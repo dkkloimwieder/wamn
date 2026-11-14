@@ -6,21 +6,21 @@ use sqlx::Row as _;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
+use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
 use wamn_catalog::{ComponentDeclaration, ServingManifest, WiringDocument};
+use wamn_connections::connection_credentials::ConnectionCredentials;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::CredentialType;
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_events_capability::EventBatchAdmission;
+use wamn_events_capability::WamnJetstream;
+use wamn_http_capability::transport::HttpTransport;
 use wamn_postgres::schema::BareSchemaName;
-use wamn_runtime::connection_credentials::ConnectionCredentials;
-use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::wamn_jetstream::EventBatchAdmission;
-use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
-use wamn_runtime::plugins::wamn_postgres::{
-    AuthorityClass, ClassCredentials, ProjectConfig, ReleaseIdentity, SessionIdentity,
-    StaticCredentialProvider, WamnPostgres,
+use wamn_postgres_capability::{
+    AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 use wash_runtime::host::probes::Liveness;
 use wash_runtime::plugin::wasi_logging::TracingLogger;
@@ -290,9 +290,12 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
     let driver = Arc::new(RouterDriver::new(Arc::new(OperationHost::new(
         Arc::clone(&engine),
         Arc::clone(&postgres),
+        Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+            &postgres,
+        ))),
         Arc::new(HttpTransport::new()?),
-        Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(
-            Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
+        Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
+            Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             &postgres,
@@ -318,10 +321,8 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         package_ids: vec!["automation".to_owned()],
         environment: "test".to_owned(),
     };
-    let jetstream = Arc::new(
-        WamnJetstream::new(wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig::default())
-            .await?,
-    );
+    let jetstream =
+        Arc::new(WamnJetstream::new(wamn_events_capability::WamnJetstreamConfig::default()).await?);
     let client = wamn_postgres::connect(database.url()).await?;
 
     let workflows = WorkflowsFixture {

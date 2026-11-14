@@ -237,7 +237,7 @@ An idempotency key alone creates no remote same-result guarantee.
 
 Contract failures remain `unbound`, `incompatible`, `authority-denied`, `attestation-invalid`, `credential-unavailable`, `timeout`, or `transport`.
 A lost response cannot become a successful result or an editable application refusal.
-The [transport owner](../../crates/platform/runtime/src/plugins/connection_http/transport.rs) defines aggregate capacity and intake bounds.
+The [transport owner](../../crates/platform/http-capability/src/transport.rs) defines aggregate capacity and intake bounds.
 
 ConnectionHttp confines requests through administrator-bound connections.
 RFC1918 and cluster service addresses are allowed because the administrator bound the target.
@@ -263,7 +263,8 @@ Guest writes and native file uploads accept at most 64 MiB.
 Native uploads stream through multipart storage and abort unfinished uploads on cancellation.
 A storage handle retains its connection generation.
 Each operation refuses a disabled connection or a changed generation before calling storage.
-The host shares storage clients by connection and generation in a bounded cache.
+The blobstore plugin shares storage clients by connection and generation in a bounded cache.
+Each project retains one plugin for guest access and file routes across resident releases.
 Range reads fetch only the requested bytes.
 A partial stream, over-limit body, or cancellation cannot publish a partial object.
 The contract's own error variants carry backend failures.
@@ -388,7 +389,7 @@ The artifact crate also owns the shared registry client configuration, trust roo
 Platform endpoint calls share its Hyper client. They use explicit trust, bounded bodies and request deadlines, without proxies or redirects.
 The upstream transports inside `oci-client` and `object_store` stay with those libraries.
 
-The host image also carries [`docker-credential-wamn`](../../crates/platform/runtime/src/bin/docker-credential-wamn.rs), a Docker credential helper for wash-runtime's own pulls.
+The host image also carries [`docker-credential-wamn`](../../crates/platform/component-artifact/src/bin/docker-credential-wamn.rs), a Docker credential helper for wash-runtime's own pulls.
 It answers `get` with the same token function, and supports no other command.
 A `config.json` that names it under `credHelpers` holds no credential.
 

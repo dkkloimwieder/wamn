@@ -170,8 +170,8 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) changes: &'a Publisher,
     #[cfg(feature = "test-util")]
     pub(crate) projection_pause: Option<&'a ProjectionPause>,
-    pub(crate) oauth: Option<&'a wamn_runtime::oauth_authorization::Authorization>,
-    pub(crate) connection_health: Option<&'a wamn_runtime::connection_health::ConnectionHealth>,
+    pub(crate) oauth: Option<&'a wamn_http_capability::oauth_authorization::Authorization>,
+    pub(crate) connection_health: Option<&'a crate::connection_health::ConnectionHealth>,
 }
 
 #[derive(Deserialize)]

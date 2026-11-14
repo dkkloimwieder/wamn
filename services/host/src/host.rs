@@ -26,8 +26,13 @@ mod commands;
 mod projects;
 mod releases;
 
+use wamn_authentication::route_authentication::EnvironmentStatusReader;
+use wamn_authentication::session_keys::{IssuerKeys, IssuerKeysConfig};
 #[cfg(test)]
 use wamn_catalog::ServingManifest;
+use wamn_component_artifact::component_artifact_source::{
+    ComponentArtifactSource, ComponentArtifactSourceConfig,
+};
 use wamn_control_provision::project_env_database_name;
 use wamn_control_provision::session_target::session_audience;
 use wamn_engine::artifact_source::ArtifactSource;
@@ -37,16 +42,12 @@ use wamn_engine::engine::{
 };
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
+use wamn_http_capability::transport::HttpTransport;
 use wamn_identity_protocol::verifier::SessionVerifier;
+use wamn_postgres_capability::AuthorityClass;
+use wamn_postgres_capability::ClassCredentials;
+use wamn_postgres_capability::WamnPostgres;
 use wamn_registry::Triple;
-use wamn_runtime::component_artifact_source::{
-    ComponentArtifactSource, ComponentArtifactSourceConfig,
-};
-use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::route_authentication::EnvironmentStatusReader;
-use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
-use wamn_runtime::plugins::{ClassCredentials, WamnPostgres};
-use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
 use wamn_workflow::DEFAULT_QUEUE_LEASE_TTL_MS;
 
 #[expect(

@@ -11,6 +11,7 @@ use serde_json::json;
 use tokio::time::{Instant, timeout};
 
 use tracing::{Instrument as _, instrument::WithSubscriber as _};
+use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
 use wamn_catalog::{
     ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageCoordinate,
 };
@@ -22,8 +23,7 @@ use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType, FlowHt
 use wamn_engine::operation::invocation_policy::InvocationPolicy as _;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_protocol::verifier::SessionVerifier;
-use wamn_runtime::plugins::route_authentication::PlatformRouteAuthenticator;
-use wamn_runtime::plugins::wamn_postgres::{
+use wamn_postgres_capability::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
 
@@ -31,7 +31,7 @@ use super::invoke_native;
 use super::trace::TraceCapture;
 use super::{CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, ROOT};
 
-#[path = "../../../../../../platform/runtime/tests/support/session_fixture.rs"]
+#[path = "../../../../../../platform/postgres-capability/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared issuer fixture also serves cache-expiry tests."
@@ -1056,13 +1056,13 @@ struct WarmCredentials {
     provider: StaticCredentialProvider,
     enabled: std::sync::atomic::AtomicBool,
 }
-impl wamn_runtime::plugins::wamn_postgres::CredentialProvider for WarmCredentials {
+impl wamn_postgres_capability::CredentialProvider for WarmCredentials {
     fn resolve(
         &self,
         project: &str,
         class: AuthorityClass,
         project_env_key: Option<&str>,
-    ) -> anyhow::Result<Option<wamn_runtime::plugins::wamn_postgres::ResolvedCredential>> {
+    ) -> anyhow::Result<Option<wamn_postgres_capability::ResolvedCredential>> {
         if !self.enabled.load(std::sync::atomic::Ordering::SeqCst) {
             return Ok(None);
         }
@@ -1160,9 +1160,8 @@ fn native_warm_retirement_aborts_retained_postgres_transaction() {
     super::run_isolated_test(
         "authenticated::native_warm_retirement_aborts_retained_postgres_transaction",
         async {
-            use wamn_runtime::plugins::wamn_postgres::{
-                PgTransaction, SessionIdentity, retained_transaction_for_test,
-            };
+            use wamn_capability_authority::identity::SessionIdentity;
+            use wamn_postgres_capability::{PgTransaction, retained_transaction_for_test};
             use wash_runtime::engine::ctx::SharedCtx;
             use wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};
             use wash_runtime::wasmtime::component::{Accessor, Instance};

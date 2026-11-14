@@ -1407,10 +1407,8 @@ mod tests {
     }
 
     impl TargetedBroker {
-        async fn runtime(
-            &self,
-        ) -> anyhow::Result<wamn_runtime::plugins::wamn_jetstream::WamnJetstream> {
-            use wamn_runtime::plugins::wamn_jetstream::{WamnJetstream, WamnJetstreamConfig};
+        async fn runtime(&self) -> anyhow::Result<wamn_events_capability::WamnJetstream> {
+            use wamn_events_capability::{WamnJetstream, WamnJetstreamConfig};
             let broker = &self.brokers[0];
             let (client, _) = monitored_broker_client(&broker.runtime, &self.server).await?;
             Ok(WamnJetstream::new(WamnJetstreamConfig {

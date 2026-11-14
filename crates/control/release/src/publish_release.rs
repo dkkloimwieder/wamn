@@ -2365,8 +2365,8 @@ mod manifest_push {
 
     #[cfg(test)]
     mod tests {
+        use wamn_component_artifact::component_artifact_source::OCI_CA_PATHS_ENV;
         use wamn_package_artifact::release_manifest_artifact::RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE;
-        use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
         use super::*;
 

@@ -12,6 +12,7 @@ use wamn_broker::Publisher;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
+use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 use wamn_control_provision::PlatformComponent;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -19,7 +20,6 @@ use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::create_or_reuse_user;
 use wamn_platform_identity::org::{MemberGrants, invite_member};
-use wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator;
 
 use http_body_util::BodyExt as _;
 

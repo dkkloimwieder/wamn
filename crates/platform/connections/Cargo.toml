@@ -1,0 +1,61 @@
+[package]
+name = "wamn-connections"
+description = "Connection facts, credentials and resource leases."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+test-util = ["dep:wamn-test-infrastructure", "wamn-kubernetes/test-util", "wamn-control-provision/test-util", "dep:wamn-test-postgres", "wamn-catalog/test-util", "wamn-capability-authority/test-util", ]
+
+[dependencies]
+wamn-test-infrastructure = { workspace = true, optional = true }
+wamn-test-postgres = { workspace = true, optional = true }
+anyhow = { workspace = true }
+async-nats = { workspace = true, features = ["jetstream", "kv"] }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
+hex = { workspace = true }
+hmac = { workspace = true }
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
+moka = { workspace = true, features = ["sync"] }
+object_store = { workspace = true, features = ["gcp"] }
+ring = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v4"] }
+wamn-broker = { workspace = true }
+wamn-capability-authority = { workspace = true }
+wamn-catalog = { workspace = true }
+wamn-control-provision = { workspace = true }
+wamn-digest = { workspace = true }
+wamn-kubernetes = { workspace = true }
+wamn-package-artifact = { workspace = true }
+wamn-platform-identity = { workspace = true }
+wamn-postgres = { workspace = true }
+wamn-registry = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+
+hyper = { workspace = true, features = ["server"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+wamn-catalog = { workspace = true, features = ["test-util"] }
+wamn-connections = { path = ".", features = ["test-util"] }
+wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-kubernetes = { workspace = true, features = ["test-util"] }
+wamn-package-artifact = { workspace = true, features = ["test-util"] }
+wamn-platform-identity = { workspace = true, features = ["test-util"] }
+wamn-test-infrastructure = { workspace = true }
+wamn-test-postgres = { workspace = true }
+wat = "=1.254.2"
+
+[lints]
+workspace = true

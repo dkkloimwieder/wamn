@@ -31,6 +31,7 @@ use wamn_catalog::{
     ComponentDeclaration, ComponentDescriptor, HostRouteSet, SERVING_MANIFEST_FORMAT_VERSION,
     ServingManifest, WiringDocument,
 };
+use wamn_connections::connection_credentials::ConnectionCredentials;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
@@ -38,19 +39,18 @@ use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::native_routes::{DeliveryRequest, Source};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
+use wamn_events_capability::WamnJetstream;
 use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig,
 };
+use wamn_http_capability::transport::HttpTransport;
 use wamn_identity_protocol::PlatformComponent;
 use wamn_identity_protocol::PrincipalId;
-use wamn_registry::Triple;
-use wamn_runtime::connection_credentials::ConnectionCredentials;
-use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
-use wamn_runtime::plugins::wamn_postgres::{
+use wamn_postgres_capability::{
     AuthorityClass, ClassCredentials, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
     WamnPostgresConfig,
 };
+use wamn_registry::Triple;
 use wamn_workflow::author_workflow::{
     AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
     author_workflow_in_databases,
@@ -481,9 +481,12 @@ impl Fixture {
             OperationHost::new(
                 Arc::clone(&self.engine),
                 Arc::clone(&self.postgres),
+                Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+                    &self.postgres,
+                ))),
                 Arc::new(HttpTransport::new().unwrap()),
-                Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(
-                    Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
+                Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
+                    Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
                     wamn_broker::Publisher::default(),
                     Arc::new(ConnectionCredentials::empty()),
                     &self.postgres,
@@ -658,11 +661,9 @@ impl Fixture {
             self.driver(release).await,
             Arc::clone(&self.postgres),
             Arc::new(
-                WamnJetstream::new(
-                    wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig::default(),
-                )
-                .await
-                .expect("event transport initializes"),
+                WamnJetstream::new(wamn_events_capability::WamnJetstreamConfig::default())
+                    .await
+                    .expect("event transport initializes"),
             ),
             release,
             QueueServiceConfig {

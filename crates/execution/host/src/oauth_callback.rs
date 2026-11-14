@@ -1,7 +1,7 @@
 //! Public control callback pages. The pending state supplies all authority.
 
 use http_body_util::{BodyExt as _, Full};
-use wamn_runtime::oauth_authorization::Authorization;
+use wamn_http_capability::oauth_authorization::Authorization;
 use wasmtime_wasi_http::WasiBody;
 
 /// Answer only the exact callback path and GET method, without a session.

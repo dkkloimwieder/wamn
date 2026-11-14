@@ -11,6 +11,9 @@ use std::process::Command;
 use std::time::Duration;
 
 use wamn_catalog::{ComponentDescriptor, ComponentPackageCoordinate};
+use wamn_component_artifact::component_artifact_source::{
+    ComponentArtifactSource, ComponentArtifactSourceConfig,
+};
 use wamn_digest::bytes_sha256;
 use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_package_artifact::registry_credentials::read_registry_credentials;
@@ -18,9 +21,6 @@ use wamn_package_artifact::{NoPackageArtifact, Repository, pull_package};
 use wamn_package_control::package_artifact::{
     PackagePushDisposition, PackageRegistry, PackageSource, PushPackageRequest,
     open_package_source, package_artifact_digest, push_package,
-};
-use wamn_runtime::component_artifact_source::{
-    ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
 
 #[path = "../../environment/tests/support/local_registry.rs"]

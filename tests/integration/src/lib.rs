@@ -16,7 +16,7 @@ pub mod trusted_http_route;
 mod fixture_membership;
 
 #[cfg(test)]
-#[path = "../../../crates/platform/runtime/tests/support/session_fixture.rs"]
+#[path = "../../../crates/platform/postgres-capability/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared fixture also serves verifier lifecycle tests."

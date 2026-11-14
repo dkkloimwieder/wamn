@@ -611,7 +611,7 @@ fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
             .expect("the value is in range");
         assert_eq!(
             spelled,
-            wamn_runtime::plugins::wamn_postgres::canonical_timestamptz(held),
+            wamn_postgres_capability::canonical_timestamptz(held),
             "the row image must spell the held value as the canonicalizer does"
         );
     }
@@ -672,7 +672,7 @@ fn timestamptz_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgre
             .expect("the value is in range");
         assert_eq!(
             spelled,
-            wamn_runtime::plugins::wamn_postgres::canonical_timestamptz(held),
+            wamn_postgres_capability::canonical_timestamptz(held),
             "the value image must spell the held value as the canonicalizer does"
         );
     }

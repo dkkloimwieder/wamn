@@ -4,8 +4,8 @@ use super::*;
 use sqlx::{Connection as _, Row as _};
 use wamn_broker::Publisher;
 use wamn_broker::connection_changes::ConnectionDrops;
-use wamn_runtime::auth_cache::test_util::{nats, until};
-use wamn_runtime::resource_lease::ResourceLeases;
+use wamn_capability_authority::auth_cache::test_util::{nats, until};
+use wamn_connections::resource_lease::ResourceLeases;
 
 struct Host {
     leases: Arc<ResourceLeases>,
@@ -22,7 +22,7 @@ struct Fixture {
     packages: Vec<wamn_compiler::manifest::PackageManifest>,
     release: wamn_engine::release_manifest::LoadedRelease,
     credentials: Arc<ConnectionCredentials>,
-    postgres: Arc<wamn_runtime::plugins::wamn_postgres::WamnPostgres>,
+    postgres: Arc<wamn_postgres_capability::WamnPostgres>,
     reader_url: String,
     registry: PackageRegistry,
     registry_credentials: RegistryCredentialSource,
@@ -139,13 +139,11 @@ impl Fixture {
             "acme",
         ));
         let postgres = Arc::new(
-            wamn_runtime::plugins::wamn_postgres::WamnPostgres::from_env_for_project(
+            wamn_postgres_capability::WamnPostgres::from_env_for_project(
                 "one",
-                Some(
-                    wamn_runtime::plugins::wamn_postgres::ClassCredentials::every_class(
-                        project_database.url().to_owned(),
-                    ),
-                ),
+                Some(wamn_postgres_capability::ClassCredentials::every_class(
+                    project_database.url().to_owned(),
+                )),
             )?,
         );
         let mut fixture = Self {
@@ -243,7 +241,7 @@ impl Fixture {
         let leases = Arc::new(ResourceLeases::new(Some(&self.reader_url))?);
         let memory =
             Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&leases)));
-        let changes = wamn_runtime::connection_memory::replicate(
+        let changes = wamn_connections::connection_memory::replicate(
             nats,
             Some("acme--dev--one"),
             Arc::clone(&memory),
@@ -391,7 +389,7 @@ async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow:
     assert!(disabled.elapsed() < Duration::from_secs(60));
     assert_eq!(
         a.memory.connection("acme--dev--one", &id).unwrap().status,
-        wamn_runtime::connection_memory::ConnectionStatus::Disabled
+        wamn_connections::connection_memory::ConnectionStatus::Disabled
     );
     a.leases.shutdown().await;
     b.leases.shutdown().await;

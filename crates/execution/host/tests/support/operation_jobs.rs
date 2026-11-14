@@ -38,7 +38,7 @@ async fn operations_refuse_unrelated_project_authority_before_execution() -> any
         )
         .await?;
     }
-    let (_server, nats) = wamn_runtime::auth_cache::test_util::nats().await;
+    let (_server, nats) = wamn_capability_authority::auth_cache::test_util::nats().await;
     let writer = Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?));
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),

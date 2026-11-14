@@ -12,18 +12,19 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use serde_json::json;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use wamn_connections::{
+    connection_credentials::ConnectionCredentials, connection_facts::ConnectionFacts,
+    connection_memory::ConnectionMemory,
+};
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql, sql};
 use wamn_engine::integration::{Integration, IntegrationBinding, IntegrationImports};
 use wamn_environment::environment::{bindings, document::EnvironmentDocument};
+use wamn_integrations::Integrations;
 use wamn_package_artifact::{
     PackageRegistry,
     registry_credentials::{RegistryCredentialSource, read_registry_credentials},
 };
 use wamn_package_control::integration;
-use wamn_runtime::{
-    connection_credentials::ConnectionCredentials, connection_facts::ConnectionFacts,
-    connection_memory::ConnectionMemory, integrations::Integrations,
-};
 use wash_runtime::{
     engine::{ctx::SharedCtx, workload::ResolvedWorkload},
     host::{
@@ -643,18 +644,16 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         "acme",
     ));
     let postgres = Arc::new(
-        wamn_runtime::plugins::wamn_postgres::WamnPostgres::from_env_for_project(
+        wamn_postgres_capability::WamnPostgres::from_env_for_project(
             "one",
-            Some(
-                wamn_runtime::plugins::wamn_postgres::ClassCredentials::every_class(
-                    project_database.url().to_owned(),
-                ),
-            ),
+            Some(wamn_postgres_capability::ClassCredentials::every_class(
+                project_database.url().to_owned(),
+            )),
         )?,
     );
-    let leases = Arc::new(wamn_runtime::resource_lease::ResourceLeases::new(Some(
-        reader_url.as_str(),
-    ))?);
+    let leases = Arc::new(wamn_connections::resource_lease::ResourceLeases::new(
+        Some(reader_url.as_str()),
+    )?);
     let facts = Arc::new(ConnectionFacts::new(
         Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&leases))),
         wamn_broker::Publisher::default(),

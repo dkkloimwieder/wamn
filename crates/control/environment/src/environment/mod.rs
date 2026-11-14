@@ -243,13 +243,13 @@ impl Platform {
     pub(crate) fn component_source(
         &self,
     ) -> anyhow::Result<
-        Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
+        Option<wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
     > {
         self.component_artifact_base
             .as_deref()
             .map(|base| -> anyhow::Result<_> {
                 let source =
-                    wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig::new(
+                    wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig::new(
                         base,
                         self.insecure_registry,
                         std::time::Duration::from_secs(30),

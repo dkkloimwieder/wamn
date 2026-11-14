@@ -258,7 +258,7 @@ async fn file_connection_lookup_requires_an_active_connection_and_integration() 
 async fn raw_blobstore_mutations_refuse_file_namespaces_on_minio() -> anyhow::Result<()> {
     use object_store::{ObjectStoreExt as _, aws::AmazonS3Builder, path::Path};
     use std::sync::Arc;
-    use wamn_runtime::plugins::wamn_blobstore::store::BoundContainer;
+    use wamn_blobstore::store::BoundContainer;
     let minio = files::Minio::start().await?;
     let backend = Arc::new(
         AmazonS3Builder::new()

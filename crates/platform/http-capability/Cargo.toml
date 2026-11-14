@@ -1,0 +1,73 @@
+[package]
+name = "wamn-http-capability"
+description = "Bound HTTP host capability and OAuth authorization."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-capability-authority/test-util", "wamn-connections/test-util", "wamn-postgres-capability/test-util"]
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
+hex = { workspace = true }
+hmac = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "http2", "tokio"] }
+jsonwebtoken = { workspace = true }
+oauth2 = { workspace = true }
+object_store = { workspace = true, features = ["gcp"] }
+opentelemetry = { workspace = true, features = ["metrics", "trace"] }
+ring = { workspace = true }
+rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
+tokio-rustls = { workspace = true }
+tower-service = { workspace = true }
+tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v4"] }
+wamn-broker = { workspace = true }
+wamn-capability-authority = { workspace = true }
+wamn-catalog = { workspace = true }
+wamn-connections = { workspace = true }
+wamn-control-provision = { workspace = true }
+wamn-engine = { workspace = true }
+wamn-identity-protocol = { workspace = true }
+wamn-kubernetes = { workspace = true }
+wamn-package-artifact = { workspace = true }
+wamn-platform-identity = { workspace = true }
+wamn-postgres = { workspace = true }
+wamn-postgres-capability = { workspace = true }
+wamn-registry = { workspace = true }
+wash-runtime = { workspace = true }
+wasmtime = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+hyper = { workspace = true, features = ["server"] }
+opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
+rcgen = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber = { workspace = true }
+wamn-catalog = { workspace = true, features = ["test-util"] }
+wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-engine = { workspace = true, features = ["test-util"] }
+wamn-http-capability = { path = ".", features = ["test-util"] }
+wamn-kubernetes = { workspace = true, features = ["test-util"] }
+wamn-package-artifact = { workspace = true, features = ["test-util"] }
+wamn-platform-identity = { workspace = true, features = ["test-util"] }
+wamn-test-infrastructure = { workspace = true }
+wamn-test-postgres = { workspace = true }
+
+[lints]
+workspace = true

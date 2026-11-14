@@ -505,7 +505,7 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 /// (`wamn-0h0g.22.37`).
 ///
 /// The production queries that select `AuthorityClass::ExecutorPlatform` live
-/// in `wamn_runtime::plugins::wamn_postgres::production_lease` and its
+/// in `wamn_postgres_capability::production_lease` and its
 /// `wiring_resolution` sibling.
 ///
 /// # The grains, and why each is the one it is

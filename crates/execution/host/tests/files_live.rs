@@ -14,18 +14,19 @@ use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 use wamn_broker::Publisher;
 use wamn_catalog::HostRouteSet;
+use wamn_connections::connection_credentials::ConnectionCredentials;
+use wamn_connections::connection_facts::ConnectionFacts;
+use wamn_connections::connection_memory::ConnectionMemory;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::native_routes::{DeliveryRequest, Source};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wamn_execution_host::file_route::{FileRefusal, FileRoutes, RegistryFileConnections};
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
-use wamn_runtime::connection_credentials::ConnectionCredentials;
-use wamn_runtime::connection_facts::ConnectionFacts;
-use wamn_runtime::connection_memory::ConnectionMemory;
-use wamn_runtime::plugins::connection_http::{
+
+use wamn_blobstore::plugin::WamnBlobstore;
+use wamn_capability_authority::connection::{
     ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
 };
-use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
 use wasmtime_wasi_http::WasiBody;
 
 #[path = "support/application_fixture.rs"]
@@ -42,7 +43,7 @@ mod file_delete_proxy;
     reason = "The shared file fixture also supports schema and registry tests."
 )]
 mod files;
-#[path = "../../../platform/runtime/tests/support/session_fixture.rs"]
+#[path = "../../../platform/postgres-capability/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared session fixture also supports verifier barriers."
@@ -84,12 +85,12 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
 
 struct FileHost {
     administration_url: String,
-    postgres: Arc<wamn_runtime::plugins::wamn_postgres::WamnPostgres>,
+    postgres: Arc<wamn_postgres_capability::WamnPostgres>,
     writer: sqlx::PgConnection,
     routes: Arc<FileRoutes>,
     delivery: HostRouteDelivery,
     blobstore: Arc<WamnBlobstore>,
-    context: Arc<wamn_runtime::invocation::ReleaseContext>,
+    context: Arc<wamn_postgres_capability::invocation::ReleaseContext>,
     registry: files::Registry,
     minio: files::Minio,
     // Keep the database server alive until its targeted clients and pools drop.
@@ -160,7 +161,7 @@ impl FileHost {
             PROJECT,
             "dev",
         ));
-        let context = Arc::new(wamn_runtime::invocation::ReleaseContext::new(
+        let context = Arc::new(wamn_postgres_capability::invocation::ReleaseContext::new(
             Arc::clone(&release),
             Arc::clone(&facts),
         )?);
@@ -666,7 +667,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_upload_streams_the_limit_and_hashes_the_stored_bytes() -> anyhow::Result<()> {
     let mut fixture = FileHost::start("file_transfer").await?;
-    let size = wamn_runtime::plugins::wamn_blobstore::intake::MAX_OBJECT_BYTES;
+    let size = wamn_blobstore::intake::MAX_OBJECT_BYTES;
     let stream = futures_util::stream::unfold(size, |remaining| async move {
         if remaining == 0 {
             None
@@ -1164,7 +1165,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     use wamn_execution_host::{
         NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig, component_invocation,
     };
-    use wamn_runtime::plugins::connection_http::transport::HttpTransport;
+    use wamn_http_capability::transport::HttpTransport;
     use wash_runtime::plugin::wasi_logging::TracingLogger;
 
     let package = signed_read::signed_read_fixture(PROJECT_ENV_KEY)?;
@@ -1204,6 +1205,9 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     let operations = Arc::new(OperationHost::new(
         Arc::new(wamn_engine::build_engine(&[])?),
         Arc::clone(&fixture.postgres),
+        Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+            &fixture.postgres,
+        ))),
         Arc::new(HttpTransport::new()?),
         Arc::new(ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),
@@ -1233,22 +1237,49 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
         .released_application(&Arc::from([package.component.clone()]))
         .await?;
     let input = json!([{"value":{"document":id}}]);
-    let payload = wamn_engine::operation::invoke_operation(&*operations, wamn_engine::operation::OperationCall {
-        closure: wamn_engine::operation::OperationClosure::Released(&Arc::from([package.component.clone()])),
-        component: &package.component, operation: signed_read::OPERATION, input: &input,
-        context: wamn_engine::operation::node_types::NodeContext {
-            wiring_id: String::new(), wiring_version: 0, node_id: String::new(),
-            delivery_id: Uuid::new_v4().to_string(), input_port: None, occurrence: 0,
-            traceparent: None, tracestate: None, deadline_ms: Some(30_000), config: "null".into(),
-        }, deadline_ms: 30_000,
-        facts: NativeFacts::entry(NodeAcquisition {
-            identity: operations.identity(PROJECT_ENV_KEY, Some(operations.release_identity())),
-            invocation: component_invocation(&package.component, signed_read::OPERATION,
-                wamn_runtime::plugins::connection_http::InvocationEntry::Route,
-                wamn_runtime::plugins::connection_http::ConnectionExecutionClosure::Released, None),
-            causation: None, platform: None,
-        }, Some(caller)),
-    }).await?.map_err(|error| anyhow::anyhow!("signed read refused: {error:?}"))?.payload;
+    let payload = wamn_engine::operation::invoke_operation(
+        &*operations,
+        wamn_engine::operation::OperationCall {
+            closure: wamn_engine::operation::OperationClosure::Released(&Arc::from([package
+                .component
+                .clone()])),
+            component: &package.component,
+            operation: signed_read::OPERATION,
+            input: &input,
+            context: wamn_engine::operation::node_types::NodeContext {
+                wiring_id: String::new(),
+                wiring_version: 0,
+                node_id: String::new(),
+                delivery_id: Uuid::new_v4().to_string(),
+                input_port: None,
+                occurrence: 0,
+                traceparent: None,
+                tracestate: None,
+                deadline_ms: Some(30_000),
+                config: "null".into(),
+            },
+            deadline_ms: 30_000,
+            facts: NativeFacts::entry(
+                NodeAcquisition {
+                    identity: operations
+                        .identity(PROJECT_ENV_KEY, Some(operations.release_identity())),
+                    invocation: component_invocation(
+                        &package.component,
+                        signed_read::OPERATION,
+                        wamn_capability_authority::connection::InvocationEntry::Route,
+                        wamn_capability_authority::connection::ConnectionExecutionClosure::Released,
+                        None,
+                    ),
+                    causation: None,
+                    platform: None,
+                },
+                Some(caller),
+            ),
+        },
+    )
+    .await?
+    .map_err(|error| anyhow::anyhow!("signed read refused: {error:?}"))?
+    .payload;
     let [request_element]: [Value; 1] = serde_json::from_str(&payload)?;
     let url = request_element["value"]["document"]
         .as_str()

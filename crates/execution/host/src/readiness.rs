@@ -16,10 +16,9 @@ pub async fn prepare_release(operations: &OperationHost) -> anyhow::Result<()> {
         .into_iter()
         .collect();
     let bound = operations
-        .postgres
+        .context
+        .connections
         .release_component_bindings_ready(
-            &operations.project,
-            &operations.release.target().project_env_key,
             operations.release.release().manifest_digest.as_str(),
             &digests,
         )

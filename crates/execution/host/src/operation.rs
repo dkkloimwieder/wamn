@@ -16,25 +16,26 @@ use opentelemetry::propagation::Extractor;
 use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+use wamn_blobstore::plugin::WamnBlobstore;
+use wamn_capability_authority::connection::{
+    ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
+};
+use wamn_capability_authority::effect_span::EffectEvidence;
+use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
 use wamn_catalog::{AdmittedComponent, ComponentSqlField, ServingComponent, ServingRoute};
+use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::native_routes::bounded_node_deadline_ms;
 use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
 use wamn_event_wire::Causation;
+use wamn_http_capability::ConnectionHttp;
+use wamn_http_capability::transport::HttpTransport;
 use wamn_identity_protocol::PlatformComponent;
-use wamn_runtime::connection_facts::ConnectionFacts;
-use wamn_runtime::plugins::EffectEvidence;
-use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::connection_http::{
-    ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
-    InvocationEntry,
-};
-use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
-use wamn_runtime::plugins::wamn_postgres::valid_runner;
-use wamn_runtime::plugins::wamn_postgres::{
-    PreparedStatementMembers, PreparedStatementSet, ReleaseIdentity, SessionIdentity,
-    StatementField, VerifiedStatement, VerifiedStatementSet, WamnPostgres,
+use wamn_postgres_capability::valid_runner;
+use wamn_postgres_capability::{
+    PreparedStatementMembers, PreparedStatementSet, StatementField, VerifiedStatement,
+    VerifiedStatementSet, WamnPostgres,
 };
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -163,11 +164,13 @@ pub use wamn_engine::invocation_trace::{InvocationSite, invocation_span};
 /// router driver runs each wiring node on the same host, so both call into the
 /// same loaded application.
 pub struct OperationHost {
+    integrations: std::sync::OnceLock<Arc<wamn_integrations::Integrations>>,
     engine: Arc<Engine>,
     pub postgres: Arc<WamnPostgres>,
+    blobstore: Arc<WamnBlobstore>,
     /// Shared by every driver in this process, independently of fresh stores.
     http_transport: Arc<HttpTransport>,
-    pub context: Arc<wamn_runtime::invocation::ReleaseContext>,
+    pub context: Arc<wamn_postgres_capability::invocation::ReleaseContext>,
     logging: Arc<TracingLogger>,
     allowed_hosts: Arc<[AllowedHost]>,
     pub release: Arc<LoadedRelease>,
@@ -242,10 +245,12 @@ impl OperationHost {
         clippy::too_many_arguments,
         reason = "each host-owned capability is an independent production dependency"
     )]
+    /// Hosts of one project share its blobstore plugin across releases.
     /// Every host in the same process must receive the same HTTP transport.
     pub fn new(
         engine: Arc<Engine>,
         postgres: Arc<WamnPostgres>,
+        blobstore: Arc<WamnBlobstore>,
         http_transport: Arc<HttpTransport>,
         facts: Arc<ConnectionFacts>,
         logging: Arc<TracingLogger>,
@@ -266,8 +271,10 @@ impl OperationHost {
         Ok(Self {
             engine,
             postgres,
+            blobstore,
             http_transport,
-            context: Arc::new(wamn_runtime::invocation::ReleaseContext::new(
+            integrations: std::sync::OnceLock::new(),
+            context: Arc::new(wamn_postgres_capability::invocation::ReleaseContext::new(
                 Arc::clone(&release),
                 facts,
             )?),
@@ -287,14 +294,13 @@ impl OperationHost {
     /// Attach retained integration readers before application stores load.
     pub fn set_integrations(
         &self,
-        integrations: Arc<wamn_runtime::integrations::Integrations>,
+        integrations: Arc<wamn_integrations::Integrations>,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.native.get().is_none(),
             "integrations must precede application loading"
         );
-        self.context
-            .integrations
+        self.integrations
             .set(integrations)
             .map_err(|_| anyhow::anyhow!("integrations already attached"))
     }
@@ -437,7 +443,7 @@ impl OperationHost {
             &components,
             NativePolicyResources {
                 files: self.files.get().cloned(),
-                integrations: self.context.integrations.get().map(Arc::clone),
+                integrations: self.integrations.get().map(Arc::clone),
                 postgres: Arc::clone(&self.postgres),
                 logging: Arc::clone(&self.logging),
                 connection_http: Arc::new(ConnectionHttp::new(
@@ -445,7 +451,7 @@ impl OperationHost {
                     Arc::clone(&self.http_transport),
                     Arc::clone(&self.allowed_hosts),
                 )),
-                blobstore: Arc::new(WamnBlobstore::new(Arc::clone(&self.postgres))),
+                blobstore: Arc::clone(&self.blobstore),
                 context: Arc::clone(&self.context),
                 release: Arc::clone(&self.release),
                 project: self.project.clone(),
@@ -676,10 +682,10 @@ fn lower_statement_set(
 mod tests;
 
 #[async_trait::async_trait]
-impl wamn_runtime::plugins::wamn_postgres::OperationInvoker for OperationHost {
+impl wamn_postgres_capability::OperationInvoker for OperationHost {
     async fn invoke(
         &self,
-        authority: Arc<wamn_runtime::invocation::AuthorizedInvocation>,
+        authority: Arc<wamn_postgres_capability::invocation::AuthorizedInvocation>,
         operation: String,
         context: node_types::NodeContext,
         input: String,
@@ -726,7 +732,7 @@ impl wamn_runtime::plugins::wamn_postgres::OperationInvoker for OperationHost {
 
     async fn sign_result(
         &self,
-        authority: Arc<wamn_runtime::invocation::AuthorizedInvocation>,
+        authority: Arc<wamn_postgres_capability::invocation::AuthorizedInvocation>,
         operation: String,
         payload: String,
     ) -> anyhow::Result<String> {

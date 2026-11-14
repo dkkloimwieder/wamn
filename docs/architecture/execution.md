@@ -15,7 +15,7 @@ The engine owns HTTP authentication and the generated `wamn:operation` binding.
 The separate HTTP component reads released route data through `wasi:config` and calls typed application exports through that binding.
 The cloud implements the operation boundary over PostgreSQL. The edge implements it over its own SQLx SQLite store.
 `RouteAuthenticator` reads the credential of a protected route.
-The cloud uses [`PlatformRouteAuthenticator`](../../crates/platform/runtime/src/plugins/route_authentication.rs), and the edge uses its local session verifier.
+The cloud uses [`PlatformRouteAuthenticator`](../../crates/platform/authentication/src/route_authentication.rs), and the edge uses its local session verifier.
 Publish decides authorization, and the runtime trusts the loaded release.
 An application's components compose at build into one component, so a call inside an application reaches no host.
 The host begins a transaction for an operation whose admitted operation declares one, whatever SQL it holds. The required permission is the entry's own operation, and nothing derives into it.
@@ -497,7 +497,7 @@ For that path, the host applies the schema and runner before it sends the read.
 An absent schema restores the server default, and an absent runner clears the prior runner.
 This reuse stores no principal, role, operation, or application identity. Those identity fields stay local to each transaction.
 
-The [session identity owner](../../crates/platform/runtime/src/plugins/wamn_postgres/session_identity.rs) refuses a transactional statement with no executing principal before it reaches PostgreSQL.
+The [session identity owner](../../crates/platform/postgres-capability/src/session_identity.rs) refuses a transactional statement with no executing principal before it reaches PostgreSQL.
 That refusal carries SQLSTATE `55000` and the message `actor-required`, as the stamp trigger does.
 
 ## Workflows
@@ -745,7 +745,7 @@ A partial creation can be retried. An API service cannot receive the reserved `a
 ### Auth memory
 
 The host answers the auth facts of a repeated caller from its memory, so they cost no Postgres round-trip.
-The [memory](../../crates/platform/runtime/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the one NATS.
+The [memory](../../crates/platform/capability-authority/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the one NATS.
 The key `<project_env_key>.<principal>` holds the grants of a principal and whether the project has its user row.
 The key `<project_env_key>.environment` holds the environment status.
 One read of `platform."user"`, `platform.user_role` and `platform.permission` answers permission and user-row requests.
@@ -831,10 +831,10 @@ Failed renewal or login expiry requires explicit login and submission. Quitting 
 ### Connection memory
 
 The host answers the connection facts of a call from its memory, so a repeated call reads Postgres and the credential store only on a miss.
-The [memory](../../crates/platform/runtime/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
+The [memory](../../crates/platform/connections/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
 It follows the revision and watch rules of the [auth memory](#auth-memory).
 Connection facts keep their own 60-second expiry.
-The [shared replica](../../crates/platform/runtime/src/kv_memory.rs) holds these rules for both memories.
+The [shared replica](../../crates/platform/capability-authority/src/kv_memory.rs) holds these rules for both memories.
 The key `<project_env_key>.connection.<connection id>` holds the active generation, effective status, credential id, and service principal id.
 It also holds exclusivity, target id, resource key, and target type.
 The effective status is active only when the integration and the connection are both active.
@@ -852,7 +852,7 @@ The active connection fact supplies the credential id and service principal.
 The host resolves the secret under that credential id.
 
 The [engine](../../crates/platform/engine/src/integration.rs) compiles the component of a wasm or native version once per component digest and keeps it in host memory.
-The [dispatch](../../crates/platform/runtime/src/integrations.rs) links an instance per (connection id, generation, credential id) from that compiled component.
+The [dispatch](../../crates/platform/integrations/src/lib.rs) links an instance per (connection id, generation, credential id) from that compiled component.
 Typed integration imports use labels, the connection names that code declares.
 The host resolves each label by its component digest, package, and name.
 HTTP and blobstore share one authority resolver.
@@ -931,7 +931,7 @@ OAuth storage uses `identity.oauth_token` and `identity.oauth_authorization` in 
 Only the host connection role and the control role receive table grants.
 Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
 An envelope key protects that data key.
-The shared [encryption module](../../crates/platform/runtime/src/oauth_encryption.rs) supports regional Cloud KMS and a local key file.
+The shared [encryption module](../../crates/platform/connections/src/oauth_encryption.rs) supports regional Cloud KMS and a local key file.
 The host reads its provider from `WAMN_OAUTH_ENCRYPTION`.
 Use `gcp` for Cloud KMS or `local` for a key file.
 [Deployment instructions](../operations/gcp.md#49-platform-install-inputs) describe that configuration.
@@ -1228,7 +1228,7 @@ Replicas serialize rotation with an issuer lock. Restarting a replica does not r
 An issuer without an active key requires explicit activation, including after removal of a compromised key.
 The previous public key stays available for the longest token lifetime plus clock tolerance after its signing cutoff.
 
-The [key cache](../../crates/platform/runtime/src/session_keys.rs) and [key owner](../../crates/identity/platform/src/session_keys.rs) define these bounds.
+The [key cache](../../crates/platform/authentication/src/session_keys.rs) and [key owner](../../crates/identity/platform/src/session_keys.rs) define these bounds.
 
 ## Operator clients
 

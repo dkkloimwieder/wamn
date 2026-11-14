@@ -2,8 +2,8 @@
 
 use clap::Args;
 use std::path::PathBuf;
+use wamn_component_artifact::component_artifact_source::OCI_CA_PATHS_ENV;
 use wamn_package_control::package_artifact::PackageRegistry;
-use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
 /// Registry access for package artifacts.
 #[derive(Debug, Args)]

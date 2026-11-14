@@ -1,0 +1,52 @@
+[package]
+name = "wamn-capability-authority"
+description = "Host invocation identity, connection policy and effect evidence."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+test-util = ["dep:opentelemetry_sdk", "dep:tracing-subscriber", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", ]
+
+[dependencies]
+opentelemetry_sdk = { workspace = true, features = ["trace", "testing"], optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+anyhow = { workspace = true }
+async-nats = { workspace = true, features = ["jetstream", "kv"] }
+bytes = { workspace = true }
+futures-util = { workspace = true }
+hex = { workspace = true }
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
+moka = { workspace = true, features = ["sync"] }
+opentelemetry = { workspace = true, features = ["metrics", "trace"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
+tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v4"] }
+wamn-broker = { workspace = true }
+wamn-catalog = { workspace = true }
+wamn-engine = { workspace = true }
+wamn-identity-protocol = { workspace = true }
+wamn-platform-identity = { workspace = true }
+wamn-registry = { workspace = true }
+wash-runtime = { workspace = true }
+wasmtime = { workspace = true }
+
+[dev-dependencies]
+
+hyper = { workspace = true, features = ["server"] }
+opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
+tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber = { workspace = true }
+wamn-catalog = { workspace = true, features = ["test-util"] }
+wamn-engine = { workspace = true, features = ["test-util"] }
+wamn-platform-identity = { workspace = true, features = ["test-util"] }
+wamn-test-postgres = { workspace = true }
+wat = "=1.254.2"
+
+[lints]
+workspace = true

@@ -11,26 +11,26 @@ use wamn_scalar::SqlValueType;
 use tokio::sync::Notify;
 use tokio::time::{Instant, timeout};
 use tracing_subscriber::layer::SubscriberExt as _;
+use wamn_blobstore::plugin::WamnBlobstore;
 use wamn_broker::Publisher;
+use wamn_capability_authority::connection::{
+    ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
+};
+use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate, ComponentSqlField,
     ComponentSqlStatement, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
     ServingManifest, ServingRelease,
 };
+use wamn_connections::connection_credentials::ConnectionCredentials;
+use wamn_connections::connection_facts::ConnectionFacts;
+use wamn_connections::connection_memory::ConnectionMemory;
 use wamn_digest::bytes_sha256;
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_http_capability::ConnectionHttp;
+use wamn_http_capability::transport::HttpTransport;
 use wamn_identity_protocol::PlatformComponent;
-use wamn_runtime::connection_credentials::ConnectionCredentials;
-use wamn_runtime::connection_facts::ConnectionFacts;
-use wamn_runtime::connection_memory::ConnectionMemory;
-use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::connection_http::{
-    ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
-};
-use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
-use wamn_runtime::plugins::wamn_postgres::{
-    ReleaseIdentity, SessionIdentity, StaticCredentialProvider, WAMN_POSTGRES_ID, WamnPostgres,
-};
+use wamn_postgres_capability::{StaticCredentialProvider, WAMN_POSTGRES_ID, WamnPostgres};
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::dispatch::DispatchTarget;
@@ -827,8 +827,11 @@ impl Fixture {
                 )),
                 blobstore: Arc::new(WamnBlobstore::new(Arc::clone(&postgres))),
                 context: Arc::new(
-                    wamn_runtime::invocation::ReleaseContext::new(Arc::clone(&release), facts)
-                        .unwrap(),
+                    wamn_postgres_capability::invocation::ReleaseContext::new(
+                        Arc::clone(&release),
+                        facts,
+                    )
+                    .unwrap(),
                 ),
                 postgres,
                 logging: Arc::new(TracingLogger::default()),
@@ -943,8 +946,8 @@ impl Fixture {
                             interface_version: self.root.interface_version.clone(),
                             operation: ROOT.into(),
                         },
-                        entry: wamn_runtime::plugins::connection_http::InvocationEntry::Wiring(
-                            wamn_runtime::plugins::connection_http::WiringPosition {
+                        entry: wamn_capability_authority::connection::InvocationEntry::Wiring(
+                            wamn_capability_authority::connection::WiringPosition {
                                 configuration: Default::default(),
                                 package_id: "workflow".into(),
                                 wiring_hash: format!("sha256:{}", "a".repeat(64)),

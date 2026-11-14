@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-blobstore.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
@@ -55,7 +56,11 @@ wamn-identity-protocol = { workspace = true, features = ["test-util"] }
 wamn-run-state = { workspace = true }
 wamn-execution-host = { workspace = true }
 wamn-workflow = { workspace = true }
-wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-connections = { workspace = true, features = ["test-util"] }
+wamn-postgres-capability = { workspace = true, features = ["test-util"] }
+wamn-http-capability = { workspace = true, features = ["test-util"] }
+wamn-authentication = { workspace = true, features = ["test-util"] }
+wamn-component-artifact = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true }
 wamn-compiler = { workspace = true }
 wash-runtime = { workspace = true, features = ["wasi-config", "wasi-logging"] }

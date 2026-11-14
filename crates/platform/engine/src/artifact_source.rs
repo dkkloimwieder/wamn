@@ -3,7 +3,7 @@
 //! [`ArtifactSource`] is the one way a host gets the bytes of an admitted
 //! component. Every source returns only bytes validated against that fact. This
 //! module holds the trait, the digest tests, and the local file source. The
-//! OCI registry source lives in `wamn-runtime` and implements the same trait.
+//! OCI registry source lives in `wamn-component-artifact` and implements the same trait.
 //! No source owns a catalog read, cache, instance pool, router behavior, or
 //! retry policy.
 

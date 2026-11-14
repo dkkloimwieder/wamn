@@ -424,7 +424,7 @@ fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
         fs::Permissions::from_mode(u32::try_from(mode).unwrap()),
     )
     .expect("apply the kubelet's file mode");
-    wamn_runtime::oauth_encryption::Envelope::from_file(&path)
+    wamn_connections::oauth_encryption::Envelope::from_file(&path)
         .unwrap_or_else(|error| panic!("rendered key {key} with mode {mode:o}: {error}"));
 }
 

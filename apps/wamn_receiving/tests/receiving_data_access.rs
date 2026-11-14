@@ -1544,7 +1544,7 @@ mod tests {
         command: &ReceiptCommand,
     ) -> std::result::Result<ReceiptCommandResult, CommandAttemptError> {
         let (request, line_json) = canonical_receipt_command(command);
-        let claimed = sqlx::query(wamn_runtime::plugins::wamn_postgres::write_log::CLAIM_SQL)
+        let claimed = sqlx::query(wamn_postgres_capability::write_log::CLAIM_SQL)
             .bind(&RECORD_RECEIPT_OPERATION)
             .bind(&command.idempotency_key)
             .bind(&request)
@@ -1552,7 +1552,7 @@ mod tests {
             .await
             .map_err(CommandAttemptError::Database)?;
         if claimed.is_none() {
-            let stored = sqlx::query(wamn_runtime::plugins::wamn_postgres::write_log::READ_SQL)
+            let stored = sqlx::query(wamn_postgres_capability::write_log::READ_SQL)
                 .bind(&RECORD_RECEIPT_OPERATION)
                 .bind(&command.idempotency_key)
                 .fetch_one(&mut **transaction)
@@ -1568,7 +1568,7 @@ mod tests {
             "row_version": result.row_version,
         })
         .to_string();
-        sqlx::query(wamn_runtime::plugins::wamn_postgres::write_log::FINISH_SQL)
+        sqlx::query(wamn_postgres_capability::write_log::FINISH_SQL)
             .bind(&RECORD_RECEIPT_OPERATION)
             .bind(&command.idempotency_key)
             .bind(&stored)

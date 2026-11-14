@@ -37,7 +37,10 @@ wamn-kubernetes.workspace = true
 wamn-platform-identity.workspace = true
 wamn-postgres.workspace = true
 wamn-registry.workspace = true
-wamn-runtime.workspace = true
+wamn-connections = { workspace = true }
+wamn-http-capability = { workspace = true }
+wamn-blobstore = { workspace = true }
+wamn-authentication = { workspace = true }
 
 [lints]
 workspace = true

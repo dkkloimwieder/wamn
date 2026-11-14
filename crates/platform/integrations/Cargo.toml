@@ -1,0 +1,27 @@
+[package]
+name = "wamn-integrations"
+description = "Bound wasm integration imports and invocation dispatch."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+moka = { workspace = true, features = ["sync"] }
+oci-client.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+uuid.workspace = true
+wamn-capability-authority.workspace = true
+wamn-catalog.workspace = true
+wamn-connections.workspace = true
+wamn-engine.workspace = true
+wamn-package-artifact.workspace = true
+wamn-postgres-capability.workspace = true
+wash-runtime.workspace = true
+wasmtime.workspace = true
+
+[lints]
+workspace = true

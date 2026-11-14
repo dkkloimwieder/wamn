@@ -21,7 +21,8 @@ wamn-kubernetes = { workspace = true }
 
 [dev-dependencies]
 wamn-test-infrastructure = { workspace = true }
-wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-capability-authority = { workspace = true, features = ["test-util"] }
+wamn-events-capability = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 tokio = { workspace = true, features = ["macros", "process"] }
 

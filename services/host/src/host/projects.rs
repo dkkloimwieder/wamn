@@ -11,6 +11,11 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
 use tokio::sync::watch;
+use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
+use wamn_capability_authority::auth_cache::replicate;
+use wamn_connections::connection_credentials::ConnectionCredentials;
+use wamn_connections::connection_facts::ConnectionFacts;
+use wamn_connections::connection_memory::{self, ConnectionMemory};
 use wamn_control_provision::{SystemReader, project_env_database_name, system_reader_login};
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::flow_http_routing::{
@@ -18,22 +23,18 @@ use wamn_engine::flow_http_routing::{
     authentication_unavailable,
 };
 use wamn_engine::release_manifest::ReleaseTarget;
+use wamn_events_capability::WamnJetstream;
+use wamn_events_capability::WamnJetstreamConfig;
 use wamn_execution_host::OperationHostConfig;
+use wamn_http_capability::transport::HttpTransport;
 use wamn_kubernetes::environment_state::{ProjectResidency, Residency};
-use wamn_registry::{Triple, environment_nats_user, project_env_key};
-use wamn_runtime::auth_cache::replicate;
-use wamn_runtime::connection_credentials::ConnectionCredentials;
-use wamn_runtime::connection_facts::ConnectionFacts;
-use wamn_runtime::connection_memory::{self, ConnectionMemory};
-use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::route_authentication::PlatformRouteAuthenticator;
-use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
-use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
-use wamn_runtime::plugins::wamn_postgres::{
+use wamn_postgres_capability::AuthorityClass;
+use wamn_postgres_capability::WamnPostgres;
+use wamn_postgres_capability::{
     CredentialProvider, ProjectConfig, ResolvedCredential, StaticCredentialProvider,
     WamnPostgresConfig,
 };
-use wamn_runtime::plugins::{WamnJetstream, WamnPostgres};
+use wamn_registry::{Triple, environment_nats_user, project_env_key};
 use wash_runtime::plugin;
 
 #[derive(Default)]
@@ -282,9 +283,11 @@ impl Environment {
             .oauth_encryption
             .as_deref()
             .map(|value| -> anyhow::Result<_> {
-                Ok(Arc::new(wamn_runtime::oauth_encryption::Envelope::open(
-                    &serde_json::from_str(value)?,
-                )?))
+                Ok(Arc::new(
+                    wamn_connections::oauth_encryption::Envelope::open(&serde_json::from_str(
+                        value,
+                    )?)?,
+                ))
             })
             .transpose()?;
         let verifier = if args.session_issuer.is_some() {
@@ -310,9 +313,9 @@ impl Environment {
             args.component_reclaim_window_seconds,
         )?;
         let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
-        let leases = Arc::new(wamn_runtime::resource_lease::ResourceLeases::new(Some(
-            &connection,
-        ))?);
+        let leases = Arc::new(wamn_connections::resource_lease::ResourceLeases::new(
+            Some(&connection),
+        )?);
         let memory =
             Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&leases)));
         let changes = connection_memory::replicate(&nats, Some(&key), Arc::clone(&memory));
@@ -344,6 +347,9 @@ impl Environment {
             releases::Resources {
                 engine: Arc::clone(&self.engine),
                 postgres: Arc::clone(&self.postgres),
+                blobstore: Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+                    &self.postgres,
+                ))),
                 transport: Arc::clone(&self.transport),
                 facts,
                 logging: Arc::clone(&self.logging),

@@ -4,12 +4,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
+use wamn_component_artifact::component_artifact_source::{
+    ComponentArtifactSource, ComponentArtifactSourceConfig,
+};
 use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
 use wamn_package_artifact::registry_pull;
-use wamn_runtime::component_artifact_source::{
-    ComponentArtifactSource, ComponentArtifactSourceConfig,
-};
 
 use super::{PackageRegistry, PublishedRelease, ReleaseComponents};
 

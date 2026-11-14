@@ -9,6 +9,7 @@ use wamn_identity_protocol::ADMIN_ROLE;
 
 use anyhow::Context as _;
 use sqlx::PgConnection as Client;
+use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::WorkloadRoleFamily;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
@@ -19,8 +20,7 @@ use wamn_platform_identity::{
     PrincipalType, assign_project_role, create_service, create_user, disable_principal, issue_pat,
     operator_subject, resolve_subject, revoke_pat,
 };
-use wamn_runtime::plugins::route_authentication::PlatformRouteAuthenticator;
-use wamn_runtime::plugins::wamn_postgres::{
+use wamn_postgres_capability::{
     AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
 

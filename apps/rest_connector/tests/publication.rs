@@ -218,7 +218,7 @@ async fn composed_sql_uses_released_schemas(
                     .get::<bool, _>(0)
             );
         } else {
-            sqlx::query(wamn_runtime::plugins::wamn_postgres::write_log::CLAIM_SQL)
+            sqlx::query(wamn_postgres_capability::write_log::CLAIM_SQL)
                 .bind(&"rest-consumer-fixture:item/record")
                 .bind(&"sql-proof")
                 .bind(&vec![1_u8])
@@ -239,7 +239,7 @@ async fn composed_sql_uses_released_schemas(
                 .await?
                 .get(0);
             assert_eq!(key, "item");
-            sqlx::query(wamn_runtime::plugins::wamn_postgres::write_log::FINISH_SQL)
+            sqlx::query(wamn_postgres_capability::write_log::FINISH_SQL)
                 .bind(&"rest-consumer-fixture:item/record")
                 .bind(&"sql-proof")
                 .bind(&"{}")

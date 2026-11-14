@@ -12,7 +12,7 @@ use crate::admission::{ScheduleRunAdmitted, admit_schedule_run, due_text};
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use wamn_catalog::parse_workflow_schedule;
-use wamn_runtime::plugins::WamnPostgres;
+use wamn_postgres_capability::WamnPostgres;
 
 /// One enabled schedule workflow of a declared application.
 #[derive(Debug, Clone, PartialEq, Eq)]
