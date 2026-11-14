@@ -6,13 +6,6 @@
 //! provisioning families lives beside `WorkloadRoleFamily` in
 //! `wamn-control-provision`, because that is where the target type is defined.
 //!
-//! # Why this lives here and not with the role families
-//!
-//! `wamn-control-provision` is a DEV-ONLY dependency of `wamn-runtime` — the
-//! shipped runtime deliberately links no provisioner. The class is needed by
-//! production runtime code (the credential provider and both pool caches), so
-//! it lives in the crate both sides already depend on in their normal graph.
-//!
 //! # Why there is deliberately no parser
 //!
 //! A class originates ONLY in trusted host composition or operator-owned

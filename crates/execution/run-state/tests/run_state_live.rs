@@ -1,20 +1,14 @@
-//! Live acceptance test for the fenced run-state transitions.
+//! Live contracts for run admission, lease fencing, recovery and pruning.
+use sqlx::{Connection as _, Row as _};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
+use wamn_run_state::admission::{self, RunAdmission, RunAdmitted, RunTrigger};
+use wamn_run_state::persistence::{self, LeaseTurn, ProductionLeaseResult};
+use wamn_run_state::run_store::{
+    ProductionCompletion, ProductionCompletionResult, ProductionLeaseRenewal, ProductionReapResult,
+};
 
 use std::io::Write as _;
 use std::process::{Command, Output, Stdio};
-use std::thread;
-use std::time::Duration;
-
-use wamn_control_provision::{
-    WorkloadRoleFamily, WorkloadRoleIdentity, sql as provision_sql, workload_login,
-};
-use wamn_run_state::queue::{
-    advance_lease_attempts_sql, clear_pre_effect_state_sql, grant_production_lease_sql,
-    renew_production_lease_sql, select_exhausted_production_sql,
-    terminalize_exhausted_production_sql,
-};
-use wamn_run_state::transitions::{release_caller_sql, terminalize_sql};
-
 fn psql(url: &str, script: &str) -> Output {
     let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
     let script =
@@ -45,30 +39,10 @@ fn success(url: &str, script: &str) -> String {
     String::from_utf8(output.stdout).expect("psql stdout is utf-8")
 }
 
-/// The generation login the fenced transitions actually run as.
-///
-/// The runtime tests executor membership before these statements run.
-/// This test exercises SQL locks and fences with the production executor grants.
-/// The host-injected project still selects each statement's queue rows.
-///
-/// A MINTED GENERATION, NOT THE BARE ACL ROLE (`wamn-0h0g.22.31`). The stable
-/// role is `NOLOGIN` and nothing in production ever authenticates as it — the
-/// executor's platform pool dials a generation that INHERITS it, and
-/// `pool::credential_exactness_hook` asserts exactly that membership on every
-/// physical connection. Driving these legs as the stable role would show a
-/// principal that cannot exist at runtime, and would take its privileges
-/// directly rather than through the inheritance edge that is the real path.
 const EXECUTOR_LOGIN: &str = "wamn_transitions_executor_login";
 
-fn executor_preamble() -> String {
-    format!(
-        "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL search_path TO wamn_run; \
-         SET LOCAL app.project_env_key = 't1';"
-    )
-}
-
-#[test]
-fn run_state_live() {
+#[tokio::test]
+async fn run_state_live() -> anyhow::Result<()> {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
@@ -175,839 +149,469 @@ fn run_state_live() {
         ),
     );
 
-    // The mirrored role blocks above are create-only — unlike builder-owned `wamn_app`
-    // they have no `ELSE ALTER` arms — and roles are CLUSTER-WIDE, so a role left behind by an
-    // earlier database is silently kept with whatever attributes it already carries.
-    // This is the leg that makes the drift contract testable rather than aspirational:
-    // it reds both when a block above stops matching the production attribute set and
-    // when the cluster this suite was pointed at is not the throwaway it is documented
-    // to be.
-    success(
-        &url,
-        "DO $$ DECLARE mirrored text; BEGIN \
-           SELECT string_agg(rolname, ',' ORDER BY rolname) INTO mirrored FROM pg_roles \
-            WHERE rolname IN ('wamn_executor_platform') \
-              AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcanlogin \
-              AND NOT rolinherit AND NOT rolcreatedb AND NOT rolcreaterole \
-              AND NOT rolreplication; \
-           ASSERT mirrored = 'wamn_executor_platform', \
-                  'the mirrored roles must carry exactly the attributes \
-                   ensure_workload_acl_role_sql mints \
-                   (NOLOGIN NOSUPERUSER \
-                   NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS); \
-                   conforming roles were: ' || coalesce(mirrored, '<none>'); \
-         END $$;",
+    let mut admin = wamn_postgres::connect(&url).await?;
+    let mut worker = wamn_postgres::connect(&url).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "SET ROLE {EXECUTOR_LOGIN}; SET search_path TO wamn_run"
+    )))
+    .execute(&mut worker)
+    .await?;
+    let actor = wamn_identity_protocol::PlatformComponent::Executor
+        .principal_id()
+        .to_string();
+    for client in [&mut admin, &mut worker] {
+        sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:run-test', false), set_config('app.project_env_key', 't1', false)")
+            .bind(&actor).execute(client).await?;
+    }
+    let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+    let input = serde_json::json!({"order": 7});
+    let nodes = serde_json::json!({"read": digest});
+    let run = RunAdmission {
+        project_env_key: "t1",
+        application: "cat",
+        manifest_digest: digest,
+        environment: "prod",
+        workflow_id: "workflow",
+        workflow_version: 1,
+        wiring_hash: digest,
+        execution_principal_id: &actor,
+        execution_role: "admin",
+        trigger: RunTrigger::Manual,
+        invoked_by: "manual",
+        invoked_by_user_id: Some(&actor),
+        node_digests: &nodes,
+        idempotency_key: "manual:7",
+        input: &input,
+        source_run: None,
+        root_run: None,
+        depth: None,
+    };
+    let mut tx = worker.begin().await?;
+    let admitted = admission::admit_run(&mut tx, &run).await?;
+    let RunAdmitted::Queued { run_id } = &admitted else {
+        panic!("run was not queued");
+    };
+    assert_eq!(admission::admit_run(&mut tx, &run).await?, admitted);
+    let different_input = serde_json::json!({"order": 8});
+    let conflict = RunAdmission {
+        input: &different_input,
+        ..run
+    };
+    assert_eq!(
+        admission::admit_run(&mut tx, &conflict).await?,
+        RunAdmitted::Conflict
     );
+    tx.commit().await?;
+    let applications = ["cat".to_owned()];
+    for invalid in [
+        Vec::new(),
+        vec![String::new()],
+        vec![" cat".to_owned()],
+        vec!["cat\0".to_owned()],
+    ] {
+        let mut tx = worker.begin().await?;
+        let error =
+            persistence::lease_next(&mut tx, "worker", &invalid, "prod", 30000, Some(digest))
+                .await
+                .unwrap_err();
+        assert_eq!(
+            error.error_type(),
+            wamn_run_state::run_store::ProductionLeaseErrorType::Contract
+        );
+        tx.rollback().await?;
+    }
 
-    // THE PRINCIPAL EVERY LEG BELOW RUNS AS, ASSERTED BEFORE ANY OF THEM RUN
-    // (`wamn-0h0g.22.31`). A superuser or a `BYPASSRLS` login would satisfy every
-    // transition below while showing nothing about the project base grants, and would do it
-    // SILENTLY — there is no leg here whose failure would name it. The membership edge is
-    // asserted with the same force: these legs must reach their privileges by INHERITING
-    // the stable role, which is what the runtime's connection probe tests, not by holding
-    // them directly.
-    success(
-        &url,
-        &format!(
-            "DO $$ BEGIN \
-               ASSERT EXISTS ( \
-                 SELECT FROM pg_catalog.pg_authid \
-                  WHERE rolname = 'wamn_app' AND NOT rolcanlogin \
-                    AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole \
-                    AND NOT rolinherit AND NOT rolreplication AND NOT rolbypassrls \
-                    AND rolpassword IS NULL), \
-                 'the stable App role must be a passwordless NOLOGIN ACL carrier'; \
-               ASSERT EXISTS ( \
-                 SELECT FROM pg_catalog.pg_authid \
-                  WHERE rolname = '{app_login}' \
-                    AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
-                    AND NOT rolcreaterole AND rolinherit AND NOT rolreplication \
-                    AND NOT rolbypassrls AND rolpassword IS NOT NULL \
-                    AND rolvaliduntil IS NOT NULL), \
-                 'the App principal must be a minted, non-bypassing generation'; \
-               ASSERT EXISTS ( \
-                 SELECT FROM pg_catalog.pg_auth_members AS membership \
-                 JOIN pg_catalog.pg_roles AS parent ON parent.oid = membership.roleid \
-                 JOIN pg_catalog.pg_roles AS child ON child.oid = membership.member \
-                  WHERE parent.rolname = 'wamn_app' \
-                    AND child.rolname = '{app_login}' \
-                    AND NOT membership.admin_option \
-                    AND membership.inherit_option \
-                    AND NOT membership.set_option), \
-                 'the App generation must INHERIT the stable ACL role'; \
-               ASSERT EXISTS ( \
-                 SELECT FROM pg_catalog.pg_authid \
-                  WHERE rolname = '{EXECUTOR_LOGIN}' \
-                    AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
-                    AND NOT rolcreaterole AND rolinherit AND NOT rolreplication \
-                    AND NOT rolbypassrls AND rolpassword IS NOT NULL \
-                    AND rolvaliduntil IS NOT NULL), \
-                 'the transitions principal must be a minted, non-bypassing generation'; \
-               ASSERT EXISTS ( \
-                 SELECT FROM pg_catalog.pg_auth_members AS membership \
-                 JOIN pg_catalog.pg_roles AS parent ON parent.oid = membership.roleid \
-                 JOIN pg_catalog.pg_roles AS child ON child.oid = membership.member \
-                  WHERE parent.rolname = 'wamn_executor_platform' \
-                    AND child.rolname = '{EXECUTOR_LOGIN}' \
-                    AND NOT membership.admin_option \
-                    AND membership.inherit_option \
-                    AND NOT membership.set_option), \
-                 'the generation must INHERIT the stable role, not hold its grants'; \
-               ASSERT pg_catalog.pg_has_role('{EXECUTOR_LOGIN}', 'wamn_platform', 'USAGE'); \
-               ASSERT NOT pg_catalog.pg_has_role('{EXECUTOR_LOGIN}', 'wamn_app', 'USAGE'); \
-             END $$;"
-        ),
-    );
+    // Admission and its queue entry roll back together.
+    let mut tx = worker.begin().await?;
+    let aborted = RunAdmission {
+        idempotency_key: "aborted",
+        ..conflict
+    };
+    let queued = admission::admit_run(&mut tx, &aborted).await?;
+    let RunAdmitted::Queued { run_id: aborted_id } = queued else {
+        panic!("run was not queued");
+    };
+    tx.rollback().await?;
+    let persisted: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM wamn_run.runs WHERE run_id=$1) OR EXISTS (SELECT 1 FROM wamn_run.run_queue WHERE run_id=$1)")
+        .bind(&aborted_id).fetch_one(&mut admin).await?.get(0);
+    assert!(!persisted);
 
-    let release = release_caller_sql();
-    let terminalize = terminalize_sql();
-    // D2b: the two transitions take their instant from the caller. This test
-    // picks the instants, so the stored stamps are exact and reproducible. A
-    // server clock could not produce either literal, which is the proof.
-    //
-    // The instants sit in the future on purpose. `runs_updated_after_created`
-    // refuses an `updated_at` older than the server-stamped `created_at`, so a
-    // literal in the past would fail that CHECK rather than test the stamp.
-    let released_at = "2099-03-04 05:06:07.000008+00";
-    let terminal_at = "2099-03-04 05:06:09.000010+00";
-
-    // Positive caller release, duplicate replay, then terminalization. A
-    // transition after terminal state returns its typed refusal.
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (project_env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment, \
-            wiring_id, wiring_version, attachment_id, status) \
-         VALUES ('t1', 'release-1', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, 'cat', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'prod', \
-           'fixture-wiring', 1, 'http-a', 'running'); \
-         INSERT INTO wamn_run.run_queue \
-           (project_env_key, run_id, lease_owner, lease_expires_at, lease_generation) \
-         VALUES ('t1', 'release-1', 'worker-a', now() + interval '1 minute', 1);",
-    );
-    let release_script = format!(
-        "{} DO $test$ DECLARE released record; BEGIN \
-           EXECUTE $statement${}$statement$ INTO STRICT released \
-             USING 'release-1'::text,'release-1'::text,'worker-a'::text,1::bigint, \
-                   'responded'::text,'{{\"ok\":true}}'::text,200::int, \
-                   'respond'::text,'sha256:one'::text,'{released_at}'::timestamptz; \
-           ASSERT released.result_code = 'released', 'caller released'; \
-           ASSERT (SELECT caller_outcome_type FROM runs WHERE run_id='release-1') = 'responded', \
-                  'caller outcome persisted'; \
-           ASSERT (SELECT caller_released_at FROM runs WHERE run_id='release-1') \
-                  = '{released_at}'::timestamptz, \
-                  'the caller instant is the one the caller passed'; \
-           ASSERT (SELECT updated_at FROM runs WHERE run_id='release-1') \
-                  = '{released_at}'::timestamptz, \
-                  'the release stamps updated_at with the same instant'; \
-         END $test$; COMMIT;",
-        executor_preamble(),
-        release
-    );
-    success(&url, &release_script);
-
-    let replay_script = format!(
-        "{} DO $test$ DECLARE replayed record; BEGIN \
-           EXECUTE $statement${}$statement$ INTO STRICT replayed \
-             USING 'release-1'::text,'release-1'::text,'worker-a'::text,1::bigint, \
-                   'responded'::text,'{{\"ok\":true}}'::text,200::int, \
-                   'respond'::text,'sha256:one'::text,'{released_at}'::timestamptz; \
-           ASSERT replayed.result_code = 'already-released', 'duplicate is replay'; \
-           ASSERT replayed.outcome_type = 'responded', 'stored type returned'; \
-         END $test$; COMMIT;",
-        executor_preamble(),
-        release
-    );
-    success(&url, &replay_script);
-
-    let terminal_script = format!(
-        "{} DO $test$ DECLARE terminal record; BEGIN \
-           EXECUTE $statement${}$statement$ INTO STRICT terminal \
-             USING 'release-1'::text,'release-1'::text,'worker-a'::text,1::bigint, \
-                   'completed'::text,'frontier-exhausted'::text, \
-                   '{{\"done\":true}}'::text,NULL::text,'{terminal_at}'::timestamptz; \
-           ASSERT terminal.result_code = 'terminalized', 'run terminalized'; \
-           ASSERT (SELECT status FROM runs WHERE run_id='release-1') = 'completed', \
-                  'terminal status persisted'; \
-           ASSERT (SELECT updated_at FROM runs WHERE run_id='release-1') \
-                  = '{terminal_at}'::timestamptz, \
-                  'the terminal instant is the one the caller passed'; \
-           ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='release-1'), \
-                  'queue row removed atomically'; \
-         END $test$; COMMIT;",
-        executor_preamble(),
-        terminalize
-    );
-    success(&url, &terminal_script);
-
-    // An attachment identifies admission provenance, not necessarily a waiting
-    // caller. Cron and event runs terminalize naturally; request sources must
-    // release their caller first.
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
-            wiring_id,wiring_version,attachment_id,status,trigger_source) VALUES \
-           ('t1','terminal-cron','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-            'fixture-wiring',1,'cron-a','running','cron'), \
-           ('t1','terminal-event','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-            'fixture-wiring',1,'event-a','running','event'), \
-           ('t1','terminal-http-open','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-            'fixture-wiring',1,'http-open','running','http'); \
-         INSERT INTO wamn_run.runs \
-           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
-            wiring_id,wiring_version,attachment_id,status,trigger_source, \
-            caller_outcome_type,caller_outcome_json,caller_http_status,caller_release_node_id, \
-            caller_outcome_hash,caller_released_at) VALUES \
-           ('t1','terminal-http-released','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-            'fixture-wiring',1,'http-released','running','http', \
-            'responded','{}',200,'respond','sha256:released',now()); \
-         INSERT INTO wamn_run.run_queue \
-           (project_env_key,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
-           ('t1','terminal-cron','worker-source',now()+interval '1 minute',1), \
-           ('t1','terminal-event','worker-source',now()+interval '1 minute',1), \
-           ('t1','terminal-http-open','worker-source',now()+interval '1 minute',1), \
-           ('t1','terminal-http-released','worker-source',now()+interval '1 minute',1);",
-    );
-    let source_terminal_script = format!(
-        "{} DO $test$ DECLARE \
-           terminal_stmt text := $statement${}$statement$; \
-           cron_terminal record; event_terminal record; \
-           http_open_terminal record; http_released_terminal record; \
-         BEGIN \
-           EXECUTE terminal_stmt INTO STRICT cron_terminal \
-             USING 'terminal-cron'::text,'terminal-cron'::text,'worker-source'::text,1::bigint, \
-                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text, \
-                   '{terminal_at}'::timestamptz; \
-           EXECUTE terminal_stmt INTO STRICT event_terminal \
-             USING 'terminal-event'::text,'terminal-event'::text,'worker-source'::text,1::bigint, \
-                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text, \
-                   '{terminal_at}'::timestamptz; \
-           EXECUTE terminal_stmt INTO STRICT http_open_terminal \
-             USING 'terminal-http-open'::text,'terminal-http-open'::text,'worker-source'::text,1::bigint, \
-                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text, \
-                   '{terminal_at}'::timestamptz; \
-           EXECUTE terminal_stmt INTO STRICT http_released_terminal \
-             USING 'terminal-http-released'::text,'terminal-http-released'::text,'worker-source'::text,1::bigint, \
-                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text, \
-                   '{terminal_at}'::timestamptz; \
-           ASSERT cron_terminal.result_code = 'terminalized', \
-                  'attached cron has no caller to release'; \
-           ASSERT event_terminal.result_code = 'terminalized', \
-                  'attached event has no caller to release'; \
-           ASSERT http_open_terminal.result_code = 'caller-unreleased', \
-                  'HTTP request must release its caller'; \
-           ASSERT (SELECT status FROM runs WHERE run_id='terminal-http-open') = 'running', \
-                  'caller refusal leaves the request running'; \
-           ASSERT EXISTS (SELECT FROM run_queue WHERE run_id='terminal-http-open'), \
-                  'caller refusal leaves the request queued'; \
-           ASSERT http_released_terminal.result_code = 'terminalized', \
-                  'released HTTP request terminalizes'; \
-         END $test$; COMMIT;",
-        executor_preamble(),
-        terminalize
-    );
-    success(&url, &source_terminal_script);
-
-    // A terminal caller replay returns the first stored outcome.
-    let post_terminal_script = format!(
-        "{} DO $test$ DECLARE refused record; BEGIN \
-           EXECUTE $statement${}$statement$ INTO STRICT refused \
-             USING 'release-1'::text,'release-1'::text,'worker-a'::text,1::bigint, \
-                   'failed'::text,'{{\"error\":{{}}}}'::text,500::int, \
-                   NULL::text,'sha256:two'::text,'{released_at}'::timestamptz; \
-           ASSERT refused.result_code = 'already-released', \
-                  'post-terminal transition is typed'; \
-           ASSERT refused.outcome_type = 'responded' \
-              AND refused.outcome_json::jsonb = '{{\"ok\":true}}'::jsonb \
-              AND refused.http_status = 200 AND refused.release_node_id = 'respond' \
-              AND refused.outcome_hash = 'sha256:one', 'the stored winner survives'; \
-         END $test$; COMMIT;",
-        executor_preamble(),
-        release
-    );
-    success(&url, &post_terminal_script);
-
-    // Actual lock race: the new leaseholder increments generation and holds the
-    // queue row while the stale worker enters release_caller. The stale statement
-    // resumes after commit and must return fence-lost without caller mutation.
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
-            wiring_id,wiring_version,attachment_id,status) \
-         VALUES ('t1','race-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-           'fixture-wiring',1,'http-race','running'); \
-         INSERT INTO wamn_run.run_queue \
-           (project_env_key,run_id,lease_owner,lease_expires_at,lease_generation) \
-         VALUES ('t1','race-1','stale-worker',now()+interval '1 minute',7);",
-    );
-    let race_url = url.clone();
-    let winner = thread::spawn(move || {
-        success(
-            &race_url,
-            &format!(
-                "{} \
-                 UPDATE run_queue SET lease_owner='winner', lease_generation=lease_generation+1, \
-                        lease_expires_at=now()+interval '1 minute' \
-                  WHERE run_id='race-1'; \
-                 SELECT pg_sleep(1); COMMIT;",
-                executor_preamble(),
-            ),
+    let mut tx = worker.begin().await?;
+    assert!(matches!(
+        persistence::lease_next(
+            &mut tx,
+            "worker",
+            &applications,
+            "prod",
+            30000,
+            Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         )
+        .await?,
+        LeaseTurn::Leased(ProductionLeaseResult::Empty)
+    ));
+    tx.commit().await?;
+    let mut tx = worker.begin().await?;
+    let LeaseTurn::Leased(ProductionLeaseResult::Ready {
+        lease_generation: first,
+        workflow,
+        ..
+    }) = persistence::lease_next(
+        &mut tx,
+        "worker",
+        &applications,
+        "prod",
+        30000,
+        Some(digest),
+    )
+    .await?
+    else {
+        panic!("run was not leased");
+    };
+    assert_eq!(
+        workflow.node_digests.get("read").map(String::as_str),
+        Some(digest)
+    );
+    tx.commit().await?;
+
+    // Expiry clears the abandoned state and advances its generation and attempts.
+    sqlx::query("UPDATE wamn_run.runs SET state_json = '{\"partial\":true}' WHERE run_id=$1")
+        .bind(run_id)
+        .execute(&mut admin)
+        .await?;
+    sqlx::query("UPDATE wamn_run.run_queue SET lease_expires_at = now() - interval '1 minute' WHERE run_id=$1")
+        .bind(run_id).execute(&mut admin).await?;
+    let mut tx = worker.begin().await?;
+    let LeaseTurn::Leased(ProductionLeaseResult::Ready {
+        lease_generation: second,
+        ..
+    }) = persistence::lease_next(
+        &mut tx,
+        "next-worker",
+        &applications,
+        "prod",
+        30000,
+        Some(digest),
+    )
+    .await?
+    else {
+        panic!("expired run was not recovered");
+    };
+    assert!(second > first);
+    // A stale settlement waiting on the new lease must see its new generation.
+    let mut stale = wamn_postgres::connect(&url).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "SET ROLE {EXECUTOR_LOGIN}; SET search_path TO wamn_run"
+    )))
+    .execute(&mut stale)
+    .await?;
+    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:run-test',false), set_config('app.project_env_key','t1',false)")
+        .bind(&actor).execute(&mut stale).await?;
+    let pid: i32 = sqlx::query("SELECT pg_backend_pid()")
+        .fetch_one(&mut stale)
+        .await?
+        .get(0);
+    let stale_run = run_id.to_owned();
+    let waiting = tokio::spawn(async move {
+        let mut tx = stale.begin().await?;
+        let result = persistence::complete(
+            &mut tx,
+            &stale_run,
+            "worker",
+            first,
+            &ProductionCompletion::completed(serde_json::Value::Null),
+        )
+        .await?;
+        tx.commit().await?;
+        assert_eq!(waiting.await??, ProductionCompletionResult::FenceLost);
+
+        Ok::<_, anyhow::Error>(result)
     });
-    thread::sleep(Duration::from_millis(200));
-    let stale_script = format!(
-        "{} DO $test$ DECLARE stale record; BEGIN \
-           EXECUTE $statement${}$statement$ INTO STRICT stale \
-             USING 'race-1'::text,'race-1'::text,'stale-worker'::text,7::bigint, \
-                   'responded'::text,'{{\"bad\":true}}'::text,200::int, \
-                   'respond'::text,'sha256:stale'::text,'{released_at}'::timestamptz; \
-           ASSERT stale.result_code = 'fence-lost', 'stale generation loses'; \
-           ASSERT (SELECT caller_released_at FROM runs WHERE run_id='race-1') IS NULL, \
-                  'FenceLost writes no caller state'; \
-           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='race-1') = 'winner', \
-                  'FenceLost writes no queue state'; \
-         END $test$; COMMIT;",
-        executor_preamble(),
-        release
-    );
-    success(&url, &stale_script);
-    winner.join().expect("winner thread");
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let blocked: bool = sqlx::query("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock')")
+                .bind(pid).fetch_one(&mut admin).await?.get(0);
+            if blocked { return Ok::<_, sqlx::Error>(()); }
+            tokio::task::yield_now().await;
+        }
+    }).await??;
 
-    // Named fault: caller release + terminal run + queue deletion all execute,
-    // then the transaction aborts. None may survive.
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
-            wiring_id,wiring_version,attachment_id,status) \
-         VALUES ('t1','fault-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-           'fixture-wiring',1,'http-fault','running'); \
-         INSERT INTO wamn_run.run_queue \
-           (project_env_key,run_id,lease_owner,lease_expires_at,lease_generation) \
-         VALUES ('t1','fault-1','worker-f',now()+interval '1 minute',9);",
+    tx.commit().await?;
+    let row = sqlx::query("SELECT r.state_json IS NULL, q.attempts FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE r.run_id=$1")
+        .bind(run_id).fetch_one(&mut admin).await?;
+    assert!(row.get::<bool, _>(0));
+    assert_eq!(row.get::<i32, _>(1), 1);
+    let mut tx = worker.begin().await?;
+    assert_eq!(
+        persistence::renew(&mut tx, run_id, "worker", first, 30000).await?,
+        ProductionLeaseRenewal::FenceLost
     );
-    let fault_script = format!(
-        "{} PREPARE release_stmt \
-           (text,text,text,bigint,text,text,int,text,text,timestamptz) AS {}; \
-         PREPARE terminal_stmt \
-           (text,text,text,bigint,text,text,text,text,timestamptz) AS {}; \
-         EXECUTE release_stmt('fault-1','fault-1','worker-f',9, \
-                              'failed','{{\"error\":{{\"code\":\"boom\"}}}}',500,NULL,'sha256:fault', \
-                              '{released_at}'); \
-         EXECUTE terminal_stmt('fault-1','fault-1','worker-f',9, \
-                               'failed','node-failed','null','terminal','{terminal_at}'); \
-         SELECT 1/0; COMMIT;",
-        executor_preamble(),
-        release,
-        terminalize
+    assert_eq!(
+        persistence::complete(
+            &mut tx,
+            run_id,
+            "next-worker",
+            second,
+            &ProductionCompletion::completed(input)
+        )
+        .await?,
+        ProductionCompletionResult::Terminalized
     );
-    let fault = psql(&url, &fault_script);
+    tx.commit().await?;
+    let queued: bool =
+        sqlx::query("SELECT EXISTS (SELECT 1 FROM wamn_run.run_queue WHERE run_id=$1)")
+            .bind(run_id)
+            .fetch_one(&mut admin)
+            .await?
+            .get(0);
+    assert!(!queued);
+
+    // The owning database refuses changes to the release frozen at admission.
+    let mut tx = admin.begin().await?;
     assert!(
-        !fault.status.success(),
-        "injected transaction fault must fail"
+        sqlx::query("UPDATE wamn_run.runs SET manifest_digest=$2 WHERE run_id=$1")
+            .bind(run_id)
+            .bind("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .execute(&mut *tx)
+            .await
+            .is_err()
     );
-    success(
-        &url,
-        "DO $$ BEGIN \
-           ASSERT (SELECT status FROM wamn_run.runs WHERE run_id='fault-1') = 'running', \
-                  'fault rolled back run terminal state'; \
-           ASSERT (SELECT caller_released_at FROM wamn_run.runs WHERE run_id='fault-1') IS NULL, \
-                  'fault rolled back caller state'; \
-           ASSERT EXISTS (SELECT FROM wamn_run.run_queue WHERE run_id='fault-1' \
-                          AND lease_owner='worker-f' AND lease_generation=9), \
-                  'fault rolled back queue deletion'; \
-         END $$;",
-    );
+    tx.rollback().await?;
 
-    // Both transitions refuse foreign runs, owners and generations without writes.
-    success(
-        &url,
-        &format!(
-            "{} DO $test$ DECLARE target text; owner text; generation bigint; \
-             expected text; released record; terminal record; before_run jsonb; before_queue jsonb; \
-             BEGIN \
-               SELECT to_jsonb(r) INTO before_run FROM runs AS r WHERE run_id='fault-1'; \
-               SELECT to_jsonb(q) INTO before_queue FROM run_queue AS q WHERE run_id='fault-1'; \
-               FOR target, owner, generation, expected IN VALUES \
-                 ('release-1','worker-f',9::bigint,'cross-run-authority'), \
-                 ('fault-1','other-worker',9::bigint,'fence-lost'), \
-                 ('fault-1','worker-f',8::bigint,'fence-lost') LOOP \
-                 EXECUTE $release${release}$release$ INTO STRICT released \
-                   USING 'fault-1'::text,target,owner,generation,'failed'::text, \
-                         '{{}}'::text,500::int,NULL::text,'sha256:refused'::text, \
-                         '{terminal_at}'::timestamptz; \
-                 ASSERT released.result_code=expected, 'caller authority refusal'; \
-                 EXECUTE $terminal${terminalize}$terminal$ INTO STRICT terminal \
-                   USING 'fault-1'::text,target,owner,generation,'failed'::text, \
-                         'node-failed'::text,'null'::text,'terminal'::text, \
-                         '{terminal_at}'::timestamptz; \
-                 ASSERT terminal.result_code=expected, 'terminal authority refusal'; \
-                 ASSERT (SELECT to_jsonb(r) FROM runs AS r WHERE run_id='fault-1')=before_run, \
-                   'a refused transition changed the run'; \
-                 ASSERT (SELECT to_jsonb(q) FROM run_queue AS q WHERE run_id='fault-1')=before_queue, \
-                   'a refused transition changed the queue'; \
-               END LOOP; \
-             END $test$; COMMIT;",
-            executor_preamble()
+    // The persisted vocabulary accepts each public status and failure class.
+    for status in wamn_run_state::RunStatus::ALL {
+        let mut tx = admin.begin().await?;
+        sqlx::query("UPDATE wamn_run.runs SET status=$2 WHERE run_id=$1")
+            .bind(run_id)
+            .bind(status.as_sql())
+            .execute(&mut *tx)
+            .await?;
+        tx.rollback().await?;
+    }
+    for failure in wamn_run_state::FailType::ALL {
+        let mut tx = admin.begin().await?;
+        sqlx::query("UPDATE wamn_run.runs SET fail_type=$2 WHERE run_id=$1")
+            .bind(run_id)
+            .bind(failure.as_sql())
+            .execute(&mut *tx)
+            .await?;
+        tx.rollback().await?;
+    }
+    for (id, version, hash) in [
+        ("", 1, digest),
+        ("workflow", 0, digest),
+        ("workflow", 1, "malformed"),
+    ] {
+        let invalid = RunAdmission {
+            workflow_id: id,
+            workflow_version: version,
+            wiring_hash: hash,
+            idempotency_key: "invalid-workflow",
+            ..aborted
+        };
+        let mut tx = worker.begin().await?;
+        assert!(admission::admit_run(&mut tx, &invalid).await.is_err());
+        tx.rollback().await?;
+    }
+    // The schema refuses invalid persisted values and incomplete event ancestry.
+    for (statement, value) in [
+        (
+            "UPDATE wamn_run.runs SET status=$2 WHERE run_id=$1",
+            "parked",
         ),
-    );
-
-    // The admission pin is the release's manifest digest (docs/architecture/overview.md#release-identity
-    // ). A lease verifies that the leasing pod carries the pinned release,
-    // on the EXISTING lease write, and never writes the pin. Covered here
-    // against the INSTALLED DDL, which is the guard the composed statements
-    // actually meet.
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
-            wiring_id,wiring_version,status) VALUES \
-           ('t1','record-lease','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-            'fixture-wiring',1,'dispatched'), \
-           ('t1','record-foreign','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-            'fixture-wiring',1,'dispatched'), \
-           ('t1','record-standard-effect','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-            'fixture-wiring',1,'running'); \
-         INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES \
-           ('t1','record-lease'),('t1','record-foreign');",
-    );
-
-    let lease = grant_production_lease_sql();
-    let record_script = format!(
-        "{} SELECT pg_sleep(0.05); PREPARE lease_stmt (text,text,bigint,text) AS {}; \
-         EXECUTE lease_stmt('record-lease','worker-record',30000, \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
-         EXECUTE lease_stmt('record-foreign','worker-foreign',30000, \
-           'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'); \
-         DO $$ BEGIN \
-           ASSERT (SELECT manifest_digest FROM runs WHERE run_id='record-lease') \
-                  = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-                  'the lease preserves the admission pin'; \
-           ASSERT (SELECT status FROM runs WHERE run_id='record-lease') = 'running', \
-                  'the lease marks the run on its one write'; \
-           ASSERT (SELECT lease_generation FROM run_queue WHERE run_id='record-lease') = 1, \
-                  'the verifying lease is the one that took the lease'; \
-           ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='record-lease') \
-                    > transaction_timestamp() + interval '30.025 seconds', \
-                  'a grant uses the fresh statement clock after waiting'; \
-           ASSERT (SELECT attempts FROM run_queue WHERE run_id='record-lease') = 0, \
-                  'a lease grant spends no crash budget'; \
-           ASSERT (SELECT status FROM runs WHERE run_id='record-foreign') = 'dispatched', \
-                  'a pod of another release acquired the run'; \
-         END $$; COMMIT;",
-        executor_preamble(),
-        lease
-    );
-    success(&url, &record_script);
-
-    // The admission trigger protects the pin independently of the executor's
-    // column grant, so exercise it as the throwaway superuser.
-    success(
-        &url,
-        "DO $$ DECLARE refusal text; BEGIN \
-           BEGIN \
-             UPDATE wamn_run.runs SET manifest_digest = NULL \
-              WHERE run_id = 'record-lease'; \
-             ASSERT false, 'the admitted release was erased'; \
-           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
-             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
-             ASSERT refusal = 'run-admission-pin-immutable', refusal; \
-           END; \
-           BEGIN \
-             UPDATE wamn_run.runs SET manifest_digest = \
-               'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' \
-              WHERE run_id = 'record-lease'; \
-             ASSERT false, 'the admitted release was rewritten in place'; \
-           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
-             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
-             ASSERT refusal = 'run-admission-pin-immutable', refusal; \
-           END; \
-           ASSERT (SELECT manifest_digest FROM wamn_run.runs WHERE run_id='record-lease') \
-                  = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-                  'the refused rewrites left the admitted release intact'; \
-         END $$;",
-    );
-
-    // ---- RECOVER AND REAP, DRIVEN UNDER THE CREDENTIAL (wamn-0h0g.22.42) ----
-    //
-    // `wamn-0h0g.22.31` closed with `renew_production_lease_sql`, the recover
-    // pair (`advance_lease_attempts_sql`, `clear_pre_effect_state_sql`) and the
-    // janitor pair (`select_exhausted_production_sql`,
-    // `terminalize_exhausted_production_sql`) asserted only by admission_live's
-    // schema-wide TOTALS. Their columns were in the granted set and NO
-    // STATEMENT EVER EXECUTED under the credential. The legs below drive each
-    // of them as the minted generation asserted at the top of this file, on
-    // exactly `grant_executor_platform_surface_sql` — so a missing column grant
-    // fails here with the statement NAMED, not as a silent zero-row read.
-    //
-    // These calls execute the production SQL unchanged through `EXECUTE ... USING`.
-    // Local records retain returned fields without creating temporary tables.
-    //
-    // EVERY REFUSAL ARM IS PAIRED WITH THE SAME STATEMENT SUCCEEDING IN THE
-    // SAME SESSION. Under FORCE RLS a principal matching no policy reads zero
-    // rows in silence, so a lone zero shows nothing; a zero standing beside a
-    // one on the same statement and the same connection does. Every arm also
-    // asserts the stored row AFTER the statement, never the statement's own
-    // exit status.
-    //
-    // `t2` is a second project in the same database. `run_queue`'s only policy
-    // is `run_queue_project_env_key`, which carries NO `TO` clause and keys on
-    // `app.project_env_key` — so the queue fence applies to this family too, unlike
-    // `runs`, whose `runs_platform` arm is `USING (true)`.
-    success(
-        &url,
-        "INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 't2','cat','1.0.0', \
-           'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
-         INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
-         VALUES ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{}'); \
-         INSERT INTO wamn_run.runs \
-           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
-            wiring_id,wiring_version,attachment_id,status,input_json) VALUES \
-           ('t1','renew-live','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew', \
-            'running','{}'), \
-           ('t1','renew-expired','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew-dead', \
-            'running','{}'), \
-           ('t2','renew-other-project','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew-t2', \
-            'running','{}'); \
-         INSERT INTO wamn_run.run_queue \
-           (project_env_key,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
-           ('t1','renew-live','renew-worker',now()+interval '30 seconds',3), \
-           ('t1','renew-expired','renew-worker',now()-interval '30 seconds',3), \
-           ('t2','renew-other-project','renew-worker',now()+interval '30 seconds',3);",
-    );
-    let renew = renew_production_lease_sql();
-    let renew_script = format!(
-        "{} \
-         DO $probe$ \
-         DECLARE granted timestamptz; refused timestamptz; touched int; \
-                 live_before timestamptz; dead_before timestamptz; \
-         BEGIN \
-           SELECT q.lease_expires_at INTO live_before \
-             FROM run_queue AS q WHERE q.run_id='renew-live'; \
-           SELECT q.lease_expires_at INTO dead_before \
-             FROM run_queue AS q WHERE q.run_id='renew-expired'; \
-           EXECUTE $renew${}$renew$ INTO refused \
-             USING 'renew-live'::text,'other-worker'::text,3::bigint,600000::bigint; \
-           GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 0 AND refused IS NULL, 'a foreign owner renewed a live lease'; \
-           EXECUTE $renew${}$renew$ INTO refused \
-             USING 'renew-live'::text,'renew-worker'::text,2::bigint,600000::bigint; \
-           GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 0 AND refused IS NULL, 'a stale generation renewed a live lease'; \
-           EXECUTE $renew${}$renew$ INTO refused \
-             USING 'renew-expired'::text,'renew-worker'::text,3::bigint,600000::bigint; \
-           GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 0 AND refused IS NULL, 'an already expired lease was extended'; \
-           EXECUTE $renew${}$renew$ INTO refused \
-             USING 'renew-other-project'::text,'renew-worker'::text,3::bigint,600000::bigint; \
-           GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 0 AND refused IS NULL, 'the renew reached another project queue row'; \
-           ASSERT (SELECT q.lease_expires_at FROM run_queue AS q WHERE q.run_id='renew-live') \
-                  = live_before, 'a refused renew moved the live deadline'; \
-           ASSERT (SELECT q.lease_expires_at FROM run_queue AS q WHERE q.run_id='renew-expired') \
-                  = dead_before, 'a refused renew moved the expired deadline'; \
-           EXECUTE $renew${}$renew$ INTO granted \
-             USING 'renew-live'::text,'renew-worker'::text,3::bigint,600000::bigint; \
-           GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 1, 'the exact owner and generation could not renew'; \
-           ASSERT granted \
-                  = (SELECT q.lease_expires_at FROM run_queue AS q WHERE q.run_id='renew-live'), \
-                  'the returned deadline is not the stored one'; \
-           ASSERT granted > live_before + interval '5 minutes', \
-                  'the renewed lease did not move out to the requested TTL'; \
-         END $probe$; COMMIT;",
-        executor_preamble(),
-        renew,
-        renew,
-        renew,
-        renew,
-        renew,
-    );
-    success(&url, &renew_script);
-    success(
-        &url,
-        "DO $$ BEGIN \
-           ASSERT (SELECT q.lease_expires_at FROM wamn_run.run_queue AS q \
-                    WHERE q.project_env_key='t2' AND q.run_id='renew-other-project') \
-                  < now() + interval '2 minutes', \
-                  'the executor extended another project lease'; \
-         END $$;",
-    );
-
-    // The pre-effect recover. `advance_lease_attempts_sql` is deliberately its
-    // own statement OUTSIDE the grant's abort target (wamn-0h0g.15.69), and
-    // `clear_pre_effect_state_sql` reopens lease eligibility by erasing exactly the
-    // dead attempt's projection — `state_json` — and nothing else. `max_attempts` defaults to 20 here, so neither recover row
-    // is a janitor candidate and the reap leg below cannot select one.
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,environment, \
-            wiring_id,wiring_version,attachment_id,status,input_json,state_json, \
-            manifest_digest) VALUES \
-           ('t1','recover-dead','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','prod','fixture-wiring',1,'http-recover', \
-            'running','{\"input\":7}','{\"cursor\":9}', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
-           ('t1','recover-fresh','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','prod','fixture-wiring',1,'http-recover-new', \
-            'dispatched','{}',NULL,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
-           ('t2','recover-other-project','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','prod','fixture-wiring',1, \
-            'http-recover-t2','running','{}','{\"cursor\":9}', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
-         INSERT INTO wamn_run.run_queue \
-           (project_env_key,run_id,lease_owner,lease_expires_at,lease_generation,attempts) VALUES \
-           ('t1','recover-dead','dead-worker',now()-interval '1 minute',5,1), \
-           ('t1','recover-fresh',NULL,NULL,0,0), \
-           ('t2','recover-other-project','dead-worker',now()-interval '1 minute',5,1);",
-    );
-    let advance = advance_lease_attempts_sql();
-    let clear = clear_pre_effect_state_sql();
-    let recover_script = format!(
-        "{} \
-         DO $probe$ DECLARE spent int; reopened text; touched int; before_run jsonb; BEGIN \
-           EXECUTE $advance${}$advance$ INTO spent USING 'recover-dead'::text; \
-           GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 1 AND spent = 2, \
-                  'replacing a prior lease is crash evidence, got ' \
-                  || coalesce(spent::text, '<none>'); \
-           EXECUTE $advance${}$advance$ INTO spent USING 'recover-fresh'::text; \
-           GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 1 AND spent = 0, 'a first lease spent crash budget'; \
-           EXECUTE $advance${}$advance$ INTO spent USING 'recover-other-project'::text; \
-           GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 0, 'the advance reached another project queue row'; \
-           SELECT to_jsonb(r)-'state_json' INTO before_run FROM runs AS r \
-             WHERE run_id='recover-dead'; \
-           EXECUTE $clear${}$clear$ INTO reopened USING 'recover-dead'::text; \
-           GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 1 AND reopened = 'recover-dead', 'the recover reopened no run'; \
-           EXECUTE $clear${}$clear$ INTO reopened USING 'recover-other-project'::text; \
-           GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 0, 'the recover reached another project run'; \
-           ASSERT (SELECT q.attempts FROM run_queue AS q WHERE q.run_id='recover-dead') = 2, \
-                  'the advanced crash evidence did not persist'; \
-           ASSERT (SELECT to_jsonb(r)-'state_json' FROM runs AS r WHERE run_id='recover-dead') \
-                  = before_run, 'the recover changed a preserved column'; \
-           ASSERT (SELECT r.state_json FROM runs AS r WHERE r.run_id='recover-dead') IS NULL, \
-                  'the recover kept the dead attempt state'; \
-           ASSERT (SELECT r.manifest_digest FROM runs AS r WHERE r.run_id='recover-dead') \
-                  = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'the recover erased the admission pin'; \
-           ASSERT (SELECT r.input_json FROM runs AS r WHERE r.run_id='recover-dead') \
-                  = '{{\"input\":7}}'::jsonb, 'the recover erased more than the dead attempt'; \
-           ASSERT (SELECT r.status FROM runs AS r WHERE r.run_id='recover-dead') = 'running', \
-                  'the recover moved the run status'; \
-         END $probe$; COMMIT;",
-        executor_preamble(),
-        advance,
-        advance,
-        advance,
-        clear,
-        clear,
-    );
-    success(&url, &recover_script);
-    success(
-        &url,
-        "DO $$ BEGIN \
-           ASSERT (SELECT q.attempts FROM wamn_run.run_queue AS q \
-                    WHERE q.project_env_key='t2' AND q.run_id='recover-other-project') = 1, \
-                  'the executor spent another project crash budget'; \
-           ASSERT (SELECT r.state_json FROM wamn_run.runs AS r \
-                    WHERE r.project_env_key='t2' AND r.run_id='recover-other-project') \
-                  = '{\"cursor\":9}'::jsonb, \
-                  'the executor erased another project attempt state'; \
-           ASSERT (SELECT r.manifest_digest FROM wamn_run.runs AS r \
-                    WHERE r.project_env_key='t2' AND r.run_id='recover-other-project') \
-                  = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-                  'the executor erased another project release pin'; \
-         END $$;",
-    );
-
-    // A refused grant rolls back its lease, but preserves prior crash evidence.
-    success(
-        &url,
-        &format!(
-            "CREATE FUNCTION wamn_run.refuse_test_grant() RETURNS trigger LANGUAGE plpgsql AS $$ \
-             BEGIN RAISE EXCEPTION 'injected-grant-failure'; END $$; \
-             CREATE TRIGGER refuse_test_grant BEFORE UPDATE OF status ON wamn_run.runs \
-               FOR EACH ROW WHEN (OLD.run_id='recover-dead') \
-               EXECUTE FUNCTION wamn_run.refuse_test_grant(); \
-             {} DO $test$ BEGIN \
-               BEGIN \
-                 EXECUTE $grant${lease}$grant$ USING 'recover-dead'::text, \
-                   'new-worker'::text,30000::bigint,NULL::text; \
-                 ASSERT false, 'the injected grant fault did not fire'; \
-               EXCEPTION WHEN raise_exception THEN \
-                 ASSERT SQLERRM='injected-grant-failure', SQLERRM; \
-               END; \
-               ASSERT (SELECT attempts FROM run_queue WHERE run_id='recover-dead')=2, \
-                 'a failed grant erased prior crash evidence'; \
-               ASSERT (SELECT lease_owner='dead-worker' AND lease_generation=5 \
-                         FROM run_queue WHERE run_id='recover-dead'), \
-                 'a failed grant leaked lease changes'; \
-             END $test$; COMMIT; \
-             DROP TRIGGER refuse_test_grant ON wamn_run.runs; \
-             DROP FUNCTION wamn_run.refuse_test_grant();",
-            executor_preamble()
+        (
+            "UPDATE wamn_run.runs SET fail_type=$2 WHERE run_id=$1",
+            "unknown",
         ),
-    );
-
-    // The janitor. `select_exhausted_production_sql` is a plain SELECT, so it
-    // keeps this file's PREPARE shape; the target arm beside it is the control
-    // that reads zero legitimately while the same statement in the same
-    // transaction reads one.
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
-            wiring_id,wiring_version,attachment_id,status,trigger_source,input_json) VALUES \
-           ('t1','reap-exhausted','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-reap', \
-            'running','http','{}'); \
-         INSERT INTO wamn_run.run_queue \
-           (project_env_key,run_id,available_at,lease_owner,lease_expires_at, \
-            lease_generation,attempts,max_attempts) \
-         VALUES ('t1','reap-exhausted','2000-01-01','dead-worker','2000-01-01',5,3,3);",
-    );
-    let select_exhausted = select_exhausted_production_sql();
-    let terminalize_exhausted = terminalize_exhausted_production_sql();
-    let reap_script = format!(
-        "{} DO $test$ DECLARE \
-           reap_select text := $statement${}$statement$; \
-           candidate record; reap_candidate record; reaped record; \
-           candidate_count bigint := 0; other_target_count bigint := 0; \
-         BEGIN \
-           FOR candidate IN EXECUTE reap_select USING 0::bigint,'{{cat}}'::text[],'prod'::text LOOP \
-             reap_candidate := candidate; \
-             candidate_count := candidate_count + 1; \
-           END LOOP; \
-           FOR candidate IN EXECUTE reap_select USING 0::bigint,'{{cat}}'::text[],'dev'::text LOOP \
-             other_target_count := other_target_count + 1; \
-           END LOOP; \
-           EXECUTE $statement${}$statement$ INTO STRICT reaped \
-             USING 'reap-exhausted'::text, \
-                   '{{\"error\":{{\"code\":\"infrastructure-failure\"}}}}'::text, \
-                   'sha256:reaped'::text,'{terminal_at}'::timestamptz; \
-           ASSERT candidate_count = 1, \
-                  'the janitor locked no crash-budget-exhausted candidate'; \
-           ASSERT reap_candidate.run_id = 'reap-exhausted', \
-                  'the janitor locked the wrong candidate'; \
-           ASSERT reap_candidate.status = 'running', \
-                  'the janitor projection lost the run status'; \
-           ASSERT reap_candidate.wiring_id = 'fixture-wiring', \
-                  'the janitor projection lost the frozen wiring identity'; \
-           ASSERT other_target_count = 0, \
-                  'the janitor left its catalog and environment target'; \
-           ASSERT reaped.status = 'infrastructure-failure', \
-                  'the reap returned no terminal status'; \
-           ASSERT (SELECT status FROM runs WHERE run_id='reap-exhausted') \
-                  = 'infrastructure-failure', 'the reap did not persist terminal status'; \
-           ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='reap-exhausted'), \
-                  'the reap did not dequeue atomically'; \
-           ASSERT (SELECT caller_outcome_type FROM runs WHERE run_id='reap-exhausted') \
-                  = 'failed', 'the reap left an attached caller unreleased'; \
-           ASSERT (SELECT caller_http_status FROM runs WHERE run_id='reap-exhausted') = 500, \
-                  'the reap stored the wrong caller status'; \
-           ASSERT (SELECT caller_outcome_hash FROM runs WHERE run_id='reap-exhausted') \
-                  = 'sha256:reaped', 'the reap stored the wrong caller body hash'; \
-           ASSERT (SELECT caller_released_at FROM runs WHERE run_id='reap-exhausted') \
-                  = '{terminal_at}'::timestamptz, 'the reap uses the caller instant'; \
-           ASSERT (SELECT updated_at FROM runs WHERE run_id='reap-exhausted') \
-                  = '{terminal_at}'::timestamptz, 'the reap stamps the same instant'; \
-           ASSERT (SELECT result_json FROM runs WHERE run_id='reap-exhausted') IS NULL, \
-                  'a flow-grain run stored a manufactured result'; \
-         END $test$; COMMIT;",
-        executor_preamble(),
-        select_exhausted,
-        terminalize_exhausted,
-    );
-    success(&url, &reap_script);
-
-    // A component candidate has a result, but no durable caller to release.
-    success(
-        &url,
-        &format!(
-            "INSERT INTO wamn_run.runs \
-               (project_env_key,run_id,package_id,environment,wiring_id,wiring_version, \
-                wiring_hash,binding_world_json,status,trigger_source) \
-             VALUES ('t1','reap-candidate','cat','prod','fixture-wiring',1, \
-               'sha256:' || repeat('a',64),'[]','running','test-case'); \
-             INSERT INTO wamn_run.run_queue(project_env_key,run_id) VALUES ('t1','reap-candidate'); \
-             {} DO $test$ DECLARE reaped record; BEGIN \
-               EXECUTE $reap${terminalize_exhausted}$reap$ INTO STRICT reaped \
-                 USING 'reap-candidate'::text,'{{\"error\":{{\"code\":\"infrastructure-failure\"}}}}'::text, \
-                   'sha256:candidate'::text,'{terminal_at}'::timestamptz; \
-               ASSERT reaped.status='infrastructure-failure', 'the candidate terminalizes'; \
-               ASSERT (SELECT result_json FROM runs WHERE run_id='reap-candidate') \
-                 = '{{\"error\":{{\"code\":\"infrastructure-failure\"}}}}'::jsonb, \
-                 'the component candidate stores its failure result'; \
-               ASSERT (SELECT caller_released_at IS NULL AND caller_outcome_json IS NULL \
-                         FROM runs WHERE run_id='reap-candidate'), \
-                 'a callerless candidate stays callerless'; \
-               ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='reap-candidate'), \
-                 'the candidate is dequeued'; \
-             END $test$; COMMIT;",
-            executor_preamble()
+        (
+            "UPDATE wamn_run.runs SET invocation_context=$2::text::jsonb WHERE run_id=$1",
+            "[]",
         ),
+    ] {
+        let mut tx = admin.begin().await?;
+        assert!(
+            sqlx::query(sqlx::AssertSqlSafe(statement.to_owned()))
+                .bind(run_id)
+                .bind(value)
+                .execute(&mut *tx)
+                .await
+                .is_err()
+        );
+        tx.rollback().await?;
+    }
+    let too_large = serde_json::json!({"value": "x".repeat(16384)}).to_string();
+    let mut tx = admin.begin().await?;
+    assert!(
+        sqlx::query("UPDATE wamn_run.runs SET invocation_context=$2::text::jsonb WHERE run_id=$1")
+            .bind(run_id)
+            .bind(too_large)
+            .execute(&mut *tx)
+            .await
+            .is_err()
     );
+    tx.rollback().await?;
+    let empty = serde_json::Value::Null;
+    for (parent, root, depth) in [
+        (None, Some("root"), Some(1)),
+        (Some("parent"), None, Some(1)),
+        (Some("parent"), Some("root"), None),
+        (Some("parent"), Some("root"), Some(17)),
+        (Some("parent"), Some("root"), Some(0)),
+    ] {
+        let invalid = RunAdmission {
+            idempotency_key: "invalid-event",
+            trigger: RunTrigger::Event,
+            invoked_by: "event:7",
+            invoked_by_user_id: None,
+            input: &empty,
+            source_run: parent,
+            root_run: root,
+            depth,
+            ..aborted
+        };
+        let mut tx = worker.begin().await?;
+        assert!(admission::admit_run(&mut tx, &invalid).await.is_err());
+        tx.rollback().await?;
+    }
+    let lineage = RunAdmission {
+        idempotency_key: "lineage",
+        trigger: RunTrigger::Event,
+        invoked_by: "event:7",
+        invoked_by_user_id: None,
+        input: &empty,
+        source_run: Some("parent"),
+        root_run: Some("root"),
+        depth: Some(1),
+        ..aborted
+    };
+    let mut tx = worker.begin().await?;
+    let RunAdmitted::Queued { run_id: lineage_id } =
+        admission::admit_run(&mut tx, &lineage).await?
+    else {
+        panic!("event was not queued");
+    };
+    tx.commit().await?;
+    let mut tx = admin.begin().await?;
+    assert!(
+        sqlx::query("UPDATE wamn_run.runs SET event_depth=2 WHERE run_id=$1")
+            .bind(&lineage_id)
+            .execute(&mut *tx)
+            .await
+            .is_err()
+    );
+    tx.rollback().await?;
+    let mut tx = admin.begin().await?;
+    assert!(
+        sqlx::query("DELETE FROM wamn_run.runs WHERE run_id=$1")
+            .bind(&lineage_id)
+            .execute(&mut *tx)
+            .await
+            .is_err()
+    );
+    tx.rollback().await?;
+    // Run authority cannot be used to settle another run.
+    let mut tx = worker.begin().await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(
+        wamn_run_state::transitions::terminalize_sql(),
+    ))
+    .bind(run_id)
+    .bind(&lineage_id)
+    .bind("worker")
+    .bind(1_i64)
+    .bind(wamn_run_state::RunStatus::Completed.as_sql())
+    .bind("router-completed")
+    .bind("{}")
+    .bind(None::<String>)
+    .bind(chrono::Utc::now())
+    .fetch_one(&mut *tx)
+    .await?;
+    let code: String = row.get(0);
+    let status: Option<String> = row.get(1);
+    assert_eq!(
+        wamn_run_state::transitions::TerminalizeResult::from_parts(
+            &code,
+            status.as_deref().unwrap_or_default()
+        ),
+        Some(wamn_run_state::transitions::TerminalizeResult::CrossRunAuthority)
+    );
+    tx.rollback().await?;
 
-    // The executor now stamps `updated_at` from its own host clock (D2b), while
-    // `created_at` keeps the server default. A worker running behind the
-    // database must fail the write rather than store a run that looks older
-    // than its own admission. The CHECK is what makes that a refusal, and the
-    // executor grant list already carries `updated_at`, so the role that would
-    // commit the skew is the role that meets the constraint here.
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
-            wiring_id,wiring_version,attachment_id,status) \
-         VALUES ('t1','clock-skew','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-           'fixture-wiring',1,'http-skew','running');",
+    let input = serde_json::Value::Null;
+    let exhausted = RunAdmission {
+        idempotency_key: "exhausted",
+        input: &input,
+        ..aborted
+    };
+    let mut tx = worker.begin().await?;
+    let RunAdmitted::Queued {
+        run_id: exhausted_id,
+    } = admission::admit_run(&mut tx, &exhausted).await?
+    else {
+        panic!("run was not queued");
+    };
+    tx.commit().await?;
+    sqlx::query("UPDATE wamn_run.run_queue SET lease_owner='dead', lease_expires_at=now()-interval '1 minute', attempts=max_attempts WHERE run_id=$1")
+        .bind(&exhausted_id).execute(&mut admin).await?;
+    let mut tx = worker.begin().await?;
+    assert_eq!(
+        persistence::reap_exhausted(&mut tx, &applications, "prod", 0).await?,
+        ProductionReapResult::Reaped {
+            run_id: exhausted_id
+        }
     );
-    let clock_skew_script = format!(
-        "{} \
-         DO $$ DECLARE refusal text; stored timestamptz; BEGIN \
-           ASSERT (SELECT updated_at = created_at FROM runs WHERE run_id='clock-skew'), \
-                  'a fresh run must admit equal stamps'; \
-           UPDATE runs SET updated_at = created_at + interval '1 second' \
-            WHERE run_id = 'clock-skew'; \
-           ASSERT (SELECT updated_at > created_at FROM runs WHERE run_id='clock-skew'), \
-                  'a later instant must be admitted'; \
-           SELECT updated_at INTO stored FROM runs WHERE run_id='clock-skew'; \
-           BEGIN \
-             UPDATE runs SET updated_at = created_at - interval '1 millisecond' \
-              WHERE run_id = 'clock-skew'; \
-             ASSERT false, 'a skewed worker clock stored a backwards updated_at'; \
-           EXCEPTION WHEN check_violation THEN \
-             GET STACKED DIAGNOSTICS refusal = CONSTRAINT_NAME; \
-             ASSERT refusal = 'runs_updated_after_created', refusal; \
-           END; \
-           ASSERT (SELECT updated_at FROM runs WHERE run_id='clock-skew') = stored, \
-                  'the refusal changed the stored instant'; \
-         END $$; COMMIT;",
-        executor_preamble()
-    );
-    success(&url, &clock_skew_script);
+    tx.commit().await?;
 
-    // A malformed digest reaches the named CHECK at admission. This leg is last
-    // so every behavioral arm above shows out before a malformed release pin
-    // can abort the suite.
-    success(
-        &url,
-        "DO $$ DECLARE refusal text; BEGIN \
-           BEGIN \
-             INSERT INTO wamn_run.runs \
-               (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest, \
-                environment,wiring_id,wiring_version,status) \
-             VALUES ('t1','record-invalid-digest','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:not-a-digest', \
-               'prod','fixture-wiring',1,'running'); \
-             ASSERT false, 'runs_release_record_check admitted a malformed digest'; \
-           EXCEPTION WHEN check_violation THEN \
-             GET STACKED DIAGNOSTICS refusal = CONSTRAINT_NAME; \
-             ASSERT refusal = 'runs_release_record_check', refusal; \
-           END; \
-         END $$;",
+    sqlx::query("UPDATE wamn_run.runs SET created_at = created_at - interval '31 days'")
+        .execute(&mut admin)
+        .await?;
+    assert_eq!(
+        persistence::prune_terminal_runs(&mut admin, "t1", 30).await?,
+        2
     );
+    let retained: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM wamn_run.runs WHERE run_id=$1)")
+        .bind(&lineage_id)
+        .fetch_one(&mut admin)
+        .await?
+        .get(0);
+    assert!(retained);
+    Ok(())
+}
+
+#[tokio::test]
+async fn database_diagnostics_omit_row_detail_and_hint() -> anyhow::Result<()> {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let mut client = wamn_postgres::connect(database.url()).await?;
+
+    sqlx::raw_sql("CREATE TEMP TABLE private_diagnostic (payload text, valid bool CONSTRAINT diagnostic_valid CHECK (valid))").execute(&mut client).await.map(drop)?;
+    let marker = "private-person@example.invalid";
+    let error = sqlx::query("INSERT INTO private_diagnostic VALUES ($1, false)")
+        .bind(&marker)
+        .execute(&mut client)
+        .await
+        .map(|result| result.rows_affected())
+        .unwrap_err();
+    assert!(
+        error
+            .as_database_error()
+            .unwrap()
+            .downcast_ref::<sqlx::postgres::PgDatabaseError>()
+            .detail()
+            .unwrap()
+            .contains(marker)
+    );
+    let rendered =
+        wamn_run_state::run_store::ProductionLeaseError::postgres("test storage", &error)
+            .to_string();
+    assert!(rendered.contains("diagnostic_valid"));
+    assert!(rendered.contains("violates check constraint"));
+    assert!(!rendered.contains(marker));
+    let error = sqlx::raw_sql("DO $$ BEGIN RAISE EXCEPTION 'diagnostic message' USING DETAIL = 'private-detail-marker', HINT = 'private-hint-marker'; END $$").execute(&mut client).await.map(drop).unwrap_err();
+    let rendered =
+        wamn_run_state::run_store::ProductionLeaseError::postgres("test storage", &error)
+            .to_string();
+    assert!(rendered.contains("diagnostic message"));
+    assert!(!rendered.contains("private-detail-marker"));
+    assert!(!rendered.contains("private-hint-marker"));
+    drop(client);
+    Ok(())
 }

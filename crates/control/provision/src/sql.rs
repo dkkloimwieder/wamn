@@ -139,8 +139,7 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 5] = [
 /// * `queue::sql::clear_pre_effect_state_sql` — `state_json`
 /// * `queue::sql::grant_production_lease_sql` — `status`
 /// * `queue::sql::terminalize_exhausted_production_sql` — `status`,
-///   `result_json`, the caller-outcome family, `updated_at`
-/// * `transitions::release_caller_sql` — the caller-outcome family, `updated_at`
+///   `result_json`, `updated_at`
 /// * `transitions::terminalize_sql` — `status`, `terminal_reason`,
 ///   `result_json`, `fail_type`, `updated_at`
 /// * `transitions::record_deadline_adjustments_sql` writes `deadline_adjustments_json`.
@@ -152,19 +151,13 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 5] = [
 /// concession. Confining the WRITE is what a column list can still buy, and it
 /// buys a lot: this family matches the permissive `TO wamn_platform` base policy arm,
 /// so a blanket `UPDATE` would let one lease rewrite any project's admission pins.
-pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 13] = [
+pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 7] = [
     "status",
     "terminal_reason",
     "fail_type",
     "result_json",
     "deadline_adjustments_json",
     "state_json",
-    "caller_outcome_type",
-    "caller_outcome_json",
-    "caller_http_status",
-    "caller_release_node_id",
-    "caller_outcome_hash",
-    "caller_released_at",
     "updated_at",
 ];
 
@@ -200,7 +193,7 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 5] = [
 /// node digests (`wamn_run_state::queue::insert_manual_run_sql`). The list
 /// reaches no binding world, legacy flow, capture or
 /// caller-outcome column.
-pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 21] = [
+pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 20] = [
     "project_env_key",
     "package_id",
     "manifest_digest",
@@ -210,7 +203,6 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 21] = [
     "wiring_hash",
     "trigger_source",
     "registration_id",
-    "service_principal_id",
     "execution_principal_id",
     "execution_role",
     "invoked_by",
@@ -595,7 +587,8 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
          GRANT SELECT, DELETE ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT UPDATE ({queue_update}) ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT INSERT ({queue_insert}) ON TABLE {schema}.\"run_queue\" TO {role}; \
-         GRANT SELECT (id, type, status, email) ON TABLE platform.\"user\" TO {role};"
+         GRANT SELECT (id, type, status, email) ON TABLE platform.\"user\" TO {role}; \
+         GRANT SELECT (target_type, target_id, key, value) ON TABLE platform.\"setting\" TO {role};"
     )
     .expect("writing to a String cannot fail");
     // `runs` carries `runs_tkey`, so the column-exact UPDATE above is dead

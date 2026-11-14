@@ -1,14 +1,14 @@
 //! Live tests of standard queue leases, leases, and exhausted-run reaping.
 //!
 //! The fixture includes an effect attempt to show that leases and reaping
-//! ignore it. FIFO order, lease recovery, crash accounting, caller outcomes,
+//! ignore it. FIFO order, lease recovery, crash accounting,
 //! and release pins retain their standard behavior.
 
 use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
-use wamn_run_state::{RunStore as _, queue::select_production_lease_sql};
+use wamn_run_state::queue::select_production_lease_sql;
 use wamn_runtime::plugins::wamn_postgres::{
     ProductionLeaseErrorType, ProductionLeaseResult, ProductionReapResult,
 };
@@ -17,10 +17,9 @@ mod common;
 
 use common::{
     COMPONENT, EMPTY_HASH, ENVIRONMENT, PACKAGE_ID, POD_MANIFEST_DIGEST, PROJECT_ENV_KEY,
-    ROLLED_COMPONENT, SCHEMA, WIRING_ID, WIRING_VERSION, assert_callerless_terminal,
-    assert_prior_winner_terminal, assert_terminal_status_dequeued, connect, expire_effect_run,
-    install_fixture, install_prior_caller_winner, make_callerless, queue_attempts, quote_literal,
-    ready_run, release_record, seed_exhausted_run, seed_run, teardown,
+    ROLLED_COMPONENT, SCHEMA, WIRING_ID, WIRING_VERSION, assert_terminal_status_dequeued, connect,
+    expire_effect_run, install_fixture, queue_attempts, quote_literal, ready_run, release_record,
+    seed_exhausted_run, seed_run, teardown,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -112,28 +111,8 @@ async fn production_lease_live() -> anyhow::Result<()> {
         BTreeSet::from(["double-a".into(), "double-b".into()])
     );
 
-    // The effect-free exhausted path computes the generic outcome and hash in
-    // the host, atomically releases an attached caller, and dequeues.
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-                "INSERT INTO {SCHEMA}.runs \
-                   (project_env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
-                    environment,wiring_id,wiring_version,trigger_source) \
-                 VALUES ($1,'janitor','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','running','cat_main','{POD_MANIFEST_DIGEST}', \
-                         'test',$2,$3,'http')"
-            ))).bind(&PROJECT_ENV_KEY).bind(&WIRING_ID).bind(&WIRING_VERSION).execute(&mut *admin).await.map(|result| result.rows_affected())?;
-    sqlx::query(sqlx::AssertSqlSafe(
-        (&format!(
-            "INSERT INTO {SCHEMA}.run_queue \
-                   (project_env_key,run_id,available_at,lease_owner,lease_expires_at, \
-                    attempts,max_attempts) \
-                 VALUES ($1,'janitor','2000-01-01','dead','2000-01-01',3,3)"
-        ))
-            .to_string(),
-    ))
-    .bind(&PROJECT_ENV_KEY)
-    .execute(&mut *admin)
-    .await
-    .map(|result| result.rows_affected())?;
+    // Exhaustion records a failure and removes the queue row.
+    seed_exhausted_run(admin, "janitor").await?;
     assert_eq!(
         plugin
             .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
@@ -142,66 +121,7 @@ async fn production_lease_live() -> anyhow::Result<()> {
             run_id: "janitor".into()
         }
     );
-    let janitor = sqlx::query(sqlx::AssertSqlSafe(
-        (&format!(
-            "SELECT status,caller_outcome_json::text,caller_http_status,caller_release_node_id, \
-                        caller_outcome_hash,caller_released_at IS NOT NULL, \
-                        EXISTS (SELECT 1 FROM {SCHEMA}.run_queue q \
-                                 WHERE q.project_env_key=r.project_env_key AND q.run_id=r.run_id) \
-                   FROM {SCHEMA}.runs r WHERE project_env_key=$1 AND run_id='janitor'"
-        ))
-            .to_string(),
-    ))
-    .bind(&PROJECT_ENV_KEY)
-    .fetch_one(&mut *admin)
-    .await?;
-    let janitor_body = json!({"error": {
-        "code": "infrastructure-failure", "wiring-id": WIRING_ID, "wiring-version": WIRING_VERSION,
-        "run-id": "janitor"
-    }});
-    assert_eq!(janitor.get::<String, _>(0), "infrastructure-failure");
-    assert_eq!(
-        serde_json::from_str::<Value>(&janitor.get::<String, _>(1))?,
-        janitor_body
-    );
-    assert_eq!(janitor.get::<i32, _>(2), 500);
-    assert_eq!(janitor.get::<Option<String>, _>(3), None);
-    assert_eq!(
-        janitor.get::<String, _>(4),
-        wamn_digest::canonical_json_sha256(&janitor_body)
-    );
-    assert!(janitor.get::<bool, _>(5));
-    assert!(!janitor.get::<bool, _>(6));
-
-    seed_exhausted_run(admin, "janitor-callerless").await?;
-    make_callerless(admin, "janitor-callerless").await?;
-    assert_eq!(
-        plugin
-            .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
-            .await?,
-        ProductionReapResult::Reaped {
-            run_id: "janitor-callerless".into()
-        }
-    );
-    assert_callerless_terminal(admin, "janitor-callerless", "infrastructure-failure").await?;
-
-    seed_exhausted_run(admin, "janitor-winner").await?;
-    let janitor_winner = install_prior_caller_winner(admin, "janitor-winner").await?;
-    assert_eq!(
-        plugin
-            .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
-            .await?,
-        ProductionReapResult::Reaped {
-            run_id: "janitor-winner".into()
-        }
-    );
-    assert_prior_winner_terminal(
-        admin,
-        "janitor-winner",
-        "infrastructure-failure",
-        &janitor_winner,
-    )
-    .await?;
+    assert_terminal_status_dequeued(admin, "janitor", "infrastructure-failure").await?;
 
     // ---- a refused grant must not starve its own janitor (wamn-0h0g.15.69) --
     //
@@ -519,15 +439,11 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
                     .await?
             );
             assert_terminal_status_dequeued(admin, run, "failed").await?;
-            let row = sqlx::query("SELECT fail_type,result_json::text,caller_outcome_json::text,terminal_reason FROM wamn_run.runs WHERE run_id=$1").bind(&run).fetch_one(&mut *admin).await?;
+            let row = sqlx::query("SELECT fail_type,result_json::text,terminal_reason FROM wamn_run.runs WHERE run_id=$1").bind(&run).fetch_one(&mut *admin).await?;
             assert_eq!(row.get::<String, _>(0), "retry-exhausted");
-            assert_eq!(row.get::<String, _>(3), "retry-exhausted");
+            assert_eq!(row.get::<String, _>(2), "retry-exhausted");
             let result: Value = serde_json::from_str(&row.get::<String, _>(1))?;
             assert_eq!(result["error"]["code"], "retry-exhausted");
-            assert_eq!(
-                result,
-                serde_json::from_str::<Value>(&row.get::<String, _>(2))?
-            );
         } else {
             expire_effect_run(admin, run).await?;
             assert_eq!(
@@ -555,7 +471,7 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
                 }
             );
             assert_terminal_status_dequeued(admin, run, "infrastructure-failure").await?;
-            let body: String = sqlx::query("SELECT caller_outcome_json::text FROM wamn_run.runs WHERE run_id=$1 AND terminal_reason='infrastructure-failure'").bind(&run).fetch_one(&mut *admin)
+            let body: String = sqlx::query("SELECT result_json::text FROM wamn_run.runs WHERE run_id=$1 AND terminal_reason='infrastructure-failure'").bind(&run).fetch_one(&mut *admin)
                 .await?
                 .get(0);
             assert_eq!(

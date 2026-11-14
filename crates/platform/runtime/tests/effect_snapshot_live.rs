@@ -9,7 +9,7 @@ use anyhow::Context as _;
 use url::Url;
 use wamn_catalog::{WiringDocument, WiringNode, WiringTerminal};
 use wamn_control_provision::{WorkloadRoleFamily, sql};
-use wamn_run_state::AuthorityClass;
+use wamn_identity_protocol::AuthorityClass;
 use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ConnectionEffectLookup, ConnectionEntryLookup, DEFAULT_PROJECT, WamnPostgres,
     WamnPostgresConfig, WiringLookup,

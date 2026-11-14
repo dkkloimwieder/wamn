@@ -78,7 +78,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 fn generation_role(database: &str) -> String {
     format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, database)
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, database)
     )
 }
 

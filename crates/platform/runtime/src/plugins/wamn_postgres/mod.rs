@@ -19,6 +19,7 @@ mod credential_exactness;
 /// Host admission of an event-started workflow run.
 mod event_admission;
 mod event_batch;
+mod executor;
 mod file_collection;
 mod numbering;
 mod operation;
@@ -31,15 +32,10 @@ mod session_identity;
 pub(crate) mod statements;
 mod types;
 mod wiring_resolution;
-mod workflow_resolution;
 pub mod write_log;
 pub use file_collection::FileCollection;
 
 pub use wiring_resolution::{RELEASE_COMPONENTS_SQL, ResolvedActiveWiring};
-pub use workflow_resolution::{
-    EnabledWorkflow, WorkflowResolutionError, WorkflowResolutionErrorType, WorkflowRunKey,
-    resolve_workflow_in_release,
-};
 
 pub use credential_exactness::{
     AclExpectation, AclTarget, AmbientCredentialState, CredentialConnectionType,
@@ -47,10 +43,8 @@ pub use credential_exactness::{
     CredentialProbePredicate, ExpectedCredentialIdentity, ExplicitCredentialSource,
     MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
 };
-pub use event_admission::{
-    ManualRunAdmission, ManualRunAdmitted, ScheduleRunAdmission, ScheduleRunAdmitted, due_text,
-};
-pub use event_batch::EventBatchAdmission;
+pub use event_admission::{EnabledWorkflow, ManualRunAdmission, ManualRunAdmitted};
+pub use event_batch::{EventBatchAdmission, decode_event_trigger};
 pub use numbering::{CounterSet, CounterSetError, CounterSetRefusal};
 pub use operation::OperationInvoker;
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};
@@ -59,9 +53,9 @@ pub use pool::{
     StaticCredentialProvider, WamnPostgresConfig,
 };
 pub use production_lease::{
-    ProductionCallerOutcome, ProductionCandidate, ProductionCompletion, ProductionCompletionResult,
-    ProductionLeaseError, ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionLeaseResult,
-    ProductionReapResult, ProductionWorkflow,
+    ProductionCompletion, ProductionCompletionResult, ProductionLeaseError,
+    ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult,
+    ProductionWorkflow,
 };
 #[cfg(feature = "test-util")]
 pub use resources::retained_transaction_for_test;
@@ -81,7 +75,7 @@ pub use types::canonical_timestamptz;
 /// workspace crate cannot name a family's credential without the class, and
 /// `wamn-0h0g.22.14` ruled the class un-parseable, so it must arrive as a value
 /// from here rather than be reconstructed from a string.
-pub use wamn_run_state::AuthorityClass;
+pub use wamn_identity_protocol::AuthorityClass;
 pub use write_log::WriteLogStore;
 
 #[cfg(not(feature = "wasm_component_model_implements"))]

@@ -1,61 +1,8 @@
-//! Environment workflow admission reads and run resolution
-//! (docs/architecture/execution.md#environment-workflows).
-//!
-//! A workflow is a row of `catalog.workflows`, not a member of the release.
-//! The host reads the enabled version of a workflow when `workflow.start`
-//! admits a run, and the queue resolves a bound run from its row: the graph
-//! from `catalog.workflows` under the run's workflow id and version, and each
-//! node from the component digest admission froze on the run, validated against
-//! the descriptors of the release the run pins. Nodes come from that release
-//! only in this epic.
-//!
-//! A workflow run resolves its pinned version on every identity.
-
-use sqlx::Row as _;
-use std::collections::{BTreeMap, BTreeSet};
-
+//! Resolve workflow graphs against their frozen release and component identities.
 use anyhow::Context as _;
+use std::collections::{BTreeMap, BTreeSet};
 use wamn_catalog::{ComponentPackageCoordinate, ServingManifest, WiringDocument};
-use wamn_run_state::AuthorityClass;
-
-use super::WamnPostgres;
-use super::wiring_resolution::{DecodedWiring, ResolvedActiveWiring, resolved_wiring};
-
-/// The enabled version of one manual workflow. A schedule workflow is not
-/// started through `workflow.start`. Binds: `$1` `project_env_key`, `$2` environment,
-/// `$3` application, `$4` workflow id.
-const ENABLED_WORKFLOW_SQL: &str = "\
-SELECT version, graph_json::text, wiring_hash, execution_type, execution_role \
-  FROM catalog.workflows \
- WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
-   AND workflow_id = $4 AND enabled AND trigger = 'manual'";
-
-/// One workflow version, enabled or not: a run finishes under the version it
-/// pinned. Binds: `$1` `project_env_key`, `$2` environment, `$3` application, `$4`
-/// workflow id, `$5` version.
-const WORKFLOW_VERSION_SQL: &str = "\
-SELECT graph_json::text, wiring_hash \
-  FROM catalog.workflows \
- WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
-   AND workflow_id = $4 AND version = $5";
-
-/// The verified manifest bytes of the release a run pins. Binds: `$1`
-/// project, `$2` manifest digest.
-pub(super) const PINNED_RELEASE_SQL: &str = "\
-SELECT canonical_bytes FROM catalog.releases \
- WHERE project_env_key = $1 AND manifest_digest = $2";
-
-/// The enabled version of one workflow, as the host admits a run of it.
-#[derive(Debug, Clone)]
-pub struct EnabledWorkflow {
-    pub version: i32,
-    pub graph: WiringDocument,
-    pub wiring_hash: String,
-    /// `role` or `invoker`.
-    pub execution_type: String,
-    /// The active role of a `role` workflow.
-    pub execution_role: Option<String>,
-}
+use wamn_runtime::plugins::wamn_postgres::{ResolvedActiveWiring, WamnPostgres};
 
 /// The facts a manual run row carries, which key its resolution.
 #[derive(Debug, Clone, Copy)]
@@ -97,7 +44,6 @@ pub enum WorkflowResolutionErrorType {
 pub struct WorkflowResolutionError {
     type_: WorkflowResolutionErrorType,
     detail: String,
-    source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 impl WorkflowResolutionError {
@@ -105,19 +51,6 @@ impl WorkflowResolutionError {
         Self {
             type_,
             detail: detail.into(),
-            source: None,
-        }
-    }
-
-    fn with_source(
-        type_: WorkflowResolutionErrorType,
-        detail: impl Into<String>,
-        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
-    ) -> Self {
-        Self {
-            type_,
-            detail: detail.into(),
-            source: Some(source.into()),
         }
     }
 
@@ -133,11 +66,7 @@ impl std::fmt::Display for WorkflowResolutionError {
     }
 }
 
-impl std::error::Error for WorkflowResolutionError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.source.as_deref().map(|source| source as _)
-    }
-}
+impl std::error::Error for WorkflowResolutionError {}
 
 /// Resolve one workflow run over `manifest`, the release it pins: the stored
 /// graph `document` under `stored_hash`, each node to the component of the
@@ -246,183 +175,58 @@ pub fn resolve_workflow_in_release(
         node_components.insert(node_id.clone(), admitted(chosen));
     }
     let components = manifest.components.iter().map(admitted).collect();
-    resolved_wiring(
-        DecodedWiring {
-            version: run.version,
-            package_version: String::new(),
-            graph_hash: stored_hash.to_owned(),
-            document,
-        },
-        run.manifest_digest,
-        node_components,
-        components,
-    )
-    .map_err(|error| {
-        WorkflowResolutionError::with_source(
-            WorkflowResolutionErrorType::Definition,
-            "the resolved workflow is not executable",
-            error,
-        )
+    Ok(ResolvedActiveWiring {
+        version: run.version,
+        manifest_digest: run.manifest_digest.to_owned(),
+        graph_hash: std::sync::Arc::from(stored_hash),
+        package_version: String::new(),
+        document,
+        node_components: std::sync::Arc::new(node_components),
+        components: components.into(),
     })
 }
 
-pub(super) fn parse_graph(graph_json: &str) -> anyhow::Result<WiringDocument> {
-    let value = serde_json::from_str(graph_json).context("parse the stored workflow graph")?;
-    WiringDocument::parse(&value).context("validate the stored workflow graph")
-}
-
-impl WamnPostgres {
-    /// The enabled version of manual workflow `workflow_id` of `application`
-    /// in `environment`, or none.
-    pub async fn enabled_workflow(
-        &self,
-        project: &str,
-        project_env_key: &str,
-        environment: &str,
-        application: &str,
-        workflow_id: &str,
-    ) -> anyhow::Result<Option<EnabledWorkflow>> {
-        self.executor_read(project, project_env_key, async |connection| {
-            let Some(row) = sqlx::query(ENABLED_WORKFLOW_SQL)
-                .bind(project_env_key)
-                .bind(environment)
-                .bind(application)
-                .bind(workflow_id)
-                .fetch_optional(&mut *connection)
-                .await
-                .context("read the enabled workflow version")?
-            else {
-                return Ok(None);
-            };
-            let graph_json: String = row.try_get(1)?;
-            Ok(Some(EnabledWorkflow {
-                version: row.try_get(0)?,
-                graph: parse_graph(&graph_json)?,
-                wiring_hash: row.try_get(2)?,
-                execution_type: row.try_get(3)?,
-                execution_role: row.try_get(4)?,
-            }))
-        })
-        .await
-    }
-
-    /// Resolve one bound workflow run from its row
-    /// ([`resolve_workflow_in_release`]).
-    pub async fn resolve_workflow(
-        &self,
-        project: &str,
-        run: &WorkflowRunKey<'_>,
-    ) -> anyhow::Result<ResolvedActiveWiring> {
-        let version = i32::try_from(run.version).context("workflow version exceeds int")?;
-        let local = self.local_application.as_ref();
-        let (graph_json, stored_hash, manifest) = self
-            .executor_read(project, run.project_env_key, async |connection| {
-                let row = sqlx::query(WORKFLOW_VERSION_SQL)
-                    .bind(run.project_env_key)
-                    .bind(run.environment)
-                    .bind(run.application)
-                    .bind(run.workflow_id)
-                    .bind(version)
-                    .fetch_optional(&mut *connection)
-                    .await
-                    .context("read the workflow version")?
-                    .ok_or_else(|| {
-                        WorkflowResolutionError::new(
-                            WorkflowResolutionErrorType::NotFound,
-                            format!(
-                                "workflow {:?} version {} is not stored",
-                                run.workflow_id, run.version
-                            ),
-                        )
-                    })?;
-                let graph_json: String = row.try_get(0)?;
-                let stored_hash: String = row.try_get(1)?;
-                let manifest = if let Some(local) = local {
-                    local.require_instance(connection).await?;
-                    anyhow::ensure!(
-                        local.target.project_env_key == run.project_env_key
-                            && local.target.environment == run.environment
-                            && local.facts.manifest_digest.as_str() == run.manifest_digest,
-                        "local release target mismatch"
-                    );
-                    local.manifest.clone()
-                } else {
-                    let bytes: Vec<u8> = sqlx::query(PINNED_RELEASE_SQL)
-                        .bind(run.project_env_key)
-                        .bind(run.manifest_digest)
-                        .fetch_optional(&mut *connection)
-                        .await
-                        .context("read the pinned release")?
-                        .ok_or_else(|| {
-                            WorkflowResolutionError::new(
-                                WorkflowResolutionErrorType::NotFound,
-                                format!("release {} is not installed", run.manifest_digest),
-                            )
-                        })?
-                        .try_get(0)?;
-                    let (manifest, digest) = ServingManifest::from_canonical_bytes(&bytes)
-                        .context("decode the pinned release")?;
-                    anyhow::ensure!(
-                        digest.as_str() == run.manifest_digest,
-                        "the pinned release bytes do not hash to the run's digest"
-                    );
-                    manifest
-                };
-                Ok((graph_json, stored_hash, manifest))
-            })
-            .await?;
-        let document = parse_graph(&graph_json)?;
-        Ok(resolve_workflow_in_release(
-            run,
-            &manifest,
-            document,
-            &stored_hash,
-        )?)
-    }
-
-    /// Run `read` in one read transaction under the executor credential.
-    pub(super) async fn executor_read<T>(
-        &self,
-        project: &str,
-        project_env_key: &str,
-        read: impl AsyncFnOnce(&mut sqlx::PgConnection) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        let (mut connection, policy) = self
-            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if let Err(error) = self
-            .begin_with_identity(
-                &mut connection,
-                AuthorityClass::ExecutorPlatform,
-                true,
-                project_env_key,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                policy.statement_timeout_ms,
+/// Resolve the pinned graph under the release already loaded by this host.
+pub async fn resolve_workflow(
+    postgres: &WamnPostgres,
+    project: &str,
+    release: &wamn_engine::release_manifest::LoadedRelease,
+    run: &WorkflowRunKey<'_>,
+) -> anyhow::Result<ResolvedActiveWiring> {
+    anyhow::ensure!(
+        release.target().project_env_key == run.project_env_key
+            && release.target().environment == run.environment
+            && release.release().manifest_digest.as_str() == run.manifest_digest,
+        "workflow run release differs from the loaded release"
+    );
+    let version = i32::try_from(run.version).context("workflow version exceeds int")?;
+    let (graph_json, hash) = postgres
+        .executor_read(project, run.project_env_key, async |connection| {
+            wamn_run_state::admission::workflow_version(
+                connection,
+                run.project_env_key,
+                run.environment,
+                run.application,
+                run.workflow_id,
+                version,
             )
-            .await
-        {
-            self.destroy(connection);
-            return Err(anyhow::anyhow!(error.to_string()));
-        }
-        let result = read(&mut connection).await;
-        let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
-        if sqlx::raw_sql(sqlx::AssertSqlSafe((end).to_string()))
-            .execute(&mut *connection)
-            .await
-            .map(|_| ())
-            .is_err()
-        {
-            self.destroy(connection);
-        }
-        result
-    }
+            .await?
+            .ok_or_else(|| {
+                WorkflowResolutionError::new(
+                    WorkflowResolutionErrorType::NotFound,
+                    "the pinned workflow version is not stored",
+                )
+                .into()
+            })
+        })
+        .await?;
+    let graph = crate::admission::parse_graph(&graph_json)?;
+    Ok(resolve_workflow_in_release(
+        run,
+        release.manifest(),
+        graph,
+        &hash,
+    )?)
 }
 
 #[cfg(test)]

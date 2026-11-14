@@ -154,7 +154,7 @@ esac
     .await
     .map(drop)?;
     sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&project_env_key).bind(&digest).bind(&&bytes[..]).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
-    sqlx::query("INSERT INTO wamn_run.runs(project_env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'stranded-work','app',$2,'dispatched',$3,'work',1,$3,'[]')").bind(&project_env_key).bind(&triple.env.as_str()).bind(&digest).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, manifest_digest, wiring_id, wiring_version, wiring_hash, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) VALUES ($1, 'stranded-work', 'app', $2, 'dispatched', $3, 'work', 1, $3, 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}')").bind(&project_env_key).bind(&triple.env.as_str()).bind(&digest).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
     transaction.commit().await?;
     let run_before: serde_json::Value = sqlx::query("SELECT to_jsonb(r) FROM wamn_run.runs r")
         .fetch_one(&mut project)

@@ -1,14 +1,8 @@
-//! PostgreSQL test for the surviving run-queue authority matrix.
-
+//! Run-queue authority through real database operations.
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
-
 use wamn_control_provision::{WorkloadRoleFamily, sql};
-use wamn_run_state::authority_class::CURRENT_USER_ROLE_MEMBERSHIP_SQL;
-use wamn_run_state::queue::{
-    park_queued_run_sql, release_parked_run_sql, select_production_lease_sql,
-};
-
+use wamn_run_state::queue::select_production_lease_sql;
 const EXECUTOR_LOGIN: &str = "wamn_matrix_executor_login";
 
 fn psql(url: &str, script: &str) -> Output {
@@ -46,14 +40,6 @@ fn success(url: &str, script: &str) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).expect("psql stdout is UTF-8")
-}
-
-fn assert_sqlstate(url: &str, script: &str, state: &str, message: &str) {
-    let output = psql(url, &format!("\\set VERBOSITY verbose\n{script}"));
-    assert!(!output.status.success(), "statement was admitted");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains(state), "SQLSTATE drifted:\n{stderr}");
-    assert!(stderr.contains(message), "refusal drifted:\n{stderr}");
 }
 
 #[test]
@@ -166,335 +152,53 @@ fn surviving_authority_matrix_live() {
              INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
              INSERT INTO wamn_run.runs \
-               (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
-                wiring_id,wiring_version,status,trigger_source,input_json,service_principal_id) \
-             VALUES ('t1','run-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','dev','legacy-wiring',1, \
-                     'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'); \
+               (project_env_key,run_id,wiring_hash,package_id,manifest_digest,environment, \
+                wiring_id,wiring_version,status,trigger_source,input_json,execution_principal_id,execution_role,invoked_by,invoked_by_user_id,node_digests_json) \
+             VALUES ('t1','run-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','dev','legacy-wiring',1, \
+                     'dispatched','manual','{{}}','00000000-0000-0000-0000-000000000001','admin','manual','00000000-0000-0000-0000-000000000001','{{}}'); \
              INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('t1','run-1');",
             manifest_hash = "a".repeat(64),
         ),
     );
 
-    // THE EXECUTOR-PLATFORM DENIAL MATRIX, STATED AS TOTALS (`wamn-0h0g.22.31`).
-    //
-    // Each leg aggregates every privilege the family actually holds across a
-    // whole schema and compares it to a LITERAL. A total is what makes one
-    // assertion refuse in BOTH directions: a grant the builder stops emitting
-    // drops out of the aggregate, and a grant it starts emitting appears in it.
-    // A per-item `has_*_privilege` list could only ever catch one direction.
-    //
-    // THE LITERALS ARE WRITTEN OUT RATHER THAN DERIVED FROM
-    // `EXECUTOR_PLATFORM_*` ON PURPOSE. Deriving them would make the constants
-    // agree with themselves: a column added to the constant would widen the
-    // grant and the expectation in the same edit, and no leg here could tell.
-    // Written out, the constant and the assertion about it are two documents, and
-    // the surface cannot be widened without moving a named assertion.
-    success(
-        &url,
-        "DO $$ DECLARE actual text; BEGIN \
-           SELECT string_agg(c.relname || ':' || p, ',' ORDER BY c.relname || ':' || p) \
-             INTO actual \
-             FROM pg_catalog.pg_class AS c \
-             JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-             CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE', \
-                                     'TRUNCATE','REFERENCES','TRIGGER']) AS p \
-            WHERE n.nspname = 'wamn_run' AND c.relkind IN ('r','p','v','m') \
-              AND pg_catalog.has_table_privilege('wamn_executor_platform', c.oid, p); \
-           ASSERT actual = 'run_queue:DELETE,run_queue:SELECT,runs:SELECT', \
-                  'run-plane TABLE grain drifted: ' || coalesce(actual, '<none>'); \
-           SELECT string_agg(c.relname || ':' || p, ',' ORDER BY c.relname || ':' || p) \
-             INTO actual \
-             FROM pg_catalog.pg_class AS c \
-             JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-             CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE', \
-                                     'TRUNCATE','REFERENCES','TRIGGER']) AS p \
-            WHERE n.nspname = 'catalog' AND c.relkind IN ('r','p','v','m') \
-              AND pg_catalog.has_table_privilege('wamn_executor_platform', c.oid, p); \
-           ASSERT actual = \
-             'connection_binding:SELECT,connection_requirement:SELECT,\
-release_connection:SELECT,releases:SELECT,workflows:SELECT', \
-                  'catalog TABLE grain drifted: ' || coalesce(actual, '<none>'); \
-           SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
-             FROM pg_catalog.pg_attribute AS a \
-            WHERE a.attrelid = 'wamn_run.runs'::regclass AND a.attnum > 0 \
-              AND NOT a.attisdropped \
-              AND pg_catalog.has_column_privilege( \
-                    'wamn_executor_platform', a.attrelid, a.attnum, 'UPDATE'); \
-           ASSERT actual = \
-             'caller_http_status,caller_outcome_hash,caller_outcome_json,caller_outcome_type,\
-caller_release_node_id,caller_released_at,deadline_adjustments_json,fail_type,\
-result_json,state_json,status,terminal_reason,updated_at', \
-                  'runs UPDATE columns drifted: ' || coalesce(actual, '<none>'); \
-           SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
-             FROM pg_catalog.pg_attribute AS a \
-            WHERE a.attrelid = 'wamn_run.run_queue'::regclass AND a.attnum > 0 \
-              AND NOT a.attisdropped \
-              AND pg_catalog.has_column_privilege( \
-                    'wamn_executor_platform', a.attrelid, a.attnum, 'UPDATE'); \
-           ASSERT actual = 'attempts,available_at,lease_expires_at,lease_generation,lease_owner', \
-                  'run_queue UPDATE columns drifted: ' || coalesce(actual, '<none>'); \
-           SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
-             FROM pg_catalog.pg_attribute AS a \
-            WHERE a.attrelid = 'wamn_run.runs'::regclass AND a.attnum > 0 \
-              AND NOT a.attisdropped \
-              AND pg_catalog.has_column_privilege( \
-                    'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
-           ASSERT actual = \
-             'project_env_key,environment,event_depth,event_root_run_id,event_source_run_id,execution_principal_id,execution_role,\
-idempotency_key,input_json,invoked_by,invoked_by_user_id,manifest_digest,node_digests_json,\
-package_id,registration_id,service_principal_id,status,trigger_source,wiring_hash,wiring_id,wiring_version', \
-                  'runs INSERT columns (the event and manual run grains) drifted: ' || coalesce(actual, '<none>'); \
-           SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
-             FROM pg_catalog.pg_attribute AS a \
-            WHERE a.attrelid = 'wamn_run.run_queue'::regclass AND a.attnum > 0 \
-              AND NOT a.attisdropped \
-              AND pg_catalog.has_column_privilege( \
-                    'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
-           ASSERT actual = 'project_env_key,run_id', \
-                  'run_queue INSERT columns drifted: ' || coalesce(actual, '<none>'); \
-           ASSERT pg_catalog.has_schema_privilege( \
-                    'wamn_executor_platform', 'wamn_run', 'USAGE'); \
-           ASSERT pg_catalog.has_schema_privilege( \
-                    'wamn_executor_platform', 'catalog', 'USAGE'); \
-           ASSERT NOT pg_catalog.has_schema_privilege( \
-                    'wamn_executor_platform', 'wamn_run', 'CREATE'); \
-           ASSERT NOT pg_catalog.has_schema_privilege( \
-                    'wamn_executor_platform', 'catalog', 'CREATE'); \
-           ASSERT pg_catalog.has_function_privilege('wamn_executor_platform', \
-                    'wamn_authority.project_key(text)', 'EXECUTE'); \
-           ASSERT NOT pg_catalog.has_schema_privilege( \
-                    'wamn_executor_platform', 'wamn_authority', 'USAGE'); \
-           ASSERT NOT pg_catalog.has_function_privilege('wamn_executor_platform', \
-                    'wamn_authority.current_project_key()', 'EXECUTE'); \
-         END $$;",
-    );
-
     let lease = select_production_lease_sql();
-    let acquired = success(
+    success(
         &url,
         &format!(
-            "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL app.project_env_key='t1'; \
-             SET LOCAL search_path=wamn_run,catalog,public; \
-             SELECT current_user; PREPARE matrix_lease(text[],text,text) AS {lease}; \
-             EXECUTE matrix_lease(ARRAY['cat'],'dev','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); ROLLBACK;"
+            "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; \
+        SET LOCAL app.project_env_key='t1'; SET LOCAL search_path=wamn_run; \
+        DO $test$ DECLARE selected record; BEGIN \
+            EXECUTE $lease${lease}$lease$ INTO STRICT selected USING ARRAY['cat'],'dev', \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'; \
+            ASSERT selected.run_id IS NOT NULL; \
+        END $test$; ROLLBACK;"
         ),
     );
-    assert!(acquired.contains(EXECUTOR_LOGIN));
-    assert!(acquired.contains("run-1"));
-
-    // The complete-grain CHECK makes a half candidate row unrepresentable, and
-    // the trigger names every component-era pin.
-    assert_sqlstate(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (project_env_key,run_id,package_id,environment, \
-            wiring_id,wiring_version,status,trigger_source,input_json) \
-         VALUES ('t1','half-run','cat','dev','candidate',1, \
-                 'dispatched','test-case','{}');",
-        "23514",
-        "runs_execution_grain_check",
-    );
-    assert_sqlstate(
-        &url,
-        "UPDATE wamn_run.runs SET binding_world_json='[]' \
-          WHERE project_env_key='t1' AND run_id='run-1';",
-        "55000",
-        "run-admission-pin-immutable",
-    );
-
-    success(
-        &url,
-        "DO $$ BEGIN \
-           ASSERT NOT EXISTS (SELECT FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']) p \
-             WHERE pg_catalog.has_table_privilege('wamn_app','wamn_run.run_queue',p)); \
-         END $$;",
-    );
-    {
-        let denied_role = "wamn_app";
-        assert_eq!(
-            success(
-                &url,
-                &format!(
-                    "BEGIN; SET LOCAL ROLE {denied_role}; \
-                     PREPARE authority_membership(text) AS {CURRENT_USER_ROLE_MEMBERSHIP_SQL}; \
-                     EXECUTE authority_membership('wamn_executor_platform'); ROLLBACK;"
-                ),
-            ),
-            "f\n",
-            "{denied_role} must not hold executor membership"
+    for statement in [
+        "SELECT * FROM wamn_run.run_queue",
+        "UPDATE wamn_run.runs SET status='completed'",
+        "INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('t1','run-1')",
+    ] {
+        let output = psql(
+            &url,
+            &format!("BEGIN; SET LOCAL ROLE wamn_app; {statement}; ROLLBACK;"),
+        );
+        assert!(
+            !output.status.success(),
+            "guest was allowed to operate the durable queue"
         );
     }
-}
-
-/// R20 (1): the candidate select filters by the leasing host's release. The
-/// FIFO head is pinned to release 2, and a host of release 1 leases the
-/// release-1 run queued behind it instead of selecting the head. A host with
-/// no release selects no pinned run.
-#[test]
-fn release_targeted_queue_lease_skips_another_releases_head_live() {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
-    let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
-    let app_schema = wamn_control_provision::APP_SCHEMA_SQL;
-    let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
-        .expect("read run-state DDL");
-    let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
-        .expect("read run-queue DDL");
+    // A foreign injected project cannot select this queue, even with executor privileges.
     success(
         &url,
         &format!(
-            "DO $$ DECLARE role_name text; BEGIN \
-               FOREACH role_name IN ARRAY ARRAY[ \
-                 'wamn_app' \
-               ] LOOP \
-                 IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname=role_name) THEN \
-                   EXECUTE format('CREATE ROLE %I NOLOGIN', role_name); \
-                 END IF; \
-               END LOOP; \
-             END $$; \
-             BEGIN; {catalog} {run_state} {run_queue} {app_schema} COMMIT; \
-             INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 't1','cat','1.0.0','sha256:{manifest_hash}'); \
-             INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
-             VALUES ('t1','sha256:21621f6bd9bc2769154aa2938726e891ecbc7929cd7be941b60ec776703ed394','{{\"release\":1}}'), \
-                    ('t1','sha256:89437c2ddcb5d585633413604661041fe6b5ee9d49ae96153fe24812f1a8c5c0','{{\"release\":2}}'); \
-             INSERT INTO wamn_run.runs \
-               (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
-                wiring_id,wiring_version,status,trigger_source,input_json,service_principal_id) \
-             VALUES ('t1','run-b','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat',{release_2},'dev','legacy-wiring',1, \
-                     'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'), \
-                    ('t1','run-a','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat',{release_1},'dev','legacy-wiring',1, \
-                     'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'); \
-             INSERT INTO wamn_run.run_queue (project_env_key,run_id,available_at) \
-             VALUES ('t1','run-b',now() - interval '2 minutes'), \
-                    ('t1','run-a',now() - interval '1 minute');",
-            manifest_hash = "a".repeat(64),
-            release_1 = RELEASE_1,
-            release_2 = RELEASE_2,
-        ),
-    );
-    let lease = select_production_lease_sql();
-    let head_for = |release: &str| {
-        let selected = success(
-            &url,
-            &format!(
-                "BEGIN; SET LOCAL app.project_env_key='t1'; \
-                 SET LOCAL search_path=wamn_run,catalog,public; \
-                 PREPARE release_lease(text[],text,text) AS {lease}; \
-                 EXECUTE release_lease(ARRAY['cat'],'dev',{release}); ROLLBACK;"
-            ),
-        );
-        selected
-            .split('|')
-            .next()
-            .expect("psql prints the selected run first")
-            .to_owned()
-    };
-    assert_eq!(
-        head_for(RELEASE_1),
-        "run-a",
-        "release 1 leases behind the release-2 head"
-    );
-    assert_eq!(
-        head_for(RELEASE_2),
-        "run-b",
-        "release 2 leases its own head"
-    );
-    assert_eq!(
-        head_for("NULL"),
-        "",
-        "a host with no release leases no pinned run"
-    );
-    assert_eq!(
-        head_for("'sha256:3333333333333333333333333333333333333333333333333333333333333333'"),
-        "",
-        "a release with no pinned run leases nothing"
-    );
-
-    // The selector supplies trusted event ancestry without rewriting author input.
-    success(
-        &url,
-        &format!(
-            "INSERT INTO wamn_run.runs \
-               (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
-                wiring_id,wiring_version,status,trigger_source,input_json, \
-                event_source_run_id,event_root_run_id,event_depth, \
-                execution_principal_id,execution_role,node_digests_json) \
-             VALUES ('t1','projection','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat',{RELEASE_1},'dev','w',1,'dispatched','event', \
-               '{{\"value\":7,\"causation\":{{\"root\":\"forged\"}}}}', \
-               'source','trusted-root',2,'00000000-0000-0000-0000-000000000002', \
-               'workflow','{{\"node\":\"sha256:frozen\"}}'); \
-             INSERT INTO wamn_run.run_queue(project_env_key,run_id,available_at) \
-             VALUES ('t1','projection','2000-01-01'); \
-             BEGIN; SET LOCAL app.project_env_key='t1'; SET LOCAL search_path=wamn_run; \
-             DO $test$ DECLARE selected record; untouched jsonb; parked text; BEGIN \
-               SELECT to_jsonb(q) INTO untouched FROM run_queue AS q WHERE run_id='projection'; \
-               EXECUTE $lease${lease}$lease$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
-               ASSERT selected.run_id='projection', 'the earliest eligible row wins'; \
-               ASSERT selected.input_json::jsonb = \
-                 (SELECT input_json FROM runs WHERE run_id='projection'), \
-                 'the selector hands execution the admitted input unchanged'; \
-               ASSERT selected.event_root_run_id='trusted-root' AND selected.event_depth=2, \
-                 'event ancestry travels in the trusted lineage columns'; \
-               ASSERT selected.execution_principal_id='00000000-0000-0000-0000-000000000002' \
-                 AND selected.execution_role='workflow' \
-                 AND selected.node_digests_json::jsonb='{{\"node\":\"sha256:frozen\"}}'::jsonb, \
-                 'the selector carries frozen execution identity'; \
-               ASSERT NOT selected.router_caller_attached AND NOT selected.durable_caller_attached, \
-                 'an event has no waiting caller'; \
-               ASSERT (SELECT to_jsonb(q) FROM run_queue AS q WHERE run_id='projection')=untouched, \
-                 'selection grants no lease'; \
-               ASSERT (SELECT lease_generation FROM run_queue WHERE run_id='projection')=0, \
-                 'an unacquired queue row starts at generation zero'; \
-               EXECUTE $park${park}$park$ INTO STRICT parked USING 'projection','dev'; \
-               ASSERT parked='projection', 'the queue row parks'; \
-               ASSERT (SELECT status FROM runs WHERE run_id='projection')='dispatched', \
-                 'parking preserves run status'; \
-               EXECUTE $lease${lease}$lease$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
-               ASSERT selected.run_id='run-a', 'the selector skips a parked head'; \
-               ASSERT selected.input_json::jsonb='{{}}'::jsonb, 'non-event input stays unchanged'; \
-               ASSERT selected.service_principal_id='00000000-0000-0000-0000-000000000001', \
-                 'the selector carries the automation principal'; \
-               EXECUTE $park${park}$park$ INTO STRICT parked USING 'run-a','dev'; \
-               EXECUTE $wake${wake}$wake$ INTO STRICT parked USING 'projection','dev'; \
-               EXECUTE $lease${lease}$lease$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
-               ASSERT selected.run_id='projection', 'a released park is eligible again'; \
-             END $test$; ROLLBACK;",
-            park = park_queued_run_sql(),
-            wake = release_parked_run_sql(),
-        ),
-    );
-    success(
-        &url,
-        &format!(
-            "BEGIN; SET LOCAL app.project_env_key='t1'; SET LOCAL search_path=wamn_run; \
-             UPDATE run_queue SET available_at='infinity'; \
-             DO $test$ DECLARE source text; router bool; durable bool; \
-               selected record; identity text; BEGIN \
-               FOR source, router, durable IN VALUES \
-                 ('http',true,true),('internal',true,true),('studio',true,true), \
-                 ('scenario-draft',true,false),('test-case',true,false) LOOP \
-                 identity := source; \
-                 INSERT INTO runs (project_env_key,run_id,package_id,manifest_digest, \
-                   environment,wiring_id,wiring_version,wiring_hash,binding_world_json, \
-                   status,trigger_source) \
-                 VALUES ('t1',identity,'cat',{RELEASE_1},'dev','w',1, \
-                   'sha256:' || repeat('d',64), \
-                   '[]'::jsonb,'dispatched',source); \
-                 INSERT INTO run_queue(project_env_key,run_id) VALUES ('t1',identity); \
-                 EXECUTE $lease${lease}$lease$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
-                 ASSERT selected.run_id=identity, 'one eligible row is selected'; \
-                 ASSERT selected.router_caller_attached=router \
-                    AND selected.durable_caller_attached=durable, \
-                   format('caller classification differs for %s',identity); \
-                 DELETE FROM run_queue WHERE run_id=identity; \
-               END LOOP; \
-             END $test$; ROLLBACK;"
+            "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; \
+        SET LOCAL app.project_env_key='other'; SET LOCAL search_path=wamn_run; \
+        DO $test$ DECLARE selected record; BEGIN \
+            EXECUTE $lease${lease}$lease$ INTO selected USING ARRAY['cat'],'dev', \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'; \
+            ASSERT selected.run_id IS NULL; \
+        END $test$; ROLLBACK;"
         ),
     );
 }
-
-/// The two release digests of the release-targeted lease, as SQL literals.
-const RELEASE_1: &str = "'sha256:21621f6bd9bc2769154aa2938726e891ecbc7929cd7be941b60ec776703ed394'";
-const RELEASE_2: &str = "'sha256:89437c2ddcb5d585633413604661041fe6b5ee9d49ae96153fe24812f1a8c5c0'";

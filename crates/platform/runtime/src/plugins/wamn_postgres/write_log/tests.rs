@@ -254,7 +254,7 @@ async fn model_versions_follow_wal_without_a_counter() {
     reader_url.set_password(Some("wal-reader")).unwrap();
     let postgres = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::default().with_class(
-            wamn_run_state::AuthorityClass::CallableHttp,
+            wamn_identity_protocol::AuthorityClass::CallableHttp,
             reader_url.to_string(),
         )),
         guest_pool_max_size: 1,

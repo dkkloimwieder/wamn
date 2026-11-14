@@ -19,7 +19,7 @@ use wamn_environment::author_workflow::{
 };
 use wamn_environment::environment::Platform;
 use wamn_environment::workflow_lifecycle::WorkflowVersion;
-use wamn_workflow::{PostgresWorkflows, Workflows as _};
+use wamn_workflow::PostgresWorkflows;
 
 use crate::env_verbs::parse_coordinate;
 

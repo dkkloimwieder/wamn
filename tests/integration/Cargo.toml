@@ -69,7 +69,6 @@ wamn-identity-protocol = { workspace = true, features = ["test-util"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 # The shared runtime session fixture.
 tokio-rustls = { workspace = true }
-wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 # `prune_record_history` is an `ops` verb; route_interface_live prunes history.
 wamn-package-control = { workspace = true, features = ["test-util"] }

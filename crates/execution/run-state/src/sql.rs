@@ -1,57 +1,9 @@
-//! The single source of run-state SQL (docs/archive/structure-review.md SR2).
-//!
-//! Pure text builders over the `runs` table this crate owns
-//! (`deploy/sql/run-state.sql`), in the house shape: values are ALWAYS `$n`
-//! parameters, identifiers are pinned, table names are UNQUALIFIED (the host
-//! injects the schema via `search_path` — the S6 schema-as-fixture pattern),
-//! and the project comes from the session identity
-//! (`current_setting('app.project_env_key', true)`). These are run-level statements.
-//! Status literals interpolate from [`crate::RunStatus`] so the builders cannot
-//! drift from the model (the same discipline this crate's `queue` module uses).
-//!
-//! This module is guest-compilable by construction: `String` builders only,
-//! no DB driver, no clock, no tokio in the dependency closure.
+//! SQL for pruning terminal run history.
+use crate::RunStatus;
 
-use crate::status::RunStatus;
-
-/// Prune terminal run history older than a retention window (9.6, wamn-srb): the
-/// `prune-run-history` verb's statement. DELETE `$1`'s `runs` rows in a TERMINAL
-/// state ([`RunStatus::is_terminal`] — completed / failed /
-/// infrastructure-failure) whose `created_at` predates `$2` days ago.
-/// Any surviving `run_queue` rows cascade
-/// via their `ON DELETE CASCADE` FK to `runs`. A `dispatched`/`running` run is
-/// never pruned (it may still complete). Age-based
-/// only in v0; no execution-lineage metadata participates.
-/// Params: `$1` `project_env_key`, `$2` retention_days.
-///
-/// # The project is a BOUND PARAMETER, and that is the whole point
-///
-/// This predicate used to read `current_setting('app.project_env_key', true)`, which is
-/// the RETIRED project keying: `wamn-0h0g.22.6` re-keyed `runs`' minimum onto
-/// `wamn_authority.project_key(project_env_key) =
-/// wamn_authority.current_project_key()`, and the `app.project_env_key` identity survives
-/// only on `run_queue`. A GUC-shaped predicate has one failure mode no amount
-/// of care removes: `current_setting(_, true)`
-/// returns NULL when the identity was never injected, `project_env_key = NULL` is NULL,
-/// and the statement reports ZERO ROWS DELETED with no error — measured on
-/// PostgreSQL 18.6 as `DELETE 0` under the dedicated retention role
-/// (`wamn-0h0g.12.69`). A bound parameter cannot be forgotten: it is either
-/// supplied or the statement does not execute.
-///
-/// Dropping the identity costs nothing the cascade needs. Measured on the same
-/// server: the `run_queue` `ON DELETE CASCADE` fires as an internal
-/// referential-integrity trigger that consults neither the deleter's table
-/// grants nor `run_queue`'s FORCE-RLS `app.project_env_key` policy, so the queue row
-/// still goes with the run in a session that never set the GUC and holds no
-/// privilege on that relation at all.
-///
-/// WHAT THIS BUILDER DOES NOT DO is decide WHOSE history may be pruned. Under
-/// the shared `wamn_platform` base policy arm a retention credential matches every
-/// project's rows, so binding the project makes the statement exact but not
-/// confined. Proving that the connected identity is the one THIS project's
-/// retention credential was minted for belongs to the verb
-/// (`services/ctl/src/prune_run_history.rs`), which refuses before it ever
-/// reaches this statement.
+/// Delete terminal runs older than the bound retention period in days.
+/// The caller authorizes the connection and binds the project as `$1` and days as `$2`.
+/// Queue entries follow their run through `ON DELETE CASCADE`.
 pub fn prune_terminal_runs_sql() -> String {
     let terminal: Vec<String> = RunStatus::ALL
         .into_iter()

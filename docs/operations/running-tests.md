@@ -385,8 +385,10 @@ It never runs for a single fix.
 Both runners use the shared process boundary in `cargo xtask require-test-result`. `WAMN_TEST_SILENCE_SECONDS` sets its silence limit, with a default of 1800 seconds. Output on either stream resets the limit. Silence past the limit stops the child process group, names the stage, and fails the run.
 It gives no expected duration.
 The epoch interruption case lives in `wamn-engine --test deadline`.
-Paused-time scheduling decisions live in `wamn-workflow --test schedule_decisions`.
+Pure calendar scheduling decisions live in `wamn-workflow --test schedule_decisions`.
 Admission authority stays in `wamn-run-state --test admission_live`.
+`wamn-run-state --test run_state_live` covers atomic admission, lease recovery, fencing and retention.
+Live schedule cases call the service with its real clock and can take several minutes.
 Schedule storage stays in `wamn-environment --test workflow_schedule_live`.
 Broker acknowledgement lives in `wamn-environment --test workflow_event_nats`.
 The native host case lives in `wamn-dev-control --test native_host` and takes live-nats.

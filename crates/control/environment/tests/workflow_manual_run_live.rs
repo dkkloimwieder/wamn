@@ -782,7 +782,7 @@ async fn a_manual_run_reads_and_shapes_as_its_invoker_with_one_role() {
 
     let row = sqlx::query(
         "SELECT trigger_source, execution_principal_id::text, execution_role, invoked_by, \
-                    invoked_by_user_id::text, service_principal_id IS NULL, manifest_digest, \
+                    invoked_by_user_id::text, manifest_digest, \
                     node_digests_json::text, package_id, wiring_id, wiring_version \
                FROM wamn_run.runs WHERE run_id = $1",
     )
@@ -795,20 +795,16 @@ async fn a_manual_run_reads_and_shapes_as_its_invoker_with_one_role() {
     assert_eq!(row.get::<String, _>(2), "reader");
     assert_eq!(row.get::<String, _>(3), "manual");
     assert_eq!(row.get::<String, _>(4), READER);
-    assert!(
-        row.get::<bool, _>(5),
-        "a manual run has no service principal"
-    );
-    assert_eq!(row.get::<String, _>(6), fixture.digest);
+    assert_eq!(row.get::<String, _>(5), fixture.digest);
     assert_eq!(
-        serde_json::from_str::<Value>(&row.get::<String, _>(7)).unwrap(),
+        serde_json::from_str::<Value>(&row.get::<String, _>(6)).unwrap(),
         json!({"read": fixture.read.component_digest, "shape": fixture.jsonata.component_digest})
     );
     assert_eq!(
         (
+            row.get::<String, _>(7),
             row.get::<String, _>(8),
-            row.get::<String, _>(9),
-            row.get::<i32, _>(10)
+            row.get::<i32, _>(9)
         ),
         (APP.to_owned(), WORKFLOW.to_owned(), 1)
     );

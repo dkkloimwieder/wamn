@@ -38,7 +38,7 @@ pub(crate) fn production_router_action(
     // A verdict may be recorded before the frontier empties. It is the owning
     // boundary truth even when later background work fails or cancels; that
     // later status is observability, not permission to suppress the first
-    // caller response or publish.
+    // publish.
     if outcome.verdict.is_some()
         && matches!(outcome.status, WalkStatus::Failed | WalkStatus::Cancelled)
     {
@@ -50,13 +50,6 @@ pub(crate) fn production_router_action(
         );
     }
     match outcome.verdict.as_ref() {
-        Some(Verdict::Respond { .. }) => {
-            return Err(ProductionLeaseError::new(
-                ProductionLeaseErrorType::Contract,
-                "map router response",
-                "router-response-without-result-owner",
-            ));
-        }
         Some(Verdict::Emit {
             event,
             dedup_id,
@@ -74,10 +67,10 @@ pub(crate) fn production_router_action(
         }
         Some(Verdict::Discard) => {
             return Ok(ProductionRouterAction::Complete(
-                ProductionCompletion::completed(outcome.result.clone(), None),
+                ProductionCompletion::completed(outcome.result.clone()),
             ));
         }
-        None => {}
+        _ => {}
     }
 
     match outcome.status {
@@ -122,7 +115,7 @@ pub(crate) fn production_router_action(
                 serde_json::Value::Object(error),
             )]));
             Ok(ProductionRouterAction::Complete(
-                ProductionCompletion::failed(body, fail_type, None),
+                ProductionCompletion::failed(body, fail_type),
             ))
         }
         WalkStatus::Cancelled => Ok(ProductionRouterAction::Cancelled),
@@ -145,30 +138,12 @@ fn persisted_router_failure(type_: RouterFailureType) -> FailType {
 
 #[cfg(test)]
 mod tests {
-    use wamn_run_state::RunStatus;
 
     use super::*;
+    use wamn_run_state::RunStatus;
 
     #[test]
-    fn detached_respond_still_has_no_result_owner() {
-        let outcome = Outcome {
-            status: WalkStatus::Completed,
-            result: serde_json::Value::Null,
-            failure: None,
-            hops: 1,
-            verdict: Some(Verdict::Respond {
-                payload: serde_json::json!({"accepted": true}),
-                node_id: "respond".into(),
-            }),
-        };
-
-        let error = production_router_action(&outcome)
-            .expect_err("detached delivery cannot own a response");
-        assert_eq!(error.error_type(), ProductionLeaseErrorType::Contract);
-    }
-
-    #[test]
-    fn router_failure_maps_once_to_run_and_caller_truth() {
+    fn router_failure_maps_once_to_run_truth() {
         let outcome = Outcome {
             status: WalkStatus::Failed,
             result: serde_json::Value::Null,
@@ -189,7 +164,6 @@ mod tests {
         assert_eq!(completion.fail_type(), Some(FailType::InvalidInput));
         assert_eq!(completion.result()["error"]["code"], "bad-order");
         assert_eq!(completion.result()["error"]["node"], "validate");
-        assert!(completion.caller().is_none());
     }
 
     #[test]
@@ -208,7 +182,6 @@ mod tests {
         };
         assert_eq!(completion.status(), RunStatus::Completed);
         assert_eq!(completion.fail_type(), None);
-        assert_eq!(completion.caller(), None);
     }
 
     #[test]

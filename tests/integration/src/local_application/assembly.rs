@@ -20,8 +20,8 @@ use wamn_execution_host::{
 use wamn_package_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_platform_identity::{assign_project_role, create_service, issue_pat, operator_subject};
 
+use wamn_identity_protocol::AuthorityClass;
 use wamn_release_control::publish_release::package_route;
-use wamn_run_state::AuthorityClass;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::WamnLogging;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;

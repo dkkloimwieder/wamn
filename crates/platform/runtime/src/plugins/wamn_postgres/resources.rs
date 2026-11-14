@@ -480,7 +480,7 @@ async fn begin_transaction(
     plugin
         .begin_with_identity(
             connection.connection(),
-            wamn_run_state::AuthorityClass::DynamicSql,
+            wamn_identity_protocol::AuthorityClass::DynamicSql,
             true,
             &project_env_key,
             schema.as_deref(),

@@ -607,11 +607,7 @@ FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
   INSERT INTO catalog.releases
     (project_env_key, manifest_digest, canonical_bytes)
     VALUES (t, 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{}');
-  INSERT INTO wamn_run.runs
-    (project_env_key, run_id, package_id, environment, status, trigger_source,
-     wiring_id, wiring_version, wiring_hash, binding_world_json, input_json)
-    VALUES (t, 'r1', 'widgets', 'dev', 'dispatched', 'internal', 'w', 1,
-            'sha256:'||repeat('c',64), '[]', '{\"a\":1}');
+  INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, trigger_source, wiring_id, wiring_version, wiring_hash, input_json, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json, manifest_digest) VALUES (t, 'r1', 'widgets', 'dev', 'dispatched', 'manual', 'w', 1, 'sha256:'||repeat('c',64), '{\"a\":1}', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');
 END LOOP;
 END $seed$;
 ";

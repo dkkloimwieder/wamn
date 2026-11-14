@@ -3,7 +3,7 @@
 use std::fmt;
 
 use sha2::{Digest as _, Sha256};
-use wamn_run_state::{AuthorityClass, app_identity_hash};
+use wamn_identity_protocol::{AuthorityClass, app_identity_hash};
 
 use crate::APP_ROLE;
 use crate::name::GUEST_SECRET_PREFIX;
@@ -444,7 +444,7 @@ pub fn workload_role_identity_hash(
             actual,
         });
     }
-    // The App family delegates to `wamn-run-state`, which is the leaf the
+    // The App family delegates to `wamn-identity-protocol`, which the
     // RUNTIME can reach, because `wamn-0h0g.22.6.7` makes the runtime make sure that
     // a resolved guest credential belongs to the project it is about to serve.
     // Delegation, not duplication — there is still ONE definition.
