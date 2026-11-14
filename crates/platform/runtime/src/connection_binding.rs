@@ -3,14 +3,15 @@
 use crate::connection_facts::ConnectionFacts;
 use crate::plugins::connection_http::{
     ConnectionExecutionClosure, authorize_candidate_closure, authorize_release_closure,
-    entry_lookup, released_invocation_application,
+    entry_lookup,
 };
 use crate::plugins::wamn_postgres::{
     ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres,
 };
 use wamn_engine::release_manifest::LoadedRelease;
 
-pub(crate) async fn resolve(
+/// Resolve the released binding of an admitted invocation.
+pub async fn resolve(
     postgres: &WamnPostgres,
     facts: &ConnectionFacts,
     release: &LoadedRelease,
@@ -24,11 +25,6 @@ pub(crate) async fn resolve(
     anyhow::ensure!(
         release.target().project_env_key == facts.project_env_key(),
         "connection release target mismatch"
-    );
-    anyhow::ensure!(
-        released_invocation_application(release.manifest(), release.target(), &invocation)
-            .is_some(),
-        "release does not authorize this invocation"
     );
     let (digest, environment, candidate) = match &invocation.closure {
         ConnectionExecutionClosure::Released => (
@@ -80,7 +76,7 @@ pub(crate) async fn resolve(
                 candidate_binding: candidate,
             },
             facts,
-            release.manifest(),
+            release,
         )
         .await?
         .context("connection binding unavailable")?;

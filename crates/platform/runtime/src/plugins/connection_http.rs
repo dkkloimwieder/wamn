@@ -214,17 +214,29 @@ pub struct ConnectionHttp {
     release: Arc<LoadedRelease>,
 }
 
-/// An empty release for host capability fixtures that execute no released component.
+/// A package release for host capability fixtures that execute no released component.
 #[cfg(any(test, feature = "test-util"))]
 pub fn test_release(project_env_key: &str) -> Arc<LoadedRelease> {
-    let manifest = LoadedRelease::control_root();
+    let manifest = ServingManifest::new(
+        wamn_catalog::ServingRelease {
+            packages: [
+                wamn_catalog::PackageCoordinate::new("capability_fixture", "1.0.0")
+                    .expect("fixture package coordinate"),
+            ]
+            .into(),
+        },
+        Default::default(),
+        Default::default(),
+        Default::default(),
+    )
+    .expect("capability fixture manifest");
     Arc::new(
         LoadedRelease::load_canonical_bytes(
-            &manifest.manifest().canonical_bytes(),
+            &manifest.canonical_bytes(),
             "capability fixture",
             wamn_engine::release_manifest::ReleaseTarget::new(project_env_key, "dev"),
         )
-        .expect("empty capability fixture release"),
+        .expect("capability fixture release"),
     )
 }
 

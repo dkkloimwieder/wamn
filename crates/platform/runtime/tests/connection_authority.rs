@@ -256,7 +256,7 @@ async fn both_outer_policy_ceiling_denials_are_final() {
         &connection,
         &target("/orders"),
         &[allowed("https://erp.example")],
-        &ExactNetwork(Vec::new()),
+        &|address| ExactNetwork(Vec::new()).allows(address),
         &dns,
     )
     .await

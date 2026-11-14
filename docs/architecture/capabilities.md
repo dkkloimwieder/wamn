@@ -101,6 +101,8 @@ HTTP and object storage use one authority resolver.
 It reads component declarations and connection modes from the loaded release.
 A configured palette declaration keeps its parameter reference.
 Publication seals its modes by package and alias beside that declaration.
+The resolver considers bindings within the admitted application.
+Shared aliases must select the same connection, version and mode.
 It reads the workflow position and node configuration from the admitted invocation.
 Connection memory supplies the binding, status and current generation.
 A configured alias must match the node configuration.
@@ -212,7 +214,7 @@ A call makes at most one extra send, so an OAuth2 retry after a changed fact is 
 A token failure before any API request returns `credential-unavailable` without the token endpoint's response body.
 The guest receives no credential. The workflow queue owns other retries.
 
-The transport refuses loopback and link-local addresses, including mapped IPv4 addresses.
+The transport refuses unspecified, loopback and link-local addresses, including mapped IPv4 addresses.
 It pins the approved peer and compares the connected peer.
 Its client identity includes the connection target and credential generation.
 It does not follow redirects or retry a request automatically.

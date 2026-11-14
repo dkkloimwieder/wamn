@@ -1,7 +1,7 @@
 //! Release bindings, target refusals, and native read authority on the environment catalog.
 
+use sqlx::Connection as _;
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -552,7 +552,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
                 candidate_binding: None,
             },
             &facts,
-            release.manifest(),
+            &release,
         )
         .await
         .unwrap()
@@ -610,4 +610,250 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
             .is_err()
     );
     drop(project);
+}
+
+#[tokio::test]
+async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
+    use wamn_catalog::{
+        BlobstoreProvider, ComponentConnection, ComponentConnectionAlias, ComponentConnectionType,
+        ComponentDescriptor, ConnectionMode, PALETTE_PACKAGE_ID,
+    };
+    use wamn_runtime::plugins::connection_http::{
+        ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
+        WiringPosition,
+    };
+    use wamn_runtime::plugins::wamn_blobstore::binding;
+    use wamn_runtime::plugins::wamn_postgres::CandidateBindingWorld;
+    use wamn_runtime::resolve_connection_for_test as resolve;
+    const DIGEST: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+    const OPERATION: &str = "wamn:node/handler@0.1.0";
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_platform_identity::test_database::project_platform();
+    let mut project = connect(database.url()).await;
+    provision_project(&mut project, database.url()).await;
+    let mut descriptor = ComponentDescriptor::named("blob-put", "0.1.0", DIGEST);
+    descriptor.operations.insert(
+        OPERATION.into(),
+        serde_json::from_value(json!({
+            "input-ports":[], "output-ports":[], "parameters":[]
+        }))
+        .unwrap(),
+    );
+    descriptor.connections.push(ComponentConnection {
+        store_alias: ComponentConnectionAlias::Configuration {
+            parameter: "binding".into(),
+        },
+        requirement_type: ComponentConnectionType::Blobstore,
+        mode: ConnectionMode::ByBinding(
+            [PACKAGE, "nested_origin"]
+                .into_iter()
+                .map(|package| {
+                    (
+                        package.into(),
+                        BTreeMap::from([("labels".into(), ConnectionMode::Write)]),
+                    )
+                })
+                .collect(),
+        ),
+    });
+    let manifest = wamn_catalog::ServingManifest::new(
+        wamn_catalog::ServingRelease {
+            packages: [PACKAGE, "nested_origin"]
+                .into_iter()
+                .map(|package| {
+                    wamn_catalog::PackageCoordinate::new(package, PACKAGE_VERSION).unwrap()
+                })
+                .collect(),
+        },
+        [wamn_catalog::ServingComponent {
+            package_id: PALETTE_PACKAGE_ID.into(),
+            runtime_schema: None,
+            descriptor,
+            statement_instances: BTreeMap::new(),
+        }]
+        .into(),
+        Default::default(),
+        BTreeMap::new(),
+    )
+    .unwrap();
+    let digest = manifest.digest().as_str().to_owned();
+    sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)")
+        .bind(PROJECT_ENV_KEY).bind(&digest).bind(manifest.canonical_bytes())
+        .execute(&mut project).await.unwrap();
+    for package in [PACKAGE, "nested_origin"] {
+        sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,'labels','wasmcloud:blobstore/blobstore@0.1.0','write')")
+            .bind(PROJECT_ENV_KEY).bind(DIGEST).bind(package).execute(&mut project).await.unwrap();
+    }
+    let mut authority = Authority::new("http://10.0.0.9:8080").await;
+    let mut document = Authority::document(&digest);
+    document.applications.get_mut(PACKAGE).unwrap().packages =
+        [PACKAGE.to_owned(), "nested_origin".into()].into();
+    let packages: Vec<_> = [PACKAGE, "nested_origin"]
+        .into_iter()
+        .map(|package| {
+            let mut declaration = declarations("s3", "write");
+            declaration.package.id = package.into();
+            declaration
+        })
+        .collect();
+    authority
+        .apply(&mut project, database.url(), &document, &packages)
+        .await;
+    let release = wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
+        &manifest.canonical_bytes(),
+        "shared blob alias fixture",
+        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT)
+            .with_applications(document.membership()),
+    )
+    .unwrap();
+    let postgres = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: Some(ClassCredentials::every_class(database.url().to_owned())),
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 2000,
+            statement_timeout_ms: 5000,
+            row_limit: 100,
+        })
+        .unwrap(),
+    );
+    postgres
+        .set_project_env_key(COMPONENT_ID, PROJECT_ENV_KEY)
+        .unwrap();
+    let facts = ConnectionFacts::new(
+        Arc::new(ConnectionMemory::default()),
+        wamn_broker::Publisher::default(),
+        Arc::new(authority.reader().await),
+        Arc::clone(&postgres),
+        PROJECT_ENV_KEY,
+        DEFAULT_PROJECT,
+        ENVIRONMENT,
+    );
+    let wiring = WiringDocument::new(
+        "store_label",
+        1,
+        "store",
+        BTreeMap::from([(
+            "store".into(),
+            WiringNode {
+                component: "blob-put".into(),
+                interface_version: "0.1.0".into(),
+                operation: OPERATION.into(),
+                operation_dependency: None,
+                params: BTreeMap::from([("binding".into(), json!("labels"))]),
+                terminal: Some(WiringTerminal::Respond),
+            },
+        )]),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut invocation = ConnectionInvocation {
+        origin: ConnectionOrigin {
+            package_id: PALETTE_PACKAGE_ID.into(),
+            component_digest: DIGEST.into(),
+            component: "blob-put".into(),
+            interface_version: "0.1.0".into(),
+            operation: OPERATION.into(),
+        },
+        entry: InvocationEntry::Wiring(WiringPosition {
+            package_id: PACKAGE.into(),
+            wiring_id: "store_label".into(),
+            wiring_version: 1,
+            node_id: "store".into(),
+            occurrence: 0,
+            configuration: Arc::new(wiring.nodes["store"].params.clone()),
+            wiring_hash: wiring.wiring_hash().as_str().into(),
+        }),
+        package_id: PALETTE_PACKAGE_ID.into(),
+        component_digest: DIGEST.into(),
+        component: "blob-put".into(),
+        operation: OPERATION.into(),
+        closure: ConnectionExecutionClosure::Released,
+        effects: None,
+    };
+    postgres
+        .bind_invocation(COMPONENT_ID, invocation.clone())
+        .unwrap();
+    let snapshot = resolve(&postgres, &facts, &release, COMPONENT_ID, "labels")
+        .await
+        .unwrap();
+    assert!(binding::resolve(&snapshot, BlobstoreProvider::S3).is_ok());
+    assert!(
+        resolve(&postgres, &facts, &release, COMPONENT_ID, "undeclared")
+            .await
+            .is_err()
+    );
+    let expected = facts.env_connections().await.unwrap().connections["labels-store"];
+    assert_eq!(
+        snapshot
+            .instance_id
+            .as_deref()
+            .unwrap()
+            .parse::<uuid::Uuid>()
+            .unwrap(),
+        expected
+    );
+    let pinned = CandidateConnectionBinding {
+        read_only: snapshot.read_only,
+        component_digest: DIGEST.into(),
+        store_alias: "labels".into(),
+        requirement_hash: snapshot.requirement_hash.unwrap(),
+        instance_id: snapshot.instance_id.unwrap(),
+        instance_revision: snapshot.instance_revision.unwrap(),
+        requirement_type: snapshot.requirement_type.unwrap(),
+        contract: snapshot.contract.unwrap(),
+        validation_hash: snapshot.validation_hash.unwrap(),
+        generation: snapshot.generation.unwrap(),
+        definition_hash: snapshot.definition_hash.unwrap(),
+        credential_set_handle: snapshot.credential_handle,
+    };
+    for (accepted, pin) in [
+        (true, pinned.clone()),
+        (
+            false,
+            CandidateConnectionBinding {
+                instance_id: uuid::Uuid::new_v4().to_string(),
+                ..pinned.clone()
+            },
+        ),
+        (
+            false,
+            CandidateConnectionBinding {
+                generation: pinned.generation + 1,
+                ..pinned
+            },
+        ),
+    ] {
+        invocation.closure = ConnectionExecutionClosure::Candidate {
+            manifest_digest: digest.clone(),
+            environment: ENVIRONMENT.into(),
+            wiring_hash: invocation.entry.wiring().unwrap().wiring_hash.clone(),
+            component: invocation.component.clone(),
+            interface_version: invocation.origin.interface_version.clone(),
+            binding_world: Arc::new(
+                CandidateBindingWorld::from_json(serde_json::to_value([pin]).unwrap()).unwrap(),
+            ),
+        };
+        postgres.revoke_invocation(COMPONENT_ID);
+        postgres
+            .bind_invocation(COMPONENT_ID, invocation.clone())
+            .unwrap();
+        assert_eq!(
+            resolve(&postgres, &facts, &release, COMPONENT_ID, "labels")
+                .await
+                .is_ok(),
+            accepted
+        );
+    }
+    invocation.closure = ConnectionExecutionClosure::Released;
+    postgres.revoke_invocation(COMPONENT_ID);
+    postgres.bind_invocation(COMPONENT_ID, invocation).unwrap();
+    let conflicting = facts.env_connections().await.unwrap().connections["http-read"];
+    sqlx::query("UPDATE catalog.connection_binding SET connection_id=$4 WHERE project_env_key=$1 AND manifest_digest=$2 AND component_digest=$3 AND package_id='nested_origin' AND name='labels'")
+        .bind(PROJECT_ENV_KEY).bind(&digest).bind(DIGEST).bind(conflicting).execute(&mut project).await.unwrap();
+    assert!(
+        resolve(&postgres, &facts, &release, COMPONENT_ID, "labels")
+            .await
+            .is_err()
+    );
 }

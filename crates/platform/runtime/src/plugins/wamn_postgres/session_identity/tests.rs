@@ -1402,7 +1402,7 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
         "org--dev--a",
         &lookup,
         &facts,
-        crate::plugins::connection_http::test_release("org--dev--a").manifest(),
+        &crate::plugins::connection_http::test_release("org--dev--a"),
     )
     .await
     .expect_err("a disagreeing project_env_key is refused");
@@ -1414,7 +1414,7 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
         "org--dev--b",
         &lookup,
         &facts,
-        crate::plugins::connection_http::test_release("org--dev--a").manifest(),
+        &crate::plugins::connection_http::test_release("org--dev--a"),
     )
     .await
     .expect_err("an offline plugin has no connection to resolve against");
@@ -1491,7 +1491,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
             "org--dev--a",
             &lookup,
             &facts,
-            crate::plugins::connection_http::test_release("org--dev--a").manifest(),
+            &crate::plugins::connection_http::test_release("org--dev--a"),
         )
         .await
         .expect_err("an unbound identity scope resolves nothing");

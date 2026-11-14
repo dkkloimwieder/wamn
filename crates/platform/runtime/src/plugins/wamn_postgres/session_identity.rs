@@ -1363,7 +1363,7 @@ impl WamnPostgres {
         project_env_key: &str,
         lookup: &ConnectionEffectLookup<'_>,
         facts: &crate::connection_facts::ConnectionFacts,
-        manifest: &wamn_catalog::ServingManifest,
+        loaded: &LoadedRelease,
     ) -> anyhow::Result<Option<ConnectionEffectSnapshot>> {
         let refusal = |message: String| SessionIdentityError {
             type_: SessionIdentityErrorType::Authorization,
@@ -1384,6 +1384,14 @@ impl WamnPostgres {
         let invocation = self
             .invocation(component_id)
             .context("no admitted connection invocation")?;
+        let manifest = loaded.manifest();
+        let application = crate::plugins::connection_http::released_invocation_application(
+            manifest,
+            loaded.target(),
+            &invocation,
+        )
+        .context("release does not authorize this invocation")?;
+        let packages = &loaded.target().applications[application].packages;
         let component = manifest
             .components
             .iter()
@@ -1443,22 +1451,11 @@ impl WamnPostgres {
         let mut bindings = release.bindings.iter().filter(|binding| {
             binding.component_digest == lookup.component_digest
                 && binding.name == lookup.store_alias
-                && (binding.package_id == lookup.package_id
-                    || lookup.package_id == wamn_catalog::PALETTE_PACKAGE_ID
-                        && manifest
-                            .release
-                            .packages
-                            .iter()
-                            .any(|package| package.package_id() == binding.package_id))
-                && lookup.candidate_binding.is_none_or(|candidate| {
-                    candidate.instance_id == binding.connection_id.to_string()
-                })
+                && packages.contains(&binding.package_id)
+                && (lookup.package_id == wamn_catalog::PALETTE_PACKAGE_ID
+                    || binding.package_id == lookup.package_id)
         });
         let binding = bindings.next();
-        anyhow::ensure!(
-            bindings.next().is_none(),
-            "connection alias has multiple binding owners"
-        );
         let read_only = match binding {
             Some(binding) => declaration
                 .mode
@@ -1466,6 +1463,17 @@ impl WamnPostgres {
                 .context("loaded release has no mode for this binding")?,
             None => true,
         };
+        for other in bindings {
+            anyhow::ensure!(
+                binding.is_some_and(|binding| binding.connection_id == other.connection_id
+                    && binding.version == other.version)
+                    && declaration
+                        .mode
+                        .read_only(&other.package_id, lookup.store_alias)
+                        == Some(read_only),
+                "connection alias has conflicting binding selections"
+            );
+        }
         let (fact, generation) = match binding {
             Some(binding) => match facts.connection(&binding.connection_id).await? {
                 Some(fact) => {

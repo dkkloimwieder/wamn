@@ -815,7 +815,9 @@ mod tests {
     }
 
     async fn origin() -> anyhow::Result<Origin> {
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let interface = std::net::UdpSocket::bind("0.0.0.0:0")?;
+        interface.connect("192.0.2.1:9")?;
+        let listener = TcpListener::bind((interface.local_addr()?.ip(), 0)).await?;
         let address = listener.local_addr()?;
         let (sent, requests) = mpsc::channel(16);
         let task = tokio::spawn(async move {

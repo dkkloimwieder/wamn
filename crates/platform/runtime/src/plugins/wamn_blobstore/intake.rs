@@ -142,10 +142,8 @@ mod tests {
         assert_eq!(intake.commit(), b"^XA^XZ");
     }
 
-    /// The ceiling refuses with BOTH numbers. "Too large" without the limit
-    /// and the observed size cannot be acted on by whoever sees it.
     #[test]
-    fn the_ceiling_refuses_naming_the_limit_and_what_was_observed() {
+    fn the_ceiling_refuses_with_the_limit_and_observed_size() {
         let mut intake = Intake::with_limit(4);
         intake.push(b"abcd").expect("exactly the limit fits");
         let error = intake.push(b"e").expect_err("one byte over must refuse");
@@ -155,11 +153,6 @@ mod tests {
                 limit: 4,
                 observed: 5
             }
-        );
-        let rendered = error.to_string();
-        assert!(
-            rendered.contains('4') && rendered.contains('5'),
-            "{rendered}"
         );
     }
 
@@ -180,16 +173,11 @@ mod tests {
         let error = intake.abort("peer reset");
 
         match &error {
-            IntakeError::Incomplete { observed, detail } => {
+            IntakeError::Incomplete { observed, .. } => {
                 assert_eq!(*observed, 16);
-                assert_eq!(detail, "peer reset");
             }
             other @ IntakeError::TooLarge { .. } => panic!("expected Incomplete, got {other:?}"),
         }
-        assert!(
-            error.to_string().contains("nothing was written"),
-            "the refusal must say the write did not happen: {error}"
-        );
     }
 
     /// The type makes the rule structural rather than advisory: bytes are

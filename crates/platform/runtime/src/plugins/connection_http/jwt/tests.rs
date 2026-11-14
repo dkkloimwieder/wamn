@@ -132,7 +132,8 @@ async fn endpoint(algorithm: &'static str, scope: &'static str) -> Endpoint {
     use hyper_util::rt::TokioIo;
     use std::sync::{Arc, Mutex};
 
-    let certificate = rcgen::generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
+    let address = super::super::tests::interface_address();
+    let certificate = rcgen::generate_simple_self_signed(vec![address.to_string()]).unwrap();
     let tls = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::aws_lc_rs::default_provider(),
     ))
@@ -155,7 +156,7 @@ async fn endpoint(algorithm: &'static str, scope: &'static str) -> Endpoint {
     .with_no_client_auth();
     let transport = super::super::HttpTransport::with_tls_config(client);
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = tokio::net::TcpListener::bind((address, 0)).await.unwrap();
     let base = format!("https://{}", listener.local_addr().unwrap());
     let url = format!("{base}/token");
     let audience = url.clone();

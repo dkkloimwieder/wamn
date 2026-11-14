@@ -66,9 +66,9 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     let original = application_fixture::load_release()?;
     let mut manifest = serde_json::to_value(original.manifest())?;
     manifest["components"][0]["descriptor"]["connections"] = json!([
-        {"store-alias":"files","requirement-type":"blobstore"},
-        {"store-alias":"files-read","requirement-type":"blobstore"},
-        {"store-alias":"files-no-cdn","requirement-type":"blobstore"}
+        {"store-alias":"files","requirement-type":"blobstore","mode":"write"},
+        {"store-alias":"files-read","requirement-type":"blobstore","mode":"read"},
+        {"store-alias":"files-no-cdn","requirement-type":"blobstore","mode":"write"}
     ]);
     let manifest: wamn_catalog::ServingManifest = serde_json::from_value(manifest)?;
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
