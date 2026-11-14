@@ -7,8 +7,8 @@ license.workspace = true
 
 [features]
 default = []
-test-util = []
-ops = ["wamn-control-provision/ops"]
+test-util = ["wamn-platform-install/test-util"]
+ops = ["wamn-control-provision/ops", "wamn-platform-install/ops"]
 
 [[test]]
 name = "create_user_live"
@@ -24,6 +24,7 @@ name = "rest_connector_publication"
 path = "../../../apps/rest_connector/tests/publication.rs"
 
 [dependencies]
+wamn-platform-install.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
 wamn-broker = { workspace = true }
@@ -64,6 +65,7 @@ wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }
 
 [dev-dependencies]
+wamn-platform-install = { workspace = true, features = ["test-util"] }
 wamn-build.workspace = true
 object_store.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio"] }

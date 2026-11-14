@@ -1,0 +1,23 @@
+{{- with .Values.publication }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Publication
+metadata:
+  name: {{ .database }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    wamn.org: {{ .org | quote }}
+    wamn.project: {{ .project | quote }}
+    wamn.env: {{ .env | quote }}
+spec:
+  name: {{ .name }}
+  cluster: {name: {{ .cluster }}}
+  dbname: {{ .database }}
+  target:
+    objects:
+    {{- range .schemas }}
+      - tablesInSchema: {{ . | quote }}
+    {{- end }}
+  parameters:
+    publish: {{ .publish | quote }}
+  publicationReclaimPolicy: retain
+{{- end }}

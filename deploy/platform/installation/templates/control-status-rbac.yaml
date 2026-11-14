@@ -1,0 +1,21 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wamn-control-status
+  namespace: {{ .Values.org }}
+rules:
+- apiGroups: [""]
+  resources: [pods]
+  verbs: [get, list, watch]
+- apiGroups: [apps]
+  resources: [deployments]
+  verbs: [get, list, watch]
+- apiGroups: [runtime.wasmcloud.dev]
+  resources: [workloaddeployments]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [create, get, update]
+- apiGroups: [""]
+  resources: [configmaps]
+  verbs: [get]

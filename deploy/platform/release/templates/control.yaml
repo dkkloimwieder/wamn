@@ -1,4 +1,56 @@
-{{- range .Values.controlResources }}
+{{- if .Values.controlService }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-http" (default .Release.Name .Values.name) }}
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
 ---
-{{ toYaml . }}
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: {{ printf "%s-http" (default .Release.Name .Values.name) }}
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
+spec:
+  replicas: 1
+  template:
+    spec:
+      hostSelector:
+        hostgroup: {{ (default .Release.Name .Values.name) }}
+      environment: {{ (default .Release.Namespace .Values.namespace) }}
+      kubernetes:
+        service:
+          name: {{ printf "%s-http" (default .Release.Name .Values.name) }}
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          version: "0.3.0"
+          interfaces: [handler]
+          config:
+            host: {{ .Values.controlService.host | quote }}
+        - namespace: wamn
+          package: flow-http-routing
+          version: "0.1.0"
+          interfaces: [routing]
+        - namespace: wamn
+          package: operation
+          version: "0.1.0"
+          interfaces: [operation]
+        - namespace: wamn
+          package: router-delivery
+          version: "0.4.0"
+          interfaces: [delivery]
+      components:
+        - name: flow-http
+          image: {{ .Values.controlService.image | quote }}
+          imagePullPolicy: Always
+          poolSize: 0
+          localResources:
+            allowedIpNameLookups: []
 {{- end }}

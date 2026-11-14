@@ -21,26 +21,42 @@ pub const SAMPLED_TRACE_IDS: [&str; 5] = [
     "0000000000000000000000000000004c",
 ];
 
+/// Render the platform collector chart with GCP configuration and test environment values.
+pub fn deployed_collector(repository: &Path) -> anyhow::Result<Vec<Value>> {
+    let chart = repository.join("deploy/platform/installation");
+    let mut values: Value = serde_yaml::from_slice(&std::fs::read(chart.join("values-gcp.yaml"))?)?;
+    values["org"] = "fixture".into();
+    values["registry"] = "registry.invalid".into();
+    values["opentelemetry-collector"]["extraEnvs"] = json!([
+        {"name":"CLUSTER","value":"fixture"},{"name":"PROJECT","value":"fixture"},
+        {"name":"REGION","value":"us-central1"},{"name":"BUCKET","value":"fixture"}
+    ]);
+    wamn_kubernetes::helm::template(
+        &json!({"chart":chart,"name":"wamn","namespace":"platform","values":values}),
+    )
+}
+
 /// Render the cluster test collector from the deployed receiver and processors.
 /// Only file exporters and the retained Prometheus metric pipeline differ.
 pub fn render_collector(repository: &Path, work: &Path) -> anyhow::Result<std::path::PathBuf> {
     use serde::Deserialize as _;
-    let deployed = std::fs::read_to_string(repository.join("deploy/platform/otel-collector.yaml"))?;
-    let documents = serde_yaml::Deserializer::from_str(&deployed)
-        .map(Value::deserialize)
-        .collect::<Result<Vec<_>, _>>()?;
+    let documents = deployed_collector(repository)?;
     let source = documents
         .iter()
-        .find(|document| document["kind"] == "ConfigMap")
+        .find(|document| {
+            document["kind"] == "ConfigMap" && document["metadata"]["name"] == "otel-collector"
+        })
         .context("deployed collector has a ConfigMap")?;
     let mut configuration: Value = serde_yaml::from_str(
-        source["data"]["config.yaml"]
+        source["data"]["relay"]
             .as_str()
             .context("deployed collector has configuration")?,
     )?;
     let image = documents
         .iter()
-        .find(|document| document["kind"] == "Deployment")
+        .find(|document| {
+            document["kind"] == "Deployment" && document["metadata"]["name"] == "otel-collector"
+        })
         .context("deployed collector has a Deployment")?["spec"]["template"]["spec"]["containers"]
         [0]["image"]
         .as_str()
@@ -611,48 +627,6 @@ mod tests {
         repeated.extend(serde_json::to_vec(&document).unwrap());
         repeated.push(b'\n');
         assert!(observed(&file_trace(&repeated, ID).unwrap()).is_err());
-    }
-
-    #[test]
-    fn rendered_cluster_collector_keeps_deployed_trace_processing_and_sampled_ids() {
-        use serde::Deserialize as _;
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let scratch = crate::scratch::ScratchRoot::create().unwrap();
-        let rendered = render_collector(&repository, scratch.path()).unwrap();
-        let contents = std::fs::read_to_string(rendered).unwrap();
-        let documents = serde_yaml::Deserializer::from_str(&contents)
-            .map(|document| Value::deserialize(document).unwrap())
-            .collect::<Vec<_>>();
-        let rendered: Value =
-            serde_yaml::from_str(documents[0]["data"]["config.yaml"].as_str().unwrap()).unwrap();
-        let source =
-            std::fs::read_to_string(repository.join("deploy/platform/otel-collector.yaml"))
-                .unwrap();
-        let deployed = serde_yaml::Deserializer::from_str(&source)
-            .map(|document| Value::deserialize(document).unwrap())
-            .find(|document| document["kind"] == "ConfigMap")
-            .unwrap();
-        let deployed: Value =
-            serde_yaml::from_str(deployed["data"]["config.yaml"].as_str().unwrap()).unwrap();
-        assert_eq!(rendered["receivers"], deployed["receivers"]);
-        for (name, processor) in deployed["processors"].as_object().unwrap() {
-            assert_eq!(rendered["processors"][name], *processor, "{name}");
-        }
-        let mut expected = deployed["service"]["pipelines"]["traces"].clone();
-        expected["exporters"] = json!(["file/traces"]);
-        assert_eq!(rendered["service"]["pipelines"]["traces"], expected);
-        assert!(
-            rendered["processors"]
-                .get("probabilistic_sampler")
-                .is_none()
-        );
-        assert!(
-            rendered["service"]["pipelines"]["traces"]["processors"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|name| name != "probabilistic_sampler")
-        );
     }
 
     #[test]

@@ -98,14 +98,26 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
         request.env,
     )?;
     prepare_kubeconfig(Path::new("/work/kubeconfig"))?;
-    crate::platform::operations::worker_chart(
-        Path::new("/usr/local/share/wamn"),
-        Path::new("/operation-inputs"),
-        Path::new("/work/chart"),
-    )?;
+    let installed = crate::platform::installed::InstalledPlatform::read(
+        &wamn_release_control::release_chart::Target {
+            kubeconfig: "/work/kubeconfig".into(),
+            context: String::new(),
+            namespace: request.org.into(),
+        },
+    )
+    .await?
+    .context("platform is not installed")?;
+    let reference = installed.values["platform"]["chart"]
+        .as_str()
+        .context("installed platform has no chart")?;
+    ensure!(
+        reference.starts_with("oci://"),
+        "worker requires a published chart"
+    );
+    let chart = crate::platform::artifact_plan::select(Path::new(reference))?;
     let mut platform = Platform::apply_from_env()?;
-    let configuration: Value =
-        serde_json::from_slice(&std::fs::read("/operation-inputs/configuration.json")?)?;
+    platform.chart = chart.directory().to_owned();
+    let configuration = &installed.values["configuration"];
     platform.insecure_registry = configuration["insecure_registry"]
         .as_bool()
         .context("registry transport is absent")?;
@@ -121,11 +133,11 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
             .context("component registry is absent")?
             .into(),
     );
-    platform.target.namespace = "hosts".into();
+    platform.target.namespace = request.org.into();
     let object: Value = wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,
         &platform.target.context,
-        "hosts",
+        request.org,
         "configmap",
         &coordinate,
     )
@@ -148,7 +160,27 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
     super::runtime::resolve_platform(&mut platform, request.org).await?;
     let administrator = if matches!(request.operation, "apply" | "reset") {
         let cluster = sql::reset::recorded_cluster(&platform, &document).await?;
-        Some(crate::platform::operations::administrator(&cluster)?)
+        Some({
+            let name = wamn_control_provision::project_env_secret_name(
+                request.org,
+                request.project,
+                request.env,
+            );
+            let configuration: Value = wamn_kubernetes::kubectl::get(
+                &platform.target.kubeconfig,
+                &platform.target.context,
+                request.org,
+                "configmap",
+                &name,
+            )
+            .await?
+            .context("environment connection configuration is absent")?;
+            let _ = cluster;
+            configuration["data"]["administration.json"]
+                .as_str()
+                .context("environment administration connection is absent")?
+                .to_owned()
+        })
     } else {
         None
     };

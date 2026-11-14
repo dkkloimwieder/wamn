@@ -486,9 +486,7 @@ pub async fn provision_journey_control(
         pool: "route-auth-pg18".to_owned(),
         record: Some(OrgRecord {
             system_database_url: system_url.to_owned(),
-            admin: DEVELOPER_EMAIL.to_owned(),
         }),
-        cluster_namespace: "wamn-system".to_owned(),
     })
     .await
     .context("stamp the journey org and environment policies through provision-org")

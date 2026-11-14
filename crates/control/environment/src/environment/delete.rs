@@ -429,6 +429,7 @@ async fn delete_locked(
             .context("database host")?
             .trim_end_matches("-rw");
         crate::provision_project_env::workload::remove_roles(
+            &platform.system_database_url,
             &platform.target.kubeconfig,
             &platform.target.context,
             org,

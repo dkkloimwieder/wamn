@@ -1,5 +1,4 @@
-# 3-node local dev cluster (plan 1.1). NodePort 30950 on the control-plane
-# node maps to host port 80. Admission plugins mirror upstream's e2e config.
+# The local cluster maps its ingress ports to host ports 80 and 443.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 kubeadmConfigPatches:
@@ -14,5 +13,6 @@ nodes:
       - containerPort: 30950
         hostPort: 80
         protocol: TCP
-  - role: worker
-  - role: worker
+      - containerPort: 30951
+        hostPort: 443
+        protocol: TCP

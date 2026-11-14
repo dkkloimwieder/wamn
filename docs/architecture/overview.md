@@ -37,7 +37,8 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
 | `wamn-package-control` | Package admission and artifacts |
 | `wamn-release-control` | Release publication and charts |
-| `wamn-environment-control` | Environment provisioning, package application, schema lifecycle, and platform operations |
+| `wamn-environment-control` | Environment provisioning, package application, and schema lifecycle |
+| `wamn-platform-install` | Helm installation, platform configuration, and explicit bootstrap Jobs |
 | `wamn-dev-control` | Development orchestration and process supervision |
 | `wamn-ctl` | Command-line client of the four control crates |
 
@@ -54,7 +55,19 @@ Package artifacts contain three tar layers and no browser files.
 A deployed service reads package facts through `wamn-package-artifact`.
 A control operation takes ordinary inputs, keeps its own validation, and returns its result without printing.
 
-The four control crates live under `crates/control/{package,release,environment,dev}`.
+`wamn-platform-install` lives under `crates/control/platform-install`.
+Helm records infrastructure in `platform/wamn-infrastructure` and platform services in `platform/wamn`.
+The org chart owns PostgreSQL clusters and backup resources in the org namespace.
+The environment chart owns databases, publications, worker accounts, hosts, and materializers in that same namespace.
+Credential Secrets and bootstrap SQL Jobs stay outside Helm values.
+Each org chart update derives its complete role list from registry facts and fixed platform definitions.
+Bootstrap declares only the fixed platform roles. Helm stores the derived list.
+Each worker fetches the selected chart by its immutable OCI digest.
+The installed-platform reader supplies registry and chart configuration to later operations.
+Host groups reference shared configuration through a ConfigMap.
+Cloud project, node pool, and OpenTofu tools live in xtask.
+
+The other control crates live under `crates/control/{package,release,environment,dev}`.
 They run the `git`, `docker`, `kubectl`, and `cargo` processes that their work needs.
 `wamn-dev-control::owned_command` owns the child process groups.
 The environment crate's `ops` feature adds the user-creation, broker-advisory reporting, and history-pruning verbs.

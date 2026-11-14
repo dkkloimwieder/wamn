@@ -47,6 +47,8 @@ pub struct WebConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Route {
+    #[serde(skip)]
+    namespace: String,
     host: String,
     release: String,
     api: String,
@@ -118,13 +120,12 @@ impl Releases {
         })
     }
     async fn request(&self, path: &str) -> anyhow::Result<serde_json::Value> {
-        Ok(self
-            .api
-            .get(format!("/api/v1/namespaces/hosts/configmaps{path}"))
-            .await?)
+        Ok(self.api.get(path.to_owned()).await?)
     }
     async fn routes(&self) -> anyhow::Result<BTreeMap<String, Route>> {
-        let mut objects = self.request("?labelSelector=wamn.route%3Dtrue").await?;
+        let mut objects = self
+            .request("/api/v1/configmaps?labelSelector=wamn.route%3Dtrue")
+            .await?;
         let objects = objects["items"]
             .as_array_mut()
             .context("route ConfigMap list has no items")?;
@@ -141,6 +142,10 @@ impl Releases {
                     .as_str()
                     .context("route ConfigMap lacks route.json")?,
             )?;
+            object["metadata"]["namespace"]
+                .as_str()
+                .context("route namespace is absent")?
+                .clone_into(&mut route.namespace);
             routes
                 .entry(std::mem::take(&mut route.host))
                 .or_insert(route);
@@ -148,9 +153,14 @@ impl Releases {
         Ok(routes)
     }
 
-    async fn read(&self, name: &str) -> anyhow::Result<LiveRelease> {
-        ensure!(segment(name), "invalid release name");
-        let object = self.request(&format!("/{name}")).await?;
+    async fn read(&self, namespace: &str, name: &str) -> anyhow::Result<LiveRelease> {
+        ensure!(
+            segment(namespace) && segment(name),
+            "invalid release coordinate"
+        );
+        let object = self
+            .request(&format!("/api/v1/namespaces/{namespace}/configmaps/{name}"))
+            .await?;
         serde_json::from_str(
             object["data"]["release.json"]
                 .as_str()
@@ -422,7 +432,7 @@ async fn respond(
         }
         return Ok(response.map(http_body_util::BodyExt::boxed_unsync));
     }
-    let row = releases.read(&route.release).await?;
+    let row = releases.read(&route.namespace, &route.release).await?;
     Ok(boxed(
         web.answer(&row, &host, path, request.method()).await?,
     ))
@@ -540,7 +550,7 @@ pub async fn probe(path: &Path) -> anyhow::Result<()> {
     let client: Client<HttpConnector, Empty<Bytes>> =
         Client::builder(TokioExecutor::new()).build_http();
     for (host, route) in releases.routes().await? {
-        let row = releases.read(&route.release).await?;
+        let row = releases.read(&route.namespace, &route.release).await?;
         if row.platform_ui.is_empty() && !row.clients.contains_key(&host) {
             continue;
         }

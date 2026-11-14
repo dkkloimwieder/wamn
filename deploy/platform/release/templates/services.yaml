@@ -4,8 +4,8 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $.Release.Name }}-http
-  namespace: {{ $.Release.Namespace }}
+  name: {{ (default $.Release.Name $.Values.name) }}-http
+  namespace: {{ (default $.Release.Namespace $.Values.namespace) }}
   annotations:
     {{- include "release.annotations" $ | nindent 4 }}
 spec:
@@ -19,14 +19,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $.Release.Name }}-files
-  namespace: {{ $.Release.Namespace }}
+  name: {{ (default $.Release.Name $.Values.name) }}-files
+  namespace: {{ (default $.Release.Namespace $.Values.namespace) }}
   annotations:
     {{- include "release.annotations" $ | nindent 4 }}
 spec:
   type: ClusterIP
   selector:
-    wasmcloud.com/hostgroup: {{ $.Release.Name | quote }}
+    wasmcloud.com/hostgroup: {{ (default $.Release.Name $.Values.name) | quote }}
     wamn.release: {{ required "runtime-operator.runtime.podLabels.wamn.release is required" (index $.Values "runtime-operator" "runtime" "podLabels" "wamn.release") | quote }}
   ports:
     - name: files

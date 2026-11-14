@@ -1,0 +1,12 @@
+dependencies:
+- name: cert-manager
+  repository: oci://quay.io/jetstack/charts
+  version: v1.21.0
+- name: cloudnative-pg
+  repository: https://cloudnative-pg.github.io/charts
+  version: 0.28.1
+- name: traefik
+  repository: https://traefik.github.io/charts
+  version: 42.4.0
+digest: sha256:ee4f7e4c1884117716a552d7b24bc4776f3ca157974d711e3d08041b544127a7
+generated: "2026-11-13T20:46:01.323401588-05:00"

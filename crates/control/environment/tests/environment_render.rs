@@ -358,8 +358,12 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
                 .as_u64()
                 .is_some_and(|replicas| replicas > 0))
     );
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let prepared =
+        wamn_environment_control::platform::artifact_plan::test_util::prepared_chart(&repository)?;
     let image = format!("registry.invalid/materializer@sha256:{}", "a".repeat(64));
-    let materializer = ensure::materializer_workload(&document, NAMESPACE, &image, false)?;
+    let materializer =
+        ensure::materializer_workload(&prepared.0, &document, NAMESPACE, &image, false)?;
     assert_eq!(materializer["spec"]["replicas"], 1);
     Ok(())
 }
@@ -581,114 +585,78 @@ fn prekind_wms_pat_renders() -> anyhow::Result<()> {
 }
 
 mod shared_resources {
-    use serde::Deserialize as _;
-    use serde_json::{Value, json};
-    use wamn_environment_control::environment::{document::EnvironmentDocument, ensure};
-    use wamn_release_control::release_chart::{self, ImageSet};
-    use wamn_test_infrastructure::scratch::ScratchRoot;
+    use super::*;
+    use wamn_environment_control::{
+        environment::ensure,
+        platform::{artifact_plan, resources},
+    };
 
     #[test]
-    fn shared_materializer_has_stable_placement_outside_application_releases() -> anyhow::Result<()>
-    {
-        let mut document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
+    fn shared_materializer_and_host_have_one_environment_chart_owner() -> anyhow::Result<()> {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let prepared = artifact_plan::test_util::prepared_chart(&repository)?;
+        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
         let image = format!("registry.example/materializer@sha256:{}", "a".repeat(64));
-        let workload = ensure::materializer_workload(&document, "hosts", &image, false)?;
-        let resources = &workload["spec"]["template"]["spec"]["service"]["localResources"];
-        assert_eq!(resources["allowedIpNameLookups"], json!([]));
-        for (key, value) in resources["environment"]["config"].as_object().unwrap() {
-            assert!(key != "DATABASE_URL" && !key.ends_with("_PG_URL"));
-            assert!(
-                !value
-                    .as_str()
-                    .and_then(|value| url::Url::parse(value).ok())
-                    .is_some_and(|url| matches!(url.scheme(), "postgres" | "postgresql"))
-            );
-        }
-        let values = ensure::materializer_host_values(&document, 30, 1, 120, None, false, None)?;
-        document.applications = serde_json::from_value(json!({
-            "a":{"packages":["a"],"current":format!("sha256:{}", "b".repeat(64)),"revocation_seconds":5,"hostname":"a.example.com"},
-            "b":{"packages":["b"],"current":format!("sha256:{}", "c".repeat(64)),"revocation_seconds":5,"hostname":"b.example.com"}
-        }))?;
-        assert_eq!(
-            workload,
-            ensure::materializer_workload(&document, "hosts", &image, false)?
+        let workload =
+            ensure::materializer_workload(&prepared.0, &document, "acme", &image, false)?;
+        let mut values: Value =
+            serde_yaml::from_slice(&std::fs::read(prepared.0.join("values.yaml"))?)?;
+        resources::merge(
+            &mut values,
+            ensure::materializer_host_values(&document, 70, 1, 120, None, false, None)?,
         );
-        assert_eq!(
+        let input = &workload["spec"]["template"]["spec"]["service"]["localResources"]["environment"]
+            ["config"];
+        values["materializer"] = json!({"name":workload["metadata"]["name"],"hostGroup":values["runtime-operator"]["runtime"]["hostGroups"][0]["name"],
+            "image":image,"projectEnvKey":wamn_registry::project_env_key("acme","apps","dev"),
+            "org":document.org,"project":document.project,"environment":document.env,"stream":input["WAMN_MAT_STREAM"],"fetchMs":1000,"sweepMs":5000});
+        resources::merge(
+            &mut values,
+            wamn_platform_install::environment::publication_values(
+                &document.triple(),
+                "a1b2c3d4",
+                "acme-dev",
+                "events",
+                &["app".into()],
+            ),
+        );
+        let entry = wamn_platform_install::environment::entry(
+            &prepared.0.join("platform/environment"),
+            "acme",
+            "shared",
             values,
-            ensure::materializer_host_values(&document, 30, 1, 120, None, false, None)?
-        );
-        let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
-        assert_eq!(
-            workload["spec"]["template"]["spec"]["hostSelector"],
-            json!({"hostgroup":group["name"]})
-        );
-        assert_eq!(
-            workload["spec"]["template"]["spec"]["service"]["image"],
-            image
-        );
-        for application in document.applications.keys() {
-            assert_ne!(
-                group["name"],
-                wamn_environment_control::environment::analyse::application_release_name(
-                    &document,
-                    application
-                )?
-            );
-        }
-        let scratch = ScratchRoot::create()?;
-        let chart = scratch.path().join("chart");
-        release_chart::stamp(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../deploy/platform/release"),
-            &ImageSet {
-                host: format!("registry.example/host:dev@sha256:{}", "d".repeat(64)),
-                http: format!("registry.example/http@sha256:{}", "e".repeat(64)),
-                materializer: image,
-            },
-            &chart,
         )?;
-        let file = scratch.path().join("values.yaml");
-        std::fs::write(&file, serde_yaml::to_string(&values)?)?;
-        let output = std::process::Command::new("helm")
-            .args(["template", group["name"].as_str().unwrap()])
-            .arg(&chart)
-            .args(["--namespace", "hosts", "--skip-crds", "-f"])
-            .arg(file)
-            .output()?;
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let objects = serde_yaml::Deserializer::from_str(std::str::from_utf8(&output.stdout)?)
-            .map(Value::deserialize)
-            .collect::<Result<Vec<_>, _>>()?;
+        let objects = wamn_kubernetes::helm::template(&entry)?;
+        let publication = objects
+            .iter()
+            .find(|object| object["kind"] == "Publication")
+            .unwrap();
+        for (label, expected) in [
+            ("wamn.org", document.org.as_str()),
+            ("wamn.project", document.project.as_str()),
+            ("wamn.env", document.env.as_str()),
+        ] {
+            assert_eq!(publication["metadata"]["labels"][label], expected);
+        }
         let host = objects
             .iter()
             .find(|object| object["kind"] == "Deployment")
             .unwrap();
-        let pod = &host["spec"]["template"];
+        let materializer = objects
+            .iter()
+            .find(|object| object["kind"] == "WorkloadDeployment")
+            .unwrap();
         assert_eq!(
-            pod["metadata"]["labels"]["wasmcloud.com/hostgroup"],
-            group["name"]
+            materializer["spec"]["template"]["spec"]["hostSelector"]["hostgroup"],
+            host["spec"]["template"]["metadata"]["labels"]["wasmcloud.com/hostgroup"]
         );
-        assert!(pod["metadata"]["labels"].get("wamn.release").is_none());
-        assert!(
-            pod["metadata"]["annotations"]
-                .get("wamn.release-digest")
-                .is_none()
+        assert_eq!(
+            materializer["metadata"]["namespace"],
+            host["metadata"]["namespace"]
         );
-        assert!(
-            objects
-                .iter()
-                .all(|object| object["kind"] != "WorkloadDeployment")
-        );
-        assert!(
-            !pod["spec"]["containers"][0]["args"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|arg| arg.as_str().unwrap().starts_with("--release-"))
+        assert_eq!(
+            materializer["spec"]["template"]["spec"]["service"]["image"],
+            image
         );
         Ok(())
     }
@@ -714,6 +682,7 @@ async fn unavailable_environment_authority_never_substitutes_checkout_selections
             namespace: NAMESPACE.into(),
         },
         chart: scratch.path().join("absent-chart"),
+        chart_download: None,
         release_artifact_base: "registry.invalid/releases".into(),
         registry_token_metadata: false,
         registry_auth_file: scratch.path().join("absent-auth.json"),

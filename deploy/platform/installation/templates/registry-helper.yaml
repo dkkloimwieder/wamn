@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wamn-registry-helper
+  namespace: {{ .Values.org }}
+data:
+  config.json: {{ dict "credHelpers" (dict (.Values.registry | splitList "/" | first) "wamn") | toJson | quote }}

@@ -19,6 +19,8 @@ wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
 wamn-build.workspace = true
 anyhow.workspace = true
+chrono = { workspace = true, features = ["clock"] }
+wamn-kubernetes.workspace = true
 cargo_metadata = "0.23"
 csv = "1"
 base64.workspace = true
@@ -35,6 +37,7 @@ wamn-compiler.workspace = true
 wamn-component-composer.workspace = true
 wamn-release-control.workspace = true
 wamn-environment-control.workspace = true
+wamn-platform-install.workspace = true
 wamn-dev-control.workspace = true
 wamn-package-control.workspace = true
 wamn-package-artifact.workspace = true

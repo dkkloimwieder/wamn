@@ -1,4 +1,10 @@
-//! BuildKit publication and chart stamping.
+#[path = "platform_pools.rs"]
+mod platform_pools;
+#[path = "platform_project.rs"]
+mod platform_project;
+#[path = "platform_tofu.rs"]
+mod platform_tofu;
+// BuildKit publication and chart stamping.
 
 use crate::process;
 use anyhow::{Context as _, ensure};
@@ -39,7 +45,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     let ui = args
         .cluster
         .as_deref()
-        .map(wamn_environment_control::platform::document::ClusterDocument::compile)
+        .map(wamn_platform_install::platform::document::ClusterDocument::compile)
         .transpose()?
         .is_some_and(|cluster| !cluster.buckets.web.is_empty());
     let components = tempfile::tempdir()?;
@@ -234,14 +240,39 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     }
     values["platformUi"] = ui_digest.unwrap_or_default().into();
     std::fs::write(path, serde_yaml::to_string(&values)?)?;
-    wamn_environment_control::platform::artifact_plan::prepare_payload(&root, &stamped)?;
-    println!("{}", stamped.display());
+    wamn_platform_install::platform::artifact_plan::prepare_payload(&root, &stamped)?;
     if !palette_pins.is_empty() {
         std::fs::write(
             args.out.join("palette.json"),
             wamn_digest::canonical_json_bytes(&serde_json::to_value(palette_pins)?),
         )?;
     }
+    process::run(
+        &root,
+        "helm",
+        &[
+            "package",
+            stamped.to_str().context("chart path")?,
+            "--destination",
+            args.out.to_str().context("chart output")?,
+        ],
+    )
+    .await?;
+    let archive = args.out.join(format!("release-{version}.tgz"));
+    let destination = format!("oci://{}/wamn/charts", args.registry);
+    let archive = archive.to_str().context("chart archive")?;
+    let mut push = vec!["push", archive, destination.as_str()];
+    if loopback(&args.registry) {
+        push.push("--plain-http");
+    }
+    let registry_auth = std::env::var("WAMN_REGISTRY_AUTH_FILE").ok();
+    if let Some(configuration) = &registry_auth {
+        push.extend(["--registry-config", configuration]);
+    }
+    process::run(&root, "helm", &push).await?;
+    let repository = format!("{}/wamn/charts/release", args.registry);
+    let digest = inspect(&root, &format!("{repository}:{version}")).await?;
+    println!("oci://{repository}@{digest}");
     Ok(())
 }
 
@@ -281,3 +312,8 @@ fn loopback(registry: &str) -> bool {
         Some("localhost" | "127.0.0.1")
     ) || registry.starts_with("[::1]")
 }
+
+pub use self::platform_pools::{Direction, resize, work_directory};
+/// Cloud project input and OpenTofu output.
+pub use self::platform_project::ProjectDocument;
+pub use self::platform_tofu::render_project_tofu;

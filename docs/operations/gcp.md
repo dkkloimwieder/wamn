@@ -386,7 +386,7 @@ gcloud compute disks list --project wamn-dev --format="table(name,sizeGb,users.b
 ```
 
 The disks of the volumes of `wamn-pg-1`, `data-wamn-nats-0`, and `otel-collector-queue` stay after the delete.
-The collector's [volume claim](../../deploy/platform/otel-collector.yaml#L98) requests `1Gi`.
+The collector's [volume claim](../../deploy/platform/installation/values-gcp.yaml) requests `1Gi`.
 Delete each one by name, one command for each disk:
 
 ```bash

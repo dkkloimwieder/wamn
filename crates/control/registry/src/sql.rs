@@ -462,3 +462,13 @@ pub const IDENTITY_SRC_SESSION_REGISTERED_ORG_SQL: &str =
 
 /// Every project deployment affected by an environment lifecycle change.
 pub const ENVIRONMENT_PROJECTS: &str = "SELECT project,env FROM registry.environment_projects WHERE org=$1 AND env=ANY($2) ORDER BY env,project";
+
+/// Registered orgs whose resources belong to the supplied namespace.
+pub const INSTALL_ORGS: &str = "SELECT id FROM registry.orgs WHERE id=$1 ORDER BY id";
+
+/// Project coordinates, physical instance, org placement, pool, and policy name.
+pub const INSTALL_PROJECTS: &str = "SELECT ep.org, ep.project, ep.env, ep.instance_suffix, \
+    o.placement_type, o.pool_cluster, e.policy_name \
+    FROM registry.environment_projects ep JOIN registry.orgs o ON o.id=ep.org \
+    JOIN registry.environments e ON e.org=ep.org AND e.env=ep.env \
+    WHERE ep.org=$1 ORDER BY ep.project, ep.env";

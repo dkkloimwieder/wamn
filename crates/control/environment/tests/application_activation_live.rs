@@ -383,6 +383,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             namespace: "hosts".into(),
         },
         chart: PathBuf::new(),
+        chart_download: None,
         release_artifact_base: format!("{}/releases", registry.address),
         registry_token_metadata: false,
         registry_auth_file: registry.auth.clone(),

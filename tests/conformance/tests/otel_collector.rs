@@ -8,11 +8,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde::Deserialize as _;
-use serde_yaml::Value;
-
-const MANIFEST: &str = "deploy/platform/otel-collector.yaml";
-const VALUES: &str = "deploy/gcp/otel-collector-values.yaml";
+use serde_json::Value;
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -20,15 +16,6 @@ fn repository_root() -> PathBuf {
         .and_then(Path::parent)
         .expect("conformance package must live at tests/conformance")
         .to_path_buf()
-}
-
-fn documents(path: &str) -> Vec<Value> {
-    let path = repository_root().join(path);
-    let source = fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-    serde_yaml::Deserializer::from_str(&source)
-        .map(|document| Value::deserialize(document).expect("each document parses"))
-        .collect()
 }
 
 fn find<'a>(documents: &'a [Value], type_: &str, name: &str) -> &'a Value {
@@ -40,7 +27,8 @@ fn find<'a>(documents: &'a [Value], type_: &str, name: &str) -> &'a Value {
 
 #[test]
 fn the_collector_configuration_passes_the_pinned_image_validate() {
-    let manifest = documents(MANIFEST);
+    let manifest =
+        wamn_test_infrastructure::telemetry::deployed_collector(&repository_root()).unwrap();
     let image =
         find(&manifest, "Deployment", "otel-collector")["spec"]["template"]["spec"]["containers"]
             [0]["image"]
@@ -50,13 +38,13 @@ fn the_collector_configuration_passes_the_pinned_image_validate() {
         image.contains("@sha256:"),
         "the collector image {image} is not pinned by digest"
     );
-    let configuration = find(&manifest, "ConfigMap", "otel-collector")["data"]["config.yaml"]
+    let configuration = find(&manifest, "ConfigMap", "otel-collector")["data"]["relay"]
         .as_str()
         .expect("the ConfigMap holds config.yaml");
-    let values = documents(VALUES);
-    let values = find(&values, "ConfigMap", "otel-collector-values")["data"]
-        .as_mapping()
-        .expect("the values ConfigMap holds data");
+    let deployment = find(&manifest, "Deployment", "otel-collector");
+    let values = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+        .as_array()
+        .unwrap();
 
     let directory =
         std::env::temp_dir().join(format!("wamn-otel-collector-{}", std::process::id()));
@@ -74,12 +62,10 @@ fn the_collector_configuration_passes_the_pinned_image_validate() {
     docker
         .args(["run", "--rm", "-v"])
         .arg(format!("{}:/configuration:ro", directory.display()));
-    for (name, value) in values {
-        let (name, value) = (
-            name.as_str().expect("a name"),
-            value.as_str().expect("a value"),
-        );
-        docker.arg("-e").arg(format!("{name}={value}"));
+    for variable in values {
+        if let (Some(name), Some(value)) = (variable["name"].as_str(), variable["value"].as_str()) {
+            docker.arg("-e").arg(format!("{name}={value}"));
+        }
     }
     let output = docker
         .args([image, "validate", "--config=/configuration/config.yaml"])

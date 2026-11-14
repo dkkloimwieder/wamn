@@ -1,0 +1,32 @@
+apiVersion: v2
+name: wamn-platform
+type: application
+version: 0.1.143
+dependencies:
+- name: runtime-operator
+  version: 2.11.0
+  repository: oci://ghcr.io/wasmcloud/charts
+- name: nats
+  version: 2.15.2
+  repository: https://nats-io.github.io/k8s/helm/charts
+- name: plugin-barman-cloud
+  version: 0.7.0
+  repository: https://cloudnative-pg.github.io/charts
+- name: opentelemetry-collector
+  version: 0.178.3
+  repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+- name: wamn-identity
+  version: 0.1.0
+  repository: file://../identity
+  condition: identity.enabled
+  alias: identity
+- name: wamn-edge
+  version: 0.1.0
+  repository: file://../edge
+  condition: edge.enabled
+  alias: edge
+- name: release
+  alias: control
+  version: 0.1.143
+  repository: file://../release
+  condition: control.enabled

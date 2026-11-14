@@ -186,6 +186,7 @@ esac
             namespace: "hosts".into(),
         },
         chart: PathBuf::new(),
+        chart_download: None,
         release_artifact_base: String::new(),
         registry_auth_file: PathBuf::new(),
         registry_token_metadata: false,

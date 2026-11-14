@@ -1,0 +1,26 @@
+cert-manager:
+  namespace: cert-manager
+  crds:
+    enabled: true
+cloudnative-pg:
+  image:
+    tag: 1.29.2
+  fullnameOverride: cnpg-controller-manager
+  config:
+    clusterWide: true
+traefik:
+  enabled: false
+  ingressClass:
+    enabled: true
+    isDefaultClass: true
+  providers:
+    kubernetesIngress:
+      allowEmptyServices: true
+  service:
+    spec:
+      type: NodePort
+  ports:
+    web:
+      nodePort: 30950
+    websecure:
+      nodePort: 30951
