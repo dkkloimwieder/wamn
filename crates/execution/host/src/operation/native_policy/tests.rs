@@ -55,8 +55,6 @@ use wamn_engine::operation::node_types;
 
 #[path = "tests/authenticated.rs"]
 mod authenticated;
-#[path = "tests/entry.rs"]
-mod entry;
 #[path = "tests/trace.rs"]
 mod trace;
 #[path = "tests/warm.rs"]
@@ -109,7 +107,6 @@ enum Case {
     Cancellation,
     Trap,
     PostgresImport,
-    Unobserved,
     /// A composed root and child, each with its own statements instance.
     MemberInstances,
     /// A composed root without SQL whose operation declares a host
@@ -137,27 +134,16 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
     let body = match case {
         Case::RunDeadline | Case::Cancellation => "(loop br 0)",
         Case::Trap => "unreachable",
-        Case::Success
-        | Case::CalleeGrant
-        | Case::StartDeadline
-        | Case::PostgresImport
-        | Case::Unobserved => "",
+        Case::Success | Case::CalleeGrant | Case::StartDeadline | Case::PostgresImport => "",
         Case::MemberInstances | Case::SqlFreeRoot => {
             unreachable!()
         }
     };
-    let observer = if matches!(case, Case::Unobserved) {
-        r#"(core module $observer (func (export "record") (param i32)))
-           (core instance $observer (instantiate $observer))
-           (alias core export $observer "record" (core func $observe))"#
-            .to_owned()
-    } else {
-        format!(
-            r#"(import "{OBSERVE}" (instance $observe
+    let observer = format!(
+        r#"(import "{OBSERVE}" (instance $observe
           (export "record" (func (param "phase" u32)))))
           (core func $observe (canon lower (func $observe "record")))"#
-        )
-    };
+    );
     wat::parse_str(format!(
         r#"(component
       {NODE_TYPES}
@@ -219,7 +205,7 @@ const MEMBER_POSTGRES: &str = r#"
         (export "sql-value" (type $sql-value (eq $sql-value')))
         (type $column' (record (field "name" string) (field "type-name" string)))
         (export "column" (type $column (eq $column')))
-        (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value))) (field "wal-position" (option string))))
+        (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value)))))
         (export "row-set" (type $row-set (eq $row-set')))
         (type $pg-error' (variant (case "serialization-failure") (case "connection-unavailable")
           (case "statement-timeout") (case "row-limit-exceeded" u64) (case "unique-violation" string)
@@ -234,8 +220,7 @@ const MEMBER_POSTGRES: &str = r#"
         (export "sql-value" (type $used-sql-value (eq $sql-value)))
         (export "row-set" (type $used-row-set (eq $row-set)))
         (export "pg-error" (type $used-pg-error (eq $pg-error)))
-        (type $want-wal' (enum "current"))
-        (export "want-wal-position" (type $want-wal (eq $want-wal')))
+
         (type $contract-part' (enum "binds" "columns"))
         (export "contract-part" (type $contract-part (eq $contract-part')))
         (type $value-shape' (record (field "count" u32) (field "types" (list string))))
@@ -254,7 +239,7 @@ const MEMBER_POSTGRES: &str = r#"
           (result (result $used-row-set (error $statement-error)))))
         (export "begin" (func async
           (result (result (own $transaction) (error $statement-error)))))
-        (export "run" (func async (param "statement" string) (param "binds" (list $used-sql-value)) (param "wal" (option $want-wal))
+        (export "run" (func async (param "statement" string) (param "binds" (list $used-sql-value))
           (result (result $used-row-set (error $statement-error)))))))
 "#;
 
@@ -784,7 +769,6 @@ impl Fixture {
         ));
         let policy = new_native_policy(
             &native,
-            None,
             NativePolicyResources {
                 integrations: None,
                 files: None,
@@ -813,16 +797,6 @@ impl Fixture {
             },
         )
         .expect("prepare immutable component policy");
-        for component in policy
-            .components
-            .values()
-            .flat_map(|policies| policies.iter())
-        {
-            assert_eq!(
-                component.application, "receiving",
-                "the identity uses the environment map name"
-            );
-        }
         let events = Arc::default();
         let entered = Arc::new(Notify::new());
         let observer = Arc::new(Observe {
@@ -853,7 +827,6 @@ impl Fixture {
                 namespace: "test".into(),
                 name: "native-policy-test".into(),
                 components: native,
-                entry: None,
                 local_resources: LocalResources::default(),
                 host_interfaces: vec![
                     WitInterface::from(ROOT),
@@ -1091,7 +1064,6 @@ async fn run_case(case: Case) {
             }
             Case::Cancellation => unreachable!("cancellation has its own caller task"),
             Case::PostgresImport => unreachable!("the postgres bind case has its own test"),
-            Case::Unobserved => unreachable!("the unobserved member has its own selection test"),
             Case::MemberInstances | Case::SqlFreeRoot => {
                 unreachable!("member instances have their own authenticated tests")
             }

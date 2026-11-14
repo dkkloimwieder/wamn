@@ -118,6 +118,7 @@ FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build-native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 COPY --from=components /http.wasm /usr/local/share/wamn/http_route.wasm
+COPY --from=components /palette/ /usr/local/share/wamn/
 COPY --from=build-native /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
 # `wamn-ctl env` applies manifests with kubectl, pinned by version and its
 # published sha256 (wamn-zua8.3). wamn-iggi moves the pin to the GKE minor.

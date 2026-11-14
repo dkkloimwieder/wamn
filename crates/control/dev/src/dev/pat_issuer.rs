@@ -381,7 +381,7 @@ impl Bootstrap {
             system_url: self.system_url.clone(),
             directory: self.files.0.clone(),
         };
-        wamn_environment_control::provision_project_env::write_secret_json(
+        wamn_environment::provision_project_env::write_secret_json(
             &root.join("identity-process.json"),
             &serde_json::to_value(state)?,
         )?;

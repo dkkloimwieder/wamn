@@ -77,7 +77,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         .map(|name| PackageCoordinate::new(name, "0.1.1").unwrap())
         .collect(),
     };
-    let assembled = assemble_local_release(&args, &roots, &admissions).unwrap();
+    let assembled = assemble_local_release(&args, &roots, &admissions, &[]).unwrap();
     let release = &assembled.published.manifest;
     let packages = args
         .packages

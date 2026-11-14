@@ -26,12 +26,8 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 
 use super::invocation_policy::{InvocationPolicy, InvocationScope};
 use super::native_call::{NativeCallFailure, NativeInvocation};
-use super::native_workload::{
-    NativeComponent, NativeEntry, native_component_name, native_entry_name,
-};
-use super::{
-    NodeAcquisition, prepare_entry_members, prepare_statement_members, prepare_statement_sets,
-};
+use super::native_workload::{NativeComponent, native_component_name};
+use super::{NodeAcquisition, prepare_statement_members, prepare_statement_sets};
 
 pub(super) const NATIVE_POLICY_ID: &str = "wamn:native-operation-policy";
 
@@ -58,9 +54,8 @@ impl std::fmt::Debug for NativePolicyResources {
 
 /// One admitted component and the operations its release publishes for it.
 ///
-/// An application composes at build, so a call inside it reaches no host, and
-/// the entry runs under its own grant. Each member reaches its own statements
-/// through its named import.
+/// An application composes at build. Each member reaches its own statements
+/// through its named import. The route lends the application its authority.
 #[derive(Debug)]
 struct ComponentPolicy {
     fact: AdmittedComponent,
@@ -72,7 +67,7 @@ struct ComponentPolicy {
     runtime_schema: Option<String>,
     /// The environment map name of the application that holds this component, which
     /// every call binds as `app.application`.
-    application: String,
+    application: Option<String>,
 }
 
 /// The facts of one native call that only this policy reads.
@@ -93,6 +88,17 @@ impl std::fmt::Debug for NativeFacts {
 }
 
 impl NativeFacts {
+    pub(super) fn authorized(
+        acquisition: NodeAcquisition,
+        authority: Arc<AuthorizedInvocation>,
+    ) -> Self {
+        Self {
+            acquisition,
+            caller: None,
+            authority: Some(authority),
+        }
+    }
+
     /// The facts of an entry call.
     pub fn entry(acquisition: NodeAcquisition, caller: Option<AuthenticatedCaller>) -> Self {
         Self {
@@ -131,7 +137,6 @@ pub struct NativePolicy {
 
 pub(super) fn new_native_policy(
     components: &[NativeComponent],
-    entry: Option<&NativeEntry>,
     resources: NativePolicyResources,
 ) -> anyhow::Result<Arc<NativePolicy>> {
     resources
@@ -164,17 +169,23 @@ pub(super) fn new_native_policy(
                 statements: prepare_statement_sets(served, &manifest.routes),
                 members,
                 runtime_schema: served.runtime_schema.clone(),
-                application: wamn_catalog::application_for_package(
-                    &resources.release.target().applications,
-                    &served.package_id,
-                )
-                .with_context(|| {
-                    format!(
-                        "package {} must belong to exactly one declared application",
-                        served.package_id
+                application: if served.package_id == wamn_catalog::PALETTE_PACKAGE_ID {
+                    None
+                } else {
+                    Some(
+                        wamn_catalog::application_for_package(
+                            &resources.release.target().applications,
+                            &served.package_id,
+                        )
+                        .with_context(|| {
+                            format!(
+                                "package {} must belong to exactly one declared application",
+                                served.package_id
+                            )
+                        })?
+                        .to_owned(),
                     )
-                })?
-                .to_owned(),
+                },
             }))
         };
     let mut facts = BTreeMap::new();
@@ -188,22 +199,6 @@ pub(super) fn new_native_policy(
             .context("statement-instance-wiring")?;
         let members = prepare_statement_members(&instances, served)?;
         facts.insert(name, ServedPolicies::from([policy(fact, served, members)?]));
-    }
-    // Each member runs in the entry under its own facts, through the
-    // statement instances that the entry carries.
-    if let Some(entry) = entry {
-        let instances = wamn_engine::statement_instances::statement_instances(&entry.bytes)
-            .context("statement-instance-wiring")?;
-        let composing = manifest
-            .composing_member()
-            .context("entry has no application members")?;
-        let members = prepare_entry_members(&instances, composing)?;
-        let served = entry
-            .members
-            .iter()
-            .map(|fact| policy(fact, served_of(fact)?, members.clone()))
-            .collect::<anyhow::Result<ServedPolicies>>()?;
-        facts.insert(native_entry_name(&entry.digest), served);
     }
     Ok(Arc::new(NativePolicy {
         resources: Arc::new(resources),
@@ -273,9 +268,18 @@ impl InvocationPolicy for NativePolicy {
             );
             return Ok(facts.clone());
         }
+        let application = match component.application.as_deref() {
+            Some(application) => application,
+            None => connection_http::released_invocation_application(
+                self.resources.release.manifest(),
+                self.resources.release.target(),
+                &facts.acquisition.invocation,
+            )
+            .context("palette invocation has no declared workflow application")?,
+        };
         let mut identity = facts
             .acquisition
-            .executing_identity(facts.caller.as_ref(), &component.application);
+            .executing_identity(facts.caller.as_ref(), application);
         if let Some(schema) = &component.runtime_schema {
             identity.schema = Some(schema.clone());
         }
@@ -476,7 +480,13 @@ impl InvocationPolicy for NativePolicy {
     }
 
     fn revoke(&self, scope: &str) {
-        self.resources.postgres.scopes.revoke(scope);
+        // A route lends its authority to the native call and owns its cleanup.
+        if scope
+            .strip_prefix(self.owner.as_ref())
+            .is_some_and(|suffix| suffix.starts_with('#'))
+        {
+            self.resources.postgres.scopes.revoke(scope);
+        }
     }
 }
 

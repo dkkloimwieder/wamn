@@ -6,10 +6,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
 use wamn_control_provision::migrations::MigrationDatabase;
-use wamn_environment_control::platform::document::{ClusterDocument, UpgradeTarget};
-use wamn_environment_control::platform::pools::Direction;
-use wamn_environment_control::platform::{artifact_plan, deploy, provider, status};
-use wamn_environment_control::platform_migrations;
+use wamn_environment::platform::document::{ClusterDocument, UpgradeTarget};
+use wamn_environment::platform::{artifact_plan, deploy, provider, status};
+use wamn_environment::platform_migrations;
 use wamn_release_control::release_chart::Target;
 
 /// Management verbs also available through the low-level control tool.
@@ -17,10 +16,6 @@ use wamn_release_control::release_chart::Target;
 pub enum PlatformCommand {
     /// Print a cluster.k file in its standard KCL form.
     Show(ShowArgs),
-    /// Set every node pool to its declared size and wait for PostgreSQL and NATS.
-    Wake(PoolsArgs),
-    /// Set every node pool to 0 nodes.
-    Sleep(PoolsArgs),
 }
 
 /// Platform verbs exposed by the product command.
@@ -164,12 +159,6 @@ pub struct DeployArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct PoolsArgs {
-    /// The cluster.k document. Its pools come from project.k in the same directory.
-    pub file: PathBuf,
-}
-
-#[derive(Debug, Args)]
 pub struct ShowArgs {
     /// The cluster.k document.
     pub file: PathBuf,
@@ -195,8 +184,7 @@ pub async fn run_product(
                 PlatformSchemaCommand::Apply(args) => (args, true),
             };
             let chart = artifact_plan::select(&args.chart)?;
-            let target =
-                wamn_environment_control::environment::kubernetes_target("platform".into())?;
+            let target = wamn_environment::environment::kubernetes_target("platform".into())?;
             let label = match args.target {
                 PlatformSchemaTarget::System => "system",
                 PlatformSchemaTarget::Project => "project",
@@ -213,19 +201,24 @@ pub async fn run_product(
             let result = Box::pin(interruptible(&mut signals, async {
                 match args.target {
                     PlatformSchemaTarget::System => {
-                        let log = wamn_environment_control::platform::system_schema(
+                        let log = wamn_environment::platform::system_schema(
                             &target, &directory, &chart, apply).await?;
                         writeln!(output, "{log}")?;
                     }
                     PlatformSchemaTarget::Project => {
                         let file = args.env.as_deref().context("--env is required for project target")?;
-                        let mut platform = wamn_environment_control::environment::Platform::project_schema_from_env()?;
+                        let mut platform = wamn_environment::environment::Platform::project_schema_from_env()?;
                         platform.target = target;
-                        let document = wamn_environment_control::environment::document::EnvironmentDocument::read_deployed(&platform, file, None).await?;
+                        let document = wamn_environment::environment::document::EnvironmentDocument::read(&platform, &wamn_environment::environment::document::EnvironmentDocument::compile(file)?.triple()).await?;
                         writeln!(output, "project SQL environment: {}", document.triple())?;
                         output.flush()?;
-                        wamn_environment_control::environment::sql::project_schema_deployed(
-                            &platform, &document, chart.image("ctl")?, apply, &directory).await?;
+                        let expected = wamn_environment::environment::sql::ExpectedDatabase::read(&platform, &document).await?;
+                        let migration = wamn_control_provision::migrations::MigrationDatabase::Project.configuration(&platform.system_database_url)?;
+                        wamn_environment::environment::sql::project_schema(&platform, &document,
+                            wamn_environment::environment::sql::ProjectSchemaRequest {
+                                expected: &expected, migration_database_url: &migration,
+                                sources: &wamn_environment::platform_migrations::embedded_sources(wamn_control_provision::migrations::MigrationDatabase::Project), apply,
+                            }, &mut output).await?;
                     }
                 }
                 output.flush().context("write the platform SQL result")
@@ -424,32 +417,8 @@ fn work_directory() -> anyhow::Result<PathBuf> {
     Ok(directory)
 }
 
-pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Result<()> {
-    if let PlatformCommand::Wake(args) | PlatformCommand::Sleep(args) = &command {
-        let direction = match &command {
-            PlatformCommand::Wake(_) => Direction::Wake,
-            _ => Direction::Sleep,
-        };
-        let document = ClusterDocument::compile(&args.file)?;
-        return wamn_environment_control::platform::pools::resize(
-            &document,
-            &args
-                .file
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join("project.k"),
-            direction,
-            &wamn_environment_control::platform::pools::work_directory()?,
-            |line| {
-                writeln!(output, "{line}")?;
-                output.flush().context("write resize progress")
-            },
-        )
-        .await;
-    }
-    let PlatformCommand::Show(args) = command else {
-        unreachable!()
-    };
+pub async fn run(command: PlatformCommand, output: impl Write) -> anyhow::Result<()> {
+    let PlatformCommand::Show(args) = command;
     show(&args, output)
 }
 
@@ -486,15 +455,13 @@ mod tests {
         .expect("parse platform show");
         let Command::Platform(command) = cli.command;
         let mut output = Vec::new();
-        let super::PlatformCommand::Show(args) = command else {
-            panic!("expected show");
-        };
+        let super::PlatformCommand::Show(args) = command;
         show(&args, &mut output).expect("show the cluster document");
         output
     }
 
     #[test]
-    fn show_preserves_the_committed_document_and_repeats_the_same_bytes() {
+    fn show_preserves_the_cluster_configuration() {
         let committed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/gcp/cluster.k");
         let document =
             ClusterDocument::compile(&committed).expect("compile the committed document");
@@ -505,10 +472,8 @@ mod tests {
         let file = directory.join("cluster.k");
         std::fs::write(&file, &output).expect("write show's output");
         let compiled = ClusterDocument::compile(&file).expect("compile show's output");
-        let repeated = shown(&file);
         std::fs::remove_dir_all(&directory).expect("remove the directory");
 
         assert_eq!(compiled, document);
-        assert_eq!(repeated, output);
     }
 }

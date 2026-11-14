@@ -298,7 +298,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             .fetch_one(&mut admin)
             .await?
             .get(0);
-    let release = sqlx::query(RELEASE_COMPONENTS_SQL)
+    let release = sqlx::query(RELEASE_COMPONENTS_SQL.as_str())
         .bind(&PROJECT_ENV_KEY)
         .bind(&manifest_digest)
         .fetch_one(&mut generation)
@@ -307,7 +307,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     assert_eq!(components.as_array().map(Vec::len), Some(1));
     assert_eq!(components[0]["component-digest"], component_digest);
     assert!(
-        sqlx::query(RELEASE_COMPONENTS_SQL)
+        sqlx::query(RELEASE_COMPONENTS_SQL.as_str())
             .bind(&PROJECT_ENV_KEY)
             .bind(&digest("e"))
             .fetch_all(&mut generation)

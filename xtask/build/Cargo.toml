@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 publish = false
 [dependencies]
+wamn-engine.workspace = true
 wamn-catalog.workspace = true
 tempfile.workspace = true
 syn = { workspace = true, features = ["full"] }

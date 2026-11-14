@@ -14,15 +14,13 @@ use anyhow::{Context as _, ensure};
 use wamn_broker::Publisher;
 use wamn_compiler::manifest::PackageManifest;
 use wamn_control_provision::sql;
-use wamn_environment_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
-use wamn_environment_control::environment::{
+use wamn_environment::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
+use wamn_environment::environment::{
     Platform, document::EnvironmentDocument, ensure::ensure_project_database,
 };
-use wamn_environment_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
-use wamn_environment_control::provision_project_env::{
-    ProvisionProjectEnvRequest, provision_project_env,
-};
-use wamn_environment_control::provision_system::{ProvisionSystemRequest, provision_system};
+use wamn_environment::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
+use wamn_environment::provision_project_env::{ProvisionProjectEnvRequest, provision_project_env};
+use wamn_environment::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_identity_client::PatIssuerConfig;
 use wamn_test_infrastructure::{locked_database, scratch::ScratchRoot};
 
@@ -126,8 +124,8 @@ async fn step_4_7_provision(system_url: &str, _work: &Path) -> anyhow::Result<St
         .await
         .context("4.7 provision-org --admin owner as wamn_system")?;
     let endpoint = url::Url::parse(system_url)?;
-    wamn_environment_control::identity_issuer::provision_identity_issuer(
-        &wamn_environment_control::identity_issuer::IdentityIssuerRequest {
+    wamn_environment::identity_issuer::provision_identity_issuer(
+        &wamn_environment::identity_issuer::IdentityIssuerRequest {
             issuer: "https://identity.example.test".into(),
             system_database_url: system_url.into(),
             db_host: Some(endpoint.host_str().unwrap().into()),
@@ -330,7 +328,7 @@ async fn release_cache(
 ) -> anyhow::Result<()> {
     let project_env_key = wamn_control_provision::project_env_key(ORG, PROJECT, ENV);
     let digest = manifest.digest();
-    wamn_environment_control::environment::stage::write_release(
+    wamn_environment::environment::stage::write_release(
         project_url,
         &project_env_key,
         digest.as_str(),
@@ -418,7 +416,7 @@ async fn local_base_grants_run_plane_and_release_cache_as_database_owner() -> an
     wamn_dev_control::dev::environment::install_journey_platform_base_grants(&mut client, DOMAIN)
         .await
         .context("local_base_grants installs the platform schema as the database owner")?;
-    wamn_environment_control::platform_migrations::install_project(&mut client)
+    wamn_environment::platform_migrations::install_project(&mut client)
     .await
     .context(
         "4.17 local_base_grants_run_plane_as_database_owner without wamn_authority permission denial",

@@ -2,7 +2,6 @@
 //! Helm chart. Arg surface mirrors what the chart's runtime deployment
 //! template renders for `wash host` (charts/runtime-operator).
 
-use sqlx::Row as _;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -12,7 +11,6 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use clap::Args;
 use clap::builder::TypedValueParser as _;
-use opentelemetry::global;
 use wash_runtime::engine::WasmProposal;
 use wash_runtime::engine::guest_memory::GuestMemoryMode;
 use wash_runtime::engine::host_memory::HostMemoryBudgets;
@@ -38,9 +36,8 @@ use wamn_engine::flow_http_routing::{
     FlowHttpRouting, requires_pat_route_authentication, requires_session_route_authentication,
 };
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget, release_label};
-use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouterDelivery};
 use wamn_execution_host::{
-    HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig, RouterDeliveryBridge,
+    HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig,
 };
 use wamn_identity_client::PatIssuerConfig;
 use wamn_identity_protocol::verifier::SessionVerifier;
@@ -1103,10 +1100,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             };
             Some((load_local_workload(directory).await?, materializer))
         }
-        None => match args.local_control.as_deref() {
-            Some(directory) => Some((load_local_workload(directory).await?, None)),
-            None => None,
-        },
+        None => None,
     };
     // The control serving root authenticates through its own control login,
     // never through the project credentials an application release needs.
@@ -1511,6 +1505,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             ),
         )?;
     }
+    if let (Some(operations), Some(((workload, _), _))) = (&operations, &local_workload) {
+        let invoker: Arc<dyn wamn_runtime::plugins::wamn_postgres::OperationInvoker> =
+            Arc::clone(operations) as Arc<_>;
+        postgres.bind_operation_invoker(&workload.workload_id, Arc::downgrade(&invoker))?;
+    }
     let router_driver = operations
         .as_ref()
         .map(|operations| Arc::new(RouterDriver::new(Arc::clone(operations))));
@@ -1531,8 +1530,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .activate_events()
         .await
         .map_err(|error| anyhow::anyhow!("activate declared event streams: {error:?}"))?;
-    let flow_http =
-        FlowHttpRouting::from_env(release.clone()).context("wamn:flow-http-routing plugin init")?;
+    let flow_http = FlowHttpRouting::new(release.clone());
     // The auth memory is the replica of the NATS KV bucket wamn-auth, and
     // the host deletes the keys of its own writes there
     // (docs/architecture/execution.md#auth-memory).
@@ -1656,22 +1654,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::<FlowHttpRouting>::clone(&flow_http),
     ];
 
-    if let Some(operations) = &operations {
-        let bridge = RouterDeliveryBridge::new(
-            Arc::clone(operations),
-            Arc::clone(&jetstream),
-            &args.project,
-        )?
-        // The bridge defaults to no meter so a test can own its own provider
-        // and read back exactly the series one bridge emitted. Production has
-        // no second provider to own, so it takes the process-global one that
-        // `initialize_observability` installs — a no-op meter when no OTEL_
-        // variable is set. Without this call both `wamn.router.delivery`
-        // series exist and stay permanently silent (wamn-1fhk).
-        .with_metrics(&global::meter(ROUTER_DELIVERY_ID));
-        // The application administration routes run in the host, in front of
-        // the bridge (docs/architecture/execution.md#host-run-routes).
-        plugins.push(Arc::new(RouterDelivery::new(Arc::new(
+    let application_http = if let Some(operations) = &operations {
+        Some(Arc::new(
             HostRouteDelivery::new(
                 Arc::clone(&operations.release),
                 HostRouteHandlers::Application {
@@ -1683,11 +1667,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                         .map(|(org, client)| (client.clone(), org.clone())),
                     changes: auth_changes.clone(),
                 },
-                Some(Arc::new(bridge)),
+                None,
             )
             .with_files(files.clone()),
-        ))));
-    }
+        ))
+    } else {
+        None
+    };
     let oauth = if args.control {
         oauth_encryption
             .map(|envelope| {
@@ -1702,7 +1688,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     } else {
         None
     };
-    if let (Some(connection), Some(root)) = (&control, &release) {
+    let control_http = if let (Some(connection), Some(root)) = (&control, &release) {
         let mut health =
             wamn_runtime::connection_health::ConnectionHealth::new(Arc::clone(&http_transport));
         if let Some((registry, credentials)) = &integration_registry {
@@ -1714,7 +1700,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             client_key: args.pat_client_key.clone(),
             server_ca: args.pat_server_ca.clone(),
         });
-        plugins.push(Arc::new(RouterDelivery::new(Arc::new(
+        Some(Arc::new(
             HostRouteDelivery::new(
                 Arc::clone(root),
                 HostRouteHandlers::Control {
@@ -1739,8 +1725,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .with_registry_token_metadata(args.registry_token_metadata)
             .with_connection_health(Arc::new(health))
             .with_oauth(oauth.clone()),
-        ))));
-    }
+        ))
+    } else {
+        None
+    };
 
     let queue = match (&router_driver, &release) {
         (Some(driver), Some(release)) if queue_credentials_complete => Some(
@@ -1948,11 +1936,36 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 }
             });
         }
+        let mut http_handler: Arc<dyn wash_runtime::host::http::HostHandler> =
+            Arc::clone(&server) as Arc<dyn wash_runtime::host::http::HostHandler>;
+        if let Some(handlers) = control_http.as_ref().or(application_http.as_ref()) {
+            let platform = Arc::new(wamn_execution_host::platform_http::PlatformHttp::new(
+                Arc::clone(&server) as Arc<dyn wash_runtime::host::http::HostHandler>,
+                Arc::clone(handlers),
+                Arc::clone(&flow_http),
+            ));
+            if control_http.is_some() {
+                let origin = args
+                    .control_public_origin
+                    .as_deref()
+                    .context("native control HTTP requires its public origin")?;
+                platform
+                    .bind(
+                        "wamn-control",
+                        url::Url::parse(origin)?
+                            .host_str()
+                            .context("control origin has no host")?
+                            .to_owned(),
+                    )
+                    .await?;
+            }
+            http_handler = platform;
+        }
         let connections = server.connection_limit();
         probe_state.register(Arc::new(connections.clone()));
         ingress_connections = Some(connections);
         ingress_handler = Some(Arc::clone(&server));
-        builder = builder.with_http_handler(server);
+        builder = builder.with_http_handler(http_handler);
     }
     let file_listener = match args.files_addr {
         Some(address) => {

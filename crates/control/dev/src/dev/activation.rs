@@ -8,7 +8,7 @@ pub(super) mod plan;
 pub use plan::flow_http_identity_fields;
 use plan::{
     decode_json, flow_http_request, heartbeat_matches, host_namespace, require_running,
-    require_stopped, validate_request, wit_interface, workload_pending,
+    require_stopped, validate_request, workload_pending,
 };
 
 use std::collections::HashMap;
@@ -219,7 +219,7 @@ fn spawn_host_process(spec: &HostProcessSpec) -> anyhow::Result<Child> {
         .iter()
         .find(|(name, _)| name == "WAMN_OAUTH_KEY_FILE")
     {
-        wamn_environment_control::platform::oauth::local_key(Path::new(path))?;
+        wamn_environment::platform::oauth::local_key(Path::new(path))?;
     }
     let mut command = Command::new(&spec.program);
     command
@@ -567,21 +567,6 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
         )
     })?;
     let mut workload = flow_http_request(request);
-    let world = workload
-        .workload
-        .as_mut()
-        .expect("HTTP workload exists")
-        .wit_world
-        .as_mut()
-        .expect("HTTP world exists");
-    for name in wamn_engine::statement_instances::statement_instances(&component_bytes)
-        .map_err(|source| stage_error(std::io::Error::other(source)))?
-        .keys()
-    {
-        let mut interface = wit_interface("wamn", "postgres", "0.4.0", "statements");
-        interface.name.clone_from(name);
-        world.host_interfaces.push(interface);
-    }
     let component = &mut workload
         .workload
         .as_mut()
@@ -590,6 +575,18 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
         .as_mut()
         .expect("flow-http world exists")
         .components[0];
+    component
+        .local_resources
+        .get_or_insert_with(Default::default)
+        .config
+        .insert(
+            wamn_catalog::http_routes::HTTP_ROUTES_CONFIG.into(),
+            serde_json::to_string(&wamn_catalog::http_routes::route_data(
+                &manifest,
+                manifest.digest().as_str(),
+            ))
+            .expect("route data is JSON"),
+        );
     component.image.clone_from(&entry.reference);
     component.image_pull_policy = v2::ImagePullPolicy::Never.into();
     let bytes = serde_json::to_vec(&workload).map_err(|source| {
@@ -649,7 +646,7 @@ fn materializer_request(
     config: &DevConfig,
     digest: &str,
 ) -> anyhow::Result<v2::WorkloadStartRequest> {
-    use wamn_environment_control::platform::materializer::{
+    use wamn_environment::platform::materializer::{
         EventIdentity, FETCH_MS, MaterializerInput, SWEEP_MS, render_materializer,
     };
 
@@ -1417,38 +1414,6 @@ mod tests {
     /// Read from the template rather than restated, and compared against the
     /// producer rather than a second list, so this cannot drift into the third
     /// hand-maintained copy of the thing it exists to prevent.
-    #[test]
-    fn the_workload_template_declares_exactly_the_fields_activation_sets() {
-        let template = std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../deploy/platform/http-route-workload.example.yaml"),
-        )
-        .expect("the workload template is validated in beside the platform manifests");
-
-        let mut declared: Vec<&str> = template
-            .lines()
-            .filter_map(|line| line.trim().split_once(':'))
-            .map(|(key, _)| key)
-            .filter(|key| key.starts_with("wamn."))
-            .collect();
-        declared.sort_unstable();
-
-        let identity = identity();
-        let mut set: Vec<&str> = flow_http_identity_fields(&identity)
-            .into_iter()
-            .map(|(field_name, _)| field_name)
-            .collect();
-        set.sort_unstable();
-
-        assert_eq!(
-            declared, set,
-            "deploy/platform/http-route-workload.example.yaml declares {declared:?} \
-             but activation sets {set:?}; the cluster journey substitutes what the \
-             template declares, so a field_name in one and not the other deploys a \
-             placeholder identity"
-        );
-    }
-
     fn release() -> ReleaseCarrier {
         ReleaseCarrier {
             artifact_base: "127.0.0.1:41012/wamn/releases".to_owned(),
@@ -1700,7 +1665,7 @@ mod tests {
         assert_eq!(resources.environment["WAMN_MAT_MAX_DELIVER"], "5");
         assert_eq!(
             resources.environment["WAMN_MAT_FETCH_MS"],
-            wamn_environment_control::platform::materializer::FETCH_MS.to_string()
+            wamn_environment::platform::materializer::FETCH_MS.to_string()
         );
         let world = staged.wit_world.unwrap();
         assert!(world.components.is_empty());

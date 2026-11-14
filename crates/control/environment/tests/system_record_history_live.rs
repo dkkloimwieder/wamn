@@ -80,7 +80,7 @@ async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor() {
     }
     // The production retirement trigger inherits the caller's actor on delete.
     let mut transaction =
-        wamn_environment_control::provision_project_env::provisioning_transaction(&mut client)
+        wamn_environment::provision_project_env::provisioning_transaction(&mut client)
             .await
             .unwrap();
     sqlx::query("DELETE FROM registry.environment_projects WHERE env='dev'")

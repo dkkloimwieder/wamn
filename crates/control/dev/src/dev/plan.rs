@@ -1,10 +1,9 @@
 use super::{Duration, Error, fmt};
 
 /// Exact stage order of one local development run.
-pub const DEV_STAGE_ORDER: [DevStage; 8] = [
+pub const DEV_STAGE_ORDER: [DevStage; 7] = [
     DevStage::Migrate,
     DevStage::Build,
-    DevStage::Virtualize,
     DevStage::Acl,
     DevStage::Admit,
     DevStage::Condition,
@@ -17,7 +16,6 @@ pub const DEV_STAGE_ORDER: [DevStage; 8] = [
 pub enum DevStage {
     Migrate,
     Build,
-    Virtualize,
     Admit,
     Condition,
     Acl,
@@ -100,7 +98,6 @@ impl DevStage {
         match self {
             Self::Migrate => "migrate",
             Self::Build => "build",
-            Self::Virtualize => "virtualize",
             Self::Admit => "admit",
             Self::Condition => "condition",
             Self::Acl => "acl",

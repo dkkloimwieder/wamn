@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use clap::Args;
 use serde_json::json;
 use std::path::PathBuf;
-use wamn_environment_control::environment::{self, Platform};
+use wamn_environment::environment::{self, Platform};
 
 use crate::operation_verbs::ControlHost;
 
@@ -16,6 +16,9 @@ pub struct DeployArgs {
     /// The published application release digest.
     #[arg(long)]
     pub release: Option<String>,
+    /// The application to deploy.
+    #[arg(long)]
+    pub application: String,
     /// The target environment file. Apply application SQL before deploying code.
     #[arg(long)]
     pub env: PathBuf,
@@ -24,7 +27,7 @@ pub struct DeployArgs {
 #[derive(Debug, Args)]
 pub struct RollbackArgs {
     pub application: String,
-    /// The published target release, required when the prior selection is ambiguous.
+    /// The published target release, to select an explicit release.
     #[arg(long)]
     pub release: Option<String>,
     /// The target environment file. Rollback preserves schema.mode and other applications.
@@ -43,7 +46,10 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
     if let Some(host) = ControlHost::from_env()? {
         let digest = match args.package {
             Some(package) => {
-                let document = environment::document::EnvironmentDocument::compile(&args.env)?;
+                let document = environment::analyse::select_application(
+                    &environment::document::EnvironmentDocument::compile(&args.env)?,
+                    Some(&args.application),
+                )?;
                 crate::operation_verbs::publish(&document, &package)
                     .await?
                     .1
@@ -54,13 +60,20 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
                 .context("select a source package or --release")?,
         };
         return host
-            .run("application.deploy", &args.env, json!({"release":digest}))
+            .run(
+                "application.deploy",
+                &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
+                json!({"release":digest,"application":args.application}),
+            )
             .await;
     }
     let platform = Platform::apply_from_env()?;
-    let document =
-        environment::document::EnvironmentDocument::read_deployed(&platform, &args.env, None)
-            .await?;
+    let document = environment::document::EnvironmentDocument::read(
+        &platform,
+        &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
+    )
+    .await?;
+    let document = environment::analyse::select_application(&document, Some(&args.application))?;
     let digest = match args.package {
         Some(package) => {
             let database_url = std::env::var("DATABASE_URL").context(
@@ -75,7 +88,9 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
             .release
             .context("select a source package or --release")?,
     };
-    print_analysis(environment::deploy(&platform, &args.env, &digest).await?)
+    print_analysis(
+        environment::deploy(&platform, &document.triple(), &args.application, &digest).await?,
+    )
 }
 
 pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
@@ -83,7 +98,7 @@ pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
         return host
             .run(
                 "application.rollback",
-                &args.env,
+                &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
                 json!({"application":args.application, "release":args.release}),
             )
             .await;
@@ -92,7 +107,7 @@ pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
     print_analysis(
         environment::rollback::rollback(
             &platform,
-            &args.env,
+            &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
             &args.application,
             args.release.as_deref(),
         )
@@ -107,7 +122,12 @@ pub async fn status(args: StatusArgs) -> anyhow::Result<()> {
     println!(
         "{}",
         serde_json::to_string_pretty(
-            &environment::status::status(&mut platform, &args.env, &admin_url).await?
+            &environment::status::status(
+                &mut platform,
+                &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
+                &admin_url
+            )
+            .await?
         )?
     );
     Ok(())

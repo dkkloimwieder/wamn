@@ -13,7 +13,7 @@ pub(crate) fn component_connection_names(
     names.extend(
         connections
             .iter()
-            .map(|connection| connection.store_alias.clone()),
+            .filter_map(|connection| connection.store_alias.name().map(str::to_owned)),
     );
     if let Some(declaration) = manifest.components.get(component) {
         names.extend(

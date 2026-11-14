@@ -128,7 +128,7 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         .map(|root| format!(" --overlay-root {}", root.display()))
         .unwrap_or_default();
     println!("environment ready; identity, control and web remain running until wamn dev down");
-    let web = wamn_environment_control::provision_project_env::read_json(&root.join("web.json"))?;
+    let web = wamn_environment::provision_project_env::read_json(&root.join("web.json"))?;
     println!("  web: {}", web["url"].as_str().unwrap_or_default());
     for application in web["applications"].as_array().into_iter().flatten() {
         println!("  {}: {}", application["name"], application["url"]);

@@ -3,7 +3,7 @@
 use sqlx::{Connection as _, Row as _};
 use wamn_broker::Publisher;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_environment_control::invite::{InviteRequest, invite};
+use wamn_environment::invite::{InviteRequest, invite};
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::org::{MemberGrants, invite_member};
 

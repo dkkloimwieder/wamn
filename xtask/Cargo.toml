@@ -15,6 +15,7 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
+wamn-catalog.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
 wamn-build.workspace = true
@@ -36,7 +37,7 @@ wamn-digest.workspace = true
 wamn-compiler.workspace = true
 wamn-component-composer.workspace = true
 wamn-release-control.workspace = true
-wamn-environment-control.workspace = true
+wamn-environment.workspace = true
 wamn-platform-install.workspace = true
 wamn-dev-control.workspace = true
 wamn-package-control.workspace = true

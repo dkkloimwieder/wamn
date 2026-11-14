@@ -603,7 +603,8 @@ WITH release_manifest AS MATERIALIZED ( \
            member.value -> 'descriptor' ->> 'component' AS component, \
            member.value -> 'descriptor' ->> 'interface-version' AS interface_version, \
            member.value -> 'descriptor' ->> 'component-digest' AS component_digest, \
-           member.value -> 'descriptor' -> 'operations' AS operations \
+           member.value -> 'descriptor' -> 'operations' AS operations, \
+           member.value -> 'descriptor' -> 'connections' AS connections \
       FROM release_manifest \
      CROSS JOIN LATERAL jsonb_array_elements(release_manifest.manifest -> 'components') \
            AS member(value) \
@@ -631,33 +632,34 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
                AND node.value ->> 'operation' = $15 \
                AND origin_component.operations ? $15 \
                AND component.operations ? $16 \
+               AND (component.package_id <> $17 OR EXISTS ( \
+                   SELECT FROM jsonb_array_elements(component.connections) declaration \
+                    WHERE declaration->>'store-alias'=$9 AND jsonb_typeof(declaration->'store-alias')='string' \
+                       OR CASE WHEN jsonb_typeof(declaration->'store-alias')='object' THEN node.value #>> ARRAY['params', declaration #>> '{store-alias,parameter}'] END = $9 \
+               )) \
            END, \
            false \
-       ) \
+       ), requirement.package_id \
   FROM member \
   LEFT JOIN selected_wiring AS wiring ON true \
-  LEFT JOIN release_member AS origin_member \
-    ON origin_member.project_env_key = member.project_env_key \
-   AND origin_member.package_id = $11 \
   LEFT JOIN release_component AS origin_component \
-    ON origin_component.project_env_key = origin_member.project_env_key \
-   AND origin_component.package_id = origin_member.package_id \
+    ON origin_component.project_env_key = member.project_env_key \
+   AND origin_component.package_id = $11 \
+   AND (EXISTS (SELECT FROM release_member WHERE package_id=$11) OR ($11=$17 AND $5::text IS NOT NULL)) \
    AND origin_component.component_digest = $12 \
    AND origin_component.component = $13 \
    AND origin_component.interface_version = $14 \
-  LEFT JOIN release_member AS executing_member \
-    ON executing_member.project_env_key = member.project_env_key \
-   AND executing_member.package_id = $2 \
   LEFT JOIN release_component AS component \
-    ON component.project_env_key = executing_member.project_env_key \
-   AND component.package_id = executing_member.package_id \
+    ON component.project_env_key = member.project_env_key \
+   AND component.package_id = $2 \
+   AND (EXISTS (SELECT FROM release_member WHERE package_id=$2) OR ($2=$17 AND $5::text IS NOT NULL)) \
    AND component.component_digest = $8 \
   LEFT JOIN LATERAL ( \
       SELECT wiring.graph_json #> ARRAY['nodes', $7] AS value \
   ) AS node ON true \
   LEFT JOIN catalog.connection_requirement AS requirement \
     ON requirement.project_env_key = $1 AND requirement.component_digest = $8 \
-   AND requirement.package_id=$2 AND requirement.name = $9 \
+   AND (requirement.package_id=$2 OR ($2=$17 AND EXISTS (SELECT FROM release_member WHERE package_id=requirement.package_id))) AND requirement.name = $9 \
  WHERE $5::text IS NULL OR wiring.graph_json IS NOT NULL";
 
 /// The inputs of the fixed part of an HTTP effect authorization. Every row
@@ -717,6 +719,7 @@ pub(crate) struct EffectFixed {
     /// `None` when the component declares no such requirement.
     mode: Option<String>,
     node_permitted: bool,
+    binding_package_id: Option<String>,
 }
 
 /// What the transaction of an HTTP effect authorization read.
@@ -1599,7 +1602,10 @@ impl WamnPostgres {
         let binding = release
             .binding(
                 lookup.component_digest,
-                lookup.package_id,
+                fixed
+                    .binding_package_id
+                    .as_deref()
+                    .unwrap_or(lookup.package_id),
                 lookup.store_alias,
             )
             .filter(|binding| {
@@ -1773,6 +1779,7 @@ impl WamnPostgres {
                 .bind(lookup.origin_interface_version)
                 .bind(lookup.origin_operation)
                 .bind(lookup.operation)
+                .bind(wamn_catalog::PALETTE_PACKAGE_ID)
                 .fetch_optional(&mut *conn)
                 .await
                 .context("query HTTP effect authorization snapshot")?;
@@ -1800,6 +1807,7 @@ impl WamnPostgres {
                 registered_operation: row.try_get(4)?,
                 mode: row.try_get(5)?,
                 node_permitted: row.try_get::<Option<bool>, _>(6)?.unwrap_or(false),
+                binding_package_id: row.try_get(7)?,
             })))
         }
         .await;
@@ -1910,8 +1918,7 @@ impl WamnPostgres {
         };
         let (mut connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            .await?;
         let statement = match sqlx::Executor::prepare(
             &mut *connection,
             sqlx::SqlSafeStr::into_sql_str(PRINCIPAL_GRANTS_SQL),
@@ -2079,28 +2086,6 @@ impl WamnPostgres {
             return Err(error).context("end the host route transaction");
         }
         Ok(result)
-    }
-
-    /// Refresh the identity and permissions of the principal of a queued run,
-    /// with `role` active or, without one, with every role it holds
-    /// ([`queued_run_caller`](crate::plugins::route_authentication::queued_run_caller)).
-    pub async fn queued_run_caller(
-        &self,
-        project: &str,
-        project_env_key: &str,
-        principal_id: &str,
-        role: Option<&str>,
-    ) -> anyhow::Result<wamn_engine::flow_http_routing::AuthenticatedCaller> {
-        anyhow::ensure!(valid_project(project), "invalid queued-run project");
-        anyhow::ensure!(
-            valid_project_env_key(project_env_key),
-            "invalid queued-run project_env_key"
-        );
-        let (mut connection, _policy) = self
-            .checkout_platform(project, AuthorityClass::CallableHttp)
-            .await?;
-        crate::plugins::route_authentication::queued_run_caller(&mut connection, principal_id, role)
-            .await
     }
 
     /// The caller of one node of a workflow run that executes as `principal_id`

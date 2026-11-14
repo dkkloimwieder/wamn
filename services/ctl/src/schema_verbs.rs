@@ -5,9 +5,7 @@ use std::path::PathBuf;
 use anyhow::{Context as _, ensure};
 use clap::{Args, Subcommand};
 use serde_json::json;
-use wamn_environment_control::environment::{
-    self, Platform, document::EnvironmentDocument, sql::schema,
-};
+use wamn_environment::environment::{self, Platform, document::EnvironmentDocument, sql::schema};
 
 use crate::operation_verbs::ControlHost;
 
@@ -69,11 +67,19 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
             }
 
             if let Some(host) = ControlHost::from_env()? {
-                return host.run("schema.reset", &args.env, json!({})).await;
+                return host
+                    .run(
+                        "schema.reset",
+                        &EnvironmentDocument::compile(&args.env)?.triple(),
+                        json!({}),
+                    )
+                    .await;
             }
             let platform = Platform::apply_from_env()?;
             let result = Box::pin(environment::sql::reset::reset_deployed(
-                &platform, &args.env, None,
+                &platform,
+                &EnvironmentDocument::compile(&args.env)?.triple(),
+                None,
             ))
             .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -120,7 +126,7 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
         return host
             .run(
                 if apply { "schema.apply" } else { "schema.diff" },
-                &args.env,
+                &input.triple(),
                 value,
             )
             .await;
@@ -130,10 +136,7 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
     } else {
         Platform::from_env()?
     };
-    let warning_application =
-        (!std::path::Path::new(&args.application).is_dir()).then_some(args.application.as_str());
-    let document =
-        EnvironmentDocument::read_deployed(&platform, &args.env, warning_application).await?;
+    let document = EnvironmentDocument::read_serving(&platform, &input.triple()).await?;
     let (application, release) = if apply && !document.applications.contains_key(&args.application)
     {
         ensure!(
@@ -157,11 +160,11 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
     if document.applications.contains_key(&application) {
         let diff = environment::operation::schema(
             &platform,
-            &args.env,
+            &document.triple(),
             &application,
             release.as_deref(),
             apply,
-            None,
+            std::env::var("WAMN_SYSTEM_ADMIN_URL").ok().as_deref(),
         )
         .await?;
         println!("{}", serde_json::to_string_pretty(&diff)?);
@@ -180,7 +183,7 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
     let candidates = roots
         .into_iter()
         .map(|path| {
-            schema::Candidate::source(wamn_environment_control::apply_package::PackageRoot {
+            schema::Candidate::source(wamn_environment::apply_package::PackageRoot {
                 path,
                 artifact_digest: None,
             })

@@ -207,7 +207,7 @@ It makes sure of the pull checkpoint through the application role and the refusa
 
 ```sh
 TMPDIR=/var/tmp RUSTC_WRAPPER='' cargo test --locked --offline \
-  -p wamn-environment-control --test netsuite_publication
+  -p wamn-environment --test netsuite_publication
 ```
 
 ## Owner-run live calls

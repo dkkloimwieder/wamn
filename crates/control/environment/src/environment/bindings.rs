@@ -226,23 +226,22 @@ pub async fn write(
          FROM catalog.connection_requirement q WHERE q.project_env_key=$1 AND EXISTS (\
          SELECT FROM catalog.releases r CROSS JOIN LATERAL \
          jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb->'components') c \
-         WHERE r.project_env_key=$1 AND r.manifest_digest=$2 AND c->>'package-id'=q.package_id \
+         WHERE r.project_env_key=$1 AND r.manifest_digest=$2 AND (c->>'package-id'=q.package_id OR (c->>'package-id'=$3 AND EXISTS (SELECT FROM jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb #> '{release,packages}') p WHERE p->>'package-id'=q.package_id))) \
          AND c->'descriptor'->>'component-digest'=q.component_digest)",
     )
     .bind(project_env_key)
     .bind(digest)
+    .bind(wamn_catalog::PALETTE_PACKAGE_ID)
     .fetch_all(&mut **tx)
     .await?
     {
         let package: String = row.get(1);
-        let application = document.application_for_package(&package).ok_or_else(|| {
-            anyhow::anyhow!("release package {package} has no sole application owner")
-        })?;
+        let application = document.application_for_package(&package).ok_or_else(|| anyhow::anyhow!("release package {package} has no sole application owner"))?;
         let name: String = row.get(2);
         let binding = bindings
             .iter()
-            .find(|b| b.application == application && b.alias == name)
-            .ok_or_else(|| anyhow::anyhow!("connection_unbound: {application}.{name}"))?;
+            .find(|b| b.application == application && b.alias == name);
+        let binding = binding.ok_or_else(|| anyhow::anyhow!("connection_unbound: {application}.{name}"))?;
         let required: String = row.get(3);
         anyhow::ensure!(
             exports_satisfy(&binding.exports, std::slice::from_ref(&required)),
@@ -261,79 +260,6 @@ pub async fn write(
         drops.release(project_env_key, digest);
     }
     Ok(())
-}
-
-/// Remove explicit retired releases after testing ownership, live hosts and pinned work.
-/// The caller holds the operation grant lock and supplies a fresh host observation.
-pub async fn contract(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
-    application: &str,
-    declared: &wamn_catalog::EnvironmentApplications,
-    retired: &[&str],
-    live: &[&str],
-    drops: &mut wamn_broker::connection_changes::ConnectionDrops,
-) -> anyhow::Result<Vec<String>> {
-    anyhow::ensure!(
-        !live.contains(&"unlabelled"),
-        "cannot retire bindings with unknown live releases"
-    );
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
-        ),
-    ))
-    .execute(&mut **tx)
-    .await
-    .map(drop)?;
-    let mut removed = Vec::new();
-    for digest in retired {
-        if live.contains(digest) {
-            continue;
-        }
-        let row = sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2").bind(project_env_key).bind(digest).fetch_one(&mut **tx).await?;
-        let (manifest, actual) = wamn_catalog::ServingManifest::from_canonical_bytes(row.get(0))?;
-        anyhow::ensure!(
-            actual.as_str() == *digest,
-            "retired release digest mismatch"
-        );
-        let owners: Vec<_> = declared
-            .iter()
-            .filter(|(_, membership)| {
-                !manifest.release.packages.is_empty()
-                    && manifest
-                        .release
-                        .packages
-                        .iter()
-                        .all(|package| membership.packages.contains(package.package_id()))
-            })
-            .map(|(name, _)| name.as_str())
-            .collect();
-        anyhow::ensure!(
-            owners == [application],
-            "retired release {digest} has no sole owner {application}"
-        );
-        let needed: bool = sqlx::query("SELECT EXISTS (SELECT FROM wamn_run.runs WHERE project_env_key=$1 AND manifest_digest=$2 \
-             AND status NOT IN ('completed','failed','infrastructure-failure'))").bind(project_env_key).bind(digest).fetch_one(&mut **tx)
-            .await?
-            .get(0);
-        if needed {
-            continue;
-        }
-        for table in ["catalog.connection_binding", "catalog.release_connection"] {
-            sqlx::query(sqlx::AssertSqlSafe(format!(
-                "DELETE FROM {table} WHERE project_env_key=$1 AND manifest_digest=$2"
-            )))
-            .bind(project_env_key)
-            .bind(digest)
-            .execute(&mut **tx)
-            .await
-            .map(|result| result.rows_affected())?;
-        }
-        drops.release(project_env_key, digest);
-        removed.push((*digest).to_owned());
-    }
-    Ok(removed)
 }
 
 /// Refresh shared connection projections during provisioning or explicit connection writes.

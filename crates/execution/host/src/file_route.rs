@@ -771,9 +771,6 @@ impl FileRoutes {
             _ => return Ok(response(405, &json!({"error":"method_not_allowed"}))),
         };
         let id = format!("wamn-control-file-{action}-http");
-        let Some(permit) = routing.try_acquire_route(&id) else {
-            return Ok(response(429, &json!({"error":"route-capacity-exhausted"})));
-        };
         let headers: Result<Vec<_>, _> = request
             .headers()
             .iter()
@@ -832,15 +829,7 @@ impl FileRoutes {
                 Ok(response(201, &json!({"file_id":id})))
             }
         }?;
-        let (parts, body) = response.into_parts();
-        Ok(hyper::Response::from_parts(
-            parts,
-            PermitBody {
-                body,
-                _permit: permit,
-            }
-            .boxed_unsync(),
-        ))
+        Ok(response)
     }
 }
 
@@ -900,7 +889,7 @@ fn declares_store(
     release.manifest().components.iter().any(|component| {
         app.packages.contains(&component.package_id)
             && component.descriptor.connections.iter().any(|requirement| {
-                requirement.store_alias == alias
+                requirement.store_alias.name() == Some(alias)
                     && requirement.requirement_type == ComponentConnectionType::Blobstore
             })
     })
@@ -1027,27 +1016,6 @@ fn error_response(error: &FileError) -> hyper::Response<WasiBody> {
     }
 }
 
-struct PermitBody {
-    body: WasiBody,
-    _permit: wamn_engine::flow_http_routing::RoutePermit,
-}
-impl hyper::body::Body for PermitBody {
-    type Data = Bytes;
-    type Error = wasmtime_wasi_http::Error;
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
-        Pin::new(&mut self.body).poll_frame(cx)
-    }
-    fn is_end_stream(&self) -> bool {
-        self.body.is_end_stream()
-    }
-    fn size_hint(&self) -> hyper::body::SizeHint {
-        self.body.size_hint()
-    }
-}
-
 /// Adapt native request frames without collecting the body.
 struct BodyReader {
     body: WasiBody,
@@ -1095,7 +1063,7 @@ pub async fn serve(
                     tracing::warn!(%error, "native file connection task failed");
                 }
             }
-            accepted = listener.accept(), if connections.len() < routing.in_flight_limit() => {
+            accepted = listener.accept() => {
                 let (stream, peer) = accepted?;
                 let files = Arc::clone(&files);
                 let routing = Arc::clone(&routing);
@@ -1138,7 +1106,7 @@ mod tests {
         PackageCoordinate, ServingComponent, ServingManifest, ServingRelease,
     };
     use wamn_engine::flow_http_routing::{
-        AuthRejection, AuthenticationRequest, RouteAuthenticator, RouteInFlightLimit, unauthorized,
+        AuthRejection, AuthenticationRequest, RouteAuthenticator, unauthorized,
     };
     use wamn_engine::release_manifest::ReleaseTarget;
     use wamn_runtime::connection_credentials::ConnectionCredentials;
@@ -1428,11 +1396,8 @@ mod tests {
     async fn native_listener_uses_shared_authentication_and_preserves_file_paths() {
         let files = Arc::new(files());
         let routing = Arc::new(
-            FlowHttpRouting::new(
-                Some(Arc::clone(&files.release)),
-                RouteInFlightLimit::default(),
-            )
-            .with_authenticator(Arc::new(SessionWithoutGrant)),
+            FlowHttpRouting::new(Some(Arc::clone(&files.release)))
+                .with_authenticator(Arc::new(SessionWithoutGrant)),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -1465,11 +1430,8 @@ mod tests {
     #[tokio::test]
     async fn native_download_refuses_anonymous_and_session_without_get_before_io() {
         let files = files();
-        let routing = FlowHttpRouting::new(
-            Some(Arc::clone(&files.release)),
-            RouteInFlightLimit::default(),
-        )
-        .with_authenticator(Arc::new(SessionWithoutGrant));
+        let routing = FlowHttpRouting::new(Some(Arc::clone(&files.release)))
+            .with_authenticator(Arc::new(SessionWithoutGrant));
         let path = format!("/api/orders/files/{}", Uuid::new_v4());
         for (authorization, status) in [(None, 401), (Some("Bearer session"), 403)] {
             let mut request = hyper::Request::builder().uri(&path);
@@ -1654,21 +1616,6 @@ mod tests {
                 .unwrap_err();
             assert_eq!(error.refusal, Some(FileRefusal::BindingRefused));
         }
-    }
-    #[test]
-    fn native_body_holds_the_route_permit_until_it_is_dropped() {
-        let files = files();
-        let limit = RouteInFlightLimit::new(std::num::NonZeroUsize::new(1).unwrap());
-        let routing = FlowHttpRouting::new(Some(files.release), limit);
-        let route = "wamn-control-file-get-http";
-        let permit = routing.try_acquire_route(route).unwrap();
-        let response = hyper::Response::new(PermitBody {
-            body: WasiBody::default(),
-            _permit: permit,
-        });
-        assert!(routing.try_acquire_route(route).is_none());
-        drop(response);
-        assert!(routing.try_acquire_route(route).is_some());
     }
     #[tokio::test]
     async fn signed_urls_refuse_an_unregistered_export_before_catalog_access() {

@@ -19,12 +19,12 @@ use wamn_catalog::{
     ServingComponent, ServingManifest, ServingRelease, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_environment_control::author_workflow::{
+use wamn_environment::author_workflow::{
     AuthorWorkflowError, AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution,
     WorkflowTrigger, author_workflow,
 };
-use wamn_environment_control::environment::lock::LifecycleLock;
-use wamn_environment_control::workflow_lifecycle::{
+use wamn_environment::environment::lock::LifecycleLock;
+use wamn_environment::workflow_lifecycle::{
     APPLY_IN_PROGRESS, WorkflowLifecycleErrorType, WorkflowVersion, disable_workflow,
     enable_workflow,
 };
@@ -238,7 +238,7 @@ impl Fixture {
         id: &str,
         version: u32,
         enabler: &str,
-    ) -> Result<(), wamn_environment_control::workflow_lifecycle::WorkflowLifecycleError> {
+    ) -> Result<(), wamn_environment::workflow_lifecycle::WorkflowLifecycleError> {
         let digest = self.digest.clone();
         enable_workflow(
             &self.project_url,

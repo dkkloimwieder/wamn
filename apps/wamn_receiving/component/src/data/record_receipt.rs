@@ -1,6 +1,6 @@
 //! Atomic `receiving.record_receipt` command over generated static accessors.
 //!
-//! The generated codec claims the key in the write log and holds the
+//! The generated operation claims the key in the write log and holds the
 //! transaction. The command inserts the receipt first, takes its id from
 //! `RETURNING`, and binds it into the receipt lines.
 
@@ -322,7 +322,7 @@ impl From<StatementError> for RecordReceiptError {
     }
 }
 
-/// Execute one request element in the transaction the codec holds for the write log.
+/// Execute one request element in the transaction the operation holds for the write log.
 pub async fn execute(
     transaction: &mut Transaction,
     command: &RecordReceiptValue,

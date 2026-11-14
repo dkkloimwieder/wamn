@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 test = false
 
 [dependencies]
+wamn-data-access.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 uuid = { workspace = true }

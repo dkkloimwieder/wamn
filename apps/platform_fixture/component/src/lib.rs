@@ -57,7 +57,7 @@ impl generated::widget_tag::update::Action for Component {}
 
 export!(Component);
 
-/// One declared detail member of a refusal, spelled as the codecs read it.
+/// One declared detail member of a refusal, spelled as the typed exports read it.
 ///
 /// `permission_denied` names the permission of the refused operation.
 fn detail(error: &AccessError, permission: &str, key: &str) -> Option<String> {

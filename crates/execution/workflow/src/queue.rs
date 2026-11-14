@@ -7,7 +7,6 @@ use anyhow::Context as _;
 use tracing::Instrument as _;
 use wash_runtime::host::probes::Liveness;
 
-use wamn_engine::entry_operation::postgres_types::PgError;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
 use wamn_event_wire::Causation;
@@ -21,7 +20,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 
 use crate::router_action::{ProductionRouterAction, production_router_action};
-use crate::{RouterDriver, RouterDriverRequest, Verdict, WorkflowIdentity, WorkflowRunRequest};
+use crate::{RouterDriver, WorkflowIdentity, WorkflowRunRequest};
 
 /// The lease target the queue binds; an event admission runs under it too.
 pub(crate) const QUEUE_LEASE_INVOCATION: &str = "wamn-executor-queue";
@@ -77,18 +76,7 @@ impl QueueService {
         let target = QueueTarget {
             project_env_key: release.target().project_env_key.clone(),
             project: config.project.clone(),
-            // Released runs carry a package of the release, and workflow runs
-            // the name of a declared application.
-            package_ids: release
-                .manifest()
-                .release
-                .packages
-                .iter()
-                .map(|package| package.package_id().to_owned())
-                .chain(release.target().applications.keys().cloned())
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect(),
+            package_ids: release.target().applications.keys().cloned().collect(),
             environment: release.target().environment.clone(),
         };
         postgres
@@ -269,8 +257,8 @@ async fn drain_one(
             lease_generation,
             wiring_id,
             wiring_version,
-            router_caller_attached,
-            durable_caller_attached,
+            router_caller_attached: _,
+            durable_caller_attached: _,
             candidate: _,
             service_principal_id: _,
             workflow,
@@ -294,44 +282,14 @@ async fn drain_one(
                 return Ok(true);
             };
             let workflow = *workflow;
-            let caller = match postgres
-                .queued_run_caller(
-                    &target.project,
-                    &target.project_env_key,
-                    &workflow.execution_principal_id,
-                    Some(&workflow.execution_role),
-                )
-                .await
-            {
-                Ok(caller) => Some(caller),
-                Err(error)
-                    if matches!(
-                        error.downcast_ref::<PgError>(),
-                        Some(PgError::ConnectionUnavailable)
-                    ) =>
-                {
-                    postgres
-                        .release_lease(QUEUE_LEASE_INVOCATION, &run_id, lease_generation)
-                        .await?;
-                    return Ok(true);
-                }
-                Err(error) => return Err(error),
-            };
-            let run = RouterDriverRequest {
+            let request = WorkflowRunRequest {
                 project_env_key: target.project_env_key.clone(),
                 package_id: package_id.clone(),
                 environment: target.environment.clone(),
                 wiring_id: wiring_id.clone(),
                 wiring_version,
                 delivery_id: run_id.clone(),
-                payload: payload.clone(),
-                caller_attached: router_caller_attached,
-                caller,
-                traceparent: None,
-                tracestate: None,
-            };
-            let request = WorkflowRunRequest {
-                run,
+                payload,
                 wiring_hash: workflow.wiring_hash,
                 node_digests: workflow.node_digests,
                 causation: workflow.causation,
@@ -351,7 +309,6 @@ async fn drain_one(
                     lease_generation,
                     lease_ttl_ms,
                     liveness,
-                    durable_caller_attached,
                     request,
                 )
                 .instrument(queue_span),
@@ -375,11 +332,10 @@ async fn drive_lease(
     lease_generation: i64,
     lease_ttl_ms: i64,
     liveness: &Liveness,
-    durable_caller_attached: bool,
     request: WorkflowRunRequest,
 ) -> anyhow::Result<()> {
     let causation = request.causation.clone();
-    let (wiring_id, wiring_version) = (request.run.wiring_id.clone(), request.run.wiring_version);
+    let (wiring_id, wiring_version) = (request.wiring_id.clone(), request.wiring_version);
     let execute = driver.execute_workflow(request);
     tokio::pin!(execute);
     let renew_every = Duration::from_millis(
@@ -413,19 +369,14 @@ async fn drive_lease(
         }
     };
 
-    let adjustments = match &delivery {
-        Ok(delivery) => delivery.deadline_adjustments.as_slice(),
-        Err(error) => error
-            .downcast_ref::<crate::DeadlineAdjustments>()
-            .map_or(&[][..], |adjustments| adjustments.0.as_slice()),
-    };
+    let (delivery, adjustments) = delivery;
     if !adjustments.is_empty()
         && !postgres
             .record_deadline_adjustments(
                 QUEUE_LEASE_INVOCATION,
                 run_id,
                 lease_generation,
-                &serde_json::to_value(adjustments)?,
+                &serde_json::to_value(&adjustments)?,
             )
             .await?
     {
@@ -452,7 +403,7 @@ async fn drive_lease(
         }
     };
 
-    let action = production_router_action(&delivery.outcome, durable_caller_attached)?;
+    let action = production_router_action(&delivery)?;
     match action {
         ProductionRouterAction::Complete(completion) => {
             commit_completion(postgres, run_id, lease_generation, &completion).await?;
@@ -462,18 +413,8 @@ async fn drive_lease(
             dedup_id,
             entity,
             operation,
+            node_id,
         } => {
-            // Read off the verdict rather than carried on the action: the node
-            // id is a trace coordinate, and `ProductionRouterAction` states what
-            // the boundary must DO. Widening it would put a tracing field on the
-            // run-store contract, and the outcome that decided the action is
-            // still in target here, so nothing is lost by reading it directly. An
-            // empty node id is unreachable — only an Emit verdict yields an Emit
-            // action — and records EMPTY rather than panicking if it ever is.
-            let node_id = match &delivery.outcome.verdict {
-                Some(Verdict::Emit { node_id, .. }) => node_id.clone(),
-                _ => String::new(),
-            };
             let publish = jetstream
                 .publish_derived(DerivedPublishRequest {
                     component_id: QUEUE_LEASE_INVOCATION.to_owned(),

@@ -13,7 +13,7 @@ use serde::Deserialize as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_dev_control::owned_command;
-use wamn_environment_control::platform::{
+use wamn_environment::platform::{
     artifact_plan,
     document::{ClusterDocument, Provider},
     provider,

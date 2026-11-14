@@ -1,7 +1,7 @@
 //! Fixture setup through the org connection authority.
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_environment_control::environment::{self, Platform, document::EnvironmentDocument};
+use wamn_environment::environment::{self, Platform, document::EnvironmentDocument};
 
 use sqlx::{Connection as _, Row as _, Statement as _};
 pub async fn bind(
@@ -293,18 +293,7 @@ manifest.Package {{
             if *palette == "blob-put" {
                 let input = std::env::var_os("WAMN_BLOB_PUT_COMPONENT")
                     .context("WAMN_BLOB_PUT_COMPONENT")?;
-                run.run(
-                    &target
-                        .join("debug/wamn-component-virtualizer")
-                        .to_string_lossy(),
-                    &[
-                        "--input",
-                        &std::path::PathBuf::from(input).to_string_lossy(),
-                        "--output",
-                        &output.join(&path).to_string_lossy(),
-                    ],
-                )
-                .await?;
+                std::fs::copy(input, output.join(&path))?;
             } else {
                 std::fs::copy(
                     target

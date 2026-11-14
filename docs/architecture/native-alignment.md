@@ -38,10 +38,10 @@ These choices make no general performance assertion.
 | Owner | Reason retained | Condition for replacement |
 | --- | --- | --- |
 | [`wamn:postgres`](data-access.md) | Commands need one exclusive session through admitted SQL and transaction finalization. | Native availability alone does not authorize a second database path. |
+| Ambient WASI CLI | Keep process arguments, environment and standard streams out of application and integration guests. | Native store construction must supply an empty CLI context. |
 | [Import admission](capabilities.md#import-admission) | Publication refuses unsupported authority before distribution. | Preserve the project contract when considering any native replacement. |
 | [Immutable wiring releases](overview.md#release-identity) | Project-owned declarations need admission, rollback identity, and exact provenance. | Reconsider when native links supply equivalent project and per-link authorization. |
 | [Invocation authority](execution.md#native-dispatch) | Deployment-trusted code can reuse native instances. Host authority remains per invocation. Guest data and task cleanup depend on reviewed component correctness. | Native dispatch owns store boundaries, overflow, and retirement. Unreviewed units remain fresh. |
-| [Guest normalization](components.md#guest-build-identity) | Standard-library imports must satisfy the closed project capability set. | A replacement build must preserve that actual import boundary. |
 | [`wamn build`](../operations/building.md#native-programs-and-app-components) | Per-guest builds preserve digest identity and admission integration. | Native build and OCI publication must supply the same declared selection and admission requirements. |
 | Operator Event permissions | Chart `2.11.0` lacks the modern `events.k8s.io` permission in watched namespaces. | Remove the targeted `create,patch` Role only when the pinned chart grants it. |
 | [Count mode](execution.md#native-dispatch) | Chart `2.11.0` defaults guest memory and raw-socket egress to enforce. The host keeps guest memory in count and defaults raw-socket egress to enforce. Guest memory count mode records growth that enforce would refuse and allows it. | Guest memory remains in count pending an owner ruling. Socket enforce mode blocks refused traffic; the existing socket flag still accepts count. |
@@ -55,10 +55,7 @@ These choices make no general performance assertion.
 Any reuse change must include its resource rules and runtime implementation together.
 The adoption decision requires no benchmark.
 
-WASI-Virt is pinned to `448f6df8f688cee5d6995e96b1ffc31f9bf00742` with adapter SHA-256 `28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632`.
-The `wasi:*` capability rows name the family of the adapter's emitted versions, not the authored WIT versions.
-A pin change must keep the emitted versions in that family and at or below the ceiling.
-Build shape serves admission policy and cannot weaken it.
+Standard-library guests retain their original WASI imports. Admission permits the approved ambient interfaces. The host supplies an empty environment, argument list and standard streams, with no preopened directories.
 
 The OCI readers preserve WAMN configuration blobs and media types.
 They require registry-targeted `HttpsExcept`, connect and read timeouts, and `ManifestUnknown` discrimination for exact republishing.

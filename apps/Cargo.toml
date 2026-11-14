@@ -32,7 +32,6 @@ members = [
     "platform/data/record-history",
     "platform/fixtures/connection-http-standard",
     "platform/fixtures/sqlx-command",
-    "platform/fixtures/std-virtualization-probe",
 ]
 exclude = [
     "platform/no-std",

@@ -97,7 +97,7 @@ Keep that file across host restarts so that stored OAuth tokens stay readable.
 
 The command starts identity, the org control host, and a local web server, then writes private `dev.json` and exits.
 The control host uses `wamn-host host --control`. Its component configuration references the org control login and its native basic-auth Secret.
-It loads the local flow-http bytes with the interfaces from `deploy/platform/control-service.yaml`.
+The host serves control HTTP endpoints natively. The platform Helm chart exposes that host through `deploy/platform/release/templates/control.yaml`.
 The administration directory holds the patch from the normal administration credential operation.
 No application release runs in the control host.
 
@@ -235,7 +235,7 @@ The loop builds the selected packages before it compares installed SQL.
 Each build describes statements against a private database on the target server.
 The shared xtask library compiles components and writes one completed `build.json`.
 Cargo decides which guests need compilation.
-The Build stage compiles each web client. The Virtualize stage selects the recorded components.
+The Build stage compiles each web client. The Admit stage selects and admits the recorded components.
 The loop prepares no SQLx verifier or metadata.
 The watcher watches package directories, platform guests, shared WIT and local configuration files.
 It skips paths covered by Git ignore rules.
@@ -292,7 +292,7 @@ A failure during preparation keeps that application running.
 A failed stage prints its top context first and every cause under it.
 The printed line names the refusal that stopped the stage.
 The loop replaces the host only after the candidate passes preparation.
-Platform builds publish palette components independently of application packages.
+Platform builds publish palette components independently of application packages. The dev loop reads the sealed `palette.json` beside its selected HTTP route guest and copies verified palette bytes into its local component source.
 The environment document owns connection bindings.
 The runtime enforces operation grants, connection bindings and credentials for each database role.
 

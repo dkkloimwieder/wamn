@@ -13,13 +13,11 @@ mod data;
 
 use crate::data::{AccessError, AccessErrorType};
 use exports::client_acme_receiving::acme::record_receipt::Guest as RecordReceipt;
-use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
+use wamn::node::types::{ErrorDetail, NodeContext, NodeError};
 
-#[cfg(test)]
-mod codecs;
 mod quality;
 
-use quality::{approve_codec, detail_codec};
+use quality::{approve_operation, detail_operation};
 
 /// The generated operations, whole.
 mod generated {
@@ -30,12 +28,12 @@ mod generated {
     ));
 }
 
-mod create_codec {
+mod create_operation {
     use super::exports::client_acme_receiving::quality::create_inspection as contract;
 
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/wamn/client_acme_receiving/wit/quality_create_inspection_codec.rs"
+        "/../../target/wamn/client_acme_receiving/wit/quality_create_inspection_operation.rs"
     ));
 }
 
@@ -57,36 +55,29 @@ struct Component;
 impl generated::purchase_order::get::Action for Component {}
 impl generated::purchase_order::update::Action for Component {}
 
-quality::detail_codec::export_operation!(
+quality::detail_operation::export_operation!(
     Component,
     exports::client_acme_receiving::quality::load_purchase_order_detail,
     wamn::node::types,
     wamn_postgres_statements::Connection::new(),
     quality::handle_detail,
-    detail_codec
+    detail_operation
 );
-quality::approve_codec::export_operation!(
+quality::approve_operation::export_operation!(
     Component,
     exports::client_acme_receiving::quality::approve_inspection,
     wamn::node::types,
     quality::handle_approve,
-    approve_codec
+    approve_operation
 );
-create_codec::export_operation!(
+create_operation::export_operation!(
     Component,
     exports::client_acme_receiving::quality::create_inspection,
     wamn::node::types,
     (),
     quality::handle_create,
-    create_codec
+    create_operation
 );
-
-fn emission(payload: String) -> Emission {
-    Emission {
-        payload,
-        port: None,
-    }
-}
 
 fn private_node_error(error: &AccessError) -> NodeError {
     let type_ = error.error_type();
@@ -142,9 +133,9 @@ fn access_detail(
 use exports::client_acme_receiving::acme::record_receipt as contract;
 use wamn_receiving::receiving::record_receipt as base;
 
-mod receipt_codec {
+mod receipt_operation {
     use super::contract;
-    include!("../../../target/wamn/client_acme_receiving/wit/acme_record_receipt_codec.rs");
+    include!("../../../target/wamn/client_acme_receiving/wit/acme_record_receipt_operation.rs");
 }
 
 /// The request id of the one request element that Acme passes to Receiving's operation.
@@ -166,29 +157,18 @@ impl RecordReceipt for Component {
                     code: Some("internal_error".to_owned()),
                 })
             })?;
-        receipt_codec::validate(&input).map_err(|error| {
+        receipt_operation::validate(&input).map_err(|error| {
             NodeError::InvalidInput(ErrorDetail {
                 message: error.context().to_owned(),
                 code: Some("invalid_input".to_owned()),
             })
         })?;
         Ok(
-            receipt_codec::run(input, &mut transaction, async |transaction, request| {
+            receipt_operation::run(input, &mut transaction, async |transaction, request| {
                 record_receipt(context.clone(), transaction, request).await
             })
             .await,
         )
-    }
-
-    async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let input = receipt_codec::decode(&input).map_err(|error| {
-            NodeError::InvalidInput(ErrorDetail {
-                message: error.context().to_owned(),
-                code: Some("invalid_input".to_owned()),
-            })
-        })?;
-        let output = <Self as RecordReceipt>::run(context, input).await?;
-        Ok(emission(receipt_codec::encode(&output)))
     }
 }
 
@@ -213,7 +193,7 @@ async fn record_receipt(
     crate::data::operation::record_inspection(transaction, &result.receipt_id, &purchase_order_id)
         .await
         .map_err(|error| {
-            receipt_codec::map_error(error.error_type().literal(), |key| {
+            receipt_operation::map_error(error.error_type().literal(), |key| {
                 access_detail(&error, key, "acme.record_receipt", None, None)
             })
         })?;

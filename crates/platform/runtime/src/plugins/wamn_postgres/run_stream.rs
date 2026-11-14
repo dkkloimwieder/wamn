@@ -46,12 +46,10 @@ pub(super) async fn run_stream<T: 'static + Send>(
     instance: Option<&str>,
     statement_path: String,
     binds: Vec<SqlValue>,
-    wal: Option<super::bindings::wamn::postgres::statements::WantWalPosition>,
 ) -> WasmResult<
     Result<
         (
             Vec<Column>,
-            Option<String>,
             StreamReader<Vec<SqlValue>>,
             FutureReader<Result<(), StatementError>>,
         ),
@@ -88,11 +86,18 @@ pub(super) async fn run_stream<T: 'static + Send>(
                 statement_path,
                 statement,
                 binds,
-                wal.is_some(),
+                plugin.active_read(&component_id),
             )
             .instrument(span)
             .await;
             record_query_ms("statement.stream", &project, started.elapsed());
+            if let Ok(opened) = &opened {
+                plugin
+                    .scopes
+                    .update_existing::<crate::invocation::Authority, _>(&component_id, |record| {
+                        record.wal_position.clone_from(&opened.wal_position);
+                    });
+            }
             opened
         })
         .await;
@@ -103,7 +108,6 @@ pub(super) type ConnectionStreamCallResult = WasmResult<
     Result<
         (
             Vec<Column>,
-            Option<String>,
             StreamReader<Vec<SqlValue>>,
             FutureReader<Result<(), StatementError>>,
         ),
@@ -117,7 +121,7 @@ fn into_guest_stream<T: 'static + Send>(
 ) -> ConnectionStreamCallResult {
     let OpenedStream {
         columns,
-        wal_position,
+        wal_position: _,
         batches,
         finished,
     } = match opened {
@@ -131,7 +135,7 @@ fn into_guest_stream<T: 'static + Send>(
                 StatementError::Postgres(PgError::ConnectionUnavailable),
             )))
         })?;
-        Ok(Ok((columns, wal_position, stream, finished)))
+        Ok(Ok((columns, stream, finished)))
     })
 }
 

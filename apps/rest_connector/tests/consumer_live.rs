@@ -9,7 +9,7 @@ use serde_json::json;
 use sqlx::PgConnection as Client;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
-use wamn_environment_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
+use wamn_environment::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
 use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
 use wamn_package_control::component_admission::ComponentAdmission;
 use wamn_runtime::plugins::wamn_postgres::{
@@ -97,7 +97,7 @@ pub async fn workflow_host(
     database: &wamn_test_postgres::Database,
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<Arc<WamnPostgres>> {
-    wamn_environment_control::platform_migrations::install_project(admin).await?;
+    wamn_environment::platform_migrations::install_project(admin).await?;
     sqlx::query("SELECT set_config('app.user_id', $1, false)")
         .bind(
             &wamn_identity_protocol::PlatformComponent::Provisioning
@@ -110,7 +110,7 @@ pub async fn workflow_host(
 
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
-    wamn_environment_control::environment::stage::write_release(
+    wamn_environment::environment::stage::write_release(
         database.url(),
         PROJECT_ENV_KEY,
         digest.as_str(),
@@ -216,10 +216,10 @@ pub async fn schedule_run(
     operations: &[&str],
     due: &str,
 ) -> anyhow::Result<String> {
-    use wamn_environment_control::author_workflow::{
+    use wamn_environment::author_workflow::{
         AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger, author_workflow_in_databases,
     };
-    use wamn_environment_control::workflow_lifecycle::{WorkflowVersion, enable_workflow};
+    use wamn_environment::workflow_lifecycle::{WorkflowVersion, enable_workflow};
     use wamn_runtime::plugins::wamn_postgres::{ScheduleRunAdmission, ScheduleRunAdmitted};
 
     let (_, digest) =
@@ -350,12 +350,18 @@ pub async fn install(
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+    let migration_database_url = wamn_control_provision::test_database::package_migration_input(
+        database.url(),
+        "rest",
+        "publication",
+        "test",
+    )
+    .await?;
     for package in &packages {
         apply_package(ApplyPackageRequest {
-            component_source: wamn_environment_control::apply_package::component_source_from_env(
-                None,
-            )
-            .unwrap(),
+            migration_database_url: migration_database_url.clone(),
+            component_source: wamn_environment::apply_package::component_source_from_env(None)
+                .unwrap(),
             changes: wamn_broker::Publisher::default(),
             package: package.clone(),
             database_url: database.url().into(),
@@ -407,7 +413,7 @@ pub async fn install(
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    wamn_environment_control::environment::stage::materialize_application_principals(
+    wamn_environment::environment::stage::materialize_application_principals(
         system.url(),
         database.url(),
         PROJECT_ENV_KEY,
@@ -547,13 +553,10 @@ pub async fn invoke(
         .join("components/rest_consumer_fixture.wasm"),
     )?;
     let application = host
-        .load_application(
-            vec![NativeComponent {
-                fact: component.clone(),
-                bytes,
-            }],
-            None,
-        )
+        .load_application(vec![NativeComponent {
+            fact: component.clone(),
+            bytes,
+        }])
         .await?;
     let intents = host.call_intents(component, OPERATION)?;
     eprintln!(
@@ -593,13 +596,10 @@ pub async fn invoke(
             .join("components/rest_connector.wasm"),
     )?;
     let connector_application = host
-        .load_application(
-            vec![NativeComponent {
-                fact: connector.clone(),
-                bytes: connector_bytes,
-            }],
-            None,
-        )
+        .load_application(vec![NativeComponent {
+            fact: connector.clone(),
+            bytes: connector_bytes,
+        }])
         .await?;
     let mut failed_payload = serde_json::Value::Null;
     for request in [

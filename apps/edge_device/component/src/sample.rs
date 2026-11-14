@@ -2,11 +2,11 @@
 /// The engine's per request element intent is its replay guard.
 mod read {
     use crate::exports::edge_device::sample::read as contract;
-    mod codec {
+    mod operation {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/edge_device/wit/sample_read_codec.rs"
+            "/../../target/wamn/edge_device/wit/sample_read_operation.rs"
         ));
     }
 
@@ -27,12 +27,12 @@ mod read {
             captured_at: request.captured_at,
         })
     }
-    codec::export_operation!(
+    operation::export_operation!(
         crate::Component,
         contract,
         crate::wamn::node::types,
         (),
         handle,
-        codec
+        operation
     );
 }

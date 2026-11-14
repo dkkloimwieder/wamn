@@ -15,10 +15,7 @@ use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Context as _;
-use wamn_catalog::{
-    ComponentPackageCoordinate, ServingManifest, WiringDocument,
-    validate_resolved_wiring_compatibility,
-};
+use wamn_catalog::{ComponentPackageCoordinate, ServingManifest, WiringDocument};
 use wamn_run_state::AuthorityClass;
 
 use super::WamnPostgres;
@@ -192,6 +189,10 @@ pub fn resolve_workflow_in_release(
                 package_version: versions
                     .get(component.package_id.as_str())
                     .copied()
+                    .or_else(|| {
+                        (component.package_id == wamn_catalog::PALETTE_PACKAGE_ID)
+                            .then_some(wamn_catalog::PALETTE_PACKAGE_VERSION)
+                    })
                     .unwrap_or_default()
                     .to_owned(),
             })
@@ -244,16 +245,6 @@ pub fn resolve_workflow_in_release(
             })?;
         node_components.insert(node_id.clone(), admitted(chosen));
     }
-    validate_resolved_wiring_compatibility(&document, &node_components).map_err(|error| {
-        WorkflowResolutionError::with_source(
-            WorkflowResolutionErrorType::Incompatible,
-            format!(
-                "workflow {:?} version {} is not compatible with its resolved nodes",
-                run.workflow_id, run.version
-            ),
-            error,
-        )
-    })?;
     let components = manifest.components.iter().map(admitted).collect();
     resolved_wiring(
         DecodedWiring {

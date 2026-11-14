@@ -7,7 +7,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_catalog::schema::ForeignKeyColumn;
 use wamn_digest::bytes_sha256;
-use wamn_environment_control::apply_package::{self, ApplyPackageRequest};
+use wamn_environment::apply_package::{self, ApplyPackageRequest};
 use wamn_schema_introspection::ir::{Constraint, ForeignKeyAction, postgres_type};
 
 use super::identity;
@@ -270,7 +270,7 @@ async fn install_fresh(
     let roots = packages
         .iter()
         .map(|package| {
-            Ok(wamn_environment_control::apply_package::PackageRoot {
+            Ok(wamn_environment::apply_package::PackageRoot {
                 path: package.clone(),
                 artifact_digest: Some(
                     wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(package)?,
@@ -278,12 +278,18 @@ async fn install_fresh(
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+    let migration_database_url = wamn_control_provision::test_database::package_migration_input(
+        &url,
+        &identity().org,
+        &identity().project,
+        &identity().environment,
+    )
+    .await?;
     for package in &roots {
         apply_package::apply_package(ApplyPackageRequest {
-            component_source: wamn_environment_control::apply_package::component_source_from_env(
-                None,
-            )
-            .unwrap(),
+            migration_database_url: migration_database_url.clone(),
+            component_source: wamn_environment::apply_package::component_source_from_env(None)
+                .unwrap(),
             changes: wamn_broker::Publisher::default(),
             package: package.clone(),
             database_url: url.clone(),

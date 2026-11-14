@@ -2,10 +2,10 @@ use sqlx::PgConnection as Client;
 
 use wamn_broker::Publisher;
 use wamn_broker::auth_changes::AuthDrops;
-use wamn_environment_control::provision_project_env::pat_secrets::{
+use wamn_environment::provision_project_env::pat_secrets::{
     MANAGEMENT_AUTHOR, assign_pat_role, mint_pat, resolve_or_create_service,
 };
-use wamn_environment_control::provision_project_env::provisioning_transaction;
+use wamn_environment::provision_project_env::provisioning_transaction;
 use wamn_identity_client::PatClient;
 use wamn_platform_identity::authenticate_pat;
 use wamn_registry::Triple;

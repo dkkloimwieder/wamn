@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 wamn-digest.workspace = true
 hex.workspace = true
+sqlx = { workspace = true, features = ["postgres", "json"] }
 serde = { workspace = true, features = ["derive"] }
 
 [lints]

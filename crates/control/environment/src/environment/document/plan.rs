@@ -23,34 +23,22 @@ pub struct EnvironmentDocument {
     pub integrations: BTreeMap<String, Integration>,
 }
 
-/// Shared schema behavior. An omitted mode follows the recorded disposable designation.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Schema {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<SchemaMode>,
-}
-
-/// The environment's schema lifecycle mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SchemaMode {
-    Reset,
-    Migrate,
-}
+pub use wamn_registry::configuration::{Client, Integration, Schema, SchemaMode};
 
 /// An application's deployment selection and declared membership.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationSelection {
+    /// Transient execution input, resolved from Helm or the deploy request.
+    #[serde(skip)]
     pub current: DeclaredRelease,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub previous: Option<String>,
     pub hostname: String,
     /// Maximum application credential revocation delay, in seconds.
     pub revocation_seconds: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,
+    /// Transient membership from the verified release manifest.
+    #[serde(skip)]
     pub packages: std::collections::BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub connections: BTreeMap<String, String>,
@@ -80,25 +68,11 @@ fn read_applications<'de, D: serde::Deserializer<'de>>(
         .collect()
 }
 
-/// The package id and immutable web artifact of an environment's client.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Client {
-    pub package: String,
-    pub web: String,
-}
-
-/// The published version of a project integration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Integration {
-    pub version: i32,
-}
-
 /// A current release: a full digest or `none`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum DeclaredRelease {
     /// Installed but not serving: `apply` uninstalls the release chart.
+    #[default]
     None,
     /// `sha256:` and 64 lowercase hex characters.
     Digest(String),
@@ -162,13 +136,14 @@ impl EnvironmentDocument {
     ///
     /// When a field is unknown or missing, or a value is refused.
     pub fn from_json(bytes: &[u8]) -> anyhow::Result<Self> {
-        let document: Self =
+        let configuration: wamn_registry::configuration::EnvironmentConfiguration =
             serde_json::from_slice(bytes).context("decode the environment JSON")?;
+        let document = Self::from_configuration(configuration);
         document.require_valid()?;
         Ok(document)
     }
 
-    fn require_valid(&self) -> anyhow::Result<()> {
+    pub(super) fn require_valid(&self) -> anyhow::Result<()> {
         wamn_control_provision::validate_project_env(&self.org, &self.project, &self.env)
             .context("the environment coordinate is not valid")?;
         ensure!(!self.policy.is_empty(), "policy is empty");
@@ -185,23 +160,11 @@ impl EnvironmentDocument {
                     && !hostname.ends_with(['.', '-']),
                 "application {name}: hostname {hostname:?} is not a lowercase DNS name"
             );
-            if let Some(previous) = &application.previous {
-                wamn_package_artifact::ensure_digest(previous)
-                    .with_context(|| format!("application {name}: previous"))?;
-            }
             if let Some(client) = &application.client {
                 wamn_package_artifact::ensure_digest(&client.web)
                     .with_context(|| format!("application {name}: client.web"))?;
             }
             ensure!(!name.is_empty(), "an application has an empty name");
-            ensure!(
-                !application.packages.is_empty(),
-                "application {name} has no packages"
-            );
-            ensure!(
-                !application.packages.contains(""),
-                "application {name} has an empty package id"
-            );
         }
         ensure!(!self.target.trim().is_empty(), "target is empty");
         for (application, definition) in &self.applications {
@@ -307,7 +270,6 @@ impl EnvironmentDocument {
         lines.push("    }".to_owned());
         lines.push("    applications = {".to_owned());
         for (name, application) in &self.applications {
-            let packages: Vec<String> = application.packages.iter().map(|id| quote(id)).collect();
             let bindings = application
                 .connections
                 .iter()
@@ -315,16 +277,11 @@ impl EnvironmentDocument {
                 .collect::<Vec<_>>()
                 .join(", ");
             lines.push(format!(
-                "        {} = {{\n            current = {}\n            hostname = {}\n            revocation_seconds = {}\n            packages = [{}]\n            connections = {{{bindings}}}",
+                "        {} = {{\n            hostname = {}\n            revocation_seconds = {}\n            connections = {{{bindings}}}",
                 quote(name),
-                quote(&application.current.to_string()),
                 quote(&application.hostname),
-                application.revocation_seconds,
-                packages.join(", ")
+                application.revocation_seconds
             ));
-            if let Some(previous) = &application.previous {
-                lines.push(format!("            previous = {}", quote(previous)));
-            }
             if let Some(client) = &application.client {
                 lines.push(format!(
                     "            client = {{package = {}, web = {}}}",

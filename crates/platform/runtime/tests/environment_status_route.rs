@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
-use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
+use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_runtime::plugins::route_authentication::{
     EnvironmentStatusReader, PlatformRouteAuthenticator,
@@ -156,7 +156,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     let reader = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(projects, None),
     )));
-    let route = FlowHttpRouting::new(Some(release()?), RouteInFlightLimit::default())
+    let route = FlowHttpRouting::new(Some(release()?))
         .with_authenticator(Arc::new(PlatformRouteAuthenticator::default()))
         .with_environment_status(Arc::new(EnvironmentStatusReader::new(
             Arc::clone(&reader),

@@ -59,6 +59,7 @@ mod bindings {
             "../../../wit/wamn-connection",
             "../../../wit/wamn-flow-http-routing",
             "../../../wit/wamn-postgres-0.4",
+            "../../../wit/wamn-node",
             "../../../wit/wamn-operation-0.1",
             "../../../wit/wamn-jetstream",
             "../../../wit/wasmcloud-blobstore",
@@ -381,11 +382,8 @@ impl ConnectionHttp {
             (ConnectionExecutionClosure::Released, Some(release)) => {
                 let manifest = release.manifest();
                 if release.target().project_env_key != self.project_env_key.as_ref()
-                    || !manifest
-                        .release
-                        .packages
-                        .iter()
-                        .any(|package| package.package_id() == invocation.package_id.as_str())
+                    || released_invocation_application(manifest, release.target(), &invocation)
+                        .is_none()
                 {
                     return Err(ConnectionError::AttestationInvalid);
                 }
@@ -942,6 +940,53 @@ fn log_effect_authority_denied(phase: &'static str, error: ConnectionError) -> C
         tracing::warn!(phase, "trusted HTTP connection authority denied");
     }
     error
+}
+
+/// Find the application authorized to execute this exact released component.
+pub fn released_invocation_application<'a>(
+    manifest: &ServingManifest,
+    target: &'a wamn_engine::release_manifest::ReleaseTarget,
+    invocation: &ConnectionInvocation,
+) -> Option<&'a str> {
+    if !manifest.components.iter().any(|component| {
+        component.package_id == invocation.package_id
+            && component.descriptor.component == invocation.component
+            && component.descriptor.component_digest == invocation.component_digest
+            && component
+                .descriptor
+                .operations
+                .contains_key(&invocation.operation)
+    }) {
+        return None;
+    }
+    if invocation.package_id == wamn_catalog::PALETTE_PACKAGE_ID {
+        let InvocationEntry::Wiring(position) = &invocation.entry else {
+            return None;
+        };
+        target
+            .applications
+            .get_key_value(&position.package_id)
+            .map(|(name, _)| name.as_str())
+    } else {
+        if !manifest
+            .release
+            .packages
+            .iter()
+            .any(|package| package.package_id() == invocation.package_id)
+        {
+            return None;
+        }
+        let application =
+            wamn_catalog::application_for_package(&target.applications, &invocation.package_id)?;
+        if invocation
+            .entry
+            .wiring()
+            .is_some_and(|position| position.package_id != application)
+        {
+            return None;
+        }
+        Some(application)
+    }
 }
 
 /// Require the executing operation to be reachable from the attested wiring root.

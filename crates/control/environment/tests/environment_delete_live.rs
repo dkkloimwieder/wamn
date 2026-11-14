@@ -6,7 +6,7 @@ use std::time::Duration;
 use serde_json::json;
 use sqlx::PgConnection as Client;
 use wamn_broker::{Publisher, auth_changes::AuthDrops, connection_changes::ConnectionDrops};
-use wamn_environment_control::{
+use wamn_environment::{
     environment::{delete::delete_registry_rows, lock::LifecycleLock},
     provision_project_env::provisioning_transaction,
 };
@@ -20,7 +20,7 @@ async fn stranded_run_refusal_preserves_the_environment_before_uninstall() -> an
         os::unix::fs::PermissionsExt as _,
         path::{Path, PathBuf},
     };
-    use wamn_environment_control::environment::{Platform, delete::delete};
+    use wamn_environment::environment::{Platform, delete::delete};
 
     // Isolate PATH in a child test process; never change the test harness environment.
     if !Path::new("delete-mutations").exists() {
@@ -92,8 +92,7 @@ esac
     .await
     .map(drop)?;
     transaction.commit().await?;
-    wamn_environment_control::provision_system::set_platform_domain(&mut system, "example.invalid")
-        .await?;
+    wamn_environment::provision_system::set_platform_domain(&mut system, "example.invalid").await?;
     sqlx::raw_sql("RESET ROLE")
         .execute(&mut system)
         .await
@@ -117,7 +116,7 @@ esac
     let mut project_url = url::Url::parse(database.url())?;
     project_url.set_path(&project_name);
     let mut project = wamn_postgres::connect(project_url.as_str()).await?;
-    wamn_environment_control::platform_migrations::install_project(&mut project).await?;
+    wamn_environment::platform_migrations::install_project(&mut project).await?;
     wamn_platform_identity::environment::fill(
         database.url(),
         project_url.as_str(),

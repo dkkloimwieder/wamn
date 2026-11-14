@@ -1,10 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/platform/postgres", "crates/platform/digest", "crates/platform/scalar", "services/host", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "xtask/build", "tools/submodule-pins", "tests/conformance", "tests/integration", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/generator", "crates/schema/introspection", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/platform-install", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/protocol", "crates/kubernetes", "crates/broker"]
+members = ["crates/platform/postgres", "crates/platform/digest", "crates/platform/scalar", "services/host", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "xtask/build", "tools/submodule-pins", "tests/conformance", "tests/integration", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/generator", "crates/schema/introspection", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/platform-install", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/protocol", "crates/kubernetes", "crates/broker"]
 default-members = [
   "crates/catalog/model",
   "crates/execution/host",
-  "crates/execution/workflow/router",
   "crates/execution/run-state",
   "crates/execution/workflow",
   "crates/identity/platform",
@@ -230,7 +229,6 @@ wasm-encoder = "0.261.0"
 wasmparser = "0.261.0"
 # Post-link normalization uses one immutable upstream adapter. Its embedded
 # `virtual_adapter-wasip2.wasm` is sha256:28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632.
-wasi-virt = { version = "=0.2.0", git = "https://github.com/bytecodealliance/WASI-Virt.git", rev = "448f6df8f688cee5d6995e96b1ffc31f9bf00742", default-features = false }
 
 # Every project crate has one canonical path + version identity (M-CRATES-IN-WORKSPACE).
 wamn-catalog = { path = "crates/catalog/model", version = "0.1.0" }
@@ -242,7 +240,7 @@ wamn-component-composer = { path = "crates/platform/component-composer", version
 wamn-package-control = { path = "crates/control/package", version = "0.1.0" }
 wamn-release-control = { path = "crates/control/release", version = "0.1.0" }
 wamn-platform-install = { path = "crates/control/platform-install", version = "0.1.0" }
-wamn-environment-control = { path = "crates/control/environment", version = "0.1.0" }
+wamn-environment = { path = "crates/control/environment", version = "0.1.0" }
 wamn-dev-control = { path = "crates/control/dev", version = "0.1.0" }
 wamn-control-provision = { path = "crates/control/provision", version = "0.1.0" }
 wamn-registry = { path = "crates/control/registry", version = "0.1.0" }
@@ -259,7 +257,6 @@ wamn-identity-protocol = { path = "crates/identity/protocol", version = "0.1.0" 
 wamn-record-history = { path = "apps/platform/data/record-history", version = "0.1.0" }
 wamn-conformance-tests = { path = "tests/conformance", version = "0.1.0" }
 wamn-integration-tests = { path = "tests/integration", version = "0.1.0" }
-wamn-router = { path = "crates/execution/workflow/router", version = "0.1.0" }
 wamn-run-state = { path = "crates/execution/run-state", version = "0.1.0" }
 wamn-run-state-sqlite = { path = "crates/execution/run-state-sqlite", version = "0.1.0" }
 wamn-runtime = { path = "crates/platform/runtime", version = "0.1.0" }

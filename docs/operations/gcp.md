@@ -430,7 +430,7 @@ The operations below use the external cloud credentials described above.
 
 Use the existing infrastructure and platform owners in this order.
 
-1. Render `deploy/gcp/project.k` with `wamn-ctl project render FILE --state-bucket BUCKET --state-prefix PREFIX DIRECTORY`.
+1. Render `deploy/gcp/project.k` with `cargo xtask project render FILE --state-bucket BUCKET --state-prefix PREFIX DIRECTORY`.
    Use the existing state bucket and prefix for this project.
    Initialize OpenTofu in that directory.
    For a fresh cluster, target the node pool resource addresses from `main.tf.json`.
@@ -522,7 +522,7 @@ Section 3 keeps that registry, the uploaded UI, buckets, IAM grants, and other p
 The guard sets every pool to 0 nodes at 03:00 New York time (07:00 UTC) every day. Run the wake verb to set every pool back to the size that `deploy/gcp/project.k` declares:
 
 ```bash
-$CARGO_TARGET_DIR/debug/wamn-ctl platform wake deploy/gcp/cluster.k
+cargo xtask platform wake deploy/gcp/cluster.k
 ```
 
 The verb resizes pool `pg` first, then the other pools. It prints one line for each pool. The `Cluster` keeps its old `Ready` condition while its pod is gone, so the verb then waits up to 900 seconds for the pod `wamn-pg-1` to exist and be Ready. Last, it waits up to 600 seconds for the statefulset `wamn-nats` to roll out.
@@ -534,7 +534,7 @@ Pod replacement ends existing port-forwards. Restart them for the services that 
 Run the sleep verb to set every pool to 0 nodes. The PostgreSQL volume keeps the data:
 
 ```bash
-$CARGO_TARGET_DIR/debug/wamn-ctl platform sleep deploy/gcp/cluster.k
+cargo xtask platform sleep deploy/gcp/cluster.k
 ```
 
 The verb prints one line for each pool, and then the names of the pools that it set to 0. Run section 5.1 to start the cluster again.

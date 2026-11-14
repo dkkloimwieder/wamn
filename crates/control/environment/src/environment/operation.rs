@@ -1,6 +1,4 @@
-//! Worker execution of one server-selected application operation.
-
-use std::path::Path;
+//! Native execution of server-authorized application operations.
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
@@ -13,14 +11,14 @@ use super::{Platform, document::EnvironmentDocument, sql};
 /// Returns preparation, SQL, or reset failures without changing code selections.
 pub async fn schema(
     platform: &Platform,
-    file: &Path,
+    triple: &wamn_registry::Triple,
     application: &str,
     release: Option<&str>,
     apply: bool,
 
     administrator: Option<&str>,
 ) -> anyhow::Result<sql::schema::Diff> {
-    let document = EnvironmentDocument::read_deployed(platform, file, Some(application)).await?;
+    let document = EnvironmentDocument::read_serving(platform, triple).await?;
     let (release, candidates) =
         sql::schema::release_candidates(platform, &document, application, release).await?;
     let state = sql::schema::state(platform, &document).await?;
@@ -34,38 +32,34 @@ pub async fn schema(
             .release
             .as_deref()
             .context("schema apply needs a published release")?;
+        let administrator =
+            administrator.context("schema apply requires the owning database credential")?;
         if diff.mode == super::document::SchemaMode::Reset {
-            if let Some(admin) = administrator {
-                Box::pin(sql::reset::reset_deployed_with_admin(
-                    platform,
-                    file,
-                    Some((application, release)),
-                    admin,
-                ))
-                .await?;
-            } else {
-                Box::pin(sql::reset::reset_deployed(
-                    platform,
-                    file,
-                    Some((application, release)),
-                ))
-                .await?;
-            }
-        } else if let Some(admin) = administrator {
+            Box::pin(sql::reset::reset_deployed_with_admin(
+                platform,
+                triple,
+                Some((application, release)),
+                administrator,
+            ))
+            .await?;
+        } else {
             let expected = sql::ExpectedDatabase::read(platform, &document).await?;
             let lock = expected.lock(platform, &document, false).await?;
-            sql::schema::apply(platform, &document, application, release, admin).await?;
-            super::ensure::ensure_cdc_inputs(platform, &document, Some(admin)).await?;
+            let result = lock
+                .protect(async {
+                    sql::schema::apply(platform, &document, application, release, administrator)
+                        .await?;
+                    super::ensure::ensure_cdc_inputs(platform, &document, Some(administrator)).await
+                })
+                .await;
             lock.release().await;
-        } else {
-            sql::apply_deployed(platform, &document, application, release).await?;
+            result?;
         }
     }
     Ok(diff)
 }
 
-/// Execute one server-built command in the product ctl image.
-/// Kubernetes supplies the mounted inputs. No request selects a path or credential.
+/// A server-authorized operation. No request selects a path or credential.
 #[derive(Debug)]
 pub struct Request<'a> {
     pub operation: &'a str,
@@ -76,178 +70,91 @@ pub struct Request<'a> {
     pub release: Option<&'a str>,
 }
 
-/// Prepare in-cluster inputs, then invoke the existing operation owner.
+/// Execute one operation with platform configuration and credentials supplied by control.
 ///
 /// # Errors
-/// Returns invalid target, input, Kubernetes, or operation failures.
-pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
-    let actor = std::env::var("WAMN_DEPLOY_ACTOR")
-        .context("authenticated deploy actor is absent")?
-        .parse::<wamn_identity_protocol::PrincipalId>()
-        .context("authenticated deploy actor is not a principal id")?;
+/// Returns invalid target, authorization input, SQL, Kubernetes, and rollout failures.
+pub async fn execute(
+    platform: &Platform,
+    request: Request<'_>,
+    actor: &wamn_identity_protocol::PrincipalId,
+    administrator: Option<&str>,
+) -> anyhow::Result<Value> {
     ensure!(
         matches!(
             request.operation,
-            "deploy" | "rollback" | "diff" | "apply" | "reset"
+            "deploy" | "rollback" | "stop" | "diff" | "apply" | "reset"
         ),
         "unknown application operation"
     );
-    let coordinate = wamn_control_provision::environment_names::environment_resource_name(
-        request.org,
-        request.project,
-        request.env,
-    )?;
-    prepare_kubeconfig(Path::new("/work/kubeconfig"))?;
-    let installed = crate::platform::installed::InstalledPlatform::read(
-        &wamn_release_control::release_chart::Target {
-            kubeconfig: "/work/kubeconfig".into(),
-            context: String::new(),
-            namespace: request.org.into(),
-        },
-    )
-    .await?
-    .context("platform is not installed")?;
-    let reference = installed.values["platform"]["chart"]
-        .as_str()
-        .context("installed platform has no chart")?;
-    ensure!(
-        reference.starts_with("oci://"),
-        "worker requires a published chart"
-    );
-    let chart = crate::platform::artifact_plan::select(Path::new(reference))?;
-    let mut platform = Platform::apply_from_env()?;
-    platform.chart = chart.directory().to_owned();
-    let configuration = &installed.values["configuration"];
-    platform.insecure_registry = configuration["insecure_registry"]
-        .as_bool()
-        .context("registry transport is absent")?;
-    platform.package_artifact_base = Some(
-        configuration["package_base"]
-            .as_str()
-            .context("package registry is absent")?
-            .into(),
-    );
-    platform.component_artifact_base = Some(
-        configuration["component_base"]
-            .as_str()
-            .context("component registry is absent")?
-            .into(),
-    );
-    platform.target.namespace = request.org.into();
-    let object: Value = wamn_kubernetes::kubectl::get(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        request.org,
-        "configmap",
-        &coordinate,
-    )
-    .await?
-    .context("canonical environment is absent")?;
-    let document = EnvironmentDocument::from_json(
-        object["data"]["environment.json"]
-            .as_str()
-            .context("canonical environment document is absent")?
-            .as_bytes(),
-    )?;
-    ensure!(
-        document.org == request.org
-            && document.project == request.project
-            && document.env == request.env,
-        "canonical environment target differs"
-    );
-    let file = Path::new("/work/environment.json");
-    std::fs::write(file, serde_json::to_vec(&document)?)?;
-    super::runtime::resolve_platform(&mut platform, request.org).await?;
-    let administrator = if matches!(request.operation, "apply" | "reset") {
-        let cluster = sql::reset::recorded_cluster(&platform, &document).await?;
-        Some({
-            let name = wamn_control_provision::project_env_secret_name(
-                request.org,
-                request.project,
-                request.env,
-            );
-            let configuration: Value = wamn_kubernetes::kubectl::get(
-                &platform.target.kubeconfig,
-                &platform.target.context,
-                request.org,
-                "configmap",
-                &name,
-            )
-            .await?
-            .context("environment connection configuration is absent")?;
-            let _ = cluster;
-            configuration["data"]["administration.json"]
-                .as_str()
-                .context("environment administration connection is absent")?
-                .to_owned()
-        })
-    } else {
-        None
-    };
+    wamn_control_provision::validate_project_env(request.org, request.project, request.env)?;
+    let triple = wamn_registry::Triple::new(request.org, request.env, request.project);
+    let actor = actor.to_string();
     match request.operation {
         "deploy" => {
-            let analysis = super::deploy_as(
-                &platform,
-                file,
-                request.release.context("deploy requires a release")?,
-                Some(actor.to_string().as_str()),
+            let analysis = super::apply_selection(
+                platform,
+                &triple,
+                request
+                    .application
+                    .context("deploy requires an application")?,
+                super::document::ReleaseChange::Deploy(
+                    request.release.context("deploy requires a release")?,
+                ),
+                Some(&actor),
             )
             .await?;
             Ok(json!({"notices":analysis.notices,"plan":analysis.plan}))
         }
         "rollback" => {
             let analysis = super::apply_selection(
-                &platform,
-                file,
+                platform,
+                &triple,
                 request
                     .application
                     .context("rollback requires an application")?,
-                super::document::SelectionChange::Rollback(request.release),
-                Some(actor.to_string().as_str()),
+                super::document::ReleaseChange::Rollback(request.release),
+                Some(&actor),
+            )
+            .await?;
+            Ok(json!({"notices":analysis.notices,"plan":analysis.plan}))
+        }
+        "stop" => {
+            let analysis = super::apply_selection(
+                platform,
+                &triple,
+                request
+                    .application
+                    .context("stop requires an application")?,
+                super::document::ReleaseChange::Stop,
+                Some(&actor),
             )
             .await?;
             Ok(json!({"notices":analysis.notices,"plan":analysis.plan}))
         }
         "diff" | "apply" => {
             let diff = schema(
-                &platform,
-                file,
+                platform,
+                &triple,
                 request
                     .application
                     .context("schema operation requires an application")?,
                 request.release,
                 request.operation == "apply",
-                administrator.as_deref(),
+                administrator,
             )
             .await?;
             Ok(serde_json::to_value([diff])?)
         }
         "reset" => {
             Box::pin(sql::reset::reset_deployed_with_admin(
-                &platform,
-                file,
+                platform,
+                &triple,
                 None,
-                administrator.as_deref().context("reset administrator")?,
+                administrator.context("reset administrator")?,
             ))
             .await
         }
         _ => unreachable!("operation was validated before execution"),
     }
-}
-
-fn prepare_kubeconfig(path: &Path) -> anyhow::Result<()> {
-    const ACCOUNT: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
-    let host = std::env::var("KUBERNETES_SERVICE_HOST").context("in-cluster API host is absent")?;
-    let host = if host.contains(':') {
-        format!("[{host}]")
-    } else {
-        host
-    };
-    let port = std::env::var("KUBERNETES_SERVICE_PORT").unwrap_or_else(|_| "443".into());
-    let configuration = json!({"apiVersion":"v1","kind":"Config","current-context":"operation",
-        "clusters":[{"name":"cluster","cluster":{"server":format!("https://{host}:{port}"),"certificate-authority":format!("{ACCOUNT}/ca.crt")}}],
-        "users":[{"name":"worker","user":{"tokenFile":format!("{ACCOUNT}/token")}}],
-        "contexts":[{"name":"operation","context":{"cluster":"cluster","user":"worker","namespace":"hosts"}}]});
-    std::fs::write(path, serde_json::to_vec(&configuration)?)?;
-    Ok(())
 }

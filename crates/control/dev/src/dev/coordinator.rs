@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
 use wamn_catalog::PackageCoordinate;
-use wamn_environment_control::apply_package::{self, ApplyPackageRequest};
+use wamn_environment::apply_package::{self, ApplyPackageRequest};
 use wamn_package_control::component_admission::{
     AdmitComponentRequest, ComponentAdmission, admit_component,
 };
@@ -178,7 +178,7 @@ struct PreparedLocalGrants {
 pub struct ProductionDevStageRunner {
     config: DevConfig,
     pub(super) environment_file: PathBuf,
-    environment: wamn_environment_control::environment::document::EnvironmentDocument,
+    environment: wamn_environment::environment::document::EnvironmentDocument,
     overlay_root: PathBuf,
     git: GitSource,
     packages: Option<ResolvedDevPackages>,
@@ -247,7 +247,7 @@ impl ProductionDevStageRunner {
         overlay_root: PathBuf,
         git: GitSource,
         environment_file: PathBuf,
-        environment: wamn_environment_control::environment::document::EnvironmentDocument,
+        environment: wamn_environment::environment::document::EnvironmentDocument,
     ) -> Self {
         let (read_publisher, read_handle) = dev_read_channel();
         Self {
@@ -386,11 +386,12 @@ impl ProductionDevStageRunner {
                     org: self.config.activation_identity().org.clone(),
                     project: self.config.activation_identity().project.clone(),
                     environment: self.config.activation_identity().environment.clone(),
-                    component_source:
-                        wamn_environment_control::apply_package::component_source_from_env(None)
-                            .map_err(|source| {
-                                ProductionDevStageError::owner("component repository", source)
-                            })?,
+                    component_source: wamn_environment::apply_package::component_source_from_env(
+                        None,
+                    )
+                    .map_err(|source| {
+                        ProductionDevStageError::owner("component repository", source)
+                    })?,
                 },
                 &self.config.activation_identity().environment,
             ))
@@ -460,10 +461,14 @@ impl ProductionDevStageRunner {
         Ok(())
     }
 
-    fn virtualize(&mut self) -> Result<(), ProductionDevStageError> {
-        self.clear_after(DevStage::Virtualize);
-        // The Build stage virtualized each component; this stage selects the
-        // components that each package's build.json records.
+    #[expect(
+        clippy::unused_async,
+        clippy::unused_async_trait_impl,
+        reason = "Admit is one stage of the `DevStageRunner` seam, and every stage the \
+                  dispatcher awaits has the same shape; this one reaches no I/O today"
+    )]
+    async fn admit(&mut self) -> Result<(), ProductionDevStageError> {
+        self.clear_after(DevStage::Admit);
         self.artifacts = select_component_artifacts(&self.package_inputs()?)?;
 
         let packages = self
@@ -481,21 +486,10 @@ impl ProductionDevStageRunner {
             let verified = base.component_digest().verify(artifact.digest.clone());
             self.verified_base_digests.push(verified);
         }
-        Ok(())
-    }
-
-    #[expect(
-        clippy::unused_async,
-        clippy::unused_async_trait_impl,
-        reason = "Admit is one stage of the `DevStageRunner` seam, and every stage the \
-                  dispatcher awaits has the same shape; this one reaches no I/O today"
-    )]
-    async fn admit(&mut self) -> Result<(), ProductionDevStageError> {
-        self.clear_after(DevStage::Admit);
         if self.artifacts.is_empty() {
             return Err(ProductionDevStageError::invalid(
                 "admit components",
-                "the Virtualize stage selected no package components",
+                "the build selected no package components",
             ));
         }
         for artifact in self.artifacts.clone() {
@@ -607,6 +601,11 @@ impl ProductionDevStageRunner {
             packages: package_coordinates,
         };
         let local = self.config.local_artifacts();
+        let palette = wamn_release_control::palette::read(
+            &local.flow_http_component,
+            &identity.project_env_key(),
+        )
+        .map_err(|source| ProductionDevStageError::owner("read platform palette", source))?;
         let (mut published, mut local_facts) = publish_release::publish_local(
             request,
             publish_release::LocalReleaseTarget {
@@ -616,12 +615,25 @@ impl ProductionDevStageRunner {
             },
             &package_roots,
             &self.admissions,
+            &palette,
         )
         .await
         .map_err(|source| ProductionDevStageError::owner("assemble local application", source))?;
         fs::create_dir_all(&local.directory).map_err(|source| {
             ProductionDevStageError::owner("create local artifact directory", source.into())
         })?;
+        for component in &palette {
+            let file = wamn_engine::artifact_source::local_component_path(
+                &local.directory,
+                &component.facts.component.component_digest,
+            )
+            .map_err(|source| {
+                ProductionDevStageError::owner("name local palette component", source.into())
+            })?;
+            fs::write(file, &component.bytes).map_err(|source| {
+                ProductionDevStageError::owner("save local palette component", source.into())
+            })?;
+        }
         let applications = self.environment.membership();
         let entry_changed = publish_release::refresh_composed_entry(
             &mut self.composed_entry,
@@ -666,7 +678,7 @@ impl ProductionDevStageRunner {
         }
         // A run admitted under the candidate pins its digest, and the run-plane
         // foreign key needs the release row, which apply's stage writes.
-        wamn_environment_control::environment::stage::write_release(
+        wamn_environment::environment::stage::write_release(
             self.config.target_database_url(),
             &identity.project_env_key(),
             published.digest.as_str(),
@@ -677,14 +689,14 @@ impl ProductionDevStageRunner {
         )
         .await
         .map_err(|source| ProductionDevStageError::owner("install local release", source))?;
-        let defaults = wamn_environment_control::environment::stage::sequence_defaults(
+        let defaults = wamn_environment::environment::stage::sequence_defaults(
             &applications,
             self.package_inputs()?
                 .iter()
                 .map(|package| &package.manifest),
         )
         .map_err(|source| ProductionDevStageError::owner("read local sequence defaults", source))?;
-        wamn_environment_control::environment::stage::create_number_sequences(
+        wamn_environment::environment::stage::create_number_sequences(
             self.config.target_database_url(),
             &defaults,
         )
@@ -703,11 +715,23 @@ impl ProductionDevStageRunner {
             &self.environment,
             &packages,
             published.digest.as_str(),
+            &palette,
         )
         .await
         .map_err(|source| {
             ProductionDevStageError::owner("prepare local connection selections", source)
         })?;
+        local_facts.requirements.extend(
+            binding_inputs
+                .iter()
+                .filter(|input| {
+                    palette.iter().any(|component| {
+                        component.facts.component.component_digest
+                            == input.requirement.component_digest()
+                    })
+                })
+                .map(|input| input.requirement.clone()),
+        );
         local_facts.bindings = resolve_local_bindings(
             &self.config,
             &self.environment,
@@ -927,7 +951,7 @@ impl ProductionDevStageRunner {
                     })?,
             );
         }
-        wamn_environment_control::provision_project_env::write_secret_json(
+        wamn_environment::provision_project_env::write_secret_json(
             &self
                 .config
                 .local_artifacts()
@@ -1011,13 +1035,9 @@ impl ProductionDevStageRunner {
 
     fn clear_after(&mut self, stage: DevStage) {
         match stage {
-            DevStage::Migrate | DevStage::Build | DevStage::Virtualize => {
+            DevStage::Migrate | DevStage::Build | DevStage::Admit => {
                 self.artifacts.clear();
                 self.verified_base_digests.clear();
-                self.admissions.clear();
-                self.release = None;
-            }
-            DevStage::Admit => {
                 self.admissions.clear();
                 self.release = None;
             }
@@ -1134,19 +1154,7 @@ impl DevStageRunner for ProductionDevStageRunner {
         );
         let packages = self.package_inputs()?;
         let applications = self.environment.membership();
-        let refusals = wamn_environment_control::environment::analyse::application_refusals(
-            &applications,
-            packages
-                .iter()
-                .map(|package| package.manifest.package.id.as_str()),
-        );
-        if !refusals.is_empty() {
-            return Err(ProductionDevStageError::invalid(
-                "read local applications",
-                refusals.join("; "),
-            ));
-        }
-        wamn_environment_control::environment::stage::sequence_defaults(
+        wamn_environment::environment::stage::sequence_defaults(
             &applications,
             packages.iter().map(|package| &package.manifest),
         )
@@ -1190,7 +1198,7 @@ impl DevStageRunner for ProductionDevStageRunner {
         let schema_deploy = self.schema_inputs.as_ref() != Some(&schema_inputs);
         let reset = schema_deploy
             && diffs.iter().any(|diff| {
-                diff.mode == wamn_environment_control::environment::document::SchemaMode::Reset
+                diff.mode == wamn_environment::environment::document::SchemaMode::Reset
             });
         let matches_installed = diffs.iter().all(|diff| {
             diff.packages
@@ -1207,9 +1215,9 @@ impl DevStageRunner for ProductionDevStageRunner {
                 ProductionDevStageError::owner("read the owned local target", source)
             })?;
         if reset {
-            target_database::validate_schema_reset(&self.environment, &roots, &diffs).map_err(
-                |source| ProductionDevStageError::owner("validate local reset inputs", source),
-            )?;
+            target_database::validate_schema_reset(&roots, &diffs).map_err(|source| {
+                ProductionDevStageError::owner("validate local reset inputs", source)
+            })?;
             // Compile the candidate before interrupting the last working application.
             self.build().await?;
             self.shutdown().await?;
@@ -1244,7 +1252,6 @@ impl DevStageRunner for ProductionDevStageRunner {
         match stage {
             DevStage::Migrate => self.migrate().await,
             DevStage::Build => self.build().await,
-            DevStage::Virtualize => self.virtualize(),
             DevStage::Admit => self.admit().await,
             DevStage::Condition => self.condition().await,
             DevStage::Acl => self.acl().await,
@@ -1265,9 +1272,10 @@ struct PreparedLocalBinding {
 async fn prepare_local_bindings(
     config: &DevConfig,
     admissions: &[ComponentAdmission],
-    environment: &wamn_environment_control::environment::document::EnvironmentDocument,
+    environment: &wamn_environment::environment::document::EnvironmentDocument,
     packages: &[wamn_compiler::manifest::PackageManifest],
     manifest_digest: &str,
+    palette: &[wamn_release_control::palette::PaletteComponent],
 ) -> anyhow::Result<Vec<PreparedLocalBinding>> {
     let mut system = wamn_postgres::connect(config.system_database_url()).await?;
     sqlx::raw_sql("SET ROLE wamn_db_owner")
@@ -1277,15 +1285,13 @@ async fn prepare_local_bindings(
     let mut document = environment.clone();
     // DEP2-03 replaces the shared candidate with application publication.
     for application in document.applications.values_mut() {
-        application.current =
-            wamn_environment_control::environment::document::DeclaredRelease::Digest(
-                manifest_digest.into(),
-            );
+        application.current = wamn_environment::environment::document::DeclaredRelease::Digest(
+            manifest_digest.into(),
+        );
     }
     let bindings =
-        wamn_environment_control::environment::bindings::analyse(&mut system, &document, packages)
-            .await?;
-    let drops = wamn_environment_control::environment::bindings::project_authority(
+        wamn_environment::environment::bindings::analyse(&mut system, &document, packages).await?;
+    let drops = wamn_environment::environment::bindings::project_authority(
         config.system_database_url(),
         config.target_database_url(),
         environment,
@@ -1328,23 +1334,74 @@ async fn prepare_local_bindings(
             });
         }
     }
+    for component in palette {
+        for connection in &component.facts.connections {
+            for ((owner, alias), _) in
+                wamn_package_control::connection_requirement::palette_connections(
+                    connection, packages,
+                )
+            {
+                let application = environment
+                    .application_for_package(owner)
+                    .context("palette binding owner has no application")?;
+                let matching = bindings
+                    .iter()
+                    .filter(|binding| binding.alias == alias && binding.application == application)
+                    .collect::<Vec<_>>();
+                let [binding] = matching.as_slice() else {
+                    anyhow::ensure!(
+                        matching.is_empty(),
+                        "palette connection alias has more than one application owner"
+                    );
+                    continue;
+                };
+                let requirement = wamn_package_control::component_admission::portable_requirement(
+                    &component.facts.component.component_digest,
+                    connection,
+                    alias,
+                );
+                let resolved = binding
+                    .resolved
+                    .as_ref()
+                    .context("local palette binding requires a host integration")?;
+                anyhow::ensure!(
+                    &resolved.requirement_type.descriptor() == requirement.requirement(),
+                    "local palette instance differs from its declared type"
+                );
+                prepared.push(PreparedLocalBinding {
+                    package_id: owner.to_owned(),
+                    read_only: binding.mode == wamn_compiler::manifest::ConnectionMode::Read,
+                    requirement,
+                    instance_id: binding.connection_id.clone(),
+                });
+            }
+        }
+    }
     let mut project = wamn_postgres::connect(config.target_database_url()).await?;
     let mut tx = project.begin().await?;
     for input in &prepared {
-        let admission = admissions
-            .iter()
-            .find(|admission| {
-                admission.package_id() == input.package_id
-                    && admission.facts().component_digest == input.requirement.component_digest()
-            })
-            .context("local admitted requirement missing")?;
+        let bytes = if let Some(component) = palette.iter().find(|component| {
+            component.facts.component.component_digest == input.requirement.component_digest()
+        }) {
+            component.bytes.as_slice()
+        } else {
+            admissions
+                .iter()
+                .find(|admission| {
+                    admission.package_id() == input.package_id
+                        && admission.facts().component_digest
+                            == input.requirement.component_digest()
+                })
+                .map(ComponentAdmission::bytes)
+                .context("local admitted requirement missing")?
+        };
         let declaration = packages
             .iter()
-            .find(|package| package.package.id == input.package_id)
-            .and_then(|package| package.connections.get(input.requirement.store_alias()))
+            .filter(|package| package.package.id == input.package_id)
+            .find_map(|package| package.connections.get(input.requirement.store_alias()))
             .context("local connection declaration missing")?;
         let interface = wamn_package_control::connection_requirement::require_imports(
-            admission.bytes(),
+            bytes,
             input.requirement.store_alias(),
             &declaration.interface,
         )?;
@@ -1357,7 +1414,7 @@ async fn prepare_local_bindings(
 
 async fn reserve_local_bindings(
     config: &DevConfig,
-    environment: &wamn_environment_control::environment::document::EnvironmentDocument,
+    environment: &wamn_environment::environment::document::EnvironmentDocument,
     packages: &[wamn_compiler::manifest::PackageManifest],
     prepared: &[PreparedLocalBinding],
     digest: &str,
@@ -1377,11 +1434,10 @@ async fn reserve_local_bindings(
     // DEP2-03 replaces the shared candidate with application publication.
     for application in document.applications.values_mut() {
         application.current =
-            wamn_environment_control::environment::document::DeclaredRelease::Digest(digest.into());
+            wamn_environment::environment::document::DeclaredRelease::Digest(digest.into());
     }
     let bindings =
-        wamn_environment_control::environment::bindings::analyse(&mut tx, &document, packages)
-            .await?;
+        wamn_environment::environment::bindings::analyse(&mut tx, &document, packages).await?;
     for input in prepared {
         let application = environment
             .application_for_package(&input.package_id)
@@ -1403,7 +1459,7 @@ async fn reserve_local_bindings(
 
 async fn resolve_local_bindings(
     config: &DevConfig,
-    environment: &wamn_environment_control::environment::document::EnvironmentDocument,
+    environment: &wamn_environment::environment::document::EnvironmentDocument,
     packages: &[wamn_compiler::manifest::PackageManifest],
     prepared: &[PreparedLocalBinding],
     digest: &str,
@@ -1432,14 +1488,11 @@ async fn resolve_local_bindings(
     // DEP2-03 replaces the shared candidate with application publication.
     for application in document.applications.values_mut() {
         application.current =
-            wamn_environment_control::environment::document::DeclaredRelease::Digest(digest.into());
+            wamn_environment::environment::document::DeclaredRelease::Digest(digest.into());
     }
-    let resolved = wamn_environment_control::environment::bindings::analyse(
-        &mut authority,
-        &document,
-        packages,
-    )
-    .await?;
+    let resolved =
+        wamn_environment::environment::bindings::analyse(&mut authority, &document, packages)
+            .await?;
     let result = async {
         sqlx::raw_sql("BEGIN")
             .execute(&mut client)
@@ -1511,7 +1564,7 @@ async fn resolve_local_bindings(
             let mut project = wamn_postgres::connect(config.target_database_url()).await?;
             let mut tx = project.begin().await?;
             let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
-            wamn_environment_control::environment::bindings::write(
+            wamn_environment::environment::bindings::write(
                 &mut tx,
                 &config.activation_identity().project_env_key(),
                 digest,
@@ -1548,7 +1601,7 @@ async fn reconcile_local_replica_identity(
             let package = wamn_catalog::package_schema::package_metadata(&directory)
                 .context("derive package model mapping")?;
             let package_id = package.coordinate.package_id();
-            let plan = wamn_environment_control::reconcile_replica_identity::reconcile(
+            let plan = wamn_environment::reconcile_replica_identity::reconcile(
                 &mut client,
                 &package.models,
                 apply,

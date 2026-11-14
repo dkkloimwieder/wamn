@@ -14,12 +14,9 @@
       }
     },
     "read": {
-      "component": "netsuite",
+      "component": "wamn_integration",
       "interface-version": "0.1.0",
-      "operation": "wamn:node/async-handler@0.1.0",
-      "params": {
-        "operation": "setting.read"
-      }
+      "operation": "wamn-integration:setting/read@0.1.1"
     },
     "window": {
       "component": "jsonata",

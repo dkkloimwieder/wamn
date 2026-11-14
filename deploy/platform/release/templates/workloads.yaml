@@ -30,25 +30,14 @@ spec:
           package: flow-http-routing
           version: "0.1.0"
           interfaces: [routing]
-        - namespace: wamn
-          package: router-delivery
-          version: "0.4.0"
-          interfaces: [delivery]
+        - namespace: wasi
+          package: config
+          version: "0.2.0-rc.1"
+          interfaces: [store]
         - namespace: wamn
           package: operation
           version: "0.1.0"
           interfaces: [operation]
-        - namespace: wamn
-          package: postgres
-          version: "0.4.0"
-          interfaces: [statements]
-        {{- range .statements }}
-        - namespace: wamn
-          package: postgres
-          version: "0.4.0"
-          name: {{ . | quote }}
-          interfaces: [statements]
-        {{- end }}
       components:
         - name: flow-http
           image: {{ required "roles[http].entry is required from the serving manifest" .entry | quote }}

@@ -190,7 +190,18 @@ impl LocalApplication {
             return Ok(None);
         };
         let Some(binding) = self.facts.bindings.iter().find(|binding| {
-            binding.package_id == lookup.package_id
+            (binding.package_id == lookup.package_id
+                || (lookup.package_id == wamn_catalog::PALETTE_PACKAGE_ID
+                    && wamn_catalog::application_for_package(
+                        &self.target.applications,
+                        &binding.package_id,
+                    ) == Some(lookup.entry.package_id)
+                    && self
+                        .manifest
+                        .release
+                        .packages
+                        .iter()
+                        .any(|package| package.package_id() == binding.package_id)))
                 && binding.requirement.component_digest() == lookup.component_digest
                 && binding.requirement.store_alias() == lookup.store_alias
         }) else {
@@ -289,10 +300,19 @@ async fn entry_facts(
                 &document,
             )?;
             let permitted = components.get(position.node_id).is_some_and(origin_exports)
-                && document
-                    .nodes
-                    .get(position.node_id)
-                    .is_some_and(|node| node.operation == lookup.origin_operation);
+                && document.nodes.get(position.node_id).is_some_and(|node| {
+                    node.operation == lookup.origin_operation
+                        && (lookup.package_id != wamn_catalog::PALETTE_PACKAGE_ID
+                            || manifest.components.iter().any(|component| {
+                                component.package_id == lookup.package_id
+                                    && component.descriptor.component_digest
+                                        == lookup.component_digest
+                                    && component.descriptor.connections.iter().any(|connection| {
+                                        connection.store_alias.resolve(&node.params)
+                                            == Some(lookup.store_alias)
+                                    })
+                            }))
+                });
             // The cluster snapshot derives the hash from the graph too
             // (session_identity.rs); wamn_http_admitter holds no grant on wiring_hash.
             (Some(document.wiring_hash().as_str().to_owned()), permitted)
@@ -500,12 +520,14 @@ pub fn validate_local_facts(
         );
         anyhow::ensure!(
             fact.target.project_env_key == project_env_key
-                && manifest
-                    .release
-                    .packages
-                    .iter()
-                    .any(|package| package.package_id() == fact.target.package_id
-                        && package.package_version() == fact.target.package_version),
+                && ((fact.target.package_id == wamn_catalog::PALETTE_PACKAGE_ID
+                    && fact.target.package_version == wamn_catalog::PALETTE_PACKAGE_VERSION)
+                    || manifest
+                        .release
+                        .packages
+                        .iter()
+                        .any(|package| package.package_id() == fact.target.package_id
+                            && package.package_version() == fact.target.package_version)),
             "local component package is outside the manifest"
         );
         let projected = manifest
@@ -542,6 +564,18 @@ pub fn validate_local_facts(
     );
     for component in &manifest.components {
         for requirement in &component.descriptor.connections {
+            let Some(alias) = requirement.store_alias.name() else {
+                continue;
+            };
+            if component.package_id == wamn_catalog::PALETTE_PACKAGE_ID
+                && !facts.requirements.iter().any(|selected| {
+                    selected.component_digest() == component.descriptor.component_digest
+                        && selected.store_alias() == alias
+                })
+            {
+                continue;
+            }
+
             anyhow::ensure!(
                 facts
                     .bindings
@@ -550,7 +584,7 @@ pub fn validate_local_facts(
                         binding.package_id == component.package_id
                             && binding.requirement.component_digest()
                                 == component.descriptor.component_digest
-                            && binding.requirement.store_alias() == requirement.store_alias
+                            && binding.requirement.store_alias() == alias
                     })
                     .count()
                     == 1,
@@ -584,7 +618,13 @@ pub fn validate_local_facts(
                 .iter()
                 .any(
                     |component| component.component_digest == requirement.component_digest()
-                        && component.target.package_id == binding.package_id
+                        && (component.target.package_id == binding.package_id
+                            || (component.target.package_id == wamn_catalog::PALETTE_PACKAGE_ID
+                                && manifest
+                                    .release
+                                    .packages
+                                    .iter()
+                                    .any(|package| package.package_id() == binding.package_id)))
                 ),
             "local requirement is outside the component closure"
         );

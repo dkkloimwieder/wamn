@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use wamn_environment_control::{
+use wamn_environment::{
     apply_package::{self, PackageRoot},
     environment::{
         document::{EnvironmentDocument, SchemaMode},
@@ -22,7 +22,7 @@ const MAINTENANCE_DATABASE: &str = "postgres";
 
 async fn recorded_disposable(
     config: &DevConfig,
-    document: &wamn_environment_control::environment::document::EnvironmentDocument,
+    document: &wamn_environment::environment::document::EnvironmentDocument,
 ) -> anyhow::Result<Option<bool>> {
     let identity = config.activation_identity();
     anyhow::ensure!(
@@ -46,9 +46,9 @@ async fn recorded_disposable(
 /// Compare local source recipes with the same records and decision used by deployment.
 pub async fn schema_changes(
     config: &DevConfig,
-    document: &wamn_environment_control::environment::document::EnvironmentDocument,
+    document: &wamn_environment::environment::document::EnvironmentDocument,
     roots: &[std::path::PathBuf],
-) -> anyhow::Result<Vec<wamn_environment_control::environment::sql::schema::Diff>> {
+) -> anyhow::Result<Vec<wamn_environment::environment::sql::schema::Diff>> {
     use anyhow::ensure;
 
     let identity = config.activation_identity();
@@ -89,7 +89,6 @@ pub async fn schema_changes(
 
 /// Resolve every local package before a destructive schema apply.
 pub(crate) fn validate_schema_reset(
-    document: &EnvironmentDocument,
     roots: &[PathBuf],
     diffs: &[schema::Diff],
 ) -> anyhow::Result<()> {
@@ -126,7 +125,7 @@ pub(crate) fn validate_schema_reset(
             .all(|id| sources.contains_key(id)),
         "local reset is missing an installed source"
     );
-    schema::validate_candidates(document, &candidates, &sources)?;
+    schema::validate_candidates(&candidates, &sources)?;
     Ok(())
 }
 
@@ -157,7 +156,7 @@ pub async fn schema_operation(
     let roots = if diffs.iter().any(|diff| diff.mode == SchemaMode::Reset) {
         let roots = all_sources(&config, &document)?;
         let diffs = schema_changes(&config, &document, &roots).await?;
-        validate_schema_reset(&document, &roots, &diffs)?;
+        validate_schema_reset(&roots, &diffs)?;
         lease.reset(&config).await?;
         roots
     } else {
@@ -176,7 +175,7 @@ async fn apply_sources(config: &DevConfig, roots: &[PathBuf]) -> anyhow::Result<
                 .map_err(Into::into)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let order = wamn_environment_control::environment::stage::apply_order(
+    let order = wamn_environment::environment::stage::apply_order(
         &manifests
             .iter()
             .map(|p| {
@@ -221,7 +220,7 @@ pub async fn reset(configuration: &Path) -> anyhow::Result<String> {
         super::session::read_environment(&configuration.with_file_name("environment.k"))?;
     let roots = all_sources(&config, &document)?;
     let diffs = schema_changes(&config, &document, &roots).await?;
-    validate_schema_reset(&document, &roots, &diffs)?;
+    validate_schema_reset(&roots, &diffs)?;
     let mut lease = acquire(&config).await?;
     lease.instance(&config).await?;
     let instance = lease.reset(&config).await?;
@@ -417,7 +416,7 @@ impl TargetLease {
                 identity.environment.as_str(),
                 &identity.project,
             );
-            wamn_environment_control::environment::sql::reset::reset_database(
+            wamn_environment::environment::sql::reset::reset_database(
                 config.system_database_url(),
                 config.target_database_url(),
                 &triple,

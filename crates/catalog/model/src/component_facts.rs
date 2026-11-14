@@ -148,6 +148,65 @@ impl ComponentConnectionType {
     }
 }
 
+/// The source of a connection name: a declared alias or a node parameter.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum ComponentConnectionAlias {
+    Name(String),
+    Configuration { parameter: String },
+}
+
+impl From<String> for ComponentConnectionAlias {
+    fn from(name: String) -> Self {
+        Self::Name(name)
+    }
+}
+impl From<&str> for ComponentConnectionAlias {
+    fn from(name: &str) -> Self {
+        Self::Name(name.to_owned())
+    }
+}
+impl ComponentConnectionAlias {
+    /// The static alias, when the declaration does not read node configuration.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Name(name) => Some(name),
+            Self::Configuration { .. } => None,
+        }
+    }
+    pub(crate) fn validate(&self) -> Result<(), ComponentFactError> {
+        let name = match self {
+            Self::Name(name) => name,
+            Self::Configuration { parameter } => parameter,
+        };
+        validate_identity(name, "connection alias declaration")?;
+        if name == "__STORE_ALIAS__" {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorType::NonCanonicalIdentity,
+                "connection alias placeholders are not declarations",
+            ));
+        }
+        Ok(())
+    }
+    /// Resolve a declaration against the host-owned node configuration.
+    pub fn resolve<'a>(&'a self, configuration: &'a BTreeMap<String, Value>) -> Option<&'a str> {
+        match self {
+            Self::Name(name) => Some(name),
+            Self::Configuration { parameter } => configuration
+                .get(parameter)?
+                .as_str()
+                .filter(|name| !name.is_empty()),
+        }
+    }
+    /// Whether an application alias can supply this declaration's binding.
+    pub fn accepts(&self, name: &str) -> bool {
+        match self {
+            Self::Name(declared) => declared == name,
+            Self::Configuration { .. } => true,
+        }
+    }
+}
+
 /// One portable connection the component reaches under an author-chosen alias.
 ///
 /// The alias is the author-owned half: it is the `requirement` string the guest
@@ -157,7 +216,7 @@ impl ComponentConnectionType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentConnection {
-    pub store_alias: String,
+    pub store_alias: ComponentConnectionAlias,
     pub requirement_type: ComponentConnectionType,
 }
 
@@ -942,7 +1001,7 @@ fn normalize_connections(
     let mut seen = BTreeSet::new();
     let mut connections = Vec::with_capacity(declarations.len());
     for declaration in declarations {
-        validate_identity(&declaration.store_alias, "store-alias")?;
+        declaration.store_alias.validate()?;
         if !seen.insert(declaration.store_alias.clone()) {
             return Err(ComponentFactError::new(
                 ComponentFactErrorType::DuplicateConnection,
@@ -1223,7 +1282,7 @@ mod tests {
         )
         .expect("component fact normalizes");
         let connections = vec![ComponentConnection {
-            store_alias: "labels".to_string(),
+            store_alias: "labels".into(),
             requirement_type: ComponentConnectionType::Blobstore,
         }];
         let descriptor = ComponentDescriptor::new(facts.component.clone(), connections.clone());
@@ -1586,7 +1645,7 @@ mod tests {
         };
         let imports = ["wamn:connection/http@0.1.0".to_string()];
         let connection = ComponentConnection {
-            store_alias: "erp".to_string(),
+            store_alias: "erp".into(),
             requirement_type: ComponentConnectionType::Http,
         };
 
@@ -1920,6 +1979,31 @@ mod tests {
                 .unwrap_err()
                 .error_type(),
             ComponentFactErrorType::DuplicateStatementField
+        );
+    }
+}
+
+#[cfg(test)]
+mod connection_alias_tests {
+    use super::*;
+    #[test]
+    fn configuration_connections_follow_each_nodes_alias() {
+        for parameter in ["store_alias", "requirement"] {
+            let declaration = ComponentConnectionAlias::Configuration {
+                parameter: parameter.to_owned(),
+            };
+            let first =
+                BTreeMap::from([(parameter.to_owned(), Value::String("labels".to_owned()))]);
+            let second =
+                BTreeMap::from([(parameter.to_owned(), Value::String("archive".to_owned()))]);
+            assert_ne!(declaration.resolve(&first), declaration.resolve(&second));
+            assert!(declaration.name().is_none());
+            assert!(declaration.resolve(&BTreeMap::new()).is_none());
+        }
+        assert!(
+            ComponentConnectionAlias::Name("__STORE_ALIAS__".into())
+                .validate()
+                .is_err()
         );
     }
 }

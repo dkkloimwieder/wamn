@@ -5,7 +5,7 @@
 //! each admitted component with [`publish_and_verify`] and pulls it back.
 
 pub(super) mod plan;
-pub(crate) use plan::portable_requirement;
+pub use plan::portable_requirement;
 pub use plan::require_admitted_statements;
 use plan::{
     bind_signed_file_results, ensure_component_package_matches, expected_operation_contracts,
@@ -263,8 +263,18 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
     let requirements = facts
         .connections
         .iter()
-        .map(|connection| portable_requirement(&admitted.component_digest, connection))
-        .collect::<Vec<_>>();
+        .map(|connection| {
+            let alias = connection
+                .store_alias
+                .name()
+                .context("package admission requires concrete connection aliases")?;
+            Ok(portable_requirement(
+                &admitted.component_digest,
+                connection,
+                alias,
+            ))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let mut connections = facts.connections;
     connections.sort_by(|left, right| left.store_alias.cmp(&right.store_alias));
 
@@ -553,7 +563,7 @@ fn read_package_owned_file(
     clippy::too_many_arguments,
     reason = "the push and its verification pull share one registry's transport facts"
 )]
-pub(crate) async fn publish_and_verify(
+pub async fn publish_and_verify(
     reference: &Reference,
     artifact_base: &str,
     insecure: bool,
@@ -1142,9 +1152,10 @@ mod tests {
         let requirement = portable_requirement(
             &digest,
             &ComponentConnection {
-                store_alias: "erp".to_owned(),
+                store_alias: "erp".to_owned().into(),
                 requirement_type: ComponentConnectionType::Http,
             },
+            "erp",
         );
 
         assert_eq!(

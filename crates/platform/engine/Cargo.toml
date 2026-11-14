@@ -26,13 +26,11 @@ wamn-identity-protocol = { workspace = true }
 # A route request's credential type reads the PAT prefix. The crate is pure.
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-# Route input schemas. A pure schema test with no I/O.
-boon = { workspace = true }
 # The `wamn.release` label value: the manifest digest as lowercase base32.
 data-encoding = { workspace = true }
 hex = { workspace = true }
-# The route limiter's in-flight and shed gauges.
-opentelemetry = { workspace = true, features = ["metrics", "trace"] }
+# Invocation tracing.
+opentelemetry = { workspace = true, features = ["trace"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -44,6 +42,11 @@ wasmparser = { workspace = true }
 # the request types only, with no client or server feature.
 hyper = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
+wasmtime-wasi.workspace = true
+
+[build-dependencies]
+wit-component = { workspace = true, features = ["dummy-module"] }
+wit-parser.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }

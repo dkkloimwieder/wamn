@@ -86,20 +86,15 @@ A plain `cargo build` of a guest does not use the guest RUSTFLAGS, so its bytes 
 The release publisher also needs the pinned `http-route` guest.
 The ctl image carries it at `/usr/local/share/wamn/http_route.wasm`.
 For native publication, set `WAMN_FLOW_HTTP_COMPONENT` to the built guest and `WAMN_COMPONENT_ARTIFACT_BASE` to the component repository.
-Publication pushes the composed entry to `<component-artifact-base>/entries`.
+Publication pushes the separate route component to `<component-artifact-base>/entries`.
 The manifest records only the path `entries@sha256:<manifest-digest>`, relative to the component artifact base.
 
 The workload guests `http-route` and `materializer` belong to no package.
 
-The Docker `roles` target exports the control HTTP entry as `http_route.wasm`.
-It composes the pinned route guest with an empty dispatcher at platform build time.
-The publisher image retains the raw route guest for application composition.
-Local development composes the same control entry before it starts the host.
-It names the entry with an absolute `file:` reference to its digest-named artifact.
-
-The xtask build library virtualizes application components and the platform guests `blob-put` and `jsonata-expression`.
-It writes the virtualized guest to `virtualized/std-empty-environment` in the Cargo target directory.
-The list is an allowlist, not discovery: a std guest that it does not name stays raw and fails its own admission.
+The platform build publishes the pinned route component without an application or dispatcher.
+The publisher uses the same route bytes for each application release.
+Control endpoints run natively and need no HTTP guest artifact.
+The build leaves standard WASI imports unchanged. The host supplies their empty application context.
 
 The build then composes each component of a package that pins bases in `base_dependencies`.
 `wamn-component-composer` joins the overlay component and each base whose operations it imports into one component.
@@ -110,7 +105,7 @@ Each member that imports `wamn:postgres/statements` gets its own outer import, `
 The composed component exports every export of its members.
 Imports that no member supplies stay imports of the composed component.
 Each member is embedded with its bytes unchanged.
-The composed component replaces the overlay's virtualized output.
+The composed component replaces the overlay's raw output.
 `wamn build` compares each base component's bytes with the digest pin in `wamn.json` before compilation.
 Publication repeats this comparison.
 
@@ -131,7 +126,7 @@ Application contracts lie under `wit/` in each package's build output, `apps/tar
 It builds `host`, `ctl`, `identity`, and `edge-web` through Docker BuildKit.
 The two role components use the package component builder.
 Each guest gets its own Cargo invocation.
-The HTTP role composes the control entry after the component builder checks its pin.
+The HTTP role publishes the raw route component after the component builder checks its pin.
 The ctl image receives the same checked HTTP component through a named BuildKit context.
 
 The registry must already be available and authenticated through the Docker configuration.
@@ -157,7 +152,12 @@ cargo xtask build-platform --stamp-only --registry localhost:5001 --out /var/tmp
 Stamping reads every selected digest from the registry and refuses a missing artifact.
 The chart holds the pinned images and role components in `values.yaml`.
 The output also carries the runtime operator archive, the identity and edge charts, and deployment resources under `platform/`.
-`palette.json` records platform palette artifact pins and declarations. Packages no longer bundle palette guests.
+`palette.json` records immutable platform artifact pins and descriptors sealed against the published guest bytes.
+The platform owns palette guests under `wamn_palette`, independently of application package membership.
+The platform distribution places the document and digest-named guest files beside `http_route.wasm`.
+Release publication and development use the same reader for that document and verify each guest digest.
+They keep palette ports and node configuration. Palette components receive no public HTTP routes.
+Packages no longer bundle palette guests.
 Transfer the whole output directory to another deployment machine.
 [Local deployment](deployment.md#local-platform) consumes it through `--chart`.
 
@@ -263,7 +263,7 @@ Artifact readers take every file from this output tree.
 An older completed build publishes its older inputs and outputs together.
 An overlay reads each base package's completed record, so build bases first.
 The build calls the composer library directly.
-The separate virtualizer remains until the typed invocation change.
+The build performs no WASI byte rewriting.
 `wamn build` does not run Vite or record browser files in `build.json`.
 
 `wamn web build` builds a standalone web artifact against the recorded package contract.
@@ -405,7 +405,7 @@ These changes make Cargo rebuild more:
 Use two clean worktrees at the same commit to test checkout independence.
 Give each worktree its own target and empty `RUSTC_WRAPPER`.
 Run `wamn build` of every package in each worktree.
-Then pass their `virtualized/std-empty-environment` directories of the Cargo target to the existing comparison:
+Then pass their `wasm32-wasip2/release` directories of the Cargo target to the existing comparison:
 
 ```bash
 WAMN_DIGEST_REPRO_A="$GUEST_REPRO_FIRST_ARTIFACTS" \

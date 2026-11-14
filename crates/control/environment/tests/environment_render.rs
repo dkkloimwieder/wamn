@@ -7,8 +7,8 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Instant;
 use wamn_control_provision::WorkloadRoleFamily;
-use wamn_environment_control::enable_cdc_project_env::reader_deployment;
-use wamn_environment_control::environment::document::EnvironmentDocument;
+use wamn_environment::enable_cdc_project_env::reader_deployment;
+use wamn_environment::environment::document::EnvironmentDocument;
 use wamn_registry::Triple;
 #[path = "support/release_documents.rs"]
 pub mod release_documents;
@@ -70,7 +70,7 @@ fn manifest(bytes: &[u8]) -> anyhow::Result<wamn_catalog::ServingManifest> {
 #[test]
 fn changing_one_application_selection_leaves_the_other_release_unchanged() -> anyhow::Result<()> {
     use std::collections::BTreeMap;
-    use wamn_environment_control::environment::{document::DeclaredRelease, write};
+    use wamn_environment::environment::{document::DeclaredRelease, write};
 
     let work = ScratchRoot::create()?;
     let mut releases = BTreeMap::new();
@@ -97,7 +97,6 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             members: [member].into(),
         });
         applications.insert(application.into(), json!({
-            "packages":[application], "current":release.digest().as_str(),
             "revocation_seconds":5,"hostname":format!("{application}.example"),
             "client":{"package":application, "web":wamn_digest::bytes_sha256(application.as_bytes())}
         }));
@@ -121,7 +120,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             document,
             application,
             release,
-            &selection.current.to_string(),
+            release.digest().as_str(),
             "registry.invalid/wamn/releases",
             70,
             "render",
@@ -244,7 +243,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
 
 #[test]
 fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
-    use wamn_environment_control::environment::{ensure, sql::reset, write};
+    use wamn_environment::environment::{ensure, sql::reset, write};
     let mut release = manifest(&fixture_releases()?[2])?;
     let component = release.components.iter().next().unwrap();
     let member = wamn_catalog::ServingEntryMember {
@@ -360,7 +359,7 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
     );
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let prepared =
-        wamn_environment_control::platform::artifact_plan::test_util::prepared_chart(&repository)?;
+        wamn_environment::platform::artifact_plan::test_util::prepared_chart(&repository)?;
     let image = format!("registry.invalid/materializer@sha256:{}", "a".repeat(64));
     let materializer =
         ensure::materializer_workload(&prepared.0, &document, NAMESPACE, &image, false)?;
@@ -546,7 +545,7 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
     secrets.push(prerequisite("wamn-oauth", &["key"], NAMESPACE));
     // The platform credential owner emits the registry Secret before applications install.
     let scratch = ScratchRoot::create()?;
-    let cluster = wamn_environment_control::platform::document::ClusterDocument::compile(
+    let cluster = wamn_environment::platform::document::ClusterDocument::compile(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/kind/cluster.k"),
     )?;
     let auth_file = scratch.path().join("registry.json");
@@ -556,9 +555,9 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
             &cluster.registry:{"username":"platform", "password":"credential"}
         }}))?,
     )?;
-    secrets.push(
-        wamn_environment_control::platform::control::registry_pull_secret(&cluster, &auth_file)?,
-    );
+    secrets.push(wamn_environment::platform::control::registry_pull_secret(
+        &cluster, &auth_file,
+    )?);
     secrets.push(prerequisite(
         &wamn_registry::name::nats_certificate(&wamn_registry::project_env_key(
             "acme", project, "dev",
@@ -586,7 +585,7 @@ fn prekind_wms_pat_renders() -> anyhow::Result<()> {
 
 mod shared_resources {
     use super::*;
-    use wamn_environment_control::{
+    use wamn_environment::{
         environment::ensure,
         platform::{artifact_plan, resources},
     };
@@ -663,15 +662,13 @@ mod shared_resources {
 }
 
 #[tokio::test]
-async fn unavailable_environment_authority_never_substitutes_checkout_selections()
--> anyhow::Result<()> {
-    use wamn_environment_control::environment::{self, Platform};
+async fn unavailable_registry_configuration_refuses_lifecycle_operations() -> anyhow::Result<()> {
+    use wamn_environment::environment::{self, Platform};
     let scratch = ScratchRoot::create()?;
-    let file = scratch.path().join("environment.k");
     let digest = wamn_digest::bytes_sha256(b"selected release");
     let document = fixture_document("dev", "orders.example", &digest);
-    std::fs::write(&file, document.to_kcl())?;
-    let original = std::fs::read(&file)?;
+    let triple = document.triple();
+    let application = document.applications.keys().next().unwrap();
     let kubeconfig = scratch.path().join("invalid-kubeconfig");
     std::fs::write(&kubeconfig, "invalid configuration")?;
     let mut platform = Platform {
@@ -699,17 +696,15 @@ async fn unavailable_environment_authority_never_substitutes_checkout_selections
         auth_nats: None,
     };
     assert!(
-        environment::deploy(&platform, &file, &digest)
+        environment::deploy(&platform, &triple, application, &digest)
             .await
             .is_err()
     );
-    assert_eq!(std::fs::read(&file)?, original);
     assert!(
-        environment::status::status(&mut platform, &file, "invalid database URL")
+        environment::status::status(&mut platform, &triple, "invalid database URL")
             .await
             .is_err()
     );
-    assert_eq!(std::fs::read(&file)?, original);
     Ok(())
 }
 

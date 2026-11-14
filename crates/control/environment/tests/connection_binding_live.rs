@@ -14,8 +14,8 @@ use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate,
     ConnectionTypeDescriptor, RequirementType, WiringDocument, WiringNode, WiringTerminal,
 };
-use wamn_environment_control::apply_package::{self, ApplyPackageRequest};
-use wamn_environment_control::environment::{bindings, document::EnvironmentDocument};
+use wamn_environment::apply_package::{self, ApplyPackageRequest};
+use wamn_environment::environment::{bindings, document::EnvironmentDocument};
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::connection_memory::ConnectionMemory;
@@ -221,10 +221,9 @@ async fn provision_project(project: &mut Client, project_url: &str) -> Vec<Admit
         )
         .await
         .unwrap(),
-        component_source: wamn_environment_control::apply_package::component_source_from_env(None)
-            .unwrap(),
+        component_source: wamn_environment::apply_package::component_source_from_env(None).unwrap(),
         changes: wamn_broker::Publisher::default(),
-        package: wamn_environment_control::apply_package::PackageRoot {
+        package: wamn_environment::apply_package::PackageRoot {
             path: package.clone(),
             artifact_digest: Some(
                 wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
@@ -372,8 +371,16 @@ impl Authority {
         }
     }
     fn document(digest: &str) -> EnvironmentDocument {
-        serde_json::from_value(json!({"org":"connection-binding-project","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","policy":"dev","revocation_seconds":60, "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},
-        "applications": {PACKAGE:{"current": digest, "revocation_seconds":5,"hostname": "fixture.example", "packages":[PACKAGE,"nested_origin","nested_wiring"],"connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap()
+        let mut document: EnvironmentDocument = serde_json::from_value(json!({"org":"connection-binding-project","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","policy":"dev","revocation_seconds":60, "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},
+        "applications": {PACKAGE:{"revocation_seconds":5,"hostname": "fixture.example","connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap();
+        let selection = document.applications.get_mut(PACKAGE).unwrap();
+        selection.current =
+            wamn_environment::environment::document::DeclaredRelease::Digest(digest.to_owned());
+        selection.packages = [PACKAGE, "nested_origin", "nested_wiring"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        document
     }
     async fn apply(
         &mut self,
@@ -394,10 +401,10 @@ impl Authority {
             .await
             .unwrap();
         let digest = match document.legacy_release() {
-            wamn_environment_control::environment::document::DeclaredRelease::Digest(digest) => {
+            wamn_environment::environment::document::DeclaredRelease::Digest(digest) => {
                 digest.as_str()
             }
-            wamn_environment_control::environment::document::DeclaredRelease::None => {
+            wamn_environment::environment::document::DeclaredRelease::None => {
                 unreachable!()
             }
         };

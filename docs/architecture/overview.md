@@ -37,7 +37,7 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
 | `wamn-package-control` | Package admission and artifacts |
 | `wamn-release-control` | Release publication and charts |
-| `wamn-environment-control` | Environment provisioning, package application, and schema lifecycle |
+| `wamn-environment` | Environment provisioning, package application, and schema lifecycle |
 | `wamn-platform-install` | Helm installation, platform configuration, and explicit bootstrap Jobs |
 | `wamn-dev-control` | Development orchestration and process supervision |
 | `wamn-ctl` | Command-line client of the four control crates |
@@ -130,7 +130,7 @@ The release name is `r-<slug>-<hash>`, derived from the coordinate `org/env/proj
 The name is also the host group of the environment.
 The chart holds the pinned runtime-operator subchart in host-only mode, which renders only the host.
 It adds one WorkloadDeployment for the `http` role and one for the `materializer` role.
-The `http` role starts the composed entry with `poolSize` 0, and a Service of the same name routes to it.
+The `http` role starts the separate route component with `poolSize` 0. A Service of the same name routes to it.
 
 When the environment has a route host, the chart also writes a ConfigMap.
 Its `release.json` names the host, the release digest, client packages in `clients`, and pinned web digests in `webs`.
@@ -138,7 +138,9 @@ The platform image set lives only in the default values of the chart. `cargo xta
 The release is named by its manifest digest alone.
 
 An environment is declared in one `environment.k` document.
-It names the coordinate, the release digest or `none`, the route host, the policy by name, and the connection definitions.
+It names the coordinate, application hostnames, the policy, schema mode, clients, connections and integrations.
+The applied configuration lives in `registry.environment_projects.configuration`. `wamn-registry` defines its type.
+Helm history owns release selections. Package membership comes from each release manifest.
 
 Its optional `client` names a package id and an immutable web artifact digest.
 Analysis makes sure that the artifact matches its digest and its package coordinate appears in the release.
@@ -167,13 +169,14 @@ TLS for browser traffic terminates at ingress.
 `wamn-ctl env` has five verbs:
 
 - `apply <file>`: Move the environment toward its document. `--dry-run` prints the plan without the lock.
-- `rollback <coordinate> --reason <text>`: Restore the previous intended release and client pin.
+- `rollback <coordinate> --reason <text>`: Restore a successful release and its client pin.
 - `delete <coordinate> [--data]`: Delete the environment.
 - `show <coordinate>`: Print the document that the authorities hold for the environment.
 - `status <coordinate>`: Print the current state as JSON.
 
 `apply`, `rollback` and `delete` take one lifecycle lock for the coordinate and hold it for the whole verb.
 A second verb on the same coordinate refuses while the lock is held.
+If the lock session fails, the verb stops its protected work and returns an error.
 `--dry-run` and `show` take no lock.
 The platform inputs come from environment variables of the verb, not from flags or document fields.
 Apply reads `WAMN_APPLY_DATABASE_URL`, which authenticates as `wamn_apply`.
@@ -188,10 +191,14 @@ Provisioning writes public apply connection data to the org namespace's `wamn-ap
 1. Analyse: Read each authority once. Compare the document with them. Return the plan or the refusals.
 2. Ensure: Create the missing substrate: the environment row, the `Database` resource, the project database, the run plane, the credential Secrets, and the admin grants.
 3. Expand: Write the policy and route host. Run the package stage. Enable each declared connection and bind it to the components of the release.
-4. Write: Recover any pending Helm operation. Always run `helm upgrade --install` with `--wait`, the readiness budget of the policy, and `--rollback-on-failure`.
+4. Write: Recover any pending Helm operation. Always run `helm upgrade --install` with `--wait`, the readiness budget of the policy, and no automatic rollback. A failed revision and its pods remain available for inspection.
 5. Readiness: Wait until each WorkloadDeployment of the release reports `Ready`.
 6. Drain: Wait until the live set is exactly the declared release. Name each stranded run and stop.
-7. Contract: Remove the bindings of releases outside the live set. Disable instances that the document no longer names. Apply a declared minimum.
+7. Retain: Keep older release facts and permissions. Rollout performs no release cleanup.
+
+A separate retention operation removes unused release facts and generated permissions under the environment lock.
+Live hosts, current Helm selections and unfinished runs keep their release facts.
+Status reports unfinished runs with no live host across the environment.
 
 During analysis, apply reads each bound connection's type and the target type from the registry.
 For an exclusive connection on a cloud target, the body from `WAMN_RELEASE_HOST_GROUP` must name `replicas: 1`.
@@ -211,7 +218,8 @@ Application schema reset stops users, removes migration-owned objects and clears
 It discards old replication changes and queued events, reapplies migrations, restores selected releases and resumes users.
 The database, credentials, platform schemas and CDC objects stay.
 
-`rollback` compares each successful revision's release digest and client pin with the current pair.
+After a failed or pending head, `rollback` restores the latest successful Helm revision.
+After a successful head, `rollback` compares successful revisions with the current release digest and client pin.
 It selects the newest revision with a different pair and status `deployed` or `superseded`.
 It restores that revision's release digest and client through `apply` and keeps the reason in the Helm description.
 If that revision has no client, rollback clears the current client.
@@ -310,10 +318,10 @@ Migrate mode preserves data. Reset mode clears application state before it reapp
 Five layers run a component, and each layer depends only on the layers below it:
 
 1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) holds pure run decisions and two storage traits. `RunStore` is the queued-run lifecycle. `IntentStore` is the per-call intent record. `wamn-runtime`, `wamn-run-state-sqlite` and the edge implement it.
-2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, `invoke_operation`, and the host side of the `wamn:operation` binding that the route guest calls. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
+2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, `invoke_operation`, and the host side of the `wamn:operation` binding that the separate route component calls. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
 3. [`wamn-runtime`](../../crates/platform/runtime/src/lib.rs) holds the plugin set: Postgres, JetStream, blobstore, HTTP connections, credentials, logging, route authentication, and the OCI registry source. `WamnPostgres` is the Postgres adapter of `RunStore`.
 4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) holds the route path, `OperationHost`, and the delivery bridge.
-5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) holds everything that walks or delivers a wiring: the driver, wiring delivery, the queue, the lowering of a wiring, and the workflow contract (start, park, release, list). It depends on the pure walk, [`wamn-router`](../../crates/execution/workflow/router/src/lib.rs). A route never enters it.
+5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) owns the private graph walk, the node invocation driver, the durable queue, and the workflow contract (start, park, release, list). It indexes catalog graphs directly. A route never enters it.
 
 The services compose these layers.
 

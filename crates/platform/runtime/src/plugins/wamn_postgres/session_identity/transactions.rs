@@ -496,8 +496,12 @@ impl WamnPostgres {
                 policy.row_limit,
             )
             .await;
-            let mut rows = rows?;
-            rows.wal_position = wal?;
+            let rows = rows?;
+            let wal = wal?;
+            self.scopes
+                .update_existing::<crate::invocation::Authority, _>(component_id, |record| {
+                    record.wal_position = wal;
+                });
             connection.repool();
             return Ok(rows);
         }
@@ -530,8 +534,12 @@ impl WamnPostgres {
             policy.row_limit,
         )
         .await;
-        let result = result.and_then(|mut rows| {
-            rows.wal_position = wal?;
+        let result = result.and_then(|rows| {
+            let wal = wal?;
+            self.scopes
+                .update_existing::<crate::invocation::Authority, _>(component_id, |record| {
+                    record.wal_position = wal;
+                });
             Ok(rows)
         });
         match result {

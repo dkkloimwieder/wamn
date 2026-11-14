@@ -271,7 +271,7 @@ fn value<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
 
 /// The `error` of the single request element answering `request_id`: the refusal that
 /// was asked for, named by its code.
-/// A code that is blank after a trim refuses in the codec, on its field, before
+/// A code that is blank after a trim refuses in the operation, on its field, before
 /// the CHECK that guards the same rule could answer (wamn-iowb.4).
 pub(crate) async fn assert_blank_codes_refuse(route: &Route) -> anyhow::Result<()> {
     let client = reqwest::Client::builder()

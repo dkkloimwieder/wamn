@@ -1,4 +1,4 @@
-//! Environment provisioning, reconciliation, and platform operations for the CLI and test support.
+//! Environment lifecycle and authorized control execution.
 
 pub mod api_service;
 pub mod apply_package;

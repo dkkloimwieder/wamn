@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_rustls::{TlsAcceptor, rustls};
 use wamn_broker::Publisher;
-use wamn_environment_control::invite::{InviteRequest, invite};
-use wamn_environment_control::provision_org::{ProvisionOrgRequest, provision_org};
+use wamn_environment::invite::{InviteRequest, invite};
+use wamn_environment::provision_org::{ProvisionOrgRequest, provision_org};
 
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::org::MemberGrants;

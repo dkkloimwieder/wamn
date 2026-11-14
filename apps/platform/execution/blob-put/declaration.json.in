@@ -54,7 +54,7 @@
   },
   "connections": [
     {
-      "store-alias": "__STORE_ALIAS__",
+      "store-alias": { "parameter": "store_alias" },
       "requirement-type": "blobstore"
     }
   ]

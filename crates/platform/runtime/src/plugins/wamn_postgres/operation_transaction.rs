@@ -10,7 +10,6 @@
 //! dropping its Store rolls back unfinished work.
 
 use crate::invocation::Authority;
-use sqlx::Row as _;
 use std::sync::{Arc, Mutex};
 
 use super::resources::{
@@ -73,21 +72,6 @@ impl OperationTransaction {
     pub fn with_known_result(mut self, result: String) -> Self {
         self.known_result = Some(result);
         self
-    }
-
-    /// Read the WAL position on this operation's connection.
-    pub(super) async fn wal_position(&self) -> Result<String, PgError> {
-        self.start().await?;
-        let mut connection = StatementConnectionGuard::new(
-            take_conn(&self.transaction.state)?,
-            Arc::clone(&self.transaction.destroyed),
-        );
-        let row = sqlx::query("SELECT pg_current_wal_lsn()::text")
-            .fetch_one(&mut *connection.connection())
-            .await
-            .map_err(|error| super::types::map_pg_error(&error))?;
-        connection.restore(&self.transaction.state);
-        Ok(row.get(0))
     }
 
     /// A guest handle of this transaction. Dropping it leaves the transaction

@@ -76,11 +76,10 @@ fn release_coordinates(
         ) => Ok((manifest_digest.clone(), environment.clone())),
         (ConnectionExecutionClosure::Released, Some((manifest, manifest_digest, scope))) => {
             if scope.project_env_key != project_env_key
-                || !manifest
-                    .release
-                    .packages
-                    .iter()
-                    .any(|package| package.package_id() == invocation.package_id.as_str())
+                || crate::plugins::connection_http::released_invocation_application(
+                    manifest, scope, invocation,
+                )
+                .is_none()
             {
                 return Err(BindingError::Unauthorized);
             }
@@ -636,7 +635,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::plugins::connection_http::ConnectionOrigin;
+    use crate::plugins::connection_http::{ConnectionOrigin, InvocationEntry};
     use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
     use crate::plugins::wamn_postgres::{CandidateBindingWorld, WamnPostgresConfig};
 
@@ -659,7 +658,7 @@ mod tests {
             },
             entry: crate::plugins::connection_http::InvocationEntry::Wiring(
                 crate::plugins::connection_http::WiringPosition {
-                    package_id: "package_a".to_string(),
+                    package_id: "warehouse".to_string(),
                     wiring_hash: fixture_wiring_hash(),
                     wiring_id: "orders".to_string(),
                     wiring_version: 3,
@@ -706,6 +705,24 @@ mod tests {
         "sha256:4444444444444444444444444444444444444444444444444444444444444444";
 
     fn manifest(project_env_key: &str, package: &str) -> (ServingManifest, ReleaseTarget) {
+        let invocation = released();
+        let mut descriptor = wamn_catalog::ComponentDescriptor::named(
+            &invocation.component,
+            &invocation.origin.interface_version,
+            &invocation.component_digest,
+        );
+        descriptor.operations.insert(
+            invocation.operation,
+            wamn_catalog::AdmittedComponentOperation {
+                registered_operation: None,
+                committed_result_schema: None,
+                host_transaction: false,
+                input_ports: vec![],
+                output_ports: vec![],
+                parameters: vec![],
+                statements: BTreeMap::new(),
+            },
+        );
         let manifest = ServingManifest {
             composed_entry: None,
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
@@ -714,7 +731,12 @@ mod tests {
                     PackageCoordinate::new(package, "1.0.0").expect("a canonical coordinate")
                 ]),
             },
-            components: BTreeSet::new(),
+            components: BTreeSet::from([wamn_catalog::ServingComponent {
+                package_id: package.to_owned(),
+                runtime_schema: None,
+                statement_instances: BTreeMap::new(),
+                descriptor,
+            }]),
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),
 
@@ -733,6 +755,50 @@ mod tests {
                 .into(),
             ),
         )
+    }
+
+    #[test]
+    fn palette_release_coordinates_require_the_exact_component_and_workflow_application() {
+        let (mut manifest, target) = manifest("org-a", "package_a");
+        let mut component = manifest.components.pop_first().unwrap();
+        component.package_id = wamn_catalog::PALETTE_PACKAGE_ID.to_owned();
+        manifest.components.insert(component);
+        let mut invocation = released();
+        invocation.package_id = wamn_catalog::PALETTE_PACKAGE_ID.to_owned();
+        invocation.origin.package_id = invocation.package_id.clone();
+        assert!(
+            release_coordinates(
+                &invocation,
+                Some((&manifest, MOUNTED_RELEASE, &target)),
+                "org-a"
+            )
+            .is_ok()
+        );
+        let InvocationEntry::Wiring(position) = &mut invocation.entry else {
+            unreachable!()
+        };
+        position.package_id = "other-application".to_owned();
+        assert!(
+            release_coordinates(
+                &invocation,
+                Some((&manifest, MOUNTED_RELEASE, &target)),
+                "org-a"
+            )
+            .is_err()
+        );
+        let InvocationEntry::Wiring(position) = &mut invocation.entry else {
+            unreachable!()
+        };
+        position.package_id = "warehouse".to_owned();
+        invocation.component_digest = format!("sha256:{}", "b".repeat(64));
+        assert!(
+            release_coordinates(
+                &invocation,
+                Some((&manifest, MOUNTED_RELEASE, &target)),
+                "org-a"
+            )
+            .is_err()
+        );
     }
 
     /// A candidate closure states its own coordinates and needs no manifest.

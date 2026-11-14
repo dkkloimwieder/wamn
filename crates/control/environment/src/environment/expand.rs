@@ -48,30 +48,19 @@ pub async fn prepare(
     packages: &[wamn_compiler::manifest::PackageManifest],
     actor: &str,
 ) -> anyhow::Result<()> {
-    for package in packages.iter().filter(|package| {
-        wamn_release_control::publish_release::composes_integration(package, &manifest.components)
-    }) {
-        ensure!(
-            document.application_for_package(&package.package.id) == Some(application),
-            "application role for {} has ambiguous ownership",
-            package.package.id
-        );
-    }
-    let selected = super::analyse::select_application(document, Some(application))?;
+    let mut selected = super::analyse::select_application(document, Some(application))?;
+    let selection = selected
+        .applications
+        .get_mut(application)
+        .expect("application was selected");
+    selection.current = super::document::DeclaredRelease::Digest(digest.to_owned());
+    selection.packages = manifest
+        .release
+        .packages
+        .iter()
+        .map(|package| package.package_id().to_owned())
+        .collect();
     let document = &selected;
-    ensure!(
-        matches!(document.legacy_release(), super::document::DeclaredRelease::Digest(selected) if selected == digest),
-        "activation digest differs from the application selection"
-    );
-    let refusals = super::analyse::application_refusals(
-        &document.membership(),
-        manifest
-            .release
-            .packages
-            .iter()
-            .map(wamn_catalog::PackageCoordinate::package_id),
-    );
-    ensure!(refusals.is_empty(), "{}", refusals.join("; "));
     let project_url = super::ensure::project_url(platform, &document.triple())
         .await
         .context("environment is not provisioned; run env provision and env initialize")?;

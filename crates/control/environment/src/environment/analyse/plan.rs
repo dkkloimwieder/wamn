@@ -1,6 +1,6 @@
 use super::{
-    Authorities, BTreeSet, EnvironmentDocument, EnvironmentRow, Notice, Observation, Platform,
-    Revision, Value,
+    Authorities, EnvironmentDocument, EnvironmentRow, Notice, Observation, Platform, Revision,
+    Value,
 };
 
 pub(super) fn replica_refusal(connection: &str, replicas: Option<u64>) -> Option<String> {
@@ -58,11 +58,14 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
     if let Some(release) = &authorities.release {
         for component in &release.manifest.components {
             for requirement in &component.descriptor.connections {
+                let Some(alias) = requirement.store_alias.name() else {
+                    continue;
+                };
                 if let Some(connection) = authorities.connections.get(&super::super::bindings::key(
                     document
                         .application_for_package(&component.package_id)
                         .unwrap_or(""),
-                    &requirement.store_alias,
+                    alias,
                 )) && !matches!(
                     (connection.requirement_type, requirement.requirement_type),
                     (
@@ -75,7 +78,7 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                 ) {
                     refusals.push(format!(
                         "connection {} has a different type from its release requirement",
-                        requirement.store_alias
+                        alias
                     ));
                 }
             }
@@ -85,7 +88,10 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                 .application_for_package(&component.package_id)
                 .unwrap_or("");
             for requirement in &component.descriptor.connections {
-                let key = super::super::bindings::key(application, &requirement.store_alias);
+                let Some(alias) = requirement.store_alias.name() else {
+                    continue;
+                };
+                let key = super::super::bindings::key(application, alias);
                 if !authorities.connections.contains_key(&key)
                     && !authorities.artifact_bindings.contains(&key)
                 {
@@ -94,54 +100,6 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                         release.digest
                     ));
                 }
-            }
-        }
-        refusals.extend(application_refusals(
-            &document.membership(),
-            release
-                .manifest
-                .release
-                .packages
-                .iter()
-                .map(wamn_catalog::PackageCoordinate::package_id),
-        ));
-    }
-    refusals
-}
-
-/// The refusals of the declared applications against the packages of the
-/// release (docs/architecture/execution.md#workflows): each package of the
-/// release belongs to exactly one application, and each assigned package is in
-/// the release.
-pub fn application_refusals<'a>(
-    applications: &wamn_catalog::EnvironmentApplications,
-    release_packages: impl IntoIterator<Item = &'a str>,
-) -> Vec<String> {
-    let release_packages: BTreeSet<&str> = release_packages.into_iter().collect();
-    let mut refusals = Vec::new();
-    for package in &release_packages {
-        let owners: Vec<&str> = applications
-            .iter()
-            .filter(|(_, application)| application.packages.contains(*package))
-            .map(|(name, _)| name.as_str())
-            .collect();
-        match owners.as_slice() {
-            [] => refusals.push(format!(
-                "package {package} of the release is assigned to no application"
-            )),
-            [_] => {}
-            _ => refusals.push(format!(
-                "package {package} is assigned to the applications {}",
-                owners.join(", ")
-            )),
-        }
-    }
-    for (name, application) in applications {
-        for package in &application.packages {
-            if !release_packages.contains(package.as_str()) {
-                refusals.push(format!(
-                    "application {name} names package {package}, which the release does not carry"
-                ));
             }
         }
     }

@@ -78,7 +78,7 @@ The host signs under the operation's grant and the file's application and connec
 A signing failure refuses the whole result.
 A direct file GET still refuses private files, including requests from administrators.
 
-Marked application routes use host delivery, so composed guest execution cannot bypass signing.
+The host signs marked application results after commit or replay, using the retained invocation authority.
 These responses use `no-store` and no ETag because their URLs expire.
 The write log retains UUIDs. Each replay signs fresh URLs after the stored result returns.
 Typed native calls use the same signing step before the host returns their result.
@@ -98,9 +98,7 @@ There are two sets.
 Release publish writes the set `application` into every application release.
 Its routes admit a PAT or a session and read the project environment database of the release.
 The control serving root serves only the set `control`, whose routes admit a browser session only.
-Platform builds compose the pinned route guest with an empty private dispatcher for this root.
-The route digest pin identifies its source, and the platform HTTP role records its OCI manifest reference.
-The control host links `wamn:operation` without binding operation authority, so every operation call refuses.
+Native ingress serves the control routes directly. Control loads no HTTP guest.
 Control roots have no release record.
 Publish refuses an authored attachment under `/wamn_control/`.
 
@@ -253,7 +251,7 @@ A `get` tag follows `row_version`, so a row that is deleted and created again un
 The entry-only `wamn:operation/operation@0.1.0` interface also provides `wal-position()`.
 It reads the WAL position on the open operation's connection and refuses `not-begun` outside an operation.
 The [operation boundary](data-access.md#the-write-log) owns its transaction lifetime.
-The composed entry computes ETags and handles conditional reads for base routes.
+The separate route component computes ETags and handles conditional reads for base routes.
 The delivery bridge retains this behavior for wiring attachments.
 The routing provider also projects the ETag inputs from the loaded release.
 Those inputs declare the release digest and either the result's revision field or the sorted relations for a list.
@@ -279,12 +277,12 @@ A dropped open operation records an execution failure and releases its authority
 A `query` replies with one page: the outcome list of one item, with the rows under `item` and the cursor under `next_cursor`.
 The entry writes the page as one JSON body.
 The entry bounds a page by the declared contract maximum, usually 100, and by the platform ceiling.
-The generated application codec validates the remaining input.
+The generated typed export validates the remaining input.
 The memory of a read is bounded by the statement's declared limit and the platform ceiling.
 The test `a_read_of_100000_rows_refuses_at_the_ceiling` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) shows the refusal.
-The composed entry calls the application query through its private dispatch interface, as it calls a projection.
-The query returns its page and the WAL position of a list ETag from one `read-json` call, and it reads through `statements.run`.
-Host routes and wiring attachments retain [`wamn:router-delivery` 0.4.0](../../wit/wamn-router-delivery-0.4/package.wit).
+The route component invokes the application through the host converter.
+The typed query returns its page. The host retains the read's WAL position for a list ETag.
+Platform endpoints use native handlers. Workflow and edge delivery move in later S7 steps.
 
 `invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.
 The router driver and the edge pass that context for each write operation.
@@ -306,7 +304,7 @@ It preserves scalar spelling and array order. A retry with changed input is an i
 
 A host or wiring route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
 Base routes keep this response for declared page and band limits.
-Their generated application codecs refuse other invalid input through the operation contract.
+Their generated typed exports refuse other invalid input through the operation contract.
 The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
 
 ```json
@@ -337,16 +335,12 @@ The deployment owner can select reviewed component digests for native warm-insta
 Application manifests cannot grant that trust.
 
 An application is one composed component, and it loads as its own native workload.
-Publication composes the pinned HTTP route guest with the application and records the entry reference in serving manifest format 11.
-A deployed entry is recorded as `entries@sha256:<manifest-digest>`, a path relative to the component artifact base.
-The host joins that path with its `WAMN_COMPONENT_ARTIFACT_BASE`, as it does for the members.
-The host records the joined reference by workload id before it calls the runtime's default start handler.
-The runtime pulls, verifies, and compiles the component. The operation binding makes sure that the recorded reference is the release's entry path under a valid base.
-The composed entry uses fresh Stores and calls base operations inside the component.
-The release chart fixes its `poolSize` at zero.
-Its image is the host group's `WAMN_COMPONENT_ARTIFACT_BASE` joined with the release entry path.
-Receiving carries no trusted warm digest or native pool override.
-Host routes and wiring attachments keep the router-delivery import.
+Publication records the separate route component in the release's entry record.
+The host starts that pinned component and loads application components separately.
+The route component receives release route data through `wasi:config`.
+Each request calls the host's operation capability, which invokes typed `run` in the application's store.
+The release chart uses a fresh store for each route request.
+The host serves platform endpoints natively under the same ingress host.
 Local publication records an absolute `file:` reference to a digest-named artifact. The existing local file loader makes sure of its bytes before binding.
 
 No two applications share a store, and wash-runtime links no application to another.
@@ -420,8 +414,13 @@ Typed operation inputs and successful results contain owned lists or records.
 Admission tests the context, node errors, and every nested value.
 It refuses store-owned resources at these boundaries.
 A composed call inside an application uses the typed entrypoint.
-JSON adapters serve HTTP and dynamic routing.
-The pure router, `wamn-router`, owns deterministic graph decisions.
+The host converts HTTP and dynamic JSON using the called export's WIT type.
+A JSON column or field uses `wamn:node/types.json-value`, a record with one `encoded-json` string.
+The converter recognizes this record shape and carries any JSON value through it.
+Text fields keep the WIT `string` type.
+The converter derives deletion markers from absent change data. It omits that data from a deleted row.
+A refusal without details returns an empty object. Absent optional refusal details stay omitted.
+Private modules in `wamn-workflow` own deterministic graph decisions.
 Before execution, the host admits one invocation record with caller, SQL, identity, causation, effect authority and trace context.
 PostgreSQL, HTTP, storage and logging read that record from one registry.
 The record retains signing authority through commit and replay.
@@ -551,13 +550,13 @@ Missed or refused ticks produce a log entry without catch-up, and host shutdown 
 The [JSONata node](../../apps/platform/execution/jsonata/src/lib.rs) is a palette node compiled to wasm.
 Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.
 The result leaves on port `main`, or on port `items`, whose schema is the item array that `label-render` takes.
-The node is a std guest: it imports `wasi:random` at the version that Rust std links, and the virtualizer passes that import through.
+The node is a std guest: it imports `wasi:random` at the version that Rust std links, and the build preserves that import.
 
 The WMS workflow `movement_label` is the first example.
 A `packaging` update starts it when the registration condition `old.location_id != new.location_id` holds, so only a move starts it.
 It stores one packaging label for each move, keyed by `{packaging_id}/{row_version}`, at the object path `wms/{key}`.
 
-- A wiring is data with edges. Versioned. Swapped by version with no rebuild. `wamn-router` walks it: frontier, ports, error edges, retry, hop budget, terminal verdict. Unchanged.
+- A wiring is data with edges. Versioned. Swapped by version with no rebuild. `wamn-workflow` walks the catalog graph directly: frontier, ports, error edges, retry, hop budget, terminal verdict. Unchanged.
 
 | Operation | Behavior |
 | --- | --- |
@@ -597,12 +596,10 @@ The idempotency key is bound to the caller and the workflow.
 A repeated start with the same key and input answers the first run, and another input refuses `idempotency_conflict`.
 The run and its queue row commit in one transaction.
 
-When the queue leases the run, `queued_run_caller` resolves its principal.
-The principal must be an active `service` or `user` that holds the run's role.
-The caller holds the permissions of that role only, and holds `admin` only when the role is `admin`.
-The host reads these grants again before each node, so a role revoked during a run refuses the next node.
-A run with no role is an automation or schedule run.
-Its principal must be an active `service`, and it holds the permissions of every role of the principal.
+Before each node, the host reads the execution principal's current grants through its authentication memory.
+The principal must be active and hold the run's selected role.
+Only that role supplies permissions. The `admin` role grants administration.
+A role revoked during a run refuses the next node. Leasing the run performs no caller read.
 
 Every workflow is a graph run by the router and the run queue under a run row. A single-operation workflow is a one-node graph. The in-process walk with no row (`RegistrationDelivery::Walk`) is removed.
 

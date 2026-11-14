@@ -1,6 +1,6 @@
 //! The command `sample.record` over the generated statements.
 //!
-//! The generated codec of `sample.record` claims the key in the write log and
+//! The generated operation of `sample.record` claims the key in the write log and
 //! holds the transaction. The command inserts the sample, whose id its default
 //! mints.
 
@@ -17,7 +17,7 @@ pub struct RecordCommand {
     pub captured_at: String,
 }
 
-/// Record one sample in the transaction its codec holds, and answer its id.
+/// Record one sample in the transaction its operation holds, and answer its id.
 ///
 /// # Errors
 ///

@@ -23,6 +23,8 @@ pub use wamn_kubernetes::environment_state::DeploymentStatus;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Status {
     pub applications: BTreeMap<String, ApplicationStatus>,
+    /// Unfinished runs with no live host anywhere in this environment.
+    pub stranded: Option<Vec<Stranded>>,
     pub installed: Option<BTreeMap<String, super::analyse::Installed>>,
     pub warnings: Vec<String>,
     pub schema: Option<super::sql::schema::Status>,
@@ -34,7 +36,6 @@ pub struct Status {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ApplicationStatus {
     pub current: super::document::DeclaredRelease,
-    pub previous: Option<String>,
     pub hostname: String,
     pub observed: Option<Observed>,
     pub warnings: Vec<String>,
@@ -54,8 +55,6 @@ pub struct Observed {
     pub live: BTreeMap<String, usize>,
     /// Release digest to the count of host pods that are terminating.
     pub terminating: BTreeMap<String, usize>,
-    /// Runs pinned to a release with no live pod.
-    pub stranded: Option<Vec<Stranded>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -68,11 +67,10 @@ pub struct RevisionStatus {
 /// Read canonical selections even when runtime or database state is unavailable.
 pub async fn status(
     platform: &mut Platform,
-    file: &std::path::Path,
+    triple: &Triple,
     admin_url: &str,
 ) -> anyhow::Result<Status> {
-    let document =
-        super::document::EnvironmentDocument::read_deployed(platform, file, None).await?;
+    let document = super::document::EnvironmentDocument::read(platform, triple).await?;
     let triple = document.triple();
     let mut warnings = Vec::new();
     let system_schema = match async {
@@ -136,25 +134,37 @@ pub async fn status(
             })
             .collect()
     });
+    let stranded = match async {
+        let observed = wamn_kubernetes::environment_state::observe_environment(
+            &platform.target.namespace,
+            &triple.to_string(),
+            |path| async move {
+                let body = kubectl(
+                    platform,
+                    &platform.target.namespace,
+                    &["get", "--raw", &path],
+                    None,
+                )
+                .await?;
+                serde_json::from_str(&body).context("read environment hosts")
+            },
+        )
+        .await?;
+        let live = wamn_kubernetes::environment_state::live_set(&observed.pods);
+        stranded_runs(platform, &triple, &live, admin_url).await
+    }
+    .await
+    {
+        Ok(runs) => Some(runs),
+        Err(error) => {
+            warnings.push(format!("stranded runs unknown: {error:#}"));
+            None
+        }
+    };
     let mut applications = BTreeMap::new();
     for (application, selection) in &document.applications {
         let mut warnings = Vec::new();
         let release_name = super::analyse::application_release_name(&document, application)?;
-        let mut packages = vec![application.clone()];
-        packages.extend(
-            selection
-                .packages
-                .iter()
-                .filter(|package| {
-                    document
-                        .applications
-                        .values()
-                        .filter(|owner| owner.packages.contains(*package))
-                        .count()
-                        == 1
-                })
-                .cloned(),
-        );
         let observed = async {
             let revision = read_revision(platform, &release_name)
                 .await?
@@ -163,15 +173,6 @@ pub async fn status(
                     number: revision.number,
                     chart: revision.chart,
                 });
-            if let Some(warning) = super::document::selection_warning(
-                application,
-                &selection.current,
-                revision
-                    .as_ref()
-                    .and_then(|revision| revision.manifest_digest.as_deref()),
-            ) {
-                warnings.push(warning);
-            }
             let namespace = platform.target.namespace.as_str();
             let observed = observe(namespace, &release_name, |path| async move {
                 let body = kubectl(platform, namespace, &["get", "--raw", &path], None).await?;
@@ -179,14 +180,6 @@ pub async fn status(
             })
             .await?;
             let state = environment_state(&observed, &release_name);
-            let stranded =
-                match stranded_runs(platform, &triple, &packages, &state.live, admin_url).await {
-                    Ok(runs) => Some(runs),
-                    Err(error) => {
-                        warnings.push(format!("stranded runs unknown: {error:#}"));
-                        None
-                    }
-                };
             Ok::<_, anyhow::Error>(Observed {
                 terminating: terminating(&observed.pods),
                 release_name,
@@ -194,7 +187,6 @@ pub async fn status(
                 deployment: state.deployment,
                 workloads: state.workloads,
                 live: state.live,
-                stranded,
             })
         }
         .await;
@@ -208,8 +200,13 @@ pub async fn status(
         applications.insert(
             application.clone(),
             ApplicationStatus {
-                current: selection.current.clone(),
-                previous: selection.previous.clone(),
+                current: observed
+                    .as_ref()
+                    .and_then(|observed| observed.revision.as_ref())
+                    .and_then(|revision| revision.manifest_digest.as_ref())
+                    .map_or(super::document::DeclaredRelease::None, |digest| {
+                        super::document::DeclaredRelease::Digest(digest.clone())
+                    }),
                 hostname: selection.hostname.clone(),
                 observed,
                 warnings,
@@ -218,6 +215,7 @@ pub async fn status(
     }
     Ok(Status {
         applications,
+        stranded,
         installed,
         warnings,
         schema,
@@ -230,7 +228,6 @@ pub async fn status(
 async fn stranded_runs(
     platform: &Platform,
     triple: &Triple,
-    packages: &[String],
     live: &BTreeMap<String, usize>,
     admin_url: &str,
 ) -> anyhow::Result<Vec<Stranded>> {
@@ -256,14 +253,7 @@ async fn stranded_runs(
     let url = project_url(platform, triple).await?;
     let project_env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, triple.env.as_str());
-    stranded(
-        &url,
-        &project_env_key,
-        triple.env.as_str(),
-        Some(packages),
-        live,
-    )
-    .await
+    stranded(&url, &project_env_key, triple.env.as_str(), None, live).await
 }
 
 #[cfg(test)]

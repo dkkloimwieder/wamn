@@ -158,7 +158,7 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
         &mut admin,
         root,
         PLATFORM_DOMAIN,
-        &wamn_environment_control::environment::document::EnvironmentDocument::compile(
+        &wamn_environment::environment::document::EnvironmentDocument::compile(
             &root.join("environment.k"),
         )?,
     )

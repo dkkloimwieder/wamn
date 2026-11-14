@@ -779,11 +779,8 @@ CREATE TABLE registry.environment_projects (
     secret_name      text NOT NULL,
     secret_namespace text,
     instance_suffix  text NOT NULL,
-    -- Reset inputs and fresh initialization identity, retained outside the recreated database.
-    -- The route host the environment document declares (docs/architecture/overview.md#environment-lifecycle).
-    route_host       text
-        CONSTRAINT project_envs_route_host_check
-        CHECK (route_host IS NULL OR route_host ~ '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'),
+    -- NULL until explicit environment configuration is applied.
+    configuration jsonb CHECK (configuration IS NULL OR jsonb_typeof(configuration) = 'object'),
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,

@@ -4,6 +4,7 @@ package wamn:operation@0.1.0;
 /// without receiving this interface.
 interface operation {
   use wamn:postgres/types@0.4.0.{pg-error};
+  use wamn:node/types@0.1.0.{node-context, emission, node-error};
   use wamn:flow-http-routing/routing@0.1.0.{authenticated-caller};
 
   /// The existing operation id text, validated against the loaded release.
@@ -33,6 +34,12 @@ interface operation {
 
   /// Authorize a read and bind its statement authority without a connection.
   authorize: async func(caller: option<borrow<authenticated-caller>>, operation: sealed-operation-id) -> result<_, refusal>;
+
+  /// Call the typed application export under the current invocation authority.
+  invoke: async func(operation: sealed-operation-id, context: node-context, input: string) -> result<emission, node-error>;
+
+  /// Sign results after commit or replay, using the retained invocation authority.
+  sign-result: async func(payload: string) -> result<string, node-error>;
 
   /// End an authorized read and record its delivery outcome without SQL.
   finish-read: async func() -> result<_, refusal>;

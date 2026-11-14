@@ -19,7 +19,7 @@
 //! is a fact on `packaging` (`location_id` with the `located_at` the command
 //! names) and its record history, and no stock changes packaging or status,
 //! so it writes no transaction row. The label workflow
-//! triggers on the location change. The generated codec claims the key in the
+//! triggers on the location change. The generated operation claims the key in the
 //! write log and holds the transaction, so a retry answers the stored result.
 
 use serde::Deserialize;
@@ -62,7 +62,7 @@ fn parse(command: &MoveCommand) -> Result<Parsed, AccessError> {
     })
 }
 
-/// Run one command request element in the transaction its codec holds for the write log.
+/// Run one command request element in the transaction its operation holds for the write log.
 ///
 /// # Errors
 ///

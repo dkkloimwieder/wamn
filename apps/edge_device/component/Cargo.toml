@@ -6,6 +6,7 @@ description = "Package-grain edge device operation component, with no SQL"
 license = "Apache-2.0"
 
 [dependencies]
+wamn-data-access = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 uuid.workspace = true

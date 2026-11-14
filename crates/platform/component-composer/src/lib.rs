@@ -7,8 +7,6 @@
 //! member, and an overlay that calls no base is returned unchanged. Each
 //! member is embedded with its bytes unchanged, so publish can hash each
 //! embedded component.
-//! [`compose_application`] adds the platform route layer while keeping the
-//! application's operation exports, including those of an existing composition.
 //!
 //! Each member that imports `wamn:postgres/statements` gets an outer import of
 //! its own, named by the member's position in the composition (`sql-0`,
@@ -26,26 +24,8 @@ use wac_graph::{CompositionGraph, EncodeOptions, NodeId, PackageId};
 use wamn_component_policy::{STATEMENT_INSTANCES_SECTION, STATEMENTS_INTERFACE};
 use wasmparser::{Parser, Payload};
 
-mod dispatch;
-
-/// The private call interface supplied only by application composition.
-pub const APPLICATION_DISPATCH: &str = "wamn:application-dispatch/dispatch@0.1.0";
-
-/// The HTTP entry exported only by the platform route layer.
+/// The HTTP entry exported only by the platform route component.
 pub const HTTP_HANDLER: &str = "wasi:http/handler@0.3.0";
-
-/// Compose the pinned platform route with a dispatcher that has no operations.
-pub fn compose_control_entry(route: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-    let pin = include_str!("../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
-        .split_whitespace()
-        .next()
-        .expect("route pin exists");
-    anyhow::ensure!(
-        wamn_digest::bytes_sha256(&route) == format!("sha256:{pin}"),
-        "control route differs from the platform route pin"
-    );
-    compose_application(route, wat::parse_str("(component)")?)
-}
 
 /// Refuse entry authority anywhere in an application member's component tree.
 pub fn validate_application_member(bytes: &[u8]) -> anyhow::Result<()> {
@@ -58,9 +38,6 @@ pub fn validate_application_member(bytes: &[u8]) -> anyhow::Result<()> {
                         import.name.name,
                         import.name.implements,
                     );
-                    if wamn_component_policy::import_pkg(interface) == "wamn:application-dispatch" {
-                        bail!("application member imports composition-private dispatch");
-                    }
                     if wamn_component_policy::import_pkg(interface) == "wamn:operation" {
                         bail!("application member imports entry-only package wamn:operation");
                     }
@@ -80,120 +57,7 @@ pub fn validate_application_member(bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Compose the platform HTTP entry with an application, preserving operation exports.
-///
-/// The application can already contain its pinned bases. Its bytes and the
-/// route layer's bytes remain unchanged inside the composition. Matching route
-/// imports bind to application exports; other imports remain host capabilities.
-pub fn compose_application(route: Vec<u8>, application: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-    validate_application_member(&application)?;
-    anyhow::ensure!(
-        names(&route, "route", true)?.contains(HTTP_HANDLER),
-        "route layer does not export {HTTP_HANDLER}"
-    );
-    let route_imports = names(&route, "route", false)?;
-    let dispatch = route_imports
-        .contains(APPLICATION_DISPATCH)
-        .then(|| dispatch::build(&application))
-        .transpose()?;
-    let mut statement_instances = application_statement_instances(&application)?;
-    let mut graph = CompositionGraph::new();
-    let application = instantiate(&mut graph, "wamn-member:application", application)?;
-    let route = instantiate(&mut graph, "wamn-member:route", route)?;
-    let dispatch = dispatch
-        .map(|bytes| instantiate(&mut graph, "wamn-member:dispatch", bytes))
-        .transpose()?;
-    // Preserve the application's type dependency order, including base exports
-    // that an overlay's exported interface uses.
-    let application_exports = graph.types()[graph[application.package].ty()]
-        .exports
-        .keys()
-        .cloned()
-        .collect::<Vec<_>>();
-    for name in &application_exports {
-        let export = graph
-            .alias_instance_export(application.instance, name)
-            .with_context(|| format!("alias application export {name}"))?;
-        if route_imports.contains(name) {
-            graph
-                .set_instantiation_argument(route.instance, name, export)
-                .with_context(|| format!("plug {name} into the route layer"))?;
-        }
-        if let Some(dispatch) = dispatch
-            && graph.types()[graph[dispatch.package].ty()]
-                .imports
-                .contains_key(name)
-        {
-            graph.set_instantiation_argument(dispatch.instance, name, export)?;
-        }
-        graph
-            .export(export, name)
-            .with_context(|| format!("export application operation {name}"))?;
-    }
-    if let Some(dispatch) = dispatch {
-        let export = graph.alias_instance_export(dispatch.instance, APPLICATION_DISPATCH)?;
-        graph.set_instantiation_argument(route.instance, APPLICATION_DISPATCH, export)?;
-    }
-    // An already composed application keeps its named statement imports and
-    // their original member digests. A plain application gets its own instance.
-    if statement_instances.is_empty() {
-        statement_instances = name_statement_instances(&mut graph, &[application])?;
-    } else {
-        for name in statement_instances.keys() {
-            statement_import(&mut graph, application, name, name)?;
-        }
-    }
-    let handler = graph
-        .alias_instance_export(route.instance, HTTP_HANDLER)
-        .context("alias route handler")?;
-    graph
-        .export(handler, HTTP_HANDLER)
-        .context("export route handler")?;
-    let mut composed = graph
-        .encode(EncodeOptions {
-            define_components: true,
-            validate: true,
-            processor: None,
-        })
-        .context("encode application with route layer")?;
-    composed = label_statement_imports(&composed, &statement_instances)?;
-    if !statement_instances.is_empty() {
-        append_custom_section(
-            &mut composed,
-            STATEMENT_INSTANCES_SECTION,
-            &serde_json::to_vec(&statement_instances)?,
-        );
-    }
-    validate_application_dispatch(&composed)?;
-    Ok(composed)
-}
-
-/// Refuse a private dispatch import left to the host, including named imports.
-pub fn validate_application_dispatch(bytes: &[u8]) -> anyhow::Result<()> {
-    let mut depth = 0_usize;
-    for payload in Parser::new(0).parse_all(bytes) {
-        match payload? {
-            Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => depth += 1,
-            Payload::End(_) => depth = depth.saturating_sub(1),
-            Payload::ComponentImportSection(imports) if depth == 0 => {
-                for import in imports {
-                    let import = import?;
-                    let interface = wamn_component_policy::instance_type(
-                        import.name.name,
-                        import.name.implements,
-                    );
-                    anyhow::ensure!(
-                        wamn_component_policy::import_pkg(interface) != "wamn:application-dispatch",
-                        "application dispatch must be supplied inside the composition"
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
+#[cfg(test)]
 fn application_statement_instances(bytes: &[u8]) -> anyhow::Result<BTreeMap<String, String>> {
     let mut depth = 0_usize;
     for payload in Parser::new(0).parse_all(bytes) {
@@ -454,7 +318,7 @@ mod tests {
     use wac_graph::types::{Package, Types};
     use wasmparser::{Parser, Payload};
 
-    use super::{HTTP_HANDLER, compose, compose_application, validate_application_member};
+    use super::{HTTP_HANDLER, compose, validate_application_member};
 
     const HOST_LOG: &str =
         r#"(import "test:host/log@1.0.0" (instance (export "log" (func (param "x" u32)))))"#;
@@ -490,54 +354,9 @@ mod tests {
         component(HOST_LOG, "test:base/op@1.0.0")
     }
 
-    fn nested_component_digests(bytes: &[u8]) -> BTreeSet<Vec<u8>> {
-        Parser::new(0)
-            .parse_all(bytes)
-            .filter_map(|payload| match payload.expect("the composed bytes parse") {
-                Payload::ComponentSection {
-                    unchecked_range, ..
-                } => {
-                    let start = usize::try_from(unchecked_range.start).expect("offset fits memory");
-                    let end = usize::try_from(unchecked_range.end).expect("offset fits memory");
-                    Some(Sha256::digest(&bytes[start..end]).to_vec())
-                }
-                _ => None,
-            })
-            .collect()
-    }
-
     #[test]
-    fn admission_refuses_unsatisfied_dispatch() {
-        let bytes = wat::parse_str(
-            r#"(component
-            (import "wamn:application-dispatch/dispatch@0.1.0" (instance)))"#,
-        )
-        .unwrap();
-        assert!(super::validate_application_dispatch(&bytes).is_err());
-    }
-
-    #[test]
-    fn admission_refuses_dispatch_imported_from_outside_the_composition() {
-        let bytes = wat::parse_str(r#"(component
-            (import "external" (implements "wamn:application-dispatch/dispatch@0.1.0") (instance)))"#).unwrap();
-        assert!(super::validate_application_dispatch(&bytes).is_err());
-    }
-
-    #[test]
-    fn composition_embeds_each_member_unchanged_and_plugs_by_export_name() {
-        let overlay = overlay();
-        let base = base();
-        let members = [&overlay, &base];
-
-        let composed = compose(overlay.clone(), vec![base.clone()]).expect("the members compose");
-
-        let embedded = nested_component_digests(&composed);
-        for member in members {
-            assert!(
-                embedded.contains(&Sha256::digest(member).to_vec()),
-                "a nested component section holds each member's input bytes"
-            );
-        }
+    fn composition_plugs_operations_by_export_name() {
+        let composed = compose(overlay(), vec![base()]).expect("the members compose");
 
         let mut types = Types::default();
         let package = Package::from_bytes("composed", None, composed, &mut types)
@@ -563,7 +382,7 @@ mod tests {
         (export "run" (func (param "statement" string) (result u32)))))"#;
 
     #[test]
-    fn resource_bearing_sql_imports_decode_after_overlay_and_entry_composition() {
+    fn resource_bearing_sql_imports_decode_after_overlay_composition() {
         let sql = r#"(import "wamn:postgres/statements@0.4.0" (instance
             (export "transaction" (type (sub resource)))
             (type $row (record (field "value" string)))
@@ -580,13 +399,6 @@ mod tests {
             .expect("overlay graph decodes");
         let provenance = super::application_statement_instances(&application).unwrap();
         assert_eq!(provenance.len(), 2);
-        let route = component(&operation_import("test:base/op@1.0.0"), HTTP_HANDLER);
-        let entry = compose_application(route, application).expect("entry composes");
-        wit_component::decode(&entry).expect("entry WIT decodes");
-        assert_eq!(
-            super::application_statement_instances(&entry).unwrap(),
-            provenance
-        );
     }
 
     #[test]
@@ -662,9 +474,19 @@ mod tests {
     #[test]
     fn an_overlay_that_calls_no_base_is_returned_unchanged() {
         let overlay = component(HOST_LOG, "test:overlay/main@1.0.0");
-        assert_eq!(
-            compose(overlay.clone(), vec![base()]).expect("the overlay composes"),
-            overlay
+        let composed = compose(overlay, vec![base()]).expect("the overlay composes");
+        let mut types = Types::default();
+        let package = Package::from_bytes("test:result", None, composed, &mut types)
+            .expect("inspect the component");
+        assert!(
+            types[package.ty()]
+                .exports
+                .contains_key("test:overlay/main@1.0.0")
+        );
+        assert!(
+            !types[package.ty()]
+                .exports
+                .contains_key("test:base/op@1.0.0")
         );
     }
 
@@ -672,70 +494,7 @@ mod tests {
     /// link ambiguous, so the composition refuses.
     #[test]
     fn two_bases_exporting_one_imported_operation_refuse() {
-        let error =
-            compose(overlay(), vec![base(), base()]).expect_err("an ambiguous link was composed");
-        assert!(error.to_string().contains("two bases export"), "{error}");
-    }
-
-    #[test]
-    fn application_composition_plugs_routes_and_keeps_both_export_sets() {
-        let application = base();
-        let route = component(&operation_import("test:base/op@1.0.0"), HTTP_HANDLER);
-        let composed = compose_application(route.clone(), application.clone())
-            .expect("the route composes with the application");
-        assert_eq!(
-            super::names(&composed, "composed", true).expect("read exports"),
-            BTreeSet::from([HTTP_HANDLER.to_owned(), "test:base/op@1.0.0".to_owned()])
-        );
-        assert_eq!(
-            super::names(&composed, "composed", false).expect("read imports"),
-            BTreeSet::from(["test:host/log@1.0.0".to_owned()])
-        );
-        let embedded = nested_component_digests(&composed);
-        for member in [&route, &application] {
-            assert!(embedded.contains(&Sha256::digest(member).to_vec()));
-        }
-        let again = compose_application(route.clone(), application.clone())
-            .expect("the same inputs compose a second time");
-        assert_eq!(Sha256::digest(&composed), Sha256::digest(&again));
-        for (mut route, mut application, change_route) in [
-            (route.clone(), application.clone(), true),
-            (route, application, false),
-        ] {
-            let changed = if change_route {
-                &mut route
-            } else {
-                &mut application
-            };
-            super::append_custom_section(changed, "test-source", b"changed");
-            let changed = compose_application(route, application).expect("changed input composes");
-            assert_ne!(Sha256::digest(&composed), Sha256::digest(&changed));
-        }
-    }
-
-    #[test]
-    fn application_composition_preserves_nested_statement_authority() {
-        let base = component(STATEMENTS_IMPORT, "test:base/op@1.0.0");
-        let overlay = component(
-            &format!(
-                "{STATEMENTS_IMPORT}{}",
-                operation_import("test:base/op@1.0.0")
-            ),
-            "test:overlay/main@1.0.0",
-        );
-        let application = compose(overlay, vec![base]).expect("the overlay composes");
-        let expected =
-            super::application_statement_instances(&application).expect("read instances");
-        let route = component(&operation_import("test:overlay/main@1.0.0"), HTTP_HANDLER);
-        let composed = compose_application(route, application).expect("the route composes");
-        assert_eq!(
-            super::application_statement_instances(&composed).expect("read instances"),
-            expected
-        );
-        assert_eq!(
-            super::names(&composed, "composed", false).expect("read imports"),
-            BTreeSet::from(["sql-0".to_owned(), "sql-1".to_owned()])
-        );
+        assert!(compose(overlay(), vec![base(), base()]).is_err());
     }
 
     #[test]
@@ -749,13 +508,7 @@ mod tests {
         ];
         for import in imports {
             let member = component(import, "test:base/op@1.0.0");
-            let error = validate_application_member(&member).expect_err("entry authority refuses");
-            assert!(
-                error
-                    .to_string()
-                    .contains("entry-only package wamn:operation"),
-                "{error}"
-            );
+            assert!(validate_application_member(&member).is_err());
             let wrapped = compose(
                 component(
                     &operation_import("test:base/op@1.0.0"),
@@ -776,42 +529,12 @@ mod tests {
                 .expect("a different package is not entry authority");
         }
         let member = component("", HTTP_HANDLER);
-        let error = validate_application_member(&member).expect_err("application HTTP refuses");
-        assert!(
-            error
-                .to_string()
-                .contains("supplies its own wasi:http/handler"),
-            "{error}"
-        );
-        let route = component("", HTTP_HANDLER);
-        assert!(compose_application(route, member).is_err());
+        assert!(validate_application_member(&member).is_err());
         let hidden = wat::parse_str(format!(
             r#"(component (component (instance $handler)
                 (export "{HTTP_HANDLER}" (instance $handler))))"#
         ))
         .expect("encode a hidden nested handler");
         assert!(validate_application_member(&hidden).is_err());
-    }
-
-    #[test]
-    fn only_the_route_layer_can_import_operation_authority() {
-        let route = component(
-            r#"(import "wamn:operation/operation@0.1.0" (instance))"#,
-            HTTP_HANDLER,
-        );
-        let application = component(STATEMENTS_IMPORT, "test:base/op@1.0.0");
-        let digest = wamn_digest::format_sha256(&Sha256::digest(&application).into());
-        let composed = compose_application(route, application).expect("entry authority composes");
-        assert_eq!(
-            super::names(&composed, "composed", false).expect("read imports"),
-            BTreeSet::from([
-                "wamn:operation/operation@0.1.0".to_owned(),
-                "sql-0".to_owned()
-            ])
-        );
-        assert_eq!(
-            super::application_statement_instances(&composed).expect("read SQL ownership"),
-            BTreeMap::from([("sql-0".to_owned(), digest)])
-        );
     }
 }

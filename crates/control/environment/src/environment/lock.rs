@@ -21,6 +21,7 @@ use wamn_registry::sql::{
 pub struct LifecycleLock {
     client: Arc<tokio::sync::Mutex<Client>>,
     connection: JoinHandle<()>,
+    lost: tokio::sync::watch::Receiver<bool>,
 }
 
 impl std::fmt::Debug for LifecycleLock {
@@ -112,15 +113,25 @@ impl LifecycleLock {
             .await?;
         let client = Arc::new(tokio::sync::Mutex::new(client));
         let heartbeat = Arc::clone(&client);
+        let (sender, lost) = tokio::sync::watch::channel(false);
         let connection = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                if heartbeat.lock().await.ping().await.is_err() {
+                let mut client = heartbeat.lock().await;
+                if !matches!(
+                    tokio::time::timeout(Duration::from_secs(3), client.ping()).await,
+                    Ok(Ok(()))
+                ) {
+                    sender.send_replace(true);
                     return;
                 }
             }
         });
-        Ok(Self { client, connection })
+        Ok(Self {
+            client,
+            connection,
+            lost,
+        })
     }
 
     async fn try_acquire(&self, sql: &str, params: &[&str]) -> anyhow::Result<bool> {
@@ -146,6 +157,10 @@ impl LifecycleLock {
 
     /// Release the lock before the verb returns, without waiting for session expiry.
     pub async fn release(self) {
+        self.connection.abort();
+        if *self.lost.borrow() {
+            return;
+        }
         let _ = sqlx::query("SELECT pg_advisory_unlock_all()")
             .execute(&mut *self.client.lock().await)
             .await
@@ -164,9 +179,28 @@ impl LifecycleLock {
         verb: impl AsyncFnOnce(&Self) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         let lock = Self::acquire(system_url, triple).await?;
-        let result = verb(&lock).await;
+        let result = lock.protect(verb(&lock)).await;
         lock.release().await;
         result
+    }
+
+    /// Cancel protected work when the session that owns its advisory locks is lost.
+    ///
+    /// # Errors
+    /// Returns the operation error, or an error when the lock session is lost.
+    pub fn protect<'a, T: 'a>(
+        &'a self,
+        work: impl std::future::Future<Output = anyhow::Result<T>> + 'a,
+    ) -> impl std::future::Future<Output = anyhow::Result<T>> + 'a {
+        let work = Box::pin(work);
+        let mut lost = self.lost.clone();
+        async move {
+            tokio::select! {
+                biased;
+                _ = lost.wait_for(|lost| *lost) => bail!("lifecycle lock lost; operation stopped"),
+                result = work => result,
+            }
+        }
     }
 
     /// The connection that holds the lock. A phase may read on it, and must

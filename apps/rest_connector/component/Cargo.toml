@@ -6,6 +6,7 @@ description = "Scheduled integration with shared state"
 license = "Apache-2.0"
 
 [dependencies]
+wamn-data-access.workspace = true
 chrono = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

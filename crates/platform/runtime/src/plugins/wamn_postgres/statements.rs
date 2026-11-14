@@ -781,7 +781,6 @@ mod tests {
         let statement = verified("SELECT $1::uuid");
         let path = "sql/statement.sql".to_owned();
         let result = super::super::RowSet {
-            wal_position: None,
             columns: vec![super::super::Column {
                 name: "value".into(),
                 type_name: "int8".into(),

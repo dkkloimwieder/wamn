@@ -120,7 +120,12 @@ pub fn resolve_workflow_components(
         let target = ComponentPackageCoordinate {
             project_env_key: project_env_key.to_owned(),
             package_id: chosen.package_id.clone(),
-            package_version: versions[chosen.package_id.as_str()].to_owned(),
+            package_version: if chosen.package_id == crate::PALETTE_PACKAGE_ID {
+                crate::PALETTE_PACKAGE_VERSION
+            } else {
+                versions[chosen.package_id.as_str()]
+            }
+            .to_owned(),
         };
         resolved.insert(
             node_id.clone(),

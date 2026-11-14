@@ -310,7 +310,11 @@ pub fn validate_component_in_release(
         .packages
         .iter()
         .find(|package| package.package_id() == component.target.package_id)
-        .map(wamn_catalog::PackageCoordinate::package_version);
+        .map(wamn_catalog::PackageCoordinate::package_version)
+        .or_else(|| {
+            (component.target.package_id == wamn_catalog::PALETTE_PACKAGE_ID)
+                .then_some(wamn_catalog::PALETTE_PACKAGE_VERSION)
+        });
     anyhow::ensure!(
         component.target.project_env_key == release.target().project_env_key
             && package_version == Some(component.target.package_version.as_str()),

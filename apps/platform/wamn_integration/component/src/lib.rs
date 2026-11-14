@@ -48,18 +48,18 @@ fn statement_error(error: &wamn_postgres_statements::StatementError) -> NodeErro
     }
 }
 
-// Keep codec validation and typed outcomes, but return SQL failures through
+// Keep operation validation and typed outcomes, but return SQL failures through
 // the existing NodeError boundary, whose message can carry the cause.
 macro_rules! export_operation {
-    ($contract:ident, $codec:ident, $item:ident, $outcome:ident, $error:ident, $state:expr, $handler:path $(, $read:item)?) => {
+    ($contract:ident, $operation:ident, $item:ident, $outcome:ident, $error:ident, $state:expr, $handler:path $(,)?) => {
         impl $contract::Guest for super::Component {
             async fn run(
                 _context: super::wamn::node::types::NodeContext,
                 input: Vec<$contract::$item>,
             ) -> Result<Vec<$contract::$outcome>, super::NodeError> {
-                $codec::validate(&input).map_err(|error| super::invalid(error.context()))?;
+                $operation::validate(&input).map_err(|error| super::invalid(error.context()))?;
                 let mut state = ($state, None);
-                let rows = $codec::run(input, &mut state, async |state, request| {
+                let rows = $operation::run(input, &mut state, async |state, request| {
                     if state.1.is_some() {
                         return Err($contract::$error::InternalError);
                     }
@@ -74,21 +74,6 @@ macro_rules! export_operation {
                     None => Ok(rows),
                 }
             }
-
-            async fn run_json(
-                context: super::wamn::node::types::NodeContext,
-                input: String,
-            ) -> Result<super::wamn::node::types::Emission, super::NodeError> {
-                let input =
-                    $codec::decode(&input).map_err(|error| super::invalid(error.context()))?;
-                let rows = <Self as $contract::Guest>::run(context, input).await?;
-                Ok(super::wamn::node::types::Emission {
-                    payload: $codec::encode(&rows),
-                    port: None,
-                })
-            }
-
-            $($read)?
         }
     };
 }

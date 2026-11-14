@@ -14,7 +14,7 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql, sql};
 use wamn_engine::integration::{Integration, IntegrationBinding, IntegrationImports};
-use wamn_environment_control::environment::{bindings, document::EnvironmentDocument};
+use wamn_environment::environment::{bindings, document::EnvironmentDocument};
 use wamn_package_artifact::{
     PackageRegistry,
     registry_credentials::{RegistryCredentialSource, read_registry_credentials},
@@ -35,7 +35,7 @@ use wash_runtime::{
     types::{Component, Workload},
     wasmtime::{
         Store,
-        component::{TypedFunc, Val},
+        component::{Func, Val},
     },
     wit::WitInterface,
 };
@@ -46,13 +46,9 @@ mod local_registry;
 #[path = "support/exclusive_resources.rs"]
 mod exclusive_resources;
 
-mod node {
-    wash_runtime::wasmtime::component::bindgen!({
-        path: "../../../wit/wamn-node", world: "node", wasmtime_crate: wash_runtime::wasmtime,
-    });
-}
-use node::wamn::node::types::{Emission, NodeContext, NodeError};
-type Run = TypedFunc<(NodeContext, String), (Result<Emission, NodeError>,)>;
+use wamn_engine::operation::node_types::{self, Emission, NodeContext, NodeError};
+use wamn_engine::operation::{json as operation_json, native_call::context_value};
+type Run = Func;
 
 async fn read_register(instance: &Integration, interface: &str, unit: u8) -> anyhow::Result<u16> {
     let result = instance
@@ -249,9 +245,11 @@ impl Application {
             .get_export_index(&mut store, None, &operation)
             .context("handler missing")?;
         let run = instance
-            .get_export_index(&mut store, Some(&interface), "run-json")
+            .get_export_index(&mut store, Some(&interface), "run")
             .context("run missing")?;
-        let run = instance.get_typed_func(&mut store, run)?;
+        let run = instance
+            .get_func(&mut store, run)
+            .context("typed run is not a function")?;
         Ok(Self {
             store,
             run,
@@ -278,12 +276,24 @@ impl Application {
             deadline_ms: Some(5000),
             config: config.to_string(),
         };
-        let input = json!([{"request_id":"live", "value":{"address":7}}]).to_string();
+        let input = json!([{"request_id":"live", "value":{"address":7}}]);
+        let ty = self
+            .run
+            .ty(&self.store)
+            .params()
+            .nth(1)
+            .context("reader has no input")?
+            .1;
+        let arguments = [context_value(context), operation_json::input(&ty, &input)?];
+        let mut results = [Val::Bool(false)];
         let run = self.run;
-        let (result,) = self
-            .store
-            .run_concurrent(async |accessor| run.call_concurrent(accessor, (context, input)).await)
+        self.store
+            .run_concurrent(async |accessor| {
+                run.call_concurrent(accessor, &arguments, &mut results)
+                    .await
+            })
             .await??;
+        let result = operation_json::emission(&results[0])?;
         let mut emission = match result {
             Ok(emission) => emission,
             Err(error) => return Ok(Err(error)),
@@ -298,12 +308,10 @@ impl Application {
                 error["code"] == "unavailable",
                 "unexpected reader error: {error}"
             );
-            return Ok(Err(NodeError::Retryable(
-                node::wamn::node::types::ErrorDetail {
-                    message: "unavailable".into(),
-                    code: Some("unavailable".into()),
-                },
-            )));
+            return Ok(Err(NodeError::Retryable(node_types::ErrorDetail {
+                message: "unavailable".into(),
+                code: Some("unavailable".into()),
+            })));
         }
         emission.payload = rows[0]["value"]["register"]
             .as_i64()
@@ -426,7 +434,7 @@ async fn apply(
     .map(drop)?;
     let _ = bindings::project_authority(system_url, project_url, document).await?;
     for application in document.applications.keys() {
-        let selected = wamn_environment_control::environment::analyse::select_application(
+        let selected = wamn_environment::environment::analyse::select_application(
             document,
             Some(application),
         )?;
@@ -440,7 +448,7 @@ async fn apply(
         let release = loaded_release(document, application)?;
         let project_env_key = "acme--dev--one";
         let digest = release.release().manifest_digest.as_str();
-        wamn_environment_control::environment::stage::write_release(
+        wamn_environment::environment::stage::write_release(
             project_url,
             project_env_key,
             digest,
@@ -557,10 +565,21 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(
         &json!({"org":"acme","project":"one","env":"dev","target":"cloud","integrations":{"meter":{"version":2},"observer-meter":{"version":2}},"policy":"dev","revocation_seconds":60,
         "applications": {
-            "reader":{"current": format!("sha256:{}","c".repeat(64)), "revocation_seconds":5,"hostname": "reader.example", "packages":["modbus_reader"],"connections":{"registers":"meter"}},
-            "observer":{"current": format!("sha256:{}","c".repeat(64)), "revocation_seconds":5,"hostname": "reader.example", "packages":["observer_fixture"],"connections":{"registers":"observer-meter"}}
+            "reader":{"revocation_seconds":5,"hostname": "reader.example","connections":{"registers":"meter"}},
+            "observer":{"revocation_seconds":5,"hostname": "reader.example","connections":{"registers":"observer-meter"}}
         }}),
     )?)?;
+    for (name, package) in [
+        ("reader", "modbus_reader"),
+        ("observer", "observer_fixture"),
+    ] {
+        document
+            .applications
+            .get_mut(name)
+            .unwrap()
+            .packages
+            .insert(package.to_owned());
+    }
     let selections = document
         .applications
         .keys()
@@ -576,7 +595,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         .collect::<anyhow::Result<Vec<_>>>()?;
     for (application, digest) in selections {
         document.applications.get_mut(&application).unwrap().current =
-            wamn_environment_control::environment::document::DeclaredRelease::Digest(digest);
+            wamn_environment::environment::document::DeclaredRelease::Digest(digest);
     }
     let package = wamn_compiler::manifest::PackageManifest::from_slice(&serde_json::to_vec(
         &json!({"package":{"id":"modbus_reader","version":"0.1.0"},"required_platform_policy_contract":{"id":"modbus_reader_data_access","state":"satisfied"},"models":{},"components":{},"connections":{"registers":{"interface":"wamn:modbus/read@1.0.0","mode":"read"}}}),

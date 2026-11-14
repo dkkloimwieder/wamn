@@ -173,7 +173,6 @@ pub async fn upgrade(
         "--wait".as_ref(),
         "--timeout".as_ref(),
         timeout.as_ref(),
-        "--rollback-on-failure".as_ref(),
         "--history-max".as_ref(),
         "50".as_ref(),
     ])
@@ -277,7 +276,6 @@ fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
 
     use super::*;
 
@@ -319,7 +317,6 @@ mod tests {
             .into(),
             roles: vec![Role {
                 entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
-                statements: vec!["sql-0".to_owned()],
                 name: RoleName::Http,
                 config: Mapping::new(),
             }],
@@ -336,59 +333,6 @@ mod tests {
         let text = std::fs::read_to_string(chart.join("Chart.yaml")).expect("read Chart.yaml");
         let chart: Value = serde_yaml::from_str(&text).expect("Chart.yaml parses");
         assert_eq!(chart["appVersion"].as_str(), Some(version.as_str()));
-    }
-
-    #[test]
-    fn the_named_application_supplies_the_http_statement_instances() {
-        let mut manifest: ServingManifest = serde_json::from_value(serde_json::json!({
-            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
-            "release": {"packages": []}, "components": [], "routes": [],
-            "attachments": {"orders-http": {
-                "type": "http", "package-id": "wamn_wms", "component": "wms",
-                "operation": "get", "definition-hash": DIGEST,
-                "definition": {}, "auth-policy": {"modes": ["none"]}
-            }}
-        }))
-        .unwrap();
-
-        let application = wamn_catalog::ServingEntryMember {
-            package_id: "wamn_wms".into(),
-            component: "wms".into(),
-            digest: DIGEST.into(),
-        };
-        for (name, imports) in [
-            ("wms", vec!["sql-application"]),
-            ("base", vec!["sql-0", "sql-1"]),
-        ] {
-            manifest.components.insert(wamn_catalog::ServingComponent {
-                package_id: "wamn_wms".into(),
-                descriptor: wamn_catalog::ComponentDescriptor::named(name, "0.1", DIGEST),
-                runtime_schema: None,
-                statement_instances: imports
-                    .into_iter()
-                    .map(|name| (name.to_owned(), BTreeMap::new()))
-                    .collect(),
-            });
-        }
-        manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
-            reference: format!("entries@{DIGEST}"),
-            route_digest: DIGEST.into(),
-            application: application.clone(),
-            members: [
-                application,
-                wamn_catalog::ServingEntryMember {
-                    package_id: "wamn_wms".into(),
-                    component: "base".into(),
-                    digest: DIGEST.into(),
-                },
-            ]
-            .into(),
-        });
-        assert_eq!(
-            roles(&manifest, "acme", "orders", "dev")[0].statements,
-            ["sql-application"],
-            "the named application owns the imports even when another member has more"
-        );
     }
 
     #[test]

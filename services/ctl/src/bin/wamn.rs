@@ -142,7 +142,15 @@ mod tests {
     #[test]
     fn source_publication_refuses_a_caller_supplied_publisher() {
         for arguments in [
-            vec!["wamn", "deploy", "apps/orders", "--env", "environment.k"],
+            vec![
+                "wamn",
+                "deploy",
+                "apps/orders",
+                "--application",
+                "orders",
+                "--env",
+                "environment.k",
+            ],
             vec![
                 "wamn",
                 "schema",
@@ -168,6 +176,8 @@ mod tests {
         let Command::Deploy(deploy) = Cli::try_parse_from([
             "wamn",
             "deploy",
+            "--application",
+            "orders",
             "--release",
             &digest,
             "--env",
@@ -213,10 +223,17 @@ mod tests {
             panic!("status");
         };
         assert_eq!(status.env, deploy.env);
-        let Command::Deploy(source) =
-            Cli::try_parse_from(["wamn", "deploy", "apps/orders", "--env", "environment.k"])
-                .unwrap()
-                .command
+        let Command::Deploy(source) = Cli::try_parse_from([
+            "wamn",
+            "deploy",
+            "apps/orders",
+            "--application",
+            "orders",
+            "--env",
+            "environment.k",
+        ])
+        .unwrap()
+        .command
         else {
             panic!("deploy source");
         };
@@ -326,12 +343,11 @@ mod tests {
 mod platform_tests {
     use super::*;
     use wamn_ctl::platform_verbs::ProductPlatformCommand;
-    use wamn_environment_control::platform::document::UpgradeTarget;
+    use wamn_environment::platform::document::UpgradeTarget;
 
     #[test]
     fn platform_schema_requires_explicit_system_target_and_chart() {
         use wamn_ctl::platform_verbs::{PlatformSchemaCommand, PlatformSchemaTarget};
-        use wamn_environment_control::migrations::Resolution;
 
         for action in ["diff", "apply"] {
             let arguments = [

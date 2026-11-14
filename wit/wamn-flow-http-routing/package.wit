@@ -9,77 +9,6 @@ interface routing {
     value: string,
   }
 
-  enum mapping-source {
-    body,
-    path,
-    query,
-    header,
-  }
-
-  enum cardinality {
-    one,
-    many,
-  }
-
-  record mapping {
-    %from: mapping-source,
-    name: string,
-    to: string,
-    optional: bool,
-    cardinality: cardinality,
-  }
-
-  record relation {
-    schema: string,
-    name: string,
-  }
-
-  variant etag-type {
-    /// The revision field in the returned value, for a strong get tag.
-    get(string),
-    /// Sorted relations and wal-position, for a weak list tag.
-    %list(list<relation>),
-  }
-
-  record etag-inputs {
-    release: string,
-    %type: etag-type,
-  }
-
-  record band-start {
-    field: string,
-    required: bool,
-  }
-
-  /// Read bounds projected from the released input schema.
-  record read-limits {
-    page-minimum: option<u32>,
-    page-maximum: option<u32>,
-    band-starts: list<band-start>,
-  }
-
-  record route-definition {
-    attachment-id: string,
-    host: string,
-    path: string,
-    method: string,
-    mappings: list<mapping>,
-    body-limit: u64,
-    mapped-limit: u64,
-    /// The Cache-Control value of a successful response, which the host
-    /// derives from the route's operation type and auth policy. None for a
-    /// route that is not a read: its responses are not stored.
-    cache-control: option<string>,
-    /// None for host routes and wiring attachments, which use router-delivery.
-    sealed-operation-id: option<string>,
-    /// The dotted request element path of the key. None means this route logs no intent.
-    idempotency-rule: option<string>,
-    etag-inputs: option<etag-inputs>,
-    /// The shared operation budget, bounded by the host operation limit.
-    operation-deadline-ms: u64,
-    read-limits: option<read-limits>,
-  }
-
   record auth-rejection {
     status: u16,
     /// An empty code requests an empty HTTP response body.
@@ -89,20 +18,6 @@ interface routing {
   /// Opaque host-owned handle for one authenticated originating caller.
   resource authenticated-caller {}
 
-  /// One admitted per-route slot. Dropping it releases the slot.
-  resource route-permit {}
-
-  /// Return route definitions carried by this process's release.
-  routes: func(method: string, authority: string) -> result<list<route-definition>, string>;
-
-  /// Authenticate after route selection. The host re-derives policy from the
-  /// loaded attachment; none is an explicitly anonymous policy.
-  authenticate: async func(attachment-id: string, headers: list<header>, body: list<u8>) -> result<option<authenticated-caller>, auth-rejection>;
-
-  /// Validate the adapter's mapped JSON against the selected attachment's
-  /// process-cached input schema.
-  validate-input: func(attachment-id: string, payload: string) -> result<_, string>;
-
-  /// Acquire immediately or return none when this attachment is at capacity.
-  try-acquire: func(attachment-id: string) -> result<option<route-permit>, string>;
+  /// Authenticate the credential accepted by the selected route.
+  authenticate: async func(attachment-id: string, accepted: string, headers: list<header>, body: list<u8>) -> result<option<authenticated-caller>, auth-rejection>;
 }

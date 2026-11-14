@@ -102,7 +102,7 @@ pub async fn read_target(
 }
 
 async fn owner_values(target: &Target, namespace: &str, name: &str) -> Result<Option<Value>, ()> {
-    if name == "identity" || name == wamn_registry::name::control_resource(&target.namespace) {
+    if name == "identity" || name == wamn_registry::name::control_resource(namespace) {
         let installed = super::installed::InstalledPlatform::read(target)
             .await
             .map_err(|_| ())?;
@@ -211,14 +211,18 @@ async fn target_status(
         }
     }
     if selection == &UpgradeTarget::Control {
-        observe_workload(
+        let service = format!("{name}-http");
+        let result = list(
             target,
             namespace,
-            "WorkloadDeployment",
-            &format!("{name}-http"),
-            &mut observations,
+            "endpointslices.discovery.k8s.io",
+            &["-l", &format!("kubernetes.io/service-name={service}")],
         )
         .await;
+        observations.push(endpoints(
+            &format!("{namespace}/Service/{service}"),
+            result.as_ref().ok(),
+        ));
     } else if let UpgradeTarget::Host { group, .. } = selection {
         let workloads = list(target, namespace, "WorkloadDeployment", &[]).await;
         append_host_workloads(

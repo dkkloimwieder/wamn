@@ -3,7 +3,6 @@ use wamn_package_artifact::registry_pull::test_server::Server;
 use wamn_package_control::web_artifact::test_support::{artifact_fixture, fixture_registry};
 use wamn_package_control::web_artifact::{pack_web_artifact, upload_web_to_store};
 use wamn_test_infrastructure::scratch::ScratchRoot;
-const HEAD: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 #[tokio::test]
 async fn two_environments_with_the_same_web_digest_share_one_completed_upload() {
@@ -22,7 +21,7 @@ async fn two_environments_with_the_same_web_digest_share_one_completed_upload() 
     let registry = fixture_registry(&scratch, &server);
     let first: EnvironmentDocument = serde_json::from_value(serde_json::json!({
         "org": "acme", "project": "web-fixture", "env": "dev", "target": "dev", "policy": "dev","revocation_seconds":60,
-        "applications": {"fixture": {"current": HEAD, "revocation_seconds":5,"hostname": "dev.example.com", "client": {"package": "web_fixture", "web": packed.digest}, "packages": ["fixture"]}}}))
+        "applications": {"fixture": {"revocation_seconds":5,"hostname": "dev.example.com", "client": {"package": "web_fixture", "web": packed.digest}}}}))
     .unwrap();
     let mut second = first.clone();
     second.env = "staging".into();

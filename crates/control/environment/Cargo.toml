@@ -1,6 +1,6 @@
 [package]
-name = "wamn-environment-control"
-description = "Environment control operations."
+name = "wamn-environment"
+description = "Environment lifecycle and authorized control execution."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

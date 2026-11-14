@@ -12,11 +12,9 @@ use wamn_catalog::{ComponentDescriptor, PackageCoordinate, ServingComponent, Ser
 use wamn_compiler::manifest::PackageManifest;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentityType};
 use wamn_digest::bytes_sha256;
-use wamn_environment_control::environment::{
-    Platform, document::EnvironmentDocument, ensure, expand, sql,
-};
+use wamn_environment::environment::{Platform, document::EnvironmentDocument, ensure, expand, sql};
 
-use wamn_environment_control::provision_project_env::{finish_database, require_connected};
+use wamn_environment::provision_project_env::{finish_database, require_connected};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 const PROJECT_ENV_KEY: &str = "acme--dev--apps";
@@ -202,7 +200,10 @@ fn package(
         value["sequences"] = json!({"document": {"pattern": "DOC-{seq:number}"}});
         value["base_dependencies"] = json!({"state":{"package":"wamn_integration","version":"1.0.0","digest":STATE_DIGEST,"operations":["data.get","data.update"]}});
         for connection in &component.descriptor.connections {
-            value["connections"][&connection.store_alias] =
+            value["connections"][connection
+                .store_alias
+                .name()
+                .expect("fixture connection has a literal alias")] =
                 json!({"interface":"wamn:connection/http@0.1.0","mode":"write"});
         }
         std::fs::create_dir_all(root.join("descriptors"))?;
@@ -269,12 +270,25 @@ fn release(
 }
 
 fn document(a: &ServingManifest, b: &ServingManifest) -> anyhow::Result<EnvironmentDocument> {
-    EnvironmentDocument::from_json(&serde_json::to_vec(
-        &json!({"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"integrations":{"erp":{"version":1}},"applications":{
-            "a":{"current":a.digest().as_str(),"revocation_seconds":5,"hostname":"a.example","packages":["a","wamn_integration"],"connections":{"upstream":"erp"}},
-            "b":{"current":b.digest().as_str(),"revocation_seconds":5,"hostname":"b.example","packages":["b","wamn_integration"],"connections":{"upstream":"erp"}}
-        }}),
-    )?)
+    let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
+    "org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,
+    "integrations":{"erp":{"version":1}},"applications":{
+        "a":{"revocation_seconds":5,"hostname":"a.example","connections":{"upstream":"erp"}},
+        "b":{"revocation_seconds":5,"hostname":"b.example","connections":{"upstream":"erp"}}
+    }}))?)?;
+    for (name, manifest) in [("a", a), ("b", b)] {
+        let application = document.applications.get_mut(name).unwrap();
+        application.current = wamn_environment::environment::document::DeclaredRelease::Digest(
+            manifest.digest().to_string(),
+        );
+        application.packages = manifest
+            .release
+            .packages
+            .iter()
+            .map(|package| package.package_id().to_owned())
+            .collect();
+    }
+    Ok(document)
 }
 
 /// The application data, allocation position, and access that activation must preserve.
@@ -352,8 +366,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .execute(&mut admin)
     .await
     .map(drop)?;
-    wamn_environment_control::provision_system::provision_system(
-        &wamn_environment_control::provision_system::ProvisionSystemRequest {
+    wamn_environment::provision_system::provision_system(
+        &wamn_environment::provision_system::ProvisionSystemRequest {
             migration_database_url: Some(
                 wamn_control_provision::test_database::platform_migration_input(
                     &system.url(),
@@ -400,7 +414,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         auth_nats: None,
     };
     let mut document = document(&old_a, &b)?;
-    let provisioned = wamn_environment_control::environment::ensure::provision(
+    let provisioned = wamn_environment::environment::ensure::provision(
         &platform,
         &document,
         &document.policy,
@@ -460,7 +474,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     // Inspect and install B's SQL before selecting or activating B's code.
     let b_current = std::mem::replace(
         &mut document.applications.get_mut("b").unwrap().current,
-        wamn_environment_control::environment::document::DeclaredRelease::None,
+        wamn_environment::environment::document::DeclaredRelease::None,
     );
     let (candidate_release, candidates) =
         sql::schema::release_candidates(&platform, &document, "b", Some(b.digest().as_str()))
@@ -518,7 +532,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     // Initialization extends capture from all installed baselines, even when the
     // caller supplies only B's selected document.
     let selected_b =
-        wamn_environment_control::environment::analyse::select_application(&document, Some("b"))?;
+        wamn_environment::environment::analyse::select_application(&document, Some("b"))?;
     let captured = ensure::installed_manifests(&platform, &selected_b).await?;
     let schemas = captured
         .iter()
@@ -607,21 +621,13 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         "running application a",
         wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "dev")
             .with_applications(
-                wamn_environment_control::environment::analyse::select_application(
-                    &document,
-                    Some("a"),
-                )?
-                .membership(),
+                wamn_environment::environment::analyse::select_application(&document, Some("a"))?
+                    .membership(),
             ),
     )?;
-    let b_permissions = wamn_runtime::plugins::route_authentication::queued_run_caller(
-        &mut observer,
-        b_user.id().to_string().as_str(),
-        None,
-    )
-    .await?;
+    let b_permissions = permissions(&mut observer, b_user.id().to_string().as_str()).await?;
     document.applications.get_mut("a").unwrap().current =
-        wamn_environment_control::environment::document::DeclaredRelease::Digest(
+        wamn_environment::environment::document::DeclaredRelease::Digest(
             new_a.digest().as_str().into(),
         );
     document
@@ -666,12 +672,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .await?;
 
     assert_eq!(before_sql, continuity(&mut observer).await?);
-    let b_after = wamn_runtime::plugins::route_authentication::queued_run_caller(
-        &mut observer,
-        b_user.id().to_string().as_str(),
-        None,
-    )
-    .await?;
+    let b_after = permissions(&mut observer, b_user.id().to_string().as_str()).await?;
     for operation in candidate_packages[1]
         .models
         .values()
@@ -681,17 +682,20 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             &candidate_packages[1].package,
             &operation.permission,
         )?;
-        assert_eq!(b_permissions.permits(&token), b_after.permits(&token));
+        assert_eq!(
+            b_permissions.contains(token.rsplit_once("@").unwrap().0),
+            b_after.contains(token.rsplit_once("@").unwrap().0)
+        );
     }
     for release in [&old_a, &new_a] {
         for component in &release.components {
             for connection in &component.descriptor.connections {
-                assert!(sqlx::query("SELECT 1 FROM catalog.connection_binding WHERE project_env_key=$1 AND manifest_digest=$2 AND component_digest=$3 AND package_id=$4 AND name=$5").bind(&PROJECT_ENV_KEY).bind(&release.digest().as_str()).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(&connection.store_alias).fetch_optional(&mut observer).await?.is_some());
+                assert!(sqlx::query("SELECT 1 FROM catalog.connection_binding WHERE project_env_key=$1 AND manifest_digest=$2 AND component_digest=$3 AND package_id=$4 AND name=$5").bind(&PROJECT_ENV_KEY).bind(&release.digest().as_str()).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(connection.store_alias.name().expect("fixture connection has a literal alias")).fetch_optional(&mut observer).await?.is_some());
             }
         }
     }
     document.applications.get_mut("a").unwrap().current =
-        wamn_environment_control::environment::document::DeclaredRelease::Digest(
+        wamn_environment::environment::document::DeclaredRelease::Digest(
             failed_release.digest().as_str().into(),
         );
     document
@@ -806,23 +810,12 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .is_some()
     );
     drop(postgres);
-    let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
-        &mut observer,
-        a_user.id().to_string().as_str(),
-        None,
-    )
-    .await?;
-    wamn_engine::router_delivery::authorize_registered_operation(
-        Some(&caller),
-        Some("wamn-integration:data/get@1.0.0"),
-    )?;
-    wamn_engine::router_delivery::authorize_registered_operation(
-        Some(&caller),
-        Some("wamn-integration:data/update@1.0.0"),
-    )?;
+    let caller = permissions(&mut observer, a_user.id().to_string().as_str()).await?;
+    assert!(caller.contains("wamn-integration:data/get"));
+    assert!(caller.contains("wamn-integration:data/update"));
     let connection = &old_a.components.first().unwrap().descriptor;
     assert!(sqlx::query("SELECT 1 FROM catalog.connection_binding WHERE manifest_digest=$1 AND component_digest=$2 AND name='upstream'").bind(&old_a.digest().as_str()).bind(&connection.component_digest).fetch_optional(&mut observer).await?.is_some());
-    // Retirement uses the production owner role, its lock, and explicit application digests.
+    // Retention uses the production owner role and retains live releases and unfinished runs.
     sqlx::raw_sql("SET ROLE wamn_db_owner")
         .execute(&mut project)
         .await
@@ -842,31 +835,17 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .bind(&PROJECT_ENV_KEY)
         .fetch_one(&mut *tx)
         .await?;
-    assert!(
-        wamn_environment_control::environment::bindings::contract(
-            &mut tx,
-            PROJECT_ENV_KEY,
-            "a",
-            &document.membership(),
-            &[b.digest().as_str()],
-            &[],
-            &mut wamn_broker::connection_changes::ConnectionDrops::default()
-        )
-        .await
-        .is_err()
-    );
-    let retired = wamn_environment_control::environment::bindings::contract(
+    let retained: BTreeSet<String> = sqlx::query_scalar("SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest<>$2")
+        .bind(PROJECT_ENV_KEY).bind(old_a.digest().as_str()).fetch_all(&mut *tx).await?.into_iter().collect();
+    let retired = wamn_environment::environment::retention::prune_releases(
         &mut tx,
         PROJECT_ENV_KEY,
-        "a",
-        &document.membership(),
-        &[old_a.digest().as_str()],
-        &[new_a.digest().as_str()],
+        &retained,
         &mut wamn_broker::connection_changes::ConnectionDrops::default(),
     )
     .await?;
     assert!(
-        wamn_environment_control::environment::stage::retire_runtime_grants(
+        wamn_environment::environment::retention::retire_runtime_grants(
             &mut admin,
             &mut tx,
             PROJECT_ENV_KEY,
@@ -922,24 +901,19 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             )
             .await?;
         }
-        let old_digest = old_a.digest();
-        let new_digest = new_a.digest();
-        let live_digests = if live {
-            vec![old_digest.as_str(), new_digest.as_str()]
-        } else {
-            vec![new_digest.as_str()]
-        };
-        let retired = wamn_environment_control::environment::bindings::contract(
+        let mut retained: BTreeSet<String> = sqlx::query_scalar("SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest<>$2")
+            .bind(PROJECT_ENV_KEY).bind(old_a.digest().as_str()).fetch_all(&mut *tx).await?.into_iter().collect();
+        if live {
+            retained.insert(old_a.digest().to_string());
+        }
+        let retired = wamn_environment::environment::retention::prune_releases(
             &mut tx,
             PROJECT_ENV_KEY,
-            "a",
-            &document.membership(),
-            &[old_digest.as_str()],
-            &live_digests,
+            &retained,
             &mut wamn_broker::connection_changes::ConnectionDrops::default(),
         )
         .await?;
-        wamn_environment_control::environment::stage::retire_runtime_grants(
+        wamn_environment::environment::retention::retire_runtime_grants(
             &mut admin,
             &mut tx,
             PROJECT_ENV_KEY,
@@ -950,7 +924,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .await?;
         tx.commit().await?;
         assert_eq!(retired.is_empty(), live || pinned);
-        let stranded = wamn_environment_control::environment::drain::stranded(
+        let stranded = wamn_environment::environment::drain::stranded(
             observer_url.as_str(),
             PROJECT_ENV_KEY,
             "dev",
@@ -965,23 +939,10 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
                 .collect::<Vec<_>>(),
             if pinned { vec!["old-work"] } else { vec![] }
         );
-        let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
-            &mut observer,
-            a_user.id().to_string().as_str(),
-            None,
-        )
-        .await?;
-        assert_eq!(
-            caller.permits("wamn-integration:data/get@1.0.0"),
-            live || pinned
-        );
-        assert!(caller.permits("wamn-integration:data/update@1.0.0"));
-        let b_after = wamn_runtime::plugins::route_authentication::queued_run_caller(
-            &mut observer,
-            b_user.id().to_string().as_str(),
-            None,
-        )
-        .await?;
+        let caller = permissions(&mut observer, a_user.id().to_string().as_str()).await?;
+        assert_eq!(caller.contains("wamn-integration:data/get"), live || pinned);
+        assert!(caller.contains("wamn-integration:data/update"));
+        let b_after = permissions(&mut observer, b_user.id().to_string().as_str()).await?;
         for operation in candidate_packages[1]
             .models
             .values()
@@ -991,14 +952,17 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
                 &candidate_packages[1].package,
                 &operation.permission,
             )?;
-            assert_eq!(b_permissions.permits(&token), b_after.permits(&token));
+            assert_eq!(
+                b_permissions.contains(token.rsplit_once("@").unwrap().0),
+                b_after.contains(token.rsplit_once("@").unwrap().0)
+            );
         }
 
         assert_eq!(before_sql, continuity(&mut observer).await?);
     }
     // A rollback recreates A0's retired bindings and permissions before code can start.
     document.applications.get_mut("a").unwrap().current =
-        wamn_environment_control::environment::document::DeclaredRelease::Digest(
+        wamn_environment::environment::document::DeclaredRelease::Digest(
             old_a.digest().to_string(),
         );
     document
@@ -1030,14 +994,17 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             .await?
             .is_some()
     );
-    let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
-        &mut observer,
-        a_user.id().to_string().as_str(),
-        None,
-    )
-    .await?;
-    assert!(caller.permits("wamn-integration:data/get@1.0.0"));
+    let caller = permissions(&mut observer, a_user.id().to_string().as_str()).await?;
+    assert!(caller.contains("wamn-integration:data/get"));
 
     assert_eq!(before_sql, continuity(&mut observer).await?);
     Ok(())
+}
+
+async fn permissions(
+    client: &mut sqlx::PgConnection,
+    principal: &str,
+) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    Ok(sqlx::query("SELECT p.permission FROM platform.user_role r JOIN platform.permission p USING(role_name) WHERE r.user_id=$1::text::uuid")
+        .bind(principal).fetch_all(client).await?.into_iter().map(|row| row.get(0)).collect())
 }

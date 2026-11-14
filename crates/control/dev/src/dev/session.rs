@@ -188,9 +188,9 @@ pub struct DevSession {
 
 pub(super) fn read_environment(
     file: &Path,
-) -> anyhow::Result<wamn_environment_control::environment::document::EnvironmentDocument> {
+) -> anyhow::Result<wamn_environment::environment::document::EnvironmentDocument> {
     anyhow::ensure!(file.is_file(), "wamn dev requires {}", file.display());
-    wamn_environment_control::environment::document::EnvironmentDocument::compile(file)
+    wamn_environment::environment::document::EnvironmentDocument::compile(file)
         .with_context(|| format!("read local environment {}", file.display()))
 }
 

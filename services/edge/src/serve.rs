@@ -211,10 +211,9 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         .await
         .context("load the release application")?;
 
-    let routing =
-        FlowHttpRouting::unlimited(Some(Arc::clone(release.release()))).with_authenticator(
-            Arc::new(EdgeAuthenticator::new(verifier, Arc::clone(&release))),
-        );
+    let routing = FlowHttpRouting::new(Some(Arc::clone(release.release()))).with_authenticator(
+        Arc::new(EdgeAuthenticator::new(verifier, Arc::clone(&release))),
+    );
     let delivery = Arc::new(EdgeDelivery::new(
         Arc::clone(&release),
         application,

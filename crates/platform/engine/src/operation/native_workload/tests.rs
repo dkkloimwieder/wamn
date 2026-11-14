@@ -86,7 +86,6 @@ async fn load_with_reuse(
             namespace: "test".into(),
             name: "native-import-admission-test".into(),
             components,
-            entry: None,
             local_resources: LocalResources::default(),
             // Host policy implements nested calls. Declaring an interface here
             // must not bypass the admitted provider uniqueness test.
@@ -258,4 +257,76 @@ async fn native_mixed_workload_keeps_each_component_lifetime() {
         .unbind_all_plugins()
         .await
         .expect("close mixed pools");
+}
+
+#[tokio::test]
+async fn ambient_cli_receives_no_host_environment_or_arguments() {
+    let mut guest = component("ambient", OPERATION, None, 0);
+    guest.bytes = wat::parse_str(format!(r#"(component
+        (type $strings (list string))
+        (type $pair (tuple string string))
+        (type $environment (list $pair))
+        (import "wasi:cli/environment@0.2.12" (instance $env
+            (export "get-environment" (func (result $environment)))
+            (export "get-arguments" (func (result $strings)))))
+        (core module $memory
+            (memory (export "memory") 1)
+            (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const 1024))
+        (core instance $memory (instantiate $memory))
+        (core func $environment (canon lower (func $env "get-environment") (memory $memory "memory") (realloc (func $memory "realloc"))))
+        (core func $arguments (canon lower (func $env "get-arguments") (memory $memory "memory") (realloc (func $memory "realloc"))))
+        (core module $code
+            (import "host" "environment" (func $environment (param i32)))
+            (import "host" "arguments" (func $arguments (param i32)))
+            (import "host" "memory" (memory 1))
+            (func $check
+                i32.const 0 call $environment
+                i32.const 4 i32.load if unreachable end
+                i32.const 8 call $arguments
+                i32.const 12 i32.load if unreachable end)
+            (start $check)
+            (func (export "run") (result i32) i32.const 0))
+        (core instance $code (instantiate $code (with "host" (instance
+            (export "environment" (func $environment))
+            (export "arguments" (func $arguments))
+            (export "memory" (memory $memory "memory"))))))
+        (func $run (result u32) (canon lift (core func $code "run")))
+        (instance $exports (export "run" (func $run)))
+        (export "{OPERATION}" (instance $exports)))"#)).expect("ambient WASI guest");
+    guest.fact.component_digest = wamn_digest::bytes_sha256(&guest.bytes);
+    guest.fact.imports = vec!["wasi:cli/environment@0.2.12".into()];
+    guest.fact.imports_fingerprint =
+        wamn_digest::canonical_json_sha256(&serde_json::json!(guest.fact.imports));
+    let workload = load_native_workload(
+        Arc::new(crate::build_engine(&[]).unwrap()),
+        NativeWorkloadSpec {
+            warm_reuse: Default::default(),
+            id: "empty-ambient-cli".into(),
+            namespace: "test".into(),
+            name: "empty-ambient-cli".into(),
+            components: vec![guest],
+            host_interfaces: Vec::new(),
+            local_resources: LocalResources {
+                environment: HashMap::from([("HOST_SECRET".into(), "not-for-guest".into())]),
+                ..Default::default()
+            },
+        },
+        &HashMap::default(),
+        &PluginBindings::new(),
+        &Meters::new(MeterKind::Off),
+    )
+    .await
+    .expect("standard WASI imports bind");
+    let id = workload.facts_by_component_id.keys().next().unwrap();
+    let target = workload
+        .dispatch_target(id, "empty-ambient-cli")
+        .await
+        .unwrap();
+    crate::operation::native_call::prepare_native(
+        &target,
+        tokio::time::Instant::now() + std::time::Duration::from_secs(5),
+    )
+    .await
+    .expect("guest observes empty ambient state");
+    workload.unbind_all_plugins().await.unwrap();
 }

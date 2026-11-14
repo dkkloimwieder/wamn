@@ -15,7 +15,7 @@ use serde_json::json;
 
 use wamn_catalog::{HostRouteSet, SERVING_MANIFEST_FORMAT_VERSION};
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
-use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
+use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_runtime::plugins::route_authentication::{
@@ -332,21 +332,20 @@ pub(super) async fn application_host_with_release(
         &login(admin_url, &administration)?,
         Some(&login(admin_url, &guest)?),
     )?;
-    let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
-        .with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default()
-                .with_authentication(Arc::new(RouteAuthentication::new(
-                    reader().await?,
-                    Arc::clone(&postgres_credentials),
-                    PROJECT,
-                )))
-                .with_session_authentication(Arc::new(SessionRouteAuthentication::new(
-                    verifier,
-                    reader().await?,
-                    Arc::clone(&postgres_credentials),
-                    PROJECT,
-                ))),
-        ));
+    let routing = FlowHttpRouting::new(Some(Arc::clone(&release))).with_authenticator(Arc::new(
+        PlatformRouteAuthenticator::default()
+            .with_authentication(Arc::new(RouteAuthentication::new(
+                reader().await?,
+                Arc::clone(&postgres_credentials),
+                PROJECT,
+            )))
+            .with_session_authentication(Arc::new(SessionRouteAuthentication::new(
+                verifier,
+                reader().await?,
+                Arc::clone(&postgres_credentials),
+                PROJECT,
+            ))),
+    ));
     let delivery = HostRouteDelivery::new(
         Arc::clone(&release),
         HostRouteHandlers::Application {

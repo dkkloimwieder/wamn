@@ -13,11 +13,7 @@ mod data;
 
 use crate::data::record_receipt as receipt;
 use exports::wamn_receiving::receiving::record_receipt as contract;
-#[cfg(test)]
-use wamn::node::types::NodeError;
 
-#[cfg(test)]
-mod codecs;
 mod reads;
 
 /// The generated operations, whole.
@@ -42,6 +38,7 @@ wit_bindgen::generate!({
 });
 
 struct Component;
+export!(Component);
 
 impl generated::purchase_order::create::Action for Component {}
 impl generated::purchase_order::get::Action for Component {}
@@ -52,33 +49,22 @@ impl generated::receipt::query::Action for Component {}
 impl generated::supplier::create::Action for Component {}
 impl generated::supplier::query::Action for Component {}
 
-mod receipt_codec {
+mod receipt_operation {
     use super::contract;
 
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/wamn/wamn_receiving/wit/receiving_record_receipt_codec.rs"
+        "/../../target/wamn/wamn_receiving/wit/receiving_record_receipt_operation.rs"
     ));
 }
 
-receipt_codec::export_operation!(
+receipt_operation::export_operation!(
     Component,
     exports::wamn_receiving::receiving::record_receipt,
     wamn::node::types,
     record_receipt_execute,
-    receipt_codec
+    receipt_operation
 );
-
-#[cfg(test)]
-async fn record_receipt(
-    input: Vec<contract::RecordReceiptItem>,
-) -> Result<Vec<contract::RecordReceiptOutcome>, NodeError> {
-    receipt_codec::validate(&input).map_err(|error| invalid_input(error.context()))?;
-    Ok(receipt_codec::run(input, &mut (), async |(), _| {
-        unreachable!("a refused call reaches no handler")
-    })
-    .await)
-}
 
 fn record_receipt_command(request: contract::RecordReceiptRequest) -> receipt::RecordReceiptValue {
     receipt::RecordReceiptValue {
@@ -100,7 +86,7 @@ fn record_receipt_command(request: contract::RecordReceiptRequest) -> receipt::R
 }
 
 fn map_record_receipt_error(error: &receipt::RecordReceiptError) -> contract::RecordReceiptError {
-    receipt_codec::map_error(error.error_type().literal(), |key| match key {
+    receipt_operation::map_error(error.error_type().literal(), |key| match key {
         "field" => error.field().map(str::to_owned),
         "id" => error.id().map(str::to_owned),
         "minimum" => error.minimum().map(|value| value.to_string()),
@@ -128,141 +114,4 @@ async fn record_receipt_execute(
 }
 
 #[cfg(test)]
-fn invalid_input(message: &str) -> NodeError {
-    NodeError::InvalidInput(wamn::node::types::ErrorDetail {
-        message: message.to_owned(),
-        code: Some("invalid_input".to_owned()),
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{contract, receipt_codec};
-
-    #[test]
-    fn typed_call_refuses_missing_correlation_before_database_work() {
-        let mut input = receipt_codec::decode(&format!(
-            r#"[{{"request_id":"first","value":{VALID_VALUE}}}]"#
-        ))
-        .unwrap();
-        input.push(contract::RecordReceiptItem {
-            request_id: String::new(),
-            input: Err(contract::InvalidInputDetail {
-                field: "input".to_owned(),
-                minimum: None,
-                maximum: None,
-                observed: None,
-            }),
-        });
-        let mut call = std::pin::pin!(super::record_receipt(input));
-        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-        assert!(matches!(
-            std::future::Future::poll(call.as_mut(), &mut context),
-            std::task::Poll::Ready(Err(super::NodeError::InvalidInput(_)))
-        ));
-    }
-
-    #[test]
-    fn arbitrary_request_id_is_preserved_in_each_outcome() {
-        let request_id = "submit receipt / café 🧾";
-        // Both request elements refuse before the handler runs, so the test needs no
-        // database.
-        let input = receipt_codec::decode(&format!(
-            r#"[{{"request_id":{id},"value":{{"unknown":true}}}},{{"request_id":{id},"value":null}}]"#,
-            id = serde_json::to_string(request_id).unwrap(),
-        ))
-        .unwrap();
-        let mut state = ();
-        let mut call = std::pin::pin!(receipt_codec::run(
-            input,
-            &mut state,
-            async |(), _| unreachable!("a refused request element reaches no handler")
-        ));
-        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-        let std::task::Poll::Ready(output) = std::future::Future::poll(call.as_mut(), &mut context)
-        else {
-            panic!("a refused request element performs no I/O");
-        };
-        assert!(
-            output
-                .iter()
-                .all(|request_element| request_element.outcome.is_err())
-        );
-        assert!(
-            output
-                .iter()
-                .all(|request_element| request_element.request_id == request_id)
-        );
-    }
-
-    const VALID_VALUE: &str = r#"{
-        "idempotency_key":"key-1",
-        "purchase_order_id":"00000000-0000-0000-0000-000000000001",
-        "receipt_reference":"receipt-1",
-        "occurred_at":"2026-09-19T12:34:56.000000Z",
-        "line":[{
-            "purchase_order_line_id":"00000000-0000-0000-0000-000000000002",
-            "quantity":"12.3400",
-            "location_id":"00000000-0000-0000-0000-000000000003"
-        }]
-    }"#;
-
-    #[test]
-    fn codec_preserves_correlation_and_exact_numeric_text() {
-        let input = format!(
-            r#"[{{"request_id":"valid","value":{VALID_VALUE}}},{{"request_id":"bad","value":{{"unknown":true}}}}]"#
-        );
-        let decoded = receipt_codec::decode(&input).expect("the envelope decodes");
-        assert_eq!(decoded[0].request_id, "valid");
-        let request = decoded[0]
-            .input
-            .as_ref()
-            .expect("the valid request element decodes");
-        assert_eq!(request.line[0].quantity, "12.3400");
-        assert_eq!(decoded[1].request_id, "bad");
-        assert_eq!(decoded[1].input.as_ref().unwrap_err().field, "input");
-    }
-
-    #[test]
-    fn codec_refuses_unknown_null_and_missing_fields_per_request_element() {
-        let input = r#"[
-            {"request_id":"unknown","value":{"unknown":true}},
-            {"request_id":"null","value":null},
-            {"request_id":"missing"}
-        ]"#;
-        let decoded = receipt_codec::decode(input).expect("the envelope decodes");
-        assert_eq!(
-            decoded
-                .iter()
-                .map(|request_element| request_element.request_id.as_str())
-                .collect::<Vec<_>>(),
-            ["unknown", "null", "missing"]
-        );
-        assert!(decoded.iter().all(|request_element| {
-            request_element
-                .input
-                .as_ref()
-                .is_err_and(|detail| detail.field == "input")
-        }));
-    }
-
-    /// A revision is an int32, so the result carries it as a JSON number.
-    #[test]
-    fn codec_encodes_row_version_as_a_number() {
-        let output = [contract::RecordReceiptOutcome {
-            request_id: "request-1".to_owned(),
-            outcome: Ok(contract::RecordReceiptResult {
-                receipt_id: "00000000-0000-0000-0000-000000000001".to_owned(),
-                purchase_order_id: "00000000-0000-0000-0000-000000000002".to_owned(),
-                purchase_order_status: "open".to_owned(),
-                row_version: 2_147_483_647,
-            }),
-        }];
-        let encoded: serde_json::Value =
-            serde_json::from_str(&receipt_codec::encode(&output)).expect("the output is JSON");
-        assert_eq!(encoded[0]["request_id"], "request-1");
-        assert_eq!(encoded[0]["value"]["row_version"], 2_147_483_647);
-    }
-}
-
-export!(Component);
+mod validation;

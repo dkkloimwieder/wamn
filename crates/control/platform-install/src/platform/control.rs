@@ -176,20 +176,6 @@ pub fn host_values(org: &str) -> Value {
     values
 }
 
-fn component_image<'a>(
-    document: &ClusterDocument,
-    image: &'a str,
-) -> anyhow::Result<std::borrow::Cow<'a, str>> {
-    if document.provider == Provider::Kind {
-        let (_, path) = image
-            .split_once('/')
-            .context("HTTP image has no OCI authority")?;
-        Ok(format!("{}/{path}", super::resources::POD_REGISTRY).into())
-    } else {
-        Ok(image.into())
-    }
-}
-
 pub(crate) fn release_values(document: &ClusterDocument, chart: &Value) -> anyhow::Result<Value> {
     let mut desired = chart.clone();
     super::resources::merge(&mut desired, host_values(&document.org));
@@ -237,7 +223,7 @@ pub(crate) fn release_values(document: &ClusterDocument, chart: &Value) -> anyho
     desired["platformUi"] = platform_ui.into();
     desired["org"] = document.org.as_str().into();
     desired["routeHost"] = document.route_hosts.control.as_str().into();
-    // The resource entry supplies the control Service and WorkloadDeployment.
+    // The resource entry supplies the native control Service.
     desired["roles"] = json!([]);
     Ok(desired)
 }
@@ -259,7 +245,7 @@ pub(super) fn resource_entry(
             group["image"] = image.clone();
         }
     }
-    desired["controlService"] = json!({"image":component_image(document,chart.image("http")?)?,"host":document.route_hosts.control});
+    desired["controlService"] = true.into();
     let desired = chart.selection_values(document, &UpgradeTarget::Control, desired)?;
     Ok(json!({"chart":chart.directory(), "version":chart.version,
         "name":wamn_registry::name::control_resource(&document.org), "namespace":document.org, "values":desired}))

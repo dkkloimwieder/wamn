@@ -147,6 +147,7 @@ pub fn write_package(
         &request,
         &[package.to_owned()],
         std::slice::from_ref(&admission),
+        &[],
     )?;
     let entry = compose_release_entry(
         &assembled.published,

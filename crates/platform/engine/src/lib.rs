@@ -40,10 +40,10 @@
 //! - OCI: `oci-client`, `oci-wasm`.
 //! - HTTP clients: `hyper-util`, `hyper-rustls`, `reqwest`.
 //! - OTLP gRPC: `opentelemetry-otlp`, `tonic`.
-//! - Upper layers: `wamn-router`, `wamn-runtime`.
+//! - Upper layers: `wamn-workflow`, `wamn-runtime`.
 //!
 //! The edge links this crate and never `wamn-runtime`, so every crate on that
-//! list is a cost the edge would pay. `wamn-router` is on it because
+//! list is a cost the edge would pay. `wamn-workflow` is on it because
 //! routes-router rule 7 keeps the router out of the base platform and the edge.
 //! wash-runtime itself links `async-nats`, `redis`, `tonic`,
 //! `opentelemetry-otlp`, `hyper-util`, and `hyper-rustls` with every feature
