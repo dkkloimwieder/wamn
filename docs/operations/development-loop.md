@@ -50,6 +50,11 @@ The digest includes package sources, shared build inputs, and built bases.
 A repeated save uses the same coordinate. Changed content gets a new coordinate.
 The builder records the matching base versions and component digests in overlays.
 It writes development SQL history to build output without changing authored history.
+Only dev package manifests carry the OCI publication timestamp `org.opencontainers.image.created`.
+Repeat publication reuses the existing timestamp and manifest digest.
+The retention operation deletes dev tags older than seven days unless a published release pins their package coordinate.
+It reads pins from `ServingManifest.release.packages` across the release repository.
+It leaves older tags without publication timestamps untouched.
 
 ## Measure one change
 

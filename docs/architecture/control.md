@@ -37,6 +37,7 @@ The service supplies the authenticated actor and reads environment configuration
 Workers receive coordinates and release identities. A request cannot select an image, command, credential, namespace, or chart path.
 The worker calls `environment::operation::execute` once. It runs SQL in the same Job.
 `release.retain` calls the environment retention owner under its existing lock.
+That operation also removes expired dev package tags after it reads package pins from every published release.
 Job status is visible only through the authorized target and operation annotations.
 
 The chart mounts the apply credential, `wamn-ctl-nats`, and the configured registry credential in operation Jobs.

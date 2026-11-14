@@ -644,6 +644,23 @@ async fn history_changes_append_immutable_versions_and_execute_during_build() ->
                 .iter()
                 .map(|migration| (&migration.version, &migration.checksum)))
     );
+    let previous = original.iter().last().unwrap().version;
+    let duplicate = package.join(format!("migrations/{previous:04}_duplicate.sql"));
+    fs::write(&duplicate, "SELECT 1;")?;
+    assert!(generate_package(&request).await.is_err());
+    fs::remove_file(duplicate)?;
+
+    let authored_version = previous + 2;
+    fs::write(
+        package.join(format!("migrations/{authored_version:04}_append.sql")),
+        "SELECT 1;",
+    )?;
+    generate_package(&request).await?;
+    let inserted = package.join(format!("migrations/{:04}_insert.sql", previous + 1));
+    fs::write(&inserted, "SELECT 1;")?;
+    assert!(generate_package(&request).await.is_err());
+    fs::remove_file(inserted)?;
+
     let path = package.join("wamn.k");
     let source = fs::read_to_string(&path)?;
     fs::write(
@@ -660,13 +677,12 @@ async fn history_changes_append_immutable_versions_and_execute_during_build() ->
                     && migration.checksum == released.checksum)
         );
     }
-    let previous = original.iter().last().unwrap().version;
     let authored = sqlx::migrate::Migrator::new(directory.join("migrations")).await?;
     let highest_authored = authored
         .iter()
         .map(|migration| migration.version)
         .max()
         .unwrap();
-    assert!(changed.iter().last().unwrap().version > previous.max(highest_authored));
+    assert_eq!(changed.iter().last().unwrap().version, highest_authored + 1);
     Ok(())
 }

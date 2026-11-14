@@ -167,7 +167,12 @@ pub(crate) async fn migrations(
     sql: &str,
 ) -> anyhow::Result<BTreeMap<std::path::PathBuf, Vec<u8>>> {
     let mut files = BTreeMap::new();
-    let mut highest = 0;
+    let highest = crate::migrations::migrator(root)
+        .await?
+        .iter()
+        .map(|migration| migration.version)
+        .max()
+        .unwrap_or(0);
     let mut latest = None;
     for directory in ["migrations", "history"] {
         let path = root.join(directory);
@@ -176,7 +181,6 @@ pub(crate) async fn migrations(
         }
         let sources = sqlx::migrate::Migrator::new(path.as_path()).await?;
         for migration in sources.iter() {
-            highest = highest.max(migration.version);
             if directory == "history" {
                 latest = Some(migration.sql.as_str().to_owned());
             }

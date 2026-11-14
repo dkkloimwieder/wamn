@@ -26,6 +26,7 @@ pub mod registry_source;
 pub mod registry_transport;
 pub mod release_manifest_artifact;
 pub mod release_manifest_source;
+mod repository;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -48,6 +49,16 @@ use crate::registry_source::RegistrySource;
 
 /// Artifact type of a package artifact.
 pub const PACKAGE_ARTIFACT_TYPE: &str = "application/vnd.wamn.package.v2";
+
+/// Standard OCI timestamp used only by development package coordinates.
+pub const CREATED_ANNOTATION: &str = "org.opencontainers.image.created";
+
+/// Whether a coordinate ends with the development content digest suffix.
+pub fn is_dev_tag(tag: &str) -> bool {
+    tag.rsplit_once("-dev.h").is_some_and(|(prefix, hex)| {
+        !prefix.is_empty() && hex.len() == 12 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
 
 /// Media type of a component descriptor layer.
 pub const COMPONENT_DESCRIPTOR_MEDIA_TYPE: &str =
@@ -162,6 +173,14 @@ pub struct PackedLayer {
     pub bytes: Vec<u8>,
 }
 
+/// Verified package content and the metadata of its published manifest.
+#[derive(Debug)]
+pub struct PulledPackage {
+    pub digest: String,
+    pub layers: Vec<PackedLayer>,
+    pub annotations: BTreeMap<String, String>,
+}
+
 /// Refuse a tag that the OCI distribution grammar does not admit.
 ///
 /// # Errors
@@ -237,6 +256,8 @@ pub struct Repository {
     pub auth: RegistryAuth,
     /// `<registry>/<repository>:<tag>` or `<registry>/<repository>@<digest>`.
     pub reference: Reference,
+    http: reqwest::Client,
+    scheme: &'static str,
 }
 
 /// Names the reference only: the credential must not reach a log.
@@ -291,6 +312,16 @@ impl Repository {
             .context("read the package artifact base")?;
         let ca_bundles = read_ca_bundles(&registry.oci_ca_paths)
             .with_context(|| format!("read CA bundles for registry {}", base.registry()))?;
+        let mut http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(REGISTRY_IO_TIMEOUT)
+            .connect_timeout(REGISTRY_IO_TIMEOUT);
+        for bundle in &ca_bundles {
+            for certificate in reqwest::Certificate::from_pem_bundle(bundle)? {
+                http = http.add_root_certificate(certificate);
+            }
+        }
         let reference = if by_digest {
             Reference::with_digest(
                 base.registry().to_owned(),
@@ -312,6 +343,12 @@ impl Repository {
             client,
             auth,
             reference,
+            http: http.build()?,
+            scheme: if registry.insecure_registry {
+                "http"
+            } else {
+                "https"
+            },
         })
     }
 
@@ -360,7 +397,7 @@ impl Repository {
         }
     }
 
-    /// The manifest digest and the layers of the package artifact under the
+    /// The manifest digest, layers and annotations of the package artifact under the
     /// reference, or `None` when it does not exist. Each layer is validated
     /// against its digest.
     ///
@@ -368,7 +405,7 @@ impl Repository {
     ///
     /// When the reference holds no package artifact, or a layer cannot be
     /// pulled or does not hash to its digest.
-    pub async fn pull(&self) -> anyhow::Result<Option<(String, Vec<PackedLayer>)>> {
+    pub async fn pull(&self) -> anyhow::Result<Option<PulledPackage>> {
         let deadline = tokio::time::Instant::now() + REGISTRY_IO_TIMEOUT;
         let Some((bytes, digest)) = self.manifest_before(deadline).await? else {
             return Ok(None);
@@ -385,7 +422,15 @@ impl Repository {
         for layer in &manifest.layers {
             layers.push(self.pull_layer(layer, deadline).await?);
         }
-        Ok(Some((digest, layers)))
+        Ok(Some(PulledPackage {
+            digest,
+            layers,
+            annotations: manifest
+                .annotations
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+        }))
     }
 
     async fn pull_layer(
@@ -430,6 +475,7 @@ pub async fn pull_package(
     Repository::open(registry, &format!("{package_id}-{version}"))?
         .pull()
         .await?
+        .map(|package| (package.digest, package.layers))
         .ok_or_else(|| {
             NoPackageArtifact {
                 package_id: package_id.to_owned(),

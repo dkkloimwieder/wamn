@@ -21,8 +21,9 @@
 //! per component, sorted by name. Its tag is `<package_id>-<version>` under an
 //! explicit `<registry>/<repository>` base. Its digest is the SHA-256 of the
 //! manifest bytes. Each tar has sorted paths, a zero mtime and a fixed owner
-//! and mode, so one tree packs to one digest. An unpacked artifact packs again
-//! offline to the same digest.
+//! and mode, so one tree packs to one digest. Dev publication also records its
+//! first publication time in the OCI manifest and reuses that time on retries.
+//! Unpacked artifacts preserve that time and pack offline to the same digest.
 
 pub(super) mod plan;
 pub(crate) use plan::component_connection_names;
@@ -55,7 +56,9 @@ pub use wamn_package_artifact::{
     COMPONENT_DESCRIPTOR_MEDIA_TYPE, NoPackageArtifact, PACKAGE_ARTIFACT_TYPE, PackageRegistry,
     PackedLayer,
 };
-use wamn_package_artifact::{Repository, ensure_tag};
+use wamn_package_artifact::{
+    CREATED_ANNOTATION, PulledPackage, Repository, ensure_tag, is_dev_tag,
+};
 
 /// Media type of the three tar layers.
 pub const PACKAGE_TAR_MEDIA_TYPE: &str = "application/vnd.wamn.package.v1.tar";
@@ -66,6 +69,7 @@ pub const PACKAGE_MANIFEST_MEDIA_TYPE: &str = "application/vnd.wamn.package.mani
 const EMPTY_CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.empty.v1+json";
 const EMPTY_CONFIG: &[u8] = b"{}";
 const TITLE_ANNOTATION: &str = "org.opencontainers.image.title";
+const CREATED_FILE: &str = "artifact-created-at";
 const PACKAGE_ID_ANNOTATION: &str = "wamn.package.id";
 const PACKAGE_VERSION_ANNOTATION: &str = "wamn.package.version";
 const COMPONENT_NAME_ANNOTATION: &str = "wamn.component.name";
@@ -140,8 +144,9 @@ struct DescriptorFile {
 ///
 /// The descriptors are the files of [`DESCRIPTOR_DIRECTORY`], which only an
 /// unpacked artifact has. So a source tree packs to a digest without
-/// descriptor layers, which differs from the pushed digest, and an unpacked
-/// artifact packs to the digest it was pushed under.
+/// descriptor layers, which differs from the pushed digest. Unpacked dev
+/// artifacts also keep their original publication time in `artifact-created-at`.
+/// An unpacked artifact packs to the digest it was pushed under.
 pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
     let descriptors = descriptor_files(root)?
         .into_iter()
@@ -151,7 +156,23 @@ pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
             bytes,
         })
         .collect();
-    pack_layers(root, descriptors)
+    let mut packed = pack_layers(root, descriptors)?;
+    if is_dev_tag(&packed.tag()) && root.join(CREATED_FILE).is_file() {
+        stamp_created(
+            &mut packed,
+            &std::fs::read_to_string(root.join(CREATED_FILE))?,
+        )?;
+    }
+    Ok(packed)
+}
+
+fn stamp_created(packed: &mut PackedPackage, created: &str) -> anyhow::Result<()> {
+    chrono::DateTime::parse_from_rfc3339(created).context("invalid dev publication time")?;
+    let mut manifest: serde_json::Value = serde_json::from_slice(&packed.manifest)?;
+    manifest["annotations"][CREATED_ANNOTATION] = created.into();
+    packed.manifest = wamn_digest::canonical_json_bytes(&manifest);
+    packed.digest = bytes_sha256(&packed.manifest);
+    Ok(())
 }
 
 /// The component descriptors of the unpacked artifact at `root`, sorted by
@@ -626,11 +647,25 @@ pub struct PushedPackage {
 /// nothing is pushed again. Tags are immutable. No database records the
 /// package; the artifact's existence is the proof of its tests (R11).
 pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<PushedPackage> {
-    let verified = verify_package(&request.package)?;
-    let packed = &verified.packed;
+    let mut verified = verify_package(&request.package)?;
+    let packed = &mut verified.packed;
     let tag = packed.tag();
     let repository = Repository::open(&request.registry, &tag)?;
-    let disposition = match repository.manifest().await? {
+    let existing = repository.manifest().await?;
+    if is_dev_tag(&tag) {
+        let created = match &existing {
+            Some((bytes, _)) => {
+                let manifest: serde_json::Value = serde_json::from_slice(bytes)?;
+                let created = manifest["annotations"][CREATED_ANNOTATION]
+                    .as_str()
+                    .context("dev package has no publication time")?;
+                created.to_owned()
+            }
+            None => chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        };
+        stamp_created(packed, &created)?;
+    }
+    let disposition = match existing {
         Some((_, existing)) if existing == packed.digest => PackagePushDisposition::AlreadyPresent,
         Some((_, existing)) => bail!(
             "package artifact {} holds {existing}, but the package packs to {}; tags are immutable, and nothing was pushed",
@@ -773,11 +808,11 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
         }
         PackageSource::Artifact { tag, registry } => (tag, registry),
     };
-    let (digest, layers) = Repository::open(&registry, &tag)?
+    let pulled = Repository::open(&registry, &tag)?
         .pull()
         .await?
         .with_context(|| format!("package artifact {tag} does not exist; run push-package"))?;
-    unpack_artifact(&tag, &digest, &layers)
+    unpack_artifact(&tag, &pulled)
 }
 
 /// Open the package artifact of `package_id@version` from the registry.
@@ -792,19 +827,26 @@ pub async fn open_package(
     package_id: &str,
     version: &str,
 ) -> anyhow::Result<OpenedPackage> {
-    let (digest, layers) =
-        wamn_package_artifact::pull_package(registry, package_id, version).await?;
-    unpack_artifact(&format!("{package_id}-{version}"), &digest, &layers)
+    let tag = format!("{package_id}-{version}");
+    let pulled = Repository::open(registry, &tag)?
+        .pull()
+        .await?
+        .ok_or_else(|| NoPackageArtifact {
+            package_id: package_id.to_owned(),
+            version: version.to_owned(),
+        })?;
+    unpack_artifact(&tag, &pulled)
 }
 
 /// Unpack the `layers` of the artifact `tag`, whose manifest digest is
 /// `digest`, into a private temporary directory, which must pack again to
 /// `digest`.
-fn unpack_artifact(
-    tag: &str,
-    digest: &str,
-    layers: &[PackedLayer],
-) -> anyhow::Result<OpenedPackage> {
+fn unpack_artifact(tag: &str, pulled: &PulledPackage) -> anyhow::Result<OpenedPackage> {
+    let PulledPackage {
+        digest,
+        layers,
+        annotations,
+    } = pulled;
     let root = std::env::temp_dir().join(format!(
         "wamn-package-{}-{}",
         std::process::id(),
@@ -821,6 +863,12 @@ fn unpack_artifact(
     };
     unpack_layers(opened.root(), layers)
         .with_context(|| format!("unpack package artifact {tag}"))?;
+    if is_dev_tag(tag) {
+        let created = annotations
+            .get(CREATED_ANNOTATION)
+            .context("dev package has no publication time")?;
+        write_file(&opened.root().join(CREATED_FILE), created.as_bytes())?;
+    }
     let unpacked = pack_package(opened.root())?;
     ensure!(
         unpacked.tag() == tag,
@@ -828,7 +876,7 @@ fn unpack_artifact(
         unpacked.tag()
     );
     ensure!(
-        unpacked.digest == digest,
+        unpacked.digest == *digest,
         "package artifact {tag} unpacks to a tree that packs to {}, not {digest}",
         unpacked.digest
     );
@@ -918,6 +966,57 @@ fn write_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn dev_artifact_keeps_its_publication_time_when_opened_and_repacked() -> anyhow::Result<()>
+    {
+        use wamn_package_artifact::registry_pull::test_server::Server;
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+        let root = scratch.path().join("package");
+        let version = "1.0.0-dev.h0123456789ab";
+        write(
+            &root,
+            "generated/wamn.json",
+            &serde_json::to_vec(&serde_json::json!({
+                "package": {"id": "orders", "version": version}
+            }))?,
+        );
+        write(&root, CREATED_FILE, b"2026-11-01T00:00:00Z");
+        let packed = pack_package(&root)?;
+        let manifest: oci_client::manifest::OciImageManifest =
+            serde_json::from_slice(&packed.manifest)?;
+        let annotations = manifest.annotations.context("published annotations")?;
+        assert_eq!(
+            chrono::DateTime::parse_from_rfc3339(
+                annotations
+                    .get(CREATED_ANNOTATION)
+                    .context("publication time")?
+            )?,
+            chrono::DateTime::parse_from_rfc3339("2026-11-01T00:00:00Z")?,
+        );
+        let responses = std::iter::once((200, packed.manifest))
+            .chain(packed.layers.into_iter().map(|layer| (200, layer.bytes)))
+            .collect();
+        let server = Server::start(responses).await;
+        let authority = server.reference.registry();
+        let auth = scratch.path().join("auth.json");
+        std::fs::write(
+            &auth,
+            serde_json::to_vec(&serde_json::json!({"auths":{
+                authority: {"username":"fixture", "password":"fixture"}
+            }}))?,
+        )?;
+        let registry = PackageRegistry {
+            artifact_base: format!("{authority}/packages"),
+            credentials: None,
+            registry_auth_file: auth,
+            insecure_registry: true,
+            oci_ca_paths: Vec::new(),
+        };
+        let opened = open_package(&registry, "orders", version).await?;
+        assert_eq!(pack_package(opened.root())?.digest, packed.digest);
+        Ok(())
+    }
+
     #[test]
     fn publication_refuses_retired_declarations_before_manifest_reading_drops_them() {
         for document in [

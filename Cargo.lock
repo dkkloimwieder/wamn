@@ -6274,6 +6274,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "http-auth",
  "http-body-util",
  "hyper",
  "hyper-rustls",
@@ -6295,6 +6296,7 @@ name = "wamn-package-control"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "futures-util",
  "hex",
  "object_store",

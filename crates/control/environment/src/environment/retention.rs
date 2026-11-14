@@ -60,6 +60,7 @@ pub async fn prune(platform: &Platform, triple: &Triple) -> anyhow::Result<Vec<S
         let changes = platform.auth_changes().await?;
         changes.publish(auth).await;
         changes.publish(connections).await;
+        crate::prune_dev_tags::prune_published(platform).await?;
         Ok(removed)
     }).await
 }

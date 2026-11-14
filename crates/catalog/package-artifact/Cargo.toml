@@ -9,6 +9,7 @@ license.workspace = true
 test-util = ["tokio/io-util", "tokio/net", "tokio/rt"]
 
 [dependencies]
+http-auth = { version = "0.1.10", default-features = false }
 wamn-digest.workspace = true
 anyhow = { workspace = true }
 oci-client = { workspace = true }

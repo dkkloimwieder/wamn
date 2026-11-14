@@ -126,15 +126,22 @@ mod tests {
     use test_server::Server;
 
     fn repository(server: &Server) -> Repository {
-        Repository {
-            reference: server.reference.clone(),
-            auth: RegistryAuth::Anonymous,
-            client: oci_client::Client::try_from(ClientConfig {
-                protocol: ClientProtocol::Http,
-                ..ClientConfig::default()
-            })
-            .unwrap(),
-        }
+        Repository::with_auth(
+            &crate::PackageRegistry {
+                artifact_base: format!(
+                    "{}/{}",
+                    server.reference.registry(),
+                    server.reference.repository()
+                ),
+                credentials: None,
+                registry_auth_file: Default::default(),
+                insecure_registry: true,
+                oci_ca_paths: Vec::new(),
+            },
+            server.reference.tag().unwrap(),
+            RegistryAuth::Anonymous,
+        )
+        .unwrap()
     }
 
     #[tokio::test]

@@ -228,6 +228,9 @@ The compiler writes history changes as SQLx migrations under `history/` in the p
 Keep these files in source control. Each file remains unchanged after release.
 Authored `migrations/` and generated `history/` share one version sequence.
 Choose each new authored version above every existing version in both directories.
+The build refuses duplicate versions, including collisions between the two directories.
+It compares new versions with the last completed build and refuses an insertion below its highest version.
+Keep that build output until the next build completes. A first build checks the combined sequence for duplicates.
 A history declaration change appends a generated migration, even when authored SQL stays unchanged.
 The build executes the combined sequence in its verification database before it returns output.
 
@@ -324,9 +327,9 @@ A web source or output edit leaves the packed package digest unchanged.
 
 The `generated/` paths of layers 2 and 3 are logical paths. `wamn build` writes those files below `apps/target/wamn/<package>/` without the `generated/` prefix, and pack reads them from there.
 
-A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/model/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type}]}`, which is `AdmittedComponent` without its target plus its connections. The reader supplies the target. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Nothing carries a timestamp. The manifest is canonical JSON.
+A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/model/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type}]}`, which is `AdmittedComponent` without its target plus its connections. The reader supplies the target. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Only dev package manifests carry `org.opencontainers.image.created`, set at first publication. Repeat publication reuses that time and the same manifest. Release coordinates and release manifests carry no timestamp. The manifest is canonical JSON.
 
-The artifact digest is the SHA-256 of the image manifest bytes. The registry records it, and it is what `artifact_digest` means. An unpacked artifact is not build output. The three tars keep their logical paths. Layer 0 goes to `generated/wamn.json`. Each descriptor goes to `descriptors/<name>.json`. It packs again offline to the pushed digest. `package_artifact_digest(root)` is that offline digest of a tree as it is. A source tree has no `descriptors/`, so its digest differs from the pushed digest. Only an unpacked tree packs to it.
+The artifact digest is the SHA-256 of the image manifest bytes. The registry records it, and it is what `artifact_digest` means. An unpacked artifact is not build output. The three tars keep their logical paths. Layer 0 goes to `generated/wamn.json`. Each descriptor goes to `descriptors/<name>.json`. Unpacked dev artifacts keep their original publication timestamp in `artifact-created-at`. Repacking reads that value and reproduces the published digest. Release coordinates need no timestamp. An unpacked artifact packs again offline to the pushed digest. `package_artifact_digest(root)` is that offline digest of a tree as it is. A source tree has no `descriptors/`, so its digest differs from the pushed digest. Only an unpacked tree packs to it.
 
 ## Host route clients
 

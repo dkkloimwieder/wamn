@@ -193,6 +193,7 @@ The registry owns the applied environment configuration. Helm owns release histo
 7. Retain: Keep older release facts and permissions. Rollout performs no release cleanup.
 
 A separate retention operation removes unused release facts and generated permissions under the environment lock.
+It also removes dev package tags older than seven days unless a published release pins their package coordinate.
 Live hosts, current Helm selections and unfinished runs keep their release facts.
 Status reports unfinished runs with no live host across the environment.
 

@@ -138,6 +138,11 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
     }
     let provisional =
         ManifestSources::from_document(&authored).context("parse the authored manifest")?;
+    crate::migrations::validate_append(
+        package_root,
+        &package_output(&request.output_root, &provisional.package.id),
+    )
+    .await?;
     let dependencies = dependencies(&request.output_root, &provisional)?;
     let bases = crate::inheritance::load_base_manifests(
         &request.output_root,
