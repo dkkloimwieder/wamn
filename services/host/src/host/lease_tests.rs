@@ -36,7 +36,7 @@ async fn facts(
         memory,
         changes,
         Arc::new(ConnectionCredentials::empty()),
-        Arc::new(WamnPostgres::new(WamnPostgresConfig {
+        &Arc::new(WamnPostgres::new(WamnPostgresConfig {
             credentials: None,
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,

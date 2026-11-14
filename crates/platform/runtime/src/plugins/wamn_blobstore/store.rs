@@ -431,7 +431,7 @@ mod tests {
             Arc::new(crate::connection_memory::ConnectionMemory::default()),
             wamn_broker::Publisher::default(),
             Arc::new(reader),
-            Arc::new(postgres),
+            &Arc::new(postgres),
             &wamn_registry::project_env_key("acme", project, "dev"),
             project,
             "dev",

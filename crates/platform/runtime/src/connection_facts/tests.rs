@@ -73,7 +73,7 @@ async fn setup(
         memory,
         changes,
         Arc::new(fixture.reader("project-a").await),
-        Arc::new(
+        &Arc::new(
             WamnPostgres::new(WamnPostgresConfig {
                 credentials: None,
                 guest_pool_max_size: 1,

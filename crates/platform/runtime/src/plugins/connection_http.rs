@@ -34,6 +34,7 @@ use crate::plugins::effect_span::{
     EFFECT_OPERATION, EffectEvidence, EffectIdentity, EffectOutcomeGuard, EffectWiring,
     HTTP_EFFECT_DURATION_MS, effect_span, record_effect_ms, record_wiring,
 };
+#[cfg(any(test, feature = "test-util"))]
 use wamn_engine::release_manifest::LoadedRelease;
 
 use super::wamn_postgres::{
@@ -196,8 +197,6 @@ impl std::fmt::Debug for ConnectionHttp {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ConnectionHttp")
-            .field("project_env_key", &self.release.target().project_env_key)
-            .field("project", &self.project)
             .finish_non_exhaustive()
     }
 }
@@ -206,11 +205,7 @@ impl std::fmt::Debug for ConnectionHttp {
 pub struct ConnectionHttp {
     postgres: Arc<WamnPostgres>,
     transport: Arc<HttpTransport>,
-    facts: Arc<ConnectionFacts>,
-    oauth2: Arc<crate::oauth_token::Cache>,
-    project: Box<str>,
     allowed_hosts: Arc<[AllowedHost]>,
-    release: Arc<LoadedRelease>,
 }
 
 /// A package release for host capability fixtures that execute no released component.
@@ -243,21 +238,12 @@ impl ConnectionHttp {
     pub fn new(
         postgres: Arc<WamnPostgres>,
         transport: Arc<HttpTransport>,
-        facts: Arc<ConnectionFacts>,
-        project: impl Into<Box<str>>,
         allowed_hosts: Arc<[AllowedHost]>,
-        release: Arc<LoadedRelease>,
     ) -> Self {
-        let project: Box<str> = project.into();
-        let oauth2 = facts.oauth_tokens();
         Self {
             postgres,
             transport,
-            facts,
-            oauth2,
-            project,
             allowed_hosts,
-            release,
         }
     }
 
@@ -299,7 +285,11 @@ impl ConnectionHttp {
         component_id: &str,
         request: &Request,
     ) -> Result<Response, ConnectionError> {
-        let first = self.attempt(component_id, request, None).await?;
+        let context = crate::invocation::context(&self.postgres.scopes, component_id)
+            .map_err(|_| ConnectionError::AttestationInvalid)?;
+        let facts = &context.connections;
+        let oauth2_cache = facts.oauth_tokens();
+        let first = self.attempt(&context, component_id, request, None).await?;
         let (connection, used) = match &first {
             Attempt::Sent { response, .. } if !matches!(response.status, 401 | 403) => {
                 return Ok(first.into_response().expect("a sent attempt"));
@@ -309,17 +299,15 @@ impl ConnectionHttp {
             }
             | Attempt::Stale { connection, used } => (*connection, used.clone()),
         };
-        self.oauth2.remove(&(connection, used.active_generation));
-        let oauth2 = self
-            .facts
+        oauth2_cache.remove(&(connection, used.active_generation));
+        let oauth2 = facts
             .generation(&connection, used.active_generation)
             .await
             .map_err(|_| ConnectionError::CredentialUnavailable)?
             .auth_type
             .clone();
         let oauth2 = crate::oauth_token::is_oauth(&oauth2) && first.status() == Some(401);
-        let fresh = self
-            .facts
+        let fresh = facts
             .read_again(&connection)
             .await
             .map_err(|_| ConnectionError::CredentialUnavailable)?;
@@ -330,7 +318,9 @@ impl ConnectionHttp {
             Attempt::Sent { oauth_token, .. } if oauth2 => oauth_token.as_deref(),
             _ => None,
         };
-        let second = self.attempt(component_id, request, rejected).await?;
+        let second = self
+            .attempt(&context, component_id, request, rejected)
+            .await?;
         match second {
             Attempt::Sent {
                 response,
@@ -339,7 +329,7 @@ impl ConnectionHttp {
                 ..
             } => {
                 if oauth2 && response.status == 401 {
-                    self.oauth2.remove(&(connection, used.active_generation));
+                    oauth2_cache.remove(&(connection, used.active_generation));
                 }
                 Ok(response)
             }
@@ -351,6 +341,7 @@ impl ConnectionHttp {
 
     async fn attempt(
         &self,
+        context: &crate::invocation::ReleaseContext,
         component_id: &str,
         request: &Request,
         rejected: Option<&str>,
@@ -369,19 +360,15 @@ impl ConnectionHttp {
         let invocation = self
             .invocation(component_id)
             .ok_or(ConnectionError::AttestationInvalid)?;
-        let environment = self.facts.environment();
-        let snapshot = crate::connection_binding::resolve(
-            &self.postgres,
-            &self.facts,
-            &self.release,
-            component_id,
-            &request.requirement,
-        )
-        .await
-        .map_err(|error| {
-            tracing::warn!(%error, "HTTP connection authority refused");
-            ConnectionError::AttestationInvalid
-        })?;
+        let facts = &context.connections;
+        let environment = facts.environment();
+        let snapshot =
+            crate::connection_binding::resolve(&self.postgres, component_id, &request.requirement)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(%error, "HTTP connection authority refused");
+                    ConnectionError::AttestationInvalid
+                })?;
         authorize_snapshot(&snapshot, &ConnectionTypeDescriptor::http_v1())?;
         authorize_method(snapshot.read_only, &request.method)?;
 
@@ -409,8 +396,7 @@ impl ConnectionHttp {
         let generation = snapshot
             .generation
             .ok_or(ConnectionError::CredentialUnavailable)?;
-        let fact = self
-            .facts
+        let fact = facts
             .connection(&connection)
             .await
             .map_err(|_| ConnectionError::CredentialUnavailable)?
@@ -424,13 +410,8 @@ impl ConnectionHttp {
         }
         let identity = ClientIdentity {
             connection: ConnectionIdentity {
-                project_env_key: self
-                    .release
-                    .target()
-                    .project_env_key
-                    .clone()
-                    .into_boxed_str(),
-                project: self.project.clone(),
+                project_env_key: facts.project_env_key().into(),
+                project: facts.project().into(),
                 environment: environment.into(),
                 instance: connection.to_string().into(),
             },
@@ -449,8 +430,7 @@ impl ConnectionHttp {
                 .into(),
             generation,
         };
-        let configuration = self
-            .facts
+        let configuration = facts
             .generation(&connection, generation)
             .await
             .map_err(|_| ConnectionError::CredentialUnavailable)?;
@@ -460,7 +440,7 @@ impl ConnectionHttp {
                 &authority,
                 decision,
                 request,
-                (&connection, &fact, &configuration),
+                (facts, &connection, &fact, &configuration),
                 rejected,
             )
             .await?;
@@ -481,7 +461,12 @@ impl ConnectionHttp {
         authority: &HttpConnectionAuthority,
         mut decision: AuthorityDecision,
         request: &Request,
-        (connection, fact, configuration): (&uuid::Uuid, &ConnectionFact, &ConnectionGeneration),
+        (facts, connection, fact, configuration): (
+            &ConnectionFacts,
+            &uuid::Uuid,
+            &ConnectionFact,
+            &ConnectionGeneration,
+        ),
         rejected: Option<&str>,
     ) -> Result<(Response, Option<String>), ConnectionError> {
         let auth_type = configuration.auth_type.as_str();
@@ -493,7 +478,7 @@ impl ConnectionHttp {
         let secret = match (auth_type, fact.credential_id) {
             ("none", _) | (_, None) => None,
             (_, Some(credential)) => Some(
-                self.facts
+                facts
                     .secret(&credential)
                     .await
                     .map_err(|_| ConnectionError::CredentialUnavailable)?,
@@ -510,6 +495,7 @@ impl ConnectionHttp {
         let key = (*connection, identity.generation);
         let token = self
             .oauth2_token(
+                facts,
                 &identity,
                 authority,
                 (auth_type, &parameters, material),
@@ -530,29 +516,30 @@ impl ConnectionHttp {
 
     async fn oauth2_token(
         &self,
+        facts: &ConnectionFacts,
         identity: &ClientIdentity,
         authority: &HttpConnectionAuthority,
         (auth_type, parameters, material): (&str, &serde_json::Value, Option<&str>),
         key: &crate::oauth_token::CacheKey,
         rejected: Option<&str>,
     ) -> Result<String, ConnectionError> {
-        let ticket = self.facts.oauth_ticket(&key.0);
-        let cache_ticket = self.oauth2.ticket();
+        let oauth2_cache = facts.oauth_tokens();
+        let ticket = facts.oauth_ticket(&key.0);
+        let cache_ticket = oauth2_cache.ticket();
         if rejected.is_none()
-            && let Some(token) = self.oauth2.get(key)
+            && let Some(token) = oauth2_cache.get(key)
         {
             return Ok(token);
         }
-        self.oauth2.remove(key);
-        let envelope = self
-            .facts
+        oauth2_cache.remove(key);
+        let envelope = facts
             .oauth_encryption()
             .ok_or(ConnectionError::CredentialUnavailable)?;
         let available = crate::oauth_token::get(
             crate::oauth_token::Request {
-                reader: &self.facts.reader(),
-                project: &self.project,
-                environment: self.facts.environment(),
+                reader: &facts.reader(),
+                project: facts.project(),
+                environment: facts.environment(),
                 connection: key.0,
                 generation: key.1,
                 authorization_code: auth_type == "oauth2_authorization_code",
@@ -599,10 +586,9 @@ impl ConnectionHttp {
             }
         })?;
         if let Some(expires) = available.retain_until {
-            self.oauth2
-                .put(cache_ticket, *key, available.token.clone(), expires, || {
-                    self.facts.oauth_ticket(&key.0) == ticket
-                });
+            oauth2_cache.put(cache_ticket, *key, available.token.clone(), expires, || {
+                facts.oauth_ticket(&key.0) == ticket
+            });
         }
         Ok(available.token)
     }
@@ -1271,16 +1257,30 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<Connecti
 /// `ConnectionError::AttestationInvalid`, and an empty value says so where a
 /// missing field would look like lost instrumentation.
 fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
-    let span = effect_span!(
-        "wamn.connection_http",
-        EffectIdentity {
-            project_env_key: &plugin.release.target().project_env_key,
-            project: &plugin.project,
-            component: component_id,
-        },
-        None,
-        effect.operation = "send",
-    );
+    let make_span = |identity: Option<&crate::plugins::wamn_postgres::SessionIdentity>| {
+        effect_span!(
+            "wamn.connection_http",
+            EffectIdentity {
+                project_env_key: identity
+                    .as_ref()
+                    .map_or("", |identity| identity.project_env_key.as_str()),
+                project: identity
+                    .as_ref()
+                    .and_then(|identity| identity.project.as_deref())
+                    .unwrap_or(""),
+                component: component_id,
+            },
+            None,
+            effect.operation = "send",
+        )
+    };
+    let span = plugin
+        .postgres
+        .scopes
+        .read::<crate::invocation::Authority, _>(component_id, |record| {
+            make_span(Some(&record.identity))
+        })
+        .unwrap_or_else(|| make_span(None));
     let invocation = plugin.invocation(component_id);
     record_wiring(
         &span,
@@ -1360,13 +1360,25 @@ impl<T: 'static + Send> http::HostWithStore<T> for SharedCtx {
                 let mut observed = EffectOutcomeGuard::new(&span, evidence);
                 let started = std::time::Instant::now();
                 let result = plugin.send(&component_id, &request).instrument(span).await;
-                record_effect_ms(
-                    &HTTP_EFFECT_DURATION_MS,
-                    EFFECT_OPERATION,
-                    "send",
-                    &plugin.project,
-                    started.elapsed(),
-                );
+                let record_duration = |project: &str| {
+                    record_effect_ms(
+                        &HTTP_EFFECT_DURATION_MS,
+                        EFFECT_OPERATION,
+                        "send",
+                        project,
+                        started.elapsed(),
+                    );
+                };
+                if plugin
+                    .postgres
+                    .scopes
+                    .read::<crate::invocation::Authority, _>(&component_id, |record| {
+                        record_duration(record.identity.project.as_deref().unwrap_or(""));
+                    })
+                    .is_none()
+                {
+                    record_duration("");
+                }
                 let outcome = http_outcome(&result);
                 observed.settle(outcome, result.is_err());
                 if let Err(error) = &result {
@@ -1968,18 +1980,24 @@ mod tests {
             Arc::new(ConnectionMemory::default()),
             Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
-            Arc::clone(&postgres),
+            &postgres,
             "org-a",
             "project-a",
             "dev",
         ));
+        let release = test_release("org-a");
+        for scope in ["component-store-7", "component-one", "component-two"] {
+            crate::invocation::bind_test_context(
+                &postgres,
+                scope,
+                Arc::clone(&facts),
+                Arc::clone(&release),
+            );
+        }
         ConnectionHttp::new(
             postgres,
             Arc::new(HttpTransport::new().expect("HTTP transport")),
-            facts,
-            "project-a",
             Vec::<AllowedHost>::new().into(),
-            crate::plugins::connection_http::test_release("org-a"),
         )
     }
 

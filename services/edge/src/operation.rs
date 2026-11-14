@@ -26,6 +26,7 @@ pub struct EdgeOperation {
     application: Arc<EdgeApplication>,
     store: EdgeStore,
     org: String,
+    scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,12 +48,14 @@ impl EdgeOperation {
         application: Arc<EdgeApplication>,
         store: EdgeStore,
         org: String,
+        scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
     ) -> Self {
         Self {
             release,
             application,
             store,
             org,
+            scopes,
         }
     }
 
@@ -235,11 +238,22 @@ impl HostPlugin for EdgeOperation {
             exports: HashSet::new(),
         }
     }
+    async fn on_workload_unbind(&self, workload: &str, _: WitInterfaces<'_>) -> anyhow::Result<()> {
+        self.scopes.revoke_workload(workload);
+        Ok(())
+    }
+
     async fn on_workload_item_bind<'a>(
         &self,
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
+        self.scopes
+            .bind_release(item.id(), Arc::clone(self.release.release()));
+        item.add_plugin(
+            wamn_engine::invocation_scope::INVOCATION_SCOPES_ID,
+            Arc::clone(&self.scopes) as _,
+        );
         if interfaces.contains("wamn", "operation", &["operation"]) {
             operation::add_to_linker::<_, EdgeOperationHost>(item.linker()?, extract_active_ctx)?;
         }

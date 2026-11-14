@@ -21,18 +21,13 @@ use crate::connection_facts::ConnectionFacts;
 use crate::connection_memory::{ConnectionFact, ConnectionStatus};
 use crate::plugins::connection_http::ConnectionInvocation;
 use crate::plugins::wamn_postgres::WamnPostgres;
-use wamn_engine::release_manifest::LoadedRelease;
 
 /// Plugin id, as the host registry knows it.
 pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
 
 /// The WAMN blobstore capability.
 pub struct WamnBlobstore {
-    postgres: Arc<WamnPostgres>,
-    facts: Arc<ConnectionFacts>,
-    pub(super) project: Box<str>,
-    /// The process's loaded release supplies immutable connection declarations.
-    release: Arc<LoadedRelease>,
+    pub(super) postgres: Arc<WamnPostgres>,
 }
 
 impl std::fmt::Debug for WamnBlobstore {
@@ -40,8 +35,6 @@ impl std::fmt::Debug for WamnBlobstore {
         // The vault is never rendered.
         formatter
             .debug_struct("WamnBlobstore")
-            .field("project_env_key", &self.release.target().project_env_key)
-            .field("project", &self.project)
             .finish_non_exhaustive()
     }
 }
@@ -49,19 +42,8 @@ impl std::fmt::Debug for WamnBlobstore {
 impl WamnBlobstore {
     /// Build the plugin over the connection-authority reader and the
     /// connection facts.
-    pub fn new(
-        postgres: Arc<WamnPostgres>,
-        facts: Arc<ConnectionFacts>,
-        project: impl Into<Box<str>>,
-        release: Arc<LoadedRelease>,
-    ) -> Self {
-        let project: Box<str> = project.into();
-        Self {
-            postgres,
-            facts,
-            project,
-            release,
-        }
+    pub fn new(postgres: Arc<WamnPostgres>) -> Self {
+        Self { postgres }
     }
 
     /// Read signing and effect authority from the invocation record.
@@ -72,52 +54,52 @@ impl WamnBlobstore {
     /// Open file storage after the native host authorizes its package binding.
     pub async fn file_store(
         &self,
+        context: &crate::invocation::ReleaseContext,
         connection_name: &str,
         read_only: bool,
     ) -> Result<super::files::FileStore, super::files::FileStorageError> {
         use super::files::{FileStorageError, FileStorageErrorType, FileStore};
         let open = async {
             use anyhow::Context as _;
-            let release = &self.release;
+            let release = &context.release;
+            let facts = &context.connections;
             anyhow::ensure!(
-                self.facts.project_env_key() == release.target().project_env_key,
+                facts.project_env_key() == release.target().project_env_key,
                 "file connection target mismatch"
             );
-            let id = *self
-                .facts
+            let id = *facts
                 .env_connections()
                 .await?
                 .connections
                 .get(connection_name)
                 .context("no file connection")?;
-            let fact = active_fact(&self.facts, &id)
+            let fact = active_fact(facts, &id)
                 .await?
                 .context("file connection disabled")?;
-            let configuration = self.facts.generation(&id, fact.active_generation).await?;
+            let configuration = facts.generation(&id, fact.active_generation).await?;
             anyhow::ensure!(
                 configuration.runtime_type == "host"
                     && matches!(configuration.integration_type.as_str(), "s3" | "gcs"),
                 "not a file connection"
             );
-            let version = self
-                .facts
+            let version = facts
                 .release(release.release().manifest_digest.as_str())
                 .await?
                 .version(&id);
-            self.facts
+            facts
                 .version(&configuration.integration_type, version)
                 .await?;
             let bound = BlobstoreDefinition::parse_for(
                 &configuration.parameters,
                 provider(&configuration.integration_type)?,
             )?;
-            let client = self.client(id, &fact, &bound).await?;
+            let client = Self::client(facts, id, &fact, &bound).await?;
             let container = BoundContainer::new(
                 Arc::clone(&client.store),
                 bound.container,
                 bound.prefix,
                 ConnectionAuthority::Live {
-                    facts: Arc::clone(&self.facts),
+                    facts: Arc::clone(facts),
                     id,
                     generation: fact.active_generation,
                 },
@@ -147,10 +129,11 @@ impl WamnBlobstore {
         component_id: &str,
         store_alias: &str,
     ) -> Result<BoundContainer, BindingError> {
+        let context = crate::invocation::context(&self.postgres.scopes, component_id)
+            .map_err(|_| BindingError::unauthorized())?;
+        let facts = &context.connections;
         let snapshot = crate::connection_binding::resolve(
             &self.postgres,
-            &self.facts,
-            &self.release,
             component_id,
             store_alias,
         )
@@ -164,29 +147,30 @@ impl WamnBlobstore {
             .as_deref()
             .and_then(|id| id.parse().ok())
             .ok_or(BindingError::unauthorized())?;
-        let fact = active_fact(&self.facts, &id)
+        let fact = active_fact(facts, &id)
             .await
             .map_err(|_| BindingError::unauthorized())?
             .filter(|fact| Some(fact.active_generation) == snapshot.generation)
             .ok_or(BindingError::unauthorized())?;
-        let configuration = self
-            .facts
+        let configuration = facts
             .generation(&id, fact.active_generation)
             .await
             .map_err(|_| BindingError::unauthorized())?;
         let provider =
             provider(&configuration.integration_type).map_err(|_| BindingError::unauthorized())?;
         let bound = binding::resolve(&snapshot, provider)?;
-        let client = self.client(id, &fact, &bound).await.map_err(|error| {
-            tracing::warn!(%error, "blobstore client unavailable");
-            BindingError::unauthorized()
-        })?;
+        let client = Self::client(facts, id, &fact, &bound)
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, "blobstore client unavailable");
+                BindingError::unauthorized()
+            })?;
         Ok(BoundContainer::new(
             Arc::clone(&client.store),
             bound.container,
             bound.prefix,
             ConnectionAuthority::Live {
-                facts: Arc::clone(&self.facts),
+                facts: Arc::clone(facts),
                 id,
                 generation: fact.active_generation,
             },
@@ -195,24 +179,24 @@ impl WamnBlobstore {
     }
 
     async fn client(
-        &self,
+        facts: &Arc<ConnectionFacts>,
         id: uuid::Uuid,
         fact: &ConnectionFact,
         bound: &BlobstoreDefinition,
     ) -> anyhow::Result<Arc<StoreClient>> {
         let key = (id, fact.active_generation);
-        if let Some(client) = self.facts.stores.get(&key) {
+        if let Some(client) = facts.stores.get(&key) {
             return Ok(client);
         }
         let secret = if bound.provider == BlobstoreProvider::S3 {
             let credential = fact
                 .credential_id
                 .ok_or_else(|| anyhow::anyhow!("storage credential unavailable"))?;
-            Some(self.facts.secret(&credential).await?)
+            Some(facts.secret(&credential).await?)
         } else {
             None
         };
-        self.facts
+        facts
             .stores
             .try_get_with(key, || {
                 let client = match bound.provider {
@@ -355,16 +339,30 @@ pub(super) fn blobstore_span(
     component_id: &str,
     operation: &'static str,
 ) -> tracing::Span {
-    let span = effect_span!(
-        "wamn.blobstore",
-        EffectIdentity {
-            project_env_key: &plugin.release.target().project_env_key,
-            project: &plugin.project,
-            component: component_id,
-        },
-        None,
-        effect.operation = operation,
-    );
+    let make_span = |identity: Option<&crate::plugins::wamn_postgres::SessionIdentity>| {
+        effect_span!(
+            "wamn.blobstore",
+            EffectIdentity {
+                project_env_key: identity
+                    .as_ref()
+                    .map_or("", |identity| identity.project_env_key.as_str()),
+                project: identity
+                    .as_ref()
+                    .and_then(|identity| identity.project.as_deref())
+                    .unwrap_or(""),
+                component: component_id,
+            },
+            None,
+            effect.operation = operation,
+        )
+    };
+    let span = plugin
+        .postgres
+        .scopes
+        .read::<crate::invocation::Authority, _>(component_id, |record| {
+            make_span(Some(&record.identity))
+        })
+        .unwrap_or_else(|| make_span(None));
     let invocation = plugin.invocation(component_id);
     record_wiring(
         &span,
@@ -462,17 +460,21 @@ mod tests {
             Arc::new(crate::connection_memory::ConnectionMemory::default()),
             wamn_broker::Publisher::default(),
             Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
-            Arc::clone(&postgres),
+            &postgres,
             "org-a",
             "project-a",
             "dev",
         ));
-        WamnBlobstore::new(
-            postgres,
-            facts,
-            "project-a",
-            crate::plugins::connection_http::test_release("org-a"),
-        )
+        let release = crate::plugins::connection_http::test_release("org-a");
+        for scope in ["component-store-3"] {
+            crate::invocation::bind_test_context(
+                &postgres,
+                scope,
+                Arc::clone(&facts),
+                Arc::clone(&release),
+            );
+        }
+        WamnBlobstore::new(postgres)
     }
 
     /// The blobstore surface fills the SAME vocabulary the HTTP surface fills,

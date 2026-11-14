@@ -296,7 +296,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
             Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
-            Arc::clone(&postgres),
+            &postgres,
             PROJECT_ENV_KEY,
             "default",
             "test",

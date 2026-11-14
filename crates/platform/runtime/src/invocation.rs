@@ -11,15 +11,102 @@ use wamn_engine::invocation_scope::{InvocationScopes, ScopeLifetime};
 use wamn_engine::invocation_trace::InvocationTrace;
 use wamn_event_wire::Causation;
 
+/// Immutable release and project-owned connection readers for one deployment.
+#[derive(Debug)]
+pub struct ReleaseContext {
+    pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
+    pub connections: Arc<crate::connection_facts::ConnectionFacts>,
+    pub integrations: std::sync::OnceLock<Arc<crate::integrations::Integrations>>,
+}
+
+impl ReleaseContext {
+    pub fn new(
+        release: Arc<wamn_engine::release_manifest::LoadedRelease>,
+        connections: Arc<crate::connection_facts::ConnectionFacts>,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            release.target().project_env_key == connections.project_env_key()
+                && release.target().environment == connections.environment(),
+            "connection release target mismatch"
+        );
+        Ok(Self {
+            release,
+            connections,
+            integrations: std::sync::OnceLock::new(),
+        })
+    }
+}
+
+pub(crate) fn context(
+    scopes: &InvocationScopes,
+    scope: &str,
+) -> anyhow::Result<Arc<ReleaseContext>> {
+    use anyhow::Context as _;
+    scopes
+        .read::<Authority, _>(scope, |record| {
+            let context = record
+                .context
+                .as_ref()
+                .context("scope has no release authority")?;
+            validate_context(&record.identity, context)?;
+            Ok(Arc::clone(context))
+        })
+        .context("scope was revoked")?
+}
+
+pub(crate) fn validate_context(
+    identity: &SessionIdentity,
+    context: &ReleaseContext,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        identity.project_env_key == context.release.target().project_env_key
+            && identity.project.as_deref() == Some(context.connections.project())
+            && identity.release.as_ref()
+                == Some(
+                    &crate::plugins::wamn_postgres::ReleaseIdentity::from_loaded(&context.release)
+                ),
+        "invocation release authority mismatch"
+    );
+    Ok(())
+}
+
+/// Bind a host-selected deployment for a capability fixture.
+#[cfg(any(test, feature = "test-util"))]
+pub fn bind_test_context(
+    postgres: &WamnPostgres,
+    scope: &str,
+    connections: Arc<crate::connection_facts::ConnectionFacts>,
+    release: Arc<wamn_engine::release_manifest::LoadedRelease>,
+) {
+    let context = Arc::new(ReleaseContext::new(release, connections).expect("fixture context"));
+    postgres.scopes.update::<Authority, _>(scope, |record| {
+        record.identity.project_env_key = context.release.target().project_env_key.clone();
+        record.identity.project = Some(context.connections.project().to_owned());
+        record.identity.release = Some(
+            crate::plugins::wamn_postgres::ReleaseIdentity::from_loaded(&context.release),
+        );
+        record.context = Some(context);
+    });
+}
+
 /// The complete host authority of one scope. Workload binding fills the same record.
 #[derive(Debug, Default)]
 pub(crate) struct Authority {
     pub identity: SessionIdentity,
+    pub context: Option<Arc<ReleaseContext>>,
     pub causation: Option<Causation>,
     pub invocation: Option<ConnectionInvocation>,
     pub transaction: Option<OperationTransaction>,
     pub wal_position: Option<String>,
     pub statements: crate::plugins::wamn_postgres::statements::StatementScope,
+}
+
+impl wamn_engine::invocation_scope::InvocationAuthority for Authority {
+    fn release(&self) -> Option<Arc<wamn_engine::release_manifest::LoadedRelease>> {
+        let context = self.context.as_ref()?;
+        validate_context(&self.identity, context).ok()?;
+        Some(Arc::clone(&context.release))
+    }
 }
 
 /// An admitted call retains this owner through commit, replay and result signing.
@@ -41,6 +128,7 @@ pub enum PrincipalVerification {
 pub struct InvocationRequest<'a> {
     pub scope: String,
     pub identity: SessionIdentity,
+    pub context: Option<Arc<ReleaseContext>>,
     pub caller: Option<AuthenticatedCaller>,
     pub registered_operation: Option<&'a str>,
     pub causation: Option<Causation>,
@@ -59,6 +147,7 @@ impl AuthorizedInvocation {
         let InvocationRequest {
             scope,
             identity,
+            context,
             caller,
             registered_operation,
             causation,
@@ -75,10 +164,14 @@ impl AuthorizedInvocation {
         if let Some(invocation) = &invocation {
             validate_invocation(invocation)?;
         }
+        if let Some(context) = &context {
+            validate_context(&identity, context)?;
+        }
         let lifetime = postgres.scopes.enter(
             scope,
             Authority {
                 identity,
+                context,
                 causation,
                 invocation,
                 statements: crate::plugins::wamn_postgres::statements::StatementScope::active(

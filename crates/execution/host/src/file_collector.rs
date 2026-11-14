@@ -70,7 +70,7 @@ impl FileRoutes {
                 continue;
             }
             let result = async {
-                let store = self.blobstore.file_store(&connection.name, false).await?;
+                let store = self.blobstore.file_store(&self.context, &connection.name, false).await?;
                 let mut batches = store.live_objects().await?.try_filter(|object| std::future::ready(object.last_modified < cutoff)).try_chunks(BATCH_SIZE);
                 while let Some(batch) = batches.next().await {
                     let batch = batch.map_err(|error| error.1)?;

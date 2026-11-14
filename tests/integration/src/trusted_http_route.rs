@@ -338,7 +338,7 @@ async fn build_with_credentials(
         Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(credentials),
-        Arc::clone(&postgres),
+        &postgres,
         PROJECT_ENV_KEY,
         PROJECT,
         ENVIRONMENT,

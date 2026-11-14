@@ -809,7 +809,7 @@ impl Fixture {
             Arc::new(ConnectionMemory::default()),
             Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
-            Arc::clone(&postgres),
+            &postgres,
             PROJECT_ENV_KEY,
             "test",
             release.target().environment.as_str(),
@@ -822,17 +822,13 @@ impl Fixture {
                 connection_http: Arc::new(ConnectionHttp::new(
                     Arc::clone(&postgres),
                     Arc::new(HttpTransport::new().expect("HTTP transport")),
-                    Arc::clone(&facts),
-                    "test",
                     Arc::from(Vec::new()),
-                    Arc::clone(&release),
                 )),
-                blobstore: Arc::new(WamnBlobstore::new(
-                    Arc::clone(&postgres),
-                    facts,
-                    "test",
-                    Arc::clone(&release),
-                )),
+                blobstore: Arc::new(WamnBlobstore::new(Arc::clone(&postgres))),
+                context: Arc::new(
+                    wamn_runtime::invocation::ReleaseContext::new(Arc::clone(&release), facts)
+                        .unwrap(),
+                ),
                 postgres,
                 logging: Arc::new(TracingLogger::default()),
                 release,

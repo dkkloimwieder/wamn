@@ -89,6 +89,7 @@ struct FileHost {
     routes: Arc<FileRoutes>,
     delivery: HostRouteDelivery,
     blobstore: Arc<WamnBlobstore>,
+    context: Arc<wamn_runtime::invocation::ReleaseContext>,
     registry: files::Registry,
     minio: files::Minio,
     // Keep the database server alive until its targeted clients and pools drop.
@@ -154,19 +155,18 @@ impl FileHost {
             Arc::new(ConnectionMemory::default()),
             Publisher::default(),
             credentials,
-            Arc::clone(&postgres),
+            &postgres,
             PROJECT_ENV_KEY,
             PROJECT,
             "dev",
         ));
-        let blobstore = Arc::new(WamnBlobstore::new(
-            Arc::clone(&postgres),
+        let context = Arc::new(wamn_runtime::invocation::ReleaseContext::new(
+            Arc::clone(&release),
             Arc::clone(&facts),
-            PROJECT,
-            Arc::clone(&release),
-        ));
+        )?);
+        let blobstore = Arc::new(WamnBlobstore::new(Arc::clone(&postgres)));
         let routes = Arc::new(FileRoutes::new(
-            Arc::clone(&release),
+            Arc::clone(&context),
             Arc::clone(&postgres),
             Arc::clone(&blobstore),
             Arc::new(RegistryFileConnections {
@@ -197,6 +197,7 @@ impl FileHost {
             routes,
             delivery,
             blobstore,
+            context,
             registry,
             minio,
             host,
@@ -576,7 +577,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     let fresh = Uuid::new_v4();
     let store = fixture
         .blobstore
-        .file_store(files::STORE_NAME, false)
+        .file_store(&fixture.context, files::STORE_NAME, false)
         .await?;
     let staged = store.stage(fresh, &b"pending row"[..]).await?;
     sqlx::raw_sql("BEGIN")
@@ -706,7 +707,7 @@ async fn native_upload_streams_the_limit_and_hashes_the_stored_bytes() -> anyhow
     );
     let store = fixture
         .blobstore
-        .file_store(files::STORE_NAME, false)
+        .file_store(&fixture.context, files::STORE_NAME, false)
         .await?;
     let stored = store.get(&row.get::<String, _>(2)).await?.bytes().await?;
     assert_eq!(stored.len(), size);
@@ -811,7 +812,7 @@ async fn committed_staging_bytes_repair_a_missing_live_object_on_native_get() ->
     let mut fixture = FileHost::start("file_crash_repair").await?;
     let store = fixture
         .blobstore
-        .file_store(files::STORE_NAME, false)
+        .file_store(&fixture.context, files::STORE_NAME, false)
         .await?;
     let id = Uuid::new_v4();
     let staged = store.stage(id, &b"committed staging"[..]).await?;
@@ -1211,7 +1212,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
                 fixture.registry.reader.clone(),
                 ORG,
             )),
-            Arc::clone(&fixture.postgres),
+            &fixture.postgres,
             PROJECT_ENV_KEY,
             PROJECT,
             "dev",

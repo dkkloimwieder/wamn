@@ -48,7 +48,16 @@ The existing code declaration records that decision and does not infer it from a
 
 The host records the original wiring, node occurrence, component digest, operation, and exact dependency path.
 A guest cannot replace that identity through request fields.
-The loaded release binds the admitted component and connection facts.
+`InvocationScopes` holds the trusted authority of each workload and invocation.
+Each record selects an immutable release and the connection reader of its project deployment.
+HTTP, blob storage, route authentication, and integration imports use that selected authority.
+A shared component digest shares code only. It grants no credential or project access.
+
+Each project deployment owns one `ConnectionFacts` instance across its loaded releases.
+Its generation, secret, and storage client maps stay separate from those of other projects.
+Each release keeps its own binding facts under its digest.
+A missing or revoked scope refuses the call before an external effect.
+Native file handlers and file collection use the same trusted deployment context.
 Nested calls retain their original caller and require the destination's authority.
 
 The environment owns concrete endpoints, schemas, container names, prefixes, and credentials.

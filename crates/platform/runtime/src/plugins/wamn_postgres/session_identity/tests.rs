@@ -465,11 +465,31 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
 #[tokio::test]
 async fn scope_authority_is_unique_and_revoked_by_its_owner() {
     use crate::invocation::{AuthorizedInvocation, InvocationRequest, PrincipalVerification};
-    let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
+    let pg = Arc::new(WamnPostgres::with_provider(Arc::new(
+        StaticCredentialProvider::default_only(None),
+    )));
+    let deployment = |key: &str, project: &str| {
+        let release = crate::plugins::connection_http::test_release(key);
+        let facts = Arc::new(crate::connection_facts::ConnectionFacts::new(
+            Arc::new(crate::connection_memory::ConnectionMemory::default()),
+            wamn_broker::Publisher::default(),
+            Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
+            &pg,
+            key,
+            project,
+            "dev",
+        ));
+        Arc::new(crate::invocation::ReleaseContext::new(release, facts).unwrap())
+    };
+    let first_project = deployment("test--dev--fixture", "fixture");
+    let second_project = deployment("test--dev--other", "other");
     let enter = |scope: &str| InvocationRequest {
+        context: Some(Arc::clone(&first_project)),
         scope: scope.to_owned(),
         identity: SessionIdentity {
             project_env_key: "test--dev--fixture".to_owned(),
+            project: Some("fixture".to_owned()),
+            release: Some(ReleaseIdentity::from_loaded(&first_project.release)),
             ..SessionIdentity::default()
         },
         caller: None,
@@ -483,12 +503,37 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
     let first = AuthorizedInvocation::enter(&pg, enter("c1")).await.unwrap();
     let retained = Arc::clone(&first);
     assert!(AuthorizedInvocation::enter(&pg, enter("c1")).await.is_err());
-    let second = AuthorizedInvocation::enter(&pg, enter("c2")).await.unwrap();
+    let mut other = enter("c2");
+    other.context = Some(Arc::clone(&second_project));
+    assert!(AuthorizedInvocation::enter(&pg, other).await.is_err());
+    let mut other = enter("c2");
+    other.context = Some(Arc::clone(&second_project));
+    other.identity.project_env_key = second_project.release.target().project_env_key.clone();
+    other.identity.project = Some("other".to_owned());
+    let second = AuthorizedInvocation::enter(&pg, other).await.unwrap();
+    assert!(Arc::ptr_eq(
+        &crate::invocation::context(&pg.scopes, "c1")
+            .unwrap()
+            .connections,
+        &first_project.connections
+    ));
+    assert!(Arc::ptr_eq(
+        &crate::invocation::context(&pg.scopes, "c2")
+            .unwrap()
+            .connections,
+        &second_project.connections
+    ));
+    assert!(Arc::ptr_eq(
+        &pg.scopes.release("c1").unwrap(),
+        &first_project.release
+    ));
     drop(first);
     assert!(pg.session_identity("c1").is_some());
     drop(retained);
     assert!(pg.session_identity("c1").is_none());
     assert!(pg.invocation("c1").is_none());
+    assert!(pg.scopes.release("c1").is_none());
+    assert!(crate::invocation::context(&pg.scopes, "c1").is_err());
     assert!(pg.invocation("c2").is_some());
     drop(second);
     assert!(pg.scopes.is_empty());
@@ -1357,7 +1402,7 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
         Arc::new(crate::connection_memory::ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
-        Arc::clone(&pg),
+        &pg,
         "org--dev--a",
         DEFAULT_PROJECT,
         "dev",
@@ -1447,7 +1492,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
         Arc::new(crate::connection_memory::ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
-        Arc::clone(&pg),
+        &pg,
         "org--dev--a",
         DEFAULT_PROJECT,
         "dev",

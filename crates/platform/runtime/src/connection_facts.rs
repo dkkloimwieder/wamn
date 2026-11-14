@@ -57,13 +57,13 @@ impl std::fmt::Debug for Secret {
     }
 }
 
-/// The connection facts one host reads for the calls of one environment.
+/// The connection facts of one project deployment.
 pub struct ConnectionFacts {
     oauth_encryption: Option<Arc<crate::oauth_encryption::Envelope>>,
     memory: Arc<ConnectionMemory>,
     changes: Publisher,
     reader: Arc<ConnectionCredentials>,
-    postgres: Arc<WamnPostgres>,
+    postgres: std::sync::Weak<WamnPostgres>,
     project_env_key: String,
     project: String,
     environment: String,
@@ -86,11 +86,13 @@ impl std::fmt::Debug for ConnectionFacts {
 }
 
 impl ConnectionFacts {
+    /// Read one project without retaining its database plugin.
+    /// The host keeps PostgreSQL alive while it serves the project.
     pub fn new(
         memory: Arc<ConnectionMemory>,
         changes: Publisher,
         reader: Arc<ConnectionCredentials>,
-        postgres: Arc<WamnPostgres>,
+        postgres: &Arc<WamnPostgres>,
         project_env_key: &str,
         project: &str,
         environment: &str,
@@ -100,7 +102,7 @@ impl ConnectionFacts {
             memory,
             changes,
             reader,
-            postgres,
+            postgres: Arc::downgrade(postgres),
             project_env_key: project_env_key.to_owned(),
             project: project.to_owned(),
             environment: environment.to_owned(),
@@ -122,7 +124,7 @@ impl ConnectionFacts {
     }
 
     pub fn oauth_encryption(&self) -> Option<Arc<crate::oauth_encryption::Envelope>> {
-        self.oauth_encryption.clone()
+        self.oauth_encryption.as_ref().map(Arc::clone)
     }
 
     pub(crate) fn oauth_tokens(&self) -> Arc<crate::oauth_token::Cache> {
@@ -135,6 +137,10 @@ impl ConnectionFacts {
 
     pub(crate) fn environment(&self) -> &str {
         &self.environment
+    }
+
+    pub fn project(&self) -> &str {
+        &self.project
     }
 
     pub fn project_env_key(&self) -> &str {
@@ -260,6 +266,8 @@ impl ConnectionFacts {
             Err(ticket) => {
                 let fact = self
                     .postgres
+                    .upgrade()
+                    .context("project database authority was unloaded")?
                     .release_fact(&self.project, &self.project_env_key, manifest_digest)
                     .await?;
                 self.memory

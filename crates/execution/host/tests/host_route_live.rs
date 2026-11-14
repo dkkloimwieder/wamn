@@ -186,14 +186,14 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         &login(admin_url, &administration)?,
         None,
     )?;
-    let routing = FlowHttpRouting::new(Some(Arc::clone(&release))).with_authenticator(Arc::new(
-        PlatformRouteAuthenticator::for_test(
+    let routing = FlowHttpRouting::for_test(Some(Arc::clone(&release))).with_authenticator(
+        Arc::new(PlatformRouteAuthenticator::for_test(
             Arc::clone(&postgres_credentials),
-            PROJECT,
+            application_fixture::PROJECT_ENV_KEY,
             Some(identity_reader),
             Some(verifier),
-        ),
-    ));
+        )),
+    );
     let delivery = HostRouteDelivery::new(
         Arc::clone(&release),
         HostRouteHandlers::Application {
@@ -803,12 +803,13 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
             keys, ORG, &audience, 1000,
         )?;
     let release = Arc::new(LoadedRelease::control_root());
-    let routing = FlowHttpRouting::new(Some(Arc::clone(&release))).with_authenticator(Arc::new(
-        wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator::new(
-            verifier,
-            control.clone(),
-        ),
-    ));
+    let routing =
+        FlowHttpRouting::for_test(Some(Arc::clone(&release))).with_authenticator(Arc::new(
+            wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator::new(
+                verifier,
+                control.clone(),
+            ),
+        ));
     let delivery = HostRouteDelivery::new(
         release,
         HostRouteHandlers::Control {

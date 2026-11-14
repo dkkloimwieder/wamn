@@ -167,7 +167,7 @@ pub struct OperationHost {
     pub postgres: Arc<WamnPostgres>,
     /// Shared by every driver in this process, independently of fresh stores.
     http_transport: Arc<HttpTransport>,
-    facts: Arc<ConnectionFacts>,
+    pub context: Arc<wamn_runtime::invocation::ReleaseContext>,
     logging: Arc<TracingLogger>,
     allowed_hosts: Arc<[AllowedHost]>,
     pub release: Arc<LoadedRelease>,
@@ -178,7 +178,6 @@ pub struct OperationHost {
     warm_reuse: WarmReuse,
     native: tokio::sync::OnceCell<ReleasedApplication>,
     files: std::sync::OnceLock<Arc<crate::file_route::FileRoutes>>,
-    integrations: std::sync::OnceLock<Arc<wamn_runtime::integrations::Integrations>>,
 }
 
 /// Keep the validated input alive so pointer identity proves immutable reuse.
@@ -260,11 +259,18 @@ impl OperationHost {
             "invalid router owner {:?}: 1-128 chars of [A-Za-z0-9_-] required",
             target.owner_prefix
         );
+        anyhow::ensure!(
+            target.project == facts.project(),
+            "operation project authority mismatch"
+        );
         Ok(Self {
             engine,
             postgres,
             http_transport,
-            facts,
+            context: Arc::new(wamn_runtime::invocation::ReleaseContext::new(
+                Arc::clone(&release),
+                facts,
+            )?),
             logging,
             allowed_hosts,
             release,
@@ -275,7 +281,6 @@ impl OperationHost {
             warm_reuse: target.warm_reuse,
             native: tokio::sync::OnceCell::new(),
             files: std::sync::OnceLock::new(),
-            integrations: std::sync::OnceLock::new(),
         })
     }
 
@@ -288,7 +293,8 @@ impl OperationHost {
             self.native.get().is_none(),
             "integrations must precede application loading"
         );
-        self.integrations
+        self.context
+            .integrations
             .set(integrations)
             .map_err(|_| anyhow::anyhow!("integrations already attached"))
     }
@@ -431,23 +437,16 @@ impl OperationHost {
             &components,
             NativePolicyResources {
                 files: self.files.get().cloned(),
-                integrations: self.integrations.get().cloned(),
+                integrations: self.context.integrations.get().map(Arc::clone),
                 postgres: Arc::clone(&self.postgres),
                 logging: Arc::clone(&self.logging),
                 connection_http: Arc::new(ConnectionHttp::new(
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.http_transport),
-                    Arc::clone(&self.facts),
-                    self.project.as_str(),
                     Arc::clone(&self.allowed_hosts),
-                    Arc::clone(&self.release),
                 )),
-                blobstore: Arc::new(WamnBlobstore::new(
-                    Arc::clone(&self.postgres),
-                    Arc::clone(&self.facts),
-                    self.project.as_str(),
-                    Arc::clone(&self.release),
-                )),
+                blobstore: Arc::new(WamnBlobstore::new(Arc::clone(&self.postgres))),
+                context: Arc::clone(&self.context),
                 release: Arc::clone(&self.release),
                 project: self.project.clone(),
             },

@@ -20,7 +20,7 @@
 //! - [`artifact_source`]: the [`ArtifactSource`](artifact_source::ArtifactSource)
 //!   trait that supplies verified component bytes, its digest tests, and the
 //!   local file source. The OCI registry source lives in `wamn-runtime`.
-//! - [`release_manifest`]: a release manifest loaded once for the process.
+//! - [`release_manifest`]: an immutable release manifest for a project deployment.
 //! - [`invocation_trace`]: restores host-captured tracing context when native
 //!   dispatch polls host callbacks.
 //! - [`component_imports`]: a compiled component's ordered world imports.

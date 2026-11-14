@@ -1,6 +1,5 @@
 //! Resolve the authority of one admitted invocation before an external call.
 
-use crate::connection_facts::ConnectionFacts;
 use crate::plugins::connection_http::{
     ConnectionExecutionClosure, authorize_candidate_closure, authorize_release_closure,
     entry_lookup,
@@ -8,17 +7,17 @@ use crate::plugins::connection_http::{
 use crate::plugins::wamn_postgres::{
     ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres,
 };
-use wamn_engine::release_manifest::LoadedRelease;
 
 /// Resolve the released binding of an admitted invocation.
 pub async fn resolve(
     postgres: &WamnPostgres,
-    facts: &ConnectionFacts,
-    release: &LoadedRelease,
     scope: &str,
     alias: &str,
 ) -> anyhow::Result<ConnectionEffectSnapshot> {
     use anyhow::Context as _;
+    let context = crate::invocation::context(&postgres.scopes, scope)?;
+    let facts = &context.connections;
+    let release = &context.release;
     let invocation = postgres
         .invocation(scope)
         .context("no admitted connection invocation")?;

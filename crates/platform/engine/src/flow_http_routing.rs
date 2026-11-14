@@ -225,7 +225,7 @@ impl std::fmt::Debug for AuthenticationRequest<'_> {
 
 /// Authoritative HTTP route supply for the flow-http adapter.
 pub struct FlowHttpRouting {
-    release: Option<Arc<LoadedRelease>>,
+    scopes: Arc<crate::invocation_scope::InvocationScopes>,
     authenticator: Option<Arc<dyn RouteAuthenticator>>,
     environment: Option<Arc<dyn EnvironmentStatus>>,
 }
@@ -235,9 +235,9 @@ impl std::fmt::Debug for FlowHttpRouting {
     }
 }
 impl FlowHttpRouting {
-    pub fn new(release: Option<Arc<LoadedRelease>>) -> Self {
+    pub fn new(scopes: Arc<crate::invocation_scope::InvocationScopes>) -> Self {
         Self {
-            release,
+            scopes,
             authenticator: None,
             environment: None,
         }
@@ -260,32 +260,32 @@ impl FlowHttpRouting {
     /// The native handler also enforces its operation grant before serving a file.
     pub async fn authenticate(
         &self,
+        loaded: &LoadedRelease,
         attachment_id: &str,
         headers: &[Header],
         body: &[u8],
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let loaded = self
-            .release
-            .as_ref()
-            .ok_or_else(authentication_unavailable)?;
         let attachment = loaded
             .manifest()
             .served_attachment(attachment_id)
             .ok_or_else(authentication_unavailable)?;
-        self.authenticate_accepted(attachment_id, attachment.auth_policy(), headers, body)
-            .await
+        self.authenticate_accepted(
+            loaded,
+            attachment_id,
+            attachment.auth_policy(),
+            headers,
+            body,
+        )
+        .await
     }
     async fn authenticate_accepted(
         &self,
+        loaded_release: &LoadedRelease,
         attachment_id: &str,
         accepted: &Value,
         headers: &[Header],
         body: &[u8],
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let loaded_release = self
-            .release
-            .as_ref()
-            .ok_or_else(authentication_unavailable)?;
         let manifest = loaded_release.manifest();
         if let Some(environment) = &self.environment {
             let inactive = environment
@@ -333,6 +333,16 @@ impl FlowHttpRouting {
             .await
     }
 
+    /// Bind the released policy for interface tests without a workload store.
+    #[cfg(feature = "test-util")]
+    pub fn for_test(release: Option<Arc<LoadedRelease>>) -> Self {
+        let scopes = Arc::new(crate::invocation_scope::InvocationScopes::default());
+        if let Some(release) = release {
+            scopes.bind_release("authentication-fixture", release);
+        }
+        Self::new(scopes)
+    }
+
     /// Exercise production route authentication from an integration test.
     #[cfg(feature = "test-util")]
     pub async fn authenticate_authorization_for_test(
@@ -347,7 +357,11 @@ impl FlowHttpRouting {
             })
             .into_iter()
             .collect::<Vec<_>>();
-        self.authenticate(attachment_id, &headers, &[])
+        let release = self.scopes.release("authentication-fixture").ok_or((
+            AUTHENTICATION_UNAVAILABLE_STATUS,
+            AUTHENTICATION_UNAVAILABLE_CODE.to_owned(),
+        ))?;
+        self.authenticate(&release, attachment_id, &headers, &[])
             .await
             .map_err(|rejection| (rejection.status, rejection.code))
     }
@@ -378,7 +392,11 @@ impl FlowHttpRouting {
                 value: (*value).to_string(),
             })
             .collect::<Vec<_>>();
-        self.authenticate(attachment_id, &headers, body)
+        let release = self.scopes.release("authentication-fixture").ok_or((
+            AUTHENTICATION_UNAVAILABLE_STATUS,
+            AUTHENTICATION_UNAVAILABLE_CODE.to_owned(),
+        ))?;
+        self.authenticate(&release, attachment_id, &headers, body)
             .await
             .map_err(|rejection| (rejection.status, rejection.code))
     }
@@ -668,7 +686,7 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
         body: Vec<u8>,
     ) -> wash_runtime::wasmtime::Result<Result<Option<Resource<AuthenticatedCaller>>, AuthRejection>>
     {
-        let (plugin, trace) = accessor.with(|mut access| {
+        let (plugin, release, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             let trace = crate::invocation_trace::request_trace(
                 &headers
@@ -676,21 +694,21 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
                     .map(|header| (header.name.clone(), header.value.clone()))
                     .collect::<Vec<_>>(),
             );
-            if let Ok(scopes) = ctx.try_get_plugin::<crate::invocation_scope::InvocationScopes>(
-                crate::invocation_scope::INVOCATION_SCOPES_ID,
-            ) {
-                let lifetime = scopes
-                    .enter(ctx.id.to_string(), (), trace.clone())
-                    .map_err(|error| wash_runtime::wasmtime::Error::msg(error.to_string()))?;
-                ctx.table.push(lifetime)?;
+            let plugin = plugin_of(&ctx)?;
+            let release = plugin.scopes.release(&ctx.component_id);
+            if release.is_some() {
+                let _ = plugin.scopes.set_trace(&ctx.component_id, trace.clone());
             }
-            Ok::<_, wash_runtime::wasmtime::Error>((plugin_of(&ctx)?, trace))
+            Ok::<_, wash_runtime::wasmtime::Error>((plugin, release, trace))
         })?;
         trace
             .run(async move {
+                let Some(release) = release else {
+                    return Ok(Err(authentication_unavailable()));
+                };
                 let accepted: Value = serde_json::from_str(&accepted)?;
                 let caller = match plugin
-                    .authenticate_accepted(&attachment_id, &accepted, &headers, &body)
+                    .authenticate_accepted(&release, &attachment_id, &accepted, &headers, &body)
                     .await
                 {
                     Ok(caller) => caller,

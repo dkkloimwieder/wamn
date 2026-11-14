@@ -179,7 +179,7 @@ impl HostCommandHandler for Commands {
                 );
                 self.postgres.bind_operation_workload(
                     &workload_id,
-                    Arc::clone(&operations.release),
+                    Arc::clone(&operations.context),
                     &component.image,
                     &component.name,
                     operations.identity(

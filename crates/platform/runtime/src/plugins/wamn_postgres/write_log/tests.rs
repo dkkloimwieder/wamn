@@ -363,6 +363,7 @@ async fn cancellation_retains_external_claims_and_rolls_back_transactional_claim
         let authority = AuthorizedInvocation::enter(
             &postgres,
             InvocationRequest {
+                context: None,
                 scope: format!("cancellation-{key}"),
                 identity: SessionIdentity {
                     project_env_key: "test--dev--writelogtx".into(),

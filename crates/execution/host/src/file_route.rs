@@ -379,6 +379,7 @@ struct UploadQuery {
 /// File handlers of one released application environment.
 pub struct FileRoutes {
     pub(crate) release: Arc<LoadedRelease>,
+    pub(crate) context: Arc<wamn_runtime::invocation::ReleaseContext>,
     pub(crate) postgres: Arc<WamnPostgres>,
     pub(crate) blobstore: Arc<WamnBlobstore>,
     pub(crate) connections: Arc<dyn FileConnections>,
@@ -397,7 +398,7 @@ impl fmt::Debug for FileRoutes {
 /// A session advisory lock holds no database transaction during object I/O.
 impl FileRoutes {
     pub fn new(
-        release: Arc<LoadedRelease>,
+        context: Arc<wamn_runtime::invocation::ReleaseContext>,
         postgres: Arc<WamnPostgres>,
         blobstore: Arc<WamnBlobstore>,
         connections: Arc<dyn FileConnections>,
@@ -405,7 +406,8 @@ impl FileRoutes {
         administration_url: Option<String>,
     ) -> Self {
         Self {
-            release,
+            release: Arc::clone(&context.release),
+            context,
             postgres,
             blobstore,
             connections,
@@ -465,7 +467,7 @@ impl FileRoutes {
         )?;
         let store = self
             .blobstore
-            .file_store(&connection.name, connection.read_only)
+            .file_store(&self.context, &connection.name, connection.read_only)
             .await?;
         Ok((connection, store))
     }
@@ -739,7 +741,7 @@ impl FileRoutes {
         // Reads do not require a current application binding.
         let store = self
             .blobstore
-            .file_store(&connection.name, connection.read_only)
+            .file_store(&self.context, &connection.name, connection.read_only)
             .await?;
         store
             .signed_url(&row.blob_key, lifetime)
@@ -809,7 +811,10 @@ impl FileRoutes {
             })
             .collect();
         let headers = headers.map_err(|_| refused(FileRefusal::InvalidInput, "headers"))?;
-        let caller = match routing.authenticate(&id, &headers, &[]).await {
+        let caller = match routing
+            .authenticate(&self.release, &id, &headers, &[])
+            .await
+        {
             Ok(Some(caller)) => caller,
             Ok(None) => return Ok(response(401, &json!({"error":"unauthorized"}))),
             Err(error) => return Ok(response(error.status, &json!({"error":error.code}))),
@@ -1246,22 +1251,24 @@ mod tests {
             .unwrap(),
         );
         let release = release();
-        let blobstore = Arc::new(WamnBlobstore::new(
-            Arc::clone(&postgres),
-            Arc::new(ConnectionFacts::new(
-                Arc::new(ConnectionMemory::default()),
-                Publisher::default(),
-                Arc::new(ConnectionCredentials::empty()),
-                Arc::clone(&postgres),
-                "acme",
-                "project",
-                "dev",
-            )),
-            "project",
-            Arc::clone(&release),
-        ));
+        let context = Arc::new(
+            wamn_runtime::invocation::ReleaseContext::new(
+                Arc::clone(&release),
+                Arc::new(ConnectionFacts::new(
+                    Arc::new(ConnectionMemory::default()),
+                    Publisher::default(),
+                    Arc::new(ConnectionCredentials::empty()),
+                    &postgres,
+                    &release.target().project_env_key,
+                    "project",
+                    "dev",
+                )),
+            )
+            .unwrap(),
+        );
+        let blobstore = Arc::new(WamnBlobstore::new(Arc::clone(&postgres)));
         FileRoutes::new(
-            release,
+            context,
             postgres,
             blobstore,
             Arc::new(NoConnections),
@@ -1423,7 +1430,7 @@ mod tests {
     async fn native_listener_uses_shared_authentication_and_preserves_file_paths() {
         let files = Arc::new(files());
         let routing = Arc::new(
-            FlowHttpRouting::new(Some(Arc::clone(&files.release)))
+            FlowHttpRouting::for_test(Some(Arc::clone(&files.release)))
                 .with_authenticator(Arc::new(SessionWithoutGrant)),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1458,7 +1465,7 @@ mod tests {
     #[tokio::test]
     async fn native_download_refuses_anonymous_and_session_without_get_before_io() {
         let files = files();
-        let routing = FlowHttpRouting::new(Some(Arc::clone(&files.release)))
+        let routing = FlowHttpRouting::for_test(Some(Arc::clone(&files.release)))
             .with_authenticator(Arc::new(SessionWithoutGrant));
         let path = format!("/api/orders/files/{}", Uuid::new_v4());
         for (authorization, status) in [(None, 401), (Some("Bearer session"), 403)] {

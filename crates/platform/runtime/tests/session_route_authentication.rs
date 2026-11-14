@@ -34,7 +34,7 @@ mod session_fixture;
 use session_fixture::{AUDIENCE, ORG, Server, claims, header, signed};
 
 const PROJECT: &str = "project";
-const PROJECT_ENV_KEY: &str = "org-a";
+const PROJECT_ENV_KEY: &str = "org-a--dev--project";
 const ATTACHMENT: &str = "purchase-http";
 const READ_ROUTE: &str = "purchase-read-http";
 const WRITE_ROUTE: &str = "purchase-write-http";
@@ -239,7 +239,7 @@ fn routing(
     authentication: Arc<PlatformRouteAuthenticator>,
     modes: &[&str],
 ) -> anyhow::Result<FlowHttpRouting> {
-    Ok(FlowHttpRouting::new(Some(load_release(modes)?)).with_authenticator(authentication))
+    Ok(FlowHttpRouting::for_test(Some(load_release(modes)?)).with_authenticator(authentication))
 }
 
 async fn accepted(route: &FlowHttpRouting, body: &Value) -> AuthenticatedCaller {
@@ -382,7 +382,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     let reader = permission_reader(url.as_str())?;
     let authentication = Arc::new(PlatformRouteAuthenticator::for_test(
         Arc::clone(&reader),
-        PROJECT,
+        PROJECT_ENV_KEY,
         Some(identity_reader.clone()),
         Some(verifier.clone()),
     ));
@@ -450,10 +450,10 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     .await?;
     assert_eq!(granted.rows_added, 1, "the unserved reference is stored");
     let serving = load_release_serving(&["session"], &[READ, WRITE, APPROVE])?;
-    let later = FlowHttpRouting::new(Some(Arc::clone(&serving))).with_authenticator(Arc::new(
+    let later = FlowHttpRouting::for_test(Some(Arc::clone(&serving))).with_authenticator(Arc::new(
         PlatformRouteAuthenticator::for_test(
             permission_reader(url.as_str())?,
-            PROJECT,
+            PROJECT_ENV_KEY,
             Some(identity_reader),
             Some(verifier),
         ),

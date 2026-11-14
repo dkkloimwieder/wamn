@@ -121,7 +121,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         Arc::new(crate::connection_memory::ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(fixture.reader("host-project").await),
-        Arc::clone(&postgres),
+        &postgres,
         "acme--dev--host-project",
         "host-project",
         "dev",
@@ -131,9 +131,8 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .unwrap();
     let authentication = Arc::new(PlatformRouteAuthenticator::new(
         Arc::clone(&postgres),
-        facts,
-        "host-project",
-        Some((authority, None)),
+        [facts],
+        Some((authority, Default::default())),
     ));
     let routing = routing_policy(
         json!({"modes":["signature"],"header":"X-Signature","credential":"org:acme:webhook@2"}),

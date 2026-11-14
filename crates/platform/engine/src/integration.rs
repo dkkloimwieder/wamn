@@ -464,6 +464,19 @@ impl PreparedIntegration {
 pub trait ConnectionDispatch: std::fmt::Debug + Send + Sync {
     async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Integration>>>;
 
+    /// Dispatch with the host-owned scope of the calling store.
+    async fn call_scoped(
+        &self,
+        scope: Option<(&crate::invocation_scope::InvocationScopes, &str)>,
+        name: &str,
+        interface: &str,
+        function: &str,
+        parameters: &[Val],
+    ) -> anyhow::Result<Option<anyhow::Result<Vec<Val>>>> {
+        let _ = scope;
+        self.call(name, interface, function, parameters).await
+    }
+
     /// Dispatch a call, or return no value while the connection is unavailable.
     async fn call(
         &self,
@@ -571,49 +584,67 @@ impl IntegrationImports {
                         let label = label.to_owned();
                         let interface = interface.to_owned();
                         let name = function.to_owned();
-                        instance.func_new_async(function, move |_, _, parameters, results| {
-                            let dispatch = Arc::clone(&dispatch);
-                            let label = label.clone();
-                            let interface = interface.clone();
-                            let name = name.clone();
-                            Box::new(async move {
-                                let values = dispatch
-                                    .call(&label, &interface, &name, parameters)
-                                    .await
-                                    .and_then(|values| {
-                                        values.with_context(|| format!("unavailable: {label}"))
-                                    });
-                                let values = match values {
-                                    Ok(values) => values,
-                                    Err(error) => {
-                                        if unavailable {
-                                            tracing::warn!(
-                                                connection = label,
-                                                interface,
-                                                "integration did not resolve"
-                                            );
-                                            results[0] = Val::Result(Err(Some(Box::new(
-                                                Val::Variant("unavailable".to_owned(), None),
-                                            ))));
-                                            return Ok(());
+                        instance.func_new_async(
+                            function,
+                            move |store, _, parameters, results| {
+                                let ctx = &store.data().active_ctx;
+                                let scope = Arc::clone(&ctx.component_id);
+                                let scopes = ctx
+                                    .try_get_plugin::<crate::invocation_scope::InvocationScopes>(
+                                        crate::invocation_scope::INVOCATION_SCOPES_ID,
+                                    )
+                                    .ok();
+                                let dispatch = Arc::clone(&dispatch);
+                                let label = label.clone();
+                                let interface = interface.clone();
+                                let name = name.clone();
+                                Box::new(async move {
+                                    let values = dispatch
+                                        .call_scoped(
+                                            scopes
+                                                .as_deref()
+                                                .map(|scopes| (scopes, scope.as_ref())),
+                                            &label,
+                                            &interface,
+                                            &name,
+                                            parameters,
+                                        )
+                                        .await
+                                        .and_then(|values| {
+                                            values.with_context(|| format!("unavailable: {label}"))
+                                        });
+                                    let values = match values {
+                                        Ok(values) => values,
+                                        Err(error) => {
+                                            if unavailable {
+                                                tracing::warn!(
+                                                    connection = label,
+                                                    interface,
+                                                    "integration did not resolve"
+                                                );
+                                                results[0] = Val::Result(Err(Some(Box::new(
+                                                    Val::Variant("unavailable".to_owned(), None),
+                                                ))));
+                                                return Ok(());
+                                            }
+                                            return Err(wash_runtime::wasmtime::Error::msg(
+                                                format!("{error:#}"),
+                                            ));
                                         }
-                                        return Err(wash_runtime::wasmtime::Error::msg(format!(
-                                            "{error:#}"
-                                        )));
+                                    };
+                                    let values = values.map_err(|error| {
+                                        wash_runtime::wasmtime::Error::msg(format!("{error:#}"))
+                                    })?;
+                                    if values.len() != results.len() {
+                                        return Err(wash_runtime::wasmtime::Error::msg(
+                                            "integration result count mismatch",
+                                        ));
                                     }
-                                };
-                                let values = values.map_err(|error| {
-                                    wash_runtime::wasmtime::Error::msg(format!("{error:#}"))
-                                })?;
-                                if values.len() != results.len() {
-                                    return Err(wash_runtime::wasmtime::Error::msg(
-                                        "integration result count mismatch",
-                                    ));
-                                }
-                                results.clone_from_slice(&values);
-                                Ok(())
-                            })
-                        })?;
+                                    results.clone_from_slice(&values);
+                                    Ok(())
+                                })
+                            },
+                        )?;
                     }
                     ComponentItem::Type(_) => {}
                     _ => anyhow::bail!(

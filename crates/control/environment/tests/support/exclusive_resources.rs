@@ -256,7 +256,7 @@ impl Fixture {
             Arc::clone(&memory),
             changes,
             Arc::clone(&self.credentials),
-            Arc::clone(&self.postgres),
+            &self.postgres,
             "acme--dev--one",
             "one",
             "dev",

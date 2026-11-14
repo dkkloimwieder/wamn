@@ -10,7 +10,6 @@ use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::InvocationTrace;
 use wamn_engine::native_routes::DeliveryClass;
-use wamn_engine::release_manifest::LoadedRelease;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTable};
 
@@ -57,7 +56,7 @@ impl OperationMetrics {
 #[derive(Debug)]
 pub(super) struct OperationWorkload {
     start: (String, String),
-    release: Arc<LoadedRelease>,
+    context: Arc<crate::invocation::ReleaseContext>,
     identity: SessionIdentity,
     operations: BTreeMap<String, OperationAuthority>,
     members: PreparedStatementMembers,
@@ -122,11 +121,13 @@ impl WamnPostgres {
     pub fn bind_operation_workload(
         &self,
         workload: &str,
-        release: Arc<LoadedRelease>,
+        context: Arc<crate::invocation::ReleaseContext>,
         reference: &str,
         component_name: &str,
         identity: SessionIdentity,
     ) -> anyhow::Result<()> {
+        crate::invocation::validate_context(&identity, &context)?;
+        let release = &context.release;
         let entry = release
             .manifest()
             .composed_entry
@@ -138,7 +139,7 @@ impl WamnPostgres {
         );
         anyhow::ensure!(
             identity.project_env_key == release.target().project_env_key
-                && identity.release.as_ref() == Some(&ReleaseIdentity::from_loaded(&release)),
+                && identity.release.as_ref() == Some(&ReleaseIdentity::from_loaded(release)),
             "operation release mismatch"
         );
         let components = entry
@@ -240,11 +241,16 @@ impl WamnPostgres {
             !workloads.contains_key(workload),
             "operation workload already bound"
         );
+        self.scopes
+            .update::<crate::invocation::Authority, _>(workload, |record| {
+                record.identity = identity.clone();
+                record.context = Some(Arc::clone(&context));
+            });
         workloads.insert(
             workload.to_owned(),
             Arc::new(OperationWorkload {
                 start: (component_name.to_owned(), reference.to_owned()),
-                release,
+                context,
                 identity,
                 operations,
                 members: Self::prepare_statement_members(members),
@@ -256,6 +262,7 @@ impl WamnPostgres {
 
     /// Remove a completed or cancelled start's pending reference.
     pub fn forget_operation_start(&self, workload: &str) {
+        self.scopes.revoke(workload);
         self.operation_workloads
             .write()
             .expect("operation workloads lock poisoned")
@@ -281,6 +288,7 @@ impl WamnPostgres {
             anyhow::ensure!(started_name == name, "operation authority is entry-only");
             anyhow::ensure!(
                 entry
+                    .context
                     .release
                     .manifest()
                     .composed_entry
@@ -291,6 +299,11 @@ impl WamnPostgres {
                 "started entry reference differs from the release"
             );
         }
+        self.scopes
+            .update::<crate::invocation::Authority, _>(component, |record| {
+                record.identity = entry.identity.clone();
+                record.context = Some(Arc::clone(&entry.context));
+            });
         bound.insert(component.to_owned(), entry);
         Ok(())
     }
@@ -789,7 +802,7 @@ fn entry_invocation_span(
         .expect("operation workloads lock poisoned")
         .get(workload)
         .cloned()?;
-    let release = facts.release.target();
+    let release = facts.context.release.target();
     let span = wamn_engine::invocation_trace::invocation_span(
         &wamn_engine::invocation_trace::InvocationSite {
             project_env_key: &release.project_env_key,
@@ -837,6 +850,7 @@ async fn begin(
     // A present handle was issued for an attachment of this loaded release.
     if let Some(caller) = caller
         && facts
+            .context
             .release
             .manifest()
             .attachment(caller.attachment_id())
@@ -862,6 +876,7 @@ async fn begin(
     let authority = AuthorizedInvocation::enter(
         &postgres,
         InvocationRequest {
+            context: Some(Arc::clone(&facts.context)),
             scope: wamn_engine::operation::next_scope(workload).into_string(),
             identity,
             caller: caller.cloned(),
@@ -908,7 +923,7 @@ async fn begin(
     let claim = claim_operation(
         &open,
         admitted.transaction,
-        facts.release.manifest().routes.iter().any(|route| {
+        facts.context.release.manifest().routes.iter().any(|route| {
             route.operation == open.operation && route.type_ == wamn_catalog::OperationType::Delete
         }),
         request,

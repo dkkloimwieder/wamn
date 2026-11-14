@@ -455,7 +455,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         Arc::new(ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(authority.reader().await),
-        Arc::clone(&postgres),
+        &postgres,
         PROJECT_ENV_KEY,
         DEFAULT_PROJECT,
         ENVIRONMENT,
@@ -495,18 +495,21 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         closure: ConnectionExecutionClosure::Released,
         effects: None,
     };
+    wamn_runtime::invocation::bind_test_context(
+        &postgres,
+        COMPONENT_ID,
+        Arc::clone(&facts),
+        Arc::clone(&release),
+    );
     let plugin = ConnectionHttp::new(
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new().unwrap()),
-        Arc::clone(&facts),
-        DEFAULT_PROJECT,
         vec![
             format!("http://{}", listener.local_addr().unwrap())
                 .parse()
                 .unwrap(),
         ]
         .into(),
-        Arc::clone(&release),
     );
     postgres
         .bind_invocation(COMPONENT_ID, invocation.clone())
@@ -586,18 +589,21 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
             .unwrap(),
         ),
     };
+    wamn_runtime::invocation::bind_test_context(
+        &postgres,
+        COMPONENT_ID,
+        Arc::clone(&facts),
+        Arc::clone(&release),
+    );
     let plugin = ConnectionHttp::new(
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new().unwrap()),
-        Arc::clone(&facts),
-        DEFAULT_PROJECT,
         vec![
             format!("http://{}", listener.local_addr().unwrap())
                 .parse()
                 .unwrap(),
         ]
         .into(),
-        release,
     );
     postgres.bind_invocation(COMPONENT_ID, invocation).unwrap();
     assert!(matches!(
@@ -724,7 +730,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         Arc::new(ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(authority.reader().await),
-        Arc::clone(&postgres),
+        &postgres,
         PROJECT_ENV_KEY,
         DEFAULT_PROJECT,
         ENVIRONMENT,

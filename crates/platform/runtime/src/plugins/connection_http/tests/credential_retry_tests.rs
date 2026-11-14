@@ -28,7 +28,7 @@ async fn a_401_after_a_write_retries_once_with_the_new_basic_credential() {
         let (resume, arrival) = fixture.pause_next_response();
         let request = request();
         let (response, ()) = tokio::time::timeout(Duration::from_secs(10), async {
-            tokio::join!(plugin.send("instance", &request), async {
+            tokio::join!(plugin.send(&plugin.scope, &request), async {
                 arrival.await.unwrap();
                 fixture.write_basic().await;
                 resume.send(()).unwrap();
@@ -49,7 +49,7 @@ async fn a_401_without_a_change_returns_the_first_response_after_one_send() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(Vec::new(), vec![401, 200]).await;
     let plugin = fixture.basic_plugin().await;
-    let response = plugin.send("instance", &request()).await.unwrap();
+    let response = plugin.send(&plugin.scope, &request()).await.unwrap();
     assert_eq!(response.status, 401);
     assert_eq!(response.body, b"api-401");
     assert_eq!(fixture.counts(), (0, 1));

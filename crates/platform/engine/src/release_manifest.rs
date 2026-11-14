@@ -1,74 +1,9 @@
-//! A release manifest loaded once for the process.
+//! An immutable verified release for one project deployment and digest.
 //!
-//! A pod carries exactly one release, delivered by one of two carriers: the
-//! digest-addressed OCI release artifact its pod template names, pulled by
-//! `ReleaseManifestSource`,
-//! or an immutable digest-named ConfigMap projected at
-//! [`RELEASE_MANIFEST_MOUNT_PATH`]. Either way the bytes are the *sole* carrier
-//! of release identity. Loading derives the manifest digest from the verified
-//! content. The process keeps the parsed document for its lifetime.
-//!
-//! The manifest names no project or environment (R1): one release serves every
-//! environment it is published for. The host takes its [`ReleaseTarget`] from
-//! its own configuration and the loaded release carries it beside the bytes.
-//!
-//! # Process lifetime
-//!
-//! Do not add invalidation, a TTL, a refresh, an eviction policy, or a
-//! revalidation hook, and do not rename this a cache. The digest *is* the
-//! identity: different content is a different digest, a different ConfigMap, a
-//! different pod template, and therefore a different pod. There is no state in
-//! which the held manifest is stale with respect to the content it was derived
-//! from, so there is nothing to invalidate. `docs/deployment-simplification-
-//! spec.md`'s "cache forever" means exactly process-lifetime immutability, never
-//! durability.
-//!
-//! # Identity is derived, never asserted — and pod-to-release binding is the
-//! # pod template's, by ratified design
-//!
-//! There is deliberately no second carrier to test the manifest against, and no
-//! comparison of the bytes to the ConfigMap's own name. Such a test would not be
-//! a verification: the name inside the container is a string placed by the *same
-//! pod template* that mounts the bytes, so comparing them tests the template's
-//! internal consistency against itself. A pod cannot second-guess its own birth
-//! certificate.
-//!
-//! The pod template carries the OCI digest, and the registry supplies the bytes.
-//! `ReleaseManifestSource`
-//! refuses a digest mismatch before loading. The loaded release derives identity
-//! from content alone. It asserts nothing about the source of that content.
-//!
-//! What binds this pod to this release is the pod template, and that is not a gap
-//! — it is where the wasmCloud-v2 model assigns the fact. The template is
-//! GitOps-converged, revision-controlled and rollout-controlled; binding
-//! bytes-to-intent is Git's job, and Git already does it. In-container
-//! name-matching would rebuild, inside the pod, an attestation the deployment
-//! plane already owns.
-//!
-//! What *is* load-bearing survives, and it is stronger than a name test: the
-//! canonical round-trip confirms the mounted bytes are well-formed manifest content
-//! whose identity is computable. Corruption, truncation, or hand-editing either
-//! fails the parse or shifts the digest — and a shifted digest is not a
-//! masquerade, it is a correct name for different content, carried honestly into
-//! every run record and authority decision downstream. Malformed bytes mean the
-//! pod never goes Ready, which is the only refusal that means anything here.
-//!
-//! # The three enumerated readers
-//!
-//! Every reader consults this one instance by reference and none of them loads,
-//! parses, or digest-verifies a manifest of its own:
-//!
-//! 1. execution — the production router driver resolves the manifest's exact
-//!    component digests and wiring identity-version pairs.
-//! 2. flow-http routing — serves `RouteDefinition` from
-//!    [`ServingManifest::attachments`].
-//! 3. jetstream delivery — conditions delivery on
-//!    [`ServingManifest::registrations`].
-//!
-//! Reader 1 runs in the executor process; readers 2 and 3 run in the wash host.
-//! Those are separate processes and cannot share one object, so the
-//! rule is one instance *per process*: construct once, hand it out by reference,
-//! and never hold two.
+//! The manifest bytes determine release identity. The deployment supplies its
+//! trusted project, environment and application membership. Readers share this
+//! loaded instance while the release has active invocations or unfinished runs.
+//! Identical component bytes do not share deployment authority or credentials.
 
 use std::{path::Path, sync::Arc};
 
@@ -169,7 +104,7 @@ impl ReleaseTarget {
     }
 }
 
-/// The one loaded, verified serving manifest a pod resolves against.
+/// A verified serving manifest bound to one project deployment.
 #[derive(Debug)]
 pub struct LoadedRelease {
     release: CarriedRelease,
@@ -182,7 +117,7 @@ impl LoadedRelease {
     /// Load and verify from the standard mount path.
     ///
     /// A pod whose manifest is absent, unreadable, unparseable or non-canonical
-    /// must not serve, so every failure here is fatal to host construction.
+    /// must not serve that release. Other releases can continue.
     pub fn load(target: ReleaseTarget) -> Result<Self, ReleaseLoadError> {
         Self::load_from(Path::new(RELEASE_MANIFEST_MOUNT_PATH), target)
     }

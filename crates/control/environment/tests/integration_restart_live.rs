@@ -658,7 +658,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&leases))),
         wamn_broker::Publisher::default(),
         Arc::clone(&credentials),
-        Arc::clone(&postgres),
+        &postgres,
         "acme--dev--one",
         "one",
         "dev",

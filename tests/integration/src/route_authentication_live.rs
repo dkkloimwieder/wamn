@@ -331,7 +331,7 @@ async fn routing(
     loaded_release: Arc<LoadedRelease>,
 ) -> anyhow::Result<FlowHttpRouting> {
     Ok(
-        FlowHttpRouting::new(Some(loaded_release)).with_authenticator(Arc::new(
+        FlowHttpRouting::for_test(Some(loaded_release)).with_authenticator(Arc::new(
             PlatformRouteAuthenticator::for_test(postgres, PROJECT, Some(identity_reader), None),
         )),
     )
@@ -502,10 +502,10 @@ async fn assert_user_environment_membership(
     )?;
     let verifier =
         wamn_identity_protocol::verifier::SessionVerifier::new(server.cache().0, ORG, &audience)?;
-    let session_routing = FlowHttpRouting::new(Some(Arc::clone(&loaded_release)))
+    let session_routing = FlowHttpRouting::for_test(Some(Arc::clone(&loaded_release)))
         .with_authenticator(Arc::new(PlatformRouteAuthenticator::for_test(
             postgres,
-            PROJECT,
+            &project_env_key(),
             Some(identity_reader),
             Some(verifier),
         )));

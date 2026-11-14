@@ -29,6 +29,25 @@ type ResponsePause = (
     tokio::sync::oneshot::Receiver<()>,
 );
 
+pub(super) struct TestHttp {
+    http: ConnectionHttp,
+    facts: Arc<ConnectionFacts>,
+    release: Arc<LoadedRelease>,
+    oauth2: Arc<crate::oauth_token::Cache>,
+    pub(super) scope: String,
+}
+impl std::ops::DerefMut for TestHttp {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.http
+    }
+}
+impl std::ops::Deref for TestHttp {
+    type Target = ConnectionHttp;
+    fn deref(&self) -> &Self::Target {
+        &self.http
+    }
+}
+
 pub(super) struct Fixture {
     base: String,
     observed: Arc<Mutex<Vec<Observed>>>,
@@ -236,7 +255,7 @@ impl Fixture {
         }
     }
 
-    async fn plugin(&mut self, parameters: &serde_json::Value) -> ConnectionHttp {
+    async fn plugin(&mut self, parameters: &serde_json::Value) -> TestHttp {
         self.plugin_with_auth(
             parameters,
             "oauth2_client_credentials",
@@ -250,7 +269,7 @@ impl Fixture {
         parameters: &serde_json::Value,
         auth_type: &str,
         secret: &str,
-    ) -> ConnectionHttp {
+    ) -> TestHttp {
         use crate::plugins::wamn_postgres::{
             ClassCredentials, ProjectConfig, StaticCredentialProvider,
         };
@@ -379,7 +398,7 @@ impl Fixture {
                 Arc::new(ConnectionMemory::default()),
                 Publisher::default(),
                 Arc::new(self.credentials.reader("project-a").await),
-                Arc::clone(&postgres),
+                &postgres,
                 "acme--dev--project-a",
                 "project-a",
                 "dev",
@@ -388,31 +407,34 @@ impl Fixture {
                 crate::oauth_encryption::Envelope::from_file(self.key.path()).unwrap(),
             ))),
         );
-        postgres
-            .set_project_env_key("instance", "acme--dev--project-a")
-            .unwrap();
-        let plugin = ConnectionHttp::new(
-            postgres,
-            Arc::new(HttpTransport::new().unwrap()),
-            facts,
-            "project-a",
-            vec![self.base.strip_suffix("bound/").unwrap().parse().unwrap()].into(),
-            release,
+        let scope = uuid::Uuid::new_v4().to_string();
+        crate::invocation::bind_test_context(
+            &postgres,
+            &scope,
+            Arc::clone(&facts),
+            Arc::clone(&release),
         );
-        plugin
-            .postgres
-            .bind_invocation("instance", invocation)
-            .unwrap();
-        plugin
+        postgres.bind_invocation(&scope, invocation).unwrap();
+        TestHttp {
+            http: ConnectionHttp::new(
+                postgres,
+                Arc::new(HttpTransport::new().unwrap()),
+                vec![self.base.strip_suffix("bound/").unwrap().parse().unwrap()].into(),
+            ),
+            oauth2: facts.oauth_tokens(),
+            facts,
+            release,
+            scope,
+        }
     }
 
-    async fn other_host(&self, first: &ConnectionHttp) -> ConnectionHttp {
+    async fn other_host(&self, first: &TestHttp) -> TestHttp {
         let facts = Arc::new(
             ConnectionFacts::new(
                 Arc::new(ConnectionMemory::default()),
                 Publisher::default(),
                 Arc::new(self.credentials.reader("project-a").await),
-                Arc::clone(&first.postgres),
+                &first.postgres,
                 "acme--dev--project-a",
                 "project-a",
                 "dev",
@@ -421,15 +443,28 @@ impl Fixture {
                 crate::oauth_encryption::Envelope::from_file(self.key.path()).unwrap(),
             ))),
         );
-        let plugin = ConnectionHttp::new(
-            Arc::clone(&first.postgres),
-            Arc::new(HttpTransport::new().unwrap()),
-            facts,
-            "project-a",
-            Arc::clone(&first.allowed_hosts),
+        let scope = uuid::Uuid::new_v4().to_string();
+        crate::invocation::bind_test_context(
+            &first.postgres,
+            &scope,
+            Arc::clone(&facts),
             Arc::clone(&first.release),
         );
-        plugin
+        first
+            .postgres
+            .bind_invocation(&scope, first.postgres.invocation(&first.scope).unwrap())
+            .unwrap();
+        TestHttp {
+            http: ConnectionHttp::new(
+                Arc::clone(&first.postgres),
+                Arc::new(HttpTransport::new().unwrap()),
+                Arc::clone(&first.allowed_hosts),
+            ),
+            oauth2: facts.oauth_tokens(),
+            facts,
+            release: Arc::clone(&first.release),
+            scope,
+        }
     }
 
     fn pause_token(&self) -> ResponsePause {
@@ -439,7 +474,7 @@ impl Fixture {
         (resume, arrival)
     }
 
-    async fn due(&self, plugin: &ConnectionHttp) {
+    async fn due(&self, plugin: &TestHttp) {
         sqlx::query("UPDATE identity.oauth_token SET expires_at='-infinity'")
             .execute(
                 &mut wamn_postgres::connect(self.credentials.database.url())
@@ -467,7 +502,7 @@ impl Fixture {
         serde_json::from_slice(plaintext.expose()).unwrap()
     }
 
-    async fn use_project(&self, plugin: &mut ConnectionHttp, project: &str) {
+    async fn use_project(&self, plugin: &mut TestHttp, project: &str) {
         use wamn_engine::release_manifest::ReleaseTarget;
         let project_env_key = wamn_registry::project_env_key("acme", project, "dev");
         plugin.release = Arc::new(
@@ -486,7 +521,7 @@ impl Fixture {
                 Arc::new(ConnectionMemory::default()),
                 Publisher::default(),
                 Arc::new(self.credentials.reader(project).await),
-                Arc::clone(&plugin.postgres),
+                &plugin.postgres,
                 &project_env_key,
                 project,
                 "dev",
@@ -496,18 +531,15 @@ impl Fixture {
             ))),
         );
         plugin.oauth2 = plugin.facts.oauth_tokens();
-        plugin
-            .postgres
-            .set_project_env_key("instance", &project_env_key)
-            .unwrap();
-        plugin.project = project.into();
+        crate::invocation::bind_test_context(
+            &plugin.postgres,
+            &plugin.scope,
+            Arc::clone(&plugin.facts),
+            Arc::clone(&plugin.release),
+        );
     }
 
-    async fn send(
-        &self,
-        plugin: &ConnectionHttp,
-        handle: &str,
-    ) -> Result<Response, ConnectionError> {
+    async fn send(&self, plugin: &TestHttp, handle: &str) -> Result<Response, ConnectionError> {
         let request = Request {
             requirement: handle.into(),
             path_and_query: "/api".into(),
@@ -518,7 +550,7 @@ impl Fixture {
             }])
         };
         let before = format!("{request:?}");
-        let result = plugin.send("instance", &request).await;
+        let result = plugin.send(&plugin.scope, &request).await;
         for value in [before, format!("{result:?}")] {
             assert!(!value.contains(CLIENT_ID));
             assert!(!value.contains(CLIENT_SECRET));
@@ -536,7 +568,7 @@ impl Fixture {
         (tokens, observed.len() - tokens)
     }
 
-    pub(super) async fn basic_plugin(&mut self) -> ConnectionHttp {
+    pub(super) async fn basic_plugin(&mut self) -> TestHttp {
         self.plugin_with_auth(
             &serde_json::json!({}),
             "http_basic",
@@ -1078,7 +1110,7 @@ async fn credential_rotation_waits_for_refresh_and_removes_the_old_token() {
     let refresh = tokio::spawn(async move {
         refreshing
             .send(
-                "instance",
+                &refreshing.scope,
                 &Request {
                     requirement: "handle".into(),
                     path_and_query: "/api".into(),

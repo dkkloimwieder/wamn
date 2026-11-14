@@ -41,6 +41,7 @@ pub(super) struct NativePolicyResources {
     pub(super) logging: Arc<TracingLogger>,
     pub(super) connection_http: Arc<ConnectionHttp>,
     pub(super) blobstore: Arc<WamnBlobstore>,
+    pub(super) context: Arc<wamn_runtime::invocation::ReleaseContext>,
     pub(super) release: Arc<LoadedRelease>,
     pub(super) project: String,
 }
@@ -231,7 +232,13 @@ impl NativePolicy {
         anyhow::ensure!(
             fact.target.project_env_key == acquisition.identity.project_env_key
                 && acquisition.invocation.operation == operation
-                && acquisition.identity.project.as_deref() == Some(self.resources.project.as_str()),
+                && acquisition.identity.project.as_deref() == Some(self.resources.project.as_str())
+                && acquisition.identity.release.as_ref()
+                    == Some(
+                        &wamn_runtime::plugins::wamn_postgres::ReleaseIdentity::from_loaded(
+                            &self.resources.release
+                        )
+                    ),
             "native-invocation-component-identity-mismatch"
         );
         fact.operations
@@ -284,6 +291,7 @@ impl InvocationPolicy for NativePolicy {
         let authority = AuthorizedInvocation::enter(
             &self.resources.postgres,
             InvocationRequest {
+                context: Some(Arc::clone(&self.resources.context)),
                 scope: wamn_engine::operation::next_scope(&self.owner).into_string(),
                 identity,
                 caller: facts.caller.clone(),

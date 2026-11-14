@@ -181,7 +181,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
         )?;
     let release = Arc::new(LoadedRelease::control_root());
     let routing = Arc::new(
-        FlowHttpRouting::new(Some(Arc::clone(&release))).with_authenticator(Arc::new(
+        FlowHttpRouting::for_test(Some(Arc::clone(&release))).with_authenticator(Arc::new(
             ControlRouteAuthenticator::new(verifier, control.clone()),
         )),
     );

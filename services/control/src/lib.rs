@@ -380,7 +380,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     );
     let database: Arc<str> = database.into();
     let org: Arc<str> = config.org.into();
-    let routing = Arc::new(FlowHttpRouting::new(None));
+    let routing = Arc::new(FlowHttpRouting::new(Arc::default()));
     let listener = tokio::net::TcpListener::bind(config.http_addr).await?;
     let mut connections = tokio::task::JoinSet::new();
     let shutdown = shutdown();

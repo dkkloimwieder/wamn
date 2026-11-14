@@ -260,7 +260,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     }
     let authentication = Arc::new(PlatformRouteAuthenticator::for_test(
         postgres,
-        PROJECT,
+        PROJECT_ENV_KEY,
         Some(wamn_postgres::pool(admin_url, 4).await?),
         Some(verifier),
     ));
@@ -289,7 +289,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
                 json!({"receiving": {"packages": ["root", "child"]}}),
             )?),
     )?);
-    let route = FlowHttpRouting::new(Some(release)).with_authenticator(authentication);
+    let route = FlowHttpRouting::for_test(Some(release)).with_authenticator(authentication);
     Ok((server, route))
 }
 
@@ -1370,7 +1370,7 @@ async fn pat_caller(
                 json!({"receiving": {"packages": ["root", "child"]}}),
             )?),
     )?);
-    let routing = FlowHttpRouting::new(Some(release)).with_authenticator(Arc::new(
+    let routing = FlowHttpRouting::for_test(Some(release)).with_authenticator(Arc::new(
         PlatformRouteAuthenticator::for_test(postgres, PROJECT, Some(reader), None),
     ));
     routing

@@ -8,12 +8,26 @@ use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wit::WitWorld;
 
 use crate::invocation_trace::InvocationTrace;
+use crate::release_manifest::LoadedRelease;
+
+/// Host-owned authority exposes its release without coupling capability types.
+pub trait InvocationAuthority: Any + Send + Sync {
+    fn release(&self) -> Option<Arc<LoadedRelease>>;
+}
 
 pub const INVOCATION_SCOPES_ID: &str = "wamn:invocation-scopes";
 
+#[derive(Default)]
+struct ReleaseScope(Option<Arc<LoadedRelease>>);
+impl InvocationAuthority for ReleaseScope {
+    fn release(&self) -> Option<Arc<LoadedRelease>> {
+        self.0.as_ref().map(Arc::clone)
+    }
+}
+
 struct Record {
     trace: InvocationTrace,
-    authority: Box<dyn Any + Send + Sync>,
+    authority: Box<dyn InvocationAuthority>,
 }
 
 /// One registry shared by the host capability readers.
@@ -35,11 +49,13 @@ impl InvocationScopes {
             .records
             .read()
             .expect("invocation scopes lock poisoned");
-        Some(read(records.get(scope)?.authority.downcast_ref()?))
+        Some(read(
+            (records.get(scope)?.authority.as_ref() as &dyn Any).downcast_ref()?,
+        ))
     }
 
     /// Populate host-owned workload facts before execution.
-    pub fn update<T: Default + Send + Sync + 'static, R>(
+    pub fn update<T: Default + InvocationAuthority, R>(
         &self,
         scope: &str,
         update: impl FnOnce(&mut T) -> R,
@@ -53,8 +69,7 @@ impl InvocationScopes {
             authority: Box::<T>::default(),
         });
         update(
-            record
-                .authority
+            (record.authority.as_mut() as &mut dyn Any)
                 .downcast_mut()
                 .expect("scope authority type differs"),
         )
@@ -69,11 +84,13 @@ impl InvocationScopes {
             .records
             .write()
             .expect("invocation scopes lock poisoned");
-        Some(update(records.get_mut(scope)?.authority.downcast_mut()?))
+        Some(update(
+            (records.get_mut(scope)?.authority.as_mut() as &mut dyn Any).downcast_mut()?,
+        ))
     }
 
     /// Install an admitted invocation atomically and return its lifetime owner.
-    pub fn enter<T: Send + Sync + 'static>(
+    pub fn enter<T: InvocationAuthority>(
         self: &Arc<Self>,
         scope: String,
         authority: T,
@@ -98,6 +115,21 @@ impl InvocationScopes {
             registry: Arc::clone(self),
             id: scope,
         })
+    }
+
+    /// Bind a release for a workload that supplies no other capability authority.
+    pub fn bind_release(&self, scope: &str, release: Arc<LoadedRelease>) {
+        self.update::<ReleaseScope, _>(scope, |record| record.0 = Some(release));
+    }
+
+    /// Resolve the immutable release selected by the host for this scope.
+    pub fn release(&self, scope: &str) -> Option<Arc<LoadedRelease>> {
+        self.records
+            .read()
+            .expect("invocation scopes lock poisoned")
+            .get(scope)?
+            .authority
+            .release()
     }
 
     /// Record the execution span once native initialization completes.

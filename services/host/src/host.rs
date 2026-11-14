@@ -1188,7 +1188,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             memory,
             changes,
             Arc::clone(&credentials),
-            Arc::clone(&postgres),
+            &postgres,
             application.map_or("", |release| release.target().project_env_key.as_str()),
             &args.project,
             application.map_or("", |release| release.target().environment.as_str()),
@@ -1309,7 +1309,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         jetstream_config = jetstream_config.with_nats(data_nats_client.clone());
     }
     let jetstream = Arc::new(WamnJetstream::new(jetstream_config).await?);
-    let flow_http = FlowHttpRouting::new(release.clone());
+    let flow_http = FlowHttpRouting::new(Arc::clone(&postgres.scopes));
     // The auth memory is the replica of the NATS KV bucket wamn-auth, and
     // the host deletes the keys of its own writes there
     // (docs/architecture/execution.md#auth-memory).
@@ -1325,19 +1325,23 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // protected route refuses the same way on every host.
     let authenticator = PlatformRouteAuthenticator::new(
         Arc::clone(&postgres),
-        Arc::clone(&facts),
-        args.project.clone(),
-        identity_reader
-            .as_ref()
-            .map(|reader| (reader.clone(), session_verifier)),
+        [Arc::clone(&facts)],
+        identity_reader.as_ref().map(|reader| {
+            (
+                reader.clone(),
+                session_verifier
+                    .into_iter()
+                    .map(|verifier| (facts.project_env_key().to_owned(), verifier))
+                    .collect(),
+            )
+        }),
     );
     let flow_http = if reads_environment_status {
         flow_http
             .with_authenticator(Arc::new(authenticator))
-            .with_environment_status(Arc::new(EnvironmentStatusReader::new(
-                Arc::clone(&postgres),
-                args.project.clone(),
-            )))
+            .with_environment_status(Arc::new(EnvironmentStatusReader::new(Arc::clone(
+                &postgres,
+            ))))
     } else {
         flow_http.with_authenticator(Arc::new(authenticator))
     };
@@ -1353,15 +1357,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             environment: release.target().environment.clone(),
         });
         let blobstore = Arc::new(
-            wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
-                Arc::clone(&postgres),
-                Arc::clone(&facts),
-                args.project.clone(),
-                Arc::clone(release),
-            ),
+            wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+                &postgres,
+            )),
         );
         Arc::new(wamn_execution_host::file_route::FileRoutes::new(
-            Arc::clone(release),
+            Arc::clone(&operations.as_ref().expect("application operations").context),
             Arc::clone(&postgres),
             blobstore,
             connections,
@@ -1450,10 +1451,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         None
     };
 
-    if let (Some(integrations), Some(release)) = (&integrations, application) {
+    if let Some(integrations) = &integrations {
         plugins.push(Arc::new(wamn_runtime::integrations::IntegrationIngress {
-            integrations: Arc::clone(integrations),
-            release: Arc::clone(release),
+            interfaces: integrations.interfaces(),
+            scopes: Arc::clone(&postgres.scopes),
         }));
     }
 

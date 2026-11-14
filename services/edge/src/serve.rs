@@ -212,14 +212,16 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         .context("load the release application")?;
 
     let application = Arc::new(application);
-    let routing = FlowHttpRouting::new(Some(Arc::clone(release.release()))).with_authenticator(
-        Arc::new(EdgeAuthenticator::new(verifier, Arc::clone(&release))),
-    );
+    let scopes = Arc::new(wamn_engine::invocation_scope::InvocationScopes::default());
+    let routing = FlowHttpRouting::new(Arc::clone(&scopes)).with_authenticator(Arc::new(
+        EdgeAuthenticator::new(verifier, Arc::clone(&release)),
+    ));
     let operation = Arc::new(EdgeOperation::new(
         Arc::clone(&release),
         application,
         store,
         config.session.org.clone(),
+        Arc::clone(&scopes),
     ));
 
     let (stopping, stopped) = tokio::sync::watch::channel(false);
@@ -238,6 +240,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         .with_plugin(Arc::new(
             wash_runtime::plugin::wasi_config::DynamicConfig::builder().build(),
         ))?
+        .with_plugin(Arc::clone(&scopes) as Arc<dyn wash_runtime::plugin::HostPlugin>)?
         .with_plugin(Arc::new(routing))?
         .with_plugin(Arc::clone(&operation) as _)?
         .with_http_handler(ingress)

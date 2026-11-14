@@ -527,7 +527,7 @@ impl Fixture {
                     Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
                     wamn_broker::Publisher::default(),
                     Arc::new(ConnectionCredentials::empty()),
-                    Arc::clone(&self.postgres),
+                    &self.postgres,
                     self.release.target().project_env_key.as_str(),
                     PROJECT,
                     self.release.target().environment.as_str(),

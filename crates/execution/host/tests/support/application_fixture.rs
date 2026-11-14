@@ -26,7 +26,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 use super::session_fixture::{self, AUDIENCE, ORG, Server, claims};
 
 pub(super) const PROJECT: &str = "project";
-pub(super) const PROJECT_ENV_KEY: &str = "org-a";
+pub(super) const PROJECT_ENV_KEY: &str = "org-a--dev--project";
 pub(super) const READ: &str = "session-test:purchase/read@1.0.0";
 pub(super) const WRITE: &str = "session-test:purchase/write@1.0.0";
 pub(super) const MEMBER: &str = "34f2085c-19d8-474f-b87a-2a29a5357b9b";
@@ -330,14 +330,14 @@ pub(super) async fn application_host_with_release(
         &login(admin_url, &administration)?,
         Some(&login(admin_url, &guest)?),
     )?;
-    let routing = FlowHttpRouting::new(Some(Arc::clone(&release))).with_authenticator(Arc::new(
-        PlatformRouteAuthenticator::for_test(
+    let routing = FlowHttpRouting::for_test(Some(Arc::clone(&release))).with_authenticator(
+        Arc::new(PlatformRouteAuthenticator::for_test(
             Arc::clone(&postgres_credentials),
-            PROJECT,
+            PROJECT_ENV_KEY,
             Some(reader().await?),
             Some(verifier),
-        ),
-    ));
+        )),
+    );
     let delivery = HostRouteDelivery::new(
         Arc::clone(&release),
         HostRouteHandlers::Application {

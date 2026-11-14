@@ -577,7 +577,11 @@ impl HostRouteDelivery {
         }
         let authentication = match &self.control_authenticator {
             Some(authenticator) => authenticator.authenticate_control(id, read, &headers).await,
-            None => routing.authenticate(id, &headers, &bytes).await,
+            None => {
+                routing
+                    .authenticate(&self.release, id, &headers, &bytes)
+                    .await
+            }
         };
         let caller = match authentication {
             Ok(caller) => caller,

@@ -209,6 +209,7 @@ impl ReadState {
 pub struct Integrations {
     imports: HashMap<(String, String), Arc<IntegrationImports>>,
     declarations: HashMap<(String, String), HashSet<String>>,
+    resources: Arc<ReadResources>,
 }
 
 impl Integrations {
@@ -221,6 +222,12 @@ impl Integrations {
         registry: PackageRegistry,
         registry_credentials: RegistryCredentialSource,
     ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            facts.project_env_key() == release.target().project_env_key
+                && facts.environment() == release.target().environment
+                && facts.project() == project,
+            "integration project authority mismatch"
+        );
         let resources = Arc::new(ReadResources {
             facts,
             manifest_digest: release.release().manifest_digest.to_string(),
@@ -269,6 +276,7 @@ impl Integrations {
         Ok(Self {
             imports,
             declarations,
+            resources,
         })
     }
 
@@ -315,7 +323,10 @@ impl Integrations {
         }
         let names = routes.keys().cloned().collect();
         let imports = Arc::new(IntegrationImports::from_dispatch(
-            Arc::new(ComponentImports { routes }),
+            Arc::new(ComponentImports {
+                routes,
+                resources: Arc::clone(&self.resources),
+            }),
             interfaces,
         ));
         imports.add_to_linker(item, &names).await
@@ -328,11 +339,31 @@ fn host_interface(interface: &str) -> bool {
 
 #[derive(Debug)]
 struct ComponentImports {
+    resources: Arc<ReadResources>,
     routes: HashMap<String, Vec<Arc<IntegrationImports>>>,
 }
 
 #[async_trait::async_trait]
 impl ConnectionDispatch for ComponentImports {
+    async fn call_scoped(
+        &self,
+        scope: Option<(&wamn_engine::invocation_scope::InvocationScopes, &str)>,
+        name: &str,
+        interface: &str,
+        function: &str,
+        parameters: &[wasmtime::component::Val],
+    ) -> anyhow::Result<Option<anyhow::Result<Vec<wasmtime::component::Val>>>> {
+        let (scopes, scope) = scope.context("integration call has no scope")?;
+        let context = crate::invocation::context(scopes, scope)?;
+        anyhow::ensure!(
+            Arc::ptr_eq(&context.connections, &self.resources.facts)
+                && context.release.release().manifest_digest.as_str()
+                    == self.resources.manifest_digest,
+            "integration invocation release mismatch"
+        );
+        self.call(name, interface, function, parameters).await
+    }
+
     async fn call(
         &self,
         name: &str,
@@ -373,8 +404,8 @@ impl ConnectionDispatch for ComponentImports {
 /// Typed imports of the native HTTP entry, targeted to its component owners.
 #[derive(Debug)]
 pub struct IntegrationIngress {
-    pub integrations: Arc<Integrations>,
-    pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
+    pub scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
+    pub interfaces: HashSet<wash_runtime::wit::WitInterface>,
 }
 
 #[async_trait::async_trait]
@@ -384,7 +415,7 @@ impl wash_runtime::plugin::HostPlugin for IntegrationIngress {
     }
     fn world(&self) -> wash_runtime::wit::WitWorld {
         wash_runtime::wit::WitWorld {
-            imports: self.integrations.interfaces(),
+            imports: self.interfaces.clone(),
             exports: HashSet::new(),
         }
     }
@@ -397,7 +428,21 @@ impl wash_runtime::plugin::HostPlugin for IntegrationIngress {
         item: &mut wash_runtime::engine::workload::WorkloadItem<'a>,
         _: wash_runtime::plugin::WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        let manifest = self.release.manifest();
+        let scope = match &*item {
+            wash_runtime::engine::workload::WorkloadItem::Component(component) => {
+                component.workload_id()
+            }
+            wash_runtime::engine::workload::WorkloadItem::Service(_) => {
+                anyhow::bail!("integration ingress requires a component")
+            }
+        };
+        let context = crate::invocation::context(&self.scopes, scope)?;
+        let release = &context.release;
+        let integrations = context
+            .integrations
+            .get()
+            .context("deployment integrations are absent")?;
+        let manifest = release.manifest();
         anyhow::ensure!(
             manifest.composed_entry.is_some(),
             "integration ingress requires a composed entry"
@@ -407,14 +452,14 @@ impl wash_runtime::plugin::HostPlugin for IntegrationIngress {
             .context("integration entry has no composing member")?
             .package_id;
         let application =
-            wamn_catalog::application_for_package(&self.release.target().applications, package)
+            wamn_catalog::application_for_package(&release.target().applications, package)
                 .context("integration entry application is ambiguous")?;
         let owners = manifest
             .components
             .iter()
             .filter(|component| {
                 wamn_catalog::application_for_package(
-                    &self.release.target().applications,
+                    &release.target().applications,
                     &component.package_id,
                 ) == Some(application)
             })
@@ -425,6 +470,6 @@ impl wash_runtime::plugin::HostPlugin for IntegrationIngress {
                 )
             })
             .collect::<Vec<_>>();
-        self.integrations.add_to_linker(item, &owners).await
+        integrations.add_to_linker(item, &owners).await
     }
 }

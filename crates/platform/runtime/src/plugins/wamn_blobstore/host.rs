@@ -426,13 +426,25 @@ where
             let mut observed = EffectOutcomeGuard::new(&span, evidence);
             let started = std::time::Instant::now();
             let outcome = effect.instrument(span).await;
-            crate::plugins::effect_span::record_effect_ms(
-                &crate::plugins::effect_span::BLOBSTORE_DURATION_MS,
-                crate::plugins::effect_span::EFFECT_OPERATION,
-                operation,
-                &plugin.project,
-                started.elapsed(),
-            );
+            let record_duration = |project: &str| {
+                crate::plugins::effect_span::record_effect_ms(
+                    &crate::plugins::effect_span::BLOBSTORE_DURATION_MS,
+                    crate::plugins::effect_span::EFFECT_OPERATION,
+                    operation,
+                    project,
+                    started.elapsed(),
+                );
+            };
+            if plugin
+                .postgres
+                .scopes
+                .read::<crate::invocation::Authority, _>(&component_id, |record| {
+                    record_duration(record.identity.project.as_deref().unwrap_or(""));
+                })
+                .is_none()
+            {
+                record_duration("");
+            }
             let observation = store_outcome(outcome.as_ref().err());
             observed.settle(observation, outcome.is_err());
             if let Err(error) = &outcome {

@@ -257,20 +257,22 @@ async fn fixture() -> (
         row_limit: 10,
     })
     .unwrap();
+    let postgres = Arc::new(postgres);
     postgres
         .bind_operation_workload(
             WORKLOAD,
-            Arc::clone(&release),
+            test_context(&postgres, Arc::clone(&release)),
             &entry_start(&release),
             "entry",
             SessionIdentity {
                 project_env_key: PROJECT_ENV_KEY.into(),
+                project: Some(super::super::DEFAULT_PROJECT.into()),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
                 ..SessionIdentity::default()
             },
         )
         .unwrap();
-    (database, Arc::new(postgres), release)
+    (database, postgres, release)
 }
 
 async fn run_guest(postgres: Arc<WamnPostgres>, release: Arc<LoadedRelease>, mode: u32) {
@@ -306,7 +308,7 @@ async fn run_guest(postgres: Arc<WamnPostgres>, release: Arc<LoadedRelease>, mod
         ),
         (
             FLOW_HTTP_ROUTING_ID,
-            Arc::new(FlowHttpRouting::new(Some(release))) as Arc<dyn HostPlugin>,
+            Arc::new(FlowHttpRouting::for_test(Some(release))) as Arc<dyn HostPlugin>,
         ),
     ]);
     let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
@@ -370,11 +372,12 @@ fn offline_fixture() -> (Arc<WamnPostgres>, Arc<LoadedRelease>) {
     postgres
         .bind_operation_workload(
             WORKLOAD,
-            Arc::clone(&release),
+            test_context(&postgres, Arc::clone(&release)),
             &entry_start(&release),
             "entry",
             SessionIdentity {
                 project_env_key: PROJECT_ENV_KEY.into(),
+                project: Some(super::super::DEFAULT_PROJECT.into()),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
                 ..SessionIdentity::default()
             },
@@ -698,8 +701,10 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
         row_limit: 10,
     })
     .unwrap();
+    let postgres = Arc::new(postgres);
     let identity = SessionIdentity {
         project_env_key: PROJECT_ENV_KEY.into(),
+        project: Some(super::super::DEFAULT_PROJECT.into()),
         release: Some(ReleaseIdentity::from_loaded(&release)),
         ..SessionIdentity::default()
     };
@@ -707,7 +712,7 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
         postgres
             .bind_operation_workload(
                 WORKLOAD,
-                Arc::clone(&release),
+                test_context(&postgres, Arc::clone(&release)),
                 "registry.example/other@sha256:bad",
                 "entry",
                 identity.clone()
@@ -717,7 +722,7 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
     postgres
         .bind_operation_workload(
             WORKLOAD,
-            Arc::clone(&release),
+            test_context(&postgres, Arc::clone(&release)),
             &entry_start(&release),
             "entry",
             identity,
@@ -749,4 +754,20 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
             .bind_entry_instance(WORKLOAD, "late-instance", "entry")
             .is_err()
     );
+}
+
+fn test_context(
+    postgres: &Arc<WamnPostgres>,
+    release: Arc<LoadedRelease>,
+) -> Arc<crate::invocation::ReleaseContext> {
+    let facts = Arc::new(crate::connection_facts::ConnectionFacts::new(
+        Arc::new(crate::connection_memory::ConnectionMemory::default()),
+        wamn_broker::Publisher::default(),
+        Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
+        postgres,
+        &release.target().project_env_key,
+        super::super::DEFAULT_PROJECT,
+        &release.target().environment,
+    ));
+    Arc::new(crate::invocation::ReleaseContext::new(release, facts).unwrap())
 }

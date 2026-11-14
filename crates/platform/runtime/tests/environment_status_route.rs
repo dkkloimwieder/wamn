@@ -26,7 +26,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 
 const PROJECT: &str = "project";
-const PROJECT_ENV_KEY: &str = "org-a";
+const PROJECT_ENV_KEY: &str = "org-a--dev--project";
 const ROUTE: &str = "purchase-read-http";
 const READ: &str = "status-test:purchase/read@1.0.0";
 const PASSWORD: &str = "environment-status-test-only";
@@ -156,17 +156,14 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     let reader = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(projects, None),
     )));
-    let route = FlowHttpRouting::new(Some(release()?))
+    let route = FlowHttpRouting::for_test(Some(release()?))
         .with_authenticator(Arc::new(PlatformRouteAuthenticator::for_test(
             Arc::clone(&reader),
             "host-project",
             None,
             None,
         )))
-        .with_environment_status(Arc::new(EnvironmentStatusReader::new(
-            Arc::clone(&reader),
-            PROJECT.to_owned(),
-        )));
+        .with_environment_status(Arc::new(EnvironmentStatusReader::new(Arc::clone(&reader))));
 
     // No row means active, and an anonymous route admits no caller.
     assert_eq!(admitted(&route).await, Ok(false));

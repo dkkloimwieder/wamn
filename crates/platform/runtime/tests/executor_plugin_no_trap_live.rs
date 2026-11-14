@@ -45,11 +45,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use wamn_broker::Publisher;
 use wamn_engine::engine::build_engine;
-use wamn_runtime::connection_credentials::ConnectionCredentials;
-use wamn_runtime::connection_facts::ConnectionFacts;
-use wamn_runtime::connection_memory::ConnectionMemory;
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
 use wamn_runtime::plugins::wamn_postgres::{
     self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
@@ -478,18 +474,7 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
             wamn_runtime::plugins::connection_http::transport::HttpTransport::new()
                 .expect("HTTP transport"),
         ),
-        Arc::new(ConnectionFacts::new(
-            Arc::new(ConnectionMemory::default()),
-            Publisher::default(),
-            Arc::new(ConnectionCredentials::empty()),
-            postgres,
-            "org-a",
-            "fixture",
-            "test",
-        )),
-        "fixture",
         allowed_hosts,
-        connection_http::test_release("org-a"),
     ));
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(

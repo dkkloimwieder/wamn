@@ -83,14 +83,12 @@ impl Fixture {
             Arc::clone(&self.memory),
             self.changes.clone(),
             Arc::new(self.credentials.reader(project).await),
-            Arc::clone(&postgres),
+            &postgres,
             &wamn_registry::project_env_key("acme", project, "dev"),
             project,
             "dev",
         ));
-        Arc::new(PlatformRouteAuthenticator::new(
-            postgres, facts, project, None,
-        ))
+        Arc::new(PlatformRouteAuthenticator::new(postgres, [facts], None))
     }
 
     async fn plugin(&mut self, secret: &str, project: &str) -> FlowHttpRouting {

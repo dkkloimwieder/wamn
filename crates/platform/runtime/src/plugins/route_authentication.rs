@@ -86,32 +86,29 @@ pub fn role_caller(
 /// memory](crate::auth_cache).
 pub struct EnvironmentStatusReader {
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-    project: String,
 }
 
 impl std::fmt::Debug for EnvironmentStatusReader {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("EnvironmentStatusReader")
-            .field("project", &self.project)
             .finish_non_exhaustive()
     }
 }
 
 impl EnvironmentStatusReader {
-    pub fn new(
-        postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-        project: String,
-    ) -> Self {
-        Self { postgres, project }
+    pub fn new(postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>) -> Self {
+        Self { postgres }
     }
 }
 
 #[async_trait::async_trait]
 impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusReader {
     async fn inactive(&self, project_env_key: &str) -> anyhow::Result<bool> {
+        let target = wamn_registry::name::parse_project_env_key(project_env_key)
+            .ok_or_else(|| anyhow::anyhow!("invalid project deployment key"))?;
         self.postgres
-            .environment_inactive(&self.project, project_env_key)
+            .environment_inactive(&target.project, project_env_key)
             .await
     }
 }
@@ -120,33 +117,36 @@ impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusRead
 #[derive(Debug)]
 pub struct PlatformRouteAuthenticator {
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-    facts: Arc<ConnectionFacts>,
-    project: Box<str>,
+    projects: std::collections::HashMap<String, Arc<ConnectionFacts>>,
     identity_reader: Option<sqlx::PgPool>,
-    verifier: Option<SessionVerifier<IssuerKeys>>,
+    verifiers: std::collections::HashMap<String, SessionVerifier<IssuerKeys>>,
 }
 
 impl PlatformRouteAuthenticator {
     /// Bind the host's project and optional identity reader and session verifier.
     pub fn new(
         postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-        facts: Arc<ConnectionFacts>,
-        project: impl Into<Box<str>>,
-        identity: Option<(sqlx::PgPool, Option<SessionVerifier<IssuerKeys>>)>,
+        facts: impl IntoIterator<Item = Arc<ConnectionFacts>>,
+        identity: Option<(
+            sqlx::PgPool,
+            std::collections::HashMap<String, SessionVerifier<IssuerKeys>>,
+        )>,
     ) -> Self {
-        let (identity_reader, verifier) = match identity {
-            Some((reader, verifier)) => {
+        let (identity_reader, verifiers) = match identity {
+            Some((reader, verifiers)) => {
                 postgres.set_hierarchy_reader(reader.clone());
-                (Some(reader), verifier)
+                (Some(reader), verifiers)
             }
-            None => (None, None),
+            None => (None, std::collections::HashMap::new()),
         };
         Self {
             postgres,
-            facts,
-            project: project.into(),
+            projects: facts
+                .into_iter()
+                .map(|facts| (facts.project_env_key().to_owned(), facts))
+                .collect(),
             identity_reader,
-            verifier,
+            verifiers,
         }
     }
 
@@ -154,29 +154,28 @@ impl PlatformRouteAuthenticator {
     #[cfg(any(test, feature = "test-util"))]
     pub fn for_test(
         postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-        project: &str,
+        project_env_key: &str,
         identity_reader: Option<sqlx::PgPool>,
         verifier: Option<SessionVerifier<IssuerKeys>>,
     ) -> Self {
-        let facts = Arc::new(ConnectionFacts::new(
-            Arc::new(crate::connection_memory::ConnectionMemory::default()),
-            wamn_broker::Publisher::default(),
-            Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
-            Arc::clone(&postgres),
-            "test",
-            project,
-            "dev",
-        ));
         Self::new(
             postgres,
-            facts,
-            project,
-            identity_reader.map(|reader| (reader, verifier)),
+            [],
+            identity_reader.map(|reader| {
+                (
+                    reader,
+                    verifier
+                        .into_iter()
+                        .map(|verifier| (project_env_key.to_owned(), verifier))
+                        .collect(),
+                )
+            }),
         )
     }
 
     async fn authenticate_signature(
         &self,
+        facts: &ConnectionFacts,
         header: &str,
         credential: &str,
         headers: &[Header],
@@ -201,7 +200,6 @@ impl PlatformRouteAuthenticator {
             return Err(signature_unauthorized());
         }
         let signature = hex::decode(signature).map_err(|_| signature_unauthorized())?;
-        let facts = &self.facts;
         let name = facts
             .reader()
             .connection_name(credential)
@@ -246,10 +244,14 @@ impl PlatformRouteAuthenticator {
         attachment_id: &str,
         token: &str,
         cookie_headers: Option<(&[Header], bool)>,
+        project: &str,
         project_env_key: &str,
         environment: &str,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
-        let verifier = self.verifier.as_ref().ok_or_else(unauthorized)?;
+        let verifier = self
+            .verifiers
+            .get(project_env_key)
+            .ok_or_else(unauthorized)?;
         let identity_reader = self.identity_reader.as_ref().ok_or_else(unauthorized)?;
         let (principal, permissions) = admit_session(
             verifier,
@@ -258,7 +260,7 @@ impl PlatformRouteAuthenticator {
             async |claims| {
                 self.postgres
                     .session_operation_permissions(
-                        &self.project,
+                        project,
                         project_env_key,
                         &claims.roles,
                         &claims.sub,
@@ -289,7 +291,7 @@ impl PlatformRouteAuthenticator {
                         .await
                         .map_err(|_| authentication_unavailable())?,
                     claims,
-                    &self.project,
+                    project,
                     environment,
                 )
                 .await
@@ -344,11 +346,24 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
         &self,
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
+        let coordinate =
+            wamn_registry::name::parse_project_env_key(&request.target.project_env_key)
+                .filter(|coordinate| coordinate.env.as_str() == request.target.environment)
+                .ok_or_else(authentication_unavailable)?;
+        let project = coordinate.project.as_str();
         if let AttachmentAuthPolicy::Signature { header, credential } = request.policy {
             let principal = self
-                .authenticate_signature(header, credential, request.headers, request.body)
+                .authenticate_signature(
+                    self.projects
+                        .get(&request.target.project_env_key)
+                        .ok_or_else(signature_unauthorized)?
+                        .as_ref(),
+                    header,
+                    credential,
+                    request.headers,
+                    request.body,
+                )
                 .await?;
-            let project = &self.project;
             let id = principal.to_string();
             let principal = id
                 .parse::<wamn_identity_protocol::PrincipalId>()
@@ -387,6 +402,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     attachment_id,
                     token,
                     csrf.map(|required| (headers, required)),
+                    project,
                     &target.project_env_key,
                     &target.environment,
                 )
@@ -436,7 +452,10 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         .strip_prefix("connection-")
                         .and_then(|id| id.parse::<uuid::Uuid>().ok())
                         .ok_or_else(unauthorized)?;
-                    let facts = &self.facts;
+                    let facts = self
+                        .projects
+                        .get(&target.project_env_key)
+                        .ok_or_else(unauthorized)?;
                     let active = facts
                         .connection(&connection)
                         .await
@@ -454,7 +473,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             // A service receives its roles through `wamn-ctl grant-role`.
             let permissions = self
                 .postgres
-                .user_operation_permissions(&self.project, &target.project_env_key, principal.id())
+                .user_operation_permissions(project, &target.project_env_key, principal.id())
                 .instrument(tracing::info_span!("wamn.auth.permissions"))
                 .await
                 .map_err(|error| {
@@ -676,7 +695,7 @@ pub(crate) mod tests {
             ),
         )
         .expect("fixture manifest loads");
-        FlowHttpRouting::new(Some(Arc::new(release))).with_authenticator(Arc::new(
+        FlowHttpRouting::for_test(Some(Arc::new(release))).with_authenticator(Arc::new(
             PlatformRouteAuthenticator::for_test(
                 Arc::new(crate::plugins::wamn_postgres::WamnPostgres::with_provider(
                     Arc::new(
