@@ -101,6 +101,7 @@ return_self_not_must_use = "allow"#   8. Library-API concern, as above.
 assert_is_empty = "allow"
 
 [workspace.dependencies]
+jmespath = "0.5.0"
 wamn-postgres = { path = "crates/platform/postgres", version = "0.1.0" }
 
 quote = "1"
@@ -243,11 +244,9 @@ wamn-environment = { path = "crates/control/environment", version = "0.1.0" }
 wamn-dev-control = { path = "crates/control/dev", version = "0.1.0" }
 wamn-control-provision = { path = "crates/control/provision", version = "0.1.0" }
 wamn-registry = { path = "crates/control/registry", version = "0.1.0" }
-wamn-event-reg = { path = "apps/platform/events/registration", version = "0.1.0" }
 wamn-event-wire = { path = "apps/platform/events/wire", version = "0.1.0" }
 wamn-engine = { path = "crates/platform/engine", version = "0.1.0" }
 wamn-execution-host = { path = "crates/execution/host", version = "0.1.0" }
-wamn-materializer = { path = "apps/platform/events/materializer", version = "0.1.0" }
 postgres-protocol = "0.6.12"
 wamn-number-pattern = { path = "crates/platform/number-pattern", version = "0.1.0" }
 wamn-platform-identity = { path = "crates/identity/platform", version = "0.1.0" }

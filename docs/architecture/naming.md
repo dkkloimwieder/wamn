@@ -66,7 +66,7 @@ The platform reserves the principal namespace `wamn:`.
 A platform component writes under the `platform."user"` row named `wamn:<component>`.
 The component is kebab-case and carries no action and no version.
 The row names the component, never the invocation.
-The closed component list is `provisioning`, `apply-package`, `materializer`, `executor`, and `audit-retention`.
+The closed component list is `provisioning`, `apply-package`, `executor`, and `audit-retention`.
 A project or application cannot create a `wamn:` name.
 
 Every environment also holds one `service` user named `workflow`, which runs workflows.

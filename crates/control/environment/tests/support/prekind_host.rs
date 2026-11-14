@@ -825,7 +825,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             wiring,
             &wiring.wiring_id,
             &[],
-            wamn_environment::author_workflow::WorkflowTrigger::Manual,
+            wamn_workflow::author_workflow::WorkflowTrigger::Manual,
             None,
         )
         .await?;

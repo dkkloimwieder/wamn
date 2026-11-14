@@ -5651,7 +5651,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-engine",
  "wamn-environment",
- "wamn-event-reg",
+ "wamn-event-wire",
  "wamn-execution-host",
  "wamn-identity-client",
  "wamn-identity-protocol",
@@ -5912,7 +5912,6 @@ dependencies = [
  "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
- "wamn-event-reg",
  "wamn-event-wire",
  "wamn-execution-host",
  "wamn-fixture-package",
@@ -5936,16 +5935,6 @@ dependencies = [
  "wat",
  "wit-component 0.254.2",
  "wit-parser 0.254.2",
-]
-
-[[package]]
-name = "wamn-event-reg"
-version = "0.1.0"
-dependencies = [
- "jmespath",
- "serde",
- "serde_json",
- "wamn-event-wire",
 ]
 
 [[package]]
@@ -6231,17 +6220,6 @@ dependencies = [
  "url",
  "uuid",
  "wamn-registry",
-]
-
-[[package]]
-name = "wamn-materializer"
-version = "0.1.0"
-dependencies = [
- "jmespath",
- "serde",
- "serde_json",
- "wamn-event-reg",
- "wamn-event-wire",
 ]
 
 [[package]]
@@ -6574,7 +6552,6 @@ dependencies = [
  "wamn-event-wire",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-materializer",
  "wamn-number-pattern",
  "wamn-package-artifact",
  "wamn-platform-identity",
@@ -6741,8 +6718,10 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "jmespath",
  "opentelemetry",
  "opentelemetry_sdk",
+ "postgres-protocol",
  "serde",
  "serde_json",
  "sqlx",
@@ -6751,6 +6730,7 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
+ "uuid",
  "wamn-broker",
  "wamn-catalog",
  "wamn-compiler",
@@ -6761,9 +6741,10 @@ dependencies = [
  "wamn-event-wire",
  "wamn-execution-host",
  "wamn-identity-protocol",
- "wamn-materializer",
  "wamn-platform-identity",
+ "wamn-platform-install",
  "wamn-postgres",
+ "wamn-registry",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-test-infrastructure",

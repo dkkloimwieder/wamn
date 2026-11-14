@@ -53,40 +53,6 @@ pub struct DevEnvironmentInputs {
     pub cdc_reader: Option<super::config::CdcReader>,
 }
 
-/// The host configuration file inside the private root.
-const HOST_CONFIG_FILE: &str = "host-config.yaml";
-
-/// Write the host configuration file with the `plugins` entry that the
-/// release chart declares (docs/plan/alignment.md R6). Its `events` binding
-/// inherits the host's data connection, as in the cluster.
-fn write_host_config(root: &Path, identity: &DevActivationIdentity) -> anyhow::Result<PathBuf> {
-    use std::io::Write as _;
-    use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
-
-    let plugins = wamn_release_control::release_chart::events_plugin(
-        &identity.org,
-        &identity.project,
-        identity.environment.as_str(),
-    )?;
-    let mut host = serde_yaml::Mapping::new();
-    host.insert("plugins".into(), plugins);
-    let mut config = serde_yaml::Mapping::new();
-    config.insert("host".into(), serde_yaml::Value::Mapping(host));
-    let path = root.join(HOST_CONFIG_FILE);
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&path)
-        .with_context(|| format!("create {}", path.display()))?;
-    // A file left by an earlier run keeps its old mode, so set it again.
-    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    file.write_all(serde_yaml::to_string(&config)?.as_bytes())
-        .with_context(|| format!("write {}", path.display()))?;
-    Ok(path)
-}
-
 /// Everything the strict `wamn dev` configuration is written from.
 #[expect(
     missing_debug_implementations,
@@ -440,7 +406,6 @@ pub struct JourneyCredentials {
     pub guest_sql: String,
     pub migration: String,
     pub executor_platform: String,
-    pub event_materializer: String,
     pub http_admitter: String,
     pub administration: String,
     pub identity_reader: String,
@@ -459,7 +424,6 @@ pub async fn prepare_journey_credentials(
         guest_sql: workload(project_url, coordinate, Family::App).await?,
         migration: workload(project_url, coordinate, Family::Migration).await?,
         executor_platform: workload(project_url, coordinate, Family::ExecutorPlatform).await?,
-        event_materializer: workload(project_url, coordinate, Family::EventMaterializer).await?,
         http_admitter: workload(project_url, coordinate, Family::HttpAdmitter).await?,
         administration: workload(project_url, coordinate, Family::Administration).await?,
         identity_reader: workload(system_url, coordinate, Family::IdentityReader).await?,
@@ -669,7 +633,6 @@ pub fn write_dev_config(
     // compilation cache is the point of keeping it.
     std::fs::create_dir_all(&wasmtime_cache)
         .context("create the product-command Wasmtime cache")?;
-    let host_config = write_host_config(root, identity)?;
     let mut config = serde_json::json!({
         "target_database_url": route.database_url.as_str(),
         "migration_database_url": credentials.migration.as_str(),
@@ -679,7 +642,6 @@ pub fn write_dev_config(
         "guest_database_url": credentials.guest_sql.as_str(),
         "executor_platform_database_url": credentials.executor_platform.as_str(),
         "http_admitter_database_url": credentials.http_admitter.as_str(),
-        "event_materializer_database_url": credentials.event_materializer.as_str(),
         "administration_database_url": credentials.administration.as_str(),
         "scheduler_nats_url": inputs.nats.nats_url.as_str(),
         "nats_tls_ca": &inputs.nats.nats_tls_ca,
@@ -703,7 +665,6 @@ pub fn write_dev_config(
         "runner": identity.runner.as_str(),
         "host_binary": &inputs.host_binary,
         "wasmtime_cache_dir": wasmtime_cache,
-        "host_config_file": host_config,
     });
     // A separate insert keeps the literal above inside the json! recursion limit.
     config["platform_domain"] = inputs.platform_domain.as_str().into();

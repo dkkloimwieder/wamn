@@ -20,7 +20,7 @@ pub struct HostCredential {
 
 /// Environment credentials in host variable order, followed by the CDC reader.
 /// Secret names derive from the family and environment coordinate.
-pub const HOST_CREDENTIALS: [HostCredential; 9] = [
+pub const HOST_CREDENTIALS: [HostCredential; 8] = [
     HostCredential {
         family: WorkloadRoleFamily::Query,
         host_variable: None,
@@ -49,11 +49,6 @@ pub const HOST_CREDENTIALS: [HostCredential; 9] = [
     HostCredential {
         family: WorkloadRoleFamily::HttpAdmitter,
         host_variable: Some("WAMN_HTTP_ADMITTER_PG_URL"),
-        database: CredentialDatabase::Project,
-    },
-    HostCredential {
-        family: WorkloadRoleFamily::EventMaterializer,
-        host_variable: Some("WAMN_EVENT_MATERIALIZER_PG_URL"),
         database: CredentialDatabase::Project,
     },
     HostCredential {

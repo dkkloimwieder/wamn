@@ -64,7 +64,7 @@ fn vendored_wasi_packages_are_registered_or_deliberately_absent() {
     // imported only by `http-route`, a `wash push` workload on the
     // non-project path the registry does not govern. Publication supplies route
     // data through wasi:config only to that platform workload (P12). The platform
-    // materializer exports wasi:cli/run as a service workload.
+    // The SQL command fixture exports wasi:cli/run as a service workload.
     const DELIBERATELY_ABSENT: [&str; 3] = ["wasi:sockets", "wasi:http", "wasi:config"];
 
     let vendored = vendored_wasi_versions(&repository_root());

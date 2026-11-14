@@ -1,70 +1,16 @@
-//! Pure selection of one fetched event for a registration delivery.
+//! Match one source event against an enabled workflow.
 
 use std::collections::BTreeSet;
 
+use super::workflow::EventTrigger;
 use serde_json::Value;
-use wamn_event_reg::EventRegistration;
 use wamn_event_wire::{Causation, DerivedEvent, Envelope};
+#[cfg(test)]
+use wamn_event_wire::{verified_derived_source_event_id, verified_source_event_id};
 
-use crate::condition::{CompiledCondition, ConditionOutcome, compile_condition};
-use crate::context::{RowProject, derived_event_context, event_context, row_project};
-use crate::input::{derived_event_input, event_input};
-
-/// A source-event coordinate that matches the delivered NATS identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifiedSourceEventId(String);
-
-impl VerifiedSourceEventId {
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Accept exactly one `Nats-Msg-Id` matching the envelope's source coordinate.
-pub fn verified_source_event_id(
-    project: &str,
-    environment: &str,
-    envelope: &Envelope,
-    message_ids: &[&str],
-) -> Option<VerifiedSourceEventId> {
-    let expected = wamn_event_wire::msg_id(project, environment, envelope.lsn);
-    match message_ids {
-        [actual] if *actual == expected => Some(VerifiedSourceEventId(expected)),
-        _ => None,
-    }
-}
-
-/// Accept exactly one host-targeted `Nats-Msg-Id` matching a derived record.
-///
-/// Target equality is validated before identity derivation, so bytes naming a
-/// foreign project/project/environment cannot borrow the local header identity.
-pub fn verified_derived_source_event_id(
-    project_env_key: &str,
-    project: &str,
-    environment: &str,
-    event: &DerivedEvent,
-    message_ids: &[&str],
-) -> Option<VerifiedSourceEventId> {
-    if event.project_env_key != project_env_key
-        || event.project != project
-        || event.environment != environment
-    {
-        return None;
-    }
-    let expected = wamn_event_wire::derived_msg_id(
-        project_env_key,
-        project,
-        environment,
-        &event.package_id,
-        &event.entity,
-        event.op,
-        &event.dedup_id,
-    );
-    match message_ids {
-        [actual] if *actual == expected => Some(VerifiedSourceEventId(expected)),
-        _ => None,
-    }
-}
+use super::condition::{CompiledCondition, ConditionOutcome, compile_condition};
+use super::context::{RowProject, derived_event_context, event_context, row_project};
+use super::input::{derived_event_input, event_input};
 
 /// Normal non-delivery outcomes owned by registration filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +25,7 @@ pub enum SkipReason {
 /// Deterministic registration refusals that must remain operator-visible.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RefuseReason {
-    SourcePackageIdentityUnknown { source_package_id: String },
+    SourcePackageIdentityUnknown { source_package: String },
     DepthExceeded { parent: Causation },
     ProjectUnscopable,
     OldImageAbsent,
@@ -101,9 +47,7 @@ pub enum DecideError {
 }
 
 /// Compile a registration's optional filter once per sweep.
-pub fn serviceable(
-    registration: &EventRegistration,
-) -> Result<Option<CompiledCondition>, DecideError> {
+pub fn serviceable(registration: &EventTrigger) -> Result<Option<CompiledCondition>, DecideError> {
     match &registration.condition {
         None => Ok(None),
         Some(expression) => compile_condition(expression)
@@ -119,7 +63,7 @@ pub fn serviceable(
 /// without a `project_id` use that trusted database-residency target; a missing
 /// or disagreeing target remains unserviceable.
 pub fn decide(
-    registration: &EventRegistration,
+    registration: &EventTrigger,
     condition: Option<&CompiledCondition>,
     envelope: &Envelope,
     known_packages: &BTreeSet<String>,
@@ -130,10 +74,10 @@ pub fn decide(
     match envelope.package_id.as_str() {
         package_id if !known_packages.contains(package_id) => {
             return Verdict::Refuse(RefuseReason::SourcePackageIdentityUnknown {
-                source_package_id: package_id.to_owned(),
+                source_package: package_id.to_owned(),
             });
         }
-        package_id if package_id != registration.source_package_id => {
+        package_id if package_id != registration.source_package => {
             return Verdict::Skip(SkipReason::SourcePackageMismatch);
         }
         _ => {}
@@ -181,7 +125,7 @@ pub fn decide(
 
 /// Decide whether one host-published derived event reaches the registration.
 pub fn decide_derived(
-    registration: &EventRegistration,
+    registration: &EventTrigger,
     condition: Option<&CompiledCondition>,
     event: &DerivedEvent,
     known_packages: &BTreeSet<String>,
@@ -191,10 +135,10 @@ pub fn decide_derived(
     match event.package_id.as_str() {
         package_id if !known_packages.contains(package_id) => {
             return Verdict::Refuse(RefuseReason::SourcePackageIdentityUnknown {
-                source_package_id: package_id.to_owned(),
+                source_package: package_id.to_owned(),
             });
         }
-        package_id if package_id != registration.source_package_id => {
+        package_id if package_id != registration.source_package => {
             return Verdict::Skip(SkipReason::SourcePackageMismatch);
         }
         _ => {}
@@ -235,18 +179,16 @@ pub fn decide_derived(
 mod tests {
     use super::*;
     use serde_json::json;
-    use wamn_event_reg::RegistrationInput;
     use wamn_event_wire::Op;
 
-    fn registration(condition: Option<&str>) -> EventRegistration {
-        EventRegistration {
-            schema_version: "0.1".into(),
-            registration_id: "r1".into(),
-            package_id: "cat".into(),
-            source_package_id: "cat".into(),
+    fn registration(condition: Option<&str>) -> EventTrigger {
+        EventTrigger {
+            workflow_id: "r1".into(),
+            application: "cat".into(),
+            source_package: "cat".into(),
             entity: "receipts".into(),
             ops: vec![Op::Insert, Op::Update],
-            input: RegistrationInput::Event,
+            enable_sequence: 0,
             condition: condition.map(str::to_owned),
         }
     }
@@ -523,7 +465,8 @@ mod tests {
 
     #[test]
     fn derived_wire_identity_reaches_one_matching_registration_without_run_admission() {
-        let encoded = serde_json::to_vec(&derived(3)).expect("derived event serializes");
+        let encoded = serde_json::to_vec(&wamn_event_wire::SourceEvent::Derived(derived(3)))
+            .expect("derived event serializes");
         let event = DerivedEvent::from_slice(&encoded).expect("derived event wire decodes");
         let message_id = wamn_event_wire::derived_msg_id(
             "t1",
@@ -551,9 +494,9 @@ mod tests {
     }
 
     #[test]
-    fn source_package_identity_has_match_known_skip_and_unknown_refusal_paths() {
+    fn source_packageentity_has_match_known_skip_and_unknown_refusal_paths() {
         let mut registration = registration(None);
-        registration.package_id = "overlay".into();
+        registration.application = "overlay".into();
         let known = known_packages();
 
         let mut other = envelope();
@@ -568,7 +511,7 @@ mod tests {
         assert_eq!(
             decide(&registration, None, &unknown, &known, "t1", Some("t1"), 16,),
             Verdict::Refuse(RefuseReason::SourcePackageIdentityUnknown {
-                source_package_id: "unknown".into(),
+                source_package: "unknown".into(),
             })
         );
 

@@ -4,12 +4,10 @@ use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::{Connection as _, Row as _};
-use wamn_environment::author_workflow::{
-    AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
-};
-use wamn_environment::workflow_lifecycle::WorkflowVersion;
 use wamn_identity_protocol::PrincipalId;
 use wamn_workflow::PostgresWorkflows;
+use wamn_workflow::author_workflow::{AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger};
+use wamn_workflow::workflow_lifecycle::WorkflowVersion;
 
 use crate::execution::Execution;
 
@@ -30,7 +28,7 @@ struct Request {
     source_package: Option<String>,
     entity: Option<String>,
     #[serde(default)]
-    ops: Vec<wamn_event_reg::Op>,
+    ops: Vec<wamn_event_wire::Op>,
     condition: Option<String>,
 }
 
@@ -130,7 +128,7 @@ impl Execution {
             let (digest, declared) =
                 wamn_environment::environment::show::serving_application(platform, &triple, name)
                     .await?;
-            let hash = wamn_environment::author_workflow::author_workflow_in_databases(
+            let hash = wamn_workflow::author_workflow::author_workflow_in_databases(
                 &database,
                 &AuthorWorkflowRequest {
                     org: &self.org,
@@ -165,7 +163,7 @@ impl Execution {
                     platform, &triple, name,
                 )
                 .await?;
-                wamn_environment::workflow_lifecycle::enable_workflow(
+                wamn_workflow::workflow_lifecycle::enable_workflow(
                     &platform.system_database_url,
                     &triple,
                     &mut application,
@@ -178,7 +176,7 @@ impl Execution {
                 .await?;
             }
             "workflow.disable" => {
-                wamn_environment::workflow_lifecycle::disable_workflow(
+                wamn_workflow::workflow_lifecycle::disable_workflow(
                     &platform.system_database_url,
                     &triple,
                     &mut application,

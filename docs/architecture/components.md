@@ -38,7 +38,7 @@ Application operations use their package interfaces and can await asynchronous c
 The P3 HTTP shell separately exports `wasi:http/handler@0.3.0`.
 Production component I/O uses native async calls for HTTP, PostgreSQL, router delivery, and event settlement.
 HTTP authentication and durable queue polling also use native async calls.
-The materializer exports `wasi:cli/run@0.3.0` and waits through `wasi:clocks/monotonic-clock@0.3.0`.
+
 Pure transformations and reads of local metadata remain synchronous.
 Transaction destruction closes unfinished connections without waiting for network I/O.
 Explicit commit and rollback calls remain asynchronous and return clean connections to the pool.

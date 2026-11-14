@@ -265,7 +265,7 @@ async fn main() -> anyhow::Result<()> {
     let coordinate = Triple::new("acme", "dev", "receiving");
     let source = source_stream_config(&coordinate, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&coordinate, 1);
-    // The broker admits the materializer consumers of the packages that the
+    // The broker admits the application consumers of the packages that the
     // timing command gives `wamn dev up`, which provisions those consumers.
     let project_env_key = wamn_dev_control::dev::environment::PROJECT_ENV_KEY;
     let packages: &[&str] = if wms {
@@ -274,12 +274,14 @@ async fn main() -> anyhow::Result<()> {
         &RECEIVING_PACKAGES
     };
     let manifests = application_manifests(&repository, packages)?;
-    let consumers = wamn_broker::events::entity_consumers(
-        &coordinate,
-        manifests
-            .iter()
-            .flat_map(wamn_compiler::manifest::PackageManifest::entity_pairs),
-    );
+    let application = if wms { "wms" } else { "receiving" };
+    let consumers = manifests
+        .iter()
+        .flat_map(wamn_compiler::manifest::PackageManifest::entity_pairs)
+        .map(|(package, entity)| {
+            wamn_broker::events::application_consumer(&coordinate, application, package, entity)
+        })
+        .collect::<Vec<_>>();
     let broker = event_broker::prepare(
         &directory,
         &coordinate,

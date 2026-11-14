@@ -40,16 +40,11 @@
         },
         "flow_http_component": {
           "type": "string"
-        },
-        "materializer_component": {
-          "description": "The built platform materializer, which the loop runs beside the release as the cluster does.",
-          "type": "string"
         }
       },
       "required": [
         "directory",
-        "flow_http_component",
-        "materializer_component"
+        "flow_http_component"
       ],
       "type": "object"
     },
@@ -110,9 +105,6 @@
     "environment": {
       "type": "string"
     },
-    "event_materializer_database_url": {
-      "type": "string"
-    },
     "executor_platform_database_url": {
       "type": "string"
     },
@@ -120,10 +112,6 @@
       "type": "string"
     },
     "host_binary": {
-      "type": "string"
-    },
-    "host_config_file": {
-      "description": "The materializer's events binding in the environment's private root, as the cluster mounts its Secret.",
       "type": "string"
     },
     "host_group": {
@@ -212,11 +200,9 @@
     "condition_bearer_token",
     "dup_window_secs",
     "environment",
-    "event_materializer_database_url",
     "executor_platform_database_url",
     "guest_database_url",
     "host_binary",
-    "host_config_file",
     "host_group",
     "host_name",
     "http_admitter_database_url",

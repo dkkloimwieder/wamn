@@ -2,7 +2,6 @@
 
 pub mod api_service;
 pub mod apply_package;
-pub mod author_workflow;
 pub mod capture_gap;
 #[cfg(feature = "ops")]
 pub mod create_user;
@@ -25,7 +24,6 @@ pub mod prune_record_history;
 pub mod prune_run_history;
 pub mod reconcile_replica_identity;
 pub mod replica_identity;
-pub mod workflow_lifecycle;
 
 #[cfg(test)]
 mod publish_release_tests;

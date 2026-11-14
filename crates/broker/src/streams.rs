@@ -1,4 +1,4 @@
-//! Provision declared event streams and materializer consumers.
+//! Provision declared event streams and event consumers.
 
 mod plan;
 pub use plan::validate_inputs;
@@ -6,8 +6,8 @@ pub use plan::validate_inputs;
 use std::time::Duration;
 
 use crate::events::{
-    advisory_stream_config, consumer_config_matches, materializer_consumer_config,
-    source_stream_config, stream_config_matches,
+    advisory_stream_config, consumer_config_matches, event_consumer_config, source_stream_config,
+    stream_config_matches,
 };
 use anyhow::{Context as _, ensure};
 use async_nats::jetstream::Context;
@@ -86,6 +86,30 @@ pub async fn provision(
         "advisory stream {} differs from its complete declaration",
         advisory_config.name
     );
+    prepare_consumers(&source, consumers).await
+}
+
+/// Provision declared application consumers before a host attaches.
+pub async fn prepare_application_consumers(
+    connection: &crate::nats::PlatformNats,
+    target: &Triple,
+    consumers: &[pull::Config],
+) -> anyhow::Result<()> {
+    let context = async_nats::jetstream::new(connection.connect().await?);
+    let stream = context
+        .get_stream(wamn_event_wire::stream_name(
+            &target.org,
+            &target.project,
+            target.env.as_str(),
+        ))
+        .await?;
+    prepare_consumers(&stream, consumers).await
+}
+
+async fn prepare_consumers(
+    source: &async_nats::jetstream::stream::Stream,
+    consumers: &[pull::Config],
+) -> anyhow::Result<()> {
     for expected in consumers {
         let durable = expected.durable_name.as_deref().expect("validated durable");
         let actual = match source.consumer_info(durable).await {
@@ -93,15 +117,15 @@ pub async fn provision(
             Err(error) if error.kind() == ConsumerInfoErrorKind::NotFound => source
                 .create_consumer_strict(expected.clone())
                 .await
-                .with_context(|| format!("create declared materializer consumer {durable}"))?
+                .with_context(|| format!("create declared event consumer {durable}"))?
                 .cached_info()
                 .config
                 .clone(),
-            Err(error) => return Err(error).context("read declared materializer consumer"),
+            Err(error) => return Err(error).context("read declared event consumer"),
         };
         ensure!(
             consumer_config_matches(expected, &actual),
-            "materializer consumer {durable} differs from its complete declaration"
+            "event consumer {durable} differs from its complete declaration"
         );
     }
     Ok(())
@@ -126,7 +150,7 @@ mod tests {
     #[test]
     fn provision_refuses_foreign_consumers_before_connecting() {
         let target = Triple::new("example", "dev", "fixture");
-        let expected = materializer_consumer_config(
+        let expected = event_consumer_config(
             "mat_t_pkg_r1",
             "evt.example.dev.fixture.widget.>",
             Duration::from_secs(30),
@@ -164,7 +188,7 @@ mod tests {
     #[test]
     fn provision_refuses_implicit_or_unbounded_delivery_inputs() {
         let target = Triple::new("example", "dev", "fixture");
-        let config = materializer_consumer_config(
+        let config = event_consumer_config(
             "mat_t_pkg_r1",
             "evt.example.dev.fixture.widget.>",
             Duration::from_secs(30),

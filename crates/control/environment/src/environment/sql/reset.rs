@@ -258,20 +258,6 @@ pub async fn reset_deployed(
 async fn stop_users(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<()> {
     crate::enable_cdc_project_env::stop_reader(platform, &document.triple()).await?;
     let shared = ensure::environment_host_name(&document.org, &document.project, &document.env)?;
-    ensure::kubectl(
-        platform,
-        &platform.target.namespace,
-        &[
-            "delete",
-            "workloaddeployment",
-            &wamn_registry::name::resource_suffix(&shared, "materializer"),
-            "--ignore-not-found",
-            "--wait=true",
-            "--timeout=120s",
-        ],
-        None,
-    )
-    .await?;
     let mut groups = std::collections::BTreeSet::from([shared]);
     for application in document.applications.keys() {
         groups.insert(analyse::application_release_name(document, application)?);
@@ -328,7 +314,7 @@ async fn resume_users(
         .await?
         .context("installed platform")?
         .values;
-    ensure::provision_materializer(platform, &control, document).await?;
+    ensure::provision_environment_host(platform, &control, document).await?;
     Ok(())
 }
 

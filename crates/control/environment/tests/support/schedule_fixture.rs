@@ -19,14 +19,6 @@ pub use wamn_engine::component_admission::{
 };
 pub use wamn_engine::engine::build_engine;
 pub use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-pub use wamn_environment::author_workflow::{
-    AuthorWorkflowError, AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution,
-    WorkflowTrigger, author_workflow_in_databases,
-};
-pub use wamn_environment::workflow_lifecycle::{
-    WorkflowLifecycleError, WorkflowLifecycleErrorType, WorkflowVersion, disable_workflow,
-    enable_workflow,
-};
 pub use wamn_execution_host::{OperationHost, OperationHostConfig};
 pub use wamn_identity_protocol::{PlatformComponent, workflow_user_id};
 pub use wamn_registry::Triple;
@@ -36,6 +28,14 @@ pub use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 pub use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 pub use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
+};
+pub use wamn_workflow::author_workflow::{
+    AuthorWorkflowError, AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution,
+    WorkflowTrigger, author_workflow_in_databases,
+};
+pub use wamn_workflow::workflow_lifecycle::{
+    WorkflowLifecycleError, WorkflowLifecycleErrorType, WorkflowVersion, disable_workflow,
+    enable_workflow,
 };
 pub use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 
@@ -540,7 +540,13 @@ impl Fixture {
         let service = QueueService::bind(
             driver,
             Arc::clone(&self.postgres),
-            Arc::new(WamnJetstream::from_env()),
+            Arc::new(
+                WamnJetstream::new(
+                    wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig::default(),
+                )
+                .await
+                .expect("event transport initializes"),
+            ),
             &self.release,
             QueueServiceConfig {
                 project: PROJECT.to_owned(),
@@ -578,7 +584,7 @@ pub fn lifecycle_refusal(result: Result<(), WorkflowLifecycleError>) -> Workflow
     result.expect_err("the enable refuses").error_type()
 }
 
-pub use wamn_runtime::plugins::wamn_postgres::EventBatchAdmission;
+pub use wamn_runtime::plugins::wamn_jetstream::EventBatchAdmission;
 pub use wamn_workflow::admission::ScheduleRunAdmitted;
 
 pub async fn event(fixture: &mut Fixture, id: &str, sequence: i64, role: Option<&str>) {
@@ -591,7 +597,7 @@ pub fn envelope(op: &str, txid: i64, lsn: u64) -> String {
     let row = json!({"id": "7", "at": "2026-10-25 10:00:00+00", "status": "open"});
     let mut value = json!({
         "op": op, "package_id": APPLICATION, "entity": "order", "table": "orders",
-        "lsn": lsn, "txid": txid, "commit_ts": "2026-10-25T10:00:00Z",
+        "type": "cdc", "lsn": lsn, "txid": txid, "commit_ts": "2026-10-25T10:00:00Z",
         "causation": {"run": "source-run", "root": "root-run", "depth": 2}
     });
     value[if op == "delete" { "old" } else { "new" }] = row;

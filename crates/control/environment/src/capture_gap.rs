@@ -27,7 +27,7 @@ use chrono::{DateTime, Utc};
 use wamn_control_provision::{
     cdc_object_name, project_env_database_name, sql, validate_project_env_cdc,
 };
-use wamn_event_wire::{Envelope, project_env};
+use wamn_event_wire::{SourceEvent, project_env};
 use wamn_registry::Triple;
 use wamn_registry::sql::{
     close_capture_gap_sql, insert_capture_gap_sql, lock_newest_capture_gap_sql,
@@ -319,9 +319,11 @@ async fn last_cdc_event(
                     .and_then(|id| id.as_str().strip_prefix(&prefix))
                     .and_then(|lsn| lsn.parse::<u64>().ok());
                 if let Some(lsn) = lsn {
-                    let envelope: Envelope = serde_json::from_slice(&message.payload)
+                    let envelope = SourceEvent::decode(&message.payload)
                         .with_context(|| format!("decode the CDC event at sequence {sequence}"))?;
-                    return Ok(Some((lsn, envelope.commit_ts)));
+                    if let SourceEvent::Cdc(envelope) = envelope {
+                        return Ok(Some((lsn, envelope.commit_ts)));
+                    }
                 }
             }
             Err(error) if error.kind() == RawMessageErrorKind::NoMessageFound => {}

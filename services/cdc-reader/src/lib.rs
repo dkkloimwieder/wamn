@@ -21,7 +21,7 @@
 //!   A crash mid-txn redelivers the whole txn; the msg-id dedupe absorbs the
 //!   published prefix (at-least-once → exactly-once WITHIN the JetStream
 //!   duplicate window keyed on `Nats-Msg-Id`; past that window the
-//!   materializer's `run_id` + `ON CONFLICT` is the unbounded guarantee — R12).
+//!   workflow's run key + `ON CONFLICT` is the unbounded guarantee — R12).
 //! - **Stall interlock** (E2): "delayed, never lost" is only SAFE if someone is
 //!   told early, because a held LSN silently freezes WAL retention on the source
 //!   DB until `max_slot_wal_keep_size` invalidates the slot — a capture gap.
@@ -1466,18 +1466,19 @@ async fn drain(
                         row.op,
                     );
                     let id = msg_id(&args.project, &args.env, row.lsn);
-                    let payload = match serde_json::to_vec(&envelope) {
-                        Ok(p) => bytes::Bytes::from(p),
-                        Err(e) => {
-                            return DrainOutcome::Severed(
-                                ReplicationError::Io(std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    e,
-                                )),
-                                summary,
-                            );
-                        }
-                    };
+                    let payload =
+                        match serde_json::to_vec(&wamn_event_wire::SourceEvent::Cdc(envelope)) {
+                            Ok(p) => bytes::Bytes::from(p),
+                            Err(e) => {
+                                return DrainOutcome::Severed(
+                                    ReplicationError::Io(std::io::Error::new(
+                                        std::io::ErrorKind::InvalidData,
+                                        e,
+                                    )),
+                                    summary,
+                                );
+                            }
+                        };
                     msgs.push(PreparedMsg {
                         subject,
                         id,
@@ -1965,7 +1966,7 @@ fn spawn_slot_monitor(
 ///
 /// A failed ack retries the transaction from the FIRST UNACKED row — the
 /// JetStream duplicate window absorbs the already-landed prefix, and the
-/// materializer's `run_id` + `ON CONFLICT` absorbs anything past the window.
+/// workflow's run key + `ON CONFLICT` absorbs anything past the window.
 /// `first_unacked` advances only as acks settle durably, so a retry never
 /// re-settles (or double-counts) a row the server already acked.
 async fn publish_txn<P: AckPublisher>(
@@ -2954,7 +2955,9 @@ mod tests {
                 PreparedMsg {
                     subject: subject(ORG, PROJECT, ENV, envelope.entity_segment(), Op::Insert),
                     id: msg_id(PROJECT, ENV, lsn),
-                    payload: bytes::Bytes::from(serde_json::to_vec(&envelope).unwrap()),
+                    payload: bytes::Bytes::from(
+                        serde_json::to_vec(&wamn_event_wire::SourceEvent::Cdc(envelope)).unwrap(),
+                    ),
                 }
             })
             .collect();

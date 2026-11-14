@@ -977,30 +977,6 @@ impl WamnPostgres {
             .flatten()
     }
 
-    /// Bind the sole elevated authority admitted by the closed workload-config
-    /// vocabulary. Ordinary components never call this and remain `GuestSql`.
-    pub(super) fn bind_workload_authority(
-        &self,
-        component_id: &str,
-        value: &str,
-    ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            value == super::EVENT_MATERIALIZER_AUTHORITY_CONFIG_VALUE,
-            "invalid workload authority"
-        );
-        self.scopes.update::<Authority, _>(component_id, |record| {
-            record.class = Some(AuthorityClass::EventMaterializer);
-        });
-        Ok(())
-    }
-
-    pub(super) fn workload_authority_for(&self, component_id: &str) -> AuthorityClass {
-        self.scopes
-            .read::<Authority, _>(component_id, |record| record.class)
-            .flatten()
-            .unwrap_or(AuthorityClass::GuestSql)
-    }
-
     /// Register the caller's `app.role` identity for a component id (4.2). When
     /// set, every transaction the plugin opens for that component binds
     /// `app.role`, so a compiled per-role RLS policy conditions on the caller's role

@@ -136,13 +136,12 @@ pub async fn provision_resources(
     .await?;
     prepare_cdc(platform, document, &mut admin, &project_admin).await?;
     ensure_streams(platform, document, &[]).await?;
-    provision_materializer(platform, control, document).await?;
+    provision_environment_host(platform, control, document).await?;
     Ok(())
 }
 
 /// Observe the resources at the end of provisioning, not merely its first row.
-/// The materializer is installed only after credentials, the database, and CDC
-/// preparation succeed. An interrupted prefix therefore remains repairable.
+/// The environment host starts after credentials, the database and CDC preparation succeed.
 pub(super) async fn resources_in_place(
     platform: &Platform,
     document: &EnvironmentDocument,
@@ -158,17 +157,7 @@ pub(super) async fn resources_in_place(
     if !super::analyse::release_present(platform, &name).await? {
         return Ok(false);
     }
-    let workload: Option<serde_json::Value> = wamn_kubernetes::kubectl::get(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        &platform.target.namespace,
-        "workloaddeployment",
-        &wamn_registry::name::resource_suffix(&name, "materializer"),
-    )
-    .await?;
-    // A transient readiness failure does not authorize another SQL operation.
-    // The only remaining provisioning action after this object is a readiness wait.
-    Ok(workload.is_some())
+    Ok(true)
 }
 
 pub(super) fn environment_host_name(org: &str, project: &str, env: &str) -> anyhow::Result<String> {
@@ -176,7 +165,7 @@ pub(super) fn environment_host_name(org: &str, project: &str, env: &str) -> anyh
 }
 
 /// Render the shared host without application release arguments or labels.
-pub fn materializer_host_values(
+pub fn environment_host_values(
     document: &EnvironmentDocument,
     drain_bound_seconds: u32,
     stream_replicas: usize,
@@ -187,10 +176,6 @@ pub fn materializer_host_values(
 ) -> anyhow::Result<serde_json::Value> {
     use serde_json::json;
     use wamn_release_control::release_chart;
-    anyhow::ensure!(
-        drain_bound_seconds > release_chart::MATERIALIZER_DRAIN_BOUND_SECONDS,
-        "the environment host drain bound must exceed the materializer drain bound"
-    );
     let group = super::write::plan::host_group(
         host_group.unwrap_or_default(),
         &document.org,
@@ -220,11 +205,6 @@ pub fn materializer_host_values(
         arguments.push("--allow-insecure-registries".into());
     }
     group["extraArgs"] = json!(arguments);
-    group["plugins"] = serde_json::to_value(release_chart::events_plugin(
-        &document.org,
-        &document.project,
-        &document.env,
-    )?)?;
     let variables = group["env"]
         .as_array_mut()
         .context("host env is not a list")?;
@@ -244,9 +224,6 @@ pub fn materializer_host_values(
         }
     }
     for (key, value) in [
-        ("WAMN_EVT_ORG", document.org.clone()),
-        ("WAMN_EVT_PROJECT", document.project.clone()),
-        ("WAMN_EVT_ENV", document.env.clone()),
         ("WAMN_EVT_STREAM_REPLICAS", stream_replicas.to_string()),
         ("WAMN_EVT_DUP_WINDOW_SECS", dup_window_secs.to_string()),
     ] {
@@ -263,10 +240,6 @@ pub fn materializer_host_values(
         ("WAMN_ORG", document.org.clone()),
         ("WAMN_PROJECT", document.project.clone()),
         ("WAMN_DRAIN_BOUND_SECONDS", drain_bound_seconds.to_string()),
-        (
-            "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS",
-            release_chart::MATERIALIZER_DRAIN_BOUND_SECONDS.to_string(),
-        ),
     ]
     .into_iter()
     .chain(release_chart::TELEMETRY_VARIABLES.map(|(key, value)| (key, value.to_owned())))
@@ -294,52 +267,11 @@ pub fn materializer_host_values(
     }))
 }
 
-/// Render the environment materializer on its stable host group.
-pub fn materializer_workload(
-    chart: &Path,
-    document: &EnvironmentDocument,
-    namespace: &str,
-    image: &str,
-    insecure_registry: bool,
-) -> anyhow::Result<serde_json::Value> {
-    use crate::platform::materializer::{self, EventIdentity, MaterializerInput};
-    let name = environment_host_name(&document.org, &document.project, &document.env)?;
-    let rendered = materializer::render_materializer(
-        &chart.join("platform/environment"),
-        &MaterializerInput {
-            workload: wamn_registry::name::resource_suffix(&name, "materializer"),
-            namespace: namespace.to_owned(),
-            image: super::runtime::pod_artifact_base(insecure_registry, image)?.into_owned(),
-            project_env_key: wamn_control_provision::project_env_key(
-                &document.org,
-                &document.project,
-                &document.env,
-            ),
-            event: EventIdentity {
-                org: document.org.clone(),
-                project: document.project.clone(),
-                environment: document.env.clone(),
-            },
-            event_stream: wamn_event_wire::stream_name(
-                &document.org,
-                &document.project,
-                &document.env,
-            ),
-            fetch_ms: materializer::FETCH_MS,
-            sweep_ms: materializer::SWEEP_MS,
-        },
-    )?;
-    let mut workload: serde_json::Value = serde_yaml::from_str(&rendered)?;
-    workload["spec"]["template"]["spec"]["hostSelector"] = serde_json::json!({"hostgroup":name});
-    Ok(workload)
-}
-
-pub(super) async fn provision_materializer(
+pub(super) async fn provision_environment_host(
     platform: &Platform,
     control: &serde_json::Value,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<()> {
-    use wamn_release_control::release_chart;
     let mut system = connect(&platform.system_database_url).await?;
     let policy = super::analyse::read_policy(&mut system, &document.org, &document.policy).await?;
     let events = platform
@@ -361,7 +293,7 @@ pub(super) async fn provision_materializer(
             .context("missing component registry")?,
     )?;
     let group = super::runtime::host_group(control, None, &component_base)?;
-    let desired = materializer_host_values(
+    let desired = environment_host_values(
         document,
         u32::try_from(policy.drain_bound_seconds)?,
         events.stream_replicas,
@@ -373,36 +305,9 @@ pub(super) async fn provision_materializer(
     let mut values: serde_json::Value =
         serde_yaml::from_slice(&std::fs::read(platform.chart.join("values.yaml"))?)?;
     crate::platform::resources::merge(&mut values, desired);
-    let image = release_chart::image_set(&platform.chart)
-        .await?
-        .materializer;
-    values["materializer"] = serde_json::json!({
-        "name":wamn_registry::name::resource_suffix(&name,"materializer"),"hostGroup":name,
-        "image":super::runtime::pod_artifact_base(platform.insecure_registry, &image)?,
-        "projectEnvKey":wamn_registry::project_env_key(&document.org,&document.project,&document.env),
-        "org":document.org,"project":document.project,"environment":document.env,
-        "stream":wamn_event_wire::stream_name(&document.org,&document.project,&document.env),
-        "fetchMs":crate::platform::materializer::FETCH_MS,"sweepMs":crate::platform::materializer::SWEEP_MS,
-    });
     let chart = platform.chart.join("platform/environment");
     super::runtime::require_chart_references(&platform.target, &chart, &name, &values).await?;
     wamn_platform_install::environment::apply(&platform.target, &chart, &name, values).await?;
-    kubectl(
-        platform,
-        &platform.target.namespace,
-        &[
-            "wait",
-            "--for=condition=Ready",
-            &format!(
-                "workloaddeployment/{}",
-                wamn_registry::name::resource_suffix(&name, "materializer")
-            ),
-            &format!("--timeout={}s", policy.readiness_budget_seconds),
-        ],
-        None,
-    )
-    .await
-    .context("wait for the environment materializer")?;
     Ok(())
 }
 
@@ -800,12 +705,21 @@ pub(super) async fn ensure_streams(
         return Ok(());
     };
     let triple = document.triple();
-    let consumers = wamn_broker::events::entity_consumers(
-        &triple,
-        manifests
+    let mut consumers = Vec::new();
+    for (application, selection) in &document.applications {
+        for (package, entity) in manifests
             .iter()
-            .flat_map(wamn_compiler::manifest::PackageManifest::entity_pairs),
-    );
+            .filter(|manifest| selection.packages.contains(&manifest.package.id))
+            .flat_map(wamn_compiler::manifest::PackageManifest::entity_pairs)
+        {
+            consumers.push(wamn_broker::events::application_consumer(
+                &triple,
+                application,
+                package,
+                entity,
+            ));
+        }
+    }
     let broker = async_nats::jetstream::new(
         events
             .nats
@@ -1125,7 +1039,7 @@ mod tests {
         let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let chart = crate::platform::artifact_plan::test_util::prepared_chart(&repository)?;
-        let fresh = materializer_host_values(&document, 70, 1, 120, None, false, None)?;
+        let fresh = environment_host_values(&document, 70, 1, 120, None, false, None)?;
         let mut installed = fresh.clone();
         let image = json!({"registry":"selected.example", "repository":"host",
             "tag":format!("selected@sha256:{}", "b".repeat(64)), "pull_policy":"IfNotPresent"});
@@ -1139,7 +1053,7 @@ mod tests {
             .unwrap()
             .insert(0, json!({"name":"unrelated", "image":{"tag":"wrong"}}));
         let mut reapplied =
-            materializer_host_values(&document, 70, 1, 120, None, false, Some(&installed))?;
+            environment_host_values(&document, 70, 1, 120, None, false, Some(&installed))?;
         assert_eq!(
             reapplied["runtime-operator"]["runtime"]["hostGroups"][0]["image"],
             image

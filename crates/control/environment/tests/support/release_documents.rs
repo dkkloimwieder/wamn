@@ -108,7 +108,7 @@ pub fn fixture_host_group(document: &EnvironmentDocument, local: &str) -> Value 
         wamn_environment::platform::installation::host_configuration(
             wamn_environment::platform::document::Provider::Kind)});
     let shared =
-        environment::ensure::materializer_host_values(document, 70, 1, 120, None, false, None)
+        environment::ensure::environment_host_values(document, 70, 1, 120, None, false, None)
             .expect("shared environment host");
     let mut group = serde_json::to_value(
         environment::runtime::host_group(
@@ -555,13 +555,11 @@ pub mod workflow {
     const CONSUMER: &str = "rest_consumer_fixture";
     use wamn_broker::Publisher;
     use wamn_catalog::WiringDocument;
-    use wamn_environment::author_workflow::{
+    use wamn_environment::environment;
+    use wamn_workflow::author_workflow::{
         AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger, author_workflow_in_databases,
     };
-    use wamn_environment::environment;
-    use wamn_environment::workflow_lifecycle::{
-        WorkflowVersion, disable_workflow, enable_workflow,
-    };
+    use wamn_workflow::workflow_lifecycle::{WorkflowVersion, disable_workflow, enable_workflow};
 
     /// The user who authors and enables schedule workflows, as an environment
     /// admin does. It holds each execution role it assigns.

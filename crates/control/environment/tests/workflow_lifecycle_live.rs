@@ -19,16 +19,16 @@ use wamn_catalog::{
     ServingComponent, ServingManifest, ServingRelease, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_environment::author_workflow::{
+use wamn_environment::environment::lock::LifecycleLock;
+use wamn_registry::Triple;
+use wamn_workflow::author_workflow::{
     AuthorWorkflowError, AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution,
     WorkflowTrigger, author_workflow,
 };
-use wamn_environment::environment::lock::LifecycleLock;
-use wamn_environment::workflow_lifecycle::{
+use wamn_workflow::workflow_lifecycle::{
     APPLY_IN_PROGRESS, WorkflowLifecycleErrorType, WorkflowVersion, disable_workflow,
     enable_workflow,
 };
-use wamn_registry::Triple;
 
 const PROJECT_ENV_KEY: &str = "workflow-project--dev--fixture";
 const ENVIRONMENT: &str = "dev";
@@ -238,7 +238,7 @@ impl Fixture {
         id: &str,
         version: u32,
         enabler: &str,
-    ) -> Result<(), wamn_environment::workflow_lifecycle::WorkflowLifecycleError> {
+    ) -> Result<(), wamn_workflow::workflow_lifecycle::WorkflowLifecycleError> {
         let digest = self.digest.clone();
         enable_workflow(
             &self.project_url,
@@ -597,7 +597,7 @@ async fn event_authorship_requires_a_captured_application_model() {
 async fn event_enable_records_stream_tail_and_requires_admin() {
     use std::time::Duration;
     use wamn_broker::EventBroker;
-    use wamn_broker::events::{materializer_consumer_config, source_stream_config};
+    use wamn_broker::events::{event_consumer_config, source_stream_config};
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
     );
@@ -662,7 +662,7 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
         &(target.env.as_str()),
         &("order.update"),
     );
-    let consumer = materializer_consumer_config("unread", &subject, Duration::from_secs(30), 5);
+    let consumer = event_consumer_config("unread", &subject, Duration::from_secs(30), 5);
     let mut consumer = stream.create_consumer(consumer).await.unwrap();
     let first = broker
         .publish(subject.clone(), "before".into())

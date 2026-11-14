@@ -271,17 +271,19 @@ The [components page](components.md#shared-label-renderer) describes its composi
 
 ## Events
 
-PostgreSQL change capture publishes the frozen [event contract](../../apps/platform/events/wire/src/lib.rs).
-Subjects retain `evt.<org>.<project>.<env>.<entity>.<op>`.
+PostgreSQL change capture publishes the [event contract](../../apps/platform/events/wire/src/lib.rs).
+The wire owner decodes records and verifies their source identity.
+Records carry `"type": "cdc"` or `"type": "derived"` and use underscore field names.
+Subjects use `evt.<org>.<env>.<project>.<entity>.<op>`.
 The declared organization, project, and environment jointly define stream isolation.
 Length-prefixed names distinguish triples that plain underscore joining can confuse.
 Source and advisory streams belong to that complete triple.
 
 Provisioning credentials create the declared streams and durable consumers.
 Provisioning compares existing configuration and refuses a mismatch.
-Runtime publishers and materializers can publish, subscribe, and attach to declared consumers.
+Runtime publishers and event consumers can publish, subscribe, and attach to declared consumers.
 They cannot create, update, or delete streams or consumers.
-Activation compares declared stream fields, including foreign sources, mirrors, filters, and delivery policy.
+The constructor compares declared stream fields, including foreign sources, mirrors, filters, and delivery policy.
 The consumer test compares only the fields wamn sets; the broker owns every other consumer field, and the test does not compare it.
 
 The platform runs one NATS for the scheduler, the events and the host memories.
@@ -293,10 +295,9 @@ The host carries the declared stream replica count and duplicate window into act
 No runtime default substitutes for a missing declaration.
 The [native declaration owner](../../crates/broker/src/events.rs) supplies the configurations used by provisioning and activation.
 
-A materializer awaits bounded fetches, router delivery, and explicit acknowledgements.
-Registration preparation and idle clock waits also yield through native async imports.
-The declared acknowledgement wait and delivery limit govern broker redelivery.
-The current consumer allows 64 pending acknowledgements, 64 messages per pull, four MiB per pull, and one waiting pull.
+The native event transport awaits bounded fetches and acknowledges each message after workflow admission commits.
+Application consumers retry deliveries without a limit, with a 30 second acknowledgement wait.
+Each consumer permits 64 pending acknowledgements, 64 messages per pull, four MiB per pull, and 64 waiting pulls.
 Successful settlement acknowledges delivery. Permanent rejection terminates it.
 A disconnect before acknowledgement permits redelivery and requires application idempotency.
 
@@ -313,7 +314,7 @@ Administrator process access remains separate from environment observation.
 
 Derived events use the host's admitted terminal, logical deduplication input, and bound causation.
 The guest cannot supply `project_env_key`, project, or environment authority.
-Causation depth bounds recursion. The current materializer limit is 16.
+Causation depth bounds recursion. Workflow refuses an event above depth 16.
 These delivery rules do not create exactly-once application effects.
 
 ## Session role reader

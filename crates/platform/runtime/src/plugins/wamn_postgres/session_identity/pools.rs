@@ -236,21 +236,12 @@ impl WamnPostgres {
     /// event-materializer binding selects a platform credential.
     pub(in super::super) async fn checkout_workload(
         &self,
-        component_id: &str,
+        _component_id: &str,
         project: &str,
         project_env_key: &str,
     ) -> Result<(Object, Arc<ProjectPool>, AuthorityClass), PgError> {
-        let class = self.workload_authority_for(component_id);
-        let (connection, pool) = match class {
-            AuthorityClass::GuestSql => self.checkout_guest(project, project_env_key).await?,
-            AuthorityClass::EventMaterializer => self.checkout_platform(project, class).await?,
-            AuthorityClass::DynamicSql
-            | AuthorityClass::ExecutorPlatform
-            | AuthorityClass::CallableHttp
-            | AuthorityClass::Administration => {
-                unreachable!("the closed workload binding admits only EventMaterializer")
-            }
-        };
+        let class = AuthorityClass::GuestSql;
+        let (connection, pool) = self.checkout_guest(project, project_env_key).await?;
         Ok((connection, pool, class))
     }
 

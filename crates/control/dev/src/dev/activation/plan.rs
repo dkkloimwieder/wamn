@@ -289,7 +289,6 @@ pub(super) fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProce
     .expect("the platform chart defaults are valid YAML");
     let runtime = &platform["runtime-operator"]["runtime"];
     let identity = request.identity;
-    let event_identity = request.config.activation_identity();
     let local = request.config.local_artifacts();
     let mut args = vec![
         "host".to_owned(),
@@ -315,8 +314,6 @@ pub(super) fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProce
         request.release.manifest_digest.to_string(),
         "--wasmtime-cache-dir".to_owned(),
         request.wasmtime_cache_dir.display().to_string(),
-        "--user-config".to_owned(),
-        request.config.host_config_file().display().to_string(),
         "--project".to_owned(),
         identity.project.clone(),
         "--org".to_owned(),
@@ -376,10 +373,6 @@ pub(super) fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProce
             request.config.http_admitter_database_url().to_owned(),
         ),
         (
-            "WAMN_EVENT_MATERIALIZER_PG_URL".to_owned(),
-            request.config.event_materializer_database_url().to_owned(),
-        ),
-        (
             "WAMN_ADMINISTRATION_PG_URL".to_owned(),
             request.config.administration_database_url().to_owned(),
         ),
@@ -391,20 +384,7 @@ pub(super) fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProce
             "WAMN_EVT_DUP_WINDOW_SECS".to_owned(),
             request.config.dup_window_secs().to_string(),
         ),
-        ("WAMN_EVT_ORG".to_owned(), event_identity.org.clone()),
-        (
-            "WAMN_EVT_PROJECT".to_owned(),
-            event_identity.project.clone(),
-        ),
-        (
-            "WAMN_EVT_ENV".to_owned(),
-            event_identity.environment.clone(),
-        ),
     ];
-    env.push((
-        "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS".to_owned(),
-        wamn_release_control::release_chart::MATERIALIZER_DRAIN_BOUND_SECONDS.to_string(),
-    ));
     env.extend(
         wamn_release_control::release_chart::TELEMETRY_VARIABLES.map(|(name, value)| {
             let value = if name == "OTEL_EXPORTER_OTLP_ENDPOINT" {

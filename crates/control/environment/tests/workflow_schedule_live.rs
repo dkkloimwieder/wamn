@@ -323,7 +323,7 @@ async fn no_enabled_schedule_version_refuses_with_no_row() {
         .enable("nightly", READER)
         .await
         .expect("enable the schedule workflow");
-    wamn_environment::workflow_lifecycle::disable_workflow(
+    wamn_workflow::workflow_lifecycle::disable_workflow(
         &fixture.url,
         &Triple::new("acme", ENVIRONMENT, APPLICATION),
         &mut fixture.admin,

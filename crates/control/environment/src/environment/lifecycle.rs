@@ -121,7 +121,7 @@ pub async fn configure(
         )
         .await?;
         resources::ensure_streams(&platform, document, &[]).await?;
-        resources::provision_materializer(&platform, &installed, document).await?;
+        resources::provision_environment_host(&platform, &installed, document).await?;
         let mut connection = lock.client().await;
         let mut tx = provision_project_env::provisioning_transaction(&mut connection).await?;
         document.save(&mut tx).await?;

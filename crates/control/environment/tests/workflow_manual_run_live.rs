@@ -38,11 +38,6 @@ use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::native_routes::{DeliveryRequest, Source};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-use wamn_environment::author_workflow::{
-    AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
-    author_workflow_in_databases,
-};
-use wamn_environment::workflow_lifecycle::{WorkflowVersion, enable_workflow};
 use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig,
 };
@@ -57,6 +52,11 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
     WamnPostgresConfig,
 };
+use wamn_workflow::author_workflow::{
+    AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
+    author_workflow_in_databases,
+};
+use wamn_workflow::workflow_lifecycle::{WorkflowVersion, enable_workflow};
 use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 
 const PROJECT_ENV_KEY: &str = "manual-live--dev--default";
@@ -658,7 +658,13 @@ impl Fixture {
         let service = QueueService::bind(
             self.driver(release).await,
             Arc::clone(&self.postgres),
-            Arc::new(WamnJetstream::from_env()),
+            Arc::new(
+                WamnJetstream::new(
+                    wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig::default(),
+                )
+                .await
+                .expect("event transport initializes"),
+            ),
             release,
             QueueServiceConfig {
                 project: PROJECT.to_owned(),
@@ -923,7 +929,7 @@ async fn an_operation_not_in_the_release_refuses_at_author_and_at_admission() {
         .await
         .expect_err("an operation the release does not serve refuses");
     let refusal = refusal
-        .downcast_ref::<wamn_environment::author_workflow::AuthorWorkflowError>()
+        .downcast_ref::<wamn_workflow::author_workflow::AuthorWorkflowError>()
         .expect("an authorship refusal");
     assert_eq!(refusal.error_type(), AuthorWorkflowErrorType::Condition);
 

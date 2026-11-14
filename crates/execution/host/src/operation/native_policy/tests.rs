@@ -1039,7 +1039,7 @@ async fn run_case(case: Case) {
                     budget
                 };
             let mut request = fixture.request(deadline);
-            request.facts.acquisition.platform = Some(PlatformComponent::Materializer);
+            request.facts.acquisition.platform = Some(PlatformComponent::Executor);
             let result = invoke_native(&target, request).await;
             let looped = looping.is_none_or(|phase| {
                 fixture
@@ -1112,7 +1112,7 @@ async fn run_case(case: Case) {
             if !matches!(case, Case::Cancellation) {
                 assert_eq!(
                     identity.user_id,
-                    Some(PlatformComponent::Materializer.principal_id().to_string()),
+                    Some(PlatformComponent::Executor.principal_id().to_string()),
                     "a callerless delivery binds its platform principal"
                 );
                 assert_eq!(

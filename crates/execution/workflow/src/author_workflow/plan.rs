@@ -20,7 +20,7 @@ pub enum WorkflowTrigger<'a> {
     Event {
         source_package: &'a str,
         entity: &'a str,
-        ops: &'a [wamn_event_reg::Op],
+        ops: &'a [wamn_event_wire::Op],
         condition: Option<&'a str>,
     },
 }

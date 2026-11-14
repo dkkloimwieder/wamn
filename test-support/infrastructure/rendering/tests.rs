@@ -90,9 +90,6 @@ const HOST_TEMPLATE: &str = r#"runtime:
         - { name: DOCKER_CONFIG, value: /etc/wamn/registry }
         - name: WAMN_COMPONENT_ARTIFACT_BASE
           value: registry.wamn-system.svc.cluster.local:5000/wamn/components
-        - { name: WAMN_EVT_ORG, value: __ORG__ }
-        - { name: WAMN_EVT_PROJECT, value: __PROJECT__ }
-        - { name: WAMN_EVT_ENV, value: dev }
         - { name: WAMN_EVT_STREAM_REPLICAS, value: "3" }
         - { name: WAMN_EVT_DUP_WINDOW_SECS, value: "120" }
         - { name: WAMN_ORG, value: __ORG__ }
@@ -116,12 +113,6 @@ const HOST_TEMPLATE: &str = r#"runtime:
               name: wamn-http-admitter-__ORG__--dev--__PROJECT__
               key: url
               optional: false
-        - name: WAMN_EVENT_MATERIALIZER_PG_URL
-          valueFrom:
-            secretKeyRef:
-              name: wamn-event-materializer-__ORG__--dev--__PROJECT__
-              key: url
-              optional: false
       volumes:
         - name: registry-pull
           secret:
@@ -139,6 +130,7 @@ __CREDENTIALS_MOUNT__
       ociCaPaths:
         - "/runtime-cert/ca.crt"
       extraArgs:
+        - "--environment=dev"
         - "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases"
         - "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000"
       resources:
@@ -220,7 +212,6 @@ fn host_input(project: &str) -> HostValuesInput {
             WorkloadRoleFamily::ExecutorPlatform,
             WorkloadRoleFamily::IdentityReader,
             WorkloadRoleFamily::HttpAdmitter,
-            WorkloadRoleFamily::EventMaterializer,
         ]
         .into_iter()
         .enumerate()
@@ -257,10 +248,6 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
         let old = &original.runtime.host_groups[0];
         assert_eq!(group.namespace, input.namespace);
         assert_eq!(group.replicas, 3);
-        // The render adds only the plugins entry to the group's other fields.
-        let mut extra = group.extra.clone();
-        assert!(extra.remove("plugins").is_some());
-        assert_eq!(extra, old.extra);
         for (name, expected) in [
             (
                 "WAMN_COMPONENT_ARTIFACT_BASE",
@@ -268,9 +255,6 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
             ),
             ("WAMN_EVT_STREAM_REPLICAS", "1"),
             ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
-            ("WAMN_EVT_ORG", ORG),
-            ("WAMN_EVT_PROJECT", project),
-            ("WAMN_EVT_ENV", "dev"),
             ("WAMN_PROJECT", project),
             ("OTEL_BSP_SCHEDULE_DELAY", "1"),
             ("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "1"),
@@ -301,27 +285,6 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
                 1
             );
         }
-        // R6: the events binding is the host group's plugins entry, inside the
-        // environment's prefix, and it names no servers.
-        let events = &group.extra["plugins"][0]["bindings"]["events"]["config"];
-        assert_eq!(
-            group.extra["plugins"][0]["workloadConfig"].as_str(),
-            Some("deny")
-        );
-        assert!(events.get("servers").is_none(), "{project}");
-        assert_eq!(
-            events["subject-allow"].as_str(),
-            Some(
-                wamn_registry::name::event_subject(
-                    &(input.event.org),
-                    &(input.event.project),
-                    &(input.event.environment),
-                    &(">")
-                )
-                .as_str()
-            ),
-            "{project}"
-        );
         let registry = |volumes: &[Volume]| {
             volumes
                 .iter()
@@ -347,14 +310,6 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
                 .unwrap();
             assert_eq!(&volume.secret.as_ref().unwrap().secret_name, name);
         }
-        assert_eq!(
-            group.extra_args,
-            [
-                format!("--release-artifact-base={}", input.release_artifact_base),
-                format!("--release-manifest-digest={}", input.manifest_digest),
-                "--allow-insecure-registries".into()
-            ]
-        );
     }
 }
 
@@ -383,9 +338,6 @@ fn host_values_refuse_missing_and_duplicate_owned_fields() {
     for name in [
         "WAMN_PG_URL",
         "WAMN_COMPONENT_ARTIFACT_BASE",
-        "WAMN_EVT_ORG",
-        "WAMN_EVT_PROJECT",
-        "WAMN_EVT_ENV",
         "WAMN_WASMTIME_CACHE_DIR",
     ] {
         let mut document = original.clone();
@@ -816,7 +768,7 @@ fn a_supplied_release_moves_the_overlay_to_its_own_identity() {
     let output = render_host_values(&BASE, &moved, &input).unwrap();
     let overlay: HostValues = serde_yaml::from_str(&output.overlay).unwrap();
     let env = &overlay.runtime.host_groups[0].env;
-    for name in ["WAMN_ORG", "WAMN_EVT_ORG"] {
+    for name in ["WAMN_ORG"] {
         assert_eq!(value(env, name), "dkk");
     }
     assert_rendered_identity(

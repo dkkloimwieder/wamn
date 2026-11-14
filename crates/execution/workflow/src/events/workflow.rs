@@ -1,56 +1,12 @@
-//! Event workflow rows shared by the guest and host admission.
+//! Match enabled workflows at their event sequence boundary.
 
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Envelope, EventRegistration, MAX_CAUSATION_DEPTH, Op, Verdict, decide, serviceable};
-
-/// A decoded event with its frozen source identity.
-#[derive(Debug, Clone)]
-pub enum SourceEvent {
-    Cdc(Envelope),
-    Derived(crate::DerivedEvent),
-}
-
-impl SourceEvent {
-    pub fn decode(body: &[u8]) -> Result<Self, serde_json::Error> {
-        let value: serde_json::Value = serde_json::from_slice(body)?;
-        if value.get("format-version").is_some() {
-            crate::DerivedEvent::from_slice(body).map(Self::Derived)
-        } else {
-            serde_json::from_value(value).map(Self::Cdc)
-        }
-    }
-
-    pub fn identity(
-        &self,
-        project_env_key: &str,
-        project: &str,
-        environment: &str,
-        headers: &[&str],
-    ) -> Option<crate::VerifiedSourceEventId> {
-        match self {
-            Self::Cdc(envelope) => {
-                crate::verified_source_event_id(project, environment, envelope, headers)
-            }
-            Self::Derived(event) => crate::verified_derived_source_event_id(
-                project_env_key,
-                project,
-                environment,
-                event,
-                headers,
-            ),
-        }
-    }
-
-    pub fn source(&self) -> (&str, &str) {
-        match self {
-            Self::Cdc(envelope) => (&envelope.package_id, &envelope.entity),
-            Self::Derived(event) => (&event.package_id, &event.entity),
-        }
-    }
-}
+use super::decide::{Verdict, decide, serviceable};
+use wamn_event_wire::{Op, SourceEvent};
+const MAX_CAUSATION_DEPTH: u32 = 16;
 
 /// An enabled event trigger of an environment application.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,24 +54,14 @@ impl EventTrigger {
         if sequence <= self.enable_sequence {
             return Ok(None);
         }
-        let registration = EventRegistration {
-            schema_version: wamn_event_reg::SCHEMA_VERSION.to_owned(),
-            registration_id: self.workflow_id.clone(),
-            package_id: self.application.clone(),
-            source_package_id: self.source_package.clone(),
-            entity: self.entity.clone(),
-            ops: self.ops.clone(),
-            input: wamn_event_reg::RegistrationInput::Event,
-            condition: self.condition.clone(),
-        };
-        let condition = serviceable(&registration).map_err(|error| TriggerMatchError {
+        let condition = serviceable(self).map_err(|error| TriggerMatchError {
             type_: TriggerMatchErrorType::Condition,
             workflow_id: self.workflow_id.clone(),
             detail: format!("{error:?}"),
         })?;
         let verdict = match event {
             SourceEvent::Cdc(envelope) => decide(
-                &registration,
+                self,
                 condition.as_ref(),
                 envelope,
                 packages,
@@ -123,8 +69,8 @@ impl EventTrigger {
                 Some(project_env_key),
                 MAX_CAUSATION_DEPTH,
             ),
-            SourceEvent::Derived(event) => crate::decide_derived(
-                &registration,
+            SourceEvent::Derived(event) => super::decide::decide_derived(
+                self,
                 condition.as_ref(),
                 event,
                 packages,
@@ -144,16 +90,6 @@ impl EventTrigger {
     }
 }
 
-/// The durable provisioned for one captured package and entity.
-pub fn entity_durable(package: &str, entity: &str) -> String {
-    format!(
-        "entity_{}_{}_{}",
-        package.len(),
-        wamn_event_wire::subject_token(package),
-        wamn_event_wire::subject_token(entity)
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,7 +99,7 @@ mod tests {
     fn workflow_matching_keeps_the_enable_boundary_and_all_filters() {
         let source = SourceEvent::decode(
             &serde_json::to_vec(&json!({
-                "op": "update", "package_id": "orders", "entity": "order", "table": "orders",
+                "type": "cdc", "op": "update", "package_id": "orders", "entity": "order", "table": "orders",
                 "lsn": 42, "txid": 7, "commit_ts": "2026-10-25T00:00:00Z",
                 "old": {"status": "draft"}, "new": {"status": "open"}
             }))

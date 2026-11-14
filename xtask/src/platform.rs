@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use wamn_release_control::release_chart::{self, ImageSet};
 
 const IMAGES: [&str; 5] = ["host", "control", "ctl", "identity", "edge-web"];
-const ROLES: [(&str, &str); 2] = [("http-route", "http"), ("materializer", "materializer")];
+const ROLES: [(&str, &str); 1] = [("http-route", "http")];
 
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -290,7 +290,6 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         &ImageSet {
             host: images.remove("host").context("host image")?,
             http: roles.remove(0),
-            materializer: roles.remove(0),
         },
         &args.out,
     )?;

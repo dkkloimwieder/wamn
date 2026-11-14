@@ -45,12 +45,29 @@ mod event_batch {
         let advisory = wamn_broker::events::advisory_stream_config(&coordinate, 1);
         let stream = broker.create_stream(source).await.unwrap();
         let advisory = broker.create_stream(advisory).await.unwrap();
+        let consumers = [APP, "billing"].map(|application| {
+            wamn_broker::events::application_consumer(
+                &coordinate,
+                application,
+                APPLICATION,
+                "order",
+            )
+        });
+        wamn_broker::streams::prepare_application_consumers(
+            &wamn_broker::nats::PlatformNats::from_env().unwrap(),
+            &coordinate,
+            &consumers,
+        )
+        .await
+        .unwrap();
         let events = WamnJetstream::new(WamnJetstreamConfig {
             nats: Some(client),
             event_target: Some(coordinate),
             stream_replicas: Some(1),
             dup_window_secs: Some(120),
-        });
+        })
+        .await
+        .unwrap();
         let subject = wamn_registry::name::event_subject(
             "schedule-live",
             PROJECT,
@@ -84,14 +101,6 @@ mod event_batch {
                 sequence,
                 source_event_id: &id,
             };
-            events
-                .route_event(&mut fixture.postgres, &admission)
-                .await
-                .unwrap();
-            events
-                .route_event(&mut fixture.postgres, &admission)
-                .await
-                .unwrap();
             wamn_workflow::event_admission::admit_application_events(
                 &events,
                 &fixture.postgres,
@@ -256,7 +265,8 @@ async fn reset_discards_only_the_named_environments_backlog() -> anyhow::Result<
     );
     let client = wamn_broker::nats::PlatformNats::from_env()?
         .connect()
-        .await?;
+        .await
+        .unwrap();
     let broker = async_nats::jetstream::new(client);
     let project = format!("p{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
     let target = Triple::new("reset", "dev", &project);
@@ -264,7 +274,8 @@ async fn reset_discards_only_the_named_environments_backlog() -> anyhow::Result<
     let mut streams = Vec::new();
     for coordinate in [&target, &other] {
         wamn_broker::streams::provision(&broker, coordinate, 1, Duration::from_secs(120), &[])
-            .await?;
+            .await
+            .unwrap();
         for config in [
             source_stream_config(coordinate, 1, Duration::from_secs(120)),
             advisory_stream_config(coordinate, 1),
@@ -272,15 +283,21 @@ async fn reset_discards_only_the_named_environments_backlog() -> anyhow::Result<
             let subject = config.subjects[0]
                 .replace('>', "widget.insert")
                 .replace('*', "message");
-            broker.publish(subject, "old event".into()).await?.await?;
+            broker
+                .publish(subject, "old event".into())
+                .await?
+                .await
+                .unwrap();
             streams.push((coordinate == &target, config));
         }
     }
     let result = async {
-        wamn_broker::streams::discard(&broker, &target).await?;
+        wamn_broker::streams::discard(&broker, &target)
+            .await
+            .unwrap();
         for (target, config) in &streams {
-            let mut stream = broker.get_stream(&config.name).await?;
-            let actual = stream.info().await?;
+            let mut stream = broker.get_stream(&config.name).await.unwrap();
+            let actual = stream.info().await.unwrap();
             assert!(wamn_broker::events::stream_config_matches(
                 config,
                 &actual.config
@@ -288,12 +305,14 @@ async fn reset_discards_only_the_named_environments_backlog() -> anyhow::Result<
             assert_eq!(actual.state.messages, u64::from(!target));
         }
         // A retry retains the declarations and leaves the other environment alone.
-        wamn_broker::streams::discard(&broker, &target).await?;
+        wamn_broker::streams::discard(&broker, &target)
+            .await
+            .unwrap();
         Ok::<_, anyhow::Error>(())
     }
     .await;
     for (_, config) in streams {
-        broker.delete_stream(&config.name).await?;
+        broker.delete_stream(&config.name).await.unwrap();
     }
     result
 }

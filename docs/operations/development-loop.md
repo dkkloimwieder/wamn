@@ -8,7 +8,7 @@ Local saves do not publish components or release manifests to a registry.
 
 ## [WAMN-DEV-ENVIRONMENT] Developer session
 
-Build `wamn`, `wamn-host`, `wamn-identity`, the flow-http component, and the materializer component before starting a session.
+Build `wamn`, `wamn-host`, `wamn-identity`, the flow-http component before starting a session.
 Build each application with `wamn build` before `dev up`.
 For each application with a web client, run `wamn web build --package <path>` before `dev up`.
 The local server reads `web-artifact/dist/` below the package build output.
@@ -51,7 +51,6 @@ Supply the published collector address through `--otel-exporter-otlp-endpoint`.
 The benchmark renders and starts this collector.
 
 Supply `--flow-http-component` with the absolute path to the built `http_route.wasm`.
-Supply `--materializer-component` with the absolute path to a `materializer.wasm` built with the guest RUSTFLAGS of [building](building.md#native-programs-and-app-components).
 The emitted `local_artifacts` configuration names the local output directory and these components.
 The environment document supplies the integration name and version.
 The host reads credential references from Postgres and resolves values through the environment store.
@@ -64,31 +63,20 @@ The `dev up` command neither copies nor imports a credential file.
 Supply `--platform-domain` with the domain of the platform principal emails, for example `example.invalid`.
 The emitted configuration stores it in `platform_domain`.
 Supply `--nats-url` with the one NATS, and `--nats-tls-ca`, `--nats-tls-cert` and `--nats-tls-key` with one client certificate.
-The certificate maps to a user with every permission: the host, the reader, stream provisioning and the materializer use it.
+The certificate maps to a user with every permission: the host, the reader, and stream provisioning use it.
 Declare `--stream-replicas` and `--dup-window-secs` explicitly.
 Supply `--cdc-reader-binary` with the built `wamn-cdc-reader`.
 
 The command runs `enable-cdc-project-env`, which is the verb that the cluster runs.
-The verb provisions the event streams with the materializer consumers of the packages, and it records the reader registration.
+The verb provisions the event streams with the application consumers of the packages, and it records the reader registration.
 The command applies the replication role, prepares a registry-reader login, and writes `cdc_reader` into `dev.json`.
 The PostgreSQL server must run with `wal_level=logical`.
 At each activation, the loop applies the CDC SQL of the verb to the target and starts `wamn-cdc-reader`.
 The reader logs to `cdc-reader.log` in the environment directory, and the loop waits until it streams.
 The loop stops the reader before it replaces the target, and the target lease drops the replication slot before the drop.
 
-The command writes `host-config.yaml` into the environment directory with mode 0600.
-It holds the `plugins` entry that the release chart declares: the `wasmcloud-nats` binding `events` with the environment's stream, subjects and inbox.
-The binding names no server, so it uses the host's data connection and its certificate.
-`host_config_file` in `dev.json` names the file, and the loop passes it to the host as `--user-config`.
+The host consumes application events natively. Workflow owns matching and admission.
 
-The loop runs the platform materializer as a second workload beside the release, as the cluster does.
-At each activation, the loop renders the materializer through `deploy/platform/environment`.
-The same chart owns the deployed workload.
-The rendering uses the deployed fetch and sweep intervals of `wamn-control-provision`.
-The loop writes the result with the local component bytes to `materializer.json` in the local output directory.
-The materializer does not enter the local admission facts, the release manifest, or the preload.
-The host starts it after the flow-http workload runs, and the loop waits until it runs.
-The materializer restarts with the host on each loop change. Its JetStream consumers are durable, so a restart resumes them.
 
 Local application and control hosts use `WAMN_OAUTH_ENCRYPTION='{"provider":"local"}'`.
 They share `<dev-root>/oauth.key` through `WAMN_OAUTH_KEY_FILE`.

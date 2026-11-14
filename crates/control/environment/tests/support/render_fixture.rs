@@ -99,9 +99,6 @@ pub fn host_values(
             "WAMN_COMPONENT_ARTIFACT_BASE",
             input.component_artifact_base.clone(),
         ),
-        ("WAMN_EVT_ORG", input.event.org.clone()),
-        ("WAMN_EVT_PROJECT", input.event.project.clone()),
-        ("WAMN_EVT_ENV", input.event.environment.clone()),
         (
             "WAMN_EVT_STREAM_REPLICAS",
             input.stream_replicas.to_string(),
@@ -173,26 +170,6 @@ pub fn host_group(overlay: &str) -> anyhow::Result<serde_yaml::Mapping> {
     for key in DERIVED_KEYS {
         group.remove(key);
     }
-    group
-        .get_mut("env")
-        .and_then(serde_yaml::Value::as_sequence_mut)
-        .context("the host group has env")?
-        .retain(|entry| {
-            entry["name"]
-                .as_str()
-                .is_none_or(|name| !DERIVED_VARIABLES.contains(&name))
-        });
-    if let Some(ports) = group
-        .get_mut("ports")
-        .and_then(serde_yaml::Value::as_sequence_mut)
-    {
-        ports.retain(|port| port["name"] != "files");
-    }
-    group
-        .get_mut("env")
-        .and_then(serde_yaml::Value::as_sequence_mut)
-        .context("apply host variables")?
-        .retain(|variable| variable["name"] != "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS");
     Ok(group)
 }
 
@@ -208,7 +185,6 @@ pub fn template(values: &serde_yaml::Value, namespace: &str) -> anyhow::Result<V
         &ImageSet {
             host: image.clone(),
             http: image.clone(),
-            materializer: image,
         },
         &work.path().join("chart"),
     )?;
@@ -351,11 +327,6 @@ pub fn assert_complete(documents: &[Value], secrets: &[Value]) -> anyhow::Result
                     }
                     (Some("wamn"), Some("postgres")) => {
                         require("WAMN_PG_URL")?;
-                        if spec["service"]["localResources"]["config"]["wamn.postgres.authority"]
-                            == "event-materializer"
-                        {
-                            require("WAMN_EVENT_MATERIALIZER_PG_URL")?;
-                        }
                     }
                     (Some("wamn"), Some("operation")) => {
                         require("WAMN_EXECUTOR_PLATFORM_PG_URL")?;

@@ -105,7 +105,6 @@ const HOST_INJECTED: [&str; 1] = ["wamn_run.run_queue"];
 /// Sorted, because both consumers compare against a sorted list.
 const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
     "wamn_administration",
-    "wamn_event_materializer",
     "wamn_executor_platform",
     "wamn_http_admitter",
     "wamn_run_retention",

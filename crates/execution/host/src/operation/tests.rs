@@ -69,7 +69,7 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
             effects: None,
         },
         causation: Some(causation),
-        platform: Some(PlatformComponent::Materializer),
+        platform: Some(PlatformComponent::ApplyPackage),
     };
 
     let original = acquisition.clone();
@@ -78,10 +78,10 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
         ..acquisition
     };
     // A callerless call binds its platform principal.
-    let materializer = PlatformComponent::Materializer.principal_id().to_string();
+    let platform_user = PlatformComponent::ApplyPackage.principal_id().to_string();
     assert_eq!(
         original.executing_principal(None).as_deref(),
-        Some(materializer.as_str())
+        Some(platform_user.as_str())
     );
     assert_eq!(
         executor.executing_principal(None),
@@ -92,7 +92,7 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
     assert_eq!(
         original.executing_identity(None, "receiving"),
         SessionIdentity {
-            user_id: Some(materializer),
+            user_id: Some(platform_user),
             operation: Some("platform-fixture-overlay:widget/record-batch@2.1.0".to_owned()),
             application: Some("receiving".to_owned()),
             ..original.identity

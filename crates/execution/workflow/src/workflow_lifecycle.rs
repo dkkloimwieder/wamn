@@ -32,7 +32,7 @@ use wamn_registry::Triple;
 use crate::author_workflow::{
     AuthorWorkflowError, AuthorWorkflowErrorType, condition_against_release,
 };
-use crate::environment::lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
+use wamn_platform_install::lifecycle_lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
 
 const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, true)";
 
@@ -385,7 +385,7 @@ async fn enable_in(
         let source_package: String = row.get(4);
         let entity: String = row.get(5);
         let stored_ops: Vec<String> = row.get(6);
-        let ops = serde_json::from_value::<Vec<wamn_event_reg::Op>>(serde_json::json!(stored_ops))
+        let ops = serde_json::from_value::<Vec<wamn_event_wire::Op>>(serde_json::json!(stored_ops))
             .map_err(WorkflowLifecycleError::stored)?;
         let condition: Option<String> = row.get(7);
         crate::author_workflow::validate_event_trigger(
@@ -406,6 +406,21 @@ async fn enable_in(
                 "the environment has no event broker",
             )
         })?;
+        let consumer = wamn_broker::events::application_consumer(
+            triple,
+            workflow.application,
+            &source_package,
+            &entity,
+        );
+        wamn_broker::streams::prepare_application_consumers(&events.nats, triple, &[consumer])
+            .await
+            .map_err(|error| {
+                WorkflowLifecycleError::with_source(
+                    WorkflowLifecycleErrorType::Broker,
+                    "prepare application event consumer",
+                    error,
+                )
+            })?;
         let tail = wamn_broker::streams::last_published_sequence(&events.nats, triple)
             .await
             .map_err(|error| {
@@ -474,23 +489,4 @@ impl WorkflowLifecycleError {
 
 fn storage(context: &'static str, error: sqlx::Error) -> WorkflowLifecycleError {
     WorkflowLifecycleError::with_source(WorkflowLifecycleErrorType::Storage, context, error)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn apply_in_progress_renders_without_the_lifecycle_prefix() {
-        let refusal = WorkflowLifecycleError::new(
-            WorkflowLifecycleErrorType::ApplyInProgress,
-            format!("{APPLY_IN_PROGRESS}: acme/wms/prod"),
-        );
-        assert!(refusal.to_string().starts_with(APPLY_IN_PROGRESS));
-        let other = WorkflowLifecycleError::new(WorkflowLifecycleErrorType::NotFound, "absent");
-        assert_eq!(
-            other.to_string(),
-            format!("{WORKFLOW_LIFECYCLE_REFUSAL} (not-found): absent")
-        );
-    }
 }

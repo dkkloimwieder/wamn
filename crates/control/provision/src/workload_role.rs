@@ -15,12 +15,8 @@ pub const RETENTION_ROLE: &str = "wamn_run_retention";
 pub use wamn_identity_protocol::authority_class::EXECUTOR_PLATFORM_ROLE;
 /// Compact prefix that leaves room for the full identity digest.
 const EXECUTOR_PLATFORM_LOGIN_PREFIX: &str = "wamn_exec_platform";
-/// Stable NOLOGIN role used by event-materializer logins.
-pub use wamn_identity_protocol::authority_class::EVENT_MATERIALIZER_ROLE;
 /// Stable NOLOGIN role used by callable-HTTP admission logins.
 pub use wamn_identity_protocol::authority_class::HTTP_ADMITTER_ROLE;
-/// Compact prefix that leaves room for the full identity digest.
-const EVENT_MATERIALIZER_LOGIN_PREFIX: &str = "wamn_materializer";
 /// Stable NOLOGIN role used by control-registry reader logins.
 pub const REGISTRY_READER_ROLE: &str = "wamn_registry_reader";
 /// Stable NOLOGIN role used by control-identity reader logins.
@@ -96,7 +92,6 @@ pub enum WorkloadRoleFamily {
     Retention,
     ExecutorPlatform,
     HttpAdmitter,
-    EventMaterializer,
     RegistryReader,
     IdentityReader,
     SessionRoleReader,
@@ -113,7 +108,7 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 14] = [
         Self::ServiceReader,
         Self::App,
         Self::Query,
@@ -121,7 +116,6 @@ impl WorkloadRoleFamily {
         Self::Retention,
         Self::ExecutorPlatform,
         Self::HttpAdmitter,
-        Self::EventMaterializer,
         Self::RegistryReader,
         Self::IdentityReader,
         Self::SessionRoleReader,
@@ -141,7 +135,6 @@ impl WorkloadRoleFamily {
             Self::Retention => RETENTION_ROLE,
             Self::ExecutorPlatform => AuthorityClass::ExecutorPlatform.acl_role(),
             Self::HttpAdmitter => AuthorityClass::CallableHttp.acl_role(),
-            Self::EventMaterializer => AuthorityClass::EventMaterializer.acl_role(),
             Self::RegistryReader => REGISTRY_READER_ROLE,
             Self::IdentityReader => IDENTITY_READER_ROLE,
             Self::ConnectionReader => CONNECTION_READER_ROLE,
@@ -157,7 +150,6 @@ impl WorkloadRoleFamily {
         match self {
             Self::Migration => crate::migration::LOGIN_PREFIX,
             Self::ExecutorPlatform => EXECUTOR_PLATFORM_LOGIN_PREFIX,
-            Self::EventMaterializer => EVENT_MATERIALIZER_LOGIN_PREFIX,
             Self::SessionRoleReader => SESSION_ROLE_READER_LOGIN_PREFIX,
             _ => self.acl_role(),
         }
@@ -173,7 +165,6 @@ impl WorkloadRoleFamily {
             | Self::ExecutorPlatform
             | Self::HttpAdmitter
             | Self::SessionRoleReader
-            | Self::EventMaterializer
             | Self::Administration => WorkloadRoleIdentityType::ProjectEnvironment,
             // Identity follows the RESOURCE PLANE, not the consumer's home: these
             // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
@@ -218,7 +209,6 @@ impl WorkloadRoleFamily {
     ///
     /// Everything else — the eight families whose credentials reach a
     /// project-environment or project database and are not the guest — is a
-    /// member. `EventMaterializer` exercises that edge
     /// through its two catalog reads. `ServiceReader` remains the empty-surface
     /// case: an RLS arm with no table grant behind it admits nothing, while the
     /// edge prevents a future first grant from silently reading zero rows.
@@ -305,7 +295,6 @@ impl WorkloadRoleFamily {
             Self::Retention => b"wamn.run-retention.identity.v0.1",
             Self::ExecutorPlatform => b"wamn.executor-platform.identity.v0.1",
             Self::HttpAdmitter => b"wamn.http-admitter.identity.v0.1",
-            Self::EventMaterializer => b"wamn.event-materializer.identity.v0.1",
             Self::RegistryReader => b"wamn.registry-reader.identity.v0.1",
             Self::IdentityReader => b"wamn.identity-reader.identity.v0.1",
             Self::ConnectionReader => b"wamn.connection-reader.identity.v0.1",
@@ -335,7 +324,6 @@ impl From<AuthorityClass> for WorkloadRoleFamily {
             AuthorityClass::DynamicSql => Self::Query,
             AuthorityClass::ExecutorPlatform => Self::ExecutorPlatform,
             AuthorityClass::CallableHttp => Self::HttpAdmitter,
-            AuthorityClass::EventMaterializer => Self::EventMaterializer,
             AuthorityClass::Administration => Self::Administration,
         }
     }

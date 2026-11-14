@@ -24,8 +24,6 @@ pub struct DevUpRequest {
     pub packages: Vec<PathBuf>,
     /// The built `wamn-cdc-reader` the loop runs beside the host.
     pub cdc_reader_binary: PathBuf,
-    /// The built platform materializer the loop runs beside the release.
-    pub materializer_component: PathBuf,
 }
 
 /// Provision the environment and return the configuration file.
@@ -60,15 +58,6 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
                 args.flow_http_component.display()
             )
         })?,
-        materializer_component: args
-            .materializer_component
-            .canonicalize()
-            .with_context(|| {
-                format!(
-                    "resolve local materializer component {}",
-                    args.materializer_component.display()
-                )
-            })?,
     };
     let mut inputs = DevEnvironmentInputs {
         local_artifacts,
@@ -177,12 +166,20 @@ async fn enable_cdc(
     )))
     .execute(&mut *admin)
     .await?;
-    let consumers = wamn_broker::events::entity_consumers(
-        &triple,
-        manifests
-            .iter()
-            .flat_map(wamn_compiler::manifest::PackageManifest::entity_pairs),
-    );
+    let document = super::session::read_environment(&args.root.join("environment.k"))?;
+    let consumers = document
+        .applications
+        .keys()
+        .flat_map(|application| {
+            manifests
+                .iter()
+                .flat_map(wamn_compiler::manifest::PackageManifest::entity_pairs)
+                .map(|(package, entity)| {
+                    wamn_broker::events::application_consumer(&triple, application, package, entity)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
     let js = async_nats::jetstream::new(inputs.nats.connect().await?);
     wamn_broker::streams::provision(
         &js,

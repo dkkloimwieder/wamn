@@ -44,8 +44,8 @@ pub use cdc::{
 
 use crate::name::{APP_ROLE, DB_OWNER_ROLE};
 use crate::workload_role::{
-    ADMINISTRATION_ROLE, EVENT_MATERIALIZER_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE,
-    PLATFORM_GROUP_ROLE, SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
+    ADMINISTRATION_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE, PLATFORM_GROUP_ROLE,
+    SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
 };
 pub(crate) use postgres_protocol::escape::escape_identifier;
 use postgres_protocol::escape::escape_literal;
@@ -614,36 +614,6 @@ pub fn grant_executor_history_reads_sql() -> String {
     )
 }
 
-/// The materializer's complete production read surface: the installed package
-/// identities used for source validation. It holds no catalog write,
-/// run-plane grant, or routine grant.
-pub const EVENT_MATERIALIZER_CATALOG_RELATIONS: [&str; 1] = ["packages"];
-
-/// Converge the stable event-materializer role to its exact package catalog
-/// read surface. Revocation spans every authority-bearing project schema so an
-/// out-of-band widening is removed on replay.
-pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
-    let role = escape_identifier(EVENT_MATERIALIZER_ROLE);
-    let schema = escape_identifier(schema);
-    let mut sql = format!(
-        "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, {PROJECT_KEY_SCHEMA}, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, {PROJECT_KEY_SCHEMA}, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, {PROJECT_KEY_SCHEMA}, {schema} FROM {role}; \
-         GRANT USAGE ON SCHEMA catalog TO {role};",
-        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::EventMaterializer),
-    );
-    for relation in EVENT_MATERIALIZER_CATALOG_RELATIONS {
-        write!(
-            sql,
-            " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
-            relation = escape_identifier(relation),
-        )
-        .expect("writing to a String cannot fail");
-    }
-    sql
-}
-
 // --- T1 control-database read surfaces (wamn-0h0g.12.116, wamn-0h0g.12.67) ---
 //
 // The T1 system database's two read-only consumers both authenticated as
@@ -936,9 +906,6 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
         WorkloadRoleFamily::RegistryReader => Some(grant_registry_reader_surface_sql()),
         WorkloadRoleFamily::IdentityReader => Some(grant_identity_reader_surface_sql()),
         WorkloadRoleFamily::ConnectionReader => Some(grant_connection_reader_surface_sql()),
-        WorkloadRoleFamily::EventMaterializer => {
-            Some(grant_event_materializer_surface_sql("wamn_run"))
-        }
         WorkloadRoleFamily::Administration => Some(grant_administration_surface_sql("wamn_run")),
         WorkloadRoleFamily::Control => Some(grant_control_surface_sql()),
         _ => None,

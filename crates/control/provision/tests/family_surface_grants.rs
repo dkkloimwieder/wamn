@@ -160,10 +160,8 @@ fn role_url(admin_url: &str, role: &str, password: &str) -> String {
 fn reset(admin_url: &str, database: &str) {
     let mut roles = vec![
         generation(WorkloadRoleFamily::ExecutorPlatform, database),
-        generation(WorkloadRoleFamily::EventMaterializer, database),
         generation(WorkloadRoleFamily::HttpAdmitter, database),
         WorkloadRoleFamily::ExecutorPlatform.acl_role().to_owned(),
-        WorkloadRoleFamily::EventMaterializer.acl_role().to_owned(),
         WorkloadRoleFamily::HttpAdmitter.acl_role().to_owned(),
     ];
     // The roles the two artifacts GRANT to or CREATE. A `GRANT … TO` a missing
@@ -197,89 +195,6 @@ fn reset(admin_url: &str, database: &str) {
     for artifact in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
         run_admin(admin_url, "apply a run-plane artifact", artifact);
     }
-}
-
-#[test]
-fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let admin = test_database.url().to_owned();
-    let database = query(&admin, "SELECT current_database()");
-    reset(&admin, &database);
-
-    let stable = WorkloadRoleFamily::EventMaterializer.acl_role();
-    let login = generation(WorkloadRoleFamily::EventMaterializer, &database);
-    let surface = sql::grant_event_materializer_surface_sql("wamn_run");
-    run_admin(&admin, "converge the event-materializer surface", &surface);
-    run_admin(&admin, "replay the convergent surface", &surface);
-    run_admin(
-        &admin,
-        "prepare the event-materializer generation",
-        &wamn_control_provision::test_database::login_sql(
-            WorkloadRoleFamily::EventMaterializer,
-            &database,
-            &login,
-            GENERATION_PW,
-        ),
-    );
-
-    let expected = vec![
-        "relation|catalog|packages|SELECT".to_owned(),
-        "schema|catalog|catalog|USAGE".to_owned(),
-    ];
-    assert_eq!(load_role_grants(&admin, stable), expected);
-    assert_eq!(
-        load_role_grants(&admin, &login),
-        vec![format!("database||{database}|CONNECT")],
-        "the materializer generation carries a direct grant beyond CONNECT"
-    );
-
-    run_admin(
-        &admin,
-        "widen the materializer role out of band",
-        &format!(
-            "GRANT SELECT ON TABLE catalog.workflows TO {stable}; \
-             GRANT SELECT ON TABLE platform.permission TO {stable}; \
-             GRANT USAGE ON SCHEMA wamn_run TO {stable}; \
-             GRANT SELECT ON TABLE wamn_run.runs TO {stable};"
-        ),
-    );
-    run_admin(
-        &admin,
-        "re-converge the event-materializer surface",
-        &surface,
-    );
-    assert_eq!(
-        load_role_grants(&admin, stable),
-        expected,
-        "an adjacent catalog or run-plane grant survived convergence"
-    );
-
-    run_admin(
-        &admin,
-        "seed materializer registration inputs",
-        "INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( 't1', 'widgets', '1.0.0', \
-            'sha256:0000000000000000000000000000000000000000000000000000000000000000'), ( 't2', 'foreign', '1.0.0', \
-            'sha256:1111111111111111111111111111111111111111111111111111111111111111');",
-    );
-    let as_materializer = role_url(&admin, &login, GENERATION_PW);
-    assert_eq!(
-        query(
-            &as_materializer,
-            "SET app.project_env_key = 't1'; \
-             SELECT string_agg(package_id || '@' || package_version, ',' ORDER BY package_id) \
-               FROM catalog.packages \
-              WHERE project_env_key = current_setting('app.project_env_key', true)"
-        ),
-        "widgets@1.0.0"
-    );
-    assert_eq!(
-        query(
-            &admin,
-            "SELECT to_regclass('catalog.event_registrations') IS NULL"
-        ),
-        "t"
-    );
 }
 
 /// The whole ACL the named role holds in this database, as the server reports

@@ -5,7 +5,7 @@
 //! Under the lifecycle lock, test ownership and existing stranded runs before
 //! uninstalling application releases. Drain their hosts and test runs again.
 //! Delete and drain the CDC reader before removing credentials or replication.
-//! Remove the materializer, PATs, Secrets, control administration key, streams,
+//! Remove the environment host, PATs, Secrets, control administration key, streams,
 //! event certificate, Publication CR, replication slot, and Database CR.
 //! Remove control logins and, with `--data`, the instance roles.
 //! Remove the credential store Secret and its account before the final transaction.
@@ -194,20 +194,6 @@ async fn delete_locked(
 
     // Shared event resources stop only after every application host drains.
     let shared = super::ensure::environment_host_name(org, project, env)?;
-    kubectl(
-        platform,
-        &platform.target.namespace,
-        &[
-            "delete",
-            "workloaddeployment",
-            &wamn_registry::name::resource_suffix(&shared, "materializer"),
-            "--ignore-not-found",
-            "--wait=true",
-            "--timeout=600s",
-        ],
-        None,
-    )
-    .await?;
     if super::analyse::release_present(platform, &shared).await? {
         release_chart::uninstall(&platform.target, &shared).await?;
         lines.push(format!("uninstalled {shared}"));
@@ -216,7 +202,7 @@ async fn delete_locked(
         super::drain::wait(platform, &shared, None)
             .await?
             .is_empty(),
-        "shared materializer hosts are still live"
+        "shared environment hosts are still live"
     );
 
     // The provisioning PATs, then the credential Secrets the verb owns.

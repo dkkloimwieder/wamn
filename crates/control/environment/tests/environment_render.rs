@@ -315,7 +315,7 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
 
     // The separate materializer is deleted before its host is stopped, then
     // ordinary provisioning renders it again with its running replica count.
-    let mut shared = ensure::materializer_host_values(
+    let mut shared = ensure::environment_host_values(
         &document,
         70,
         1,
@@ -338,7 +338,7 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
             .all(|host| host["spec"]["replicas"] == 0)
     );
     let shared = template(
-        &serde_yaml::to_value(ensure::materializer_host_values(
+        &serde_yaml::to_value(ensure::environment_host_values(
             &document,
             70,
             1,
@@ -360,10 +360,6 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let prepared =
         wamn_environment::platform::artifact_plan::test_util::prepared_chart(&repository)?;
-    let image = format!("registry.invalid/materializer@sha256:{}", "a".repeat(64));
-    let materializer =
-        ensure::materializer_workload(&prepared.0, &document, NAMESPACE, &image, false)?;
-    assert_eq!(materializer["spec"]["replicas"], 1);
     Ok(())
 }
 
@@ -589,76 +585,6 @@ mod shared_resources {
         environment::ensure,
         platform::{artifact_plan, resources},
     };
-
-    #[test]
-    fn shared_materializer_and_host_have_one_environment_chart_owner() -> anyhow::Result<()> {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let prepared = artifact_plan::test_util::prepared_chart(&repository)?;
-        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
-        let image = format!("registry.example/materializer@sha256:{}", "a".repeat(64));
-        let workload =
-            ensure::materializer_workload(&prepared.0, &document, "acme", &image, false)?;
-        let mut values: Value =
-            serde_yaml::from_slice(&std::fs::read(prepared.0.join("values.yaml"))?)?;
-        resources::merge(
-            &mut values,
-            ensure::materializer_host_values(&document, 70, 1, 120, None, false, None)?,
-        );
-        let input = &workload["spec"]["template"]["spec"]["service"]["localResources"]["environment"]
-            ["config"];
-        values["materializer"] = json!({"name":workload["metadata"]["name"],"hostGroup":values["runtime-operator"]["runtime"]["hostGroups"][0]["name"],
-            "image":image,"projectEnvKey":wamn_registry::project_env_key("acme","apps","dev"),
-            "org":document.org,"project":document.project,"environment":document.env,"stream":input["WAMN_MAT_STREAM"],"fetchMs":1000,"sweepMs":5000});
-        resources::merge(
-            &mut values,
-            wamn_platform_install::environment::publication_values(
-                &document.triple(),
-                "a1b2c3d4",
-                "acme-dev",
-                "events",
-                &["app".into()],
-            ),
-        );
-        let entry = wamn_platform_install::environment::entry(
-            &prepared.0.join("platform/environment"),
-            "acme",
-            "shared",
-            values,
-        )?;
-        let objects = wamn_kubernetes::helm::template(&entry)?;
-        let publication = objects
-            .iter()
-            .find(|object| object["kind"] == "Publication")
-            .unwrap();
-        for (label, expected) in [
-            ("wamn.org", document.org.as_str()),
-            ("wamn.project", document.project.as_str()),
-            ("wamn.env", document.env.as_str()),
-        ] {
-            assert_eq!(publication["metadata"]["labels"][label], expected);
-        }
-        let host = objects
-            .iter()
-            .find(|object| object["kind"] == "Deployment")
-            .unwrap();
-        let materializer = objects
-            .iter()
-            .find(|object| object["kind"] == "WorkloadDeployment")
-            .unwrap();
-        assert_eq!(
-            materializer["spec"]["template"]["spec"]["hostSelector"]["hostgroup"],
-            host["spec"]["template"]["metadata"]["labels"]["wasmcloud.com/hostgroup"]
-        );
-        assert_eq!(
-            materializer["metadata"]["namespace"],
-            host["metadata"]["namespace"]
-        );
-        assert_eq!(
-            materializer["spec"]["template"]["spec"]["service"]["image"],
-            image
-        );
-        Ok(())
-    }
 }
 
 #[tokio::test]

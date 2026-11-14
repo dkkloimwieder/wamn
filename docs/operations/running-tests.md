@@ -34,7 +34,7 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
 - Any `Cargo.toml` or `Cargo.lock` also runs `cargo xtask compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it.
-- Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies. Changes to materializer WASI WIT select root and apps.
+- Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies.
 - A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
 - A path that no package owns and no rule names selects every applicable workspace and suite.
 - Documentation-only changes select nothing, including quality, and exit successfully.
@@ -139,7 +139,6 @@ In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this che
 | `WAMN_RECEIVING_DEV_BIN` | `TARGET/debug/wamn-ctl` |
 | `WAMN_IDENTITY_BINARY` | `TARGET/debug/wamn-identity` |
 | `WAMN_FLOW_HTTP_COMPONENT` | `TARGET/apps/wasm32-wasip2/release/http_route.wasm` |
-| `WAMN_MATERIALIZER_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/materializer.wasm` |
 | `WAMN_BLOB_PUT_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/blob_put.wasm` |
 | `WAMN_SQLX_TRANSACTION_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/sqlx_command.wasm` |
 | `WAMN_PLATFORM_UI_DIST` | `ROOT/apps/platform_ui/dist` |
@@ -148,7 +147,6 @@ In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this che
 | `WAMN_RECEIVING_DEV_HOST_BIN` | Same input as `WAMN_HOST_BINARY` |
 | `WAMN_SESSION_EXCHANGE_CTL_BIN` | Same input as `WAMN_RECEIVING_DEV_BIN` |
 | `WAMN_DEV_ENV_FLOW_HTTP_COMPONENT` | Same input as `WAMN_FLOW_HTTP_COMPONENT` |
-| `WAMN_DEV_ENV_MATERIALIZER_COMPONENT` | Same input as `WAMN_MATERIALIZER_COMPONENT` |
 | `WAMN_POSTGRES_BIN_DIR` | `/usr/lib/postgresql/18/bin` |
 
 The PostgreSQL directory holds `initdb`, `postgres`, `pg_ctl`, and `psql` from PostgreSQL 18.
@@ -599,7 +597,7 @@ Run this case alone.
 The fixture requires PostgreSQL 18 binaries, Docker, and the existing development service images.
 The case also requires `jq` on `PATH`.
 
-Use the preparation rows for the native programs, application packages, HTTP guest, and materializer.
+Use the preparation rows for the native programs, application packages, HTTP guest.
 From the disposable worktree, build its fixture example and list its test executable:
 
 ```bash
@@ -625,10 +623,9 @@ The fixture starts Compose services on assigned loopback ports.
 If you put `--wms` before `--`, the fixture also starts MinIO and makes the `labels` bucket.
 It then sets `WAMN_DEV_ENV_CREDENTIALS_FILE` to a mode 0600 file with the MinIO credential under the handle `labels-store`.
 It sets `WAMN_RECEIVING_DEV_MINIO_ENDPOINT` to the MinIO address.
-The fixture's NATS admits the materializer consumers of the packages that the command gives `wamn dev up`.
+The fixture's NATS admits the event consumers of the packages that the command gives `wamn dev up`.
 These are `wamn_receiving` and `client_acme_receiving`, or `wamn_wms` with `--wms`.
 The fixture sets the CDC reader binary and the event publisher credential for `wamn dev up`.
-It also sets the event materializer credential, which the broker targets to the source stream.
 It sets `WAMN_DEV_ENV_ROOT` to `delivery-timings/env` in the target directory, which survives runs, so the compile cache survives too.
 Before the command starts, the fixture counts the files under `dev-wasmtime-cache/modules` in that root, without the `.stats` files.
 It writes the count to `cache-state.json` in the results directory, so that you can read a cold run as cold.

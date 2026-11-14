@@ -203,8 +203,11 @@ async fn read_all(
                 .and_then(|h| h.get(NATS_MESSAGE_ID))
                 .map(std::string::ToString::to_string)
                 .unwrap_or_default();
-            let envelope: Envelope =
-                serde_json::from_slice(&msg.payload).expect("envelope deserializes (draft shape)");
+            let wamn_event_wire::SourceEvent::Cdc(envelope) =
+                wamn_event_wire::SourceEvent::decode(&msg.payload).expect("event decodes")
+            else {
+                panic!("expected CDC event")
+            };
             out.push((msg.subject.to_string(), id, envelope));
             msg.ack().await.expect("ack");
         }

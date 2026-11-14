@@ -16,11 +16,12 @@ use wamn_engine::release_manifest::LoadedRelease;
 use wamn_postgres::schema::BareSchemaName;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
+use wamn_runtime::plugins::wamn_jetstream::EventBatchAdmission;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
-    AuthorityClass, ClassCredentials, EventBatchAdmission, ProjectConfig, ReleaseIdentity,
-    SessionIdentity, StaticCredentialProvider, WamnPostgres,
+    AuthorityClass, ClassCredentials, ProjectConfig, ReleaseIdentity, SessionIdentity,
+    StaticCredentialProvider, WamnPostgres,
 };
 use wash_runtime::host::probes::Liveness;
 
@@ -320,7 +321,10 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         package_ids: vec!["automation".to_owned()],
         environment: "test".to_owned(),
     };
-    let jetstream = Arc::new(WamnJetstream::from_env());
+    let jetstream = Arc::new(
+        WamnJetstream::new(wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig::default())
+            .await?,
+    );
     let client = wamn_postgres::connect(database.url()).await?;
 
     let workflows = WorkflowsFixture {

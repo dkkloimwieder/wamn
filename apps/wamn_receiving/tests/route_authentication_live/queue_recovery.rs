@@ -269,7 +269,7 @@ async fn serve(
     tokio::sync::watch::Sender<bool>,
     tokio::task::JoinHandle<anyhow::Result<()>>,
 )> {
-    let jetstream = Arc::new(WamnJetstream::new(WamnJetstreamConfig::default()));
+    let jetstream = Arc::new(WamnJetstream::new(WamnJetstreamConfig::default()).await?);
     let service = QueueService::bind(
         Arc::clone(&queue.driver),
         Arc::clone(&queue.postgres),

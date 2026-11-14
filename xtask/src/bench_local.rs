@@ -380,15 +380,7 @@ async fn measure(local: &mut Local<'_>, args: &Args, target: &Path) -> anyhow::R
         Some(target),
     )
     .await?;
-    let materializer = wamn_build::build_guest(
-        root,
-        &root.join("apps/Cargo.toml"),
-        "materializer",
-        Some(target),
-    )
-    .await?;
     let http = data_digest(&route)?;
-    let materializer_digest = data_digest(&materializer)?;
     local
         .logged(
             "build.log",
@@ -632,9 +624,7 @@ async fn measure(local: &mut Local<'_>, args: &Args, target: &Path) -> anyhow::R
                 .arg("--cdc-reader-binary")
                 .arg(local.bin.join("wamn-cdc-reader"))
                 .arg("--flow-http-component")
-                .arg(&route)
-                .arg("--materializer-component")
-                .arg(&materializer),
+                .arg(&route),
         )
         .await?;
     let log = std::fs::File::create(local.work.join("dev.log"))?;
@@ -726,18 +716,11 @@ async fn measure(local: &mut Local<'_>, args: &Args, target: &Path) -> anyhow::R
             &["stop", &format!("{}-collector", local.prefix)],
         )
         .await?;
-        data::app_result(
-            &local.work,
-            &output,
-            &http,
-            &materializer_digest,
-            false,
-            scale,
-        )?;
+        data::app_result(&local.work, &output, &http, false, scale)?;
     } else {
         data::write(
             &local.work.join("metadata.json"),
-            &json!({"concurrency":args.concurrency,"http_route_sha256":http,"materializer_sha256":materializer_digest,"edge":false}),
+            &json!({"concurrency":args.concurrency,"http_route_sha256":http,"edge":false}),
         )?;
         data::result(&local.work, &output, args.concurrency)?;
     }

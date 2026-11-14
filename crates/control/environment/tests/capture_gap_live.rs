@@ -229,7 +229,7 @@ async fn recover_and_close_record_each_capture_gap() {
         &js,
         subject(ORG, PROJECT, ENV, "widget", Op::Insert),
         &msg_id(PROJECT, ENV, cdc_lsn),
-        serde_json::to_vec(&envelope).unwrap(),
+        serde_json::to_vec(&wamn_event_wire::SourceEvent::Cdc(envelope)).unwrap(),
     )
     .await;
     publish(

@@ -37,7 +37,6 @@ const IDENTITY_DATABASE_URL: &str = "identity_database_url";
 const GUEST_DATABASE_URL: &str = "guest_database_url";
 const EXECUTOR_PLATFORM_DATABASE_URL: &str = "executor_platform_database_url";
 const HTTP_ADMITTER_DATABASE_URL: &str = "http_admitter_database_url";
-const EVENT_MATERIALIZER_DATABASE_URL: &str = "event_materializer_database_url";
 const ADMINISTRATION_DATABASE_URL: &str = "administration_database_url";
 const SCHEDULER_NATS_URL: &str = "scheduler_nats_url";
 const NATS_TLS_CA: &str = "nats_tls_ca";
@@ -60,7 +59,6 @@ const HOST_NAME: &str = "host_name";
 const RUNNER: &str = "runner";
 const HOST_BINARY: &str = "host_binary";
 const WASMTIME_CACHE_DIR: &str = "wasmtime_cache_dir";
-const HOST_CONFIG_FILE: &str = "host_config_file";
 const CDC_READER: &str = "cdc_reader";
 #[cfg(test)]
 const PACKAGE_MANIFEST_FILE: &str = "generated/wamn.json";
@@ -74,9 +72,6 @@ const POSTGRES_ROUTING_QUERY_KEYS: [&str; 5] = ["host", "hostaddr", "port", "dbn
 pub struct LocalArtifacts {
     pub directory: PathBuf,
     pub flow_http_component: PathBuf,
-    /// The built platform materializer, which the loop runs beside the
-    /// release as the cluster does.
-    pub materializer_component: PathBuf,
 }
 
 /// The CDC reader the loop runs beside the host: the cluster's binary with the
@@ -131,7 +126,6 @@ struct DevConfigDocument {
     guest_database_url: String,
     executor_platform_database_url: String,
     http_admitter_database_url: String,
-    event_materializer_database_url: String,
     administration_database_url: String,
     scheduler_nats_url: String,
     nats_tls_ca: PathBuf,
@@ -154,9 +148,6 @@ struct DevConfigDocument {
     runner: String,
     host_binary: PathBuf,
     wasmtime_cache_dir: PathBuf,
-    /// The materializer's events binding in the environment's private root,
-    /// as the cluster mounts its Secret.
-    host_config_file: PathBuf,
     /// The CDC reader that `wamn dev up` enabled. Absent means no reader runs.
     #[serde(default)]
     cdc_reader: Option<CdcReader>,
@@ -566,7 +557,6 @@ pub struct DevConfig {
     guest_database_url: Box<str>,
     executor_platform_database_url: Box<str>,
     http_admitter_database_url: Box<str>,
-    event_materializer_database_url: Box<str>,
     administration_database_url: Box<str>,
     scheduler_nats_url: Box<str>,
     nats_tls_ca: PathBuf,
@@ -583,7 +573,6 @@ pub struct DevConfig {
     activation_identity: DevActivationIdentity,
     host_binary: PathBuf,
     wasmtime_cache_dir: PathBuf,
-    host_config_file: PathBuf,
     cdc_reader: Option<CdcReader>,
     probes: Box<[ReachabilityProbe]>,
 }
@@ -617,10 +606,6 @@ impl fmt::Debug for DevConfig {
                 &self.sanitized_endpoint(HTTP_ADMITTER_DATABASE_URL),
             )
             .field(
-                EVENT_MATERIALIZER_DATABASE_URL,
-                &self.sanitized_endpoint(EVENT_MATERIALIZER_DATABASE_URL),
-            )
-            .field(
                 ADMINISTRATION_DATABASE_URL,
                 &self.sanitized_endpoint(ADMINISTRATION_DATABASE_URL),
             )
@@ -645,7 +630,6 @@ impl fmt::Debug for DevConfig {
             .field("activation_identity", &self.activation_identity)
             .field(HOST_BINARY, &self.host_binary)
             .field(WASMTIME_CACHE_DIR, &self.wasmtime_cache_dir)
-            .field(HOST_CONFIG_FILE, &self.host_config_file)
             .field(CDC_READER, &self.cdc_reader)
             .finish_non_exhaustive()
     }
@@ -707,11 +691,6 @@ impl DevConfig {
     /// Callable-HTTP PostgreSQL URL passed to the local serving host.
     pub fn http_admitter_database_url(&self) -> &str {
         &self.http_admitter_database_url
-    }
-
-    /// Event-materializer PostgreSQL URL passed to the local serving host.
-    pub fn event_materializer_database_url(&self) -> &str {
-        &self.event_materializer_database_url
     }
 
     /// Administration PostgreSQL URL passed to the local serving host.
@@ -806,12 +785,6 @@ impl DevConfig {
         &self.wasmtime_cache_dir
     }
 
-    /// The materializer's events binding, passed to the host as
-    /// `--user-config`: the host configuration file with the `plugins` entry.
-    pub fn host_config_file(&self) -> &Path {
-        &self.host_config_file
-    }
-
     /// The CDC reader the loop starts after each activation, when enabled.
     pub const fn cdc_reader(&self) -> Option<&CdcReader> {
         self.cdc_reader.as_ref()
@@ -838,10 +811,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     let (http_admitter_probe, http_admitter_identity) = database_probe(
         HTTP_ADMITTER_DATABASE_URL,
         &config.http_admitter_database_url,
-    )?;
-    let (event_materializer_probe, event_materializer_identity) = database_probe(
-        EVENT_MATERIALIZER_DATABASE_URL,
-        &config.event_materializer_database_url,
     )?;
     let (administration_probe, administration_identity) = database_probe(
         ADMINISTRATION_DATABASE_URL,
@@ -870,7 +839,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
             (&guest_probe, &guest_identity),
             (&executor_platform_probe, &executor_platform_identity),
             (&http_admitter_probe, &http_admitter_identity),
-            (&event_materializer_probe, &event_materializer_identity),
             (&administration_probe, &administration_identity),
         ],
     )?;
@@ -895,7 +863,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         guest_probe,
         executor_platform_probe,
         http_admitter_probe,
-        event_materializer_probe,
         administration_probe,
         scheduler_probe,
         otel_exporter_probe,
@@ -1180,7 +1147,6 @@ pub(crate) mod tests {
             (GUEST_DATABASE_URL): format!("postgresql://guest:guest-secret@{}/target", addresses[3]),
             (EXECUTOR_PLATFORM_DATABASE_URL): format!("postgresql://platform:platform-secret@{}/target", addresses[4]),
             (HTTP_ADMITTER_DATABASE_URL): format!("postgresql://admitter:admitter-secret@{}/target", addresses[5]),
-            (EVENT_MATERIALIZER_DATABASE_URL): format!("postgresql://materializer:materializer-secret@{}/target", addresses[6]),
             (ADMINISTRATION_DATABASE_URL): format!("postgresql://administration:administration-secret@{}/target", addresses[9]),
             (SCHEDULER_NATS_URL): format!("nats://{}", addresses[7]),
             (NATS_TLS_CA): "/run/wamn-dev/nats/ca.crt",
@@ -1193,8 +1159,7 @@ pub(crate) mod tests {
             (ROUTE_HOST): "fixture.localhost",
             (PLATFORM_DOMAIN): "example.invalid",
             (LOCAL_ARTIFACTS): {"directory": "/tmp/wamn-local-candidate",
-                "flow_http_component": "/tmp/wamn-flow-http.wasm",
-                "materializer_component": "/tmp/wamn-materializer.wasm"},
+                "flow_http_component": "/tmp/wamn-flow-http.wasm"},
             (PACKAGE_SOURCES): [],
             (CATALOG): "default",
             (ENVIRONMENT): "fixture-dev",
@@ -1205,7 +1170,6 @@ pub(crate) mod tests {
             (RUNNER): "wamn-dev-fixture-1",
             (HOST_BINARY): "/opt/wamn/bin/wamn-host",
             (WASMTIME_CACHE_DIR): "/tmp/wamn-dev-cache",
-            (HOST_CONFIG_FILE): "/tmp/wamn-dev/host-config.yaml",
         })
     }
 
@@ -1608,8 +1572,17 @@ manifest.Package {
             .await
             .expect("every semantic endpoint is reachable");
 
-        for task in accepted {
-            task.await.expect("join semantic endpoint");
+        for (address, task) in addresses.into_iter().zip(accepted) {
+            if config
+                .probes
+                .iter()
+                .any(|probe| probe.port == address.port())
+            {
+                task.await.expect("join declared endpoint");
+            } else {
+                task.abort();
+                let _ = task.await;
+            }
         }
         let debug = format!("{config:?}");
         for credential in [
@@ -1619,7 +1592,6 @@ manifest.Package {
             "guest-secret",
             "platform-secret",
             "admitter-secret",
-            "materializer-secret",
             "administration-secret",
             "condition-super-secret",
         ] {
@@ -1714,18 +1686,6 @@ manifest.Package {
         assert_eq!(error.error_type(), DevConfigErrorType::MissingKey);
         assert_eq!(error.key(), LOCAL_ARTIFACTS);
 
-        let mut missing_runtime_role = complete_document(&addresses);
-        missing_runtime_role
-            .as_object_mut()
-            .expect("fixture object")
-            .remove(EVENT_MATERIALIZER_DATABASE_URL);
-        let error = parse_config(
-            &serde_json::to_vec(&missing_runtime_role).expect("serialize missing runtime role"),
-        )
-        .expect_err("missing role-exact credential must refuse");
-        assert_eq!(error.error_type(), DevConfigErrorType::MissingKey);
-        assert_eq!(error.key(), EVENT_MATERIALIZER_DATABASE_URL);
-
         let mut tls_scheduler = complete_document(&addresses);
         tls_scheduler[SCHEDULER_NATS_URL] = json!("tls://scheduler.invalid:4222");
         let error = parse_config(
@@ -1784,16 +1744,6 @@ manifest.Package {
         assert_eq!(error.error_type(), DevConfigErrorType::DatabaseCollision);
         assert_eq!(error.key(), GUEST_DATABASE_URL);
         assert!(!error.to_string().contains("target-secret"));
-
-        let mut sibling_reuse = complete_document(&addresses);
-        let platform_credential = sibling_reuse[EXECUTOR_PLATFORM_DATABASE_URL].clone();
-        sibling_reuse[EVENT_MATERIALIZER_DATABASE_URL] = platform_credential;
-        let error =
-            parse_config(&serde_json::to_vec(&sibling_reuse).expect("serialize sibling reuse"))
-                .expect_err("runtime roles must not share one credential");
-        assert_eq!(error.error_type(), DevConfigErrorType::DatabaseCollision);
-        assert_eq!(error.key(), EVENT_MATERIALIZER_DATABASE_URL);
-        assert!(!error.to_string().contains("platform-secret"));
     }
 
     #[test]

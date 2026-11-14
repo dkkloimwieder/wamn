@@ -450,7 +450,7 @@ The host binds the executing principal as `app.user_id` in each identity transac
 [Record history](data-access.md#record-history) stamps that principal on every write.
 
 - An authenticated caller of a route binds its principal id.
-- A post-commit registration delivery binds `wamn:materializer`.
+- Native event admission runs as the workflow user.
 - An automation delivery binds its admitted service principal.
 - A schedule delivery binds the environment's `workflow` user.
 - A workflow run binds its execution principal.
@@ -458,7 +458,7 @@ The host binds the executing principal as `app.user_id` in each identity transac
 
 The same transaction binds the executing operation as `app.operation`.
 A node binds the operation token of the entry that it runs. A composed callee runs under that token.
-A registration delivery binds the token of its handler.
+An event workflow binds the token of its operation.
 A host queue lease, reap, renew, or complete transaction binds the `wamn:executor` credential-class identity.
 An absent operation binds an empty value, so a pooled connection keeps no earlier operation.
 The [record history log](data-access.md#history-tables-and-the-log-trigger) records the operation in each entry.
@@ -499,10 +499,10 @@ Control binds the authorized connection. Run-state functions perform the reads a
 
 An event workflow is an enabled row of `catalog.workflows` in an environment application.
 Its trigger names the source package, entity, operations, and an optional JMESPath condition over the old and new images.
-Env apply creates one durable consumer per captured entity.
-The materializer reads trigger rows and admits all matching workflows for one message through one host transaction.
+Env apply creates one durable consumer per application, source package and captured entity.
+Workflow reads trigger rows and admits all matching workflows for one message through one host transaction.
 Admission resolves each graph against the serving release and freezes its node digests.
-The materializer acknowledges the message after that transaction commits.
+The native broker transport acknowledges the message after that transaction commits.
 
 The workflow identity and delivery id form the idempotency key, so redelivery creates no second run.
 A trigger matches only stream sequences greater than its `enable_sequence`.
@@ -560,7 +560,7 @@ The result leaves on port `main`, or on port `items`, whose schema is the item a
 The node is a std guest: it imports `wasi:random` at the version that Rust std links, and the build preserves that import.
 
 The WMS workflow `movement_label` is the first example.
-A `packaging` update starts it when the registration condition `old.location_id != new.location_id` holds, so only a move starts it.
+A `packaging` update starts it when the event condition `old.location_id != new.location_id` holds, so only a move starts it.
 It stores one packaging label for each move, keyed by `{packaging_id}/{row_version}`, at the object path `wms/{key}`.
 
 - A wiring is data with edges. Versioned. Swapped by version with no rebuild. `wamn-workflow` walks the catalog graph directly: frontier, ports, error edges, retry, hop budget, terminal verdict. Unchanged.
@@ -644,7 +644,13 @@ A PAT-authenticated service can start an invoker workflow with its own held role
 The host derives that role from current grants, with the existing single-role or held-admin selection rule.
 A service never borrows a user's active role. User sessions with a service role or any unheld role still refuse.
 
-An event trigger is a row: `source_package` and `entity` (one captured model; the package qualifies the name, as today's registrations do), `ops` (a subset of `insert`, `update`, `delete`, today's vocabulary), optional `condition` over the old and new image. Consumers are a property of the application's captured entities, created at env apply from the installed schema, one per entity; nothing in JetStream is created or removed for a workflow. The materializer is one per environment, always rendered, reads enabled trigger rows and filters each message by package, entity, op and condition. Two workflows on one entity are two rows, one consumer. Fan-out: for one message the materializer admits one run per matching trigger in one host-owned transaction — a batch admission that is new; today's `admit_event_run` admits one run per call — each with idempotency key `(workflow_id, delivery_id)`, and acks after that transaction commits; a redelivery re-admits idempotently, so a partial failure repeats nothing. Enable boundary: enable reads the entity stream's last published sequence (stream tail, not a consumer's position) and writes it into the trigger row in the enabling transaction; the materializer matches only messages whose stream sequence is greater. The read and the commit are not atomic: a message published between them has a greater sequence and starts the workflow, which is the safe side. This is publication order, not commit order: a change committed before enable but published after it (CDC lag) does start the workflow, and a change published before enable never does. Stated and accepted; a commit-ordered boundary would need the history position on the message and is not proposed. An operation that today declares a `registration` in its package (a custom operation declared as an event handler) is an operation like any other; the trigger that starts it is a workflow row authored in the environment.
+An event trigger names a source package, entity, operations and an optional condition over the old and new images.
+Provisioning declares one durable consumer per application source before hosts attach.
+Workflow enablement prepares the same declaration before it records the stream tail as the enable boundary.
+Workflow matches messages above that boundary and admits every matching run in one transaction.
+The runtime plugin pulls messages and acknowledges them after the transaction commits.
+Concurrent hosts share each application consumer. A redelivery retains the original run and release.
+
 
 A package ships no workflows and no triggers; a custom operation's `registration` leaves `wamn.k`, and the operation stays. The two shipped today (WMS label, NetSuite pull) become environment data authored in their environments.
 
@@ -1232,7 +1238,7 @@ A read names every relation that it selects from, and a history table counts as 
 A write names each relation that it inserts into, updates or deletes from. A relation that it only locks is not written.
 A write marks stale only the stored reads that share a relation with it, by the one rule `writeTouches` in the runtime.
 A write whose contract names no relation, or a read whose contract names none, counts as touching, so that pair behaves as before.
-A materializer runs after the write's response and can write other tables, which the browser cannot see. A stored read of such a table stays fresh until its `max-age` ends, and its ETag then reads the change.
+An event workflow runs after the write's response and can write other tables, which the browser cannot see. A stored read of such a table stays fresh until its `max-age` ends, and its ETag then reads the change.
 A new CSRF cookie empties the store, so one session's reads never answer the next session.
 The transport also calls each `onWrite` listener with the write's relations after the write settles.
 A generated detail, a table, an edit cell, the record text in a table's reference column and a form's selector list listen through `afterWrites` with the relations of their own read.

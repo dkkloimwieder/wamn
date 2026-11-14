@@ -177,7 +177,11 @@ fn prepare_with(
             format!("$JS.API.CONSUMER.MSG.NEXT.{suffix}"),
             format!("$JS.ACK.{suffix}.>"),
         ]);
-        runtime.push(info.clone());
+        runtime.extend([
+            info.clone(),
+            format!("$JS.API.CONSUMER.MSG.NEXT.{suffix}"),
+            format!("$JS.ACK.{suffix}.>"),
+        ]);
         observer.push(info);
     }
     let directory = work.join("event-nats");

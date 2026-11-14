@@ -21,11 +21,6 @@ world connection-http-plugin {
 /// Host-side bindgen world for the trusted one-frame HTTP effect surface.
 
 /// Host-owned registration provisioning.
-/// Native wasmcloud:nats owns materializer attachment, delivery and settlement.
-world jetstream-plugin {
-  import wamn:jetstream/types@0.1.0;
-  import wamn:jetstream/registration@0.1.0;
-}
 
 /// Host-side bindgen world for the S5 `wamn:logging` plugin: the host
 /// IMPLEMENTS `wasi:logging/logging` (enrich + non-blocking enqueue + drop

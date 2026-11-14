@@ -92,16 +92,6 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_DRAIN_BOUND_SECONDS")]
     pub drain_bound_seconds: u64,
 
-    /// The workload grace, which the release chart renders: the time to stop
-    /// services and answer operator stops before the host closes ingress.
-    /// Components stop after HTTP drains. This must be shorter than the drain bound.
-    #[arg(
-        long,
-        env = "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS",
-        default_value = "10"
-    )]
-    pub materializer_drain_bound_seconds: u64,
-
     #[arg(long = "scheduler-nats-tls-ca")]
     pub scheduler_nats_tls_ca: Option<PathBuf>,
 
@@ -703,7 +693,6 @@ fn host_credentials(
     database_url: Option<String>,
     executor_platform_url: Option<String>,
     http_admitter_url: Option<String>,
-    event_materializer_url: Option<String>,
     administration_url: Option<String>,
 ) -> ClassCredentials {
     let credentials = database_url.map_or_else(ClassCredentials::default, |input| {
@@ -726,12 +715,6 @@ fn host_credentials(
     let credentials = match http_admitter_url {
         Some(admitter) => credentials.with_class(AuthorityClass::CallableHttp, admitter),
         None => credentials.without_class(AuthorityClass::CallableHttp),
-    };
-    let credentials = match event_materializer_url {
-        Some(materializer) => {
-            credentials.with_class(AuthorityClass::EventMaterializer, materializer)
-        }
-        None => credentials.without_class(AuthorityClass::EventMaterializer),
     };
     match administration_url {
         Some(administration) => {
@@ -1000,10 +983,6 @@ async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<a
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        args.materializer_drain_bound_seconds < args.drain_bound_seconds,
-        "materializer_drain_bound_seconds must be shorter than drain_bound_seconds"
-    );
     let startup_started = Instant::now();
     let descriptor_soft_limit = wash_runtime::host::quota::raise_descriptor_limit();
     tracing::info!(
@@ -1076,14 +1055,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .await?
     };
     let local_workload = match args.local_application.as_deref() {
-        Some(directory) => {
-            let materializer = if directory.join("materializer.json").try_exists()? {
-                Some(load_local_materializer(directory).await?)
-            } else {
-                None
-            };
-            Some((load_local_workload(directory).await?, materializer))
-        }
+        Some(directory) => Some(load_local_workload(directory).await?),
         None => None,
     };
     // The control serving root authenticates through its own control login,
@@ -1237,12 +1209,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // platform.permission read that PAT/session routes require. Connection
     // resolution also uses this class. The manifest-derived condition retains the
     // pool for either demand; a host with neither retains the absent arm.
-    // EventMaterializer uses the same explicit-source rule: only the dedicated
-    // URL names that class, and absence removes the shared guest placeholder.
     let executor_platform_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
-        .ok()
-        .filter(|url| !url.is_empty());
-    let event_materializer_url = std::env::var("WAMN_EVENT_MATERIALIZER_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
     let http_admitter_url = demanded_http_admitter_url(
@@ -1271,14 +1238,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let postgres_credentials = if guest_url.is_some()
         || executor_platform_url.is_some()
         || http_admitter_url.is_some()
-        || event_materializer_url.is_some()
         || administration_url.is_some()
     {
         Some(host_credentials(
             guest_url.clone(),
             executor_platform_url.clone(),
             http_admitter_url,
-            event_materializer_url,
             administration_url.clone(),
         ))
     } else {
@@ -1474,7 +1439,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if let (Some(operations), Some(integrations)) = (&operations, &integrations) {
         operations.set_integrations(Arc::clone(integrations))?;
     }
-    if let (Some(operations), Some(((workload, reference), _))) = (&operations, &local_workload) {
+    if let (Some(operations), Some((workload, reference))) = (&operations, &local_workload) {
         let component = workload
             .workload
             .components
@@ -1491,7 +1456,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             ),
         )?;
     }
-    if let (Some(operations), Some(((workload, _), _))) = (&operations, &local_workload) {
+    if let (Some(operations), Some((workload, _))) = (&operations, &local_workload) {
         let invoker: Arc<dyn wamn_runtime::plugins::wamn_postgres::OperationInvoker> =
             Arc::clone(operations) as Arc<_>;
         postgres.bind_operation_invoker(&workload.workload_id, Arc::downgrade(&invoker))?;
@@ -1508,14 +1473,15 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // A control host has no event streams, so its event plugin gets no
     // connection and activation does nothing.
     let mut jetstream_config = WamnJetstreamConfig::from_env();
+    jetstream_config.event_target = args
+        .org
+        .as_deref()
+        .zip(args.environment.as_deref())
+        .map(|(org, environment)| wamn_registry::Triple::new(org, environment, &args.project));
     if args.local_control.is_none() {
         jetstream_config = jetstream_config.with_nats(data_nats_client.clone());
     }
-    let jetstream = Arc::new(WamnJetstream::new(jetstream_config));
-    jetstream
-        .activate_events()
-        .await
-        .map_err(|error| anyhow::anyhow!("activate declared event streams: {error:?}"))?;
+    let jetstream = Arc::new(WamnJetstream::new(jetstream_config).await?);
     let flow_http = FlowHttpRouting::new(release.clone());
     // The auth memory is the replica of the NATS KV bucket wamn-auth, and
     // the host deletes the keys of its own writes there
@@ -1995,10 +1961,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .await
         .context("failed to start native host")?;
     let workload_drain = Arc::new(commands::WorkloadDrain::default());
-    let local_materializer = local_workload
-        .as_ref()
-        .and_then(|(_, materializer)| materializer.as_ref())
-        .map(|materializer| materializer.workload_id.clone());
     let mut control_builder =
         AttachedHostControl::builder(Arc::clone(&native_host), Arc::new(scheduler_nats_client))
             .with_host_group(args.host_group.clone())
@@ -2062,27 +2024,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let started = match (preloaded, local_workload) {
         (Err(error), _) => Err(error),
         (Ok(()), None) => Ok(()),
-        (Ok(()), Some(((workload, _), materializer))) => {
-            // The materializer is a platform workload beside the release, so
-            // it starts after the release's flow-http workload runs.
-            match start_local(&native_host, workload).await {
-                Ok(()) => match materializer {
-                    Some(materializer) => start_local(&native_host, materializer).await,
-                    None => Ok(()),
-                },
-                Err(error) => Err(error),
-            }
-        }
+        (Ok(()), Some((workload, _))) => start_local(&native_host, workload).await,
     };
     if let Err(error) = started {
         let _ = stop_queue.send(true);
         wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, async {
             let _ = workload_drain
-                .stop(
-                    &native_host,
-                    local_materializer.as_deref(),
-                    Duration::from_secs(args.materializer_drain_bound_seconds),
-                )
+                .stop(&native_host, Duration::from_secs(args.drain_bound_seconds))
                 .await;
             let had_ingress = ingress_handler.is_some();
             let explicit_stop = match ingress_handler.as_ref() {
@@ -2164,11 +2112,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             // Component replies report Stopping until HTTP drains (R20).
             // Past the operator wait bound, the host drain goes on.
             if let Err(error) = workload_drain
-                .stop(
-                    &native_host,
-                    local_materializer.as_deref(),
-                    Duration::from_secs(args.materializer_drain_bound_seconds),
-                )
+                .stop(&native_host, Duration::from_secs(args.drain_bound_seconds))
                 .await
             {
                 tracing::warn!(%error, "workload drain");
@@ -2406,65 +2350,6 @@ async fn load_local_bytes(
         "{label} component digest does not match the selected bytes"
     );
     Ok(loaded)
-}
-
-/// Load the platform materializer's service workload with explicitly local
-/// bytes. The cluster declares it as a service, so it must carry one and no
-/// components.
-async fn load_local_materializer(
-    directory: &Path,
-) -> anyhow::Result<wash_runtime::types::WorkloadStartRequest> {
-    use wash_runtime::types::{Service, Workload, WorkloadStartRequest};
-    use wash_runtime::washlet::types::v2;
-
-    let bytes = std::fs::read(directory.join("materializer.json"))
-        .context("read the local materializer workload description")?;
-    let request: v2::WorkloadStartRequest = serde_json::from_slice(&bytes)
-        .context("decode the local materializer workload description")?;
-    let workload = request
-        .workload
-        .context("local materializer description has no workload")?;
-    let service = workload
-        .service
-        .context("local materializer must declare a service")?;
-    anyhow::ensure!(
-        workload.volumes.is_empty(),
-        "local materializer must declare no volumes"
-    );
-    let world = workload
-        .wit_world
-        .context("local materializer has no component world")?;
-    anyhow::ensure!(
-        world.components.is_empty(),
-        "local materializer must declare its service and no components"
-    );
-    anyhow::ensure!(
-        service.image_pull_secret.is_none()
-            && service.image_pull_policy == v2::ImagePullPolicy::Never as i32,
-        "local materializer must use explicit local bytes without registry credentials"
-    );
-    let loaded = load_local_bytes(directory, &service.image, "local materializer").await?;
-    Ok(WorkloadStartRequest {
-        workload_id: request.workload_id,
-        workload: Workload {
-            namespace: workload.namespace,
-            name: workload.name,
-            annotations: workload.annotations,
-            service: Some(Service {
-                bytes: loaded.bytes,
-                digest: loaded.digest,
-                local_resources: service
-                    .local_resources
-                    .map(TryInto::try_into)
-                    .transpose()?
-                    .unwrap_or_default(),
-                max_restarts: service.max_restarts,
-            }),
-            volumes: Vec::new(),
-            host_interfaces: world.host_interfaces.into_iter().map(Into::into).collect(),
-            components: Vec::new(),
-        },
-    })
 }
 
 /// The time the auxiliary teardown after [`stop_combined_after`] may take:
@@ -3186,7 +3071,6 @@ host:
     const GUEST: &str = "postgres://guest@h/db";
     const PLATFORM: &str = "postgres://platform@h/db";
     const ADMITTER: &str = "postgres://admitter@h/db";
-    const MATERIALIZER: &str = "postgres://materializer@h/db";
     const ADMINISTRATION: &str = "postgres://administration@h/db";
 
     /// THE GUEST URL IS NOT A CUT-OVER FAMILY'S CREDENTIAL (`wamn-0h0g.22.31`,
@@ -3203,14 +3087,12 @@ host:
             Some(GUEST.to_owned()),
             Some(PLATFORM.to_owned()),
             Some(ADMITTER.to_owned()),
-            Some(MATERIALIZER.to_owned()),
             Some(ADMINISTRATION.to_owned()),
         );
         for class in AuthorityClass::ALL {
             let expected = match class {
                 AuthorityClass::ExecutorPlatform => PLATFORM,
                 AuthorityClass::CallableHttp => ADMITTER,
-                AuthorityClass::EventMaterializer => MATERIALIZER,
                 AuthorityClass::Administration => ADMINISTRATION,
                 AuthorityClass::GuestSql | AuthorityClass::DynamicSql => GUEST,
             };
@@ -3236,7 +3118,6 @@ host:
             Some(GUEST.to_owned()),
             Some(PLATFORM.to_owned()),
             None,
-            Some(MATERIALIZER.to_owned()),
             None,
         );
         assert_eq!(
@@ -3255,7 +3136,6 @@ host:
             Some(GUEST.to_owned()),
             None,
             Some(ADMITTER.to_owned()),
-            Some(MATERIALIZER.to_owned()),
             None,
         );
         assert_eq!(
@@ -3270,121 +3150,14 @@ host:
             "unnaming executor-platform must not disturb another class"
         );
 
-        let no_materializer = host_credentials(
-            Some(GUEST.to_owned()),
-            Some(PLATFORM.to_owned()),
-            Some(ADMITTER.to_owned()),
-            None,
-            None,
-        );
-        assert_eq!(
-            no_materializer.url(AuthorityClass::EventMaterializer),
-            None,
-            "an unprovisioned materializer must not borrow the guest credential"
-        );
-        assert_eq!(
-            no_materializer.url(AuthorityClass::CallableHttp),
-            Some(ADMITTER),
-            "unnaming the materializer must not disturb another class"
-        );
-
-        let neither = host_credentials(Some(GUEST.to_owned()), None, None, None, None);
+        let neither = host_credentials(Some(GUEST.to_owned()), None, None, None);
         assert_eq!(neither.url(AuthorityClass::ExecutorPlatform), None);
         assert_eq!(neither.url(AuthorityClass::CallableHttp), None);
-        assert_eq!(neither.url(AuthorityClass::EventMaterializer), None);
         assert_eq!(
             neither.url(AuthorityClass::GuestSql),
             Some(GUEST),
             "the guest class keeps its own credential either way"
         );
-
-        let materializer_only =
-            host_credentials(None, None, None, Some(MATERIALIZER.to_owned()), None);
-        assert_eq!(
-            materializer_only.url(AuthorityClass::EventMaterializer),
-            Some(MATERIALIZER)
-        );
-        assert_eq!(materializer_only.url(AuthorityClass::GuestSql), None);
-    }
-
-    #[tokio::test]
-    async fn local_materializer_requires_its_service_and_no_components() {
-        use wash_runtime::washlet::types::v2;
-
-        let directory = std::env::temp_dir().join(format!(
-            "wamn-host-local-materializer-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&directory).unwrap();
-        let bytes = b"local materializer transport fixture";
-        let digest = wamn_digest::bytes_sha256(bytes);
-        let path = wamn_engine::artifact_source::local_component_path(&directory, &digest).unwrap();
-        std::fs::write(&path, bytes).unwrap();
-        let mut request = v2::WorkloadStartRequest {
-            workload_id: "wamn-dev-materializer".to_owned(),
-            workload: Some(v2::Workload {
-                namespace: "local".to_owned(),
-                name: "materializer".to_owned(),
-                service: Some(v2::Service {
-                    image: digest.clone(),
-                    image_pull_policy: v2::ImagePullPolicy::Never as i32,
-                    max_restarts: 5,
-                    local_resources: Some(v2::LocalResources {
-                        environment: HashMap::from([(
-                            "WAMN_MAT_MAX_DELIVER".to_owned(),
-                            "5".to_owned(),
-                        )]),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
-                wit_world: Some(v2::WitWorld::default()),
-                ..Default::default()
-            }),
-        };
-        let write = |request: &v2::WorkloadStartRequest| {
-            std::fs::write(
-                directory.join("materializer.json"),
-                serde_json::to_vec(request).unwrap(),
-            )
-            .unwrap();
-        };
-        write(&request);
-        let loaded = load_local_materializer(&directory).await.unwrap();
-        assert!(loaded.workload.components.is_empty());
-        let service = loaded.workload.service.as_ref().unwrap();
-        assert_eq!(service.bytes.as_ref(), bytes);
-        assert_eq!(service.max_restarts, 5);
-        assert_eq!(
-            service.local_resources.environment["WAMN_MAT_MAX_DELIVER"],
-            "5"
-        );
-        let workload = request.workload.as_mut().unwrap();
-        workload.wit_world.as_mut().unwrap().components = vec![v2::Component {
-            name: "extra".to_owned(),
-            image: digest.clone(),
-            ..Default::default()
-        }];
-        write(&request);
-        assert!(
-            load_local_materializer(&directory)
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("no components")
-        );
-        let workload = request.workload.as_mut().unwrap();
-        workload.wit_world.as_mut().unwrap().components.clear();
-        workload.service = None;
-        write(&request);
-        assert!(
-            load_local_materializer(&directory)
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("service")
-        );
-        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[tokio::test]

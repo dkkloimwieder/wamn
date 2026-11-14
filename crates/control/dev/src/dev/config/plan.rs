@@ -2,13 +2,13 @@ use super::{
     ADMINISTRATION_DATABASE_URL, CATALOG, CDC_READER, CONDITION_BEARER_TOKEN, CdcReader,
     DOCUMENT_KEY, DUP_WINDOW_SECS, DatabaseIdentity, DevActivationIdentity, DevConfig,
     DevConfigDocument, DevConfigError, DevConfigErrorType, ENVIRONMENT,
-    EVENT_MATERIALIZER_DATABASE_URL, EXECUTOR_PLATFORM_DATABASE_URL, GUEST_DATABASE_URL,
-    HOST_BINARY, HOST_CONFIG_FILE, HOST_GROUP, HOST_NAME, HTTP_ADMITTER_DATABASE_URL,
-    IDENTITY_DATABASE_URL, LOCAL_ARTIFACTS, LocalArtifacts, MIGRATION_DATABASE_URL, NATS_TLS_CA,
-    NATS_TLS_CERT, NATS_TLS_KEY, ORG, OTEL_EXPORTER_OTLP_ENDPOINT, PACKAGE_SOURCES,
-    PLATFORM_DOMAIN, POSTGRES_SYSTEM_DATABASES, PROJECT, PackageSource, PathBuf, ROUTE_HOST,
-    RUNNER, ReachabilityProbe, SCHEDULER_NATS_URL, STREAM_REPLICAS, SYSTEM_DATABASE_URL,
-    SessionIdentity, TARGET_DATABASE_URL, Url, Value, WASMTIME_CACHE_DIR,
+    EXECUTOR_PLATFORM_DATABASE_URL, GUEST_DATABASE_URL, HOST_BINARY, HOST_GROUP, HOST_NAME,
+    HTTP_ADMITTER_DATABASE_URL, IDENTITY_DATABASE_URL, LOCAL_ARTIFACTS, LocalArtifacts,
+    MIGRATION_DATABASE_URL, NATS_TLS_CA, NATS_TLS_CERT, NATS_TLS_KEY, ORG,
+    OTEL_EXPORTER_OTLP_ENDPOINT, PACKAGE_SOURCES, PLATFORM_DOMAIN, POSTGRES_SYSTEM_DATABASES,
+    PROJECT, PackageSource, PathBuf, ROUTE_HOST, RUNNER, ReachabilityProbe, SCHEDULER_NATS_URL,
+    STREAM_REPLICAS, SYSTEM_DATABASE_URL, SessionIdentity, TARGET_DATABASE_URL, Url, Value,
+    WASMTIME_CACHE_DIR,
 };
 
 /// Language-neutral JSON Schema generated from the strict `dev.json` input type.
@@ -91,7 +91,7 @@ pub(super) fn validate_config_document_shape(
                 DevConfigError::new(
                     DevConfigErrorType::InvalidValue,
                     key.as_str(),
-                    "local artifacts require only directory, flow_http_component and materializer_component paths",
+                    "local artifacts require only directory and flow_http_component paths",
                 )
             })?;
             continue;
@@ -227,7 +227,6 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         guest_database_url,
         executor_platform_database_url,
         http_admitter_database_url,
-        event_materializer_database_url,
         administration_database_url,
         scheduler_nats_url,
         nats_tls_ca,
@@ -250,7 +249,6 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         runner,
         host_binary,
         wasmtime_cache_dir,
-        host_config_file,
         cdc_reader,
     } = input;
 
@@ -265,10 +263,6 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     )?;
     let http_admitter_database_url =
         nonempty_string(http_admitter_database_url, HTTP_ADMITTER_DATABASE_URL)?;
-    let event_materializer_database_url = nonempty_string(
-        event_materializer_database_url,
-        EVENT_MATERIALIZER_DATABASE_URL,
-    )?;
     let administration_database_url =
         nonempty_string(administration_database_url, ADMINISTRATION_DATABASE_URL)?;
     let scheduler_nats_url = nonempty_string(scheduler_nats_url, SCHEDULER_NATS_URL)?;
@@ -306,7 +300,6 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     for path in [
         &local_artifacts.directory,
         &local_artifacts.flow_http_component,
-        &local_artifacts.materializer_component,
     ] {
         if !path.is_absolute() {
             return Err(DevConfigError::new(
@@ -355,13 +348,6 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     };
     let host_binary = nonempty_path(host_binary, HOST_BINARY)?;
     let wasmtime_cache_dir = nonempty_path(wasmtime_cache_dir, WASMTIME_CACHE_DIR)?;
-    if !host_config_file.is_absolute() {
-        return Err(DevConfigError::new(
-            DevConfigErrorType::InvalidValue,
-            HOST_CONFIG_FILE,
-            "the host configuration file path must be absolute",
-        ));
-    }
     if let Some(reader) = &cdc_reader {
         let paths = [&reader.binary, &reader.cdc_sql_file];
         if paths.iter().any(|path| !path.is_absolute())
@@ -389,7 +375,6 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         guest_database_url,
         executor_platform_database_url,
         http_admitter_database_url,
-        event_materializer_database_url,
         administration_database_url,
         scheduler_nats_url,
         nats_tls_ca,
@@ -406,7 +391,6 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         activation_identity,
         host_binary,
         wasmtime_cache_dir,
-        host_config_file,
         cdc_reader,
         probes: Box::new([]),
     })

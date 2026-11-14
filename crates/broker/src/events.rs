@@ -2,16 +2,16 @@
 
 use std::time::Duration;
 
+use crate::advisories::{
+    DELIVERY_ADVISORY_MAX_AGE_SECONDS, DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT,
+};
 use async_nats::jetstream::consumer::{self, AckPolicy, DeliverPolicy, pull};
 use async_nats::jetstream::stream::{self, Compression, RetentionPolicy, StorageType};
-use wamn_event_wire::{
-    DELIVERY_ADVISORY_MAX_AGE_SECONDS, DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT,
-    delivery_advisory_stream, delivery_advisory_subjects, stream_subjects,
-};
+use wamn_event_wire::{delivery_advisory_stream, delivery_advisory_subjects, stream_subjects};
 use wamn_registry::Triple;
 
-/// One materializer batch holds at most four MiB.
-pub const MATERIALIZER_MAX_PULL_BYTES: i64 = 4 * 1024 * 1024;
+/// One event batch holds at most four MiB.
+pub const EVENT_MAX_PULL_BYTES: i64 = 4 * 1024 * 1024;
 
 /// Declare the source stream with explicit broker defaults.
 pub fn source_stream_config(
@@ -53,36 +53,31 @@ pub fn advisory_stream_config(target: &Triple, replicas: usize) -> stream::Confi
     }
 }
 
-/// One durable consumer per captured package and entity, independent of workflows.
-pub fn entity_consumers<'a>(
+/// Declare one application source consumer, shared by its serving hosts.
+pub fn application_consumer(
     target: &Triple,
-    entities: impl IntoIterator<Item = (&'a str, &'a str)>,
-) -> Vec<pull::Config> {
-    let entities = entities
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>();
-    entities
-        .into_iter()
-        .map(|(package, entity)| {
-            let durable = format!(
-                "entity_{}_{}_{}",
-                package.len(),
-                wamn_event_wire::subject_token(package),
-                wamn_event_wire::subject_token(entity)
-            );
-            let filter = wamn_registry::name::event_subject(
-                &target.org,
-                &target.project,
-                target.env.as_str(),
-                &format!("{}.>", wamn_event_wire::subject_token(entity)),
-            );
-            materializer_consumer_config(&durable, &filter, Duration::from_secs(30), 5)
-        })
-        .collect()
+    application: &str,
+    package: &str,
+    entity: &str,
+) -> pull::Config {
+    let durable = format!(
+        "application_{}_{}_entity_{}_{}_{}",
+        application.len(),
+        wamn_event_wire::subject_token(application),
+        package.len(),
+        wamn_event_wire::subject_token(package),
+        wamn_event_wire::subject_token(entity)
+    );
+    let filter =
+        wamn_event_wire::entity_filter(&target.org, &target.project, target.env.as_str(), entity);
+    let mut config = event_consumer_config(&durable, &filter, Duration::from_secs(30), 5);
+    config.max_deliver = -1;
+    config.max_waiting = 64;
+    config
 }
 
-/// Declare the existing bounded materializer delivery policy.
-pub fn materializer_consumer_config(
+/// Declare the existing bounded event delivery policy.
+pub fn event_consumer_config(
     durable: &str,
     filter_subject: &str,
     ack_wait: Duration,
@@ -98,7 +93,7 @@ pub fn materializer_consumer_config(
         max_deliver: i64::from(max_deliver),
         max_ack_pending: 64,
         max_batch: 64,
-        max_bytes: MATERIALIZER_MAX_PULL_BYTES,
+        max_bytes: EVENT_MAX_PULL_BYTES,
         max_waiting: 1,
         ..Default::default()
     }
@@ -194,7 +189,7 @@ pub fn stream_config_matches(expected: &stream::Config, actual: &stream::Config)
 
 /// Compare the fields wamn sets in the declared consumer.
 ///
-/// [`materializer_consumer_config`] builds every declared consumer. The broker
+/// [`event_consumer_config`] builds every declared consumer. The broker
 /// owns every field it leaves at its default, and a newer broker may fill
 /// them in, for example NATS 2.11 and later add `_nats.*` metadata keys.
 /// The destructure names every field, so a new upstream field needs a decision.
@@ -418,7 +413,7 @@ mod tests {
 
     #[test]
     fn consumer_comparison_ignores_broker_fields_and_refuses_changed_wamn_fields() {
-        let expected = materializer_consumer_config(
+        let expected = event_consumer_config(
             "mat_t_pkg_r1",
             "evt.acme.dev.widgets.widget.>",
             Duration::from_secs(30),

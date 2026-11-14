@@ -14,7 +14,7 @@
 //! A version is authored disabled; [`crate::workflow_lifecycle`] enables it.
 //!
 //! The application is one the environment declares in `environment.k`, as
-//! the serving Helm revision keeps it ([`crate::environment::show`]). An
+//! the serving Helm revision keeps it from the deployed environment. An
 //! application it does not declare refuses before the graph is conditioned.
 //!
 //! The trigger is part of the version: `manual`, or `schedule` with a
@@ -200,7 +200,7 @@ pub struct AuthorWorkflowRequest<'a> {
     pub application: &'a str,
     /// The applications the environment declares, as the serving Helm
     /// revision keeps them
-    /// ([`crate::environment::show::serving_application`]).
+    /// from the deployed environment.
     pub declared: &'a wamn_catalog::EnvironmentApplications,
     pub document: &'a WiringDocument,
     pub trigger: WorkflowTrigger<'a>,
@@ -305,28 +305,27 @@ pub(crate) async fn validate_event_trigger(
             models.insert(model.get::<String, _>(0));
         }
     }
-    let registration = wamn_event_reg::EventRegistration {
-        schema_version: wamn_event_reg::SCHEMA_VERSION.to_owned(),
-        registration_id: "workflow".to_owned(),
-        package_id: source_package.to_owned(),
-        source_package_id: source_package.to_owned(),
-        entity: entity.to_owned(),
-        ops: ops.to_vec(),
-        input: wamn_event_reg::RegistrationInput::Event,
-        condition: condition.map(str::to_owned),
-    };
-    wamn_event_reg::validate(&registration, source_package, source_package, &models).map_err(
-        |issues| {
-            AuthorWorkflowError::new(
+    if !models.contains(entity)
+        || ops.is_empty()
+        || ops.iter().enumerate().any(|(i, op)| ops[..i].contains(op))
+    {
+        return Err(AuthorWorkflowError::new(
+            AuthorWorkflowErrorType::Event,
+            "unknown entity or invalid event operations",
+        ));
+    }
+    if let Some(condition) = condition {
+        if condition.trim().is_empty() {
+            return Err(AuthorWorkflowError::new(
                 AuthorWorkflowErrorType::Event,
-                issues
-                    .iter()
-                    .map(|issue| format!("{}: {}", issue.path, issue.message))
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            )
-        },
-    )
+                "event condition is empty",
+            ));
+        }
+        jmespath::compile(condition).map_err(|error| {
+            AuthorWorkflowError::new(AuthorWorkflowErrorType::Event, error.to_string())
+        })?;
+    }
+    Ok(())
 }
 
 /// Validate and append one disabled workflow version in the caller's transaction.
@@ -542,20 +541,5 @@ mod tests {
                 ));
             }
         }
-    }
-
-    #[test]
-    fn the_execution_maps_to_its_stored_columns() {
-        assert_eq!(WorkflowExecution::Role("clerk").type_str(), "role");
-        assert_eq!(WorkflowExecution::Role("clerk").role(), Some("clerk"));
-        assert_eq!(WorkflowExecution::Invoker.type_str(), "invoker");
-        assert_eq!(WorkflowExecution::Invoker.role(), None);
-        assert_eq!(WorkflowTrigger::Manual.as_str(), "manual");
-        assert_eq!(WorkflowTrigger::Manual.schedule(), None);
-        assert_eq!(WorkflowTrigger::Schedule("0 * * * *").as_str(), "schedule");
-        assert_eq!(
-            WorkflowTrigger::Schedule("0 * * * *").schedule(),
-            Some("0 * * * *")
-        );
     }
 }

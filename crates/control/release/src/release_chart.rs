@@ -12,8 +12,8 @@
 //! is named by its manifest digest alone (R1).
 
 pub(super) mod plan;
-pub use plan::{events_plugin, release_name, roles, values, workload_name};
 use plan::{recovery, split_host_image};
+pub use plan::{release_name, roles, values, workload_name};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -64,7 +64,7 @@ pub use plan::ImageSet;
 /// The chart must hold its built subchart archive.
 pub fn stamp(chart: &Path, set: &ImageSet, out: &Path) -> anyhow::Result<PathBuf> {
     let (repository, tag) = split_host_image(&set.host)?;
-    let pinned = [("http", &set.http), ("materializer", &set.materializer)];
+    let pinned = [("http", &set.http)];
     for (name, image) in pinned {
         ensure!(
             image.contains("@sha256:"),
@@ -83,7 +83,6 @@ pub fn stamp(chart: &Path, set: &ImageSet, out: &Path) -> anyhow::Result<PathBuf
     image["tag"] = tag.into();
     let platform = &mut values["platform"];
     platform["roles"]["http"]["image"] = set.http.clone().into();
-    platform["roles"]["materializer"]["image"] = set.materializer.clone().into();
     std::fs::write(&path, serde_yaml::to_string(&values)?)
         .with_context(|| format!("write {}", path.display()))?;
     Ok(out.to_owned())
@@ -121,15 +120,12 @@ pub async fn image_set(chart: &Path) -> anyhow::Result<ImageSet> {
     Ok(ImageSet {
         host,
         http: stamped(&roles["http"]["image"], "http image")?,
-        materializer: stamped(&roles["materializer"]["image"], "materializer image")?,
     })
 }
 
 pub use plan::Role;
 
 pub use plan::RoleName;
-
-pub use plan::MATERIALIZER_DRAIN_BOUND_SECONDS;
 
 pub use plan::TELEMETRY_VARIABLES;
 
@@ -333,30 +329,6 @@ mod tests {
         let text = std::fs::read_to_string(chart.join("Chart.yaml")).expect("read Chart.yaml");
         let chart: Value = serde_yaml::from_str(&text).expect("Chart.yaml parses");
         assert_eq!(chart["appVersion"].as_str(), Some(version.as_str()));
-    }
-
-    #[test]
-    fn values_refuse_a_materializer_bound_equal_to_or_above_the_host_bound() {
-        for host_bound in [
-            0,
-            MATERIALIZER_DRAIN_BOUND_SECONDS,
-            MATERIALIZER_DRAIN_BOUND_SECONDS - 1,
-        ] {
-            let mut input = input();
-            input.drain_bound_seconds = host_bound;
-            let error = values(&input).expect_err("materializer must stop before its host");
-            assert_eq!(
-                error.to_string(),
-                format!(
-                    "materializer_drain_bound_seconds (10) must be shorter than drain_bound_seconds ({host_bound})"
-                )
-            );
-        }
-        for host_bound in [MATERIALIZER_DRAIN_BOUND_SECONDS + 1, 30] {
-            let mut input = input();
-            input.drain_bound_seconds = host_bound;
-            assert!(values(&input).is_ok(), "host bound {host_bound} is valid");
-        }
     }
 
     #[test]

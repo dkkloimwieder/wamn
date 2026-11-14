@@ -74,10 +74,6 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_CDC_READER_BIN")]
     cdc_reader_binary: PathBuf,
 
-    /// Built platform materializer the loop runs beside the release.
-    #[arg(long, env = "WAMN_DEV_ENV_MATERIALIZER_COMPONENT")]
-    materializer_component: PathBuf,
-
     /// The built `wamn-host` the loop supervises.
     #[arg(long, env = "WAMN_DEV_ENV_HOST_BIN")]
     host_binary: PathBuf,
@@ -118,7 +114,6 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         platform_ui: args.platform_ui,
         packages: args.packages,
         cdc_reader_binary: args.cdc_reader_binary,
-        materializer_component: args.materializer_component,
     })
     .await?;
 

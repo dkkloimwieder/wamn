@@ -911,7 +911,7 @@ mod tests {
         assert!(analyze_project(&statements, &granted, "application").is_ok());
 
         // The imports of the private sqlx-command driver and
-        // apps/platform/execution/materializer.
+        // apps/platform/fixtures/sqlx-command.
         let platform = ComponentImports::new([
             "wamn:postgres/types@0.4.0".to_string(),
             "wamn:postgres/client@0.4.0".to_string(),

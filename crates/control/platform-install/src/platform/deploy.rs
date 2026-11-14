@@ -305,10 +305,18 @@ fn host_target<'a>(
                 .and_then(|variable| variable["value"].as_str())
                 .context("installed host has no environment coordinate")
         };
+        let environment = group["extraArgs"]
+            .as_array()
+            .and_then(|args| {
+                args.iter()
+                    .filter_map(Value::as_str)
+                    .find_map(|arg| arg.strip_prefix("--environment="))
+            })
+            .context("installed host has no environment argument")?;
         wamn_registry::Triple::new(
-            variable("WAMN_EVT_ORG")?,
-            variable("WAMN_EVT_ENV")?,
-            variable("WAMN_EVT_PROJECT")?,
+            variable("WAMN_ORG")?,
+            environment,
+            variable("WAMN_PROJECT")?,
         )
     };
     Ok((triple, application))

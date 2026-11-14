@@ -82,8 +82,6 @@ platform:
     http:
       image: ""
       maxConcurrency: 1
-    materializer:
-      image: ""
   ctl:
     image: ""
   identity:

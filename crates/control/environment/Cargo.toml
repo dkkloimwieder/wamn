@@ -51,7 +51,6 @@ wamn-catalog = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-registry = { workspace = true }
-wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 postgres-protocol = { workspace = true }
 wamn-platform-identity = { workspace = true }
@@ -65,6 +64,7 @@ wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }
 
 [dev-dependencies]
+wamn-workflow.workspace = true
 wamn-platform-install = { workspace = true, features = ["test-util"] }
 wamn-build.workspace = true
 object_store.workspace = true
@@ -72,7 +72,6 @@ sqlx = { workspace = true, features = ["postgres", "runtime-tokio"] }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-execution-host = { workspace = true }
-wamn-workflow = { workspace = true }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 uuid = { workspace = true }

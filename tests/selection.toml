@@ -203,18 +203,14 @@ targets = [
   { workspace="apps", package="http-route", target="cdylib:http_route", tier="contract" },
   { workspace="apps", package="http-route", target="test:adversarial", tier="contract" },
   { workspace="apps", package="jsonata-expression", target="cdylib:jsonata_expression", tier="contract" },
-  { workspace="apps", package="materializer", target="cdylib:materializer", tier="contract" },
   { workspace="apps", package="netsuite", target="cdylib:netsuite", tier="contract" },
   { workspace="apps", package="receiving", target="cdylib:receiving", tier="contract" },
   { workspace="apps", package="rest-connector", target="cdylib:rest_connector", tier="contract" },
   { workspace="apps", package="rest-consumer-fixture", target="cdylib:rest_consumer_fixture", tier="contract" },
   { workspace="apps", package="sqlx-command", target="cdylib:sqlx_command", tier="contract" },
   { workspace="apps", package="wamn-data-access", target="lib:wamn_data_access", tier="contract" },
-  { workspace="apps", package="wamn-event-reg", target="lib:wamn_event_reg", tier="contract" },
-  { workspace="apps", package="wamn-event-reg", target="test:event_reg", tier="contract" },
   { workspace="apps", package="wamn-event-wire", target="lib:wamn_event_wire", tier="contract" },
   { workspace="apps", package="wamn-integration", target="cdylib:wamn_integration", tier="contract" },
-  { workspace="apps", package="wamn-materializer", target="lib:wamn_materializer", tier="contract" },
   { workspace="apps", package="wamn-postgres-statements", target="lib:wamn_postgres_statements", tier="contract" },
   { workspace="apps", package="wamn-record-history", target="lib:wamn_record_history", tier="contract" },
   { workspace="apps", package="wamn-record-history", target="test:fold", tier="contract" },
@@ -275,12 +271,12 @@ root_features = ["wamn-environment/ops"]
 
 [[rules]]
 # Bindgen reads shared WIT outside Cargo dependency edges.
-inputs = ['^wit/(wamn-(connection|flow-http-routing|integration|jetstream|node|operation-0\.1|postgres-0\.4)|wasmcloud-blobstore)/', '^crates/platform/runtime/wit/deps/']
+inputs = ['^wit/(wamn-(connection|flow-http-routing|integration|node|operation-0\.1|postgres-0\.4)|wasmcloud-blobstore)/', '^crates/platform/runtime/wit/deps/']
 workspaces = ["root", "apps", "no-std"]
 
 [[rules]]
-# Host and materializer bindings read these shared interfaces.
-inputs = ['^apps/platform/execution/materializer/wit/deps/wasi-cli/', '^apps/platform/execution/materializer/wit/deps/wasi-clocks/']
+# Host and guest bindings read these shared interfaces.
+inputs = ['^wit/wasi-(cli|clocks)/']
 workspaces = ["root", "apps"]
 
 [[rules]]
@@ -359,14 +355,6 @@ outputs = {WAMN_FLOW_HTTP_COMPONENT = "{target}/wasm32-wasip2/release/http_route
 aliases = {WAMN_DEV_ENV_FLOW_HTTP_COMPONENT = "WAMN_FLOW_HTTP_COMPONENT"}
 commands = [
   ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--release", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "http-route"],
-]
-
-[[preparation]]
-id = "materializer"
-outputs = {WAMN_MATERIALIZER_COMPONENT = "{target}/wasm32-wasip2/debug/materializer.wasm"}
-aliases = {WAMN_DEV_ENV_MATERIALIZER_COMPONENT = "WAMN_MATERIALIZER_COMPONENT"}
-commands = [
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "materializer"],
 ]
 
 [[preparation]]
@@ -566,7 +554,7 @@ prerequisites = ["application-components", "http-route", "nats", "identity"]
 [[preparation]]
 packages = ["wamn-receiving-tests"]
 target = ["lib:wamn_receiving_tests"]
-prerequisites = ["application-components", "http-route", "nats", "host", "ctl", "identity", "materializer"]
+prerequisites = ["application-components", "http-route", "nats", "host", "ctl", "identity"]
 
 [[preparation]]
 packages = ["wamn-wms-tests"]

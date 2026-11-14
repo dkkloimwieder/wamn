@@ -40,7 +40,6 @@ wamn-catalog = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-materializer = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 postgres-protocol = { workspace = true }

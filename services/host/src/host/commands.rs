@@ -101,23 +101,14 @@ impl WorkloadDrain {
         Ok(())
     }
 
-    pub async fn stop(
-        &self,
-        host: &Host,
-        local_materializer: Option<&str>,
-        bound: Duration,
-    ) -> anyhow::Result<()> {
+    pub async fn stop(&self, host: &Host, bound: Duration) -> anyhow::Result<()> {
         self.state.send_modify(|state| state.draining = true);
         let services = self.state.borrow().services.clone();
         let mut state = self.state.subscribe();
         tokio::time::timeout(bound, async {
             // Workload stop aborts the service supervisor, including its restart
             // loop. Host::stop alone stops plugins, not running service tasks.
-            for workload_id in services
-                .iter()
-                .map(String::as_str)
-                .chain(local_materializer)
-            {
+            for workload_id in services.iter().map(String::as_str) {
                 host.workload_stop(wash_runtime::types::WorkloadStopRequest {
                     workload_id: workload_id.to_owned(),
                 })
@@ -375,10 +366,7 @@ mod tests {
         drain.admit("http", false).unwrap();
         drain.stopped("http");
         let started = tokio::time::Instant::now();
-        drain
-            .stop(&host, Some("local-materializer"), Duration::from_secs(1))
-            .await
-            .unwrap();
+        drain.stop(&host, Duration::from_secs(1)).await.unwrap();
         assert_eq!(started.elapsed(), Duration::ZERO);
     }
 }

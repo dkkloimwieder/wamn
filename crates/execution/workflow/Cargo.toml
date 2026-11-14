@@ -6,13 +6,16 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-registry.workspace = true
+jmespath.workspace = true
+wamn-platform-install.workspace = true
+postgres-protocol.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 wamn-catalog = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-materializer.workspace = true
 # The route path, the operation host, and the delivery bridge. This crate sits
 # above it, and it never depends on this crate.
 wamn-execution-host = { workspace = true }
@@ -32,6 +35,7 @@ serde_json = { workspace = true }
 # The workflow contract parks, releases, and lists runs in the run plane.
 
 [dev-dependencies]
+uuid.workspace = true
 wamn-digest.workspace = true
 wamn-compiler.workspace = true
 wamn-platform-identity = { workspace = true }

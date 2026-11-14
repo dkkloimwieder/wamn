@@ -21,12 +21,10 @@ members = [
     "wamn_receiving/component",
     "wamn_wms/component",
     "platform/ingress/http-route",
-    "platform/events/materializer",
     "platform/events/registration",
     "platform/events/wire",
     "platform/execution/blob-put",
     "platform/execution/jsonata",
-    "platform/execution/materializer",
     "platform/data/access",
     "platform/data/postgres-statements",
     "platform/data/record-history",
@@ -123,9 +121,7 @@ sqlx-core = { version = "=0.9.0", default-features = false }
 wit-bindgen = { version = "0.62.0", default-features = false, features = ["async", "macros", "realloc"] }
 
 # Guest-owned path identities are independent of the native workspace contract.
-wamn-event-reg = { path = "platform/events/registration", version = "0.1.0" }
 wamn-event-wire = { path = "platform/events/wire", version = "0.1.0" }
-wamn-materializer = { path = "platform/events/materializer", version = "0.1.0" }
 wamn-data-access = { path = "platform/data/access", version = "0.1.0" }
 wamn-postgres-statements = { path = "platform/data/postgres-statements", version = "0.1.0" }
 wamn-record-history = { path = "platform/data/record-history", version = "0.1.0" }
