@@ -157,7 +157,6 @@ pub fn app_result(
     work: &Path,
     output: &Path,
     http: &str,
-    materializer: &str,
     edge: bool,
     scale: usize,
 ) -> anyhow::Result<()> {
@@ -278,7 +277,6 @@ pub fn app_result(
     run["edge"] = edge.into();
     run["seed_scale"] = scale.into();
     run["http_route_sha256"] = http.into();
-    run["materializer_sha256"] = materializer.into();
     run["host_mean_ms"] = json!(totals.iter().sum::<f64>() / f64_count(totals.len()));
     let mut postgres = 0.0;
     for (name, values) in parts {

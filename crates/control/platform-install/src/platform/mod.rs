@@ -16,5 +16,4 @@ pub mod provider;
 pub mod resources;
 pub mod status;
 
-pub mod materializer;
 pub use crate::org;

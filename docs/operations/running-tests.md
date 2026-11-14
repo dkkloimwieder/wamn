@@ -34,7 +34,7 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
 - Any `Cargo.toml` or `Cargo.lock` also runs `cargo xtask compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it.
-- Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies. Changes to materializer WASI WIT select root and apps.
+- Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies.
 - A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
 - A path that no package owns and no rule names selects every applicable workspace and suite.
 - Documentation-only changes select nothing, including quality, and exit successfully.
@@ -139,7 +139,6 @@ In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this che
 | `WAMN_RECEIVING_DEV_BIN` | `TARGET/debug/wamn-ctl` |
 | `WAMN_IDENTITY_BINARY` | `TARGET/debug/wamn-identity` |
 | `WAMN_FLOW_HTTP_COMPONENT` | `TARGET/apps/wasm32-wasip2/release/http_route.wasm` |
-| `WAMN_MATERIALIZER_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/materializer.wasm` |
 | `WAMN_BLOB_PUT_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/blob_put.wasm` |
 | `WAMN_SQLX_TRANSACTION_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/sqlx_command.wasm` |
 | `WAMN_PLATFORM_UI_DIST` | `ROOT/apps/platform_ui/dist` |
@@ -148,7 +147,6 @@ In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this che
 | `WAMN_RECEIVING_DEV_HOST_BIN` | Same input as `WAMN_HOST_BINARY` |
 | `WAMN_SESSION_EXCHANGE_CTL_BIN` | Same input as `WAMN_RECEIVING_DEV_BIN` |
 | `WAMN_DEV_ENV_FLOW_HTTP_COMPONENT` | Same input as `WAMN_FLOW_HTTP_COMPONENT` |
-| `WAMN_DEV_ENV_MATERIALIZER_COMPONENT` | Same input as `WAMN_MATERIALIZER_COMPONENT` |
 | `WAMN_POSTGRES_BIN_DIR` | `/usr/lib/postgresql/18/bin` |
 
 The PostgreSQL directory holds `initdb`, `postgres`, `pg_ctl`, and `psql` from PostgreSQL 18.
@@ -514,7 +512,7 @@ Do not infer execution from the aggregate Cargo pass count.
 | `[IDENTITY-LIVE]` | Runtime `plugins::wamn_postgres::session_identity::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::session_identity::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
-| `[CAPTURE-GAP]` | `crates/control/environment/tests/capture_gap_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs the platform NATS inputs below. It does not test the refusal of an active slot, because only a streaming reader holds a slot active |
+| `[CAPTURE-GAP]` | `crates/control/environment/tests/capture_gap_live.rs`: requires a Kubernetes target, a stamped release chart, PostgreSQL 18 with `wal_level=logical`, and the platform NATS inputs below. It stops and restarts the reader Deployment during recovery |
 | `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored in live-postgres, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
 
 The source owners declare additional credentials, artifact paths, and selected assertions.
@@ -524,9 +522,8 @@ For deployed runs, use [cluster commands](cluster-tests.md).
 The broker cases in `auth_drops_live` and `connection_drops_live` use the platform NATS client.
 Set `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT`, and `WAMN_NATS_TLS_KEY` for a private TLS broker.
 Each case creates its memory buckets through the production function and needs permission to create and delete keys.
-The [delivery fixture](#local-saved-edit-acceptance) supplies an owned broker and development certificates.
-Inside its child command, use `WAMN_RECEIVING_DEV_NATS_URL` for `WAMN_NATS_URL`.
-Use its `WAMN_DEV_ENV_NATS_TLS_CA`, `WAMN_DEV_ENV_NATS_TLS_CERT`, and `WAMN_DEV_ENV_NATS_TLS_KEY` for the corresponding platform variables.
+Use the installed disposable platform's broker and its normal platform NATS inputs.
+The [development loop](development-loop.md) does not provision a private broker.
 
 `production_operator_authentication_and_operation_authorization` keeps `identity.log` and `test.log` in a new `wamn-route-auth-*` directory under `${TMPDIR:-/var/tmp}`.
 A failure prints both paths.

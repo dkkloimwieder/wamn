@@ -18,7 +18,6 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 mod credential_exactness;
 /// Host admission of an event-started workflow run.
 mod event_admission;
-mod event_batch;
 mod executor;
 mod file_collection;
 mod numbering;
@@ -42,7 +41,6 @@ pub use credential_exactness::{
     MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
 };
 pub use event_admission::{EnabledWorkflow, ManualRunAdmission, ManualRunAdmitted};
-pub use event_batch::{EventBatchAdmission, decode_event_trigger};
 pub use numbering::{CounterSet, CounterSetError, CounterSetRefusal};
 pub use operation::OperationInvoker;
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};
@@ -85,7 +83,6 @@ mod bindings {
             "../../../wit/wamn-postgres-0.4",
             "../../../wit/wamn-node",
         "../../../wit/wamn-operation-0.1",
-            "../../../wit/wamn-jetstream",
             "../../../wit/wasmcloud-blobstore",
             "wit",
         ],
@@ -113,7 +110,6 @@ mod bindings {
             "../../../wit/wamn-postgres-0.4",
             "../../../wit/wamn-node",
         "../../../wit/wamn-operation-0.1",
-            "../../../wit/wamn-jetstream",
             "../../../wit/wasmcloud-blobstore",
             "wit",
         ],
@@ -227,12 +223,6 @@ pub const PROJECT_CONFIG_KEY: &str = "wamn.project";
 /// It is set by the platform (the workload instance id), never by the guest.
 pub const RUNNER_CONFIG_KEY: &str = "wamn.runner";
 
-/// Per-workload, host-owned credential discriminator. Absence preserves the
-/// ordinary guest credential; the closed explicit vocabulary admits only the
-/// event materializer.
-pub const AUTHORITY_CONFIG_KEY: &str = "wamn.postgres.authority";
-const EVENT_MATERIALIZER_AUTHORITY_CONFIG_VALUE: &str = "event-materializer";
-
 /// The project id used when a component names none — the single database a
 /// [`WamnPostgresConfig`] URL points at.
 pub const DEFAULT_PROJECT: &str = "default";
@@ -252,17 +242,6 @@ pub(crate) struct BindCounters {
 }
 
 impl WamnPostgres {
-    fn bind_configured_workload_authority(
-        &self,
-        component_id: &str,
-        config: &std::collections::HashMap<String, String>,
-    ) -> anyhow::Result<()> {
-        if let Some(authority) = config.get(AUTHORITY_CONFIG_KEY) {
-            self.bind_workload_authority(component_id, authority)?;
-        }
-        Ok(())
-    }
-
     /// The per-REQUEST half of the workload bind: every identity keyed by `scope`.
     ///
     /// Un-fused from [`HostPlugin::on_workload_item_bind`] so the router driver
@@ -284,14 +263,6 @@ impl WamnPostgres {
         self.bind_counters
             .scope_registrations
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.bind_configured_workload_authority(scope, config)?;
-        if let Some(authority) = config.get(AUTHORITY_CONFIG_KEY) {
-            tracing::debug!(
-                component = scope,
-                authority,
-                "wamn:postgres workload authority registered"
-            );
-        }
         if let Some(project_env_key) = config.get(PROJECT_ENV_KEY_CONFIG_KEY) {
             let project_env_key = project_env_key.clone();
             self.set_project_env_key(scope, &project_env_key)?;
@@ -566,37 +537,6 @@ mod tests {
         let interface = named_interface("alpha", "project/a");
         let error = NamedProject::from_interface(&interface).expect_err("invalid project");
         assert!(error.to_string().contains("invalid project"));
-    }
-
-    #[test]
-    fn binding_config_admits_only_the_exact_materializer_authority() {
-        let postgres = WamnPostgres::new(WamnPostgresConfig::from_env()).unwrap();
-        let explicit = std::collections::HashMap::from([(
-            AUTHORITY_CONFIG_KEY.to_owned(),
-            EVENT_MATERIALIZER_AUTHORITY_CONFIG_VALUE.to_owned(),
-        )]);
-        postgres
-            .bind_configured_workload_authority("materializer", &explicit)
-            .unwrap();
-        postgres
-            .bind_configured_workload_authority("ordinary-guest", &std::collections::HashMap::new())
-            .unwrap();
-        assert_eq!(
-            postgres.workload_authority_for("materializer"),
-            AuthorityClass::EventMaterializer
-        );
-        assert_eq!(
-            postgres.workload_authority_for("ordinary-guest"),
-            AuthorityClass::GuestSql
-        );
-
-        let invalid = std::collections::HashMap::from([(
-            AUTHORITY_CONFIG_KEY.to_owned(),
-            "executor-platform".to_owned(),
-        )]);
-        postgres
-            .bind_configured_workload_authority("invalid", &invalid)
-            .expect_err("the binding vocabulary is closed");
     }
 }
 

@@ -12,17 +12,14 @@
 //! builders) and drives `event_reader::run_with_shutdown` — the service body the
 //! subcommand runs — through the load-bearing drills:
 //!
-//! - refusal probes: a disabled registration refuses; a MISSING slot is the
-//!   v3 §11 capture-gap incident: the reader stays running and stopped, and
-//!   never creates slots;
+//! - a missing slot ends the reader without creating a slot;
 //! - commit order + envelope shape + `Nats-Msg-Id` dedupe on the stream;
 //! - confirmed LSN advances only on JetStream ack;
 //! - crash (task abort) → restart resumes from the confirmed LSN, no gaps;
 //! - an idle database's slot follows another database's WAL (keepalive confirm);
 //! - JetStream unreachable (a severed TCP proxy) → the LSN HOLDS while
 //!   writes continue → restore → delayed, never lost;
-//! - an invalidated slot stops capture until the newest gap row has
-//!   resync_at, and capture resumes in the same process (wamn-59z6);
+//! - an invalidated slot ends capture; recovery and restart resume it;
 //! - clean shutdown on cancellation; teardown leaves NO slot behind.
 
 use sqlx::{Connection as _, Row as _};
@@ -36,14 +33,11 @@ use async_nats::jetstream::consumer::pull::Config as PullConfig;
 use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
 use futures_util::StreamExt as _;
 
-use wamn_cdc_reader::{EventReaderArgs, ReaderShutdown, run_with_shutdown};
-use wamn_control_provision::{
-    SystemReader, WorkloadRoleFamily, cdc_object_name, sql, system_reader_login,
-};
+use wamn_cdc_reader::{ReaderShutdown, run_with_shutdown};
+use wamn_control_provision::{cdc_object_name, sql};
 use wamn_event_wire::{Causation, Envelope, Op, msg_id, subject};
-use wamn_registry::sql::{
-    upsert_event_reader_sql, upsert_org_sql, upsert_project_env_with_policy_sql, upsert_project_sql,
-};
+use wamn_events::reader::ReaderConfig;
+use wamn_registry::sql::{upsert_org_sql, upsert_project_env_with_policy_sql, upsert_project_sql};
 
 const SYSTEM_SCHEMA: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -53,9 +47,6 @@ const PROJECT: &str = "app";
 const ENV: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
 const CDC_PW: &str = "wamn_cdc_pw";
-/// Password for the condition's minted registry-reader generation.
-const READER_PW: &str = "wamn_registry_reader_pw";
-
 /// Swap the database path segment of a libpq URL (the test controls the URL —
 /// no query string).
 fn swap_db(url: &str, db: &str) -> String {
@@ -74,11 +65,6 @@ fn role_url(super_url: &str, role: &str, password: &str) -> String {
     let (_, host_and_path) = after_scheme.rsplit_once('@').expect("url has userinfo");
     let (host_port, _) = host_and_path.split_once('/').expect("url has a path");
     format!("postgres://{role}:{password}@{host_port}/{DB}")
-}
-
-/// This condition's registry-reader generation-A login (`wamn-0h0g.12.116`).
-fn registry_reader_role() -> String {
-    system_reader_login(SystemReader::Registry, ORG, PROJECT, ENV, DB)
 }
 
 async fn connect(url: &str) -> sqlx::PgConnection {
@@ -141,24 +127,19 @@ impl Proxy {
     }
 }
 
-fn reader_args(super_url: &str, cdc_name: &str, nats_url: String) -> EventReaderArgs {
-    EventReaderArgs {
+fn reader_args(super_url: &str, cdc_name: &str, nats_url: String) -> ReaderConfig {
+    ReaderConfig {
         org: ORG.into(),
         project: PROJECT.into(),
         env: ENV.into(),
-        // The NARROW credential, not the superuser one: `wamn-0h0g.12.116` gave
-        // the registration read its own `wamn_registry_reader` generation, whose
-        // whole authority is `SELECT` on `registry.event_readers`. The reader
-        // refuses any other principal before it opens a socket, so passing the
-        // condition's admin URL here would fail closed rather than pass.
-        system_database_url: role_url(super_url, &registry_reader_role(), READER_PW),
+        publication: cdc_name.into(),
+        slot: cdc_name.into(),
+        stream: wamn_event_wire::stream_name(ORG, PROJECT, ENV),
         cdc_url: cdc_plain_url(super_url, cdc_name),
         nats_url,
         nats_tls_ca: None,
         nats_tls_cert: None,
         nats_tls_key: None,
-        stream_replicas: 1,
-        dup_window_secs: 120,
         feedback_secs: 1,
         stall_threshold_secs: 30,
         slot_poll_secs: 0,
@@ -203,8 +184,11 @@ async fn read_all(
                 .and_then(|h| h.get(NATS_MESSAGE_ID))
                 .map(std::string::ToString::to_string)
                 .unwrap_or_default();
-            let envelope: Envelope =
-                serde_json::from_slice(&msg.payload).expect("envelope deserializes (draft shape)");
+            let wamn_event_wire::SourceEvent::Cdc(envelope) =
+                wamn_event_wire::SourceEvent::decode(&msg.payload).expect("event decodes")
+            else {
+                panic!("expected CDC event")
+            };
             out.push((msg.subject.to_string(), id, envelope));
             msg.ack().await.expect("ack");
         }
@@ -333,29 +317,6 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     .await
     .map(drop)
     .expect("drop leftover role");
-    // Roles are CLUSTER-wide, so `DROP DATABASE` does not reach them and a
-    // leftover HEALTHY reader would satisfy the builder's `IF NOT EXISTS` and
-    // mask a mutated one. `DROP OWNED BY` precedes `DROP ROLE` so a dependency
-    // left in another database cannot refuse the drop.
-    for role in [
-        registry_reader_role(),
-        system_reader_login(SystemReader::Registry, ORG, PROJECT, ENV, DB),
-        WorkloadRoleFamily::RegistryReader.acl_role().to_owned(),
-    ] {
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&format!(
-                "DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
-                   EXECUTE 'DROP OWNED BY \"{role}\"'; \
-                   EXECUTE 'DROP ROLE \"{role}\"'; \
-                 END IF; END $$"
-            ))
-                .to_string(),
-        ))
-        .execute(&mut admin)
-        .await
-        .map(drop)
-        .expect("drop leftover registry-reader role");
-    }
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE DATABASE {DB}")))
         .execute(&mut admin)
         .await
@@ -403,31 +364,6 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .await
         .map(|result| result.rows_affected())
         .expect("bind the provisioning actor");
-    // The registration read's own credential, minted through the REAL builders
-    // now that `registry.event_readers` exists (`wamn-0h0g.12.116`). The grant
-    // batch also runs inside `test_database::login_sql`; applying it
-    // first shows the convergent step is a no-op on replay rather than a
-    // one-shot.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&sql::grant_registry_reader_surface_sql()).to_string(),
-    ))
-    .execute(&mut sys)
-    .await
-    .map(drop)
-    .expect("converge the registry reader's grant set");
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::test_database::login_sql(
-            WorkloadRoleFamily::RegistryReader,
-            DB,
-            &registry_reader_role(),
-            READER_PW,
-        ))
-            .to_string(),
-    ))
-    .execute(&mut sys)
-    .await
-    .map(drop)
-    .expect("prepare the registry-reader generation");
     sqlx::query(sqlx::AssertSqlSafe((upsert_org_sql()).to_string()))
         .bind(&ORG)
         .bind(&"pooled")
@@ -480,39 +416,6 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     .map(|result| result.rows_affected())
     .expect("project-env row");
     let secret = wamn_registry::name::project_env_cdc_secret_name(ORG, PROJECT, ENV);
-    let register = |enabled: bool, schema: Option<&'static str>| {
-        let (cdc, stream, secret) = (&cdc_name, &stream_name, &secret);
-        let input = swap_db(&super_url, DB);
-        async move {
-            let mut sys = connect(&input).await;
-            sqlx::query("SELECT set_config('app.user_id',$1,false)")
-                .bind(
-                    wamn_control_provision::PlatformComponent::Provisioning
-                        .principal_id()
-                        .to_string(),
-                )
-                .execute(&mut sys)
-                .await
-                .unwrap();
-            sqlx::query(sqlx::AssertSqlSafe((upsert_event_reader_sql()).to_string()))
-                .bind(&ORG)
-                .bind(&PROJECT)
-                .bind(&ENV)
-                .bind(cdc)
-                .bind(cdc)
-                .bind(stream)
-                .bind(secret)
-                .bind(&None::<&str>)
-                .bind(&enabled)
-                .bind(&schema.map(|schema| vec![schema]))
-                .execute(&mut sys)
-                .await
-                .map(|result| result.rows_affected())
-                .expect("event_readers row");
-        }
-    };
-    register(false, Some("app")).await;
-
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&sql::ensure_schema_sql("app")).to_string(),
     ))
@@ -598,42 +501,6 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     let proxy = Proxy::start(upstream).await;
     let proxied_nats = format!("nats://127.0.0.1:{}", proxy.port);
 
-    // --- refusal probes ------------------------------------------------------
-    // Both are timeout-bounded: a refusal that HANGS (e.g. a blinded preflight
-    // sending the reader into its reopen loop forever) must fail the condition, not
-    // stall it — that is exactly the M4 mutant's shape.
-    tokio::time::timeout(
-        Duration::from_secs(60),
-        run_with_shutdown(
-            reader_args(&super_url, &cdc_name, proxied_nats.clone()),
-            ReaderShutdown::new(),
-        ),
-    )
-    .await
-    .expect("the disabled-registration probe must terminate")
-    .expect_err("a disabled registration must refuse");
-
-    // A registration from before the schema column names no schema, and the
-    // reader refuses it by name before it connects anything (wamn-0h0g.19.21).
-    register(true, None).await;
-    run_with_shutdown(
-        reader_args(&super_url, &cdc_name, proxied_nats.clone()),
-        ReaderShutdown::new(),
-    )
-    .await
-    .expect_err("a registration with no schema must refuse");
-
-    register(true, Some("app")).await;
-    run_with_shutdown(
-        reader_args(&super_url, &cdc_name, proxied_nats.clone()),
-        ReaderShutdown::new(),
-    )
-    .await
-    .expect_err("a missing stream must refuse activation");
-    assert!(
-        js.get_stream(&stream_name).await.is_err(),
-        "reader must not create its missing stream"
-    );
     let coordinate = wamn_registry::Triple::new(ORG, ENV, PROJECT);
     let source_config =
         wamn_broker::events::source_stream_config(&coordinate, 1, Duration::from_secs(120));
@@ -647,46 +514,24 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .await
         .expect("provision declared advisory stream");
 
-    // A publication of another schema than the registered one refuses, naming
-    // both schemas (wamn-0h0g.19.21).
-    register(true, Some("billing")).await;
+    // A missing slot ends the reader without creating one.
     tokio::time::timeout(
-        Duration::from_secs(60),
+        Duration::from_secs(15),
         run_with_shutdown(
             reader_args(&super_url, &cdc_name, proxied_nats.clone()),
             ReaderShutdown::new(),
         ),
     )
     .await
-    .expect("the other-schema probe must terminate")
-    .expect_err("a publication of another schema must refuse");
-    register(true, Some("app")).await;
-
-    // A missing slot is the capture-gap incident (wamn-59z6): the reader stays
-    // running and stopped, and never creates the slot.
-    let gap_shutdown = ReaderShutdown::new();
-    let gap_reader = tokio::spawn(run_with_shutdown(
-        reader_args(&super_url, &cdc_name, proxied_nats.clone()),
-        gap_shutdown.clone(),
-    ));
-    tokio::time::sleep(Duration::from_secs(5)).await;
-    assert!(
-        !gap_reader.is_finished(),
-        "a missing slot stops capture; the reader does not exit"
-    );
-    let slots: i64 = sqlx::query("SELECT count(*) FROM pg_replication_slots WHERE slot_name = $1")
-        .bind(&cdc_name)
-        .fetch_one(&mut sys)
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(slots, 0, "the reader never creates the slot");
-    gap_shutdown.shutdown();
-    tokio::time::timeout(Duration::from_secs(10), gap_reader)
-        .await
-        .expect("a stopped reader ends on shutdown")
-        .expect("reader task join")
-        .expect("a stopped reader shuts down cleanly");
+    .expect("missing slot must end the reader")
+    .expect_err("missing slot refuses capture");
+    let slots: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM pg_replication_slots WHERE slot_name=$1")
+            .bind(&cdc_name)
+            .fetch_one(&mut sys)
+            .await
+            .unwrap();
+    assert_eq!(slots, 0, "the reader never creates slots");
 
     // --- slot (the real builder), then the reader ---------------------------
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -786,18 +631,14 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
             .unwrap();
         expected.push((Op::Insert, id.to_string()));
     }
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("BEGIN; \
-         INSERT INTO app.widgets (id, val) VALUES (21, 'v21'); \
-         INSERT INTO app.widgets (id, val) VALUES (22, 'v22'); \
-         INSERT INTO app.widgets (id, val) VALUES (23, 'v23'); \
-         COMMIT")
-            .to_string(),
-    ))
-    .execute(&mut sys)
-    .await
-    .map(drop)
-    .unwrap();
+    let mut copy = sys
+        .copy_in_raw("COPY app.widgets (id, val) FROM STDIN")
+        .await
+        .unwrap();
+    copy.send("21\tv21\n22\tv22\n23\tv23\n".as_bytes())
+        .await
+        .unwrap();
+    copy.finish().await.unwrap();
     expected.extend([21, 22, 23].map(|id| (Op::Insert, id.to_string())));
     sqlx::raw_sql("UPDATE app.widgets SET val = 'u5' WHERE id = 5")
         .execute(&mut sys)
@@ -851,11 +692,28 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     );
     for (subj, id, e) in &delivered {
         assert_eq!(subj, &subject(ORG, PROJECT, ENV, e.entity_segment(), e.op));
-        assert_eq!(id, &msg_id(PROJECT, ENV, e.lsn));
+        assert_eq!(id, &msg_id(PROJECT, ENV, &e.identity));
         assert_eq!(e.package_id, "platform_fixture");
         assert_eq!(e.entity, "widget");
         assert_eq!(e.table, "widgets");
     }
+    assert_eq!(
+        delivered[0].2.identity.row_ordinal, 1,
+        "an excluded row still occupies its transaction position"
+    );
+    let copy_rows = &delivered[20..23];
+    assert!(
+        copy_rows
+            .iter()
+            .all(|(_, _, row)| row.identity.commit_lsn == copy_rows[0].2.identity.commit_lsn)
+    );
+    assert_eq!(
+        copy_rows
+            .iter()
+            .map(|(_, _, row)| row.identity.row_ordinal)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
     let ids: std::collections::BTreeSet<_> = delivered.iter().map(|(_, id, _)| id).collect();
     assert_eq!(ids.len(), delivered.len(), "Nats-Msg-Ids are unique");
     let txids: Vec<u32> = delivered[20..23].iter().map(|(_, _, e)| e.txid).collect();
@@ -1158,8 +1016,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
 
     // --- phase I: an invalidated slot stops capture until the gap closes -----
     // (wamn-59z6) A 1 MB slot limit and WAL written past it invalidate the
-    // inactive slot. The reader stays stopped while the gap row is open, and it
-    // resumes in the same process when resync_at is set.
+    // inactive slot. Recovery repairs it before the reader restarts.
     // ALTER SYSTEM refuses a transaction block, so it runs alone.
     for statement in [
         "ALTER SYSTEM SET max_slot_wal_keep_size = '1MB'",
@@ -1198,17 +1055,33 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         }
     }
     assert!(lost, "the slot was never invalidated");
+    sqlx::query(sqlx::AssertSqlSafe(
+        wamn_registry::sql::upsert_event_reader_sql().to_string(),
+    ))
+    .bind(ORG)
+    .bind(PROJECT)
+    .bind(ENV)
+    .bind(&cdc_name)
+    .bind(&cdc_name)
+    .bind(&stream_name)
+    .bind("unused-control-secret")
+    .bind(None::<&str>)
+    .bind(true)
+    .bind(vec!["app"])
+    .execute(&mut sys)
+    .await
+    .unwrap();
     let lost_confirmed = confirmed_lsn(&mut sys, &cdc_name).await;
     let shutdown_i = ReaderShutdown::new();
     let handle_i = tokio::spawn(run_with_shutdown(
         reader_args(&super_url, &cdc_name, proxied_nats.clone()),
         shutdown_i.clone(),
     ));
-    tokio::time::sleep(Duration::from_secs(5)).await;
-    assert!(
-        !handle_i.is_finished(),
-        "an invalidated slot does not end the reader"
-    );
+    tokio::time::timeout(Duration::from_secs(15), handle_i)
+        .await
+        .expect("invalidated slot must end the reader")
+        .expect("reader task")
+        .expect_err("lost slot refuses capture");
     // The recovery, as recover-capture-gap writes it: a new slot, then the row.
     sqlx::query("SELECT pg_drop_replication_slot($1)")
         .bind(&cdc_name)
@@ -1244,16 +1117,6 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .await
         .map(|result| result.rows_affected())
         .unwrap();
-    tokio::time::sleep(Duration::from_secs(40)).await;
-    assert_eq!(
-        stream_count(&js, &stream_name).await,
-        before_gap,
-        "an open gap row keeps capture stopped on a healthy new slot"
-    );
-    assert!(
-        !handle_i.is_finished(),
-        "the stopped reader is still running"
-    );
     sqlx::query(
         "UPDATE registry.capture_gap SET resync_at = now() \
          WHERE org = $1 AND project = $2 AND env = $3",
@@ -1265,11 +1128,11 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     .await
     .map(|result| result.rows_affected())
     .expect("close the gap");
+    let handle_i = tokio::spawn(run_with_shutdown(
+        reader_args(&super_url, &cdc_name, proxied_nats.clone()),
+        shutdown_i.clone(),
+    ));
     wait_for_count(&js, &stream_name, before_gap + 1, 45).await;
-    assert!(
-        !handle_i.is_finished(),
-        "capture resumed in the same process, with no restart"
-    );
     shutdown_i.shutdown();
     tokio::time::timeout(Duration::from_secs(15), handle_i)
         .await

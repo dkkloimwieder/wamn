@@ -2,11 +2,8 @@
 
 pub mod api_service;
 pub mod apply_package;
-pub mod author_workflow;
-pub mod capture_gap;
 #[cfg(feature = "ops")]
 pub mod create_user;
-pub mod enable_cdc_project_env;
 pub mod env_policies;
 pub mod environment;
 pub mod ident;
@@ -23,9 +20,8 @@ pub use wamn_platform_install::provision_system;
 pub mod prune_record_history;
 #[cfg(feature = "ops")]
 pub mod prune_run_history;
-pub mod reconcile_replica_identity;
-pub mod replica_identity;
-pub mod workflow_lifecycle;
+pub use wamn_events::reconcile_replica_identity;
+pub use wamn_events::replica_identity;
 
 #[cfg(test)]
 mod publish_release_tests;

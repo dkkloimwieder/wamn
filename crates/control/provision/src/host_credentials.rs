@@ -13,14 +13,14 @@ pub enum CredentialDatabase {
 #[derive(Debug, Clone, Copy)]
 pub struct HostCredential {
     pub family: WorkloadRoleFamily,
-    /// None for the CDC reader, which runs outside the host group.
+    /// Optional host variable for the credential.
     pub host_variable: Option<&'static str>,
     pub database: CredentialDatabase,
 }
 
-/// Environment credentials in host variable order, followed by the CDC reader.
+/// Environment credentials in host variable order.
 /// Secret names derive from the family and environment coordinate.
-pub const HOST_CREDENTIALS: [HostCredential; 9] = [
+pub const HOST_CREDENTIALS: [HostCredential; 7] = [
     HostCredential {
         family: WorkloadRoleFamily::Query,
         host_variable: None,
@@ -52,19 +52,9 @@ pub const HOST_CREDENTIALS: [HostCredential; 9] = [
         database: CredentialDatabase::Project,
     },
     HostCredential {
-        family: WorkloadRoleFamily::EventMaterializer,
-        host_variable: Some("WAMN_EVENT_MATERIALIZER_PG_URL"),
-        database: CredentialDatabase::Project,
-    },
-    HostCredential {
         family: WorkloadRoleFamily::Administration,
         host_variable: Some("WAMN_ADMINISTRATION_PG_URL"),
         database: CredentialDatabase::Project,
-    },
-    HostCredential {
-        family: WorkloadRoleFamily::RegistryReader,
-        host_variable: None,
-        database: CredentialDatabase::Control,
     },
 ];
 

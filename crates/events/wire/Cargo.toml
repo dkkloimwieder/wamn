@@ -1,0 +1,16 @@
+[package]
+name = "wamn-event-wire"
+description = "Event records, broker subjects and source identity."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wamn-registry = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+chrono = { workspace = true, features = ["std", "serde"] }
+sha2 = { workspace = true }
+
+[lints]
+workspace = true

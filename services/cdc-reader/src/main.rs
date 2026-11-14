@@ -1,11 +1,4 @@
-//! wamn-cdc-reader: the CDC event-reader service binary (SR9).
-//!
-//! Pre-split this ran as `wamn-host event-reader`; the flags are unchanged,
-//! the `event-reader` subcommand literal is gone (single-purpose binary).
-
-#[cfg(test)]
-#[path = "../../cli_help_tests.rs"]
-mod help_env_tests;
+//! Run change capture from one mounted JSON configuration.
 
 use std::str::FromStr as _;
 
@@ -14,12 +7,13 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(name = "wamn-cdc-reader", version, about)]
 struct Cli {
-    /// Log level (the chart passes this before the service flags)
+    /// Minimum log level when RUST_LOG is unset.
     #[arg(long = "log-level", global = true, default_value = "info")]
     log_level: String,
 
-    #[command(flatten)]
-    args: wamn_cdc_reader::EventReaderArgs,
+    /// Reader configuration as JSON.
+    #[arg(long)]
+    config: std::path::PathBuf,
 }
 
 fn init_tracing(level: tracing::Level) {
@@ -45,7 +39,8 @@ async fn main() -> anyhow::Result<()> {
     // leaves its provider in place.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    wamn_cdc_reader::run(cli.args).await
+    let args = serde_json::from_slice(&std::fs::read(cli.config)?)?;
+    wamn_cdc_reader::run(args).await
 }
 
 #[cfg(all(test, target_os = "linux"))]

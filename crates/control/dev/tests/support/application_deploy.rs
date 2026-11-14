@@ -1029,16 +1029,6 @@ async fn first_install(
             );
         } else {
             environment = observed;
-            let workloads = get(journey.run, "hosts", "workloaddeployments", "").await?;
-            ensure!(
-                workloads["items"]
-                    .as_array()
-                    .context("shared workloads")?
-                    .iter()
-                    .all(|workload| workload["metadata"]["name"]
-                        != wamn_registry::name::resource_suffix(&shared, "materializer")),
-                "missed the interruption window: provisioning already reached the materializer"
-            );
         }
     }
     let mut database = observer(journey).await?;

@@ -4,7 +4,7 @@
 -- state share one durability domain). The host polls due work and leases rows.
 -- A run lease lets another replica recover abandoned work.
 -- Run persistence lives in crates/execution/run-state.
--- The host and materializer use this schema to lease and enqueue work.
+-- The host and workflow use this schema to lease and enqueue work.
 --
 -- STANDALONE ARTIFACT, ADDITIVE to deploy/sql/run-state.sql: same convention as
 -- run-state.sql / catalog-schema.sql — deliberately NOT included by
@@ -28,8 +28,7 @@
 -- TARGET: the SKIP LOCKED queue + write-ahead + single-owner leases + janitor +
 -- reconciliation. Every row shares one project-global FIFO ordered by
 -- `(available_at, run_id)`. Runs have no event ordering guarantee.
--- (Row events are the D19 v3 event plane's — CDC reader → JetStream →
--- materializer; the outbox table + poller were torn down at l5i9.19.)
+-- The CDC reader publishes row events through JetStream to workflow admission.
 
 -- ---------------------------------------------------------------------------
 -- run_queue: one row per pending/in-flight run. `available_at` conditions visibility

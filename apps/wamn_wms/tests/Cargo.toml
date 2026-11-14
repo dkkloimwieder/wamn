@@ -17,7 +17,7 @@ wamn-digest.workspace = true
 wamn-identity-client = { workspace = true }
 wamn-kubernetes = { workspace = true }
 wamn-compiler = { workspace = true }
-# The subject token of a registration entity, as the materializer consumer filters it.
+# Event identity and subject tokens shared with application consumers.
 wamn-event-wire = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true, features = ["rustls", "json"] }

@@ -23,9 +23,7 @@ use std::process::{Command, Stdio};
 
 use url::Url;
 
-use wamn_control_provision::sql::{
-    grant_identity_reader_surface_sql, grant_registry_reader_surface_sql,
-};
+use wamn_control_provision::sql::grant_identity_reader_surface_sql;
 use wamn_control_provision::{
     SYSTEM_SCHEMA_SQL, SystemReader, WorkloadRoleFamily, system_reader_login,
 };
@@ -223,184 +221,6 @@ fn reader_sqlstate(reader_url: &str, statement: &str) -> Option<String> {
 }
 
 #[test]
-fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let admin_url = test_database.url().to_owned();
-    let database = {
-        let (ok, out, err) = psql_tuples(&admin_url, "SELECT current_database()");
-        assert!(ok, "read the target database name:\n{err}");
-        out.trim().to_owned()
-    };
-
-    reset_roles(&admin_url, &database);
-    apply_system_schema(&admin_url);
-
-    let role = generation_role(SystemReader::Registry, &database);
-    let stable = WorkloadRoleFamily::RegistryReader.acl_role();
-    // The convergent grant batch, applied TWICE: a replay against an already
-    // correct database must be a no-op, not a widening or an error.
-    let grant = grant_registry_reader_surface_sql();
-    run_admin(&admin_url, "converge the registry reader", &grant);
-    run_admin(&admin_url, "replay the convergent grant", &grant);
-    run_admin(
-        &admin_url,
-        "prepare the registry-reader generation",
-        &wamn_control_provision::test_database::login_sql(
-            WorkloadRoleFamily::RegistryReader,
-            &database,
-            &role,
-            READER_PW,
-        ),
-    );
-
-    // --- the server's answer about the STABLE role's whole ACL --------------
-    assert_eq!(
-        load_role_grants(&admin_url, stable),
-        vec![
-            "relation|registry|capture_gap|SELECT|false".to_owned(),
-            "relation|registry|event_readers|SELECT|false".to_owned(),
-            "schema|registry|registry|USAGE|false".to_owned(),
-        ],
-        "the stable registry-reader role's aclexplode grants are not exactly \
-         USAGE on registry plus SELECT on registry.event_readers and registry.capture_gap"
-    );
-    // The generation itself holds only CONNECT, directly: its read authority is
-    // inherited, so a direct table grant here would be a second, unmanaged path.
-    assert_eq!(
-        load_role_grants(&admin_url, &role),
-        vec![format!("database||{database}|CONNECT|false")],
-        "the registry-reader generation carries a direct grant beyond CONNECT"
-    );
-
-    // --- the server's answer about the effective privilege ------------------
-    let mut probes = format!(
-        "DO $probe$ DECLARE r text := '{role}'; BEGIN \
-           ASSERT NOT (SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = r), \
-             'the probe role is superuser or bypasses RLS — that masks every denial below'; \
-           ASSERT (SELECT rolcanlogin FROM pg_roles WHERE rolname = r), \
-             'the prepared generation must be able to authenticate'; \
-           ASSERT has_schema_privilege(r, 'registry', 'USAGE'), \
-             'the registry reader cannot reach its own schema'; \
-           ASSERT has_table_privilege(r, 'registry.event_readers', 'SELECT'), \
-             'the registry reader cannot read its one relation'; \n"
-    );
-    // Every OTHER system-plane schema, and the sensitive identity relations, are
-    // denied — this is the disjointness the two families exist to keep.
-    for schema in ["identity", "provisioning"] {
-        writeln!(
-            probes,
-            "  ASSERT NOT has_schema_privilege(r, '{schema}', 'USAGE'), \
-               'the registry reader reaches the {schema} schema'; "
-        )
-        .expect("writing to a String cannot fail");
-    }
-    for relation in [
-        "identity.password_logins",
-        "identity.pats",
-        "identity.principals",
-        "identity.project_env_memberships",
-        "identity.project_roles",
-        "registry.orgs",
-        "registry.projects",
-        "registry.environment_projects",
-    ] {
-        for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
-            writeln!(
-                probes,
-                "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
-                   'the registry reader holds {privilege} on {relation}'; "
-            )
-            .expect("writing to a String cannot fail");
-        }
-    }
-    // …and on its OWN relation it holds the read and nothing else.
-    for privilege in ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES"] {
-        writeln!(
-            probes,
-            "  ASSERT NOT has_table_privilege(r, 'registry.event_readers', '{privilege}'), \
-               'the registry reader holds {privilege} on its own relation'; "
-        )
-        .expect("writing to a String cannot fail");
-    }
-    probes.push_str("END $probe$;\n");
-    run_admin(&admin_url, "the effective-privilege probes", &probes);
-
-    // --- the reader's OWN session -------------------------------------------
-    let reader_url = role_url(&admin_url, &role, READER_PW);
-    run_admin(
-        &reader_url,
-        "the reader session's own self-test",
-        "DO $self$ BEGIN \
-           ASSERT NOT (SELECT rolsuper OR rolbypassrls FROM pg_roles \
-                        WHERE rolname = current_user), \
-             'this session is superuser or bypasses RLS and establishes nothing'; \
-         END $self$;",
-    );
-    // The REAL consuming statement, executed by the REAL credential.
-    assert_eq!(
-        reader_sqlstate(
-            &reader_url,
-            &format!(
-                "PREPARE probe (text,text,text) AS {select}; \
-                 EXECUTE probe('{ORG}','{PROJECT}','{ENV}'); DEALLOCATE probe;",
-                select = wamn_registry::sql::select_event_reader_sql(),
-            ),
-        ),
-        None,
-        "the registry reader cannot run the statement it exists for"
-    );
-    for (statement, what) in [
-        (
-            "SELECT token_hash FROM identity.pats".to_owned(),
-            "read the token digests it must never see",
-        ),
-        (
-            "SELECT role FROM identity.project_roles".to_owned(),
-            "read project role grants",
-        ),
-        (
-            "INSERT INTO identity.project_roles (principal_id, org, project, role) \
-             VALUES (gen_random_uuid(), 'x', 'y', 'admin')"
-                .to_owned(),
-            "self-grant a project role",
-        ),
-        (
-            "SELECT id FROM registry.orgs".to_owned(),
-            "read a registry relation outside its grant",
-        ),
-        (
-            "UPDATE registry.event_readers SET enabled = false".to_owned(),
-            "write its own relation",
-        ),
-        (
-            "INSERT INTO registry.event_readers (org, project, env, publication, slot, \
-             stream, replication_secret_name) VALUES ('a','b','c','d','e','f','g')"
-                .to_owned(),
-            "insert into its own relation",
-        ),
-    ] {
-        assert_eq!(
-            reader_sqlstate(&reader_url, &statement).as_deref(),
-            Some("42501"),
-            "the registry reader was able to {what}"
-        );
-    }
-}
-
-/// THE FORGERY PRIMITIVE, CLOSED AND MEASURED (`wamn-0h0g.12.67`), and the
-/// DISJOINTNESS validated live with BOTH readers provisioned at once.
-///
-/// `wamn-system-db` authenticated as `wamn_system`, the owner of `identity.pats`
-/// and `identity.project_roles`, and `identity.*` has no row-level security. The
-/// two statements below are the ones that primitive enabled: bind a token digest
-/// to any principal, and self-grant a project role. Both are run FROM THE
-/// READER'S OWN SESSION and must come back `42501`.
-///
-/// The live cluster role carries `SELECT, INSERT, UPDATE`; the grant drifted
-/// SELECT-only -> +INSERT -> +INSERT,UPDATE three times out of band. This is the
-/// live half of the guard that fails on the fourth.
-#[test]
 fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_other() {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
@@ -420,7 +240,6 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
     let mut reader_url = Vec::new();
     for (reader, grant) in [
         (SystemReader::Identity, grant_identity_reader_surface_sql()),
-        (SystemReader::Registry, grant_registry_reader_surface_sql()),
         (
             SystemReader::Connection,
             wamn_control_provision::sql::grant_connection_reader_surface_sql(),
@@ -460,17 +279,6 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         "the stable identity-reader role's aclexplode grants are not exactly \
          USAGE on identity plus its identity reads and membership columns"
     );
-    // The registry reader is untouched by the identity reader's convergence —
-    // neither batch may narrow or widen the other.
-    assert_eq!(
-        load_role_grants(&admin_url, WorkloadRoleFamily::RegistryReader.acl_role()),
-        vec![
-            "relation|registry|capture_gap|SELECT|false".to_owned(),
-            "relation|registry|event_readers|SELECT|false".to_owned(),
-            "schema|registry|registry|USAGE|false".to_owned(),
-        ],
-    );
-
     assert_eq!(
         load_role_grants(&admin_url, WorkloadRoleFamily::ConnectionReader.acl_role()),
         vec![
@@ -588,9 +396,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         // Neither reader may reach the OTHER's plane, in either direction.
         let foreign = match reader {
             SystemReader::Identity => "SELECT publication FROM registry.event_readers",
-            SystemReader::Registry | SystemReader::Connection => {
-                "SELECT token_hash FROM identity.pats"
-            }
+            SystemReader::Connection => "SELECT token_hash FROM identity.pats",
         };
         assert_eq!(
             reader_sqlstate(url, foreign).as_deref(),

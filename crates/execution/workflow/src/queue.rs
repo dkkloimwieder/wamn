@@ -97,12 +97,6 @@ impl QueueService {
                 },
             )
             .await?;
-        jetstream.bind_derived_invocation(
-            QUEUE_LEASE_INVOCATION,
-            &target.project_env_key,
-            &config.project,
-            &target.environment,
-        )?;
         let liveness = Liveness::new(Duration::from_millis(config.lease_ttl_ms).saturating_mul(3));
         Ok(Self {
             driver,

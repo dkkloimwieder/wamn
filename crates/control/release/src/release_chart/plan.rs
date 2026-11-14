@@ -1,4 +1,4 @@
-use super::{AttachmentType, Duration, Mapping, ServingManifest, Value, ensure, release_label};
+use super::{AttachmentType, Mapping, ServingManifest, Value, ensure, release_label};
 use anyhow::Context as _;
 
 /// The Helm release and host group name of an application: `r-<slug>-<hash>`.
@@ -82,48 +82,8 @@ pub(super) fn applications_argument(
         .context("the canonical applications are UTF-8")
 }
 
-/// The host group's `plugins` entry for the materializer's `events` binding
-/// (docs/plan/alignment.md R6). Its grants are the environment's own stream and
-/// subjects, and its replies use the environment user's inbox. It names no
-/// `servers`, so it inherits the data connection and its certificate (R5).
-/// `workloadConfig: deny` keeps every connection key and grant here.
-pub fn events_plugin(org: &str, project: &str, env: &str) -> anyhow::Result<Value> {
-    let target = wamn_registry::Triple::new(org, env, project);
-    let source = wamn_broker::events::source_stream_config(&target, 1, Duration::from_secs(120));
-    let project_env_key = wamn_registry::project_env_key(org, project, env);
-    let config = mapping([
-        (
-            "inbox-prefix",
-            wamn_registry::name::nats_subject(&[&wamn_registry::name::nats_token(
-                "_INBOX_",
-                (wamn_registry::environment_nats_user(&project_env_key)).as_ref(),
-                "",
-            )]),
-        ),
-        ("stream-allow", source.name),
-        ("subject-allow", source.subjects.join(",")),
-        ("subscription-capacity-bytes", "4194304".to_owned()),
-        ("subscription-capacity", "64".to_owned()),
-        ("max-in-flight", "64".to_owned()),
-    ]);
-    let mut binding = Mapping::new();
-    binding.insert("config".into(), config);
-    let mut bindings = Mapping::new();
-    bindings.insert("events".into(), Value::Mapping(binding));
-    let mut entry = Mapping::new();
-    entry.insert("id".into(), "wasmcloud-nats".into());
-    entry.insert("workloadConfig".into(), "deny".into());
-    entry.insert("bindings".into(), Value::Mapping(bindings));
-    Ok(Value::Sequence(vec![Value::Mapping(entry)]))
-}
-
 /// Render the install values of one application.
 pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
-    ensure!(
-        MATERIALIZER_DRAIN_BOUND_SECONDS < input.drain_bound_seconds,
-        "materializer_drain_bound_seconds ({MATERIALIZER_DRAIN_BOUND_SECONDS}) must be shorter than drain_bound_seconds ({})",
-        input.drain_bound_seconds
-    );
     ensure!(
         input.applications.len() == 1,
         "a release must select exactly one application"
@@ -177,7 +137,6 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         input.org.clone(),
         input.project.clone(),
         input.drain_bound_seconds.to_string(),
-        MATERIALIZER_DRAIN_BOUND_SECONDS.to_string(),
     ]) {
         variables.push(mapping([("name", variable.to_owned()), ("value", value)]));
     }
@@ -221,10 +180,6 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     ensure!(
         !group.contains_key("plugins"),
         "the host group body sets `plugins`, which the release chart derives"
-    );
-    group.insert(
-        "plugins".into(),
-        events_plugin(&input.org, &input.project, &input.env)?,
     );
     let roles = input
         .roles
@@ -348,8 +303,6 @@ pub struct ImageSet {
     pub host: String,
     /// `<repository>@sha256:<hex>`.
     pub http: String,
-    /// `<repository>@sha256:<hex>`.
-    pub materializer: String,
 }
 
 /// One application HTTP workload with its configuration.
@@ -427,18 +380,8 @@ pub(super) enum Recovery {
 /// `WAMN_DRAIN_BOUND_SECONDS` is the policy's drain bound, the one budget of
 /// the host's shutdown sequence, from the same value as the pods'
 /// `terminationGracePeriodSeconds` (R20).
-pub(super) const HOST_VARIABLES: [&str; 4] = [
-    "WAMN_ORG",
-    "WAMN_PROJECT",
-    "WAMN_DRAIN_BOUND_SECONDS",
-    "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS",
-];
-
-/// The materializer's grace: when its host drains, the host stops the
-/// materializer and answers the operator's stop within this time, before it
-/// closes admission. It must be shorter than the drain bound, so a host pod
-/// never leaves a materializer replica that the operator cannot stop.
-pub const MATERIALIZER_DRAIN_BOUND_SECONDS: u32 = 10;
+pub(super) const HOST_VARIABLES: [&str; 3] =
+    ["WAMN_ORG", "WAMN_PROJECT", "WAMN_DRAIN_BOUND_SECONDS"];
 
 /// The host samples traces at their start and exports to the cluster's collector.
 /// The sampler keeps sampled parents and 10% of new traces (R5, R6).
@@ -471,11 +414,10 @@ pub(super) fn runtime_default_variables() -> anyhow::Result<Vec<String>> {
 /// The host variables a host group body must not set: the derived ones, the
 /// telemetry ones, and the chart's environment variable, which the release
 /// replaces by argument. The runtime defaults are refused beside them.
-pub(super) const REFUSED_VARIABLES: [&str; 9] = [
+pub(super) const REFUSED_VARIABLES: [&str; 8] = [
     "WAMN_ORG",
     "WAMN_PROJECT",
     "WAMN_DRAIN_BOUND_SECONDS",
-    "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS",
     "OTEL_EXPORTER_OTLP_ENDPOINT",
     "OTEL_SERVICE_NAME",
     "OTEL_TRACES_SAMPLER",

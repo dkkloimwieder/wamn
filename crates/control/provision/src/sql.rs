@@ -44,8 +44,8 @@ pub use cdc::{
 
 use crate::name::{APP_ROLE, DB_OWNER_ROLE};
 use crate::workload_role::{
-    ADMINISTRATION_ROLE, EVENT_MATERIALIZER_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE,
-    PLATFORM_GROUP_ROLE, SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
+    ADMINISTRATION_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE, PLATFORM_GROUP_ROLE,
+    SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
 };
 pub(crate) use postgres_protocol::escape::escape_identifier;
 use postgres_protocol::escape::escape_literal;
@@ -614,36 +614,6 @@ pub fn grant_executor_history_reads_sql() -> String {
     )
 }
 
-/// The materializer's complete production read surface: the installed package
-/// identities used for source validation. It holds no catalog write,
-/// run-plane grant, or routine grant.
-pub const EVENT_MATERIALIZER_CATALOG_RELATIONS: [&str; 1] = ["packages"];
-
-/// Converge the stable event-materializer role to its exact package catalog
-/// read surface. Revocation spans every authority-bearing project schema so an
-/// out-of-band widening is removed on replay.
-pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
-    let role = escape_identifier(EVENT_MATERIALIZER_ROLE);
-    let schema = escape_identifier(schema);
-    let mut sql = format!(
-        "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, {PROJECT_KEY_SCHEMA}, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, {PROJECT_KEY_SCHEMA}, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, {PROJECT_KEY_SCHEMA}, {schema} FROM {role}; \
-         GRANT USAGE ON SCHEMA catalog TO {role};",
-        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::EventMaterializer),
-    );
-    for relation in EVENT_MATERIALIZER_CATALOG_RELATIONS {
-        write!(
-            sql,
-            " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
-            relation = escape_identifier(relation),
-        )
-        .expect("writing to a String cannot fail");
-    }
-    sql
-}
-
 // --- T1 control-database read surfaces (wamn-0h0g.12.116, wamn-0h0g.12.67) ---
 //
 // The T1 system database's two read-only consumers both authenticated as
@@ -669,13 +639,6 @@ pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
 /// The REVOKE target, not the grant target: a system-plane reader is revoked
 /// across all three and granted inside exactly one.
 pub const SYSTEM_PLANE_SCHEMAS: [&str; 3] = ["identity", "provisioning", "registry"];
-
-/// The two relations the CDC reader's `SELECT`s touch.
-///
-/// `services/cdc-reader` runs `wamn_registry::sql::select_event_reader_sql`
-/// and `select_capture_gap_sql` over `WAMN_SYSTEM_URL` and nothing else, so this
-/// is its whole authority (`wamn-59z6`: the reader reads its gap row).
-pub const REGISTRY_READER_RELATIONS: [&str; 2] = ["event_readers", "capture_gap"];
 
 /// The relations the management and user route identity reads touch.
 ///
@@ -741,19 +704,6 @@ fn grant_system_reader_surface_sql(
         .expect("writing to a String cannot fail");
     }
     sql
-}
-
-/// Converge `wamn_registry_reader` to its exact CDC-registration read surface.
-///
-/// `SELECT` on `registry.event_readers` and `registry.capture_gap`. The role is refused on `identity.*`
-/// by the same batch that grants it here, which is why the CDC reader's
-/// credential cannot be reused to read or forge identity.
-pub fn grant_registry_reader_surface_sql() -> String {
-    grant_system_reader_surface_sql(
-        WorkloadRoleFamily::RegistryReader,
-        "registry",
-        &REGISTRY_READER_RELATIONS,
-    )
 }
 
 /// Converge `wamn_identity_reader` to its exact identity read surface.
@@ -933,12 +883,8 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
         }
         WorkloadRoleFamily::HttpAdmitter => Some(grant_http_admitter_surface_sql("wamn_run")),
         WorkloadRoleFamily::SessionRoleReader => Some(grant_session_role_reader_surface_sql()),
-        WorkloadRoleFamily::RegistryReader => Some(grant_registry_reader_surface_sql()),
         WorkloadRoleFamily::IdentityReader => Some(grant_identity_reader_surface_sql()),
         WorkloadRoleFamily::ConnectionReader => Some(grant_connection_reader_surface_sql()),
-        WorkloadRoleFamily::EventMaterializer => {
-            Some(grant_event_materializer_surface_sql("wamn_run"))
-        }
         WorkloadRoleFamily::Administration => Some(grant_administration_surface_sql("wamn_run")),
         WorkloadRoleFamily::Control => Some(grant_control_surface_sql()),
         _ => None,

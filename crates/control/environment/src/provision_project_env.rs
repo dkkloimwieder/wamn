@@ -31,13 +31,10 @@ use wamn_registry::Triple;
 use wamn_identity_client::{PatClient, PatIssuerConfig};
 use wamn_release_control::env_policies::read_env_policy;
 
-mod database;
 mod output;
 pub mod pat_secrets;
 pub(crate) mod registry;
 pub(crate) mod workload;
-
-pub(crate) use database::database_host;
 
 use pat_secrets::issue_pat_secrets;
 use registry::{mint_instance_suffix, record_project_env};

@@ -132,17 +132,23 @@ pub fn overlay_values(overlay: &str, identity: &EventIdentity) -> anyhow::Result
     let from = wamn_registry::project_env_key(
         &declared(&group.env, "WAMN_ORG")?,
         &declared(&group.env, "WAMN_PROJECT")?,
-        &declared(&group.env, "WAMN_EVT_ENV")?,
+        group
+            .extra_args
+            .iter()
+            .find_map(|arg| arg.strip_prefix("--environment="))
+            .context("host overlay has no environment argument")?,
     );
     for (name, value) in [
         ("WAMN_ORG", &identity.org),
-        ("WAMN_EVT_ORG", &identity.org),
         ("WAMN_PROJECT", &identity.project),
-        ("WAMN_EVT_PROJECT", &identity.project),
-        ("WAMN_EVT_ENV", &identity.environment),
     ] {
         env_mut(&mut group.env, name)?.value = Some(value.clone());
     }
+    replace_arg(
+        &mut group.extra_args,
+        "--environment",
+        &identity.environment,
+    )?;
     let names = group
         .env
         .iter_mut()
@@ -257,30 +263,6 @@ pub fn render_host_values(
     group.namespace.clone_from(&input.namespace);
     group.replicas = input.replicas;
     unique_env(&group.env)?;
-    // The materializer's events binding is the host group's `plugins` entry,
-    // as the release chart declares it: the environment's stream, subjects
-    // and inbox, and no `servers`, so it inherits the data connection
-    // (docs/plan/alignment.md R6).
-    let source = wamn_broker::events::source_stream_config(
-        &wamn_registry::Triple::new(
-            input.event.org.as_str(),
-            input.event.environment.as_str(),
-            input.event.project.as_str(),
-        ),
-        input.stream_replicas,
-        std::time::Duration::from_secs(input.dup_window_secs),
-    );
-    let plugins: Value = serde_yaml::from_str(&format!(
-        "[{{id: wasmcloud-nats, workloadConfig: deny, bindings: {{events: {{config: {{\
-         inbox-prefix: \"_INBOX_{}\", stream-allow: \"{}\", subject-allow: \"{}\", \
-         subscription-capacity-bytes: \"4194304\", subscription-capacity: \"64\", \
-         max-in-flight: \"64\"}}}}}}}}]",
-        wamn_registry::environment_nats_user(&project_env_key),
-        source.name,
-        source.subjects.join(","),
-    ))
-    .context("render the events plugins entry")?;
-    group.extra.insert("plugins".into(), plugins);
     let guest = env_mut(&mut group.env, "WAMN_PG_URL")?;
     guest
         .value_from
@@ -349,9 +331,6 @@ pub fn render_host_values(
         ),
         ("WAMN_EVT_STREAM_REPLICAS", stream_replicas.as_str()),
         ("WAMN_EVT_DUP_WINDOW_SECS", dup_window_secs.as_str()),
-        ("WAMN_EVT_ORG", input.event.org.as_str()),
-        ("WAMN_EVT_PROJECT", input.event.project.as_str()),
-        ("WAMN_EVT_ENV", input.event.environment.as_str()),
     ] {
         let variable = env_mut(&mut group.env, name)?;
         ensure!(
@@ -392,6 +371,11 @@ pub fn render_host_values(
             },
         );
     }
+    replace_arg(
+        &mut group.extra_args,
+        "--environment",
+        &input.event.environment,
+    )?;
     replace_arg(
         &mut group.extra_args,
         "--release-artifact-base",

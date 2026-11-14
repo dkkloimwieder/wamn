@@ -217,11 +217,11 @@ pub async fn schedule_run(
     due: &str,
 ) -> anyhow::Result<String> {
     use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-    use wamn_environment::author_workflow::{
+    use wamn_workflow::admission::{ScheduleRunAdmitted, admit_schedule_run};
+    use wamn_workflow::author_workflow::{
         AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger, author_workflow_in_databases,
     };
-    use wamn_environment::workflow_lifecycle::{WorkflowVersion, enable_workflow};
-    use wamn_workflow::admission::{ScheduleRunAdmitted, admit_schedule_run};
+    use wamn_workflow::workflow_lifecycle::{WorkflowVersion, enable_workflow};
 
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;

@@ -6,8 +6,8 @@
 use sqlx::Row as _;
 
 use wamn_control_provision::{cdc_object_name, sql};
-use wamn_environment::enable_cdc_project_env::record_event_reader;
 use wamn_environment::environment::ensure::cdc_in_place;
+use wamn_events::lifecycle::record_event_reader;
 use wamn_registry::Triple;
 use wamn_registry::sql::{
     stamp_env_policy_sql, upsert_org_sql, upsert_project_env_with_policy_sql, upsert_project_sql,

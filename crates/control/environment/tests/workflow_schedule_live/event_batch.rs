@@ -72,8 +72,17 @@ async fn fanout_is_atomic_idempotent_and_records_the_history_actor() {
         assert_eq!(
             row.get::<String, _>(3),
             format!(
-                "event:40:{}",
-                wamn_event_wire::msg_id(PROJECT, ENVIRONMENT, 40)
+                "event:{}",
+                wamn_event_wire::msg_id(
+                    PROJECT,
+                    ENVIRONMENT,
+                    &wamn_event_wire::CdcIdentity {
+                        system_id: 1,
+                        timeline: 1,
+                        commit_lsn: 40,
+                        row_ordinal: 0
+                    }
+                )
             )
         );
         assert_eq!(row.get::<Option<String>, _>(4).as_deref(), Some(READER));
@@ -125,8 +134,17 @@ async fn fanout_is_atomic_idempotent_and_records_the_history_actor() {
     let actors =
         sqlx::query("SELECT invoked_by_user_id::text FROM wamn_run.runs WHERE invoked_by = $1")
             .bind(&format!(
-                "event:41:{}",
-                wamn_event_wire::msg_id(PROJECT, ENVIRONMENT, 41)
+                "event:{}",
+                wamn_event_wire::msg_id(
+                    PROJECT,
+                    ENVIRONMENT,
+                    &wamn_event_wire::CdcIdentity {
+                        system_id: 1,
+                        timeline: 1,
+                        commit_lsn: 41,
+                        row_ordinal: 0
+                    }
+                )
             ))
             .fetch_all(&mut fixture.admin)
             .await

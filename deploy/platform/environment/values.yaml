@@ -1,7 +1,6 @@
 database: null
 publication: null
 operations: null
-materializer: null
 credentialAccess: null
 
 brokerCertificates: []

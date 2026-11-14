@@ -69,19 +69,22 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The materializer consumers of captured entities in the supplied packages.
+/// Application consumers for the fixture project.
 fn declared_consumers(target: &Triple, manifests: &[String]) -> anyhow::Result<Vec<pull::Config>> {
     let manifests = manifests
         .iter()
         .map(|path| {
-            if let Some(root) = wamn_compiler::manifest_package_root(Path::new(path)) {}
             Ok(wamn_compiler::manifest::PackageManifest::from_slice(
                 &fs::read(path).with_context(|| format!("read {path}"))?,
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let entities = manifests.iter().flat_map(PackageManifest::entity_pairs);
-    let consumers = wamn_broker::events::entity_consumers(target, entities);
+    let consumers = entities
+        .map(|(package, entity)| {
+            wamn_broker::events::application_consumer(target, &target.project, package, entity)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(consumers)
 }
 

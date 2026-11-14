@@ -163,10 +163,8 @@ fn render(target: &wamn_registry::Triple, authorization: &mut Authorization) -> 
     let source = source_stream_config(target, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(target, 1);
     let user = wamn_registry::environment_nats_user(&project_env_key);
-    // The environment's events, and what its host and its materializer read
-    // on that environment's own stream: every consumer of the stream, by
-    // wildcard. The materializer creates application consumers with filters
-    // confined to this environment. The broker owns the streams.
+    // The environment host reads its application consumers.
+    // Provisioning declares the streams and consumers before attachment.
     let mut publish = vec![source.subjects[0].clone()];
     for name in [&source.name, &advisory.name] {
         publish.push(wamn_registry::name::nats_subject(&[
@@ -178,15 +176,6 @@ fn render(target: &wamn_registry::Triple, authorization: &mut Authorization) -> 
         ]));
     }
     publish.extend([
-        wamn_registry::name::nats_subject(&[
-            "$JS",
-            "API",
-            "CONSUMER",
-            "CREATE",
-            (source.name).as_ref(),
-            "*",
-            (source.subjects[0]).as_ref(),
-        ]),
         wamn_registry::name::nats_subject(&[
             "$JS",
             "API",
@@ -241,7 +230,7 @@ fn render(target: &wamn_registry::Triple, authorization: &mut Authorization) -> 
             },
         },
     );
-    // Environment provisioning owns the materializer and its host's data binding.
+    // Environment provisioning owns the host data binding.
     vec![environment_certificate(
         &wamn_registry::name::nats_certificate(&project_env_key),
         &user,
@@ -474,8 +463,7 @@ mod tests {
                     ]))
             );
         }
-        // Routing can create filtered consumers inside this environment.
-        // Unfiltered consumers, foreign filters and stream mutations stay refused.
+        // Native hosts attach to provisioned consumers. Broker mutations stay refused.
         let stream = source_stream_config(&document("one"), 1, Duration::from_secs(120)).name;
         for subject in [
             wamn_registry::name::nats_subject(&[
@@ -537,26 +525,6 @@ mod tests {
                 "DELETE",
                 (stream).as_ref(),
             ]),
-        ] {
-            assert!(
-                !one.permissions
-                    .publish
-                    .allow
-                    .iter()
-                    .any(|pattern| subject_matches(pattern, &subject)),
-                "{subject} is granted"
-            );
-        }
-        for subject in [
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "CONSUMER",
-                "MSG",
-                "NEXT",
-                (stream).as_ref(),
-                "mat",
-            ]),
             wamn_registry::name::nats_subject(&[
                 "$JS",
                 "API",
@@ -572,6 +540,24 @@ mod tests {
                 ">",
             ]),
         ] {
+            assert!(
+                !one.permissions
+                    .publish
+                    .allow
+                    .iter()
+                    .any(|pattern| subject_matches(pattern, &subject)),
+                "{subject} is granted"
+            );
+        }
+        for subject in [wamn_registry::name::nats_subject(&[
+            "$JS",
+            "API",
+            "CONSUMER",
+            "MSG",
+            "NEXT",
+            (stream).as_ref(),
+            "mat",
+        ])] {
             assert!(
                 one.permissions
                     .publish

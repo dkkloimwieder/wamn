@@ -190,10 +190,9 @@ pub fn insert_capture_gap_sql() -> &'static str {
 }
 
 /// Lock the newest capture gap of one registration (`wamn-59z6`). Params: `$1`
-/// org, `$2` project, `$3` env. Columns: `created_at`, `slot`, and whether
-/// `resync_at` is set.
+/// org, `$2` project, `$3` env. Columns: `created_at`, `slot`, and `resync_at`.
 pub fn lock_newest_capture_gap_sql() -> &'static str {
-    "SELECT created_at, slot, resync_at IS NOT NULL \
+    "SELECT created_at, slot, resync_at \
      FROM registry.capture_gap \
      WHERE org = $1 AND project = $2 AND env = $3 \
      ORDER BY created_at DESC LIMIT 1 FOR UPDATE"
@@ -205,17 +204,6 @@ pub fn close_capture_gap_sql() -> &'static str {
     "UPDATE registry.capture_gap SET resync_at = now() \
      WHERE org = $1 AND project = $2 AND env = $3 AND created_at = $4 \
      RETURNING resync_at"
-}
-
-/// Read one project-env's CDC reader registration — what the reader service
-/// (l5i9.10) streams by. Params: `$1` org, `$2` project, `$3` env. Columns:
-/// `publication, slot, stream, replication_secret_name,
-/// replication_secret_namespace, enabled, schema`.
-pub fn select_event_reader_sql() -> &'static str {
-    "SELECT publication, slot, stream, \
-            replication_secret_name, replication_secret_namespace, enabled, schema \
-     FROM registry.event_readers \
-     WHERE org = $1 AND project = $2 AND env = $3"
 }
 
 /// Delete every connection of one environment, with no reference refusal, and
@@ -394,10 +382,6 @@ pub fn control_provision_src_sql_grant_connection_reader_surface_sql(role: &str)
         " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.lock_oauth_connection(text,text,text,uuid), registry.read_file_connection(text,text,text,uuid), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_generation(text,text,text,uuid,bigint), registry.read_connection_secret(text,text,text,uuid), registry.read_env_connections(text,text,text), registry.read_integration_version(text,integer) TO {role};"
     )
 }
-
-/// crates/control/environment/src/enable_cdc_project_env.rs::pause_event_reader registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_ENABLE_CDC_PROJECT_ENV_PAUSE_EVENT_READER: &str =
-    "UPDATE registry.event_readers SET enabled=false WHERE org=$1 AND project=$2 AND env=$3";
 
 /// crates/control/environment/src/provision_system.rs::set_platform_domain registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN: &str =

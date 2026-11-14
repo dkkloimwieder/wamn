@@ -32,6 +32,8 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-registry` | Org, environment and project coordinates, resource names, and registry SQL |
 | `wamn-control-provision` | Provisioning SQL and credential roles |
 | `wamn-broker` | NATS connections, streams, shared memory buckets, and authorization |
+| `wamn-event-wire` | Tagged event records and stable source identity |
+| `wamn-events` | CDC configuration, reader lifecycle and capture recovery |
 | `wamn-kubernetes` | Kubernetes HTTP client, Secrets, Job execution, and command runners |
 | `wamn-catalog` | Component, wiring, and release facts |
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
@@ -58,7 +60,7 @@ A control operation takes ordinary inputs, keeps its own validation, and returns
 `wamn-platform-install` lives under `crates/control/platform-install`.
 Helm records infrastructure in `platform/wamn-infrastructure` and platform services in `platform/wamn`.
 The org chart owns PostgreSQL clusters and backup resources in the org namespace.
-The environment chart owns databases, publications, worker accounts, hosts, and materializers in that same namespace.
+The environment chart owns databases, publications, worker accounts, and hosts in that same namespace.
 Credential Secrets and bootstrap SQL Jobs stay outside Helm values.
 Each org chart update derives its complete role list from registry facts and fixed platform definitions.
 Bootstrap declares only the fixed platform roles. Helm stores the derived list.
@@ -130,7 +132,7 @@ An environment is one Helm release of the `release` chart in `deploy/platform/re
 The release name is `r-<slug>-<hash>`, derived from the coordinate `org/env/project`.
 The name is also the host group of the environment.
 The chart holds the pinned runtime-operator subchart in host-only mode, which renders only the host.
-It adds one WorkloadDeployment for the `http` role and one for the `materializer` role.
+It adds one WorkloadDeployment for the `http` role.
 The `http` role starts the separate route component with `poolSize` 0. A Service of the same name routes to it.
 
 When the environment has a route host, the chart also writes a ConfigMap.

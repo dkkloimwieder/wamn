@@ -5,7 +5,7 @@ wit_bindgen::generate!({
         "../../../../wit/wamn-postgres-0.4",
         "../../../../wit/wamn-node",
         "../../../../wit/wamn-operation-0.1",
-        "../../execution/materializer/wit/deps/wasi-clocks",
+        "../../../../wit/wasi-clocks",
         "../../../../wit/wasi-config",
         "wit",
     ],

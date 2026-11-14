@@ -100,7 +100,13 @@ pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyho
         None,
     )
     .await?;
-    crate::enable_cdc_project_env::wait_reader_stopped(platform, triple).await
+    wamn_events::lifecycle::wait_reader_stopped(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        &platform.target.namespace,
+        triple,
+    )
+    .await
 }
 
 pub(super) async fn delete_publication(platform: &Platform, database: &str) -> anyhow::Result<()> {

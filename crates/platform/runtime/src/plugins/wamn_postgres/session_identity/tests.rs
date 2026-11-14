@@ -508,7 +508,6 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
         pg.set_project(c, "proj").unwrap();
         pg.set_schema(c, "s_run").unwrap();
         pg.set_runner(c, "owner-1").unwrap();
-        pg.bind_workload_authority(c, "event-materializer").unwrap();
         pg.set_role(c, "inspector").unwrap();
         pg.set_user_id(c, "6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b")
             .unwrap();
@@ -542,10 +541,6 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
     assert_eq!(pg.project_for("wl-a-component-0"), DEFAULT_PROJECT);
     assert_eq!(pg.schema_for("wl-a-component-0"), None);
     assert_eq!(pg.runner_for("wl-a-component-0"), None);
-    assert_eq!(
-        pg.workload_authority_for("wl-a-component-0"),
-        AuthorityClass::GuestSql
-    );
     assert_eq!(pg.role_for("wl-a-component-0"), None);
     assert_eq!(pg.user_id_for("wl-a-component-0"), None);
     assert_eq!(pg.operation_for("wl-a-component-0"), None);
@@ -563,10 +558,6 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
     assert_eq!(
         pg.runner_for("wl-b-component-0").as_deref(),
         Some("owner-1")
-    );
-    assert_eq!(
-        pg.workload_authority_for("wl-b-component-0"),
-        AuthorityClass::EventMaterializer
     );
     assert_eq!(
         pg.role_for("wl-b-component-0").as_deref(),
@@ -1511,39 +1502,6 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
 #[derive(Default)]
 struct RecordingProvider {
     asked: std::sync::Mutex<Vec<AuthorityClass>>,
-}
-
-#[tokio::test]
-async fn workload_binding_selects_only_the_materializer_authority() {
-    let provider = Arc::new(RecordingProvider::default());
-    let pg = WamnPostgres::with_provider(Arc::clone(&provider) as Arc<dyn CredentialProvider>);
-    pg.bind_workload_authority("materializer", "event-materializer")
-        .expect("the closed materializer value is admitted");
-    pg.bind_workload_authority("invalid", "executor-platform")
-        .expect_err("no other explicit authority is admitted");
-
-    assert!(
-        pg.checkout_workload("materializer", DEFAULT_PROJECT, "org--dev--a")
-            .await
-            .is_err(),
-        "the recording provider deliberately names no credential"
-    );
-    assert!(
-        pg.checkout_workload("ordinary-guest", DEFAULT_PROJECT, "org--dev--a")
-            .await
-            .is_err(),
-        "the recording provider deliberately names no credential"
-    );
-
-    let asked = provider
-        .asked
-        .lock()
-        .expect("recording provider lock poisoned")
-        .clone();
-    assert_eq!(
-        asked,
-        vec![AuthorityClass::EventMaterializer, AuthorityClass::GuestSql]
-    );
 }
 
 impl CredentialProvider for RecordingProvider {

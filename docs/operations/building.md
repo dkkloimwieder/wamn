@@ -88,7 +88,7 @@ For native publication, set `WAMN_FLOW_HTTP_COMPONENT` to the built guest and `W
 Publication pushes the separate route component to `<component-artifact-base>/entries`.
 The manifest records only the path `entries@sha256:<manifest-digest>`, relative to the component artifact base.
 
-The workload guests `http-route` and `materializer` belong to no package.
+The workload guest `http-route` belongs to no package.
 
 The platform build publishes the pinned route component without an application or dispatcher.
 The publisher uses the same route bytes for each application release.
@@ -116,7 +116,8 @@ The dev loop watches the package roots, `apps/platform`, and the shared platform
 
 WIT bindings read canonical package directories through ordered `path` lists. Put dependencies before the consumer world.
 The router owns `wamn:node`. The runtime owns PostgreSQL, connection, JetStream, flow routing, and blobstore contracts.
-The execution host owns router delivery. The materializer owns the shared WASI CLI and clock packages.
+The execution host owns router delivery. Workflow owns native event matching.
+Shared WASI definitions live under `wit/wasi-cli` and `wit/wasi-clocks`.
 Application contracts lie under `wit/` in each package's build output, `apps/target/wamn/<package>/wit`, which `wamn build` writes. Do not copy platform WIT into application directories.
 
 ## Platform artifacts

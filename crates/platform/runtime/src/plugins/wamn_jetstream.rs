@@ -1,12 +1,6 @@
-//! Host-owned registration activation and event publication.
-//!
-//! Native `wasmcloud:nats` owns materializer attachment, delivery and settlement.
-//! This module selects enabled event workflows, retains durable drift
-//! tests, and host-only derived-event publication. Broker advisories replace
-//! the payload DLQ.
+//! Native event transport and derived publication.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::HashSet;
 use std::time::Duration;
 
 use async_nats::HeaderMap;
@@ -14,76 +8,30 @@ use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::Context;
 #[cfg(test)]
 use async_nats::jetstream::consumer::AckPolicy;
-use async_nats::jetstream::consumer::Config as StoredConsumerConfig;
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
-use async_nats::jetstream::context::{GetStreamError, GetStreamErrorKind};
+mod admission;
+use crate::EffectOutcome;
+use anyhow::Context as _;
 #[cfg(test)]
 use futures_util::StreamExt as _;
-use tokio::sync::Mutex;
 use tracing::Instrument as _;
 use wamn_broker::events::{
-    advisory_stream_config, consumer_config_matches, materializer_consumer_config,
-    source_stream_config, stream_config_matches,
+    advisory_stream_config, consumer_config_matches, source_stream_config, stream_config_matches,
 };
-use wamn_event_wire::{
-    Causation, DerivedEvent, Op, derived_msg_id, stream_name, subject, subject_token,
-};
+use wamn_event_wire::{Causation, DerivedEvent, Op, derived_msg_id, stream_name, subject};
 use wamn_registry::Triple;
 
-use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
-use wash_runtime::engine::workload::WorkloadItem;
-use wash_runtime::plugin::{HostPlugin, WitInterfaces};
-use wash_runtime::wasmtime::component::{Accessor, Linker};
-use wash_runtime::wit::{WitInterface, WitWorld};
+use wash_runtime::plugin::HostPlugin;
+use wash_runtime::wit::WitWorld;
 
 use crate::plugins::effect_span::{
-    EFFECT_OPERATION, EffectIdentity, EffectWiring, JETSTREAM_DURATION_MS, effect_span,
-    record_effect_ms, record_wiring,
+    EFFECT_OPERATION, EffectIdentity, EffectOutcomeGuard, EffectWiring, JETSTREAM_DURATION_MS,
+    effect_span, record_effect_ms, record_wiring,
 };
-use crate::plugins::wamn_postgres::{
-    DEFAULT_PROJECT, PROJECT_CONFIG_KEY, PROJECT_ENV_KEY_CONFIG_KEY,
-};
-mod admission;
-
-mod bindings {
-    wash_runtime::wasmtime::component::bindgen!({
-        path: [
-            "../../../wit/wamn-connection",
-            "../../../wit/wamn-flow-http-routing",
-            "../../../wit/wamn-postgres-0.4",
-            "../../../wit/wamn-node",
-            "../../../wit/wamn-operation-0.1",
-            "../../../wit/wamn-jetstream",
-            "../../../wit/wasmcloud-blobstore",
-            "wit",
-        ],
-        world: "wamn:host/jetstream-plugin@0.1.0",
-        imports: { default: async | trappable | tracing },
-        wasmtime_crate: wash_runtime::wasmtime,
-    });
-}
-
-use bindings::wamn::jetstream::registration;
-use bindings::wamn::jetstream::types::JsError;
-
 pub const WAMN_JETSTREAM_ID: &str = "wamn-jetstream";
 
-/// Trusted workload identity carrying the exact event environment.
-pub const ENVIRONMENT_CONFIG_KEY: &str = "wamn.environment";
-
-/// The host-owned inputs needed to publish one admitted Emit terminal.
-///
-/// Project, project, and environment are intentionally absent:
-/// [`WamnJetstream::publish_derived`] resolves them from the identity bound to
-/// `component_id`. `package_id` is supplied only by the native host caller from
-/// its loaded release/run/wiring identity; it is not a guest WIT operand.
-///
-/// `wiring_id`, `wiring_version` and `node_id` are trace coordinates only: they
-/// name the wiring position the Emit terminal was admitted at, and nothing on
-/// the publish path authorizes against them. Both callers are native hosts that
-/// already hold all three — the router bridge from its resolved target and the
-/// executor from its leased queue row — so neither reads them from guest
-/// output. See [`js_span`] for how they reach the effect span.
+/// An admitted Emit terminal. Event coordinates come from host construction.
+/// The caller supplies its package selector, payload and trace position.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DerivedPublishRequest {
     pub component_id: String,
@@ -145,15 +93,6 @@ impl std::fmt::Display for DerivedPublishError {
 
 impl std::error::Error for DerivedPublishError {}
 
-/// Link host-owned registration tests directly.
-/// The host path calls this from [`HostPlugin::on_workload_item_bind`];
-/// a Service (the materializer, l5i9.17) or a hand-built store links it the same
-/// way `wamn:postgres` is linked.
-pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
-    registration::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // Plugin configuration
 // ---------------------------------------------------------------------------
@@ -173,21 +112,12 @@ pub struct WamnJetstreamConfig {
 }
 
 impl WamnJetstreamConfig {
-    /// The event coordinates and stream declarations. The host adds its data
+    /// Read stream declarations. The host supplies its event coordinate and data
     /// connection with [`Self::with_nats`].
     pub fn from_env() -> Self {
         Self {
             nats: None,
-            event_target: match (
-                std::env::var("WAMN_EVT_ORG"),
-                std::env::var("WAMN_EVT_PROJECT"),
-                std::env::var("WAMN_EVT_ENV"),
-            ) {
-                (Ok(org), Ok(project), Ok(environment)) => {
-                    Some(Triple::new(org, environment, project))
-                }
-                _ => None,
-            },
+            event_target: None,
             stream_replicas: std::env::var("WAMN_EVT_STREAM_REPLICAS")
                 .ok()
                 .and_then(|value| value.parse().ok()),
@@ -211,30 +141,21 @@ impl WamnJetstreamConfig {
 
 #[derive(Debug)]
 pub struct WamnJetstream {
-    nats: Option<async_nats::Client>,
     stream_replicas: Option<usize>,
     dup_window_secs: Option<u64>,
     /// Event coordinates come from the platform bootstrap, separately from DB authority.
     event_coordinates: EventCoordinates,
-    /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
-    /// `OnceCell`) so a transient connect failure is retried on the next call
-    /// instead of memoized forever; only a successful connect is stored.
-    ctx: Mutex<Option<Context>>,
-    /// Per-component project/project/environment identity, registered at workload
-    /// bind from the same trusted `wamn.*` config the `wamn:postgres`
-    /// identity read. It exists only to enrich this plugin's effect spans: before
-    /// `wamn-0h0g.24.3` the bind read the project, derived the execution target
-    /// from it and discarded it, so nothing here could say whose event plane a
-    /// publish or an ack belonged to.
-    identity: std::sync::RwLock<HashMap<String, JetstreamIdentity>>,
+    /// Validated once when the host constructs the plugin.
+    ctx: Option<Context>,
+    stream: Option<async_nats::jetstream::stream::Stream>,
 }
 
-/// One component's bind-time project/project identity.
+/// Host identity for event publication and tracing.
 #[derive(Clone, Debug)]
-struct JetstreamIdentity {
+struct JetstreamIdentity<'a> {
     project_env_key: Box<str>,
-    project: Box<str>,
-    environment: Box<str>,
+    project: &'a str,
+    environment: &'a str,
 }
 
 #[derive(Debug, Default)]
@@ -246,11 +167,11 @@ struct EventCoordinates {
 
 fn require_event_coordinates(coordinates: &EventCoordinates) -> Result<(), DerivedPublishError> {
     for (name, value) in [
-        ("WAMN_EVT_ORG", coordinates.org.as_ref()),
-        ("WAMN_EVT_PROJECT", coordinates.project.as_ref()),
-        ("WAMN_EVT_ENV", coordinates.environment.as_ref()),
+        ("org", coordinates.org.as_ref()),
+        ("project", coordinates.project.as_ref()),
+        ("environment", coordinates.environment.as_ref()),
     ] {
-        if value.is_empty() || value.trim() != value || subject_token(value) != value {
+        if !wamn_event_wire::valid_subject_token(value) {
             return Err(DerivedPublishError::new(
                 DerivedPublishErrorType::UnboundIdentity,
                 format!("event coordinate {name} is absent or not one NATS subject token"),
@@ -261,9 +182,9 @@ fn require_event_coordinates(coordinates: &EventCoordinates) -> Result<(), Deriv
 }
 
 #[derive(Debug)]
-struct PreparedDerivedPublication {
+struct PreparedDerivedPublication<'a> {
     component_id: String,
-    identity: JetstreamIdentity,
+    identity: JetstreamIdentity<'a>,
     subject: String,
     message_id: String,
     expected_stream: String,
@@ -282,28 +203,24 @@ struct DerivedPublishWiring {
     node_id: String,
 }
 
-fn prepare_derived_publication(
-    identity: JetstreamIdentity,
+fn prepare_derived_publication<'a>(
+    identity: JetstreamIdentity<'a>,
     coordinates: &EventCoordinates,
     request: DerivedPublishRequest,
-) -> Result<PreparedDerivedPublication, DerivedPublishError> {
-    require_event_coordinates(coordinates)?;
-    if identity.environment != coordinates.environment {
+) -> Result<PreparedDerivedPublication<'a>, DerivedPublishError> {
+    if identity.environment != coordinates.environment.as_ref() {
         return Err(DerivedPublishError::new(
             DerivedPublishErrorType::UnboundIdentity,
             "derived event environment differs from the platform event binding",
         ));
     }
-    if request.package_id.is_empty()
-        || request.package_id.trim() != request.package_id
-        || request.package_id.as_bytes().contains(&0)
-    {
+    if !wamn_event_wire::valid_subject_token(&request.package_id) {
         return Err(DerivedPublishError::new(
             DerivedPublishErrorType::InvalidInput,
             "derived event package-id is empty or noncanonical",
         ));
     }
-    if request.entity.is_empty() || request.entity.trim() != request.entity {
+    if !wamn_event_wire::valid_subject_token(&request.entity) {
         return Err(DerivedPublishError::new(
             DerivedPublishErrorType::InvalidInput,
             "derived event entity is empty or noncanonical",
@@ -354,12 +271,16 @@ fn prepare_derived_publication(
         &coordinates.project,
         &coordinates.environment,
     );
-    let body = serde_json::to_vec(&event).map_err(|error| {
+    let source = wamn_event_wire::SourceEvent::Derived(event);
+    let body = serde_json::to_vec(&source).map_err(|error| {
         DerivedPublishError::new(
             DerivedPublishErrorType::Serialization,
             format!("serialize derived event: {error}"),
         )
     })?;
+    let wamn_event_wire::SourceEvent::Derived(event) = source else {
+        unreachable!("the publisher constructed a derived event")
+    };
     Ok(PreparedDerivedPublication {
         component_id: request.component_id,
         identity,
@@ -376,27 +297,9 @@ fn prepare_derived_publication(
     })
 }
 
-/// The span one `wamn:jetstream` effect opens, enriched from the component's
-/// bind-time identity and, where the operation has one, its wiring position.
-///
-/// Only `publish-derived` passes a `wiring`. It is the one operation this plugin
-/// performs on behalf of an admitted Emit terminal, and its native callers hand
-/// the coordinates down with the request. The registration operations perform
-/// control work at no wiring node, so each records the
-/// keys EMPTY through
-/// [`record_wiring`]'s `None`, which reads as "this effect holds no such identity"
-/// rather than as dropped instrumentation.
-///
-/// Four of the eight keys are EMPTY even on `publish-derived`.
-/// `wamn.occurrence`, `wamn.component_digest`, `wamn.component_name` and
-/// `wamn.operation` all belong to a bound `ConnectionInvocation`, and the
-/// publish path never stands in a guest invocation record: its two callers are the
-/// router delivery bridge and the executor queue, both native hosts. They hold
-/// the wiring position but no per-visit invocation, so there is nothing
-/// host-attested to fill those four with and a placeholder would be an identity the
-/// platform cannot make.
+/// Trace a derived publication using the host identity and admitted wiring position.
 fn js_span(
-    identity: &JetstreamIdentity,
+    identity: &JetstreamIdentity<'_>,
     component_id: &str,
     operation: &'static str,
     wiring: Option<&DerivedPublishWiring>,
@@ -405,7 +308,7 @@ fn js_span(
         "wamn.jetstream",
         EffectIdentity {
             project_env_key: &identity.project_env_key,
-            project: &identity.project,
+            project: identity.project,
             component: component_id,
         },
         None,
@@ -428,9 +331,9 @@ fn js_span(
 }
 
 impl WamnJetstream {
-    pub fn new(cfg: WamnJetstreamConfig) -> Self {
-        Self {
-            nats: cfg.nats,
+    pub async fn new(cfg: WamnJetstreamConfig) -> anyhow::Result<Self> {
+        let has_target = cfg.event_target.is_some();
+        let mut plugin = Self {
             stream_replicas: cfg.stream_replicas,
             dup_window_secs: cfg.dup_window_secs,
             event_coordinates: cfg
@@ -440,46 +343,60 @@ impl WamnJetstream {
                     project: target.project.into_boxed_str(),
                     environment: target.env.as_str().into(),
                 }),
-            ctx: Mutex::new(None),
-            identity: std::sync::RwLock::new(HashMap::new()),
+            ctx: None,
+            stream: None,
+        };
+        anyhow::ensure!(
+            has_target || cfg.nats.is_none(),
+            "event connection requires host coordinates"
+        );
+        let expected = if has_target {
+            require_event_coordinates(&plugin.event_coordinates)?;
+            Some(plugin.expected_event_streams()?)
+        } else {
+            None
+        };
+        if let Some(client) = cfg.nats {
+            let expected = expected.expect("the event connection has a validated target");
+            let context = async_nats::jetstream::new(client);
+            for config in expected {
+                let stream = context
+                    .get_stream(&config.name)
+                    .await
+                    .with_context(|| format!("read declared event stream {}", config.name))?;
+                if !stream_config_matches(&config, &stream.cached_info().config) {
+                    return Err(anyhow::anyhow!(format!(
+                        "event stream {} differs from its declaration",
+                        config.name
+                    )));
+                }
+                if plugin.stream.is_none() {
+                    plugin.stream = Some(stream);
+                }
+            }
+            plugin.ctx = Some(context);
         }
+        Ok(plugin)
     }
 
-    /// Read the platform event coordinates, broker address, and host-owned credentials.
-    pub fn from_env() -> Self {
-        Self::new(WamnJetstreamConfig::from_env())
-    }
-
-    /// Refuse a configured event connection until its streams match their declarations.
-    pub async fn activate_events(&self) -> Result<(), JsError> {
-        if self.nats.is_some() {
-            self.ensure_ctx().await?;
-        }
-        Ok(())
-    }
-
-    fn expected_event_streams(
-        &self,
-    ) -> Result<[async_nats::jetstream::stream::Config; 2], JsError> {
-        require_event_coordinates(&self.event_coordinates)
-            .map_err(|error| JsError::Other(error.to_string()))?;
+    fn expected_event_streams(&self) -> anyhow::Result<[async_nats::jetstream::stream::Config; 2]> {
         let replicas = self
             .stream_replicas
             .filter(|replicas| (1..=5).contains(replicas))
             .ok_or_else(|| {
-                JsError::Other(
-                    "WAMN_EVT_STREAM_REPLICAS must declare one to five NATS stream copies".into(),
+                anyhow::anyhow!(
+                    "WAMN_EVT_STREAM_REPLICAS must declare one to five NATS stream copies",
                 )
             })?;
-        let duplicate_window = self
-            .dup_window_secs
-            .filter(|seconds| *seconds > 0)
-            .map(Duration::from_secs)
-            .ok_or_else(|| {
-                JsError::Other(
-                    "WAMN_EVT_DUP_WINDOW_SECS must declare a positive duplicate window".into(),
-                )
-            })?;
+        let duplicate_window =
+            self.dup_window_secs
+                .filter(|seconds| *seconds > 0)
+                .map(Duration::from_secs)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "WAMN_EVT_DUP_WINDOW_SECS must declare a positive duplicate window",
+                    )
+                })?;
         let target = Triple::new(
             self.event_coordinates.org.as_ref(),
             self.event_coordinates.environment.as_ref(),
@@ -491,163 +408,28 @@ impl WamnJetstream {
         ])
     }
 
-    fn materializer_project_env_key(&self) -> Result<String, JsError> {
-        require_event_coordinates(&self.event_coordinates)
-            .map_err(|error| JsError::Other(error.to_string()))?;
-        Ok(wamn_registry::project_env_key(
-            &self.event_coordinates.org,
-            &self.event_coordinates.project,
-            &self.event_coordinates.environment,
-        ))
-    }
-
-    /// Register a component's bind-time target identity. All values come from the
-    /// trusted workload config. Generic guest operations use them only for
-    /// enrichment; the native derived publisher separately requires a complete
-    /// subject-safe identity.
-    fn set_identity(
-        &self,
-        component_id: &str,
-        project_env_key: Option<&str>,
-        project: Option<&str>,
-        environment: Option<&str>,
-    ) {
-        self.identity
-            .write()
-            .expect("jetstream identity lock poisoned")
-            .insert(
-                component_id.to_string(),
-                JetstreamIdentity {
-                    project_env_key: project_env_key.unwrap_or_default().into(),
-                    project: project.unwrap_or(DEFAULT_PROJECT).into(),
-                    environment: environment.unwrap_or_default().into(),
-                },
-            );
-    }
-
-    /// Bind the exact trusted target used by native derived publication.
-    ///
-    /// The production driver calls this at instance checkout and revokes it at
-    /// release. No target operand exists on [`DerivedPublishRequest`], so a
-    /// guest or wiring payload has nothing it can echo or redirect.
-    pub fn bind_derived_invocation(
-        &self,
-        component_id: &str,
-        project_env_key: &str,
-        project: &str,
-        environment: &str,
-    ) -> Result<(), DerivedPublishError> {
-        for (field, value) in [
-            ("project_env_key", project_env_key),
-            ("project", project),
-            ("environment", environment),
-        ] {
-            if value.is_empty() || value.trim() != value || subject_token(value) != value {
-                return Err(DerivedPublishError::new(
-                    DerivedPublishErrorType::InvalidInput,
-                    format!(
-                        "derived event {field} identity is empty or not one NATS subject token"
-                    ),
-                ));
-            }
-        }
-        self.set_identity(
-            component_id,
-            Some(project_env_key),
-            Some(project),
-            Some(environment),
-        );
-        Ok(())
-    }
-
-    /// Revoke a native derived-publication identity at instance release.
-    pub fn revoke_derived_invocation(&self, component_id: &str) {
-        self.identity
-            .write()
-            .expect("jetstream identity lock poisoned")
-            .remove(component_id);
-    }
-
-    /// The identity registered for a component, or the unbound default. An
-    /// unregistered component is a store built without the bind path (a bench,
-    /// a hand-linked fixture), not a guest that withheld its identity.
-    fn identity_for(&self, component_id: &str) -> JetstreamIdentity {
-        self.identity
-            .read()
-            .expect("jetstream identity lock poisoned")
-            .get(component_id)
-            .cloned()
-            .unwrap_or_else(|| JetstreamIdentity {
-                project_env_key: Box::default(),
-                project: DEFAULT_PROJECT.into(),
-                environment: Box::default(),
-            })
-    }
-
-    fn required_derived_identity(
-        &self,
-        component_id: &str,
-    ) -> Result<JetstreamIdentity, DerivedPublishError> {
-        let identity = self
-            .identity
-            .read()
-            .expect("jetstream identity lock poisoned")
-            .get(component_id)
-            .cloned()
-            .ok_or_else(|| {
-                DerivedPublishError::new(
-                    DerivedPublishErrorType::UnboundIdentity,
-                    "derived-event-target-unbound",
-                )
-            })?;
-        for value in [
-            identity.project_env_key.as_ref(),
-            identity.project.as_ref(),
-            identity.environment.as_ref(),
-        ] {
-            if value.is_empty() || value.trim() != value || subject_token(value) != value {
-                return Err(DerivedPublishError::new(
-                    DerivedPublishErrorType::UnboundIdentity,
-                    "derived-event-target-incomplete-or-invalid",
-                ));
-            }
-        }
-        Ok(identity)
-    }
-
-    /// Resolve (lazily connect + memoize) the JetStream context. Unconfigured or
-    /// unreachable ⇒ `connection-unavailable`.
-    async fn ensure_ctx(&self) -> Result<Context, JsError> {
-        let mut guard = self.ctx.lock().await;
-        if let Some(ctx) = guard.as_ref() {
-            return Ok(ctx.clone());
-        }
-        let client = self.nats.clone().ok_or(JsError::ConnectionUnavailable)?;
-        let expected_streams = self.expected_event_streams()?;
-        let ctx = async_nats::jetstream::new(client);
-        for expected in expected_streams {
-            let stream = ctx
-                .get_stream(&expected.name)
-                .await
-                .map_err(|error| map_get_stream_err(&expected.name, &error))?;
-            if !stream_config_matches(&expected, &stream.cached_info().config) {
-                return Err(JsError::Other(format!(
-                    "event stream {:?} differs from its complete declaration",
-                    expected.name
-                )));
-            }
-        }
-        *guard = Some(ctx.clone());
-        Ok(ctx)
-    }
-
     /// Publish an admitted Emit terminal and return only after JetStream's
     /// server acknowledgement resolves.
     pub async fn publish_derived(
         &self,
         request: DerivedPublishRequest,
     ) -> Result<DerivedPublishAck, DerivedPublishError> {
-        let identity = self.required_derived_identity(&request.component_id)?;
+        if self.event_coordinates.org.is_empty() {
+            return Err(DerivedPublishError::new(
+                DerivedPublishErrorType::UnboundIdentity,
+                "event target is absent",
+            ));
+        }
+        let identity = JetstreamIdentity {
+            project_env_key: wamn_registry::project_env_key(
+                &self.event_coordinates.org,
+                &self.event_coordinates.project,
+                &self.event_coordinates.environment,
+            )
+            .into(),
+            project: &self.event_coordinates.project,
+            environment: &self.event_coordinates.environment,
+        };
         let publication = prepare_derived_publication(identity, &self.event_coordinates, request)?;
         let mut headers = HeaderMap::new();
         headers.insert(NATS_MESSAGE_ID, publication.message_id.as_str());
@@ -658,14 +440,19 @@ impl WamnJetstream {
             "publish-derived",
             Some(&publication.wiring),
         );
+        let mut observed = EffectOutcomeGuard::new(&span, None);
         let started = std::time::Instant::now();
         let result = async {
-            let ctx = self.ensure_ctx().await.map_err(|error| {
-                DerivedPublishError::new(
-                    DerivedPublishErrorType::ConnectionUnavailable,
-                    format!("derived event JetStream unavailable: {error:?}"),
-                )
-            })?;
+            let ctx = self
+                .ctx
+                .as_ref()
+                .ok_or(anyhow::anyhow!("event connection unavailable"))
+                .map_err(|error| {
+                    DerivedPublishError::new(
+                        DerivedPublishErrorType::ConnectionUnavailable,
+                        format!("derived event JetStream unavailable: {error:?}"),
+                    )
+                })?;
             // Two awaits are load-bearing: queue completion may follow only
             // the server ACK, never the client-side send future.
             let ack = ctx
@@ -705,9 +492,21 @@ impl WamnJetstream {
             &JETSTREAM_DURATION_MS,
             EFFECT_OPERATION,
             "publish-derived",
-            &publication.identity.project,
+            publication.identity.project,
             started.elapsed(),
         );
+        let outcome = match &result {
+            Ok(_) => EffectOutcome::Responded,
+            Err(error) => match error.error_type() {
+                DerivedPublishErrorType::UnboundIdentity
+                | DerivedPublishErrorType::InvalidInput
+                | DerivedPublishErrorType::ConnectionUnavailable
+                | DerivedPublishErrorType::Serialization => EffectOutcome::RefusedBeforeDispatch,
+                DerivedPublishErrorType::PublishRejected => EffectOutcome::EffectUncertain,
+                DerivedPublishErrorType::UnexpectedStream => EffectOutcome::Responded,
+            },
+        };
+        observed.settle(outcome, result.is_err());
         result
     }
 }
@@ -717,380 +516,20 @@ impl HostPlugin for WamnJetstream {
     fn id(&self) -> &'static str {
         WAMN_JETSTREAM_ID
     }
-
     fn world(&self) -> WitWorld {
         WitWorld {
-            imports: HashSet::from([
-                WitInterface::from("wamn:jetstream/types@0.1.0"),
-                WitInterface::from("wamn:jetstream/registration@0.1.0"),
-            ]),
+            imports: HashSet::new(),
             exports: HashSet::new(),
         }
     }
-
-    async fn on_workload_item_bind<'a>(
-        &self,
-        item: &mut WorkloadItem<'a>,
-        interfaces: WitInterfaces<'_>,
-    ) -> anyhow::Result<()> {
-        if !interfaces.contains("wamn", "jetstream", &["registration"]) {
-            return Ok(());
-        }
-        let (project_env_key, project, environment) = {
-            let config = &item.local_resources().config;
-            (
-                config.get(PROJECT_ENV_KEY_CONFIG_KEY).cloned(),
-                config.get(PROJECT_CONFIG_KEY).cloned(),
-                config.get(ENVIRONMENT_CONFIG_KEY).cloned(),
-            )
-        };
-        self.set_identity(
-            item.id(),
-            project_env_key.as_deref(),
-            project.as_deref(),
-            environment.as_deref(),
-        );
-        add_to_linker(item.linker()?)?;
-        Ok(())
-    }
 }
 
-// ---------------------------------------------------------------------------
-// Pure mappings (unit-tested; some are mutant-guarded)
-// ---------------------------------------------------------------------------
-
-/// `get_stream` failure → error taxonomy: a transport `Request` failure is
-/// transient; every other type (a JetStream 404, an empty/invalid name) means
-/// the stream is not there to bind against.
-fn map_get_stream_err(stream: &str, e: &GetStreamError) -> JsError {
-    match e.kind() {
-        GetStreamErrorKind::Request => JsError::ConnectionUnavailable,
-        _ => JsError::NotFound(stream.to_string()),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Environment event registration
-// ---------------------------------------------------------------------------
-
-/// A consumer attachment that does not match an enabled environment trigger.
-const UNREGISTERED_SOURCE: &str = "unregistered-source";
-const CONSUMER_CONFIG_DRIFT: &str = "registration-consumer-config-drift";
-
-/// The `(entity, op)` tail of one event subject — the whole of a registration's
-/// identity that a subject can carry.
-///
-/// `evt.<org>.<env>.<project>.<entity>.<op>` is the entire grammar the event
-/// plane publishes ([`wamn_event_wire::subject`]), and its entity segment is
-/// [`subject_token`]-sanitized. Anything else — an empty filter (which selects
-/// the whole stream), a `>` above the entity — yields `None`: it selects
-/// subjects whose registration identity cannot be read off at all, and what
-/// cannot be read cannot match an enabled trigger.
-fn subject_source(subject: &str) -> Option<(&str, &str)> {
-    let mut tokens = subject.split('.');
-    let prefix = tokens.next()?;
-    let _org = tokens.next()?;
-    let _environment = tokens.next()?;
-    let _project = tokens.next()?;
-    let entity = tokens.next()?;
-    let op = tokens.next()?;
-    if prefix != "evt" || tokens.next().is_some() {
-        return None;
-    }
-    Some((entity, op))
-}
-
-fn require_registration(
-    triggers: &[wamn_materializer::workflow::EventTrigger],
-    coordinates: &EventCoordinates,
-    stream: &str,
-    package_id: &str,
-    registration_id: &str,
-    filter_subject: &str,
-) -> Result<(), String> {
-    require_event_coordinates(coordinates).map_err(|error| error.to_string())?;
-    let prefix = wamn_registry::name::event_prefix(
-        &coordinates.org,
-        &coordinates.project,
-        &coordinates.environment,
-    );
-    if stream
-        != stream_name(
-            &coordinates.org,
-            &coordinates.project,
-            &coordinates.environment,
-        )
-        || !filter_subject.starts_with(&prefix)
-    {
-        return Err(format!(
-            "{UNREGISTERED_SOURCE}: stream or filter differs from the platform event binding"
-        ));
-    }
-    let registration = triggers
-        .iter()
-        .find(|trigger| trigger.application == package_id && trigger.workflow_id == registration_id)
-        .ok_or_else(|| {
-            format!(
-                "{UNREGISTERED_SOURCE}: no enabled event trigger {package_id:?}/{registration_id:?}"
-            )
-        })?;
-    let (entity, op) = subject_source(filter_subject).ok_or_else(|| {
-        format!(
-            "{UNREGISTERED_SOURCE}: filter subject {filter_subject:?} does not name one entity \
-             and op"
-        )
-    })?;
-    let any_op = op == ">" || op == "*";
-    if subject_token(&registration.entity) != entity
-        || (!any_op
-            && !registration
-                .ops
-                .iter()
-                .any(|candidate| candidate.as_str() == op))
-    {
-        return Err(format!(
-            "{UNREGISTERED_SOURCE}: registration {registration_id:?} does not source entity \
-             {entity:?} op {op:?}"
-        ));
-    }
-
-    Ok(())
-}
-
-fn exact_consumer_config_drift(
-    requested: &registration::ConsumerConfig,
-    stored: &StoredConsumerConfig,
-) -> bool {
-    let expected = materializer_consumer_config(
-        &requested.durable,
-        &requested.filter_subject,
-        Duration::from_millis(requested.ack_wait_ms),
-        requested.max_deliver,
-    );
-    !consumer_config_matches(&expected, stored)
-}
-
-async fn prepare_consumer(
-    plugin: &WamnJetstream,
-    postgres: &crate::plugins::WamnPostgres,
-    config: &registration::ConsumerConfig,
-    package_id: &str,
-    registration_id: &str,
-) -> Result<(), JsError> {
-    let project_env_key = plugin.materializer_project_env_key()?;
-    let triggers = postgres
-        .event_triggers(
-            &plugin.event_coordinates.project,
-            &project_env_key,
-            &plugin.event_coordinates.environment,
-        )
-        .await
-        .map_err(|error| JsError::Other(error.to_string()))?;
-    require_registration(
-        &triggers,
-        &plugin.event_coordinates,
-        &config.stream_name,
-        package_id,
-        registration_id,
-        &config.filter_subject,
-    )
-    .map_err(JsError::Other)?;
-    let trigger = triggers
-        .iter()
-        .find(|trigger| trigger.application == package_id && trigger.workflow_id == registration_id)
-        .ok_or_else(|| JsError::Other(UNREGISTERED_SOURCE.into()))?;
-    if config.durable
-        != wamn_materializer::workflow::entity_durable(&trigger.source_package, &trigger.entity)
-    {
-        return Err(JsError::Other(format!(
-            "{UNREGISTERED_SOURCE}: durable differs from the entity consumer"
-        )));
-    }
-    if config.max_deliver == 0 || config.ack_wait_ms == 0 {
-        return Err(JsError::Other(
-            "registration delivery and acknowledgement bounds must be nonzero".into(),
-        ));
-    }
-    let ctx = plugin.ensure_ctx().await?;
-    let stream = ctx
-        .get_stream(&config.stream_name)
-        .await
-        .map_err(|error| map_get_stream_err(&config.stream_name, &error))?;
-    let consumer = stream
-        .get_consumer::<PullConfig>(&config.durable)
-        .await
-        .map_err(|error| JsError::Other(format!("attach provisioned consumer: {error}")))?;
-    if exact_consumer_config_drift(config, &consumer.cached_info().config) {
-        return Err(JsError::Other(format!(
-            "{CONSUMER_CONFIG_DRIFT}: durable {:?} differs from its bounded registration configuration",
-            config.durable,
-        )));
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Host trait impls
-// ---------------------------------------------------------------------------
-
-fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<std::sync::Arc<WamnJetstream>> {
-    ctx.try_get_plugin::<WamnJetstream>(WAMN_JETSTREAM_ID)
-}
-
-fn event_plugins<T: 'static + Send>(
-    accessor: &Accessor<T, SharedCtx>,
-) -> wash_runtime::wasmtime::Result<(
-    Arc<WamnJetstream>,
-    Arc<crate::plugins::WamnPostgres>,
-    String,
-)> {
-    accessor.with(|mut access| {
-        let ctx = access.get();
-        Ok((
-            plugin_of(&ctx)?,
-            ctx.try_get_plugin::<crate::plugins::WamnPostgres>(
-                crate::plugins::wamn_postgres::WAMN_POSTGRES_ID,
-            )?,
-            ctx.component_id.to_string(),
-        ))
-    })
-}
-
-impl registration::Host for ActiveCtx<'_> {}
-
-impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
-    async fn triggers(
-        accessor: &Accessor<T, Self>,
-    ) -> wash_runtime::wasmtime::Result<Result<String, JsError>> {
-        let (plugin, postgres, component) = event_plugins(accessor)?;
-        let project_env_key = match plugin.materializer_project_env_key() {
-            Ok(project_env_key) => project_env_key,
-            Err(error) => return Ok(Err(error)),
-        };
-        if let Err(error) = postgres.require_event_materializer(&component, &project_env_key) {
-            return Ok(Err(JsError::Other(error.to_string())));
-        }
-        let identity = plugin.identity_for(&component);
-        let span = js_span(&identity, &component, "event-triggers", None);
-        Ok(
-            match postgres
-                .event_triggers(
-                    &plugin.event_coordinates.project,
-                    &project_env_key,
-                    &plugin.event_coordinates.environment,
-                )
-                .instrument(span)
-                .await
-            {
-                Ok(triggers) => serde_json::to_string(&triggers)
-                    .map_err(|error| JsError::Other(error.to_string())),
-                Err(error) => Err(JsError::Other(error.to_string())),
-            },
-        )
-    }
-
-    async fn admit(
-        accessor: &Accessor<T, Self>,
-        source_package: String,
-        entity: String,
-        envelope: String,
-        sequence: u64,
-        source_event_id: String,
-    ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
-        let (plugin, postgres, component) = event_plugins(accessor)?;
-        let project_env_key = match plugin.materializer_project_env_key() {
-            Ok(project_env_key) => project_env_key,
-            Err(error) => return Ok(Err(error)),
-        };
-        if let Err(error) = postgres.require_event_materializer(&component, &project_env_key) {
-            return Ok(Err(JsError::Other(error.to_string())));
-        }
-        let identity = plugin.identity_for(&component);
-        let span = js_span(&identity, &component, "route-event", None);
-        Ok(plugin
-            .route_event(
-                &postgres,
-                &crate::plugins::wamn_postgres::EventBatchAdmission {
-                    source_package: &source_package,
-                    entity: &entity,
-                    envelope: &envelope,
-                    sequence,
-                    source_event_id: &source_event_id,
-                },
-            )
-            .instrument(span)
-            .await)
-    }
-
-    async fn prepare(
-        accessor: &Accessor<T, Self>,
-        package_id: String,
-        registration_id: String,
-        config: registration::ConsumerConfig,
-    ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
-        let (plugin, postgres, component_id) = accessor.with(|mut access| {
-            let ctx = access.get();
-            Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
-                ctx.try_get_plugin::<crate::plugins::WamnPostgres>(
-                    crate::plugins::wamn_postgres::WAMN_POSTGRES_ID,
-                )?,
-                ctx.component_id.to_string(),
-            ))
-        })?;
-        let project_env_key = match plugin.materializer_project_env_key() {
-            Ok(project_env_key) => project_env_key,
-            Err(error) => return Ok(Err(error)),
-        };
-        if let Err(error) = postgres.require_event_materializer(&component_id, &project_env_key) {
-            return Ok(Err(JsError::Other(error.to_string())));
-        }
-        let identity = plugin.identity_for(&component_id);
-        let span = js_span(&identity, &component_id, "prepare-registration", None);
-        let started = std::time::Instant::now();
-        let result = prepare_consumer(&plugin, &postgres, &config, &package_id, &registration_id)
-            .instrument(span)
-            .await;
-        record_effect_ms(
-            &JETSTREAM_DURATION_MS,
-            EFFECT_OPERATION,
-            "prepare-registration",
-            &identity.project,
-            started.elapsed(),
-        );
-        Ok(result)
-    }
-}
+const CONSUMER_CONFIG_DRIFT: &str = "event-consumer-config-drift";
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::Path;
 
     use super::*;
-    use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
-
-    #[test]
-    fn contract_declares_host_registration() {
-        let contract = fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../wit/wamn-jetstream/package.wit"),
-        )
-        .expect("authoritative jetstream WIT reads");
-        for required in [
-            "package wamn:jetstream@0.1.0;",
-            "record consumer-config {",
-            "durable: string,",
-            "filter-subject: string,",
-            "ack-wait-ms: u64,",
-            "max-deliver: u32,",
-            "prepare: async func(package-id: string, registration-id: string, config: consumer-config) -> result<_, js-error>;",
-        ] {
-            assert!(
-                contract.contains(required),
-                "wamn:jetstream contract is missing the host registration line: {required:?}"
-            );
-        }
-    }
 
     fn derived_request(component_id: &str, dedup_id: &str) -> DerivedPublishRequest {
         DerivedPublishRequest {
@@ -1111,94 +550,29 @@ mod tests {
         }
     }
 
-    /// A plugin bound for derived publication into a valid event target, with no
-    /// broker URL so `ensure_ctx` refuses before any socket is opened. The span
-    /// is opened before that refusal, which is what makes the shape assertable
-    /// with no NATS server running.
-    fn span_test_plugin() -> WamnJetstream {
-        let mut plugin = WamnJetstream::new(WamnJetstreamConfig::default());
-        plugin
-            .bind_derived_invocation(
-                "component-1",
-                "fixture-route-auth",
-                "database-project",
-                "dev",
-            )
-            .expect("trusted driver target binds");
-        plugin.event_coordinates = EventCoordinates {
-            org: "fixture".into(),
-            project: "widgets".into(),
-            environment: "dev".into(),
-        };
-        plugin
+    /// A bound publisher without a broker connection.
+    async fn span_test_plugin() -> WamnJetstream {
+        WamnJetstream::new(WamnJetstreamConfig {
+            event_target: Some(Triple::new("fixture", "dev", "widgets")),
+            stream_replicas: Some(1),
+            dup_window_secs: Some(120),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
     }
 
-    /// The whole span value, frozen as a literal: a derived publication names
-    /// the wiring position it was admitted at, and names EMPTY the four keys the
-    /// publish path cannot source.
     #[tokio::test]
-    async fn derived_publication_span_carries_the_wiring_and_node_it_published_for() {
-        let plugin = span_test_plugin();
-        let harness = SpanHarness::install("jetstream-derived-span-test");
-
-        plugin
+    async fn derived_publication_refuses_without_a_broker() {
+        let plugin = span_test_plugin().await;
+        let error = plugin
             .publish_derived(derived_request("component-1", "author:orders:7"))
             .await
-            .expect_err("no broker URL refuses before connecting");
-
+            .expect_err("publication needs a broker");
         assert_eq!(
-            harness.attributes("wamn.jetstream"),
-            expected_attributes(
-                ["fixture-route-auth", "database-project", "component-1"],
-                [
-                    "platform_fixture",
-                    "fixture-orders",
-                    "7",
-                    "publish",
-                    // The publish path holds no guest invocation for these fields.
-                    "0",
-                    "",
-                    "",
-                    "",
-                ],
-                &[("effect.operation", "publish-derived")],
-            ),
-            "a derived event must name the wiring node that produced it"
+            error.error_type(),
+            DerivedPublishErrorType::ConnectionUnavailable
         );
-    }
-
-    /// Two emits from different nodes of one wiring must not read alike, or the
-    /// coordinate is decoration rather than an answer to "which node published
-    /// this?".
-    #[tokio::test]
-    async fn two_derived_publications_name_their_own_nodes() {
-        let plugin = span_test_plugin();
-        let harness = SpanHarness::install("jetstream-two-nodes-span-test");
-
-        for (node_id, dedup_id) in [
-            ("publish", "author:orders:7"),
-            ("escalate", "author:orders:8"),
-        ] {
-            let mut request = derived_request("component-1", dedup_id);
-            request.node_id = node_id.into();
-            plugin
-                .publish_derived(request)
-                .await
-                .expect_err("no broker URL refuses before connecting");
-        }
-
-        let nodes: Vec<String> = harness
-            .every_span("wamn.jetstream")
-            .into_iter()
-            .map(|attributes| {
-                attributes
-                    .into_iter()
-                    .find(|(key, _)| key == "wamn.node_id")
-                    .expect("every derived publish span records a node id")
-                    .1
-            })
-            .collect();
-        assert_eq!(nodes, vec!["publish".to_owned(), "escalate".to_owned()]);
     }
 
     #[test]
@@ -1267,270 +641,52 @@ mod tests {
         assert_eq!(error.error_type(), DerivedPublishErrorType::InvalidInput);
     }
 
-    #[test]
-    fn derived_publication_refuses_an_unbound_or_partial_scope() {
-        let plugin = WamnJetstream::new(WamnJetstreamConfig::default());
-        assert_eq!(
-            plugin
-                .required_derived_identity("component-1")
-                .unwrap_err()
-                .error_type(),
-            DerivedPublishErrorType::UnboundIdentity
-        );
-        plugin.set_identity("component-1", Some("fixture"), Some("app"), None);
-        assert_eq!(
-            plugin
-                .required_derived_identity("component-1")
-                .unwrap_err()
-                .error_type(),
-            DerivedPublishErrorType::UnboundIdentity
-        );
-        plugin.set_identity(
-            "component-1",
-            Some("other.project"),
-            Some("app"),
-            Some("dev"),
-        );
-        assert_eq!(
-            plugin
-                .required_derived_identity("component-1")
-                .unwrap_err()
-                .error_type(),
-            DerivedPublishErrorType::UnboundIdentity
-        );
-        assert!(
-            plugin
-                .bind_derived_invocation("component-1", "other.project", "app", "dev")
-                .is_err(),
-            "an identity that can escape one subject token is refused"
-        );
-        plugin
-            .bind_derived_invocation("component-1", "fixture", "app", "dev")
-            .expect("complete trusted target binds");
-        assert_eq!(
-            plugin
-                .required_derived_identity("component-1")
-                .expect("identity resolves")
-                .environment
-                .as_ref(),
-            "dev"
-        );
-        plugin.revoke_derived_invocation("component-1");
-        assert!(plugin.required_derived_identity("component-1").is_err());
+    #[tokio::test]
+    async fn construction_refuses_invalid_event_coordinates_before_connect() {
+        for target in [
+            Triple::new("", "dev", "widgets"),
+            Triple::new("fixture", "dev", ""),
+            Triple::new("fixture.>", "dev", "widgets"),
+        ] {
+            assert!(
+                WamnJetstream::new(WamnJetstreamConfig {
+                    event_target: Some(target),
+                    ..Default::default()
+                })
+                .await
+                .is_err()
+            );
+        }
     }
 
     #[tokio::test]
-    async fn derived_publication_refuses_missing_or_foreign_event_coordinates_before_connect() {
-        let mut plugin = WamnJetstream::new(WamnJetstreamConfig::default());
-        plugin
-            .bind_derived_invocation(
-                "component-1",
-                "fixture-route-auth",
-                "database-project",
-                "dev",
-            )
-            .expect("trusted driver target binds");
-        for coordinates in [
-            EventCoordinates::default(),
-            EventCoordinates {
-                org: "fixture".into(),
-                project: Box::default(),
-                environment: "dev".into(),
-            },
-            EventCoordinates {
-                org: "fixture.>".into(),
-                project: "widgets".into(),
-                environment: "dev".into(),
-            },
-            EventCoordinates {
-                org: "fixture".into(),
-                project: "widgets".into(),
-                environment: "prod".into(),
-            },
+    async fn construction_requires_declared_stream_limits() {
+        for (replicas, window) in [
+            (None, None),
+            (Some(0), Some(120)),
+            (Some(6), Some(120)),
+            (Some(1), Some(0)),
         ] {
-            plugin.event_coordinates = coordinates;
-            let error = plugin
-                .publish_derived(derived_request("component-1", "author:orders:7"))
+            assert!(
+                WamnJetstream::new(WamnJetstreamConfig {
+                    event_target: Some(Triple::new("fixture", "dev", "widgets")),
+                    stream_replicas: replicas,
+                    dup_window_secs: window,
+                    ..Default::default()
+                })
                 .await
-                .expect_err("missing or foreign event coordinates must refuse before connection");
-            assert_eq!(error.error_type(), DerivedPublishErrorType::UnboundIdentity);
-        }
-    }
-
-    #[test]
-    fn activation_requires_declared_stream_limits_separate_from_workload_instances() {
-        assert!(
-            WamnJetstream::new(WamnJetstreamConfig::default())
-                .expected_event_streams()
                 .is_err()
-        );
-        let mut plugin = WamnJetstream::new(WamnJetstreamConfig {
+            );
+        }
+        WamnJetstream::new(WamnJetstreamConfig {
             event_target: Some(Triple::new("fixture", "dev", "widgets")),
+            stream_replicas: Some(3),
+            dup_window_secs: Some(120),
             ..Default::default()
-        });
-        assert!(plugin.expected_event_streams().is_err());
-        plugin.stream_replicas = Some(3);
-        assert!(plugin.expected_event_streams().is_err());
-        plugin.dup_window_secs = Some(120);
-        let [source, advisories] = plugin.expected_event_streams().unwrap();
-        assert_eq!(source.num_replicas, 3);
-        assert_eq!(advisories.num_replicas, 3);
-        assert_eq!(source.duplicate_window, Duration::from_secs(120));
-        for replicas in [0, 6] {
-            plugin.stream_replicas = Some(replicas);
-            assert!(plugin.expected_event_streams().is_err());
-        }
-        plugin.stream_replicas = Some(1);
-        plugin.dup_window_secs = Some(0);
-        assert!(plugin.expected_event_streams().is_err());
+        })
+        .await
+        .unwrap();
     }
-
-    #[test]
-    fn config_from_env_has_no_connection() {
-        // The host adds its data connection; the environment names none.
-        assert!(WamnJetstreamConfig::from_env().nats.is_none());
-    }
-
-    #[test]
-    fn registration_preparation_requires_the_exact_environment_source() {
-        let triggers = vec![wamn_materializer::workflow::EventTrigger {
-            application: "cat".into(),
-            workflow_id: "r1".into(),
-            source_package: "cat".into(),
-            entity: "widgets".into(),
-            ops: vec![Op::Insert],
-            condition: None,
-            enable_sequence: 0,
-        }];
-        let coordinates = EventCoordinates {
-            org: "fixture".into(),
-            project: "proj".into(),
-            environment: "prod".into(),
-        };
-        require_registration(
-            &triggers,
-            &coordinates,
-            "EVT_7_fixture_4_prod_4_proj",
-            "cat",
-            "r1",
-            "evt.fixture.prod.proj.widgets.>",
-        )
-        .expect("exact environment registration admits");
-        for foreign_stream in [
-            stream_name("foreign", "proj", "prod"),
-            stream_name("fixture", "other-project", "prod"),
-            stream_name("fixture", "proj", "dev"),
-        ] {
-            assert!(
-                require_registration(
-                    &triggers,
-                    &coordinates,
-                    &foreign_stream,
-                    "cat",
-                    "r1",
-                    "evt.fixture.prod.proj.widgets.>",
-                )
-                .is_err()
-            );
-        }
-        for filter in [
-            "",
-            "evt.>",
-            "evt.foreign.prod.proj.widgets.>",
-            "evt.fixture.prod.foreign.widgets.>",
-            "evt.fixture.foreign.proj.widgets.>",
-            "evt.fixture.prod.proj.*.>",
-            "evt.fixture.prod.proj.widgets.delete",
-        ] {
-            assert!(
-                require_registration(
-                    &triggers,
-                    &coordinates,
-                    "EVT_7_fixture_4_prod_4_proj",
-                    "cat",
-                    "r1",
-                    filter
-                )
-                .is_err(),
-                "unregistered filter {filter:?}"
-            );
-        }
-
-        assert!(
-            require_registration(
-                &triggers,
-                &coordinates,
-                "EVT_7_fixture_4_prod_4_proj",
-                "cat",
-                "r2",
-                "evt.fixture.prod.proj.widgets.>"
-            )
-            .is_err()
-        );
-        assert!(
-            require_registration(
-                &triggers,
-                &coordinates,
-                "EVT_7_fixture_4_prod_4_proj",
-                "cat",
-                "r1",
-                "evt.fixture.prod.proj.orders.>"
-            )
-            .is_err(),
-            "a real registration id cannot bless another registration's source"
-        );
-        assert!(
-            require_registration(
-                &triggers,
-                &coordinates,
-                "EVT_7_fixture_4_prod_4_proj",
-                "other_package",
-                "r1",
-                "evt.fixture.prod.proj.widgets.>"
-            )
-            .is_err(),
-            "registration ids are package-owned and must not collide across packages"
-        );
-    }
-
-    #[test]
-    fn registration_consumer_refuses_changed_broker_bounds() {
-        use async_nats::jetstream::consumer::IntoConsumerConfig as _;
-
-        let requested = registration::ConsumerConfig {
-            stream_name: "EVT_7_fixture_4_prod_4_proj".into(),
-            durable: "mat_t1_cat_r1".into(),
-            filter_subject: "evt.fixture.prod.proj.widgets.>".into(),
-            ack_wait_ms: 30_000,
-            max_deliver: 5,
-        };
-        let matching = materializer_consumer_config(
-            &requested.durable,
-            &requested.filter_subject,
-            Duration::from_millis(requested.ack_wait_ms),
-            requested.max_deliver,
-        )
-        .into_consumer_config();
-        assert!(!exact_consumer_config_drift(&requested, &matching));
-
-        let unbounded = StoredConsumerConfig {
-            max_deliver: -1,
-            ..matching
-        };
-        assert!(
-            exact_consumer_config_drift(&requested, &unbounded),
-            "the server must retain the admitted retry bound"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Live round-trip against a real data-plane NATS. Ignored by default and
-    // conditioned on WAMN_NATS_URL and its WAMN_NATS_TLS_* certificate: it exercises the exact async-nats call
-    // sequence the plugin relies on (dedupe on publish, durable pull consumer,
-    // fetch/metadata/headers/ack) through the plugin's own mapping helpers, so
-    // a broken API assumption fails here rather than only in-cluster. The full
-    // component-driven e2e rides the materializer (l5i9.17).
-    // -----------------------------------------------------------------------
 
     #[tokio::test]
     #[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
@@ -1563,10 +719,9 @@ mod tests {
             event_target: Some(target),
             stream_replicas: Some(1),
             dup_window_secs: Some(120),
-        });
-        plugin
-            .bind_derived_invocation("component-1", "wamnjsderived", "app", "dev")
-            .expect("trusted target binds");
+        })
+        .await
+        .unwrap();
         let first = plugin
             .publish_derived(derived_request("component-1", "author:orders:7"))
             .await
@@ -1619,4 +774,14 @@ mod tests {
             .await
             .expect("advisory cleanup");
     }
+}
+
+/// One message from one entity consumer. Target and release come from the host.
+#[derive(Debug)]
+pub struct EventBatchAdmission<'a> {
+    pub source_package: &'a str,
+    pub entity: &'a str,
+    pub envelope: &'a str,
+    pub sequence: u64,
+    pub source_event_id: &'a str,
 }

@@ -23,8 +23,6 @@ pub enum PlatformComponent {
     Provisioning,
     /// Package application, including operation grants.
     ApplyPackage,
-    /// Post-commit registration delivery.
-    Materializer,
     /// Executor queue delivery and management candidate cases.
     Executor,
     /// The record history retention task, which removes expired log entries.
@@ -33,10 +31,9 @@ pub enum PlatformComponent {
 
 impl PlatformComponent {
     /// Every component. Order is presentational.
-    pub const ALL: [PlatformComponent; 5] = [
+    pub const ALL: [PlatformComponent; 4] = [
         PlatformComponent::Provisioning,
         PlatformComponent::ApplyPackage,
-        PlatformComponent::Materializer,
         PlatformComponent::Executor,
         PlatformComponent::AuditRetention,
     ];
@@ -46,7 +43,6 @@ impl PlatformComponent {
         match self {
             PlatformComponent::Provisioning => "provisioning",
             PlatformComponent::ApplyPackage => "apply-package",
-            PlatformComponent::Materializer => "materializer",
             PlatformComponent::Executor => "executor",
             PlatformComponent::AuditRetention => "audit-retention",
         }

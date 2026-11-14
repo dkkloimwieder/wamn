@@ -5560,6 +5560,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-event-wire",
+ "wamn-events",
  "wamn-postgres",
  "wamn-registry",
  "wamn-test-postgres",
@@ -5680,7 +5681,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-engine",
  "wamn-environment",
- "wamn-event-reg",
+ "wamn-event-wire",
  "wamn-execution-host",
  "wamn-identity-client",
  "wamn-identity-protocol",
@@ -5929,8 +5930,8 @@ dependencies = [
  "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
- "wamn-event-reg",
  "wamn-event-wire",
+ "wamn-events",
  "wamn-execution-host",
  "wamn-fixture-package",
  "wamn-identity-client",
@@ -5956,16 +5957,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-event-reg"
-version = "0.1.0"
-dependencies = [
- "jmespath",
- "serde",
- "serde_json",
- "wamn-event-wire",
-]
-
-[[package]]
 name = "wamn-event-wire"
 version = "0.1.0"
 dependencies = [
@@ -5973,6 +5964,27 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "wamn-registry",
+]
+
+[[package]]
+name = "wamn-events"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "chrono",
+ "postgres-protocol",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "wamn-broker",
+ "wamn-catalog",
+ "wamn-control-provision",
+ "wamn-event-wire",
+ "wamn-kubernetes",
+ "wamn-postgres",
  "wamn-registry",
 ]
 
@@ -6248,17 +6260,6 @@ dependencies = [
  "url",
  "uuid",
  "wamn-registry",
-]
-
-[[package]]
-name = "wamn-materializer"
-version = "0.1.0"
-dependencies = [
- "jmespath",
- "serde",
- "serde_json",
- "wamn-event-reg",
- "wamn-event-wire",
 ]
 
 [[package]]
@@ -6596,7 +6597,6 @@ dependencies = [
  "wamn-event-wire",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-materializer",
  "wamn-number-pattern",
  "wamn-package-artifact",
  "wamn-platform-identity",
@@ -6762,8 +6762,10 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "jmespath",
  "opentelemetry",
  "opentelemetry_sdk",
+ "postgres-protocol",
  "serde",
  "serde_json",
  "sqlx",
@@ -6772,6 +6774,7 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
+ "uuid",
  "wamn-broker",
  "wamn-catalog",
  "wamn-compiler",
@@ -6782,9 +6785,10 @@ dependencies = [
  "wamn-event-wire",
  "wamn-execution-host",
  "wamn-identity-protocol",
- "wamn-materializer",
  "wamn-platform-identity",
+ "wamn-platform-install",
  "wamn-postgres",
+ "wamn-registry",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-test-infrastructure",

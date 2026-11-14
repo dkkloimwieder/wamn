@@ -53,7 +53,6 @@ fn image_set_fixture() -> ImageSet {
     ImageSet {
         host: format!("localhost:5000/wamn-host:dev@sha256:{}", "1".repeat(64)),
         http: format!("localhost:5000/wamn/flow-http@sha256:{}", "2".repeat(64)),
-        materializer: format!("localhost:5000/wamn/materializer@sha256:{}", "3".repeat(64)),
     }
 }
 
@@ -102,7 +101,6 @@ fn input(env: &str) -> ValuesInput {
         roles: vec![Role {
             name: RoleName::Http,
             entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
-            statements: vec!["sql-0".to_owned(), "sql-1".to_owned()],
             config,
         }],
         drain_bound_seconds: 300,
@@ -188,11 +186,6 @@ fn render(chart: &Path, scratch: &Scratch, env: &str) -> Vec<Value> {
                 .expect("seconds integer")
         };
         let drain = seconds("WAMN_DRAIN_BOUND_SECONDS");
-        let grace = seconds("WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS");
-        assert!(
-            grace < drain,
-            "{name}: workload grace {grace} must be shorter than drain bound {drain}"
-        );
         assert_eq!(
             pod["terminationGracePeriodSeconds"].as_u64(),
             Some(drain),
@@ -505,12 +498,7 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     // observability.md R6: the host exports to the cluster's collector, each
     // variable once.
     let variables = host["env"].as_sequence().expect("host variables");
-    let materializer_bounds: Vec<&Value> = variables
-        .iter()
-        .filter(|variable| variable["name"] == "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS")
-        .collect();
-    assert_eq!(materializer_bounds.len(), 1);
-    assert_eq!(materializer_bounds[0]["value"].as_str(), Some("10"));
+
     // Owner ruling 2026-10-21: count guest growth, keep the chart's 64Mi request.
     assert_eq!(
         host["resources"]["requests"]["memory"].as_str(),

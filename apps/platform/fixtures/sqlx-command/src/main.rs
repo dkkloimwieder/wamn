@@ -12,7 +12,7 @@ mod postgres;
 mod bindings {
     wit_bindgen::generate!({
         world: "wamn:sqlx-command/sqlx-command@0.1.0",
-        path: ["../../execution/materializer/wit/deps/wasi-cli", "wit"],
+        path: ["../../../../wit/wasi-cli", "wit"],
         generate_all,
     });
 }

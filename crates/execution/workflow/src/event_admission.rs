@@ -1,12 +1,14 @@
 //! Resolve matching event workflows and admit their runs as one batch.
 use crate::admission::{node_digests, parse_graph};
+use crate::events::EventTrigger;
 use sqlx::Row as _;
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_event_wire::SourceEvent;
 use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
-use wamn_materializer::workflow::SourceEvent;
 use wamn_run_state::admission::{self, RunAdmission, RunAdmitted, RunTrigger};
 use wamn_run_state::run_store::ProductionLeaseError;
-use wamn_runtime::plugins::wamn_postgres::{EventBatchAdmission, WamnPostgres};
+use wamn_runtime::plugins::wamn_jetstream::EventBatchAdmission;
+use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 
 /// Re-read trigger rows, resolve their graphs and actor, and insert all runs
 /// and queue entries before committing. Any refusal rolls back the batch.
@@ -58,7 +60,7 @@ pub async fn admit_event_batch(
             .map_err(|error| ProductionLeaseError::storage("read event workflows", error))?;
             let mut matches = Vec::new();
             for row in rows {
-                let event = wamn_runtime::plugins::wamn_postgres::decode_event_trigger(&row)?;
+                let event = decode_event_trigger(&row)?;
                 if let Some(input) = event
                     .matches(&source, admission.sequence, &packages, project_env_key)
                     .map_err(|error| {
@@ -88,7 +90,7 @@ pub async fn admit_event_batch(
                 .transpose()
                 .map_err(|error| ProductionLeaseError::invalid("decode event depth", error))?;
             let principal = workflow_user_id().to_string();
-            let delivery = format!("event:{}:{}", admission.sequence, admission.source_event_id);
+            let delivery = format!("event:{}", admission.source_event_id);
             for (row, event, input) in matches {
                 let key = serde_json::json!([
                     "event",
@@ -169,8 +171,52 @@ pub async fn admit_application_events(
     project: &str,
     release: &LoadedRelease,
 ) -> anyhow::Result<()> {
+    let target = release.target();
+    let triggers = postgres
+        .executor_read(project, &target.project_env_key, async |connection| {
+            admission::event_workflows(
+                connection,
+                &target.project_env_key,
+                &target.environment,
+                None,
+            )
+            .await?
+            .iter()
+            .map(|row| decode_event_trigger(row).map_err(anyhow::Error::from))
+            .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .await?;
+    let sources = triggers
+        .iter()
+        .filter(|trigger| target.applications.contains_key(&trigger.application))
+        .map(|trigger| {
+            (
+                trigger.application.as_str(),
+                trigger.source_package.as_str(),
+                trigger.entity.as_str(),
+            )
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
     jetstream
-        .admit_application_events(postgres, project, release, admit_event_batch)
+        .admit_application_events(postgres, project, release, &sources, admit_event_batch)
         .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+/// Decode stored event trigger facts for workflow orchestration.
+fn decode_event_trigger(row: &sqlx::postgres::PgRow) -> Result<EventTrigger, ProductionLeaseError> {
+    let ops: String = row.get(4);
+    let sequence: i64 = row.get(6);
+    Ok(EventTrigger {
+        application: row.get(0),
+        workflow_id: row.get(1),
+        source_package: row.get(2),
+        entity: row.get(3),
+        ops: serde_json::from_str(&ops)
+            .map_err(|error| ProductionLeaseError::invalid("decode event operations", error))?,
+        condition: row.get(5),
+        enable_sequence: u64::try_from(sequence)
+            .map_err(|error| ProductionLeaseError::invalid("decode enable sequence", error))?,
+    })
 }

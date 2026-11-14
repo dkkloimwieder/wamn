@@ -194,19 +194,19 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     .expect("writing to a String cannot fail");
     // Exercise the REAL CDC reader-registration builders (wamn-l5i9.9) against
     // the demo/app/dev project-env provisioned above: upsert twice (the second
-    // refreshes slot/enabled — ON CONFLICT DO UPDATE), read it back via the real
-    // select, reject a registration for an UNPROVISIONED env (the project-env
+    // refreshes slot/enabled), observe the stored state, and reject a registration
+    // for an UNPROVISIONED env (the project-env
     // FK — enable-cdc is an overlay on an already-provisioned env), and make sure that
     // the whole-org cascade drops the registration.
     writeln!(
         script,
         "PREPARE uper (text,text,text,text,text,text,text,text,boolean,text[]) AS {upsert};\n\
-         PREPARE geter (text,text,text) AS {select};\n\
          EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev',\
                       'EVT_4_demo_3_dev_3_app','wamn-cdc-demo--dev--app',NULL,true,ARRAY['app']);\n\
          EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev_v2',\
                       'EVT_4_demo_3_dev_3_app','wamn-cdc-demo--dev--app',NULL,false,ARRAY['billing']);\n\
-         CREATE TEMP TABLE reader_probe AS EXECUTE geter('demo','app','dev');\n\
+         CREATE TEMP TABLE reader_probe AS SELECT * FROM registry.event_readers \
+             WHERE org='demo' AND project='app' AND env='dev';\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.event_readers\n\
                      WHERE org='demo' AND project='app' AND env='dev')=1,\n\
@@ -217,7 +217,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
              'the second upsert refreshed slot + enabled + schema (ON CONFLICT DO UPDATE)';\n\
            ASSERT (SELECT stream FROM reader_probe)='EVT_4_demo_3_dev_3_app'\n\
               AND (SELECT replication_secret_name FROM reader_probe)='wamn-cdc-demo--dev--app',\n\
-             'select_event_reader_sql returns the stream + replication-Secret reference';\n\
+             'registration retains the stream and credential reference';\n\
          END $$;\n\
          DO $$ BEGIN BEGIN\n\
            INSERT INTO registry.event_readers\n\
@@ -231,9 +231,8 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
            ASSERT (SELECT count(*) FROM registry.event_readers WHERE org='demo')=0,\n\
              'deleting an org cascades its CDC registrations (through environment_projects)';\n\
          END $$;\n\
-         DEALLOCATE uper; DEALLOCATE geter;",
+         DEALLOCATE uper;",
         upsert = wamn_registry::sql::upsert_event_reader_sql(),
-        select = wamn_registry::sql::select_event_reader_sql(),
     )
     .expect("writing to a String cannot fail");
     script.push_str("DROP SCHEMA registry CASCADE;\n");

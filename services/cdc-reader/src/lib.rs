@@ -1,192 +1,33 @@
-//! The wamn-cdc-reader service (wamn-l5i9.10, D19 v3 §4; its own SR9 artifact): the CDC reader —
-//! one pg_walstream session for ONE project-env, publishing row events onto
-//! its organization, project, and environment source stream.
-//!
-//! MVP outcome: event spine (causation depth = loop guard).
-//!
-//! Dispatcher-family NATIVE service (the v3 posture exception: it holds the
-//! R8b **replication** credential — `WAMN_CDC_URL`, the plain libpq URL from
-//! the `wamn-cdc-…` Secret; the reader appends `sslmode` +
-//! `replication=database` itself). What it streams comes from its
-//! `registry.event_readers` registration (publication / slot / stream — read
-//! from the row). The stream must match the declared environment coordinates.
-//!
-//! Load-bearing semantics:
-//!
-//! - **Confirmed LSN advances ONLY on JetStream ack**, at transaction
-//!   granularity: every row event of a txn is published (`Nats-Msg-Id =
-//!   <project>_<env>:<lsn>`) and acked before the `Commit` frame advances the
-//!   feedback LSN to the commit's end. JetStream unreachable ⇒ the publish
-//!   retries forever ⇒ the LSN holds ⇒ WAL is retained — delayed, never lost.
-//!   A crash mid-txn redelivers the whole txn; the msg-id dedupe absorbs the
-//!   published prefix (at-least-once → exactly-once WITHIN the JetStream
-//!   duplicate window keyed on `Nats-Msg-Id`; past that window the
-//!   materializer's `run_id` + `ON CONFLICT` is the unbounded guarantee — R12).
-//! - **Stall interlock** (E2): "delayed, never lost" is only SAFE if someone is
-//!   told early, because a held LSN silently freezes WAL retention on the source
-//!   DB until `max_slot_wal_keep_size` invalidates the slot — a capture gap.
-//!   `publish_acked` escalates to a distinct `CDC_PUBLISH_STALLED` event past
-//!   `--stall-threshold-secs`; independently a slot-headroom monitor polls
-//!   `pg_replication_slots.safe_wal_size` over a SEPARATE plain connection and
-//!   alerts BEFORE `wal_status` leaves `reserved`. Runbook: on a sustained
-//!   stall, fix JetStream — NEVER drop the slot (that "fixes" the disk by
-//!   creating the gap). All signals are structured `wamn::event_reader` events.
-//! - **Commit order**: `StreamingMode::Off` — the server delivers whole
-//!   transactions in commit order; sequential publish preserves it, so stream
-//!   order == commit order per DB.
-//! - **The reader NEVER creates the slot.** `enable-cdc-project-env` created
-//!   it (WAL pinned from enable); a MISSING or INVALIDATED slot is a capture
-//!   GAP — a first-class incident (v3 §11, `wamn-59z6`). The reader stops
-//!   capture, stays running, logs `CDC_CAPTURE_GAP` once per process, and
-//!   every 30 seconds reads its registration, its newest `registry.capture_gap`
-//!   row and its slot. It resumes in the same process when the slot is healthy
-//!   and that row has `resync_at` set. Recovery is operator-driven:
-//!   `wamn-ctl recover-capture-gap`, the resync, `wamn-ctl close-capture-gap`
-//!   (docs/operations/gcp.md#57-cdc-slot-lost).
-//! - **The reader captures only the declared shape** (wamn-0h0g.19.19). Before
-//!   every session it reads the server version, the publication, and the slot,
-//!   and compares them against the provisioning declaration in
-//!   `wamn_control_provision::sql::cdc`. A server below
-//!   [`POSTGRES_MAJOR_MINIMUM`], a publication that publishes other operations or
-//!   another target, or a slot with another plugin, lifetime, two-phase setting,
-//!   or failover setting stops the reader. The declared publication excludes
-//!   TRUNCATE, so a received TRUNCATE is counted and alerted as an incident.
-//! - The reader never creates or changes streams. Provisioning owns both the
-//!   source stream and its advisory stream. Activation reads and compares their
-//!   complete declared configuration before it opens the replication session.
-//!   Missing streams or changed settings require operator action.
-//! - **Session re-open** (S-CDC-1 finding F2, R11): the crate's inner retry can
-//!   be shorter than a real primary-less window, so a session-level re-open
-//!   loop wraps the drain. ONE `ReopenLadder` backs BOTH arms (open failure and
-//!   drain sever), so a session that opens cleanly then severs immediately can
-//!   no longer hot-loop preflight→connect→sever: every re-open backs off, and
-//!   the cap trips two ways. The consecutive-failure streak resets ONLY on a
-//!   drain that committed a transaction (`DrainSummary { commits > 0 }` —
-//!   productivity, never open success), catching a fast flap; a trailing-window
-//!   re-open RATE cap catches a slow flap that commits a little each session
-//!   and would otherwise reset the streak forever. The slot admits one
-//!   consumer, so exclusivity is structural (the lease that elects WHICH
-//!   replica holds the session is deferred — run replicas=1).
-//! - **Relation classification** (wamn-l5i9.11): each relation resolves by OID
-//!   to either a package-local entity identity or a package-declared internal
-//!   exclusion. Both maps are maintained atomically by package application and
-//!   remain valid across renames because OIDs survive. Exclusions are counted;
-//!   an undeclared relation is a typed publication refusal.
+//! Stream committed PostgreSQL row changes to the environment event stream.
+//! A transaction advances only after every broker acknowledgement settles.
+//! Lost slots end the process. Recovery repairs the slot and restarts the reader.
 
 use sqlx::Row as _;
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
-use async_nats::header::{HeaderMap, NATS_MESSAGE_ID};
+use async_nats::header::{HeaderMap, NATS_EXPECTED_STREAM, NATS_MESSAGE_ID};
 use async_nats::jetstream;
-use clap::Args;
 use pg_walstream::{
     CancellationToken, ColumnValue, EventStream, EventType, LogicalReplicationStream,
     ReplicationError, ReplicationStreamConfig, RetryConfig, RowData, StreamingMode,
 };
 
 use postgres_protocol::escape::escape_identifier;
-use wamn_broker::events::{advisory_stream_config, source_stream_config, stream_config_matches};
-use wamn_control_provision::{SystemReader, system_reader_login};
-#[cfg(test)]
-use wamn_event_wire::stream_subjects;
-use wamn_event_wire::{Causation, Envelope, Op, msg_id, stream_name, subject};
-use wamn_registry::Triple;
-use wamn_registry::sql::{select_capture_gap_sql, select_event_reader_sql};
+use wamn_catalog::manifest::CONTROL_OWNED_RELATION_TABLES;
+use wamn_event_wire::{Causation, CdcIdentity, Envelope, Op, msg_id, subject};
 
-#[derive(Debug, Args)]
-pub struct EventReaderArgs {
-    /// Org id (the project-env must be CDC-enabled and registered).
-    #[arg(long)]
-    pub org: String,
-
-    /// Project id.
-    #[arg(long)]
-    pub project: String,
-
-    /// Environment slug.
-    #[arg(long)]
-    pub env: String,
-
-    /// Postgres URL to the T1 system DB (`wamn_system`) — reads this
-    /// project-env's `registry.event_readers` registration (SELECT only).
-    ///
-    /// A targeted A/B LOGIN generation of `wamn_registry_reader`, whose whole
-    /// authority is that one `SELECT` (`wamn-0h0g.12.116`). It is settled purely
-    /// before any I/O by [`parse_system_reader_url`], so a URL carrying the
-    /// unconfined `wamn_system` owner — which can write `identity.pats` under no
-    /// row-level security — crash-loops the reader instead of serving it.
-    #[arg(long, env = "WAMN_SYSTEM_URL", hide_env_values = true)]
-    pub system_database_url: String,
-
-    /// The replication credential: the `wamn-cdc-…` Secret's `url` — a PLAIN
-    /// libpq URL (no query string); the reader appends `sslmode` +
-    /// `replication=database` itself.
-    #[arg(long, env = "WAMN_CDC_URL", hide_env_values = true)]
-    pub cdc_url: String,
-
-    /// The NATS (JetStream) the events publish to (docs/plan/alignment.md R8).
-    #[arg(long, env = "WAMN_NATS_URL", hide_env_values = true)]
-    pub nats_url: String,
-
-    /// The CA of the NATS server.
-    #[arg(long, env = "WAMN_NATS_TLS_CA", requires_all = ["nats_tls_cert", "nats_tls_key"])]
-    pub nats_tls_ca: Option<PathBuf>,
-
-    /// The reader's client certificate, which the server maps to its user
-    /// (docs/plan/alignment.md R4).
-    #[arg(long, env = "WAMN_NATS_TLS_CERT", requires_all = ["nats_tls_ca", "nats_tls_key"])]
-    pub nats_tls_cert: Option<PathBuf>,
-
-    /// The key of the client certificate.
-    #[arg(long, env = "WAMN_NATS_TLS_KEY", requires_all = ["nats_tls_ca", "nats_tls_cert"])]
-    pub nats_tls_key: Option<PathBuf>,
-
-    /// Declared replicas for the provisioned event streams. A mismatch refuses activation.
-    #[arg(long, default_value_t = 3)]
-    pub stream_replicas: usize,
-
-    /// JetStream duplicate window (the `Nats-Msg-Id` dedupe horizon), seconds.
-    /// Asserted against a pre-existing stream, not applied (R12).
-    #[arg(long, default_value_t = 120)]
-    pub dup_window_secs: u64,
-
-    /// Standby-status feedback interval, seconds (how often the confirmed
-    /// LSN reaches the server).
-    #[arg(long, default_value_t = 5)]
-    pub feedback_secs: u64,
-
-    /// How long a single JetStream publish may retry unacked before the reader
-    /// emits the distinct `CDC_PUBLISH_STALLED` alert event (E2). Below this the
-    /// retries are ordinary warns; at/past it every retry is an error alerts can
-    /// bind to. The LSN is held throughout — a stall silently freezes WAL
-    /// retention on the source DB, so this is a SAFETY INTERLOCK, not a metric.
-    #[arg(long, default_value_t = 30)]
-    pub stall_threshold_secs: u64,
-
-    /// How often the slot-headroom monitor polls `pg_replication_slots` over a
-    /// SEPARATE plain connection (E2 backstop). Zero disables the monitor.
-    #[arg(long, default_value_t = 30)]
-    pub slot_poll_secs: u64,
-
-    /// Warn while the slot is still `reserved` but `safe_wal_size` has fallen
-    /// below this many bytes — the early alert that fires BEFORE `wal_status`
-    /// leaves `reserved` (E2). Default 256 MiB (≈16 WAL segments of headroom).
-    #[arg(long, default_value_t = 268_435_456)]
-    pub slot_safe_wal_warn_bytes: i64,
-}
+use wamn_events::reader::ReaderConfig;
 
 /// What a session error means for the service.
 #[derive(Debug, PartialEq, Eq)]
 enum SessionFate {
     /// Shutdown was requested — exit cleanly.
     Cancelled,
-    /// The slot is gone/invalidated: a capture GAP — the next preflight stops
-    /// capture until the gap closes (v3 §11, `wamn-59z6`).
+    /// The slot is missing or invalidated. Capture requires operator recovery.
     SlotIncident,
     /// Misconfiguration that a retry cannot fix.
     Fatal,
@@ -198,11 +39,15 @@ enum SessionFate {
 /// ALL variants (the server message may surface as a connection error).
 fn classify(e: &ReplicationError) -> SessionFate {
     let msg = e.to_string().to_ascii_lowercase();
-    if msg.contains("invalidat") || msg.contains("can no longer be used") {
+    if msg.contains("invalidat")
+        || msg.contains("can no longer be used")
+        || (msg.contains("replication slot") && msg.contains("does not exist"))
+    {
         return SessionFate::SlotIncident;
     }
     match e {
         ReplicationError::Cancelled(_) => SessionFate::Cancelled,
+        ReplicationError::ReplicationSlot(_) => SessionFate::SlotIncident,
         ReplicationError::Authentication(_) | ReplicationError::Config(_) => SessionFate::Fatal,
         _ => SessionFate::Reopen,
     }
@@ -210,7 +55,7 @@ fn classify(e: &ReplicationError) -> SessionFate {
 
 /// Shared reopen backoff + cap ladder (R11). BOTH the open-failure arm and the
 /// drain-sever arm feed this ONE ladder, so a session that opens cleanly then
-/// severs immediately can no longer hot-loop preflight→connect→sever as fast as
+/// severs immediately can no longer hot-loop connect→sever as fast as
 /// Postgres answers: every re-open is a bounded backoff, and the cap trips two
 /// independent ways.
 ///
@@ -350,13 +195,6 @@ pub const UNMAPPED_MANAGED_RELATION_REFUSAL: &str = "cdc-unmapped-managed-relati
 pub const UNMAPPED_MANAGED_RELATION_REMEDY: &str =
     "reconcile the installed package relation classifications before resuming CDC publication";
 
-/// The package applier's control-owned OID map lives beside application data so
-/// the CDC credential can resolve identities without crossing a plane. A
-/// schema publication observes its writes, but they are control facts rather
-/// than managed application events and must never recurse through the map.
-const CONTROL_OWNED_ENTITY_MAP_RELATION: &str = "wamn_entities";
-const CONTROL_OWNED_CDC_EXCLUSION_MAP_RELATION: &str = "wamn_cdc_exclusions";
-
 fn remember_relation_classification(
     cache: &mut HashMap<u32, RelationClassification>,
     relation_oid: u32,
@@ -387,11 +225,11 @@ fn merge_relation_counts(committed: &mut BTreeMap<String, u64>, pending: BTreeMa
 }
 
 /// Resolve one relation OID to its package-owned CDC classification over a
-/// short-lived SQL connection (the preflight-style credential — the CDC role's
+/// short-lived SQL connection (the CDC role's
 /// grants cover both maps). An absent row or map is a non-retryable typed refusal;
 /// connection/query failure remains transient and reopens the session.
 async fn resolve_relation_classification(
-    args: &EventReaderArgs,
+    args: &ReaderConfig,
     schema: &str,
     relation_oid: u32,
 ) -> Result<RelationClassification, ReplicationError> {
@@ -511,462 +349,26 @@ fn parse_causation(flags: u8, prefix: &str, content: &[u8]) -> Option<Causation>
     }
 }
 
-/// This project-env's registration, straight off `registry.event_readers`.
-struct Registration {
-    publication: String,
-    slot: String,
-    stream: String,
-    enabled: bool,
-    /// The schema set that the publication covers. Older unregistered rows remain null.
-    schema: Option<Vec<String>>,
-}
-
-async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registration> {
-    // Settled PURELY and FIRST: the credential is shown to be this project-env's
-    // own registry-reader generation before a socket is opened. The accepted
-    // value is deliberately discarded — this call exists to fix the ORDER, so a
-    // mis-targeted or over-wide Secret refuses here instead of connecting with it.
-    let expected = system_reader_login(
-        SystemReader::Registry,
-        &args.org,
-        &args.project,
-        &args.env,
-        "wamn_system",
-    );
-    wamn_postgres::require_identity(&args.system_database_url, &expected, "wamn_system")?;
-    let mut client = connect_system(args).await?;
-    let row = sqlx::query(sqlx::AssertSqlSafe((select_event_reader_sql()).to_string()))
-        .bind(&args.org)
-        .bind(&args.project)
-        .bind(&args.env)
-        .fetch_optional(&mut client)
-        .await
-        .context("read registry.event_readers")?
-        .with_context(|| {
-            format!(
-                "no event-reader registration for {}/{}/{} — run enable-cdc-project-env first",
-                args.org, args.project, args.env
-            )
-        })?;
-    Ok(Registration {
-        publication: row.get(0),
-        slot: row.get(1),
-        stream: row.get(2),
-        enabled: row.get(5),
-        schema: row.get(6),
-    })
-}
-
-async fn connect_system(args: &EventReaderArgs) -> anyhow::Result<sqlx::PgConnection> {
-    let client = wamn_postgres::connect(&args.system_database_url)
-        .await
-        .context("connect to the system DB (--system-database-url)")?;
-
-    Ok(client)
-}
-
-/// Refuse a registration that names another stream, is disabled, or names no
-/// schema.
-fn require_registration(args: &EventReaderArgs, reg: &Registration) -> anyhow::Result<()> {
-    let expected_stream = stream_name(&args.org, &args.project, &args.env);
-    if reg.stream != expected_stream {
-        bail!(
-            "registered source stream {} does not match this environment's stream {expected_stream}",
-            reg.stream
-        );
-    }
-    if !reg.enabled {
-        bail!(
-            "event-reader registration for {}/{}/{} is disabled",
-            args.org,
-            args.project,
-            args.env
-        );
-    }
-    if reg.schema.is_none() {
-        bail!(
-            "event-reader registration for {}/{}/{} names no schema — run \
-             enable-cdc-project-env again to record it",
-            args.org,
-            args.project,
-            args.env
-        );
-    }
-    Ok(())
-}
-
-/// The structured event of a capture gap (`wamn-59z6`), logged once per process.
+/// Structured event emitted before a reader exits on a lost slot.
 pub const CAPTURE_GAP_EVENT: &str = "CDC_CAPTURE_GAP";
-
-/// How often a reader stopped on a capture gap reads its registration, its
-/// newest gap row and its slot again: the slot monitor's default cadence.
-const GAP_POLL: Duration = Duration::from_secs(30);
-
-/// Why capture cannot run: the slot is lost, or the newest gap row of the
-/// registration waits for its resync (docs/operations/gcp.md#57-cdc-slot-lost).
-#[derive(Debug)]
-struct CaptureGap {
-    slot: String,
-    reason: String,
-}
-
-/// The newest `registry.capture_gap` row of this registration, when its
-/// `resync_at` is not set.
-async fn open_capture_gap(args: &EventReaderArgs) -> anyhow::Result<Option<CaptureGap>> {
-    let mut client = connect_system(args).await?;
-    let row = sqlx::query(sqlx::AssertSqlSafe((select_capture_gap_sql()).to_string()))
-        .bind(&args.org)
-        .bind(&args.project)
-        .bind(&args.env)
-        .fetch_optional(&mut client)
-        .await
-        .context("read registry.capture_gap")?;
-    Ok(row
-        .filter(|row| !row.get::<bool, _>(1))
-        .map(|row| CaptureGap {
-            slot: row.get(0),
-            reason: "the newest capture gap waits for close-capture-gap".to_owned(),
-        }))
-}
-
-/// Capture may run only with no open gap row and a healthy slot of the
-/// declared shape. Drift and connection failures stay errors.
-async fn capture_gap(
-    args: &EventReaderArgs,
-    reg: &Registration,
-) -> anyhow::Result<Option<CaptureGap>> {
-    if let Some(gap) = open_capture_gap(args).await? {
-        return Ok(Some(gap));
-    }
-    preflight(args, reg).await
-}
-
-/// Stop capture on a gap: log [`CAPTURE_GAP_EVENT`] once per process, then read
-/// the registration, its newest gap row and the slot every [`GAP_POLL`], with
-/// no log, until capture may run. Returns the registration to resume on, or
-/// `None` on shutdown. The reader never creates or drops a slot here.
-async fn wait_out_gap(
-    args: &EventReaderArgs,
-    gap: CaptureGap,
-    reported: &mut bool,
-    token: &CancellationToken,
-) -> anyhow::Result<Option<Registration>> {
-    if !*reported {
-        *reported = true;
-        tracing::error!(
-            target: "wamn::event_reader",
-            event = CAPTURE_GAP_EVENT,
-            slot = %gap.slot,
-            reason = %gap.reason,
-            "CAPTURE GAP: capture stopped until recover-capture-gap and close-capture-gap"
-        );
-    }
-    loop {
-        tokio::select! {
-            () = token.cancelled() => return Ok(None),
-            () = tokio::time::sleep(GAP_POLL) => {}
-        }
-        let reg = read_registration(args).await?;
-        require_registration(args, &reg)?;
-        if capture_gap(args, &reg).await?.is_none() {
-            tracing::info!(
-                target: "wamn::event_reader",
-                slot = reg.slot,
-                "capture gap closed; capture resumes"
-            );
-            return Ok(Some(reg));
-        }
-    }
-}
-
-/// The lowest PostgreSQL major version the reader accepts.
-///
-/// PostgreSQL 17 shipped both features the reader depends on. It added the
-/// `failover` argument that makes `pg_create_logical_replication_slot` take
-/// five arguments, which is the call `create_failover_slot_sql` emits. It also
-/// added the `invalidation_reason` column of `pg_replication_slots`, which
-/// [`preflight_slot`] reads to find the capture-gap incident. A PostgreSQL 17
-/// server therefore passes this minimum and then finds both. See
-/// <https://www.postgresql.org/docs/17/release-17.html>.
-///
-/// Every deployment target in this repository runs PostgreSQL 18.
-const POSTGRES_MAJOR_MINIMUM: i32 = 17;
-
-/// The output plugin `create_failover_slot_sql` declares.
-const DECLARED_SLOT_PLUGIN: &str = "pgoutput";
-
-/// The prefix every drift refusal carries, so operators grep one string.
-pub const CAPTURE_SHAPE_DRIFT_REFUSAL: &str = "CAPTURE SHAPE DRIFT";
-
-/// The distinct log event a received TRUNCATE raises. The declared publication
-/// excludes TRUNCATE, so alerts bind to this name as an incident.
+/// A received TRUNCATE is reported and skipped.
 pub const TRUNCATE_INCIDENT_EVENT: &str = "CDC_TRUNCATE_RECEIVED";
 
-/// Verify the whole declared capture substrate over one ordinary SQL
-/// connection, before every session: the server version minimum, the publication
-/// shape, and the slot shape and health.
-///
-/// An absent or invalidated slot is the v3 §11 capture-gap incident, returned
-/// as a [`CaptureGap`] (`wamn-59z6`). Any other
-/// difference from the provisioned declaration is drift, and the reader refuses
-/// it rather than capture an unknown shape (wamn-0h0g.19.19).
-async fn preflight(
-    args: &EventReaderArgs,
-    reg: &Registration,
-) -> anyhow::Result<Option<CaptureGap>> {
-    let url = Ok::<_, anyhow::Error>(args.cdc_url.clone())?;
-    let mut client = wamn_postgres::connect(&url)
-        .await
-        .context("preflight: connect the CDC credential to the project-env DB")?;
-
-    preflight_server_version(&mut client).await?;
-    let schema = reg
-        .schema
-        .as_deref()
-        .context("require_registration refuses a registration with no schema")?;
-    preflight_publication(&mut client, &reg.publication, schema).await?;
-    preflight_slot(&mut client, &reg.slot).await
-}
-
-/// The major version carried by a `server_version_num` setting.
-fn postgres_major(version_num: i32) -> i32 {
-    version_num / 10_000
-}
-
-/// Refuse a server below [`POSTGRES_MAJOR_MINIMUM`]. The reader states its
-/// requirement at startup instead of failing later inside the walsender.
-async fn preflight_server_version(client: &mut sqlx::PgConnection) -> anyhow::Result<()> {
-    let row = sqlx::query("SELECT current_setting('server_version_num')::int4")
-        .fetch_one(&mut *client)
-        .await
-        .context("preflight: read server_version_num")?;
-    let version_num: i32 = row.get(0);
-    let major = postgres_major(version_num);
-    if major < POSTGRES_MAJOR_MINIMUM {
-        bail!(
-            "PostgreSQL {major} is below the reader's minimum of {POSTGRES_MAJOR_MINIMUM} \
-             (server_version_num={version_num}) — the declared failover slot needs \
-             PostgreSQL {POSTGRES_MAJOR_MINIMUM} or later"
-        );
-    }
-    tracing::info!(major, version_num, "preflight: server version accepted");
-    Ok(())
-}
-
-/// The live publication shape, straight off `pg_publication`.
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "the fields are the catalog's own boolean columns, one for one"
-)]
-struct PublicationShape {
-    all_tables: bool,
-    insert: bool,
-    update: bool,
-    delete: bool,
-    truncate: bool,
-    /// The schemas in `pg_publication_namespace` for this publication, sorted.
-    schemas: Vec<String>,
-    /// Rows in `pg_publication_rel` for this publication.
-    tables: i64,
-}
-
-/// Every way a live publication differs from `create_publication_sql` for the
-/// registered schema set, one sentence each. An empty result means the
-/// publication matches.
-fn publication_drift(shape: &PublicationShape, schemas: &[String]) -> Vec<String> {
-    let mut drift: Vec<String> = Vec::new();
-    if shape.all_tables {
-        drift.push("puballtables=true, declared false (FOR TABLES IN SCHEMA)".to_owned());
-    }
-    for (name, live) in [
-        ("pubinsert", shape.insert),
-        ("pubupdate", shape.update),
-        ("pubdelete", shape.delete),
-    ] {
-        if !live {
-            drift.push(format!("{name}=false, declared true"));
-        }
-    }
-    if shape.truncate {
-        drift.push("pubtruncate=true, declared false".to_owned());
-    }
-    let published = shape
-        .schemas
-        .iter()
-        .collect::<std::collections::BTreeSet<_>>();
-    let registered = schemas.iter().collect::<std::collections::BTreeSet<_>>();
-    if published != registered {
-        drift.push(format!(
-            "publishes schemas {published:?}, registered schemas {registered:?}"
-        ));
-    }
-    if shape.tables != 0 {
-        drift.push(format!(
-            "{} explicitly published tables, declared 0",
-            shape.tables
-        ));
-    }
-    drift
-}
-
-/// The live slot shape, straight off `pg_replication_slots`.
-struct SlotShape {
-    slot_type: Option<String>,
-    plugin: Option<String>,
-    temporary: bool,
-    two_phase: bool,
-    failover: bool,
-}
-
-/// Every way a live slot differs from `create_failover_slot_sql`, one sentence
-/// each. An empty result means the slot matches.
-fn slot_drift(shape: &SlotShape) -> Vec<String> {
-    let mut drift: Vec<String> = Vec::new();
-    if shape.slot_type.as_deref() != Some("logical") {
-        drift.push(format!(
-            "slot_type={:?}, declared \"logical\"",
-            shape.slot_type
-        ));
-    }
-    if shape.plugin.as_deref() != Some(DECLARED_SLOT_PLUGIN) {
-        drift.push(format!(
-            "plugin={:?}, declared {DECLARED_SLOT_PLUGIN:?}",
-            shape.plugin
-        ));
-    }
-    if shape.temporary {
-        drift.push("temporary=true, declared false".to_owned());
-    }
-    if shape.two_phase {
-        drift.push("two_phase=true, declared false".to_owned());
-    }
-    if !shape.failover {
-        drift.push("failover=false, declared true".to_owned());
-    }
-    drift
-}
-
-/// Compare the live publication against `create_publication_sql`: the one
-/// registered schema set, no explicit tables, never `FOR ALL TABLES`, and the three
-/// row operations the event plane carries with TRUNCATE excluded.
-async fn preflight_publication(
-    client: &mut sqlx::PgConnection,
-    publication: &str,
-    schema: &[String],
-) -> anyhow::Result<()> {
-    let row = sqlx::query(
-        "SELECT p.puballtables, p.pubinsert, p.pubupdate, p.pubdelete, p.pubtruncate, \
-                    ARRAY(SELECT s.nspname::text FROM pg_publication_namespace n \
-                            JOIN pg_namespace s ON s.oid = n.pnnspid \
-                           WHERE n.pnpubid = p.oid ORDER BY 1), \
-                    (SELECT count(*) FROM pg_publication_rel r WHERE r.prpubid = p.oid) \
-             FROM pg_publication p WHERE p.pubname = $1",
-    )
-    .bind(publication)
-    .fetch_optional(&mut *client)
-    .await
-    .context("preflight: read pg_publication")?;
-    let Some(row) = row else {
-        bail!(
-            "{CAPTURE_SHAPE_DRIFT_REFUSAL}: publication {publication} does not exist — \
-             the reader never creates publications; re-enable CDC for this project-env"
-        );
-    };
-    let drift = publication_drift(
-        &PublicationShape {
-            all_tables: row.get(0),
-            insert: row.get(1),
-            update: row.get(2),
-            delete: row.get(3),
-            truncate: row.get(4),
-            schemas: row.get(5),
-            tables: row.get(6),
-        },
-        schema,
-    );
-    if !drift.is_empty() {
-        bail!(
-            "{CAPTURE_SHAPE_DRIFT_REFUSAL}: publication {publication} differs from its \
-             declaration ({}) — restore the declared publication before capture resumes",
-            drift.join(", ")
-        );
-    }
-    tracing::info!(
-        publication,
-        ?schema,
-        "preflight: publication matches its declaration (insert/update/delete, registered schemas)"
-    );
-    Ok(())
-}
-
-/// Verify the slot EXISTS, is healthy, and carries its declared shape over an
-/// ordinary SQL connection, and log the resume position. Absent or invalidated
-/// ⇒ the v3 §11 incident. A different shape ⇒ a drift refusal.
-async fn preflight_slot(
-    client: &mut sqlx::PgConnection,
-    slot: &str,
-) -> anyhow::Result<Option<CaptureGap>> {
-    let row = sqlx::query(
-        "SELECT active, confirmed_flush_lsn::text, wal_status::text, invalidation_reason::text, \
-                    slot_type::text, plugin::text, temporary, two_phase, failover \
-             FROM pg_replication_slots WHERE slot_name = $1",
-    )
-    .bind(slot)
-    .fetch_optional(&mut *client)
-    .await
-    .context("preflight: read pg_replication_slots")?;
-    let Some(row) = row else {
-        // The reader never creates slots: recover-capture-gap does.
-        return Ok(Some(CaptureGap {
-            slot: slot.to_owned(),
-            reason: "missing".to_owned(),
-        }));
-    };
-    let active: bool = row.get(0);
-    let confirmed: Option<String> = row.get(1);
-    let wal_status: Option<String> = row.get(2);
-    let invalidation: Option<String> = row.get(3);
-    if invalidation.is_some() || wal_status.as_deref() == Some("lost") {
-        return Ok(Some(CaptureGap {
-            slot: slot.to_owned(),
-            reason: invalidation.unwrap_or_else(|| "wal_status lost".to_owned()),
-        }));
-    }
-    let drift = slot_drift(&SlotShape {
-        slot_type: row.get(4),
-        plugin: row.get(5),
-        temporary: row.get(6),
-        two_phase: row.get(7),
-        failover: row.get(8),
-    });
-    if !drift.is_empty() {
-        bail!(
-            "{CAPTURE_SHAPE_DRIFT_REFUSAL}: replication slot {slot} differs from its \
-             declaration ({}) — drop and re-enable CDC to restore the declared slot, \
-             and assess the gap that drop creates",
-            drift.join(", ")
-        );
-    }
-    tracing::info!(
-        slot,
-        active,
-        confirmed_flush_lsn = confirmed.as_deref().unwrap_or("-"),
-        wal_status = wal_status.as_deref().unwrap_or("-"),
-        "preflight: slot healthy and matching its declaration (resume position = confirmed LSN)"
-    );
-    Ok(None)
+struct Session {
+    stream: EventStream,
+    identity: pg_walstream::ServerIdentity,
+    history: Vec<pg_walstream::TimelineSwitch>,
 }
 
 async fn open_session(
-    args: &EventReaderArgs,
-    reg: &Registration,
+    args: &ReaderConfig,
     token: CancellationToken,
-) -> Result<EventStream, ReplicationError> {
+) -> Result<Session, ReplicationError> {
     let url =
         replication_url(&args.cdc_url).map_err(|e| ReplicationError::Config(e.to_string()))?;
     let cfg = ReplicationStreamConfig::new(
-        reg.slot.clone(),
-        reg.publication.clone(),
+        args.slot.clone(),
+        args.publication.clone(),
         2,
         // Off: whole transactions, post-commit, in commit order — nothing
         // uncommitted is ever published (giant txns spill server-side).
@@ -981,10 +383,15 @@ async fn open_session(
     // default, so the reader must opt in for `drain` to see them.
     .with_messages(true);
     let mut stream = LogicalReplicationStream::new(&url, cfg).await?;
-    // No ensure_replication_slot: the preflight confirmed existence; creating
-    // here would turn a dropped slot into a SILENT gap.
+    let identity = *stream.server_identity();
+    let history = stream.timeline_history().await?;
+    // Provisioning alone creates slots. A missing slot must stop capture.
     stream.start(None).await?;
-    Ok(stream.into_stream(token))
+    Ok(Session {
+        stream: stream.into_stream(token),
+        identity,
+        history,
+    })
 }
 
 /// The reader's own shutdown handle. It holds the replication adapter's
@@ -1031,7 +438,7 @@ impl Drop for ReaderShutdownGuard {
     }
 }
 
-pub async fn run(args: EventReaderArgs) -> anyhow::Result<()> {
+pub async fn run(args: ReaderConfig) -> anyhow::Result<()> {
     let shutdown = ReaderShutdown::new();
     let signalled = shutdown.clone();
     // PID 1 gets no default signal disposition (the dispatcher precedent).
@@ -1050,7 +457,7 @@ pub async fn run(args: EventReaderArgs) -> anyhow::Result<()> {
 /// The service body, shutdown injected — the live acceptance test drives this directly
 /// (abort = the crash drill, shutdown = clean stop).
 pub async fn run_with_shutdown(
-    mut args: EventReaderArgs,
+    mut args: ReaderConfig,
     shutdown: ReaderShutdown,
 ) -> anyhow::Result<()> {
     use sqlx::ConnectOptions as _;
@@ -1084,15 +491,6 @@ pub async fn run_with_shutdown(
         args.nats_tls_key.as_deref(),
         None,
     )?;
-    let mut reg = read_registration(&args).await?;
-    require_registration(&args, &reg)?;
-    tracing::info!(
-        publication = reg.publication,
-        slot = reg.slot,
-        stream = reg.stream,
-        "registration loaded"
-    );
-
     let client = wamn_broker::nats::connect(
         nats_options,
         &args.nats_url,
@@ -1100,86 +498,31 @@ pub async fn run_with_shutdown(
     )
     .await?;
     let js = jetstream::new(client);
-    let target = Triple::new(&args.org, args.env.as_str(), &args.project);
-    let source_config = source_stream_config(
-        &target,
-        args.stream_replicas,
-        Duration::from_secs(args.dup_window_secs),
-    );
-    let advisory_config = advisory_stream_config(&target, args.stream_replicas);
-    for expected in [&source_config, &advisory_config] {
-        let stream = js
-            .get_stream(&expected.name)
-            .await
-            .with_context(|| format!("open provisioned event stream {}", expected.name))?;
-        if !stream_config_matches(expected, &stream.cached_info().config) {
-            bail!(
-                "event stream {} differs from its complete declaration",
-                expected.name
-            );
-        }
-    }
 
     // `confirmed_lsn_age_seconds` gauge (E2): millis of the last confirmed-LSN
     // advance, seeded at start so a reader that never commits still ages. Shared
     // with the detached slot-headroom monitor.
     let last_lsn_advance_ms = Arc::new(AtomicI64::new(chrono::Utc::now().timestamp_millis()));
-    // The monitor follows the registered slot. A recovery can name a new
-    // slot, so the monitor has its own token and restarts with the slot.
-    let mut monitor = token.child_token();
+    let monitor = token.child_token();
     spawn_slot_monitor(
         &args,
-        reg.slot.clone(),
+        args.slot.clone(),
         monitor.clone(),
         Arc::clone(&last_lsn_advance_ms),
     );
+    // Every exit also stops the detached monitor.
+    let _monitor_shutdown = ReaderShutdown { token: monitor }.into_guard();
 
     let mut ladder = ReopenLadder::new();
-    let mut gap_reported = false;
     loop {
         if token.is_cancelled() {
             return Ok(());
         }
-        let observed = read_registration(&args).await?;
-        if !observed.enabled {
-            tokio::select! {
-                () = token.cancelled() => return Ok(()),
-                () = tokio::time::sleep(Duration::from_millis(100)) => {},
-            }
-            continue;
-        }
-        require_registration(&args, &observed)?;
-        reg = observed;
-        // An open gap row or an absent/invalidated slot = the capture-gap
-        // incident, a drifted publication or slot = refusal — validated before
-        // EVERY session, so a substrate changed mid-life is caught on the
-        // re-open path too.
-        if let Some(gap) = capture_gap(&args, &reg).await? {
-            let Some(resumed) = wait_out_gap(&args, gap, &mut gap_reported, &token).await? else {
-                return Ok(());
-            };
-            if resumed.slot != reg.slot {
-                monitor.cancel();
-                monitor = token.child_token();
-                spawn_slot_monitor(
-                    &args,
-                    resumed.slot.clone(),
-                    monitor.clone(),
-                    Arc::clone(&last_lsn_advance_ms),
-                );
-            }
-            continue;
-        }
-
-        let mut stream = match open_session(&args, &reg, token.child_token()).await {
+        let mut session = match open_session(&args, token.child_token()).await {
             Ok(s) => s,
             Err(e) => match classify(&e) {
                 SessionFate::Cancelled => return Ok(()),
-                SessionFate::SlotIncident => {
-                    // The next preflight finds the lost slot and waits.
-                    ladder_step_or_bail(&mut ladder, 0, &e, &token).await?;
-                    continue;
-                }
+                SessionFate::SlotIncident => return Err(capture_failure(&args.slot, e)),
                 SessionFate::Fatal => return Err(anyhow::anyhow!(e).context("open session")),
                 SessionFate::Reopen => {
                     // An open that never produced a commit is unproductive by
@@ -1194,23 +537,10 @@ pub async fn run_with_shutdown(
             "walsender session open; draining"
         );
 
-        match drain(
-            &mut stream,
-            &args,
-            &reg.slot,
-            &token,
-            &js,
-            &last_lsn_advance_ms,
-        )
-        .await
-        {
-            DrainOutcome::Reconfigure(summary) => {
-                log_drain_summary(&summary, "database reset");
-                let _ = stream.shutdown().await;
-            }
+        match drain(&mut session, &args, &token, &js, &last_lsn_advance_ms).await {
             DrainOutcome::Shutdown(summary) => {
                 log_drain_summary(&summary, "shutdown");
-                let _ = stream.shutdown().await;
+                let _ = session.stream.shutdown().await;
                 tracing::info!(
                     reopens = ladder.reopens(),
                     commits = summary.commits,
@@ -1224,20 +554,13 @@ pub async fn run_with_shutdown(
                 // with. Snapshot caller intent first so cleanup cannot turn a
                 // fatal decode refusal into a successful shutdown.
                 let cancellation_requested = token.is_cancelled();
-                let _ = stream.shutdown().await;
+                let _ = session.stream.shutdown().await;
                 if cancellation_requested {
                     return Ok(());
                 }
-                let observed = read_registration(&args).await?;
-                if !observed.enabled || observed.slot != reg.slot {
-                    continue;
-                }
                 match classify(&e) {
                     SessionFate::Cancelled => return Ok(()),
-                    SessionFate::SlotIncident => {
-                        // The next preflight finds the lost slot and waits.
-                        ladder_step_or_bail(&mut ladder, summary.commits, &e, &token).await?;
-                    }
+                    SessionFate::SlotIncident => return Err(capture_failure(&args.slot, e)),
                     SessionFate::Fatal => return Err(anyhow::anyhow!(e).context("drain")),
                     SessionFate::Reopen => {
                         // Productivity — not open success — resets the streak:
@@ -1248,6 +571,12 @@ pub async fn run_with_shutdown(
             }
         }
     }
+}
+
+fn capture_failure(slot: &str, error: ReplicationError) -> anyhow::Error {
+    tracing::error!(target: "wamn::event_reader", event = CAPTURE_GAP_EVENT, slot,
+        %error, "capture stopped; recover the slot and restart the reader");
+    anyhow::anyhow!(error).context("CDC capture gap")
 }
 
 /// Feed one re-open into the shared ladder and act on its verdict: bail if the
@@ -1295,6 +624,7 @@ struct Txn {
     commit_ts: chrono::DateTime<chrono::Utc>,
     causation: Option<Causation>,
     rows: Vec<PendingRow>,
+    next_ordinal: u64,
     excluded_by_relation: BTreeMap<String, u64>,
 }
 
@@ -1307,7 +637,7 @@ struct PendingRow {
     new: Option<serde_json::Map<String, serde_json::Value>>,
     entity_mapping: EntityMapping,
     table: String,
-    lsn: u64,
+    ordinal: u64,
 }
 
 /// What a drained session produced. `commits` is the R11 productivity signal —
@@ -1342,7 +672,6 @@ fn log_drain_summary(summary: &DrainSummary, ending: &str) {
 /// the caller always knows whether the ended session was productive.
 enum DrainOutcome {
     Shutdown(DrainSummary),
-    Reconfigure(DrainSummary),
     Severed(ReplicationError, DrainSummary),
 }
 
@@ -1356,13 +685,13 @@ enum DrainOutcome {
 /// round trip amortized over the txn instead of one per row. Returns the
 /// `DrainSummary` in both outcomes.
 async fn drain(
-    stream: &mut EventStream,
-    args: &EventReaderArgs,
-    expected_slot: &str,
+    session: &mut Session,
+    args: &ReaderConfig,
     token: &CancellationToken,
     js: &jetstream::Context,
     last_lsn_advance_ms: &AtomicI64,
 ) -> DrainOutcome {
+    let stream = &mut session.stream;
     let mut txn: Option<Txn> = None;
     let mut summary = DrainSummary {
         commits: 0,
@@ -1380,7 +709,6 @@ async fn drain(
             Err(ReplicationError::Cancelled(_)) => return DrainOutcome::Shutdown(summary),
             Err(e) => return DrainOutcome::Severed(e, summary),
         };
-        let lsn = ev.lsn.value();
         let (op, old, new, schema, table, relation_oid) = match ev.event_type {
             EventType::Begin {
                 transaction_id,
@@ -1392,48 +720,16 @@ async fn drain(
                     commit_ts: commit_timestamp,
                     causation: None,
                     rows: Vec::new(),
+                    next_ordinal: 0,
                     excluded_by_relation: BTreeMap::new(),
                 });
                 continue;
             }
-            EventType::Commit { end_lsn, .. } => {
-                // Hold the same shared environment exclusion as SQL Jobs until
-                // broker acknowledgments settle. Reset waits before purging.
-                let publication = async {
-                    let mut client = connect_system(args).await?;
-                    let held: bool = sqlx::query(wamn_registry::sql::ENVIRONMENT_SHARED_LOCK_SQL)
-                        .bind(&args.org)
-                        .bind(&args.project)
-                        .bind(&args.env)
-                        .fetch_one(&mut client)
-                        .await?
-                        .get(0);
-                    if !held {
-                        return Ok::<_, anyhow::Error>(None);
-                    }
-                    let row =
-                        sqlx::query(sqlx::AssertSqlSafe((select_event_reader_sql()).to_string()))
-                            .bind(&args.org)
-                            .bind(&args.project)
-                            .bind(&args.env)
-                            .fetch_one(&mut client)
-                            .await?;
-                    if !row.get::<bool, _>(5) || row.get::<String, _>(1) != expected_slot {
-                        return Ok(None);
-                    }
-                    Ok(Some(client))
-                }
-                .await;
-                let _publication = match publication {
-                    Ok(Some(client)) => client,
-                    Ok(None) => return DrainOutcome::Reconfigure(summary),
-                    Err(error) => {
-                        return DrainOutcome::Severed(
-                            ReplicationError::Config(error.to_string()),
-                            summary,
-                        );
-                    }
-                };
+            EventType::Commit {
+                commit_lsn,
+                end_lsn,
+                ..
+            } => {
                 let Some(frame) = txn.take() else {
                     return DrainOutcome::Severed(
                         ReplicationError::Protocol("Commit outside a Begin frame".into()),
@@ -1445,15 +741,28 @@ async fn drain(
                 // to every row — robust to whether the message arrived before or
                 // after these rows.
                 let mut msgs = Vec::with_capacity(frame.rows.len());
-                for row in &frame.rows {
+                let timeline = session
+                    .history
+                    .iter()
+                    .find(|ancestor| commit_lsn < ancestor.switchpoint())
+                    .map_or(
+                        session.identity.timeline(),
+                        pg_walstream::TimelineSwitch::timeline,
+                    );
+                for row in frame.rows {
                     let envelope = Envelope {
                         op: row.op,
-                        old: row.old.clone(),
-                        new: row.new.clone(),
-                        package_id: row.entity_mapping.package_id.clone(),
-                        entity: row.entity_mapping.entity_id.clone(),
-                        table: row.table.clone(),
-                        lsn: row.lsn,
+                        old: row.old,
+                        new: row.new,
+                        package_id: row.entity_mapping.package_id,
+                        entity: row.entity_mapping.entity_id,
+                        table: row.table,
+                        identity: CdcIdentity {
+                            system_id: session.identity.system_id(),
+                            timeline,
+                            commit_lsn: commit_lsn.value(),
+                            row_ordinal: row.ordinal,
+                        },
                         txid: frame.txid,
                         commit_ts: frame.commit_ts,
                         causation: frame.causation.clone(),
@@ -1465,19 +774,20 @@ async fn drain(
                         envelope.entity_segment(),
                         row.op,
                     );
-                    let id = msg_id(&args.project, &args.env, row.lsn);
-                    let payload = match serde_json::to_vec(&envelope) {
-                        Ok(p) => bytes::Bytes::from(p),
-                        Err(e) => {
-                            return DrainOutcome::Severed(
-                                ReplicationError::Io(std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    e,
-                                )),
-                                summary,
-                            );
-                        }
-                    };
+                    let id = msg_id(&args.project, &args.env, &envelope.identity);
+                    let payload =
+                        match serde_json::to_vec(&wamn_event_wire::SourceEvent::Cdc(envelope)) {
+                            Ok(p) => bytes::Bytes::from(p),
+                            Err(e) => {
+                                return DrainOutcome::Severed(
+                                    ReplicationError::Io(std::io::Error::new(
+                                        std::io::ErrorKind::InvalidData,
+                                        e,
+                                    )),
+                                    summary,
+                                );
+                            }
+                        };
                     msgs.push(PreparedMsg {
                         subject,
                         id,
@@ -1491,7 +801,10 @@ async fn drain(
                 let stall_threshold = Duration::from_secs(args.stall_threshold_secs);
                 let mut tally = PublishTally::default();
                 match publish_txn(
-                    &JsPublisher { js },
+                    &JsPublisher {
+                        js,
+                        stream: &args.stream,
+                    },
                     token,
                     &msgs,
                     MAX_IN_FLIGHT,
@@ -1626,15 +939,15 @@ async fn drain(
                 continue;
             }
         };
-        if table.as_ref() == CONTROL_OWNED_ENTITY_MAP_RELATION
-            || table.as_ref() == CONTROL_OWNED_CDC_EXCLUSION_MAP_RELATION
-        {
-            tracing::debug!(
-                %schema,
-                %table,
-                relation_oid,
-                "control-owned relation-map change excluded from CDC publication"
+        let Some(frame) = txn.as_mut() else {
+            return DrainOutcome::Severed(
+                ReplicationError::Protocol("row event outside a Begin/Commit frame".into()),
+                summary,
             );
+        };
+        let ordinal = frame.next_ordinal;
+        frame.next_ordinal += 1;
+        if CONTROL_OWNED_RELATION_TABLES.contains(&table.as_ref()) {
             continue;
         }
         // Resolve an uncached relation OID before buffering anything publishable.
@@ -1666,12 +979,6 @@ async fn drain(
             }
             remember_relation_classification(&mut relation_classifications, relation_oid, resolved)
         };
-        let Some(frame) = txn.as_mut() else {
-            return DrainOutcome::Severed(
-                ReplicationError::Protocol("row event outside a Begin/Commit frame".into()),
-                summary,
-            );
-        };
         let Some(entity_mapping) =
             publishable_entity(classification, &mut frame.excluded_by_relation)
         else {
@@ -1693,7 +1000,7 @@ async fn drain(
             new,
             entity_mapping,
             table: table.to_string(),
-            lsn,
+            ordinal,
         });
     }
 }
@@ -1710,8 +1017,6 @@ enum PublishOutcome {
 /// default ack-inflight semaphore (so `send` never blocks on backpressure), and
 /// large enough that the ack round trip amortizes across a whole transaction.
 const MAX_IN_FLIGHT: usize = 256;
-const ASYNC_NATS_DEFAULT_MAX_ACK_INFLIGHT: usize = 5_000;
-const _: () = assert!(MAX_IN_FLIGHT < ASYNC_NATS_DEFAULT_MAX_ACK_INFLIGHT);
 
 /// One row event's wire form, prepared once and re-published as-is on a retry
 /// (the `Nats-Msg-Id` in `id` is what the JetStream duplicate window keys on).
@@ -1736,41 +1041,30 @@ struct PublishTally {
     deduped: u64,
 }
 
-/// The publish substrate the txn pipeline drives. Abstracted so the pipeline's
-/// ordering / in-flight-bound / first-unacked-retry logic is unit-testable with
-/// a scripted fake. In production `Ack` is async-nats' `PublishAckFuture`:
-/// `send` performs the FIRST `.await` (buffers the publish on the connection,
-/// returns the ack future) and `settle` the SECOND (the server `PublishAck`).
-/// The trait is private and always driven single-threaded from `drain`, so the
-/// futures' `Send`-ness is irrelevant.
-#[allow(async_fn_in_trait)]
-trait AckPublisher {
-    type Ack;
-    async fn send(&self, msg: &PreparedMsg) -> anyhow::Result<Self::Ack>;
-    async fn settle(&self, ack: Self::Ack) -> anyhow::Result<PublishAcknowledgment>;
-}
-
-/// Production publisher: async-nats JetStream. `send` sends and returns the ack
-/// future (async-nats 0.47: `publish_with_headers(...).await`); `settle` awaits
-/// it for the `PublishAck`. Batch/ack errors are boxed dyn — `anyhow!`, never
-/// `.context`.
+/// Publish messages and await the broker acknowledgements.
 struct JsPublisher<'a> {
     js: &'a jetstream::Context,
+    stream: &'a str,
 }
 
-impl AckPublisher for JsPublisher<'_> {
-    type Ack = jetstream::context::PublishAckFuture;
-
-    async fn send(&self, msg: &PreparedMsg) -> anyhow::Result<Self::Ack> {
+impl JsPublisher<'_> {
+    async fn send(
+        &self,
+        msg: &PreparedMsg,
+    ) -> anyhow::Result<jetstream::context::PublishAckFuture> {
         let mut headers = HeaderMap::new();
         headers.insert(NATS_MESSAGE_ID, msg.id.as_str());
+        headers.insert(NATS_EXPECTED_STREAM, self.stream);
         self.js
             .publish_with_headers(msg.subject.clone(), headers, msg.payload.clone())
             .await
             .map_err(|e| anyhow::anyhow!("publish: {e}"))
     }
 
-    async fn settle(&self, ack: Self::Ack) -> anyhow::Result<PublishAcknowledgment> {
+    async fn settle(
+        &self,
+        ack: jetstream::context::PublishAckFuture,
+    ) -> anyhow::Result<PublishAcknowledgment> {
         let ack = ack.await.map_err(|e| anyhow::anyhow!("ack: {e}"))?;
         Ok(PublishAcknowledgment {
             duplicate: ack.duplicate,
@@ -1920,9 +1214,9 @@ async fn poll_slot_once(
 /// Spawn the slot-headroom monitor (E2 backstop): a detached loop — like the
 /// SIGTERM task, it rides the process lifetime and exits on shutdown — polling
 /// on its own cadence. A poll failure is transient (logged, retried); the main
-/// loop's preflight owns the die-loudly decision.
+/// replication session ends capture on a lost slot.
 fn spawn_slot_monitor(
-    args: &EventReaderArgs,
+    args: &ReaderConfig,
     slot: String,
     token: CancellationToken,
     last_lsn_advance_ms: Arc<AtomicI64>,
@@ -1965,11 +1259,11 @@ fn spawn_slot_monitor(
 ///
 /// A failed ack retries the transaction from the FIRST UNACKED row — the
 /// JetStream duplicate window absorbs the already-landed prefix, and the
-/// materializer's `run_id` + `ON CONFLICT` absorbs anything past the window.
+/// workflow's run key + `ON CONFLICT` absorbs anything past the window.
 /// `first_unacked` advances only as acks settle durably, so a retry never
 /// re-settles (or double-counts) a row the server already acked.
-async fn publish_txn<P: AckPublisher>(
-    publisher: &P,
+async fn publish_txn(
+    publisher: &JsPublisher<'_>,
     token: &CancellationToken,
     msgs: &[PreparedMsg],
     max_in_flight: usize,
@@ -2061,8 +1355,8 @@ enum PassOutcome {
     Failed(anyhow::Error),
 }
 
-async fn publish_pass<P: AckPublisher>(
-    publisher: &P,
+async fn publish_pass(
+    publisher: &JsPublisher<'_>,
     token: &CancellationToken,
     msgs: &[PreparedMsg],
     first_unacked: &mut usize,
@@ -2070,7 +1364,7 @@ async fn publish_pass<P: AckPublisher>(
     tally: &mut PublishTally,
 ) -> PassOutcome {
     // (row index, held ack future) in publish order — index strictly ascending.
-    let mut held: Vec<(usize, P::Ack)> = Vec::new();
+    let mut held: Vec<(usize, jetstream::context::PublishAckFuture)> = Vec::new();
     for idx in *first_unacked..msgs.len() {
         if token.is_cancelled() {
             return PassOutcome::Cancelled;
@@ -2098,11 +1392,11 @@ async fn publish_pass<P: AckPublisher>(
 /// (and the tally); the FIRST failure stops the drain and returns, dropping the
 /// still-held futures — `first_unacked` is left AT the failed row so the retry
 /// restarts there and never re-settles a durably-acked prefix.
-async fn settle_all<P: AckPublisher>(
-    publisher: &P,
+async fn settle_all(
+    publisher: &JsPublisher<'_>,
     msgs: &[PreparedMsg],
     first_unacked: &mut usize,
-    held: &mut Vec<(usize, P::Ack)>,
+    held: &mut Vec<(usize, jetstream::context::PublishAckFuture)>,
     tally: &mut PublishTally,
 ) -> anyhow::Result<()> {
     for (idx, ack) in held.drain(..) {
@@ -2121,205 +1415,6 @@ async fn settle_all<P: AckPublisher>(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The declared shape the preflight compares against, so the two
-    /// constructors below read as the provisioned substrate.
-    fn declared_publication() -> PublicationShape {
-        PublicationShape {
-            all_tables: false,
-            insert: true,
-            update: true,
-            delete: true,
-            truncate: false,
-            schemas: vec!["app".to_owned()],
-            tables: 0,
-        }
-    }
-
-    fn declared_slot() -> SlotShape {
-        SlotShape {
-            slot_type: Some("logical".to_owned()),
-            plugin: Some(DECLARED_SLOT_PLUGIN.to_owned()),
-            temporary: false,
-            two_phase: false,
-            failover: true,
-        }
-    }
-
-    /// The reader's expectations and the provisioning builders name ONE shape.
-    /// A change to either side that the other does not follow fails here rather
-    /// than at a project's preflight (wamn-0h0g.19.19).
-    #[test]
-    fn the_preflight_expectations_match_the_provisioning_declaration() {
-        let publication = wamn_control_provision::sql::create_publication_sql(
-            "wamn_cdc_fixture__billing__dev",
-            "app",
-        );
-        assert!(
-            publication.contains("WITH (publish = 'insert, update, delete')"),
-            "{publication}"
-        );
-        assert!(!publication.contains("truncate"), "{publication}");
-        assert!(!publication.contains("FOR ALL TABLES"), "{publication}");
-        let slot =
-            wamn_control_provision::sql::create_failover_slot_sql("wamn_cdc_fixture__billing__dev");
-        assert!(
-            slot.contains(&format!("'{DECLARED_SLOT_PLUGIN}', false, false, true")),
-            "{slot}"
-        );
-    }
-
-    /// The declared substrate produces no drift, and each single departure from
-    /// it produces exactly one named refusal reason.
-    #[test]
-    fn publication_accepts_exactly_the_registered_schema_set() {
-        let shape = PublicationShape {
-            schemas: vec!["app".into(), "other".into()],
-            ..declared_publication()
-        };
-        assert!(publication_drift(&shape, &["other".into(), "app".into()]).is_empty());
-        assert!(!publication_drift(&shape, &["app".into()]).is_empty());
-        assert!(!publication_drift(&shape, &["app".into(), "unexpected".into()]).is_empty());
-    }
-
-    #[test]
-    fn publication_and_slot_drift_name_every_departure_from_the_declaration() {
-        assert!(publication_drift(&declared_publication(), &["app".to_owned()]).is_empty());
-        assert!(slot_drift(&declared_slot()).is_empty());
-
-        let truncating = PublicationShape {
-            truncate: true,
-            ..declared_publication()
-        };
-        assert_eq!(
-            publication_drift(&truncating, &["app".to_owned()]),
-            vec!["pubtruncate=true, declared false".to_owned()]
-        );
-        let all_tables = PublicationShape {
-            all_tables: true,
-            ..declared_publication()
-        };
-        assert_eq!(publication_drift(&all_tables, &["app".to_owned()]).len(), 1);
-        assert_eq!(
-            publication_drift(&declared_publication(), &["billing".to_owned()]),
-            vec!["publishes schemas {\"app\"}, registered schemas {\"billing\"}".to_owned()]
-        );
-        let re_pointed = PublicationShape {
-            schemas: vec!["app".to_owned(), "billing".to_owned()],
-            tables: 3,
-            ..declared_publication()
-        };
-        assert_eq!(publication_drift(&re_pointed, &["app".to_owned()]).len(), 2);
-        let no_updates = PublicationShape {
-            update: false,
-            ..declared_publication()
-        };
-        assert_eq!(
-            publication_drift(&no_updates, &["app".to_owned()]),
-            vec!["pubupdate=false, declared true".to_owned()]
-        );
-
-        let no_failover = SlotShape {
-            failover: false,
-            ..declared_slot()
-        };
-        assert_eq!(
-            slot_drift(&no_failover),
-            vec!["failover=false, declared true".to_owned()]
-        );
-        let other_plugin = SlotShape {
-            plugin: Some("wal2json".to_owned()),
-            ..declared_slot()
-        };
-        assert_eq!(slot_drift(&other_plugin).len(), 1);
-        let physical_and_temporary = SlotShape {
-            slot_type: Some("physical".to_owned()),
-            temporary: true,
-            two_phase: true,
-            ..declared_slot()
-        };
-        assert_eq!(slot_drift(&physical_and_temporary).len(), 3);
-    }
-
-    /// The minimum refuses PostgreSQL 16 and accepts the 17 the failover argument
-    /// needs and the 18 every deployment target runs.
-    #[test]
-    fn the_postgres_minimum_sits_at_the_failover_slot_argument() {
-        assert_eq!(POSTGRES_MAJOR_MINIMUM, 17);
-        assert!(postgres_major(160_009) < POSTGRES_MAJOR_MINIMUM);
-        assert!(postgres_major(170_000) >= POSTGRES_MAJOR_MINIMUM);
-        assert!(postgres_major(180_001) >= POSTGRES_MAJOR_MINIMUM);
-    }
-
-    /// THE CONSUMER-WIRING GUARD (`wamn-0h0g.12.116`).
-    ///
-    /// `wamn-system-db` authenticates as `wamn_system`, which owns
-    /// `registry`, `provisioning` and `identity` under no row-level security.
-    /// Re-pointing this reader at it — the wide credential it used to carry —
-    /// is refused on the ROLE predicate, and refused BEFORE any I/O: the host
-    /// below does not resolve, so a connect-first implementation would fail
-    /// with a connection error instead of this one.
-    #[tokio::test]
-    async fn the_registration_read_refuses_the_wide_system_owner_before_connecting() {
-        let mut args = reader_args_fixture();
-        args.system_database_url =
-            "postgres://wamn_system:pw@sysdb.invalid:5432/wamn_system".into();
-        let Err(error) = read_registration(&args).await else {
-            panic!("the wide system-owner credential was accepted");
-        };
-        assert!(
-            error
-                .downcast_ref::<wamn_postgres::IdentityMismatch>()
-                .is_some()
-        );
-        // The refusal must not echo the input: it carries a password.
-        assert!(!format!("{error}").contains("pw@"));
-    }
-
-    /// Its own targeted generation, conversely, passes the pure condition and only
-    /// then fails on the connection — which is what shows the condition is a
-    /// PREDICATE on the credential and not a blanket refusal.
-    #[tokio::test]
-    async fn the_registration_read_accepts_its_own_generation_and_then_connects() {
-        let mut args = reader_args_fixture();
-        let role = wamn_control_provision::system_reader_login(
-            SystemReader::Registry,
-            &args.org,
-            &args.project,
-            &args.env,
-            "wamn_system",
-        );
-        args.system_database_url = format!("postgres://{role}:pw@sysdb.invalid:5432/wamn_system");
-        let Err(error) = read_registration(&args).await else {
-            panic!("sysdb.invalid must not resolve");
-        };
-        assert!(
-            error
-                .downcast_ref::<wamn_postgres::IdentityMismatch>()
-                .is_none(),
-            "the reader's own generation was refused by the target condition: {error}"
-        );
-    }
-
-    fn reader_args_fixture() -> EventReaderArgs {
-        EventReaderArgs {
-            org: "fixture".into(),
-            project: "widgets".into(),
-            env: "dev".into(),
-            system_database_url: String::new(),
-            cdc_url: "postgres://cdc:pw@db.invalid:5432/project".into(),
-            nats_url: "nats://nats.invalid:4222".into(),
-            nats_tls_ca: None,
-            nats_tls_cert: None,
-            nats_tls_key: None,
-            stream_replicas: 1,
-            dup_window_secs: 120,
-            feedback_secs: 1,
-            stall_threshold_secs: 30,
-            slot_poll_secs: 0,
-            slot_safe_wal_warn_bytes: 268_435_456,
-        }
-    }
 
     #[test]
     fn classify_routes_the_session_fates() {
@@ -2350,96 +1445,6 @@ mod tests {
             )),
             SlotIncident
         );
-    }
-
-    #[test]
-    fn relation_classification_lookup_is_by_oid_in_the_event_schema() {
-        // The pinned lookup: OID-keyed (stable across renames and during
-        // catch-up), qualified by the EVENT's schema — the map lives beside
-        // the tables it describes, so no registry column is needed.
-        assert_eq!(
-            relation_classification_lookup_sql("app"),
-            "SELECT entity.package_id AS entity_package_id, entity.entity_id, excluded.package_id AS excluded_package_id, excluded.relation_id FROM (SELECT $1::oid AS relation_oid) AS lookup LEFT JOIN \"app\".wamn_entities AS entity USING (relation_oid) LEFT JOIN \"app\".wamn_cdc_exclusions AS excluded USING (relation_oid)"
-        );
-        // pgoutput schema names are server-provided — quote-safe embedding.
-        assert_eq!(
-            relation_classification_lookup_sql("we\"ird"),
-            "SELECT entity.package_id AS entity_package_id, entity.entity_id, excluded.package_id AS excluded_package_id, excluded.relation_id FROM (SELECT $1::oid AS relation_oid) AS lookup LEFT JOIN \"we\"\"ird\".wamn_entities AS entity USING (relation_oid) LEFT JOIN \"we\"\"ird\".wamn_cdc_exclusions AS excluded USING (relation_oid)"
-        );
-    }
-
-    #[test]
-    fn resolved_relation_classification_is_cached_as_one_closed_identity() {
-        let mut cache = HashMap::new();
-        let mapping = RelationClassification::Entity(EntityMapping {
-            package_id: "platform_fixture".into(),
-            entity_id: "widget".into(),
-        });
-        assert_eq!(
-            remember_relation_classification(&mut cache, 42, mapping.clone()),
-            mapping
-        );
-        assert_eq!(cache.get(&42), Some(&mapping));
-    }
-
-    #[test]
-    fn excluded_relation_skip_is_counted_by_package_relation_identity() {
-        let excluded = ExcludedRelation {
-            package_id: "platform_fixture".into(),
-            relation_id: "widget_command".into(),
-        };
-        let mut pending = BTreeMap::new();
-        assert_eq!(
-            publishable_entity(
-                RelationClassification::Excluded(excluded.clone()),
-                &mut pending
-            ),
-            None
-        );
-        assert_eq!(
-            publishable_entity(RelationClassification::Excluded(excluded), &mut pending),
-            None
-        );
-        let mut committed = BTreeMap::new();
-        assert!(committed.is_empty(), "uncommitted skips are not observable");
-        merge_relation_counts(&mut committed, pending);
-        assert_eq!(committed.get("platform_fixture::widget_command"), Some(&2));
-    }
-
-    #[test]
-    fn unmapped_managed_relation_refusal_is_fatal_and_names_its_remedy() {
-        let error = ReplicationError::Config(format!(
-            "{UNMAPPED_MANAGED_RELATION_REFUSAL}: schema=\"inventory\" relation_oid=42; remedy: {UNMAPPED_MANAGED_RELATION_REMEDY}"
-        ));
-        assert_eq!(classify(&error), SessionFate::Fatal);
-        let message = error.to_string();
-        assert!(message.contains(UNMAPPED_MANAGED_RELATION_REFUSAL));
-        assert!(message.contains(UNMAPPED_MANAGED_RELATION_REMEDY));
-    }
-
-    #[test]
-    fn row_map_keeps_null_and_absence_distinct() {
-        let row = RowData::from_pairs(vec![
-            ("id", ColumnValue::text("7")),
-            ("note", ColumnValue::Null),
-            // "big" (unchanged TOAST) is ABSENT from the pgoutput row.
-        ]);
-        let map = row_to_map(&row).unwrap();
-        assert_eq!(map.get("id").unwrap(), "7");
-        assert!(map.get("note").unwrap().is_null());
-        assert!(map.get("big").is_none());
-    }
-
-    #[test]
-    fn row_to_map_passes_clean_utf8_through_unchanged() {
-        // Clean UTF-8 (incl. multibyte) maps verbatim — no refusal, no rewrite.
-        let row = RowData::from_pairs(vec![
-            ("id", ColumnValue::text("7")),
-            ("name", ColumnValue::text("naïve café")),
-        ]);
-        let map = row_to_map(&row).expect("clean UTF-8 maps without refusal");
-        assert_eq!(map.get("id").unwrap(), "7");
-        assert_eq!(map.get("name").unwrap(), "naïve café");
     }
 
     #[test]
@@ -2497,552 +1502,6 @@ mod tests {
     // R11 — the shared reopen backoff/cap ladder. These drive the ladder
     // deterministically with synthetic `Instant`s: the "stubbed stream that
     // opens-then-errs" is modelled by feeding `commits == 0` re-opens.
-
-    #[test]
-    fn ladder_open_then_err_flap_terminates_within_the_cap() {
-        // Every session opens then severs without committing (commits == 0) —
-        // the hot-loop R11 describes. The streak guard MUST trip, and within
-        // `max_consecutive` re-opens, not never.
-        let mut ladder = ReopenLadder::new();
-        let cap = ladder.max_consecutive;
-        let t0 = Instant::now();
-        let mut tripped_at = None;
-        for i in 1..=cap {
-            match ladder.note_reopen(t0, 0) {
-                LadderStep::Trip(_) => {
-                    tripped_at = Some(i);
-                    break;
-                }
-                LadderStep::Backoff(d) => {
-                    // Backoff must be bounded and grow with the streak.
-                    assert!(d <= ladder.max_backoff);
-                }
-            }
-        }
-        assert_eq!(
-            tripped_at,
-            Some(cap),
-            "an open-then-err flap must terminate exactly at the consecutive cap"
-        );
-    }
-
-    #[test]
-    fn ladder_productivity_resets_the_streak() {
-        // A session that commits (commits > 0) clears the fast-flap streak, so
-        // the consecutive guard NEVER trips no matter how many productive
-        // re-opens happen. Spaced beyond the rate window so ONLY the streak
-        // guard is exercised here.
-        let mut ladder = ReopenLadder::new();
-        let t0 = Instant::now();
-        for i in 0..100 {
-            let now = t0 + Duration::from_secs(i * 10);
-            assert!(
-                matches!(ladder.note_reopen(now, 1), LadderStep::Backoff(_)),
-                "a productive re-open must never trip the streak guard"
-            );
-        }
-        assert_eq!(ladder.consecutive_failures(), 0);
-    }
-
-    #[test]
-    fn ladder_rate_cap_catches_a_slow_productive_flap() {
-        // The slow flap the streak guard alone misses: every session commits
-        // once (streak stays 0) but re-opens ~1/s, far above the rate cap. The
-        // trailing-window guard must NOT trip while under the cap and MUST trip
-        // exactly once it is exceeded — pinning both directions.
-        let mut ladder = ReopenLadder::new();
-        let cap = ladder.rate_cap as u64;
-        let t0 = Instant::now();
-        let mut trip_at = None;
-        for i in 0..100u64 {
-            let now = t0 + Duration::from_secs(i);
-            match ladder.note_reopen(now, 1) {
-                LadderStep::Backoff(_) => assert!(
-                    i <= cap,
-                    "re-open #{i} is still under the rate cap ({cap}); must not trip yet"
-                ),
-                LadderStep::Trip(_) => {
-                    trip_at = Some(i);
-                    break;
-                }
-            }
-        }
-        // `cap + 1` re-opens (indices 0..=cap) put `cap + 1` instants in the
-        // window; the trip fires on that one, i.e. at index `cap`.
-        assert_eq!(
-            trip_at,
-            Some(cap),
-            "a sustained productive flap must trip the rate cap the moment it is exceeded"
-        );
-        assert_eq!(
-            ladder.consecutive_failures(),
-            0,
-            "the trip came from the rate cap, not the streak"
-        );
-    }
-
-    // E2 — the stall interlock's decision cores.
-
-    #[test]
-    fn stall_level_escalates_at_the_threshold() {
-        let t = Duration::from_secs(30);
-        // Below the threshold: an ordinary retry.
-        assert_eq!(
-            stall_level(Duration::from_secs(29), t),
-            StallLevel::Retrying
-        );
-        // AT the threshold: the distinct alert fires (boundary is load-bearing —
-        // an off-by-one here delays the CDC_PUBLISH_STALLED alert by a whole
-        // retry interval).
-        assert_eq!(stall_level(Duration::from_secs(30), t), StallLevel::Stalled);
-        // Past it: still stalled.
-        assert_eq!(
-            stall_level(Duration::from_secs(600), t),
-            StallLevel::Stalled
-        );
-    }
-
-    #[test]
-    fn slot_health_maps_wal_status_and_the_safe_wal_minimum() {
-        let minimum = 268_435_456; // 256 MiB
-        // reserved with ample headroom → healthy; below the minimum → the early
-        // warning that fires BEFORE the status leaves 'reserved'.
-        assert_eq!(
-            classify_slot_health("reserved", Some(minimum * 4), minimum),
-            SlotHealth::Healthy
-        );
-        assert_eq!(
-            classify_slot_health("reserved", Some(minimum - 1), minimum),
-            SlotHealth::HeadroomLow
-        );
-        // At exactly the minimum it is still healthy (strictly-below warns).
-        assert_eq!(
-            classify_slot_health("reserved", Some(minimum), minimum),
-            SlotHealth::Healthy
-        );
-        // The Postgres wal_status ladder past 'reserved'.
-        assert_eq!(
-            classify_slot_health("extended", None, minimum),
-            SlotHealth::Extended
-        );
-        assert_eq!(
-            classify_slot_health("unreserved", None, minimum),
-            SlotHealth::Unreserved
-        );
-        assert_eq!(
-            classify_slot_health("lost", None, minimum),
-            SlotHealth::Lost
-        );
-        // NULL/unknown status is surfaced, never silently healthy.
-        assert_eq!(
-            classify_slot_health("unknown", None, minimum),
-            SlotHealth::HeadroomLow
-        );
-    }
-
-    #[test]
-    fn stream_config_drift_flags_replicas_dup_window_and_storage() {
-        use jetstream::stream::{Config, StorageType};
-        let matching = source_stream_config(
-            &Triple::new("fixture", "dev", "widgets"),
-            3,
-            Duration::from_secs(120),
-        );
-        assert!(stream_config_matches(&matching, &matching.clone()));
-        for changed in [
-            Config {
-                subjects: vec!["evt.fixture.dev.*.>".into()],
-                ..matching.clone()
-            },
-            Config {
-                num_replicas: 1,
-                ..matching.clone()
-            },
-            Config {
-                duplicate_window: Duration::from_secs(10),
-                ..matching.clone()
-            },
-            Config {
-                storage: StorageType::Memory,
-                ..matching.clone()
-            },
-        ] {
-            assert!(!stream_config_matches(&matching, &changed), "{changed:?}");
-        }
-    }
-
-    #[test]
-    fn delivery_advisory_stream_drift_pins_the_subject_cap() {
-        use jetstream::stream::Config;
-        let matching = advisory_stream_config(&Triple::new("fixture", "dev", "widgets"), 3);
-        assert!(stream_config_matches(&matching, &matching.clone()));
-        for target in [
-            Triple::new("fixture", "dev", "gadgets"),
-            Triple::new("fixture", "prod", "widgets"),
-        ] {
-            assert!(!stream_config_matches(
-                &matching,
-                &advisory_stream_config(&target, 3)
-            ));
-        }
-        assert!(!stream_config_matches(
-            &matching,
-            &Config {
-                max_messages_per_subject: -1,
-                ..matching.clone()
-            }
-        ));
-    }
-
-    // E1 — the publish pipeline. A scripted `AckPublisher` drives the
-    // ordering / in-flight-bound / first-unacked-retry logic without a real
-    // JetStream; `start_paused` makes the retry backoff sleeps free.
-
-    /// A publisher that records every send/settle in call order and can script
-    /// per-row ack failures + duplicate flags. `Ack` is the row index (parsed
-    /// from the msg id), so the log reads as `send:<idx>` / `settle:<idx>` /
-    /// `settlefail:<idx>` in exactly the order the pipeline drove them.
-    struct FakePublisher {
-        settle_fails: std::cell::RefCell<Vec<u32>>,
-        duplicate: std::cell::RefCell<Vec<bool>>,
-        log: std::cell::RefCell<Vec<String>>,
-    }
-
-    impl FakePublisher {
-        fn new(n: usize) -> Self {
-            Self {
-                settle_fails: std::cell::RefCell::new(vec![0; n]),
-                duplicate: std::cell::RefCell::new(vec![false; n]),
-                log: std::cell::RefCell::new(Vec::new()),
-            }
-        }
-        fn fail_settle_once(&self, idx: usize) {
-            self.settle_fails.borrow_mut()[idx] += 1;
-        }
-        fn mark_duplicate(&self, idx: usize) {
-            self.duplicate.borrow_mut()[idx] = true;
-        }
-        fn log(&self) -> Vec<String> {
-            self.log.borrow().clone()
-        }
-        fn settle_order(&self) -> Vec<usize> {
-            self.log
-                .borrow()
-                .iter()
-                .filter_map(|e| e.strip_prefix("settle:").map(|s| s.parse().unwrap()))
-                .collect()
-        }
-        fn send_count(&self, idx: usize) -> usize {
-            let want = format!("send:{idx}");
-            self.log.borrow().iter().filter(|e| **e == want).count()
-        }
-    }
-
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "`AckPublisher` declares `async fn` because the production implementation talks \
-                  to JetStream; this scripted fake answers from memory and still has to match \
-                  the trait"
-    )]
-    impl AckPublisher for FakePublisher {
-        type Ack = usize;
-        async fn send(&self, msg: &PreparedMsg) -> anyhow::Result<usize> {
-            let idx: usize = msg.id.parse().unwrap();
-            self.log.borrow_mut().push(format!("send:{idx}"));
-            Ok(idx)
-        }
-        async fn settle(&self, ack: usize) -> anyhow::Result<PublishAcknowledgment> {
-            let idx = ack;
-            if self.settle_fails.borrow()[idx] > 0 {
-                self.settle_fails.borrow_mut()[idx] -= 1;
-                self.log.borrow_mut().push(format!("settlefail:{idx}"));
-                return Err(anyhow::anyhow!("scripted ack failure at {idx}"));
-            }
-            self.log.borrow_mut().push(format!("settle:{idx}"));
-            Ok(PublishAcknowledgment {
-                duplicate: self.duplicate.borrow()[idx],
-            })
-        }
-    }
-
-    fn prepared(n: usize) -> Vec<PreparedMsg> {
-        (0..n)
-            .map(|i| PreparedMsg {
-                subject: format!("evt.test.{i}"),
-                id: i.to_string(),
-                payload: bytes::Bytes::from_static(b"{}"),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn in_flight_bound_is_pinned_under_the_client_semaphore() {
-        // Drift guard: the held-ack set is bounded well under async-nats' 5000
-        // default max-ack-inflight semaphore, so `send` never blocks on
-        // backpressure while the pipeline holds a batch.
-        assert_eq!(MAX_IN_FLIGHT, 256);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn pipeline_settles_every_ack_in_publish_order() {
-        // The load-bearing invariant: `Acked` is returned only once EVERY held
-        // ack has settled (settle-before-LSN-advance), and the settles are in
-        // publish order (== held-future order == commit order).
-        let fake = FakePublisher::new(5);
-        let msgs = prepared(5);
-        let token = CancellationToken::new();
-        let mut tally = PublishTally::default();
-        let out = publish_txn(
-            &fake,
-            &token,
-            &msgs,
-            10,
-            Duration::from_secs(30),
-            &mut tally,
-        )
-        .await;
-        assert!(matches!(out, PublishOutcome::Acked));
-        assert_eq!(tally.published, 5, "every row is acked before advancing");
-        assert_eq!(tally.deduped, 0);
-        assert_eq!(
-            fake.settle_order(),
-            vec![0, 1, 2, 3, 4],
-            "acks settle in publish order, all of them"
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn in_flight_bound_drains_mid_transaction() {
-        // With a bound of 2 the pipeline MUST settle a batch before it has sent
-        // the whole transaction — a mid-txn drain — rather than holding all
-        // five acks to the end.
-        let fake = FakePublisher::new(5);
-        let msgs = prepared(5);
-        let token = CancellationToken::new();
-        let mut tally = PublishTally::default();
-        let out = publish_txn(&fake, &token, &msgs, 2, Duration::from_secs(30), &mut tally).await;
-        assert!(matches!(out, PublishOutcome::Acked));
-        assert_eq!(tally.published, 5);
-        let log = fake.log();
-        let last_send = log.iter().rposition(|e| e == "send:4").unwrap();
-        let first_settle = log.iter().position(|e| e.starts_with("settle:")).unwrap();
-        assert!(
-            first_settle < last_send,
-            "the in-flight bound must trigger a mid-transaction drain: {log:?}"
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn retry_restarts_from_the_first_unacked_row() {
-        // Row 1's first ack fails; row 2 comes back a duplicate on the retry (it
-        // landed in the first pass but its future was dropped unsettled). The
-        // retry MUST restart at the first unacked row (1), never re-sending the
-        // durably-acked prefix (0), and count each row exactly once.
-        let fake = FakePublisher::new(3);
-        fake.fail_settle_once(1);
-        fake.mark_duplicate(2);
-        let msgs = prepared(3);
-        let token = CancellationToken::new();
-        let mut tally = PublishTally::default();
-        let out = publish_txn(
-            &fake,
-            &token,
-            &msgs,
-            10,
-            Duration::from_secs(30),
-            &mut tally,
-        )
-        .await;
-        assert!(matches!(out, PublishOutcome::Acked));
-        assert_eq!(tally.published, 3, "each row acked exactly once");
-        assert_eq!(tally.deduped, 1, "row 2's redelivery is deduped");
-        assert_eq!(
-            fake.send_count(0),
-            1,
-            "a durably-acked prefix row is never re-sent"
-        );
-        let log = fake.log();
-        let fail_pos = log.iter().position(|e| e == "settlefail:1").unwrap();
-        let resent: Vec<String> = log[fail_pos + 1..]
-            .iter()
-            .filter(|e| e.starts_with("send:"))
-            .cloned()
-            .collect();
-        assert_eq!(
-            resent,
-            vec!["send:1".to_string(), "send:2".to_string()],
-            "the retry re-publishes from the first unacked row, in order: {log:?}"
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn cancellation_mid_pipeline_reports_cancelled() {
-        // A shutdown request during the txn's publish returns CancelledMidRetry
-        // (the caller reports a clean drain summary, LSN unadvanced).
-        let fake = FakePublisher::new(3);
-        let msgs = prepared(3);
-        let token = CancellationToken::new();
-        token.cancel();
-        let mut tally = PublishTally::default();
-        let out = publish_txn(
-            &fake,
-            &token,
-            &msgs,
-            10,
-            Duration::from_secs(30),
-            &mut tally,
-        )
-        .await;
-        assert!(matches!(out, PublishOutcome::CancelledMidRetry));
-    }
-
-    /// E1 LIVE condition (env-conditioned, LOCAL): drive the REAL `JsPublisher` pipeline
-    /// against a throwaway JetStream (`docker run -d nats:2 -js`). Set
-    /// `WAMN_E1_NATS_URL`; ignored by default. Shows the pipelined
-    /// publish lands every message, IN ORDER (stream seq == publish order), and
-    /// that a re-publish of the same `Nats-Msg-Id`s deduplicates. Uses > 256
-    /// messages so a real mid-transaction drain is exercised.
-    #[tokio::test]
-    #[ignore = "requires: env:WAMN_E1_NATS_URL"]
-    async fn pipelined_publish_lands_in_order_and_dedupes_live() {
-        use async_nats::jetstream::consumer::pull::Config as PullConfig;
-        use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
-        use futures_util::StreamExt as _;
-
-        const ORG: &str = "e1";
-        const PROJECT: &str = "app";
-        const ENV: &str = "dev";
-        const N: u64 = 600; // > MAX_IN_FLIGHT: forces a real mid-txn drain
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_E1_NATS_URL");
-
-        let nats_url = std::env::var("WAMN_E1_NATS_URL")
-            .expect("set WAMN_E1_NATS_URL to a throwaway JetStream-enabled NATS");
-
-        let client = async_nats::connect(&nats_url).await.expect("connect nats");
-        let js = jetstream::new(client);
-        let stream_name = format!("EVT_e1test_{}", std::process::id());
-        // Fresh stream each run.
-        let _ = js.delete_stream(&stream_name).await;
-        let stream = js
-            .create_stream(jetstream::stream::Config {
-                name: stream_name.clone(),
-                subjects: vec![stream_subjects(ORG, PROJECT, ENV)],
-                storage: jetstream::stream::StorageType::File,
-                num_replicas: 1,
-                retention: jetstream::stream::RetentionPolicy::Limits,
-                duplicate_window: Duration::from_secs(120),
-                ..Default::default()
-            })
-            .await
-            .expect("create stream");
-
-        // One event per lsn 0..N, in publish order.
-        let msgs: Vec<PreparedMsg> = (0..N)
-            .map(|lsn| {
-                let envelope = Envelope {
-                    op: Op::Insert,
-                    old: None,
-                    new: None,
-                    package_id: "platform_fixture".into(),
-                    entity: "orders".into(),
-                    table: "orders".into(),
-                    lsn,
-                    txid: 1,
-                    commit_ts: chrono::Utc::now(),
-                    causation: None,
-                };
-                PreparedMsg {
-                    subject: subject(ORG, PROJECT, ENV, envelope.entity_segment(), Op::Insert),
-                    id: msg_id(PROJECT, ENV, lsn),
-                    payload: bytes::Bytes::from(serde_json::to_vec(&envelope).unwrap()),
-                }
-            })
-            .collect();
-
-        let token = CancellationToken::new();
-        let publisher = JsPublisher { js: &js };
-
-        // First pass: pipeline the whole batch; every id is fresh, none deduped.
-        let mut tally = PublishTally::default();
-        let out = publish_txn(
-            &publisher,
-            &token,
-            &msgs,
-            MAX_IN_FLIGHT,
-            Duration::from_secs(30),
-            &mut tally,
-        )
-        .await;
-        assert!(matches!(out, PublishOutcome::Acked));
-        assert_eq!(tally.published, N, "every message acked");
-        assert_eq!(tally.deduped, 0, "first publish deduplicates nothing");
-
-        // Read the stream back in stored order and show it equals publish order.
-        let consumer = stream
-            .create_consumer(PullConfig {
-                deliver_policy: DeliverPolicy::All,
-                ack_policy: AckPolicy::Explicit,
-                num_replicas: 1,
-                memory_storage: true,
-                ..Default::default()
-            })
-            .await
-            .expect("create pull consumer");
-        let mut ids = Vec::new();
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while (ids.len() as u64) < N && Instant::now() < deadline {
-            let mut batch = consumer
-                .fetch()
-                .max_messages(
-                    usize::try_from(N).expect("the fixture count fits a usize") - ids.len(),
-                )
-                .messages()
-                .await
-                .expect("fetch");
-            while let Some(msg) = batch.next().await {
-                let msg = msg.expect("message");
-                let id = msg
-                    .headers
-                    .as_ref()
-                    .and_then(|h| h.get(NATS_MESSAGE_ID))
-                    .map(std::string::ToString::to_string)
-                    .unwrap_or_default();
-                ids.push(id);
-                msg.ack().await.expect("ack");
-            }
-        }
-        let want: Vec<String> = (0..N).map(|lsn| msg_id(PROJECT, ENV, lsn)).collect();
-        assert_eq!(
-            ids, want,
-            "stream order == publish order (pipelining kept order)"
-        );
-
-        // Second pass: the identical batch. The duplicate window absorbs every
-        // id — all acked, all flagged duplicate, stream count unchanged.
-        let mut tally2 = PublishTally::default();
-        let out2 = publish_txn(
-            &publisher,
-            &token,
-            &msgs,
-            MAX_IN_FLIGHT,
-            Duration::from_secs(30),
-            &mut tally2,
-        )
-        .await;
-        assert!(matches!(out2, PublishOutcome::Acked));
-        assert_eq!(tally2.published, N);
-        assert_eq!(
-            tally2.deduped, N,
-            "re-publish of the same ids fully deduped"
-        );
-        let info_msgs = {
-            let mut s = js.get_stream(&stream_name).await.expect("get stream");
-            s.info().await.expect("info").state.messages
-        };
-        assert_eq!(info_msgs, N, "dedupe kept the stored count flat");
-
-        js.delete_stream(&stream_name).await.expect("delete stream");
-    }
 }
 
 fn replication_url(input: &str) -> anyhow::Result<String> {

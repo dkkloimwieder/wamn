@@ -90,16 +90,6 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_DRAIN_BOUND_SECONDS")]
     pub drain_bound_seconds: u64,
 
-    /// The workload grace, which the release chart renders: the time to stop
-    /// services and answer operator stops before the host closes ingress.
-    /// Components stop after HTTP drains. This must be shorter than the drain bound.
-    #[arg(
-        long,
-        env = "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS",
-        default_value = "10"
-    )]
-    pub materializer_drain_bound_seconds: u64,
-
     #[arg(long = "scheduler-nats-tls-ca")]
     pub scheduler_nats_tls_ca: Option<PathBuf>,
 
@@ -652,7 +642,6 @@ fn host_credentials(
     database_url: Option<String>,
     executor_platform_url: Option<String>,
     http_admitter_url: Option<String>,
-    event_materializer_url: Option<String>,
     administration_url: Option<String>,
 ) -> ClassCredentials {
     let credentials = database_url.map_or_else(ClassCredentials::default, |input| {
@@ -675,12 +664,6 @@ fn host_credentials(
     let credentials = match http_admitter_url {
         Some(admitter) => credentials.with_class(AuthorityClass::CallableHttp, admitter),
         None => credentials.without_class(AuthorityClass::CallableHttp),
-    };
-    let credentials = match event_materializer_url {
-        Some(materializer) => {
-            credentials.with_class(AuthorityClass::EventMaterializer, materializer)
-        }
-        None => credentials.without_class(AuthorityClass::EventMaterializer),
     };
     match administration_url {
         Some(administration) => {
@@ -895,10 +878,6 @@ async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<a
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        args.materializer_drain_bound_seconds < args.drain_bound_seconds,
-        "materializer_drain_bound_seconds must be shorter than drain_bound_seconds"
-    );
     let startup_started = Instant::now();
     let descriptor_soft_limit = wash_runtime::host::quota::raise_descriptor_limit();
     tracing::info!(
@@ -1099,12 +1078,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // platform.permission read that PAT/session routes require. Connection
     // resolution also uses this class. The manifest-derived condition retains the
     // pool for either demand; a host with neither retains the absent arm.
-    // EventMaterializer uses the same explicit-source rule: only the dedicated
-    // URL names that class, and absence removes the shared guest placeholder.
     let executor_platform_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
-        .ok()
-        .filter(|url| !url.is_empty());
-    let event_materializer_url = std::env::var("WAMN_EVENT_MATERIALIZER_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
     let http_admitter_url = demanded_http_admitter_url(
@@ -1133,14 +1107,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let postgres_credentials = if guest_url.is_some()
         || executor_platform_url.is_some()
         || http_admitter_url.is_some()
-        || event_materializer_url.is_some()
         || administration_url.is_some()
     {
         Some(host_credentials(
             guest_url.clone(),
             executor_platform_url.clone(),
             http_admitter_url,
-            event_materializer_url,
             administration_url.clone(),
         ))
     } else {
@@ -1327,12 +1299,16 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         oci_cache_dir: args.oci_cache_dir.clone(),
         oci_ca_paths: args.oci_ca_paths.clone(),
     };
-    let jetstream_config = WamnJetstreamConfig::from_env().with_nats(data_nats_client.clone());
-    let jetstream = Arc::new(WamnJetstream::new(jetstream_config));
-    jetstream
-        .activate_events()
-        .await
-        .map_err(|error| anyhow::anyhow!("activate declared event streams: {error:?}"))?;
+    let mut jetstream_config = WamnJetstreamConfig::from_env();
+    jetstream_config.event_target = args
+        .org
+        .as_deref()
+        .zip(args.environment.as_deref())
+        .map(|(org, environment)| wamn_registry::Triple::new(org, environment, &args.project));
+    if jetstream_config.event_target.is_some() {
+        jetstream_config = jetstream_config.with_nats(data_nats_client.clone());
+    }
+    let jetstream = Arc::new(WamnJetstream::new(jetstream_config).await?);
     let flow_http = FlowHttpRouting::new(release.clone());
     // The auth memory is the replica of the NATS KV bucket wamn-auth, and
     // the host deletes the keys of its own writes there
@@ -1409,12 +1385,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // Pool config from WAMN_PG_URL + the WAMN_PG_* tuning env; without a URL
         // the plugin still links and returns connection-unavailable on use.
         Arc::<WamnPostgres>::clone(&postgres),
-        // l5i9.17: the wamn:jetstream plugin (E10), first bound by the
-        // Service-first materializer. It uses the host's data connection.
-        // wamn-0h0g.15.95: READER 4 of the loaded release. Delivery is conditioned on the serving
-        // release's registration projection, so an event whose registration
-        // identity is not in this release never reaches a component. The plugin
-        // takes the loaded manifest — it does not load one.
+        // Native event transport shares the host's data connection.
+        // Workflow matches events against the loaded application release.
         Arc::<WamnJetstream>::clone(&jetstream),
         // wamn-0h0g.15.96: READER 3 of the loaded release. Route projection stays wholly
         // in-memory; a PAT-protected route additionally carries the targeted
@@ -1716,11 +1688,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         let _ = stop_queue.send(true);
         wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, async {
             let _ = workload_drain
-                .stop(
-                    &native_host,
-                    None,
-                    Duration::from_secs(args.materializer_drain_bound_seconds),
-                )
+                .stop(&native_host, Duration::from_secs(args.drain_bound_seconds))
                 .await;
             let had_ingress = ingress_handler.is_some();
             let explicit_stop = match ingress_handler.as_ref() {
@@ -1801,11 +1769,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             // Component replies report Stopping until HTTP drains (R20).
             // Past the operator wait bound, the host drain goes on.
             if let Err(error) = workload_drain
-                .stop(
-                    &native_host,
-                    None,
-                    Duration::from_secs(args.materializer_drain_bound_seconds),
-                )
+                .stop(&native_host, Duration::from_secs(args.drain_bound_seconds))
                 .await
             {
                 tracing::warn!(%error, "workload drain");
@@ -2622,7 +2586,6 @@ host:
     const GUEST: &str = "postgres://guest@h/db";
     const PLATFORM: &str = "postgres://platform@h/db";
     const ADMITTER: &str = "postgres://admitter@h/db";
-    const MATERIALIZER: &str = "postgres://materializer@h/db";
     const ADMINISTRATION: &str = "postgres://administration@h/db";
 
     /// THE GUEST URL IS NOT A CUT-OVER FAMILY'S CREDENTIAL (`wamn-0h0g.22.31`,
@@ -2639,14 +2602,12 @@ host:
             Some(GUEST.to_owned()),
             Some(PLATFORM.to_owned()),
             Some(ADMITTER.to_owned()),
-            Some(MATERIALIZER.to_owned()),
             Some(ADMINISTRATION.to_owned()),
         );
         for class in AuthorityClass::ALL {
             let expected = match class {
                 AuthorityClass::ExecutorPlatform => PLATFORM,
                 AuthorityClass::CallableHttp => ADMITTER,
-                AuthorityClass::EventMaterializer => MATERIALIZER,
                 AuthorityClass::Administration => ADMINISTRATION,
                 AuthorityClass::GuestSql | AuthorityClass::DynamicSql => GUEST,
             };
@@ -2672,7 +2633,6 @@ host:
             Some(GUEST.to_owned()),
             Some(PLATFORM.to_owned()),
             None,
-            Some(MATERIALIZER.to_owned()),
             None,
         );
         assert_eq!(
@@ -2691,7 +2651,6 @@ host:
             Some(GUEST.to_owned()),
             None,
             Some(ADMITTER.to_owned()),
-            Some(MATERIALIZER.to_owned()),
             None,
         );
         assert_eq!(
@@ -2706,41 +2665,14 @@ host:
             "unnaming executor-platform must not disturb another class"
         );
 
-        let no_materializer = host_credentials(
-            Some(GUEST.to_owned()),
-            Some(PLATFORM.to_owned()),
-            Some(ADMITTER.to_owned()),
-            None,
-            None,
-        );
-        assert_eq!(
-            no_materializer.url(AuthorityClass::EventMaterializer),
-            None,
-            "an unprovisioned materializer must not borrow the guest credential"
-        );
-        assert_eq!(
-            no_materializer.url(AuthorityClass::CallableHttp),
-            Some(ADMITTER),
-            "unnaming the materializer must not disturb another class"
-        );
-
-        let neither = host_credentials(Some(GUEST.to_owned()), None, None, None, None);
+        let neither = host_credentials(Some(GUEST.to_owned()), None, None, None);
         assert_eq!(neither.url(AuthorityClass::ExecutorPlatform), None);
         assert_eq!(neither.url(AuthorityClass::CallableHttp), None);
-        assert_eq!(neither.url(AuthorityClass::EventMaterializer), None);
         assert_eq!(
             neither.url(AuthorityClass::GuestSql),
             Some(GUEST),
             "the guest class keeps its own credential either way"
         );
-
-        let materializer_only =
-            host_credentials(None, None, None, Some(MATERIALIZER.to_owned()), None);
-        assert_eq!(
-            materializer_only.url(AuthorityClass::EventMaterializer),
-            Some(MATERIALIZER)
-        );
-        assert_eq!(materializer_only.url(AuthorityClass::GuestSql), None);
     }
 
     #[test]

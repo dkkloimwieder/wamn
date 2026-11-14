@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-event-wire.workspace = true
 anyhow.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "json"] }
@@ -25,7 +26,6 @@ wamn-control-provision.workspace = true
 wamn-engine.workspace = true
 wamn-environment = { workspace = true, features = ["ops"] }
 wamn-platform-install.workspace = true
-wamn-event-reg.workspace = true
 wamn-workflow.workspace = true
 wamn-package-control.workspace = true
 async-trait.workspace = true

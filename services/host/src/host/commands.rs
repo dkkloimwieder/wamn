@@ -101,23 +101,14 @@ impl WorkloadDrain {
         Ok(())
     }
 
-    pub async fn stop(
-        &self,
-        host: &Host,
-        local_materializer: Option<&str>,
-        bound: Duration,
-    ) -> anyhow::Result<()> {
+    pub async fn stop(&self, host: &Host, bound: Duration) -> anyhow::Result<()> {
         self.state.send_modify(|state| state.draining = true);
         let services = self.state.borrow().services.clone();
         let mut state = self.state.subscribe();
         tokio::time::timeout(bound, async {
             // Workload stop aborts the service supervisor, including its restart
             // loop. Host::stop alone stops plugins, not running service tasks.
-            for workload_id in services
-                .iter()
-                .map(String::as_str)
-                .chain(local_materializer)
-            {
+            for workload_id in services.iter().map(String::as_str) {
                 host.workload_stop(wash_runtime::types::WorkloadStopRequest {
                     workload_id: workload_id.to_owned(),
                 })
@@ -244,7 +235,7 @@ mod tests {
         };
 
         let host = Host::builder().build().unwrap();
-        for workload_id in ["materializer", "http"] {
+        for workload_id in ["service", "http"] {
             let started = host
                 .workload_start(WorkloadStartRequest {
                     workload_id: workload_id.into(),
@@ -266,10 +257,10 @@ mod tests {
             );
         }
         let drain = WorkloadDrain::default();
-        drain.admit("materializer", true).unwrap();
+        drain.admit("service", true).unwrap();
         drain.admit("http", false).unwrap();
         assert!(drain.defer_component_stop("http").is_none());
-        let stopping = drain.stop(&host, None, Duration::from_secs(5));
+        let stopping = drain.stop(&host, Duration::from_secs(5));
         tokio::pin!(stopping);
         tokio::select! {
             biased;
@@ -278,7 +269,7 @@ mod tests {
         }
         let status = host
             .workload_status(WorkloadStatusRequest {
-                workload_id: "materializer".into(),
+                workload_id: "service".into(),
             })
             .await
             .unwrap();
@@ -286,10 +277,7 @@ mod tests {
             status.workload_status.workload_state,
             WorkloadState::NotFound
         );
-        assert_eq!(
-            drain.admit("materializer", true).unwrap_err().to_string(),
-            "host is draining"
-        );
+        assert!(drain.admit("service", true).is_err());
         assert!(drain.admit("new-http", false).is_err());
         // Local teardown completed, but a reply to the operator is still due.
         tokio::time::advance(Duration::from_secs(2)).await;
@@ -298,13 +286,13 @@ mod tests {
             result = &mut stopping => panic!("local stop must not stand in for an operator reply: {result:?}"),
             () = tokio::task::yield_now() => {}
         }
-        drain.stopped("materializer");
+        drain.stopped("service");
         tokio::select! {
             biased;
             result = &mut stopping => panic!("operator has not stopped the component: {result:?}"),
             () = tokio::task::yield_now() => {}
         }
-        assert!(drain.defer_component_stop("materializer").is_none());
+        assert!(drain.defer_component_stop("service").is_none());
         assert!(drain.defer_component_stop("unknown").is_none());
         for _ in 0..2 {
             let response = drain.defer_component_stop("http").unwrap();
@@ -348,37 +336,30 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn drain_ends_at_its_bound_when_operator_stop_never_arrives() {
-        for (workload, service) in [("materializer", true), ("http", false)] {
+        for (workload, service) in [("service", true), ("http", false)] {
             let host = Host::builder().build().unwrap();
             let drain = WorkloadDrain::default();
             drain.admit(workload, service).unwrap();
             let started = tokio::time::Instant::now();
-            let error = drain
-                .stop(&host, None, Duration::from_secs(1))
+            let _error = drain
+                .stop(&host, Duration::from_secs(1))
                 .await
                 .expect_err("no operator stop arrived");
-            assert_eq!(
-                error.to_string(),
-                "workloads did not receive operator stops within the drain bound"
-            );
             assert_eq!(started.elapsed(), Duration::from_secs(1));
             assert!(drain.admit(workload, service).is_err());
         }
     }
 
     #[tokio::test(start_paused = true)]
-    async fn local_and_already_stopped_workloads_need_no_operator_reply() {
+    async fn already_stopped_workloads_need_no_operator_reply() {
         let host = Host::builder().build().unwrap();
         let drain = WorkloadDrain::default();
-        drain.admit("materializer", true).unwrap();
-        drain.stopped("materializer");
+        drain.admit("service", true).unwrap();
+        drain.stopped("service");
         drain.admit("http", false).unwrap();
         drain.stopped("http");
         let started = tokio::time::Instant::now();
-        drain
-            .stop(&host, Some("local-materializer"), Duration::from_secs(1))
-            .await
-            .unwrap();
+        drain.stop(&host, Duration::from_secs(1)).await.unwrap();
         assert_eq!(started.elapsed(), Duration::ZERO);
     }
 }

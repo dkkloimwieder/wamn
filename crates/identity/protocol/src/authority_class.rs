@@ -24,8 +24,6 @@ pub const QUERY_ROLE: &str = "wamn_query";
 pub const EXECUTOR_PLATFORM_ROLE: &str = "wamn_executor_platform";
 /// Stable database role for wamn_http_admitter.
 pub const HTTP_ADMITTER_ROLE: &str = "wamn_http_admitter";
-/// Stable database role for wamn_event_materializer.
-pub const EVENT_MATERIALIZER_ROLE: &str = "wamn_event_materializer";
 /// Stable database role for wamn_administration.
 pub const ADMINISTRATION_ROLE: &str = "wamn_administration";
 
@@ -48,8 +46,6 @@ pub enum AuthorityClass {
     ExecutorPlatform,
     /// Connection-HTTP authorization and effect-snapshot operations.
     CallableHttp,
-    /// Materializer-owned event consumption and admission SQL.
-    EventMaterializer,
     /// Host-run administration routes and their writes of the application
     /// authorization relations (docs/architecture/data-access.md#actors).
     Administration,
@@ -57,12 +53,11 @@ pub enum AuthorityClass {
 
 impl AuthorityClass {
     /// Every class, in declaration order, for table-driven tests.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 5] = [
         Self::GuestSql,
         Self::DynamicSql,
         Self::ExecutorPlatform,
         Self::CallableHttp,
-        Self::EventMaterializer,
         Self::Administration,
     ];
 
@@ -73,7 +68,6 @@ impl AuthorityClass {
             Self::DynamicSql => QUERY_ROLE,
             Self::ExecutorPlatform => EXECUTOR_PLATFORM_ROLE,
             Self::CallableHttp => HTTP_ADMITTER_ROLE,
-            Self::EventMaterializer => EVENT_MATERIALIZER_ROLE,
             Self::Administration => ADMINISTRATION_ROLE,
         }
     }
@@ -88,7 +82,6 @@ impl AuthorityClass {
             Self::DynamicSql => "dynamic-sql",
             Self::ExecutorPlatform => "executor-platform",
             Self::CallableHttp => "callable-http",
-            Self::EventMaterializer => "event-materializer",
             Self::Administration => "administration",
         }
     }

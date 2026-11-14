@@ -969,7 +969,7 @@ fn append_host_workloads(
         .as_mut()
         .and_then(|response| response["items"].as_array_mut())
     {
-        // The application renderer and materializer writer use this placement selector.
+        // The application renderer and environment host use this placement selector.
         items.retain(|object| {
             object
                 .pointer("/spec/template/spec/hostSelector/hostgroup")

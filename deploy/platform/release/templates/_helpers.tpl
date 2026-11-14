@@ -23,5 +23,4 @@ wamn.release: {{ required "runtime-operator.runtime.podLabels.wamn.release is re
 {{- $_ := required "runtime-operator.runtime.image.repository is required: stamp the platform image set" $image.repository }}
 {{- $_ := required "runtime-operator.runtime.image.tag is required: stamp the platform image set" $image.tag }}
 {{- $_ := required "platform.roles.http.image is required: stamp the platform image set" .Values.platform.roles.http.image }}
-{{- $_ := required "platform.roles.materializer.image is required: stamp the platform image set" .Values.platform.roles.materializer.image }}
 {{- end }}

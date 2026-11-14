@@ -232,7 +232,7 @@ pub async fn reset_deployed(
             .await?;
             ensure!(replication, "reset requires the capture login");
             stop_users(&platform, &document).await?;
-            crate::enable_cdc_project_env::discard_backlog(
+            discard_backlog(
                 &platform.system_database_url,
                 &credentials.capture,
                 &document.triple(),
@@ -256,22 +256,14 @@ pub async fn reset_deployed(
 }
 
 async fn stop_users(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<()> {
-    crate::enable_cdc_project_env::stop_reader(platform, &document.triple()).await?;
-    let shared = ensure::environment_host_name(&document.org, &document.project, &document.env)?;
-    ensure::kubectl(
-        platform,
+    wamn_events::lifecycle::stop_reader(
+        &platform.target.kubeconfig,
+        &platform.target.context,
         &platform.target.namespace,
-        &[
-            "delete",
-            "workloaddeployment",
-            &wamn_registry::name::resource_suffix(&shared, "materializer"),
-            "--ignore-not-found",
-            "--wait=true",
-            "--timeout=120s",
-        ],
-        None,
+        &document.triple(),
     )
     .await?;
+    let shared = ensure::environment_host_name(&document.org, &document.project, &document.env)?;
     let mut groups = std::collections::BTreeSet::from([shared]);
     for application in document.applications.keys() {
         groups.insert(analyse::application_release_name(document, application)?);
@@ -328,7 +320,7 @@ async fn resume_users(
         .await?
         .context("installed platform")?
         .values;
-    ensure::provision_materializer(platform, &control, document).await?;
+    ensure::provision_environment_host(platform, &control, document).await?;
     Ok(())
 }
 
@@ -384,4 +376,20 @@ pub fn stop_values(values: &mut Value) -> anyhow::Result<()> {
         group["replicas"] = 0.into();
     }
     Ok(())
+}
+
+async fn discard_backlog(
+    system_url: &str,
+    admin_url: &str,
+    triple: &wamn_registry::Triple,
+) -> anyhow::Result<()> {
+    let instance =
+        crate::provision_project_env::read_project_env_instance(system_url, triple).await?;
+    let slot = wamn_control_provision::cdc_object_name(
+        &triple.org,
+        &triple.project,
+        &triple.env,
+        &instance,
+    );
+    wamn_events::lifecycle::discard_backlog(admin_url, &slot).await
 }

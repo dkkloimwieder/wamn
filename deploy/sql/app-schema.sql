@@ -206,7 +206,6 @@ CREATE TABLE platform."user" (
                     THEN COALESCE((display_name, id) IN (
                              ('wamn:provisioning', '770df186-ac15-579e-b46b-c297cae2011b'::uuid),
                              ('wamn:apply-package', '7695180f-4b9a-581f-84ef-d7e9cdbd2b77'::uuid),
-                             ('wamn:materializer', '968bd0cc-e612-5d29-9d6c-af1993b8df0a'::uuid),
                              ('wamn:executor', 'd318d033-29ea-5cb0-ab56-24340413fbcc'::uuid),
                              ('wamn:audit-retention', '34cbd151-990e-5800-93be-4fba8878b943'::uuid)),
                          false)

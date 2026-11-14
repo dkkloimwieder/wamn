@@ -2,6 +2,7 @@
 
 pub mod analyse;
 pub mod bindings;
+pub mod capture_gap;
 mod clients;
 pub mod connections;
 pub mod delete;
