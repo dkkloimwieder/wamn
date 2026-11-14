@@ -481,6 +481,9 @@ impl Fixture {
             OperationHost::new(
                 Arc::clone(&self.engine),
                 Arc::clone(&self.postgres),
+                Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+                    &self.postgres,
+                ))),
                 Arc::new(HttpTransport::new().unwrap()),
                 Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
                     Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),

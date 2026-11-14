@@ -1205,6 +1205,9 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     let operations = Arc::new(OperationHost::new(
         Arc::new(wamn_engine::build_engine(&[])?),
         Arc::clone(&fixture.postgres),
+        Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+            &fixture.postgres,
+        ))),
         Arc::new(HttpTransport::new()?),
         Arc::new(ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),

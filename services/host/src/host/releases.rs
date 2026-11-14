@@ -31,6 +31,7 @@ type ReleaseKey = (String, String);
 pub(super) struct Resources {
     pub engine: Arc<Engine>,
     pub postgres: Arc<WamnPostgres>,
+    pub blobstore: Arc<wamn_blobstore::plugin::WamnBlobstore>,
     pub transport: Arc<HttpTransport>,
     pub facts: Arc<ConnectionFacts>,
     pub logging: Arc<TracingLogger>,
@@ -188,6 +189,7 @@ impl Releases {
         let operations = Arc::new(OperationHost::new(
             Arc::clone(&r.engine),
             Arc::clone(&r.postgres),
+            Arc::clone(&r.blobstore),
             Arc::clone(&r.transport),
             Arc::clone(&r.facts),
             Arc::clone(&r.logging),
@@ -220,9 +222,7 @@ impl Releases {
         let files = Arc::new(wamn_execution_host::file_route::FileRoutes::new(
             Arc::clone(&operations.context),
             Arc::clone(&r.postgres),
-            Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
-                &r.postgres,
-            ))),
+            Arc::clone(&r.blobstore),
             connections,
             r.configuration.project.clone(),
             r.administration_url.clone(),

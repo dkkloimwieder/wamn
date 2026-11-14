@@ -167,6 +167,7 @@ pub struct OperationHost {
     integrations: std::sync::OnceLock<Arc<wamn_integrations::Integrations>>,
     engine: Arc<Engine>,
     pub postgres: Arc<WamnPostgres>,
+    blobstore: Arc<WamnBlobstore>,
     /// Shared by every driver in this process, independently of fresh stores.
     http_transport: Arc<HttpTransport>,
     pub context: Arc<wamn_postgres_capability::invocation::ReleaseContext>,
@@ -244,10 +245,12 @@ impl OperationHost {
         clippy::too_many_arguments,
         reason = "each host-owned capability is an independent production dependency"
     )]
+    /// Hosts of one project share its blobstore plugin across releases.
     /// Every host in the same process must receive the same HTTP transport.
     pub fn new(
         engine: Arc<Engine>,
         postgres: Arc<WamnPostgres>,
+        blobstore: Arc<WamnBlobstore>,
         http_transport: Arc<HttpTransport>,
         facts: Arc<ConnectionFacts>,
         logging: Arc<TracingLogger>,
@@ -268,6 +271,7 @@ impl OperationHost {
         Ok(Self {
             engine,
             postgres,
+            blobstore,
             http_transport,
             integrations: std::sync::OnceLock::new(),
             context: Arc::new(wamn_postgres_capability::invocation::ReleaseContext::new(
@@ -447,7 +451,7 @@ impl OperationHost {
                     Arc::clone(&self.http_transport),
                     Arc::clone(&self.allowed_hosts),
                 )),
-                blobstore: Arc::new(WamnBlobstore::new(Arc::clone(&self.postgres))),
+                blobstore: Arc::clone(&self.blobstore),
                 context: Arc::clone(&self.context),
                 release: Arc::clone(&self.release),
                 project: self.project.clone(),

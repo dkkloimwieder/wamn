@@ -346,7 +346,8 @@ async fn build_with_credentials(
     let driver = Arc::new(RouterDriver::new(Arc::new(
         OperationHost::new(
             engine,
-            postgres,
+            Arc::clone(&postgres),
+            Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(postgres)),
             Arc::new(HttpTransport::new().context("build the process HTTP transport")?),
             facts,
             Arc::new(TracingLogger::default()), // The upstream is a loopback origin the test owns; the cluster

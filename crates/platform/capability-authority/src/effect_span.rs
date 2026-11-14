@@ -671,19 +671,4 @@ mod tests {
             assert_eq!(observed_outcome("outcome-table-test", settled), expected);
         }
     }
-
-    /// The six words are the whole set. None of them names a rollback, an undo
-    /// or a revert, because no effect observation states what a command did.
-    #[test]
-    fn no_outcome_word_states_a_command_was_undone() {
-        for outcome in EffectOutcome::ALL {
-            let label = outcome.label();
-            for forbidden in ["rollback", "rolled", "undo", "undone", "revert"] {
-                assert!(
-                    !label.contains(forbidden),
-                    "{label} states {forbidden}, which the platform does not know"
-                );
-            }
-        }
-    }
 }

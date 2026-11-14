@@ -179,7 +179,7 @@ async fn run_component(component_path: &Path, guest_url: String) -> anyhow::Resu
     let mut linker: Linker<SharedCtx> = Linker::new(raw);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
     wasmtime_wasi::p3::add_to_linker(&mut linker)?;
-    wamn_postgres::add_to_linker(&mut linker)?;
+    wamn_postgres_capability::add_to_linker(&mut linker)?;
 
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(WAMN_POSTGRES_ID, postgres);

@@ -39,6 +39,7 @@ serde_json = { workspace = true }
 # The workflow contract parks, releases, and lists runs in the run plane.
 
 [dev-dependencies]
+wamn-blobstore.workspace = true
 uuid.workspace = true
 wash-runtime = { workspace = true, features = ["wasi-logging"] }
 wamn-digest.workspace = true

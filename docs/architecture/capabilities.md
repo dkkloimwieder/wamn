@@ -263,7 +263,8 @@ Guest writes and native file uploads accept at most 64 MiB.
 Native uploads stream through multipart storage and abort unfinished uploads on cancellation.
 A storage handle retains its connection generation.
 Each operation refuses a disabled connection or a changed generation before calling storage.
-The host shares storage clients by connection and generation in a bounded cache.
+The blobstore plugin shares storage clients by connection and generation in a bounded cache.
+Each project retains one plugin for guest access and file routes across resident releases.
 Range reads fetch only the requested bytes.
 A partial stream, over-limit body, or cancellation cannot publish a partial object.
 The contract's own error variants carry backend failures.

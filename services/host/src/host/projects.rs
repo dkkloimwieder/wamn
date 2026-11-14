@@ -347,6 +347,9 @@ impl Environment {
             releases::Resources {
                 engine: Arc::clone(&self.engine),
                 postgres: Arc::clone(&self.postgres),
+                blobstore: Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+                    &self.postgres,
+                ))),
                 transport: Arc::clone(&self.transport),
                 facts,
                 logging: Arc::clone(&self.logging),

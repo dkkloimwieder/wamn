@@ -521,6 +521,9 @@ pub async fn invoke(
     let host = OperationHost::new(
         Arc::new(wamn_engine::build_engine(&[])?),
         Arc::clone(&postgres),
+        Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+            &postgres,
+        ))),
         Arc::new(HttpTransport::new()?),
         Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
             Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
