@@ -1,0 +1,9 @@
+{{- if or .Values.projects .Values.credentialAccess }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-projects
+  namespace: {{ .Release.Namespace }}
+data:
+  projects.json: {{ toJson .Values.projects | quote }}
+{{- end }}

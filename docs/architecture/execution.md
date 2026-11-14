@@ -137,7 +137,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:org-admin/grant@0.9.0` | Takes `principal_id` of an active member and writes only the explicit `org-admin` grant. Authorization derives access below it. |
 | `wamn-control:org-admin/revoke@0.9.0` | Takes `principal_id` and removes only `org-admin`. Other explicit grants stay. |
 | `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: environments of the project as `{name, state}`. |
-| `wamn-control:environment/status@0.9.0` | Answers the digest, rollout, workload conditions, and live set of one environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
+| `wamn-control:environment/status@0.9.0` | Answers the shared host rollout, workload conditions, resident releases, and unfinished-run pins for one project of an environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
 | `wamn-control:connection/test@0.9.0` | Requires project-admin authority. Takes `project`, `env`, integration `name`, candidate `parameters`, optional `credential`, and optional `version`. Answers `{ok: true}` or `{ok: false, error}`. Writes nothing and stops after ten seconds. |
 | `wamn-control:project/create@0.9.0` | Creates a project with no environment. |
 | `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of a release installed in that environment. Answers `operations`: for each export of the release's components, the members it `reaches`, each with the exports it holds, `imprecise` when it is a base member's whole statement set, and per statement the relations it reads, writes, deletes and locks, derived from the release's SQL over the environment's relation columns, and `roles`: each role of the environment with the `operations` it holds, `admin` every operation of the release. A view read reports the view columns and each base table with the columns that the view depends on through `pg_depend`. Writes nothing. |
@@ -160,9 +160,12 @@ The first two counts share one query through the existing environment administra
 Each count read has a two-second timeout, and both reads run concurrently.
 A failed or timed-out read logs a warning and returns null for its counts, without failing the runtime status answer.
 
-The control host selects one status source. Kubernetes reads the release namespace.
-With `--local-control`, the local source reads the development loop's endpoint record and queries its selected host through NATS.
-Both sources return the same digest, rollout, workloads, and live set.
+The control service reads the shared host Deployment and application WorkloadDeployments from the org namespace.
+It reads `/_wamn/residency` on each live host through the Kubernetes pod proxy.
+The host reports each project's loaded application releases and unfinished runs, including releases that failed to load.
+An unavailable project remains unknown and does not hide another project's report.
+The `residency` result lists the application, manifest digest, loaded state, and run IDs.
+The host carries no single release digest. Application Helm histories remain independent.
 
 An application route runs under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
@@ -746,7 +749,7 @@ One read of `platform."user"`, `platform.user_role` and `platform.permission` an
 Invocation binds and workflow callers use the guest login. Route authentication uses the callable-HTTP login.
 Both use the same grants reader and memory value.
 A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
-Each host watches the keys of its project and keeps each value it sees, so a fact one host reads serves every host of the project.
+The environment host watches each project through that project's event client and keeps its connection facts separate. A fact read for one project never supplies another project's authority.
 The control host serves every project, so it watches every key.
 Each environment document declares the project's `revocation_seconds` and each application's `revocation_seconds`.
 Both values are required nonnegative integers. Zero disables caching.
@@ -1492,3 +1495,22 @@ A cursor of another model, or one that does not decode, refuses with `invalid_in
 The device listens only on a loopback address. A non-loopback address refuses before startup.
 The device has no request counter that sheds calls. Its instance pool retains warm instances only.
 Calls beyond the warm pool can use one-shot stores.
+
+### Environment placement
+
+One native runtime serves every project of its org and environment.
+The environment chart projects the allowed project names through `--projects`.
+Each project has its own database connection configuration, connection reader, and event client certificate.
+The host refuses a workload outside that project set before it loads components.
+Project preparation retries independently. A failed project or release does not stop another project's queues.
+
+Each application owns its execution objects even when applications use the same manifest digest.
+Only verified manifest bytes share a cache. Every load first authorizes the digest against its own project catalog.
+Current releases and releases pinned by unfinished runs stay loaded together.
+Release preparation and queue execution remain independent.
+Authorization reads remain live, so one project cannot set another project's cache lifetime.
+
+Reset and deletion remove only the selected project from the host projection.
+They wait for pods that mount that project's configuration to stop before replacing or removing its database.
+Other projects remain in the shared host projection. The last project removes the host release.
+Lifecycle exclusion uses org and environment. Application locks still include their project and application.

@@ -9,7 +9,6 @@ pub mod audit_retention;
 pub mod connection;
 pub mod environment_names;
 mod error;
-pub mod host_credentials;
 pub mod identity_role;
 pub mod migration;
 pub mod migrations;

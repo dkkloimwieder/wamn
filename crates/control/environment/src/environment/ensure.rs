@@ -70,7 +70,6 @@ pub async fn provision_resources(
         &outcome.database,
     )
     .await?;
-    ensure_credential_access(platform, document, &cluster).await?;
     wamn_platform_install::environment::apply(
         &platform.target,
         &platform.chart.join("platform/environment"),
@@ -153,15 +152,15 @@ pub(super) async fn resources_in_place(
     {
         return Ok(false);
     }
-    let name = environment_host_name(&document.org, &document.project, &document.env)?;
+    let name = environment_host_name(&document.org, &document.env)?;
     if !super::analyse::release_present(platform, &name).await? {
         return Ok(false);
     }
     Ok(true)
 }
 
-pub(super) fn environment_host_name(org: &str, project: &str, env: &str) -> anyhow::Result<String> {
-    Ok(wamn_control_provision::environment_names::environment_resource_name(org, project, env)?)
+pub(super) fn environment_host_name(org: &str, env: &str) -> anyhow::Result<String> {
+    Ok(wamn_registry::name::environment_host_name(org, env)?)
 }
 
 /// Render the shared host without application release arguments or labels.
@@ -176,15 +175,10 @@ pub fn environment_host_values(
 ) -> anyhow::Result<serde_json::Value> {
     use serde_json::json;
     use wamn_release_control::release_chart;
-    let group = super::write::plan::host_group(
-        host_group.unwrap_or_default(),
-        &document.org,
-        &document.project,
-        &document.env,
-    )?;
+    let group = super::write::plan::host_group(host_group.unwrap_or_default())?;
     let registry_arguments = super::write::plan::registry_arguments(&group);
     let mut group = serde_json::to_value(group)?;
-    let name = environment_host_name(&document.org, &document.project, &document.env)?;
+    let name = environment_host_name(&document.org, &document.env)?;
     for field in [
         "name",
         "namespace",
@@ -202,6 +196,7 @@ pub fn environment_host_values(
     let mut arguments = vec![
         format!("--environment={}", document.env),
         "--files-addr=0.0.0.0:8082".into(),
+        "--projects=/etc/wamn/environment/projects.json".into(),
     ];
     arguments.extend(registry_arguments);
     if insecure_registry {
@@ -249,7 +244,6 @@ pub fn environment_host_values(
     }
     for (key, value) in [
         ("WAMN_ORG", document.org.clone()),
-        ("WAMN_PROJECT", document.project.clone()),
         ("WAMN_DRAIN_BOUND_SECONDS", drain_bound_seconds.to_string()),
     ]
     .into_iter()
@@ -264,18 +258,51 @@ pub fn environment_host_values(
     if let Some(image) = super::runtime::host_image(installed, group["name"].as_str().unwrap()) {
         group["image"] = image.clone();
     }
-    let project_env_key =
-        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     Ok(json!({
         "roles": [],
         "runtime-operator": {"runtime": {
             "terminationGracePeriodSeconds": drain_bound_seconds,
-            "serviceAccount": {"create":false, "name": wamn_registry::service_account_name(&document.org, &document.project, &document.env)},
+            "podAnnotations": {"wamn.environment":format!("{}/{}",document.org,document.env)},
+            "serviceAccount": {"create":false, "name": wamn_registry::name::environment_service_account(&document.org, &document.env)},
             "automountServiceAccountToken": true,
             "hostGroups": [group]
         }},
-        "global": {"certificates": {"dataCertSecretName": wamn_registry::name::nats_certificate(&project_env_key)}}
+        "global": {"certificates": {"dataCertSecretName": "wasmcloud-runtime-tls"}}
     }))
+}
+
+/// Project membership and mounted references have one owner in the environment chart.
+fn configure_projects(
+    values: &mut serde_json::Value,
+    document: &EnvironmentDocument,
+    projects: &[String],
+    name: &str,
+) -> anyhow::Result<()> {
+    use serde_json::json;
+    values["projects"] = json!(projects);
+    let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
+    let mut volumes =
+        vec![json!({"name":"projects","configMap":{"name":format!("{name}-projects")}})];
+    let mut mounts =
+        vec![json!({"name":"projects","mountPath":"/etc/wamn/environment","readOnly":true})];
+    for project in projects {
+        let key = wamn_registry::project_env_key(&document.org, project, &document.env);
+        volumes.push(json!({"name":format!("project-{project}"),"configMap":{"name":wamn_control_provision::project_env_secret_name(&document.org,project,&document.env),"optional":true}}));
+        mounts.push(json!({"name":format!("project-{project}"),"mountPath":format!("/etc/wamn/environment/{project}"),"readOnly":true}));
+        volumes.push(json!({"name":format!("events-{project}"),"secret":{"secretName":wamn_registry::name::nats_certificate(&key),"optional":true}}));
+        mounts.push(json!({"name":format!("events-{project}"),"mountPath":format!("/etc/wamn/environment/{project}/nats"),"readOnly":true}));
+    }
+    for (field, entries) in [("volumes", volumes), ("volumeMounts", mounts)] {
+        group
+            .as_object_mut()
+            .context("host group is not an object")?
+            .entry(field)
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .context("host references are not a list")?
+            .extend(entries);
+    }
+    Ok(())
 }
 
 pub(super) async fn provision_environment_host(
@@ -284,12 +311,18 @@ pub(super) async fn provision_environment_host(
     document: &EnvironmentDocument,
 ) -> anyhow::Result<()> {
     let mut system = connect(&platform.system_database_url).await?;
-    let policy = super::analyse::read_policy(&mut system, &document.org, &document.policy).await?;
+    let policy_name: String =
+        sqlx::query_scalar("SELECT policy_name FROM registry.environments WHERE org=$1 AND env=$2")
+            .bind(&document.org)
+            .bind(&document.env)
+            .fetch_one(&mut system)
+            .await?;
+    let policy = super::analyse::read_policy(&mut system, &document.org, &policy_name).await?;
     let events = platform
         .events
         .as_ref()
         .context("environment provisioning requires the event broker")?;
-    let name = environment_host_name(&document.org, &document.project, &document.env)?;
+    let name = environment_host_name(&document.org, &document.env)?;
     let installed = crate::platform::resources::release_values(
         &platform.target,
         &platform.target.namespace,
@@ -303,17 +336,8 @@ pub(super) async fn provision_environment_host(
             .as_deref()
             .context("missing component registry")?,
     )?;
-    let mut group = super::runtime::host_group(control, None, &component_base)?;
-    let instance =
-        read_project_env_instance(&platform.system_database_url, &document.triple()).await?;
-    group
-        .get_mut("env")
-        .and_then(serde_yaml::Value::as_sequence_mut)
-        .context("host variables are not a list")?
-        .push(serde_yaml::to_value(
-            serde_json::json!({"name":"WAMN_SESSION_INSTANCE_SUFFIX", "value":instance}),
-        )?);
-    let desired = environment_host_values(
+    let group = super::runtime::host_group(control, None, &component_base)?;
+    let mut desired = environment_host_values(
         document,
         u32::try_from(policy.drain_bound_seconds)?,
         events.stream_replicas,
@@ -322,6 +346,39 @@ pub(super) async fn provision_environment_host(
         platform.insecure_registry,
         installed.as_ref(),
     )?;
+    let projects: Vec<String> = sqlx::query_scalar("SELECT project FROM registry.environment_projects WHERE org=$1 AND env=$2 ORDER BY project")
+        .bind(&document.org).bind(&document.env).fetch_all(&mut system).await?;
+    configure_projects(
+        &mut desired,
+        document,
+        &projects,
+        &wamn_registry::name::environment_host_name(&document.org, &document.env)?,
+    )?;
+    let cluster =
+        resolve_cluster(&platform.system_database_url, &document.org, &policy_name).await?;
+    let mut secrets = vec![format!("{cluster}-ca"), "wamn-pg-ca".into()];
+    for project in &projects {
+        secrets.push(wamn_registry::credential_secret_name(
+            &document.org,
+            project,
+            &document.env,
+        ));
+        secrets.extend(
+            wamn_control_provision::WorkloadRoleFamily::project_env_families()
+                .filter(|family| {
+                    *family != wamn_control_provision::WorkloadRoleFamily::SessionRoleReader
+                })
+                .map(|family| {
+                    wamn_control_provision::workload_secret_name(
+                        family,
+                        &document.org,
+                        project,
+                        &document.env,
+                    )
+                }),
+        );
+    }
+    desired["credentialAccess"] = serde_json::json!({"account":wamn_registry::name::environment_service_account(&document.org,&document.env),"secrets":secrets});
     let mut values: serde_json::Value =
         serde_yaml::from_slice(&std::fs::read(platform.chart.join("values.yaml"))?)?;
     crate::platform::resources::merge(&mut values, desired);
@@ -329,6 +386,114 @@ pub(super) async fn provision_environment_host(
     super::runtime::require_chart_references(&platform.target, &chart, &name, &values).await?;
     wamn_platform_install::environment::apply(&platform.target, &chart, &name, values).await?;
     Ok(())
+}
+
+/// Remove one project's runtime access while leaving the other projects served.
+pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
+    let name = environment_host_name(&triple.org, triple.env.as_str())?;
+    let Some(mut values) = crate::platform::resources::release_values(
+        &platform.target,
+        &platform.target.namespace,
+        &name,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+    let projects = values["projects"]
+        .as_array_mut()
+        .context("environment host has no project projection")?;
+    projects.retain(|project| project.as_str() != Some(&triple.project));
+    if projects.is_empty() {
+        values["runtime-operator"]["runtime"]["hostGroups"] = serde_json::json!([]);
+        wamn_platform_install::environment::apply(
+            &platform.target,
+            &platform.chart.join("platform/environment"),
+            &name,
+            values,
+        )
+        .await?;
+        super::drain::wait_stopped(platform, &name).await?;
+        return wamn_release_control::release_chart::uninstall(&platform.target, &name).await;
+    }
+    let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
+    for field in ["volumes", "volumeMounts"] {
+        if let Some(entries) = group[field].as_array_mut() {
+            entries.retain(|entry| {
+                entry["name"] != format!("project-{}", triple.project)
+                    && entry["name"] != format!("events-{}", triple.project)
+            });
+        }
+    }
+    let bound = values["runtime-operator"]["runtime"]["terminationGracePeriodSeconds"]
+        .as_u64()
+        .context("environment host has no shutdown bound")?;
+    wamn_platform_install::environment::apply(
+        &platform.target,
+        &platform.chart.join("platform/environment"),
+        &name,
+        values,
+    )
+    .await?;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(bound.saturating_add(15)),
+        async {
+            loop {
+                let pods = super::analyse::read_pods(platform, &name).await?;
+                let still_mounted =
+                    pods["items"]
+                        .as_array()
+                        .context("host pod list has no items")?
+                        .iter()
+                        .any(|pod| {
+                            !matches!(
+                                pod["status"]["phase"].as_str(),
+                                Some("Succeeded" | "Failed")
+                            ) && pod["spec"]["volumes"].as_array().into_iter().flatten().any(
+                                |volume| volume["name"] == format!("project-{}", triple.project),
+                            )
+                        });
+                if !still_mounted {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        },
+    )
+    .await
+    .context("project still has active runtime resources")??;
+    let mut values = crate::platform::resources::release_values(
+        &platform.target,
+        &platform.target.namespace,
+        &name,
+    )
+    .await?
+    .context("environment host disappeared while suspending project")?;
+    let mut removed = vec![wamn_registry::credential_secret_name(
+        &triple.org,
+        &triple.project,
+        triple.env.as_str(),
+    )];
+    removed.extend(
+        wamn_control_provision::WorkloadRoleFamily::project_env_families().map(|family| {
+            wamn_control_provision::workload_secret_name(
+                family,
+                &triple.org,
+                &triple.project,
+                triple.env.as_str(),
+            )
+        }),
+    );
+    if let Some(secrets) = values["credentialAccess"]["secrets"].as_array_mut() {
+        secrets.retain(|secret| !removed.iter().any(|name| secret.as_str() == Some(name)));
+    }
+    wamn_platform_install::environment::apply(
+        &platform.target,
+        &platform.chart.join("platform/environment"),
+        &name,
+        values,
+    )
+    .await
 }
 
 /// Record the environment and create roles before CNPG creates its database.
@@ -1007,54 +1172,6 @@ fn shred(file: &Path) -> anyhow::Result<()> {
     std::fs::remove_file(file).with_context(|| format!("remove {}", file.display()))
 }
 
-/// Create the environment account and immutable grants before the release starts.
-async fn ensure_credential_access(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    cluster: &str,
-) -> anyhow::Result<()> {
-    let account =
-        wamn_registry::service_account_name(&document.org, &document.project, &document.env);
-    let secret =
-        wamn_registry::credential_secret_name(&document.org, &document.project, &document.env);
-    let mut secrets = vec![
-        secret,
-        format!("{}-ca", cluster),
-        "wamn-pg-ca".into(),
-        wamn_control_provision::project_env_cdc_secret_name(
-            &document.org,
-            &document.project,
-            &document.env,
-        ),
-    ];
-    secrets.extend(
-        wamn_control_provision::WorkloadRoleFamily::project_env_families()
-            .filter(|family| {
-                *family != wamn_control_provision::WorkloadRoleFamily::SessionRoleReader
-            })
-            .map(|family| {
-                wamn_control_provision::workload_secret_name(
-                    family,
-                    &document.org,
-                    &document.project,
-                    &document.env,
-                )
-            }),
-    );
-    let name = wamn_control_provision::environment_names::environment_resource_name(
-        &document.org,
-        &document.project,
-        &document.env,
-    )?;
-    wamn_platform_install::environment::apply(
-        &platform.target,
-        &platform.chart.join("platform/environment"),
-        &name,
-        serde_json::json!({"credentialAccess":{"account":account,"secrets":secrets}}),
-    )
-    .await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1084,8 +1201,11 @@ mod tests {
             reapplied["runtime-operator"]["runtime"]["hostGroups"][0]["image"],
             image
         );
+        let projects = vec![document.project.clone(), "billing".into()];
+        let name = environment_host_name(&document.org, &document.env)?;
+        configure_projects(&mut reapplied, &document, &projects, &name)?;
         let entry = json!({"chart":chart.0.join("platform/environment"), "version":crate::platform::artifact_plan::select(&chart.0)?.version,
-            "name":environment_host_name(&document.org, &document.project, &document.env)?,
+            "name":environment_host_name(&document.org, &document.env)?,
             "namespace":"hosts", "values":reapplied});
         let objects = wamn_kubernetes::helm::template(&entry)?;
         let host = objects
@@ -1096,11 +1216,28 @@ mod tests {
             host["spec"]["template"]["spec"]["containers"][0]["image"],
             format!("selected.example/host:selected@sha256:{}", "b".repeat(64))
         );
-        reapplied["runtime-operator"]["runtime"]["hostGroups"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("image");
-        assert_eq!(reapplied, fresh);
+        let projection = objects
+            .iter()
+            .find(|object| object["metadata"]["name"] == format!("{name}-projects"))
+            .unwrap();
+        let projected: Vec<String> =
+            serde_json::from_str(projection["data"]["projects.json"].as_str().unwrap())?;
+        assert_eq!(projected, projects);
+        let volumes = host["spec"]["template"]["spec"]["volumes"]
+            .as_array()
+            .unwrap();
+        for project in &projected {
+            let expected = wamn_control_provision::project_env_secret_name(
+                &document.org,
+                project,
+                &document.env,
+            );
+            assert!(
+                volumes
+                    .iter()
+                    .any(|volume| volume["configMap"]["name"] == expected)
+            );
+        }
         Ok(())
     }
 }

@@ -1,5 +1,9 @@
 //! Live lease handoff through the host's SIGTERM and queue drain owner.
 
+use wamn_runtime::connection_credentials::ConnectionCredentials;
+use wamn_runtime::connection_facts::ConnectionFacts;
+use wamn_runtime::connection_memory::{self, ConnectionMemory};
+
 use super::*;
 use sqlx::Row as _;
 use std::sync::atomic::{AtomicBool, Ordering};

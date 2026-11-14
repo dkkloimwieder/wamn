@@ -18,15 +18,8 @@ use super::{Platform, document::EnvironmentDocument, lock::LifecycleLock};
 pub async fn prune(platform: &Platform, triple: &Triple) -> anyhow::Result<Vec<String>> {
     LifecycleLock::hold(&platform.system_database_url, triple, async |_| {
         let document = EnvironmentDocument::read_serving(platform, triple).await?;
-        let observed = wamn_kubernetes::environment_state::observe_environment(
-            &platform.target.namespace, &triple.to_string(), |path| async move {
-                let body = super::ensure::kubectl(platform, &platform.target.namespace,
-                    &["get", "--raw", &path], None).await?;
-                serde_json::from_str(&body).context("read environment hosts for retention")
-            },
-        ).await?;
-        let live = wamn_kubernetes::environment_state::live_set(&observed.pods);
-        ensure!(!live.contains_key("unlabelled"), "cannot retain releases with unknown live hosts");
+        let residency = super::drain::observe(platform,triple).await?;
+        let live = super::drain::loaded(&residency);
         let mut retained: BTreeSet<String> = live.into_keys().collect();
         for selection in document.applications.values() {
             if let super::document::DeclaredRelease::Digest(digest) = &selection.current {

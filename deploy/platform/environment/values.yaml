@@ -73,3 +73,6 @@ runtime-operator:
     serviceAccount:
       create: false
       name: ""
+
+# Project names served by the environment host.
+projects: []

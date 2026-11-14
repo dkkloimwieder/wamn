@@ -559,9 +559,13 @@ async fn apply_selection(
                 release_chart::uninstall(&platform.target, &release_name).await?;
                 analysis.plan.push(format!("uninstalled {release_name}"));
             }
-            drain::drain(&platform, &document, &analysis)
+            let residency = drain::drain(&platform, &document, &analysis)
                 .await
-                .context("observe application drain")?;
+                .context("observe application residency")?;
+            analysis.plan.push(format!(
+                "release residency: {}",
+                serde_json::to_string(&residency)?
+            ));
             Ok(analysis)
         })
         .await;

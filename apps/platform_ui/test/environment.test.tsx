@@ -35,6 +35,7 @@ function fixture(initial: "active" | "inactive" = "active", digest: string | nul
               rollout: { replicas: 2, updated_replicas: 1, ready_replicas: 1, available_replicas: 1 },
               workloads: [{ name: "http", conditions: [{ type: "Ready", status: "True" }] }],
               live: [{ digest: "sha256:release", pods: 1 }],
+              residency: [{ application: "orders", manifest_digest: "sha256:release", loaded: true, runs: [] }],
             }
           : {
               digest,

@@ -43,6 +43,12 @@ pub(crate) async fn provision(
     let key = wamn_registry::project_env_key(&document.org, &document.project, &document.env);
     let triple = document.triple();
     let mut data = serde_json::Map::new();
+    data.insert(
+        "instance".into(),
+        super::read_project_env_instance(&platform.system_database_url, &triple)
+            .await?
+            .into(),
+    );
     let mut application = None;
     let mut dynamic = None;
     for family in WorkloadRoleFamily::project_env_families() {

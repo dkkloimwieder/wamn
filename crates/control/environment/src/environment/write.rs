@@ -13,7 +13,6 @@ use super::Platform;
 use super::analyse::{Analysis, ReleaseFacts};
 use super::document::EnvironmentDocument;
 use super::ensure::PrivateDirectory;
-use wamn_control_provision::host_credentials::HOST_CREDENTIALS;
 use wamn_release_control::release_chart::{self, RoleName, ValuesInput};
 
 /// What the write left for readiness.
@@ -138,15 +137,9 @@ pub fn release_values(
     )
 }
 
-/// The host group body: the platform's part, read from
-/// `WAMN_RELEASE_HOST_GROUP`, and the environment's credential Secret
-/// references, which the verb derives from the coordinate.
-pub fn host_group(
-    path: Option<&Path>,
-    org: &str,
-    project: &str,
-    env: &str,
-) -> anyhow::Result<Mapping> {
+/// Read the host placement body used to observe replica policy.
+/// Project credentials come only from the environment chart projection.
+pub fn host_group(path: Option<&Path>) -> anyhow::Result<Mapping> {
     let group = match path {
         None => Mapping::new(),
         Some(path) => serde_yaml::from_str(
@@ -154,5 +147,5 @@ pub fn host_group(
         )
         .with_context(|| format!("{} is not a YAML mapping", path.display()))?,
     };
-    plan::host_group(group, org, project, env)
+    plan::host_group(group)
 }

@@ -159,11 +159,7 @@ pub(super) async fn resolve_application(
             .as_deref()
             .context("missing component registry")?,
     )?;
-    let name = super::ensure::environment_host_name(
-        &environment.org,
-        &environment.project,
-        &environment.env,
-    )?;
+    let name = super::ensure::environment_host_name(&environment.org, &environment.env)?;
     let shared = resources::helm(
         target,
         &[

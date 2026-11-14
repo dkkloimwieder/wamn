@@ -234,7 +234,9 @@ wamn status --env environments/dev/environment.k
 Publication needs no destination database.
 Run `wamn env apply environments/dev/environment.k` before applying application SQL and deploying code.
 Each application owns its Helm history, workloads, Services, and route ConfigMaps.
-The environment chart owns the shared host. Application workloads and file Services select that host.
+The environment chart owns one host for each org and environment. All projects share it.
+Application workloads and file Services select that host. Database credentials and event bindings remain separate for each project.
+Status reports loaded application releases and the unfinished runs that pin them.
 The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
 Code-only deploy, reapply, and rollback preserve installed SQL and other applications' data, permissions, routes, and workloads.
 Helm is the only owner of release history. Deploy names the application and release digest.

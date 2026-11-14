@@ -118,8 +118,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     values.insert("audit".into(), mapping([("actor", input.actor.clone())]));
     values.insert(
         "hostGroup".into(),
-        wamn_registry::name::environment_resource_name(&input.org, &input.project, &input.env)?
-            .into(),
+        wamn_registry::name::environment_host_name(&input.org, &input.env)?.into(),
     );
     Ok(Value::Mapping(values))
 }

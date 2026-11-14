@@ -47,31 +47,6 @@ pub fn host_values(
     let variables = group["env"]
         .as_sequence_mut()
         .context("apply host variables")?;
-    for credential in wamn_control_provision::host_credentials::HOST_CREDENTIALS {
-        let Some(variable) = credential.host_variable else {
-            continue;
-        };
-        let selected = if credential.family == wamn_control_provision::WorkloadRoleFamily::App {
-            Some(input.guest_secret_name.as_str())
-        } else {
-            input
-                .role_secrets
-                .iter()
-                .find(|secret| secret.family == credential.family)
-                .map(|secret| secret.name.as_str())
-        };
-        if let Some(name) = selected {
-            let entry = variables
-                .iter_mut()
-                .find(|entry| entry["name"] == variable)
-                .context("apply credential variable")?;
-            entry
-                .as_mapping_mut()
-                .context("host variable mapping")?
-                .remove("value");
-            entry["valueFrom"]["secretKeyRef"]["name"] = name.into();
-        }
-    }
     for (name, value) in [
         ("WAMN_SCHEMA", schema.to_owned()),
         (

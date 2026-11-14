@@ -349,14 +349,16 @@ export function Environment(
           <Records
             refresh={refresh}
             id="live-releases"
-            title="Live releases"
-            rows={status()?.live ?? []}
-            rowKey={(entry) => entry.digest}
+            title="Resident releases"
+            rows={status()?.residency ?? []}
+            rowKey={(entry) => `${entry.application}:${entry.manifestDigest}`}
             columns={[
-              { id: "digest", header: "Release", accessorKey: "digest", size: 150 },
-              { id: "pods", header: "Pods", accessorKey: "pods" },
+              { id: "application", header: "Application", accessorKey: "application" },
+              { id: "manifestDigest", header: "Release", accessorKey: "manifestDigest", size: 150 },
+              { id: "loaded", header: "Loaded", accessorFn: (entry) => entry.loaded ? "Yes" : "No" },
+              { id: "runs", header: "Run pins", accessorFn: (entry) => entry.runs.join(", ") },
             ]}
-            formats={{ digest: "short-hash" }}
+            formats={{ manifestDigest: "short-hash" }}
           />
         </div>
       </Show>

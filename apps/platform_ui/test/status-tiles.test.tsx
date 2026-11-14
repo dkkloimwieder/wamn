@@ -14,6 +14,7 @@ const status: environment.EnvironmentStatusResult = {
   memberships: 5,
   workloads: [{ name: "http", conditions: [{ type: "Ready", status: "True" }] }],
   live: [],
+                  residency: [],
 };
 
 function tile(label: string, value: string, state: string, view: Pick<typeof screen, "getByRole"> = screen) {
@@ -127,6 +128,7 @@ describe("Control splash", () => {
                   memberships: 5,
                   workloads: status.workloads,
                   live: [],
+                  residency: [],
                 },
               },
             ]),

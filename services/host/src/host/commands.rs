@@ -8,13 +8,14 @@ use anyhow::Context as _;
 use wash_runtime::host::{Host, HostApi as _};
 use wash_runtime::washlet::{HostCommandHandler, HostControlDefaults, types::v2};
 
-use super::releases::{Releases, ResidentRelease};
+use super::projects::Environment;
+use super::releases::ResidentRelease;
 use wamn_execution_host::platform_http::PlatformHttp;
 use wamn_runtime::plugins::WamnPostgres;
 
 pub(super) struct Commands {
     pub postgres: Arc<WamnPostgres>,
-    pub releases: Option<Arc<Releases>>,
+    pub releases: Option<Arc<Environment>>,
     pub http: Option<Arc<PlatformHttp>>,
     pub workloads: std::sync::Mutex<std::collections::HashMap<String, Arc<ResidentRelease>>>,
     /// The base the host resolves members and the composed entry against.

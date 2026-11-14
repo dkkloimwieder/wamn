@@ -188,12 +188,7 @@ fn applications_in_one_environment_have_independent_release_resources() {
                     let spec = &object["spec"]["template"]["spec"];
                     assert_eq!(
                         spec["hostSelector"]["hostgroup"],
-                        wamn_registry::name::environment_resource_name(
-                            &input.org,
-                            &input.project,
-                            &input.env
-                        )
-                        .unwrap()
+                        wamn_registry::name::environment_host_name(&input.org, &input.env).unwrap()
                     );
                     assert_eq!(
                         spec["components"][0]["image"],
@@ -215,12 +210,7 @@ fn applications_in_one_environment_have_independent_release_resources() {
                 "Service" if object["spec"]["selector"].is_mapping() => {
                     assert_eq!(
                         object["spec"]["selector"]["wasmcloud.com/hostgroup"],
-                        wamn_registry::name::environment_resource_name(
-                            &input.org,
-                            &input.project,
-                            &input.env
-                        )
-                        .unwrap()
+                        wamn_registry::name::environment_host_name(&input.org, &input.env).unwrap()
                     );
                 }
                 "ConfigMap" if object["metadata"]["name"] == name => {

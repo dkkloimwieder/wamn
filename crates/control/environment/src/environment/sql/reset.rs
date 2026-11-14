@@ -263,14 +263,7 @@ async fn stop_users(platform: &Platform, document: &EnvironmentDocument) -> anyh
         &document.triple(),
     )
     .await?;
-    let shared = ensure::environment_host_name(&document.org, &document.project, &document.env)?;
-    let mut groups = std::collections::BTreeSet::from([shared]);
-    for application in document.applications.keys() {
-        groups.insert(analyse::application_release_name(document, application)?);
-    }
-    for name in &groups {
-        stop_group(platform, name).await?;
-    }
+    ensure::suspend_project(platform, &document.triple()).await?;
     Ok(())
 }
 
@@ -280,6 +273,11 @@ async fn resume_users(
     admin_url: &str,
 ) -> anyhow::Result<()> {
     use super::super::{readiness, write};
+    let control = crate::platform::installed::InstalledPlatform::read(&platform.target)
+        .await?
+        .context("installed platform")?
+        .values;
+    ensure::provision_environment_host(platform, &control, document).await?;
     // Restore every selected release before readers or hosts can admit work.
     let actor = wamn_identity_protocol::PlatformComponent::Provisioning
         .principal_id()
@@ -316,52 +314,6 @@ async fn resume_users(
         .with_context(|| format!("resume application {application}: readiness budget expired"))?
         .with_context(|| format!("resume application {application}"))?;
     }
-    let control = crate::platform::installed::InstalledPlatform::read(&platform.target)
-        .await?
-        .context("installed platform")?
-        .values;
-    ensure::provision_environment_host(platform, &control, document).await?;
-    Ok(())
-}
-
-async fn stop_group(platform: &Platform, name: &str) -> anyhow::Result<()> {
-    use wamn_release_control::release_chart;
-    if analyse::release_present(platform, name).await? {
-        let bytes = crate::platform::resources::helm(
-            &platform.target,
-            &[
-                "get".as_ref(),
-                "values".as_ref(),
-                name.as_ref(),
-                "-n".as_ref(),
-                platform.target.namespace.as_ref(),
-                "-o".as_ref(),
-                "json".as_ref(),
-            ],
-        )
-        .await?;
-        let mut values: Value = serde_json::from_slice(&bytes)?;
-        stop_values(&mut values)?;
-        let private = ensure::PrivateDirectory::create()?;
-        let path = private.path("stopped.yaml");
-        std::fs::write(&path, serde_yaml::to_string(&values)?)?;
-        release_chart::recover_pending(&platform.target, name).await?;
-        release_chart::upgrade(
-            &platform.target,
-            &platform.chart,
-            name,
-            &path,
-            std::time::Duration::from_secs(120),
-            "database reset",
-        )
-        .await?;
-    }
-    ensure!(
-        super::super::drain::wait(platform, name, None)
-            .await?
-            .is_empty(),
-        "database user {name} is still running"
-    );
     Ok(())
 }
 

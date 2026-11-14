@@ -230,7 +230,7 @@ fn render(target: &wamn_registry::Triple, authorization: &mut Authorization) -> 
             },
         },
     );
-    // Environment provisioning owns the host data binding.
+    // The environment host mounts this certificate only for this project's event client.
     vec![environment_certificate(
         &wamn_registry::name::nats_certificate(&project_env_key),
         &user,

@@ -1,14 +1,7 @@
-use super::{
-    EnvironmentDocument, HOST_CREDENTIALS, Mapping, RoleName, Value, ValuesInput, release_chart,
-};
+use super::{EnvironmentDocument, Mapping, RoleName, Value, ValuesInput, release_chart};
 use anyhow::Context as _;
 
-pub(in crate::environment) fn host_group(
-    mut group: Mapping,
-    org: &str,
-    project: &str,
-    env: &str,
-) -> anyhow::Result<Mapping> {
+pub(in crate::environment) fn host_group(mut group: Mapping) -> anyhow::Result<Mapping> {
     // The upstream chart replaces a group's resources wholesale.
     // Fill omitted defaults before it receives a placement-specific override.
     if let Some(resources) = group.get_mut("resources") {
@@ -27,43 +20,12 @@ pub(in crate::environment) fn host_group(
             resources.entry(name).or_insert(value);
         }
     }
-    let variables = group
+    group
         .entry("env".into())
         .or_insert_with(|| Value::Sequence(Vec::new()))
         .as_sequence_mut()
         .context("the platform host group's `env` is not a list")?;
-    for credential in HOST_CREDENTIALS {
-        let Some(variable) = credential.host_variable else {
-            continue;
-        };
-        anyhow::ensure!(
-            !variables
-                .iter()
-                .any(|entry| entry["name"].as_str() == Some(variable)),
-            "the platform host group sets {variable}, which apply derives from the coordinate"
-        );
-        variables.push(serde_yaml::from_str(&format!(
-            "{{name: {variable}, value: /etc/wamn/postgres/{}.json}}",
-            if credential.family == wamn_control_provision::WorkloadRoleFamily::App {
-                "app".to_owned()
-            } else {
-                credential.family.component_stem()
-            }
-        ))?);
-    }
-    let mut group = serde_json::to_value(group)?;
-    if let Some(volumes) = group["volumes"].as_array_mut() {
-        volumes.retain(|volume| volume["name"] != "postgres-configuration");
-    }
-    if !group["volumes"].is_array() {
-        group["volumes"] = serde_json::json!([]);
-    }
-    group["volumes"].as_array_mut().unwrap().push(serde_json::json!({"name":"postgres-configuration", "configMap":{"name":wamn_control_provision::project_env_secret_name(org, project, env)}}));
-    if !group["volumeMounts"].is_array() {
-        group["volumeMounts"] = serde_json::json!([]);
-    }
-    group["volumeMounts"].as_array_mut().unwrap().push(serde_json::json!({"name":"postgres-configuration", "mountPath":"/etc/wamn/postgres", "readOnly":true}));
-    Ok(serde_yaml::from_value(serde_yaml::to_value(group)?)?)
+    Ok(group)
 }
 
 /// Derive registry arguments from the platform host's environment variables.

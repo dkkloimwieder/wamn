@@ -223,10 +223,11 @@ pub fn delete_environment_connections_sql() -> &'static str {
 /// Environment exclusion key shared by lifecycle operations and CDC publication.
 /// Acquire this key before an application key or a database mutation lock.
 pub const ENVIRONMENT_LOCK_SQL: &str =
-    "SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3, 0))";
+    "SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
 
 /// Independent applications and SQL Jobs exclude shared database replacement.
-pub const ENVIRONMENT_SHARED_LOCK_SQL: &str = "SELECT pg_try_advisory_lock_shared(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3, 0))";
+pub const ENVIRONMENT_SHARED_LOCK_SQL: &str =
+    "SELECT pg_try_advisory_lock_shared(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
 
 /// Lifecycle state belongs to the environment.
 pub const ENVIRONMENT_DISPOSABLE: &str =

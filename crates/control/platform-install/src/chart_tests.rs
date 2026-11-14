@@ -486,7 +486,7 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let coordinates = [("a", "b-c", "d"), ("a", "b", "c-d")];
     let accounts = coordinates
-        .map(|(org, project, env)| wamn_registry::service_account_name(org, project, env));
+        .map(|(org, _project, env)| wamn_registry::name::environment_service_account(org, env));
     let secrets = coordinates
         .map(|(org, project, env)| wamn_registry::credential_secret_name(org, project, env));
     assert_ne!(accounts[0], accounts[1]);
@@ -513,7 +513,11 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
             assert_eq!(subject["name"], accounts[index]);
             assert_eq!(subject["namespace"], role["metadata"]["namespace"]);
         }
-        for rule in role["rules"].as_array().unwrap() {
+        for rule in role["rules"].as_array().unwrap().iter().filter(|rule| {
+            rule["resources"]
+                .as_array()
+                .is_some_and(|resources| resources.iter().any(|resource| resource == "secrets"))
+        }) {
             let allowed = rule["resourceNames"].as_array().unwrap();
             assert!(allowed.iter().any(|name| name == &secrets[index]));
             assert!(!allowed.iter().any(|name| name == &secrets[1 - index]));

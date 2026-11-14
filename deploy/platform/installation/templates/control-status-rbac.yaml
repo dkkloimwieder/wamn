@@ -55,7 +55,7 @@ rules:
   resources: [secrets, configmaps, services, serviceaccounts]
   verbs: [get, list, watch, create, update, patch, delete]
 - apiGroups: [""]
-  resources: [pods, pods/log, events]
+  resources: [pods, pods/log, pods/proxy, events]
   verbs: [get, list, watch]
 - apiGroups: [apps]
   resources: [deployments, statefulsets, daemonsets, replicasets]

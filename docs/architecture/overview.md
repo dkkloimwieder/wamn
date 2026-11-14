@@ -130,7 +130,8 @@ Frozen candidate execution retains its own admitted facts throughout the travers
 
 Each application has its own Helm release of `deploy/platform/release`.
 The release name is `r-<slug>-<hash>`, derived from `org/env/project/application`.
-The environment chart owns the shared host and its runtime-operator dependency.
+The environment chart owns one host for each org and environment, shared by all projects.
+Its project projection names the allowed projects. Each project mounts its own connection configuration and event certificate.
 Application releases contain no host Deployment or runtime-operator dependency.
 It adds one WorkloadDeployment for the `http` role.
 The `http` role starts the separate route component with `poolSize` 0. A Service of the same name routes to it.
@@ -189,12 +190,12 @@ The registry owns the applied environment configuration. Helm owns release histo
 3. Expand: Write the policy and route host. Run the package stage. Enable each declared connection and bind it to the components of the release.
 4. Write: Recover any pending Helm operation. Always run `helm upgrade --install` with `--wait`, the readiness budget of the policy, and no automatic rollback. A failed revision and its pods remain available for inspection.
 5. Readiness: Wait until each WorkloadDeployment of the release reports `Ready`.
-6. Drain: Wait until the live set is exactly the declared release. Name each stranded run and stop.
+6. Drain: Read loaded releases and the unfinished runs that pin them. Report stranded runs without changing their state.
 7. Retain: Keep older release facts and permissions. Rollout performs no release cleanup.
 
 A separate retention operation removes unused release facts and generated permissions under the environment lock.
-Live hosts, current Helm selections and unfinished runs keep their release facts.
-Status reports unfinished runs with no live host across the environment.
+Loaded releases, current Helm selections and unfinished runs keep their release facts.
+Status reports each application's loaded releases and run pins. It also reports unfinished runs whose release is not loaded.
 
 During analysis, apply reads each bound connection's type and the target type from the registry.
 For an exclusive connection on a cloud target, the body from `WAMN_RELEASE_HOST_GROUP` must name `replicas: 1`.
@@ -238,7 +239,7 @@ In order, it does these steps:
 The `Database` resource keeps `databaseReclaimPolicy: retain`, so the database stays on the cluster.
 With `--data`, the verb drops the database and the instance roles. It reads the coordinate again from a terminal first.
 
-The platform UI reads status through a control operation with a read-only ServiceAccount over Pods, Deployments and WorkloadDeployments in the release namespace `hosts`: the digest from the host Deployment's pod-template annotations, the rollout from its status, the workload conditions, the live set. Who selected and who approved are not there: they are in the Helm revision (§11.3), read with `helm history`, not by the UI. Current state only; no history of tests; no Secrets; no verb runs from a browser. The project screen that reads the saga today reads this instead.
+The platform UI reads status through a control operation in the org namespace. Kubernetes supplies the shared host rollout and application workload conditions. The pod proxy supplies each application's resident releases and unfinished-run pins. Application history stays in Helm. An unreadable host leaves residency unknown.
 
 - Every step is safe to run twice. A missing object is a finished step, not a refusal.
 
