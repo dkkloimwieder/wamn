@@ -258,10 +258,7 @@ pub(super) fn palette_connections(
             let mut modes: BTreeMap<String, BTreeMap<String, wamn_catalog::ConnectionMode>> =
                 BTreeMap::new();
             for ((package, alias), declaration) in
-                wamn_package_control::connection_requirement::palette_connections(
-                    connection,
-                    manifests.values(),
-                )
+                crate::connection_requirement::palette_connections(connection, manifests.values())
             {
                 let mode = match declaration.mode {
                     wamn_compiler::manifest::ConnectionMode::Read => {

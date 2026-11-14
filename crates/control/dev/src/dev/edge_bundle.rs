@@ -16,11 +16,9 @@ use wamn_engine::artifact_source::local_component_path;
 use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_registry::project_env_key;
 
-use wamn_package_control::component_admission::{AdmitComponentRequest, admit_component};
-use wamn_package_control::component_declaration::{
-    authored_base_digests, render_package_declaration,
-};
-use wamn_release_control::publish_release::{
+use wamn_publish::component_admission::{AdmitComponentRequest, admit_component};
+use wamn_publish::component_declaration::{authored_base_digests, render_package_declaration};
+use wamn_publish::publish_release::{
     PublishReleaseRequest, assemble_release, compose_pinned_application, compose_release_entry,
 };
 

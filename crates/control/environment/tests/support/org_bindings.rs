@@ -143,7 +143,7 @@ async fn cluster_credential(
 pub async fn publish_declarations(
     run: &mut super::Run,
     root: &std::path::Path,
-    registry: &wamn_package_control::package_artifact::PackageRegistry,
+    registry: &wamn_publish::package_artifact::PackageRegistry,
     component_base: &str,
     database_url: &str,
 ) -> anyhow::Result<()> {
@@ -309,8 +309,8 @@ manifest.Package {{
             });
         }
         std::fs::write(output.join(BUILD_RECORD_FILE), build_record.to_bytes())?;
-        Box::pin(wamn_package_control::package_artifact::push_package(
-            &wamn_package_control::package_artifact::PushPackageRequest {
+        Box::pin(wamn_publish::package_artifact::push_package(
+            &wamn_publish::package_artifact::PushPackageRequest {
                 package,
                 registry: registry.clone(),
                 component_artifact_base: component_base.into(),

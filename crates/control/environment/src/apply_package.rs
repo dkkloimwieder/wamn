@@ -24,9 +24,7 @@ pub use error::{
 pub use package_version::{
     LOCK_PACKAGE_SQL, load_applied_package, read_applied_package, read_package_migrations,
 };
-pub use wamn_package_control::package_source::{
-    PackageRoot, read_package_directory, read_package_root,
-};
+pub use wamn_publish::package_source::{PackageRoot, read_package_directory, read_package_root};
 
 pub const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.data-access:' || current_database(), 0))";
@@ -67,7 +65,7 @@ impl ApplyPackageRequest {
 
 /// Read the existing component repository variable with the package registry's transport.
 pub fn component_source_from_env(
-    registry: Option<&wamn_package_control::package_artifact::PackageRegistry>,
+    registry: Option<&wamn_publish::package_artifact::PackageRegistry>,
 ) -> anyhow::Result<
     Option<wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
 > {
@@ -141,7 +139,7 @@ pub(crate) async fn prepare_package(root: &PackageRoot) -> anyhow::Result<Prepar
     package_metadata(&directory).context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
-    let migration_root = wamn_package_control::package_source::migration_root(&root.path);
+    let migration_root = wamn_publish::package_source::migration_root(&root.path);
     let migrations = wamn_compiler::migrations::migrator(&migration_root).await?;
     Ok(PreparedPackage {
         component_source: None,
@@ -286,7 +284,7 @@ async fn apply(
     let mut tx = migration::begin(client, project_env_key).await?;
     let mut changed = false;
     if applied.is_none() {
-        changed |= wamn_package_control::connection_requirement::install(
+        changed |= wamn_publish::connection_requirement::install(
             &mut tx,
             project_env_key,
             &package.root,

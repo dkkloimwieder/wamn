@@ -2,7 +2,7 @@
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
-use wamn_package_control::web_artifact::{self, upload_web_artifact};
+use wamn_publish::web_artifact::{self, upload_web_artifact};
 
 /// Web client commands.
 #[derive(Debug, Args)]

@@ -11,10 +11,10 @@ use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, work
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wamn_environment::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
 use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
-use wamn_package_control::component_admission::ComponentAdmission;
 use wamn_postgres_capability::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
+use wamn_publish::component_admission::ComponentAdmission;
 
 const PROJECT_ENV_KEY: &str = "rest--test--publication";
 const OPERATION: &str = "rest-consumer-fixture:item/record@0.1.1";

@@ -28,7 +28,7 @@ uuid = { workspace = true, features = ["v7"] }
 wamn-catalog = { workspace = true }
 wamn-integration-tests = { workspace = true }
 
-wamn-package-control = { workspace = true, features = ["test-util"] }
+wamn-publish = { workspace = true, features = ["test-util"] }
 wamn-release-control = { workspace = true }
 wamn-environment = { workspace = true, features = ["test-util"] }
 # The publisher a run-plane reconciliation takes (Publisher).

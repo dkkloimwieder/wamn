@@ -239,7 +239,7 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
 /// The owning package id is a parameter rather than the export's namespace,
 /// because production does not tie the two together: a component that exports
 /// the platform interface `wamn:node/handler@0.1.0` carries the application's own
-/// package id, as the fixture of `crates/control/release/src/publish_release.rs` shows
+/// package id, as the fixture of `crates/control/publish/src/publish_release.rs` shows
 /// with `http-request` under `"package-id":"orders"`. Deriving the id from the
 /// namespace produced the reserved id `wamn`, which is not a manifest any
 /// publisher can publish.

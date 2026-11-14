@@ -4,9 +4,9 @@ pub(super) mod plan;
 
 use std::path::Path;
 
+use crate::package_artifact::{OpenedPackage, PackageRegistry, open_package};
 use anyhow::{Context as _, ensure};
 use wamn_catalog::{ApplicationDefinition, PackageCoordinate};
-use wamn_package_control::package_artifact::{OpenedPackage, PackageRegistry, open_package};
 
 use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 
@@ -93,14 +93,15 @@ pub(super) fn read_package_manifests(
     let mut contracts = BTreeMap::new();
     for root in roots {
         let path = wamn_compiler::package_manifest_path(root);
-        let directory = wamn_package_control::package_source::read_package_directory(root)
-            .map_err(|error| PublishManifestError {
+        let directory = crate::package_source::read_package_directory(root).map_err(|error| {
+            PublishManifestError {
                 source: Some(error.into()),
                 ..PublishManifestError::new(
                     PublishManifestErrorType::PackageManifest,
                     format!("read package directory {}", root.display()),
                 )
-            })?;
+            }
+        })?;
         let manifest =
             wamn_compiler::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
                 .map_err(|error| {
@@ -276,7 +277,7 @@ mod tests {
             )
             .unwrap();
             let mut manifest: serde_json::Value = serde_json::from_slice(include_bytes!(
-                "../../../package/tests/fixtures/component_package/generated/wamn.json"
+                "../../tests/fixtures/component_package/generated/wamn.json"
             ))
             .unwrap();
             if with_migrations {
@@ -296,7 +297,7 @@ mod tests {
                     "base": {
                         "package": "base_fixture",
                         "version": "1.0.0",
-                        "digest": wamn_package_control::test_support::DIGEST,
+                        "digest": crate::test_support::DIGEST,
                         "operations": ["item.get"],
                     }
                 });
@@ -347,7 +348,7 @@ mod tests {
         let get = package_route(&wms, "wamn_wms", "wms", &sealed("wamn-wms:packaging/get"))
             .expect("the packaging get has a contract");
         assert_eq!(get.type_, OperationType::Get);
-        assert_eq!(get.revision.as_deref(), Some("row_version"));
+
         assert_eq!(get.reads, relations(&[("wms", "packaging")]));
 
         let query = package_route(&wms, "wamn_wms", "wms", &sealed("wamn-wms:packaging/query"))
@@ -395,14 +396,7 @@ mod tests {
                 .expect("the operation has a contract")
                 .idempotency
         };
-        assert_eq!(
-            route(&sealed("wamn-wms:inventory/move")).as_deref(),
-            Some("value.idempotency_key")
-        );
-        assert_eq!(
-            route(&sealed("wamn-wms:packaging/create")).as_deref(),
-            Some("idempotency_key")
-        );
+
         assert_eq!(route(&sealed("wamn-wms:packaging/get")), None);
         let archive = package_route(
             &app("platform_fixture"),

@@ -37,18 +37,17 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-kubernetes` | Kubernetes HTTP client, Secrets, Job execution, and command runners |
 | `wamn-catalog` | Component, wiring, and release facts |
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
-| `wamn-package-control` | Package admission and artifacts |
-| `wamn-release-control` | Release publication and charts |
+| `wamn-publish` | Package admission, artifact construction, and package and release publication |
+| `wamn-release-control` | Release charts and deployment facts |
 | `wamn-environment` | Environment provisioning, package application, and schema lifecycle |
 | `wamn-platform-install` | Helm installation, platform configuration, and explicit bootstrap Jobs |
-| `wamn-dev` | Source publication and watched product deployment |
-| `wamn-ctl` | Command-line client of the four control crates |
+| `wamn-dev` | Source builds and watched product deployment |
+| `wamn-ctl` | Command-line build, publication, and control client |
 
 The CLI and test support call each control crate directly.
-The dependency order is package, release, environment, then development.
-Each crate depends only on earlier control crates and the lower libraries.
+Publication and release charts have separate owners. Environment deployment reads both, and development drives the shared deployment path.
 The control crates never depend on `wamn-ctl`.
-`wamn-package-control` owns standalone web artifacts in `web_artifact`.
+`wamn-publish` owns standalone web artifacts in `web_artifact`.
 Package artifacts contain three tar layers and no browser files.
 `wamn build` compiles package components without Vite or a web output digest.
 `wamn web build` binds browser files to the compiled package manifest digest recorded in `build.json`.
@@ -69,7 +68,7 @@ The installed-platform reader supplies registry and chart configuration to later
 Host groups reference shared configuration through a ConfigMap.
 Cloud project, node pool, and OpenTofu tools live in xtask.
 
-The other control crates live under `crates/control/{package,release,environment,dev}`.
+The other control crates live under `crates/control/{publish,release,environment,dev}`.
 They run the `git`, `docker`, `kubectl`, and `cargo` processes that their work needs.
 The environment crate owns history retention. Its library interfaces enforce the retention login and coordinate.
 [Native control](control.md) owns the org control service and its operation worker.

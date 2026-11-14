@@ -108,7 +108,7 @@ The database executor suite needs no application, browser, device, or platform p
 cargo xtask test-changes --suite package-executor
 ```
 
-This suite runs `wamn-package-control`'s `migrations_live` target.
+This suite runs `wamn-environment`'s `migrations_live` target.
 It covers SQLx commit and checksum behavior, history write failures, and the restricted migration login.
 A source diff still selects dependent packages and their integration inputs.
 Run the Receiving and WMS proof from the repository root:
@@ -612,7 +612,7 @@ The old environment worker and its terminal confirmation are removed.
 Creation and deletion journeys need the replacement lifecycle routes before they can run.
 Tests must use those routes for setup and cleanup.
 
-`wamn-package-control/tests/migrations_live.rs` covers SQLx checksums, transaction rollback, retry behavior, and failed history writes.
+`wamn-environment/tests/migrations_live.rs` covers SQLx checksums, transaction rollback, retry behavior, and failed history writes.
 It also calls package apply to refuse rebinding an existing relation to another package or entity.
 The same target checks direct migration credentials and refuses administrator sessions for platform migrations.
 `wamn-compiler/tests/build_live.rs::history_changes_append_immutable_versions_and_execute_during_build` covers generated history versioning.

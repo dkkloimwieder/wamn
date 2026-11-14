@@ -68,7 +68,7 @@ wamn-events-capability = { workspace = true }
 wamn-component-artifact = { workspace = true }
 wamn-compiler = { workspace = true }
 wamn-schema-introspection = { workspace = true }
-wamn-package-control = { workspace = true }
+wamn-publish = { workspace = true }
 wamn-release-control = { workspace = true }
 
 [dev-dependencies]
@@ -103,7 +103,7 @@ pg_query = "=6.2.1"
 tar = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-engine = { workspace = true }
-wamn-package-control = { workspace = true, features = ["test-util"] }
+wamn-publish = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

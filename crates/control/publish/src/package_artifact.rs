@@ -1055,7 +1055,11 @@ mod tests {
             oci_ca_paths: Vec::new(),
         };
         let opened = open_package(&registry, "orders", version).await?;
-        assert_eq!(pack_package(opened.root())?.digest, packed.digest);
+        assert_eq!(
+            wamn_catalog::ArtifactHash::parse(pack_package(opened.root())?.digest.to_string())
+                .unwrap(),
+            wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap()
+        );
         Ok(())
     }
 
@@ -1187,8 +1191,14 @@ mod tests {
         let first = pack_package(&root).unwrap();
         std::fs::write(root.join("migrations/0001_initial.sql"), b"SELECT 1;\n").unwrap();
         let second = pack_package(&root).unwrap();
-        assert_eq!(first.digest, second.digest);
-        assert_eq!(first.digest, bytes_sha256(&first.manifest));
+        assert_eq!(
+            wamn_catalog::ArtifactHash::parse(first.digest.to_string()).unwrap(),
+            wamn_catalog::ArtifactHash::parse(second.digest.to_string()).unwrap()
+        );
+        assert_eq!(
+            wamn_catalog::ArtifactHash::parse(first.digest.to_string()).unwrap(),
+            wamn_catalog::ArtifactHash::parse(bytes_sha256(&first.manifest).to_string()).unwrap()
+        );
         remove(&root);
     }
 
@@ -1197,7 +1207,11 @@ mod tests {
         let root = package_tree("changed");
         let first = pack_package(&root).unwrap();
         std::fs::write(root.join("generated/sql/receipt.sql"), b"SELECT 2;\n").unwrap();
-        assert_ne!(first.digest, pack_package(&root).unwrap().digest);
+        assert_ne!(
+            wamn_catalog::ArtifactHash::parse(first.digest.to_string()).unwrap(),
+            wamn_catalog::ArtifactHash::parse(pack_package(&root).unwrap().digest.to_string())
+                .unwrap()
+        );
         remove(&root);
     }
 
@@ -1222,7 +1236,11 @@ mod tests {
         write(&web, "index.html", b"standalone output\n");
         // Record the changed compiled output.
         write_build_record(&root);
-        assert_eq!(first.digest, pack_package(&root).unwrap().digest);
+        assert_eq!(
+            wamn_catalog::ArtifactHash::parse(first.digest.to_string()).unwrap(),
+            wamn_catalog::ArtifactHash::parse(pack_package(&root).unwrap().digest.to_string())
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1262,12 +1280,19 @@ mod tests {
         let descriptor = descriptor();
         let packed = pack_layers(&root, vec![descriptor.clone()]).unwrap();
         // A source tree has no descriptor layers, so its digest differs.
-        assert_ne!(pack_package(&root).unwrap().digest, packed.digest);
+        assert_ne!(
+            wamn_catalog::ArtifactHash::parse(pack_package(&root).unwrap().digest.to_string())
+                .unwrap(),
+            wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap()
+        );
 
         let unpacked = root.parent().unwrap().join("unpacked");
         unpack_layers(&unpacked, &packed.layers).unwrap();
         let repacked = pack_package(&unpacked).unwrap();
-        assert_eq!(repacked.digest, packed.digest);
+        assert_eq!(
+            wamn_catalog::ArtifactHash::parse(repacked.digest.to_string()).unwrap(),
+            wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap()
+        );
         remove(&root);
     }
 }

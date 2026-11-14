@@ -383,7 +383,7 @@ fn declaration() -> anyhow::Result<ComponentDeclaration> {
     ));
     let target =
         wamn_catalog::ComponentPackageCoordinate::new(PROJECT_ENV_KEY, PACKAGE, PACKAGE_VERSION)?;
-    let document = wamn_package_control::component_declaration::render_palette_declaration(
+    let document = wamn_publish::component_declaration::render_palette_declaration(
         &template,
         &target,
         Some(STORE_ALIAS),

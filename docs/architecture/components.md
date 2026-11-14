@@ -11,6 +11,10 @@ Components contain no deployment endpoint, database identity, or credential.
 
 ## Grouping and publication
 
+`wamn-publish` owns package admission, artifact construction, and package and release publication.
+Package coordinates are immutable. Dev publication keeps its first publication time on repeat pushes.
+Release manifests carry no publication time, so their identity depends only on release content.
+
 The default is one component per package, exporting its declared operation set.
 A different import or connection requirement can justify a separate component.
 A heavy dependency that must stay out of the hot execution path can also justify separation.

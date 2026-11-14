@@ -950,7 +950,7 @@ mod tests {
         entries
             .iter()
             .map(|(package, declared)| {
-                let mut manifest = wamn_package_control::test_support::source_manifest();
+                let mut manifest = wamn_publish::test_support::source_manifest();
                 manifest.package.id = (*package).to_owned();
                 manifest.sequences = declared
                     .iter()

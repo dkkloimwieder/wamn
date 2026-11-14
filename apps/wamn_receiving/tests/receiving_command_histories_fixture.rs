@@ -1153,7 +1153,9 @@ pub(crate) fn assert_histories_with_cancellation(
     for (component, root) in &inputs.packages {
         package_tree_digests.insert(
             component.clone(),
-            json!(wamn_package_control::package_artifact::package_artifact_digest(root)?),
+            json!(wamn_publish::package_artifact::package_artifact_digest(
+                root
+            )?),
         );
     }
     let secret: Value = serde_json::from_slice(&std::fs::read(&inputs.operator_secret)?)?;

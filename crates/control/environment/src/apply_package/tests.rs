@@ -117,11 +117,11 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
             .is_ok()
     );
     let shipped = std::env::temp_dir().join(format!("wamn-local-shipped-{}", std::process::id()));
-    wamn_package_control::test_support::copy_schema_fixture(&shipped);
+    wamn_publish::test_support::copy_schema_fixture(&shipped);
     apply_package(ApplyPackageRequest {
         migration_database_url: migration_url.into(),
         component_source: crate::apply_package::component_source_from_env(None).unwrap(),
-        package: wamn_package_control::package_artifact::fixture_package_root(&shipped).unwrap(),
+        package: wamn_publish::package_artifact::fixture_package_root(&shipped).unwrap(),
         database_url: owner_url.to_string(),
         org: "apply-drops".into(),
         project: "fixture".into(),

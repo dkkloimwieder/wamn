@@ -2,8 +2,8 @@ use super::{
     AdmittedComponent, AttachmentTarget, BTreeMap, BTreeSet, ComposedApplication,
     DependencyDigestRule, PackageCoordinate, PublishManifestError, PublishManifestErrorType,
     PublishReleaseManifest, PublishedRelease, ReleaseComponents, RouteContracts, ServingComponent,
-    ServingManifest, ServingRoute, ensure, project_serving_component,
-    resolve_component_dependency_closure, resolve_route_component,
+    ServingRoute, ensure, project_serving_component, resolve_component_dependency_closure,
+    resolve_route_component,
 };
 use anyhow::Context as _;
 
@@ -87,13 +87,7 @@ pub fn record_composed_entry(
         application: entry.application.clone(),
         members,
     });
-    let canonical_bytes = manifest.canonical_bytes();
-    let (manifest, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
-    *published = PublishedRelease {
-        manifest,
-        digest,
-        canonical_bytes,
-    };
+    *published = super::seal_release(&manifest)?;
     Ok(())
 }
 

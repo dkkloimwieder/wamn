@@ -9,7 +9,7 @@ use anyhow::{Context as _, ensure};
 use super::Platform;
 use super::analyse::ReleaseFacts;
 use super::document::ApplicationSelection;
-use wamn_package_control::web_artifact::{WebManifest, pull_web_artifact};
+use wamn_publish::web_artifact::{WebManifest, pull_web_artifact};
 
 pub(super) async fn analyse(
     platform: &Platform,

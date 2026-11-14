@@ -73,7 +73,7 @@ mod tests {
         for kept in [
             "crates/schema/generator/src/client_ts.rs",
             "apps/wamn_wms/wamn.k",
-            "crates/control/package/tests/fixtures/component_package/generated/wamn.json",
+            "crates/control/publish/tests/fixtures/component_package/generated/wamn.json",
         ] {
             assert!(!is_build_output(kept), "{kept}");
         }

@@ -12,7 +12,7 @@ use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, 
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
 use wamn_http_capability::transport::HttpTransport;
-use wamn_package_control::component_admission::ComponentAdmission;
+use wamn_publish::component_admission::ComponentAdmission;
 
 use wamn_capability_authority::connection::{
     ConnectionExecutionClosure, InvocationEntry, WiringPosition,

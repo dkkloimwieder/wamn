@@ -19,7 +19,7 @@ wamn-digest.workspace = true
 wamn-engine.workspace = true
 wamn-environment.workspace = true
 wamn-identity-protocol.workspace = true
-wamn-package-control.workspace = true
+wamn-publish.workspace = true
 wamn-registry.workspace = true
 wamn-release-control.workspace = true
 
@@ -51,7 +51,7 @@ oci-client = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-run-state = { workspace = true }
-wamn-package-control = { workspace = true, features = ["test-util"] }
+wamn-publish = { workspace = true, features = ["test-util"] }
 wamn-environment = { workspace = true, features = ["test-util", "ops"] }
 
 [lints]

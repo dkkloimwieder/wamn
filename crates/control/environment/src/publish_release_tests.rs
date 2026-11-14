@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_catalog::PackageCoordinate;
-use wamn_package_control::test_support::{closure_component, source_manifest};
-use wamn_release_control::publish_release::{
+use wamn_publish::publish_release::{
     PublishReleaseManifest, ReleaseComponents, RouteContracts,
     publish_release_with_package_manifests,
 };
+use wamn_publish::test_support::{closure_component, source_manifest};
 
 #[test]
 fn application_packages_with_different_model_schemas_publish_and_pass_apply_analysis() {

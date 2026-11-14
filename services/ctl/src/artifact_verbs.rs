@@ -13,7 +13,7 @@ use anyhow::{Context as _, ensure};
 use clap::Args;
 use serde_json::Value;
 use wamn_package_artifact::{PackageRegistry, Repository};
-use wamn_package_control::package_artifact::PACKAGE_MANIFEST_MEDIA_TYPE;
+use wamn_publish::package_artifact::PACKAGE_MANIFEST_MEDIA_TYPE;
 
 use crate::package_verbs::RegistryArgs;
 

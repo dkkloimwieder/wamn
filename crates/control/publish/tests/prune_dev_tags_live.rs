@@ -1,6 +1,6 @@
 //! Development package retention through the shared registry:2 fixture.
 
-#[path = "support/local_registry.rs"]
+#[path = "../../environment/tests/support/local_registry.rs"]
 mod local_registry;
 
 use chrono::{Duration, Utc};
@@ -105,7 +105,7 @@ async fn prune_preserves_pins_and_shared_digests_and_removes_expired_dev_tags() 
         attachments: BTreeMap::new(),
         host_routes: BTreeSet::new(),
     };
-    wamn_environment::prune_dev_tags::prune(&registry, &[release], now).await?;
+    wamn_publish::development::prune(&registry, &[release], now).await?;
     assert!(
         Repository::open(&registry, &pinned)?
             .manifest()

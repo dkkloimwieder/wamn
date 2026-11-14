@@ -13,7 +13,7 @@
 //!
 //! Project admission separately DENIES `wasi:cli/environment` to project code —
 //! the closed allowlist in `crates/platform/component-policy`, reached from
-//! `crates/control/package/src/component_admission.rs` through `validate_component_admission`.
+//! `crates/control/publish/src/component_admission.rs` through `validate_component_admission`.
 //! That is the first door. This test tests the guarantee that holds for a guest
 //! which imports the interface ANYWAY: defence in depth, measured rather than
 //! asserted.

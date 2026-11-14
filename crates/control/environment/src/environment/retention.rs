@@ -145,10 +145,7 @@ pub async fn retire_runtime_grants(
             .map(|package| (package.package.id.as_str(), package))
             .collect();
         for package in packages.iter().filter(|package| {
-            wamn_release_control::publish_release::composes_integration(
-                package,
-                &manifest.components,
-            )
+            wamn_publish::publish_release::composes_integration(package, &manifest.components)
         }) {
             let requirements = if retired.contains(digest) {
                 &mut removed
@@ -159,7 +156,7 @@ pub async fn retire_runtime_grants(
                 .entry(package.package.id.clone())
                 .or_default()
                 .extend(
-                    wamn_release_control::publish_release::application_dependency_permissions(
+                    wamn_publish::publish_release::application_dependency_permissions(
                         package,
                         &dependencies,
                     )?,

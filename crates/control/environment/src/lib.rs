@@ -15,7 +15,7 @@ pub use wamn_platform_install::platform;
 pub mod platform_migrations;
 pub use wamn_platform_install::provision_org;
 pub mod provision_project_env;
-pub mod prune_dev_tags;
+mod prune_dev_tags;
 pub use wamn_platform_install::provision_system;
 #[cfg(feature = "ops")]
 pub mod prune_record_history;

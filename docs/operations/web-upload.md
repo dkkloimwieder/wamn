@@ -5,7 +5,7 @@ It pulls the platform UI from its pinned registry artifact.
 Application uploads pull a pinned standalone web artifact from the registry.
 It does not build files or change edge routing.
 [services/ctl/src/web.rs](../../services/ctl/src/web.rs) defines the arguments and output.
-[crates/control/package/src/web_artifact.rs](../../crates/control/package/src/web_artifact.rs) owns the upload behavior.
+[crates/control/publish/src/web_artifact.rs](../../crates/control/publish/src/web_artifact.rs) owns the upload behavior.
 
 ## Build and push
 
@@ -73,7 +73,7 @@ wamn web upload --platform-ui sha256:<64 lowercase hex digits> [--bucket <bucket
 
 A bucket URL uses `s3://<bucket>[/<prefix>]` or `gs://<bucket>[/<prefix>]`.
 The optional prefix adds a directory before the upload path.
-`Sink::store` in [web_artifact.rs](../../crates/control/package/src/web_artifact.rs) reads `AWS_*` variables for S3.
+`Sink::store` in [web_artifact.rs](../../crates/control/publish/src/web_artifact.rs) reads `AWS_*` variables for S3.
 For Google Cloud Storage, it reads `GOOGLE_*` variables and Application Default Credentials, the credentials that Google client libraries use.
 The caller needs access to create objects in the bucket.
 The upload does not create the bucket or grant public access.
@@ -142,13 +142,13 @@ Each write creates a new object and never replaces an existing object.
 A failed upload can leave objects behind. The command performs no rollback.
 A retry after a partial upload keeps each existing object whose bytes are equal, and refuses an object with other bytes.
 
-[The web archive reader](../../crates/control/package/src/web_artifact/plan.rs) accepts `index.html`, the service worker `sw.js`, and files under `assets/`.
+[The web archive reader](../../crates/control/publish/src/web_artifact/plan.rs) accepts `index.html`, the service worker `sw.js`, and files under `assets/`.
 The web front gives pinned assets `Cache-Control: public, max-age=31536000, immutable`.
 The index and `sw.js` carry `Cache-Control: no-cache`.
 The web front also marks generated `config.json` as `no-cache`.
 The accepted extensions are `html`, `js`, `css`, `json`, `map`, `svg`, `png`, `ico`, `woff2`, and `woff`.
 
-The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crates/control/package/src/web_artifact.rs) report these errors:
+The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crates/control/publish/src/web_artifact.rs) report these errors:
 
 | Error text | Cause or action |
 | --- | --- |

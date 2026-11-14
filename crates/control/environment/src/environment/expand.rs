@@ -140,7 +140,7 @@ pub(super) async fn prepare_at(
         .fetch_one(&mut *tx)
         .await?;
     super::document::write_revocation_configuration(&mut tx, document).await?;
-    wamn_package_control::connection_requirement::prepare_release(
+    wamn_publish::connection_requirement::prepare_release(
         &mut tx,
         &project_env_key,
         manifest,
