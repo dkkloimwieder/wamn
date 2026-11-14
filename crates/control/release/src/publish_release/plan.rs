@@ -1,20 +1,11 @@
 use super::{
-    AdmittedComponent, AttachmentTarget, AuthoritativeEnvironmentPolicy, BTreeMap, BTreeSet,
-    BareSchemaName, ComposedApplication, DependencyDigestRule, PackageCoordinate,
-    ProjectedEnvironmentPolicy, PublishManifestError, PublishManifestErrorType,
-    PublishReleaseManifest, PublishedRelease, ReleaseComponents, ReleaseTarget, RouteContracts,
-    ServingComponent, ServingManifest, ServingRoute, ensure, project_serving_component,
+    AdmittedComponent, AttachmentTarget, BTreeMap, BTreeSet, ComposedApplication,
+    DependencyDigestRule, PackageCoordinate, PublishManifestError, PublishManifestErrorType,
+    PublishReleaseManifest, PublishedRelease, ReleaseComponents, RouteContracts, ServingComponent,
+    ServingManifest, ServingRoute, ensure, project_serving_component,
     resolve_component_dependency_closure, resolve_route_component,
 };
 use anyhow::Context as _;
-
-pub(super) fn projected_environment_policy_sql(run_schema: &BareSchemaName) -> String {
-    format!(
-        "SELECT expected_environment, source_policy_org, source_policy_hash \
-           FROM {}.environment_policies WHERE project_env_key = $1",
-        run_schema.quoted()
-    )
-}
 
 /// Parse one exact `PACKAGE_ID@PACKAGE_VERSION` package coordinate.
 pub fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
@@ -103,68 +94,6 @@ pub fn record_composed_entry(
         digest,
         canonical_bytes,
     };
-    Ok(())
-}
-
-pub(crate) fn verify_projected_environment_policy(
-    projected: Option<&ProjectedEnvironmentPolicy>,
-    source_policy: &AuthoritativeEnvironmentPolicy,
-    target: &ReleaseTarget,
-    run_schema: &BareSchemaName,
-) -> Result<(), PublishManifestError> {
-    let Some(projected) = projected else {
-        return Err(environment_policy_absent(target, run_schema));
-    };
-    verify_environment_name(&projected.expected_environment, target)?;
-    if projected.source_policy_org.as_deref() != Some(source_policy.source_policy_org.as_ref())
-        || projected.source_policy_hash.as_deref()
-            != Some(source_policy.source_policy_hash.as_ref())
-    {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::EnvironmentPolicySourceMismatch,
-            format!(
-                "environment {:?} policy source differs: projected-org={:?}, authoritative-org={:?}, projected-hash={:?}, authoritative-hash={:?}; rerun the verification policy projection",
-                target.environment,
-                projected.source_policy_org.as_deref().unwrap_or("<absent>"),
-                source_policy.source_policy_org,
-                projected
-                    .source_policy_hash
-                    .as_deref()
-                    .unwrap_or("<absent>"),
-                source_policy.source_policy_hash,
-            ),
-        ));
-    }
-    Ok(())
-}
-
-pub(super) fn environment_policy_absent(
-    target: &ReleaseTarget,
-    run_schema: &BareSchemaName,
-) -> PublishManifestError {
-    PublishManifestError::new(
-        PublishManifestErrorType::EnvironmentPolicyAbsent,
-        format!(
-            "project {:?} has no row in {}.environment_policies; run `wamn-ctl env apply`",
-            target.project_env_key,
-            run_schema.as_str()
-        ),
-    )
-}
-
-pub(super) fn verify_environment_name(
-    expected_environment: &str,
-    target: &ReleaseTarget,
-) -> Result<(), PublishManifestError> {
-    if expected_environment != target.environment {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::EnvironmentPolicyMismatch,
-            format!(
-                "release environment {:?} differs from provisioned environment {:?}",
-                target.environment, expected_environment
-            ),
-        ));
-    }
     Ok(())
 }
 

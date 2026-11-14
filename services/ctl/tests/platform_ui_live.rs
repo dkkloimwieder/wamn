@@ -10,8 +10,8 @@ use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::process::Command;
 use wamn_control_provision::{PlatformComponent, WorkloadRoleFamily};
 use wamn_dev_control::dev::environment::{
-    DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT,
-    install_journey_platform_base_grants, reconcile_journey_run_plane,
+    DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, initialize_journey_platform,
+    install_journey_platform_base_grants,
 };
 use wamn_environment_control::provision_project_env::{
     ProvisionProjectEnvRequest, provision_project_env,
@@ -94,7 +94,7 @@ async fn provision_browser_environment(
         environment: ENVIRONMENT.to_owned(),
     };
     install_journey_platform_base_grants(&mut target, "example.invalid").await?;
-    reconcile_journey_run_plane(&coordinate, system_url, target_url.as_str()).await?;
+    initialize_journey_platform(&coordinate, system_url, target_url.as_str()).await?;
     let administration = wamn_test_infrastructure::credentials::database_login(
         system_url,
         Some(target_url.as_str()),

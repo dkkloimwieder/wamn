@@ -7,25 +7,6 @@ mod local_delivery;
 mod scheduler_outage;
 
 pub(super) const DEV_COMMAND_TIMEOUT: Duration = Duration::from_mins(12);
-/// The migrations the dev command installs, with each package version from
-/// its wamn.json.
-pub(super) fn dev_expected_migrations() -> [(&'static str, &'static str, i32, &'static str); 2] {
-    [
-        (
-            OVERLAY_PACKAGE_ID,
-            *OVERLAY_PACKAGE_VERSION,
-            1,
-            "migrations/0001_initial.sql",
-        ),
-        (
-            BASE_PACKAGE_ID,
-            *BASE_PACKAGE_VERSION,
-            1,
-            "migrations/0001_initial.sql",
-        ),
-    ]
-}
-
 pub(super) struct DevJourneyInputs {
     pub(super) wamn_binary: PathBuf,
     pub(super) environment: DevEnvironmentInputs,
@@ -112,20 +93,6 @@ pub(super) fn verify_dev_command_output(output: &std::process::Output) -> anyhow
         output.status.success(),
         "wamn dev failed with {}: stdout={stdout:?} stderr={stderr:?}",
         output.status
-    );
-    let stages = wamn_dev_control::dev::DEV_STAGE_ORDER
-        .iter()
-        .map(|stage| stage.as_str())
-        .collect::<Vec<_>>()
-        .join(",");
-    let expected = format!("run completed: {stages}");
-    let results = stdout
-        .lines()
-        .filter(|line| line.starts_with("run completed:"))
-        .collect::<Vec<_>>();
-    anyhow::ensure!(
-        results == [expected.as_str()],
-        "wamn dev returned the wrong product receipt: {results:?}; stdout={stdout:?}"
     );
     // The endpoint the activated release served, read off the public dev seam.
     // Only the Activate stage can publish it, so dropping that publish leaves
@@ -260,39 +227,29 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
         "wamn dev installed the wrong exact package coordinates: {observed_packages:?}"
     );
 
-    let migrations = sqlx::query(
-        "SELECT package_id, package_version, ordinal, relative_path, sha256 \
-             FROM catalog.package_migrations WHERE project_env_key = $1 \
-             ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\", ordinal",
-    )
-    .bind(&identity().project_env_key().as_str())
-    .fetch_all(&mut *project)
-    .await
-    .context("read product-command target migration records")?;
-    let observed_migrations = migrations
-        .iter()
-        .map(|row| {
-            (
-                row.get::<String, _>(0),
-                row.get::<String, _>(1),
-                row.get::<i32, _>(2),
-                row.get::<String, _>(3),
-                row.get::<String, _>(4),
-            )
-        })
-        .collect::<Vec<_>>();
-    anyhow::ensure!(
-        observed_migrations.len() == dev_expected_migrations().len()
-            && observed_migrations
+    use sqlx::migrate::Migrate as _;
+    for source in released_package_roots().values() {
+        let directory = wamn_package_control::package_source::read_package_directory(source)?;
+        let metadata = wamn_catalog::package_schema::package_metadata(&directory)?;
+        let expected = wamn_compiler::migrations::migrator(
+            &wamn_package_control::package_source::migration_root(source),
+        )
+        .await?;
+        let table = wamn_control_provision::migration::history_table(
+            &identity().project_env_key(),
+            metadata.coordinate.package_id(),
+        );
+        let applied = project.list_applied_migrations(&table).await?;
+        anyhow::ensure!(
+            expected
                 .iter()
-                .zip(dev_expected_migrations())
-                .all(|((id, version, ordinal, path, hash), expected)| {
-                    (id.as_str(), version.as_str(), *ordinal, path.as_str()) == expected
-                        && hash.len() == 71
-                        && hash.starts_with("sha256:")
-                }),
-        "wamn dev installed the wrong exact migration records: {observed_migrations:?}"
-    );
+                .filter(|file| file.migration_type.is_up_migration())
+                .all(|file| applied
+                    .iter()
+                    .any(|row| row.version == file.version && row.checksum == file.checksum)),
+            "dev SQLx history differs from its package sources"
+        );
+    }
 
     verify_journey_operation_grants(project).await?;
 
@@ -357,7 +314,7 @@ pub(super) async fn current_database_acl(
 
 #[tokio::test]
 #[ignore = "requires: env:WAMN_IDENTITY_BINARY, env:RESEND_API_KEY, env:RESEND_FROM, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:cargo-sqlx, bin:jq"]
-async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> anyhow::Result<()> {
+async fn product_dev_command_applies_packages_and_cleans_up() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_IDENTITY_BINARY, env:RESEND_API_KEY, env:RESEND_FROM, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:cargo-sqlx, bin:jq",
     );
@@ -420,7 +377,6 @@ pub(super) async fn assert_dev_command(
     let config = write_dev_config(
         root,
         system_url,
-        &environment.template,
         &environment.route,
         &environment.credentials,
         &inputs.environment,

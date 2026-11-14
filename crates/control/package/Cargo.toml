@@ -40,7 +40,6 @@ wamn-platform-identity = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-engine = { workspace = true }
-wamn-schema-control = { workspace = true }
 wamn-compiler = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 wamn-fixture-package = { workspace = true, optional = true }

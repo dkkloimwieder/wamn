@@ -28,6 +28,7 @@ use oci_client::{Client as OciClient, Reference};
 use serde::Deserialize;
 use wamn_catalog::ComponentConnectionRequirement;
 use wamn_catalog::ConnectionTypeDescriptor;
+use wamn_catalog::package_schema::package_metadata;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
     ComponentDescriptor, ComponentSqlField, ComponentSqlStatement, bind_component_statement_facts,
@@ -40,7 +41,6 @@ use wamn_package_artifact::registry_credentials::RegistryCredentials;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_schema_control::package_metadata;
 
 use wamn_compiler::declared_sql;
 
@@ -220,7 +220,7 @@ impl ComponentAdmission {
 
 /// Validate saved component and package bytes without publication side effects.
 pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentAdmission> {
-    let directory = crate::apply_package::read_package_directory(&args.package)?;
+    let directory = crate::package_source::read_package_directory(&args.package)?;
     let package = package_metadata(&directory)
         .context("validate strict package directory before component publication")?;
     let package_manifest =

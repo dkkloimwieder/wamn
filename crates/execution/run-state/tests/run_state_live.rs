@@ -275,10 +275,7 @@ fn run_state_live() {
     // transition after terminal state returns its typed refusal.
     success(
         &url,
-        "INSERT INTO wamn_run.environment_policies \
-           (project_env_key,expected_environment) \
-         VALUES ('t1','prod'); \
-         INSERT INTO wamn_run.runs \
+        "INSERT INTO wamn_run.runs \
            (project_env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment, \
             wiring_id, wiring_version, attachment_id, status) \
          VALUES ('t1', 'release-1', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, 'cat', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'prod', \
@@ -667,9 +664,6 @@ fn run_state_live() {
            'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
          INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
          VALUES ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{}'); \
-         INSERT INTO wamn_run.environment_policies \
-           (project_env_key,expected_environment) \
-         VALUES ('t2','prod'); \
          INSERT INTO wamn_run.runs \
            (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,input_json) VALUES \

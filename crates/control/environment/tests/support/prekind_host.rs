@@ -419,12 +419,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         PLATFORM_DOMAIN,
     )
     .await?;
-    wamn_environment_control::reconcile_run_plane::reconcile(
-        &mut project,
-        &wamn_schema_control::BareSchemaName::new("wamn_run")?,
-        true,
-    )
-    .await?;
+    wamn_environment_control::platform_migrations::install_project(&mut project).await?;
     sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:prekind',false)").bind(&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut project).await.map(|result| result.rows_affected())?;
     sqlx::query("SELECT set_config('app.project_env_key',$1,false)")
         .bind(&project_env_key)
@@ -435,7 +430,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         .execute(&mut project)
         .await
         .map(drop)?;
-    sqlx::query("INSERT INTO wamn_run.environment_policies(project_env_key,expected_environment) VALUES ($1,'http')").bind(&project_env_key).execute(&mut project).await.map(|result| result.rows_affected())?;
+
     let instance: i64 =
         sqlx::query("SELECT oid::bigint FROM pg_database WHERE datname=current_database()")
             .fetch_one(&mut project)

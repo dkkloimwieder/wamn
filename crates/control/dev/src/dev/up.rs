@@ -105,7 +105,6 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
     let config = write_dev_config(
         &args.root,
         &args.system_database_url,
-        &environment.template,
         &environment.route,
         &environment.credentials,
         &inputs,
@@ -201,11 +200,13 @@ async fn enable_cdc(
         .iter()
         .flat_map(|manifest| manifest.models.values())
     {
-        sql.push_str(&wamn_schema_control::alter_replica_identity_sql(
-            &model.schema,
-            &model.table,
-            wamn_schema_control::ReplicaIdentity::Full,
-        ));
+        sql.push_str(
+            &wamn_environment_control::replica_identity::alter_replica_identity_sql(
+                &model.schema,
+                &model.table,
+                wamn_environment_control::replica_identity::ReplicaIdentity::Full,
+            ),
+        );
         sql.push(';');
     }
     sql.push_str(&wamn_control_provision::sql::create_publication_schemas_sql(&name, &schemas));

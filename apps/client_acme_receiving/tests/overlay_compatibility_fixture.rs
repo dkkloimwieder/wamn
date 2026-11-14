@@ -7,7 +7,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_catalog::schema::ForeignKeyColumn;
 use wamn_digest::bytes_sha256;
-use wamn_package_control::apply_package::{self, ApplyPackageRequest};
+use wamn_environment_control::apply_package::{self, ApplyPackageRequest};
 use wamn_schema_introspection::ir::{Constraint, ForeignKeyAction, postgres_type};
 
 use super::identity;
@@ -30,7 +30,7 @@ async fn observe_installed_contract(
             .as_str()
             .context("required table must be a name")?;
         let rows = sqlx::query(sqlx::AssertSqlSafe(
-            (wamn_schema_control::select_schema_columns_sql()).to_string(),
+            "SELECT c.relname::text, a.attname::text, a.attnotnull, a.attnum::int, format_type(a.atttypid,a.atttypmod) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid WHERE n.nspname=$1 AND c.relkind IN ('r','p') AND a.attnum>0 AND NOT a.attisdropped ORDER BY c.relname,a.attnum".to_owned(),
         ))
         .bind(&schema)
         .fetch_all(&mut *project)
@@ -270,7 +270,7 @@ async fn install_fresh(
     let roots = packages
         .iter()
         .map(|package| {
-            Ok(wamn_package_control::apply_package::PackageRoot {
+            Ok(wamn_environment_control::apply_package::PackageRoot {
                 path: package.clone(),
                 artifact_digest: Some(
                     wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(package)?,
@@ -280,8 +280,10 @@ async fn install_fresh(
         .collect::<anyhow::Result<Vec<_>>>()?;
     for package in &roots {
         apply_package::apply_package(ApplyPackageRequest {
-            component_source: wamn_package_control::apply_package::component_source_from_env(None)
-                .unwrap(),
+            component_source: wamn_environment_control::apply_package::component_source_from_env(
+                None,
+            )
+            .unwrap(),
             changes: wamn_broker::Publisher::default(),
             package: package.clone(),
             database_url: url.clone(),

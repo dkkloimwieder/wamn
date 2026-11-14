@@ -62,3 +62,5 @@ pub use output::{host_route_client_output_root, output_root, package_workspace};
 pub use package_catalog::project_package_catalog;
 
 mod history;
+
+pub mod migrations;

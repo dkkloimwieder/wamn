@@ -13,13 +13,12 @@
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 pub(super) mod plan;
-pub(crate) use plan::verify_projected_environment_policy;
 pub use plan::{
     application_dependency_permissions, composes_integration, parse_package, record_composed_entry,
 };
 use plan::{
     application_digests, covers_routes, pin_runtime_schemas, project_components, project_routes,
-    projected_environment_policy_sql, validate_request,
+    validate_request,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,19 +26,16 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
 
+use wamn_catalog::exposure::{
+    HttpRoute as AuthoredHttpRoute, canonical_http_route_template, normalize_http_route,
+};
 use wamn_catalog::{
     AdmittedComponent, AttachmentTarget, ComponentConnection, ComponentPackageCoordinate,
     ManifestDigest, OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
     ServingAttachment, ServingComponent, ServingManifest, ServingRelation, ServingRelease,
     ServingRoute,
 };
-use wamn_engine::release_manifest::ReleaseTarget;
-use wamn_schema_control::{
-    BareSchemaName, HttpRoute as AuthoredHttpRoute, canonical_http_route_template,
-    normalize_http_route,
-};
 
-use crate::verification_policy::AuthoritativeEnvironmentPolicy;
 use wamn_package_control::package_artifact::{OpenedPackage, PackageRegistry};
 
 mod attachments;
@@ -139,9 +135,6 @@ pub enum PublishManifestErrorType {
     ClosureConflict,
     Document,
     DuplicateAttachmentId,
-    EnvironmentPolicyAbsent,
-    EnvironmentPolicyMismatch,
-    EnvironmentPolicySourceMismatch,
     ApplicationSelection,
     ApplicationCoverage,
     AmbiguousApplicationMember,
@@ -163,9 +156,6 @@ impl PublishManifestErrorType {
             Self::ClosureConflict => "closure-conflict",
             Self::Document => "document",
             Self::DuplicateAttachmentId => "duplicate-attachment-id",
-            Self::EnvironmentPolicyAbsent => "environment-policy-not-converged",
-            Self::EnvironmentPolicyMismatch => "environment-policy-environment-mismatch",
-            Self::EnvironmentPolicySourceMismatch => "environment-policy-source-mismatch",
         }
     }
 }
@@ -331,22 +321,6 @@ pub async fn publish_local(
         .fetch_one(&mut client)
         .await?;
     let assembled = assemble_local_release(&args, package_roots, admissions)?;
-    let run_schema = BareSchemaName::new(target.run_schema.to_owned())?;
-    let policy = crate::verification_policy::read_authoritative_environment_policy(
-        target.control_database_url,
-        &args.org,
-        &args.environment,
-    )
-    .await?;
-    let projected =
-        read_projected_environment_policy(&mut client, &run_schema, &args.project_env_key())
-            .await?;
-    verify_projected_environment_policy(
-        projected.as_ref(),
-        &policy,
-        &ReleaseTarget::new(args.project_env_key(), &args.environment),
-        &run_schema,
-    )?;
     drop(client);
     Ok((assembled.published, assembled.facts))
 }
@@ -739,34 +713,6 @@ async fn publish_candidate(
     )
     .await?;
     Ok(published)
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct ProjectedEnvironmentPolicy {
-    expected_environment: String,
-    source_policy_org: Option<String>,
-    source_policy_hash: Option<String>,
-}
-
-pub(crate) async fn read_projected_environment_policy(
-    client: &mut Client,
-    run_schema: &BareSchemaName,
-    project_env_key: &str,
-) -> Result<Option<ProjectedEnvironmentPolicy>, PublishManifestError> {
-    sqlx::query(sqlx::AssertSqlSafe(projected_environment_policy_sql(
-        run_schema,
-    )))
-    .bind(project_env_key)
-    .fetch_optional(&mut *client)
-    .await
-    .map(|row| {
-        row.map(|row| ProjectedEnvironmentPolicy {
-            expected_environment: row.get(0),
-            source_policy_org: row.get(1),
-            source_policy_hash: row.get(2),
-        })
-    })
-    .map_err(|error| storage("read the provisioned environment policy", error))
 }
 
 /// Read the environment's lifecycle setting from its registry row.
@@ -2082,64 +2028,6 @@ mod tests {
             serving.descriptor.operations[operation].statement(&path),
             admitted.operations[operation].statement(&path)
         );
-    }
-
-    #[test]
-    fn environment_policy_refusals_remain_distinct() {
-        let authoritative_hash = format!("sha256:{}", "a".repeat(64));
-        let stale_hash = format!("sha256:{}", "b".repeat(64));
-        let source_policy = AuthoritativeEnvironmentPolicy {
-            source_policy_org: "demo".into(),
-            policy: wamn_control_provision::EnvPolicy::prod(),
-            source_policy_hash: authoritative_hash.clone().into_boxed_str(),
-        };
-        let release = ReleaseTarget::new("org-a", "prod");
-        let schema = BareSchemaName::new("wamn_run").unwrap();
-        assert_eq!(
-            verify_projected_environment_policy(None, &source_policy, &release, &schema)
-                .unwrap_err()
-                .error_type(),
-            PublishManifestErrorType::EnvironmentPolicyAbsent
-        );
-        let wrong_environment = ProjectedEnvironmentPolicy {
-            expected_environment: "dev".to_owned(),
-            source_policy_org: Some("demo".to_owned()),
-            source_policy_hash: Some(authoritative_hash.clone()),
-        };
-        assert_eq!(
-            verify_projected_environment_policy(
-                Some(&wrong_environment),
-                &source_policy,
-                &release,
-                &schema,
-            )
-            .unwrap_err()
-            .error_type(),
-            PublishManifestErrorType::EnvironmentPolicyMismatch
-        );
-        let stale = ProjectedEnvironmentPolicy {
-            expected_environment: "prod".to_owned(),
-            source_policy_org: Some("demo".to_owned()),
-            source_policy_hash: Some(stale_hash.clone()),
-        };
-        let mismatch =
-            verify_projected_environment_policy(Some(&stale), &source_policy, &release, &schema)
-                .unwrap_err();
-        assert_eq!(
-            mismatch.error_type(),
-            PublishManifestErrorType::EnvironmentPolicySourceMismatch
-        );
-        assert!(mismatch.detail().contains("environment \"prod\""));
-        assert!(mismatch.detail().contains(&stale_hash));
-        assert!(mismatch.detail().contains(&authoritative_hash));
-
-        let exact = ProjectedEnvironmentPolicy {
-            expected_environment: "prod".to_owned(),
-            source_policy_org: Some("demo".to_owned()),
-            source_policy_hash: Some(authoritative_hash),
-        };
-        verify_projected_environment_policy(Some(&exact), &source_policy, &release, &schema)
-            .unwrap();
     }
 }
 

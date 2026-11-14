@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::Args;
-use wamn_package_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
+use wamn_environment_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
 use wamn_package_control::package_artifact::{
     self, OpenedPackage, PackagePushDisposition, PackageRegistry, PackageSource, PushPackageRequest,
 };

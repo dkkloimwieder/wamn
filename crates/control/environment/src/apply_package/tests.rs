@@ -117,11 +117,11 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
             .is_ok()
     );
     let shipped = std::env::temp_dir().join(format!("wamn-local-shipped-{}", std::process::id()));
-    crate::test_support::copy_schema_fixture(&shipped);
+    wamn_package_control::test_support::copy_schema_fixture(&shipped);
     apply_package(ApplyPackageRequest {
         migration_database_url: migration_url.into(),
         component_source: crate::apply_package::component_source_from_env(None).unwrap(),
-        package: crate::package_artifact::fixture_package_root(&shipped).unwrap(),
+        package: wamn_package_control::package_artifact::fixture_package_root(&shipped).unwrap(),
         database_url: owner_url.to_string(),
         org: "apply-drops".into(),
         project: "fixture".into(),
@@ -136,11 +136,11 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
             .is_err()
     })
     .await;
-    assert_eq!(
-        database
-            .execute(&["SELECT count(*) FROM platform.role WHERE name = 'admin'"])
-            .unwrap()
-            .trim(),
-        "1"
-    );
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let admin_role: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT FROM platform.role WHERE name='admin')")
+            .fetch_one(&mut client)
+            .await
+            .unwrap();
+    assert!(admin_role);
 }

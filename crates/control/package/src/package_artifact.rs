@@ -267,8 +267,8 @@ fn descriptor_files(root: &Path) -> anyhow::Result<Vec<(ComponentDescriptor, Vec
 /// with the stand-in artifact digest of
 /// [`wamn_test_infrastructure::fixture_digest::fixture_artifact_digest`].
 #[cfg(any(test, feature = "test-util"))]
-pub fn fixture_package_root(root: &Path) -> anyhow::Result<crate::apply_package::PackageRoot> {
-    Ok(crate::apply_package::PackageRoot {
+pub fn fixture_package_root(root: &Path) -> anyhow::Result<crate::package_source::PackageRoot> {
+    Ok(crate::package_source::PackageRoot {
         path: root.to_owned(),
         artifact_digest: Some(
             wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(root)?,
@@ -485,8 +485,9 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         manifest.package.version,
         contract.id
     );
-    let directory = crate::apply_package::read_package_directory(root)?;
-    wamn_schema_control::package_metadata(&directory).context("plan the package migrations")?;
+    let directory = crate::package_source::read_package_directory(root)?;
+    wamn_catalog::package_schema::package_metadata(&directory)
+        .context("plan the package migrations")?;
 
     let base_digests = authored_base_digests(root).context("read the authored base digests")?;
     let mut descriptors = Vec::new();
@@ -742,8 +743,8 @@ impl OpenedPackage {
     /// The package root with the digest this opener holds in memory, the one
     /// carrier of the digest of an opened artifact. The digest is the one the
     /// registry records; a directory has none.
-    pub fn package_root(&self) -> crate::apply_package::PackageRoot {
-        crate::apply_package::PackageRoot {
+    pub fn package_root(&self) -> crate::package_source::PackageRoot {
+        crate::package_source::PackageRoot {
             path: self.root.clone(),
             artifact_digest: self.digest.clone(),
         }

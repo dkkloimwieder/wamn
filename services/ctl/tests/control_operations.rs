@@ -217,17 +217,8 @@ fn remote_commands_send_only_contract_targets_without_direct_credentials() -> an
             "application.deploy" => vec!["deploy", "--release", &digest],
             "application.rollback" => vec!["rollback", "a", "--release", &digest],
             "schema.diff" => vec!["schema", "diff", "a", "--release", &digest],
-            "schema.apply" => vec![
-                "schema",
-                "apply",
-                "a",
-                "--release",
-                &digest,
-                "--resolve",
-                "a:migrations/0001.sql=retry",
-            ],
+            "schema.apply" => vec!["schema", "apply", "a", "--release", &digest],
             "schema.reset" => vec!["schema", "reset"],
-            "schema.adopt" => vec!["schema", "adopt"],
             operation => panic!("add CLI coverage for {operation}"),
         };
         let mut responses = vec![(200, json!({"value":{"job":"op-fixture"}}))];

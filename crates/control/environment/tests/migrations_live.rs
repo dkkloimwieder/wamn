@@ -3,7 +3,7 @@
 use sqlx::SqlSafeStr as _;
 use sqlx::migrate::{MigrateError, Migration, MigrationType, Migrator};
 use wamn_control_provision::migration;
-use wamn_package_control::migrations;
+use wamn_environment_control::migrations;
 
 fn source(version: i64, sql: &str) -> Migration {
     Migration::new(
@@ -206,7 +206,7 @@ async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic
 
 #[tokio::test]
 async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Result<()> {
-    use wamn_package_control::apply_package::{self, ApplyPackageRequest, PackageRoot};
+    use wamn_environment_control::apply_package::{self, ApplyPackageRequest, PackageRoot};
     let _lock = wamn_test_postgres::lock();
     let database = wamn_platform_identity::test_database::project_platform();
     let migration_input = wamn_control_provision::test_database::package_migration_input(
@@ -310,5 +310,97 @@ async fn platform_migrations_refuse_administrators_and_use_scope_credentials() -
                 && !declaration.bypassrls
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() -> anyhow::Result<()>
+{
+    use wamn_environment_control::{apply_package, environment::sql::reset::reset_database};
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_control_provision::test_database::system();
+    system.execute(&[
+        &wamn_control_provision::test_database::seed_org_project_env_sql("reset", "fixture", "dev"),
+    ])?;
+    let triple = wamn_registry::Triple::new("reset", "dev", "fixture");
+    let database = wamn_platform_identity::test_database::project_platform();
+    let migration_input = wamn_control_provision::test_database::package_migration_input(
+        database.url(),
+        "reset",
+        "fixture",
+        "dev",
+    )
+    .await?;
+    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+    let root = scratch.path().join("package");
+    wamn_package_control::test_support::copy_schema_fixture(&root);
+    let directory = apply_package::read_package_directory(&root)?;
+    let metadata = wamn_catalog::package_schema::package_metadata(&directory)?;
+    let apply = || apply_package::ApplyPackageRequest {
+        package: wamn_package_control::package_artifact::fixture_package_root(&root).unwrap(),
+        component_source: None,
+        changes: wamn_broker::Publisher::default(),
+        database_url: database.url().to_owned(),
+        migration_database_url: migration_input.clone(),
+        org: "reset".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
+    };
+    apply_package::apply_package_schema(apply()).await?;
+    let mut admin = wamn_postgres::connect(database.url()).await?;
+    let before: sqlx::postgres::types::Oid =
+        sqlx::query_scalar("SELECT oid FROM pg_database WHERE datname=current_database()")
+            .fetch_one(&mut admin)
+            .await?;
+    let schemas = metadata
+        .models
+        .iter()
+        .map(|model| postgres_protocol::escape::escape_identifier(&model.schema))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(",");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE PUBLICATION reset_publication FOR TABLES IN SCHEMA {schemas}"
+    )))
+    .execute(&mut admin)
+    .await?;
+    sqlx::query("INSERT INTO platform.write_log(operation,idempotency_key,request,result) VALUES ('fixture.create','before-reset',$1,'committed')")
+        .bind(&b"request"[..]).execute(&mut admin).await?;
+    system.execute(&["SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.environments SET disposable=false WHERE org='reset' AND env='dev'"])?;
+    assert!(
+        reset_database(system.url(), database.url(), &triple)
+            .await
+            .is_err()
+    );
+    system.execute(&["SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.environments SET disposable=true WHERE org='reset' AND env='dev'"])?;
+    reset_database(system.url(), database.url(), &triple).await?;
+    let after: sqlx::postgres::types::Oid =
+        sqlx::query_scalar("SELECT oid FROM pg_database WHERE datname=current_database()")
+            .fetch_one(&mut admin)
+            .await?;
+    assert_eq!(before, after);
+    let retained: bool = sqlx::query_scalar("SELECT to_regclass('platform.\"user\"') IS NOT NULL AND EXISTS(SELECT FROM pg_publication_namespace WHERE pnpubid=(SELECT oid FROM pg_publication WHERE pubname='reset_publication'))").fetch_one(&mut admin).await?;
+    assert!(retained);
+    for model in &metadata.models {
+        let absent: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NULL")
+            .bind(format!(
+                "{}.{}",
+                postgres_protocol::escape::escape_identifier(&model.schema),
+                postgres_protocol::escape::escape_identifier(&model.table)
+            ))
+            .fetch_one(&mut admin)
+            .await?;
+        assert!(absent);
+    }
+    let empty: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT FROM catalog.packages) AND NOT EXISTS(SELECT FROM catalog.workflows)").fetch_one(&mut admin).await?;
+    assert!(empty);
+    let claim_removed: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT FROM platform.write_log WHERE operation='fixture.create' AND idempotency_key='before-reset')")
+        .fetch_one(&mut admin).await?;
+    assert!(claim_removed);
+    let outcome = apply_package::apply_package_schema(apply()).await?;
+    assert!(outcome.migrations_applied > 0);
+    let mut executor = wamn_postgres::connect(&migration_input).await?;
+    migration::require_login(&mut executor, "reset--dev--fixture").await?;
     Ok(())
 }

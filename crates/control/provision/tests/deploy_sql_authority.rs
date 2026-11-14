@@ -594,9 +594,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
                (project_env_key, package_id, package_version, artifact_digest) \
              SELECT t, 'platform_fixture', '1.0.0', {hash} \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n\
-             INSERT INTO wamn_run.environment_policies \
-               (project_env_key, expected_environment) \
-             SELECT t, 'dev' FROM unnest(ARRAY['t1', 't2']) AS t;\n\
+             \n\
              INSERT INTO wamn_run.runs \
                (project_env_key, run_id, package_id, environment, \
                 wiring_id, wiring_version, wiring_hash, binding_world_json) \

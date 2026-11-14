@@ -6,4 +6,3 @@ pub mod publish_release;
 pub mod release_carrier;
 pub mod release_chart;
 pub mod release_composition;
-pub mod verification_policy;

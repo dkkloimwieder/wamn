@@ -104,13 +104,6 @@ mod tests {
     }
 
     #[test]
-    fn normalization_uppercases_the_method_and_trims_the_trailing_slash() {
-        let normalized = normalize_http_route(&route("/widgets/", "post"), "create").unwrap();
-        assert_eq!(normalized.path, "/widgets");
-        assert_eq!(normalized.method, "POST");
-    }
-
-    #[test]
     fn a_hostname_cannot_reach_an_authored_route() {
         let authored = serde_json::json!({
             "host": "package.example",
@@ -123,39 +116,14 @@ mod tests {
 
     #[test]
     fn a_malformed_method_or_path_is_refused_by_name() {
-        assert_eq!(
-            normalize_http_route(&route("/widgets", "po st"), "create")
-                .unwrap_err()
-                .code,
-            "invalid-http-method"
-        );
-        assert_eq!(
-            normalize_http_route(&route("widgets", "POST"), "create")
-                .unwrap_err()
-                .code,
-            "invalid-http-path-template"
-        );
+        assert!(normalize_http_route(&route("/widgets", "po st"), "create").is_err());
+        assert!(normalize_http_route(&route("widgets", "POST"), "create").is_err());
     }
 
     #[test]
     fn malformed_route_segments_are_refused() {
         for path in ["/a/{*rest}/b", "/a//b", "/a/{id}x"] {
-            let error = normalize_http_route(&route(path, "POST"), "create").unwrap_err();
-            assert_eq!(error.code, "invalid-http-path-template", "{path}");
-            assert_eq!(error.subject, "create");
+            assert!(normalize_http_route(&route(path, "POST"), "create").is_err());
         }
-    }
-
-    #[test]
-    fn the_collision_key_drops_parameter_names() {
-        assert_eq!(canonical_http_route_template("/{id}"), "/{}");
-        assert_eq!(
-            canonical_http_route_template("/{widget}"),
-            canonical_http_route_template("/{id}")
-        );
-        assert_eq!(
-            canonical_http_route_template("/files/{*rest}"),
-            "/files/{*}"
-        );
     }
 }

@@ -165,9 +165,6 @@ fn surviving_authority_matrix_live() {
              INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 't1','cat','1.0.0','sha256:{manifest_hash}'); \
              INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
-             INSERT INTO wamn_run.environment_policies \
-               (project_env_key,expected_environment) \
-             VALUES ('t1','dev'); \
              INSERT INTO wamn_run.runs \
                (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,trigger_source,input_json,service_principal_id) \
@@ -203,8 +200,7 @@ fn surviving_authority_matrix_live() {
                                      'TRUNCATE','REFERENCES','TRIGGER']) AS p \
             WHERE n.nspname = 'wamn_run' AND c.relkind IN ('r','p','v','m') \
               AND pg_catalog.has_table_privilege('wamn_executor_platform', c.oid, p); \
-           ASSERT actual = 'environment_policies:SELECT,\
-run_queue:DELETE,run_queue:SELECT,runs:SELECT', \
+           ASSERT actual = 'run_queue:DELETE,run_queue:SELECT,runs:SELECT', \
                   'run-plane TABLE grain drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(c.relname || ':' || p, ',' ORDER BY c.relname || ':' || p) \
              INTO actual \
@@ -363,9 +359,6 @@ fn release_targeted_queue_lease_skips_another_releases_head_live() {
              INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:21621f6bd9bc2769154aa2938726e891ecbc7929cd7be941b60ec776703ed394','{{\"release\":1}}'), \
                     ('t1','sha256:89437c2ddcb5d585633413604661041fe6b5ee9d49ae96153fe24812f1a8c5c0','{{\"release\":2}}'); \
-             INSERT INTO wamn_run.environment_policies \
-               (project_env_key,expected_environment) \
-             VALUES ('t1','dev'); \
              INSERT INTO wamn_run.runs \
                (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,trigger_source,input_json,service_principal_id) \

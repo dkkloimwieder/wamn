@@ -14,8 +14,8 @@ use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate,
     ConnectionTypeDescriptor, RequirementType, WiringDocument, WiringNode, WiringTerminal,
 };
+use wamn_environment_control::apply_package::{self, ApplyPackageRequest};
 use wamn_environment_control::environment::{bindings, document::EnvironmentDocument};
-use wamn_package_control::apply_package::{self, ApplyPackageRequest};
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::connection_memory::ConnectionMemory;
@@ -221,10 +221,10 @@ async fn provision_project(project: &mut Client, project_url: &str) -> Vec<Admit
         )
         .await
         .unwrap(),
-        component_source: wamn_package_control::apply_package::component_source_from_env(None)
+        component_source: wamn_environment_control::apply_package::component_source_from_env(None)
             .unwrap(),
         changes: wamn_broker::Publisher::default(),
-        package: wamn_package_control::apply_package::PackageRoot {
+        package: wamn_environment_control::apply_package::PackageRoot {
             path: package.clone(),
             artifact_digest: Some(
                 wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)

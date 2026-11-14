@@ -22,8 +22,6 @@ struct Request {
     #[serde(default)]
     release: Option<String>,
     #[serde(default)]
-    resolve: Option<String>,
-    #[serde(default)]
     job: Option<String>,
 }
 
@@ -34,7 +32,6 @@ enum Operation {
     Diff,
     Apply,
     Reset,
-    Adopt,
 }
 
 impl Operation {
@@ -45,7 +42,6 @@ impl Operation {
             "schema.diff" => Self::Diff,
             "schema.apply" => Self::Apply,
             "schema.reset" => Self::Reset,
-            "schema.adopt" => Self::Adopt,
             _ => return None,
         })
     }
@@ -57,12 +53,11 @@ impl Operation {
             Self::Diff => "diff",
             Self::Apply => "apply",
             Self::Reset => "reset",
-            Self::Adopt => "adopt",
         }
     }
 
     fn privileged(self) -> bool {
-        matches!(self, Self::Apply | Self::Reset | Self::Adopt)
+        matches!(self, Self::Apply | Self::Reset)
     }
 
     fn needs(
@@ -155,10 +150,7 @@ impl ControlRoutes<'_> {
             return Err(anyhow::anyhow!("operation worker must share the org namespace").into());
         }
         if attachment.route.operation == "operation.status" {
-            if request.application.is_some()
-                || request.release.is_some()
-                || request.resolve.is_some()
-            {
+            if request.application.is_some() || request.release.is_some() {
                 return Err(invalid("value"));
             }
             return status(api, &request, &coordinate).await;
@@ -275,13 +267,6 @@ fn validate(operation: Operation, request: &Request) -> Result<(), Refusal> {
             return Err(invalid("release"));
         }
     }
-    if request
-        .resolve
-        .as_ref()
-        .is_some_and(|value| value.len() > 1024 || value.contains(['\0', '\n', '\r']))
-    {
-        return Err(invalid("resolve"));
-    }
     match operation {
         Operation::Deploy if request.release.is_none() || request.application.is_some() => {
             return Err(invalid("release"));
@@ -294,11 +279,7 @@ fn validate(operation: Operation, request: &Request) -> Result<(), Refusal> {
         Operation::Reset if request.application.is_some() || request.release.is_some() => {
             return Err(invalid("application"));
         }
-        Operation::Adopt if request.release.is_some() => return Err(invalid("release")),
         _ => {}
-    }
-    if !matches!(operation, Operation::Apply) && request.resolve.is_some() {
-        return Err(invalid("resolve"));
     }
     Ok(())
 }
@@ -332,7 +313,6 @@ fn manifest(
     for (flag, value) in [
         ("--application", request.application.as_deref()),
         ("--release", request.release.as_deref()),
-        ("--resolve", request.resolve.as_deref()),
     ] {
         if let Some(value) = value {
             arguments.extend([flag, value]);
@@ -414,7 +394,7 @@ async fn status(
     if job["metadata"]["annotations"][TARGET] != coordinate
         || !matches!(
             job["metadata"]["annotations"][OPERATION].as_str(),
-            Some("deploy" | "rollback" | "diff" | "apply" | "reset" | "adopt")
+            Some("deploy" | "rollback" | "diff" | "apply" | "reset")
         )
     {
         return Err(Refusal::Declared {
@@ -526,7 +506,6 @@ mod tests {
             env: "dev".into(),
             application: None,
             release: None,
-            resolve: None,
             job: None,
         };
         for metadata in [false, true] {
@@ -579,7 +558,7 @@ mod tests {
                     Operation::Deploy | Operation::Rollback | Operation::Diff => {
                         assert!(!actual.contains("cnpg-superuser"));
                     }
-                    Operation::Apply | Operation::Reset | Operation::Adopt => {
+                    Operation::Apply | Operation::Reset => {
                         assert!(actual.contains("cnpg-superuser"));
                     }
                 }

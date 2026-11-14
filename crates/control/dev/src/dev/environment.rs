@@ -15,21 +15,17 @@
 //! provisioning; it only names the arguments and the order.
 
 use sqlx::PgConnection as Client;
-use sqlx::postgres::PgConnectOptions as PostgresConfig;
 use sqlx::{Connection as _, Row as _};
-use std::fmt::Write as _;
 
 use std::path::{Path, PathBuf};
-use std::str::FromStr as _;
 
 use crate::identifier::Identifier;
 use anyhow::Context as _;
 
-use wamn_control_provision::{platform_principals_sql, sql as provision_sql};
+use wamn_control_provision::sql as provision_sql;
 use wamn_environment_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, read_json, secret_annotation, secret_value,
 };
-use wamn_environment_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_identity_client::PatIssuerConfig;
 
 use crate::dev::activation::DevActivationIdentity;
@@ -98,7 +94,6 @@ fn write_host_config(root: &Path, identity: &DevActivationIdentity) -> anyhow::R
 )]
 pub struct DevEnvironment {
     /// Pristine clone source for every run's target database.
-    pub template: String,
     pub route: ProvisionedRoute,
     pub credentials: JourneyCredentials,
     pub identity: DevActivationIdentity,
@@ -166,7 +161,7 @@ pub async fn provision(
     .await?;
     tx.commit().await?;
     drop(project);
-    reconcile_journey_run_plane(&coordinate, system_url, &project_url).await?;
+    initialize_journey_platform(&coordinate, system_url, &project_url).await?;
     let credentials = prepare_journey_credentials(&coordinate, system_url, &project_url).await?;
     let reader = super::credentials::workload(
         &project_url,
@@ -200,10 +195,25 @@ pub async fn provision(
         &root.join("identity-trust.json"),
         &serde_json::json!({"issuer":issuer.args.endpoint,"ca":issuer.args.server_ca,"instance_suffix":instance}),
     )?;
-    let template =
-        prepare_target_template(admin, system_url, &route.database_url, root, &identity).await?;
+    let target = wamn_postgres::identity(&route.database_url)?.1;
+    let instance: sqlx::postgres::types::Oid =
+        sqlx::query_scalar("SELECT oid FROM pg_database WHERE datname=$1")
+            .bind(&target)
+            .fetch_one(&mut *admin)
+            .await?;
+    let marker = wamn_runtime::local_application::local_target_marker(
+        &identity.project_env_key(),
+        &identity.environment,
+        instance.0,
+    );
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "COMMENT ON DATABASE {} IS {}",
+        postgres_protocol::escape::escape_identifier(&target),
+        postgres_protocol::escape::escape_literal(&marker)
+    )))
+    .execute(&mut *admin)
+    .await?;
     Ok(DevEnvironment {
-        template,
         route,
         credentials,
         identity,
@@ -430,6 +440,7 @@ fn route_credentials(
 )]
 pub struct JourneyCredentials {
     pub guest_sql: String,
+    pub migration: String,
     pub executor_platform: String,
     pub event_materializer: String,
     pub http_admitter: String,
@@ -448,6 +459,7 @@ pub async fn prepare_journey_credentials(
     let workload = super::credentials::workload;
     Ok(JourneyCredentials {
         guest_sql: workload(project_url, coordinate, Family::App).await?,
+        migration: workload(project_url, coordinate, Family::Migration).await?,
         executor_platform: workload(project_url, coordinate, Family::ExecutorPlatform).await?,
         event_materializer: workload(project_url, coordinate, Family::EventMaterializer).await?,
         http_admitter: workload(project_url, coordinate, Family::HttpAdmitter).await?,
@@ -483,161 +495,12 @@ pub async fn provision_journey_control(
     .map(|_| ())
 }
 
-/// Snapshot the pristine project database and capture its database-level ACL.
-///
-/// `CREATE DATABASE ... TEMPLATE` copies every object and every object-level
-/// privilege. It does not copy the ACL of the database itself, so that one
-/// thing is read from the live database here, while it is healthy, and written
-/// as SQL the loop replays after each clone.
-///
-/// Reading the ACL beats deriving it. A derived set would be this module's
-/// opinion of what the standup granted; `datacl` is what it actually granted.
-pub async fn prepare_target_template(
-    admin: &mut Client,
-    system_url: &str,
-    target_url: &str,
-    root: &Path,
-    identity: &DevActivationIdentity,
-) -> anyhow::Result<String> {
-    let target = PostgresConfig::from_str(target_url)
-        .context("parse the target database URL")?
-        .get_database()
-        .context("the target database URL names no database")?
-        .to_owned();
-    let template = wamn_registry::name::database_template(&target);
-
-    let acl = render_database_acl(admin, &target).await?;
-    std::fs::write(root.join("database-acl.sql"), &acl)
-        .context("write the captured database-level ACL")?;
-
-    // CREATE DATABASE ... TEMPLATE refuses while another session is connected to
-    // the source, so the copy is taken before the Condition opens.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "DROP DATABASE IF EXISTS {} WITH (FORCE)",
-        Identifier::new(template.clone())?.quoted()
-    )))
-    .execute(&mut *admin)
-    .await
-    .map(drop)
-    .context("drop a previous target template")?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "CREATE DATABASE {} TEMPLATE {}",
-        Identifier::new(template.clone())?.quoted(),
-        Identifier::new(target.clone())?.quoted()
-    )))
-    .execute(&mut *admin)
-    .await
-    .map(drop)
-    .context("snapshot the pristine target database as a template")?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "REVOKE CONNECT, TEMPORARY ON DATABASE {} FROM PUBLIC",
-        Identifier::new(template.clone())?.quoted(),
-    )))
-    .execute(&mut *admin)
-    .await
-    .map(drop)
-    .context("preserve the cluster PUBLIC CONNECT base grants on the template")?;
-
-    // The fingerprint is stamped ON the template, so it cannot be separated
-    // from the thing it describes. A run compares it before it drops anything.
-    let system_database = super::target_database::database_name(system_url)
-        .context("the system database URL names no database")?;
-    let fingerprint =
-        super::target_database::template_fingerprint(&target, &system_database, identity);
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "COMMENT ON DATABASE {} IS {}",
-        Identifier::new(template.clone())?.quoted(),
-        postgres_protocol::escape::escape_literal(&fingerprint)
-    )))
-    .execute(&mut *admin)
-    .await
-    .map(drop)
-    .context("stamp the template with its standup fingerprint")?;
-    let instance: u32 = sqlx::query("SELECT oid FROM pg_catalog.pg_database WHERE datname=$1")
-        .bind(&target)
-        .fetch_one(&mut *admin)
-        .await?
-        .get::<sqlx::postgres::types::Oid, _>(0)
-        .0;
-    let marker = wamn_runtime::local_application::local_target_marker(
-        &identity.project_env_key(),
-        &identity.environment,
-        instance,
-    );
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "COMMENT ON DATABASE {} IS {}",
-        Identifier::new(target)?.quoted(),
-        postgres_protocol::escape::escape_literal(&marker),
-    )))
-    .execute(&mut *admin)
-    .await
-    .map(drop)
-    .context("stamp the provisioned local target")?;
-    Ok(template)
-}
-
-/// Render the database-level ACL of `database` as replayable SQL.
-async fn render_database_acl(admin: &mut Client, database: &str) -> anyhow::Result<String> {
-    let rows = sqlx::query(
-        "SELECT grantee::regrole::text AS grantee,
-                    privilege_type,
-                    is_grantable
-               FROM pg_catalog.pg_database d,
-                    LATERAL pg_catalog.aclexplode(d.datacl)
-              WHERE d.datname = $1
-              ORDER BY 1, 2",
-    )
-    .bind(database)
-    .fetch_all(&mut *admin)
-    .await
-    .context("read the database-level ACL")?;
-    let owner: String = sqlx::query(
-        "SELECT pg_catalog.pg_get_userbyid(datdba)::text
-               FROM pg_catalog.pg_database WHERE datname = $1",
-    )
-    .bind(database)
-    .fetch_one(&mut *admin)
-    .await
-    .context("read the database owner")?
-    .get(0);
-
-    let quoted = Identifier::new(database.to_owned())?.quoted();
-    let mut sql = format!(
-        "ALTER DATABASE {quoted} OWNER TO {};\n         REVOKE ALL ON DATABASE {quoted} FROM PUBLIC;\n",
-        Identifier::new(owner)?.quoted()
-    );
-    for row in rows {
-        let grantee: Option<String> = row.get("grantee");
-        let privilege: String = row.get("privilege_type");
-        let grantable: bool = row.get("is_grantable");
-        // A NULL grantee is PUBLIC, which the blanket REVOKE above already
-        // settled and which this loop must not hand back.
-        let Some(grantee) = grantee else { continue };
-        if grantee == "-" {
-            continue;
-        }
-        writeln!(
-            sql,
-            "GRANT {privilege} ON DATABASE {quoted} TO {}{};",
-            Identifier::new(grantee)?.quoted(),
-            if grantable { " WITH GRANT OPTION" } else { "" }
-        )
-        .expect("writing to a String cannot fail");
-    }
-    Ok(sql)
-}
-
 /// Install the catalog, the application authorization schema and the platform principal rows.
 pub async fn install_journey_platform_base_grants(
     project: &mut Client,
     platform_domain: &str,
 ) -> anyhow::Result<()> {
-    let platform_principals =
-        platform_principals_sql(platform_domain).context("render the platform principal rows")?;
-    // The run-plane reconcile runs as the database owner, so the owner also
-    // owns what this function installs. The owner cannot create roles, so the
-    // roles that the catalog names exist first.
-    reconcile_run_plane::ensure_runtime_roles(project).await?;
+    wamn_environment_control::platform_migrations::install_project(project).await?;
     let owner: String = sqlx::query(
         "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
     )
@@ -659,22 +522,7 @@ pub async fn install_journey_platform_base_grants(
         .await
         .map(drop)
         .context("assume the project database owner")?;
-    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .execute(&mut *project)
-        .await
-        .map(drop)
-        .context("install the catalog schema")?;
-    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
-        .execute(&mut *project)
-        .await
-        .map(drop)
-        .context("install the application authorization schema")?;
-    wamn_package_control::schema_baseline::record_project(project).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(platform_principals.clone()))
-        .execute(&mut *project)
-        .await
-        .map(drop)
-        .context("create the platform principal rows")?;
+    wamn_platform_identity::environment::fill_platform(project, platform_domain).await?;
     sqlx::raw_sql("RESET ROLE")
         .execute(&mut *project)
         .await
@@ -753,25 +601,44 @@ pub async fn grant_operator_admin_role(
     })
 }
 
-pub async fn reconcile_journey_run_plane(
+pub async fn initialize_journey_platform(
     coordinate: &JourneyTarget,
     system_url: &str,
     project_url: &str,
 ) -> anyhow::Result<()> {
-    reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
-        platform_migration_database_url: None,
-        system_database_url: system_url.to_owned(),
-        admin_database_url: project_url.to_owned(),
-        org: coordinate.org.clone(),
-        project: coordinate.project.clone(),
-        env: coordinate.environment.clone(),
-        schema: "wamn_run".to_owned(),
-        dry_run: false,
-        // A journey reconciles before its host serves.
-        changes: wamn_broker::Publisher::default(),
-    })
-    .await
-    .context("reconcile the journey run plane")?;
+    let mut project = wamn_postgres::connect(project_url).await?;
+    wamn_environment_control::platform_migrations::install_project(&mut project).await?;
+    let scope = wamn_control_provision::migrations::MigrationDatabase::Project;
+    let (_, database) = wamn_postgres::identity(project_url)?;
+    let migration_input = super::credentials::login(
+        project_url,
+        &scope.login(&database),
+        Some(scope.owner_role()),
+        "",
+    )
+    .await?;
+    wamn_environment_control::platform_migrations::restore_project(
+        &migration_input,
+        &wamn_environment_control::platform_migrations::embedded_sources(scope),
+    )
+    .await?;
+    let key = wamn_registry::project_env_key(
+        &coordinate.org,
+        &coordinate.project,
+        &coordinate.environment,
+    );
+    wamn_platform_identity::environment::fill(
+        system_url,
+        project_url,
+        wamn_platform_identity::application::ApplicationTarget {
+            org: &coordinate.org,
+            project: &coordinate.project,
+            env: &coordinate.environment,
+            project_env_key: &key,
+        },
+        &wamn_broker::Publisher::default(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -796,7 +663,6 @@ pub fn dev_activation_identity(
 pub fn write_dev_config(
     root: &Path,
     system_url: &str,
-    template: &str,
     route: &ProvisionedRoute,
     credentials: &JourneyCredentials,
     inputs: &DevEnvironmentInputs,
@@ -810,16 +676,7 @@ pub fn write_dev_config(
     let host_config = write_host_config(root, identity)?;
     let mut config = serde_json::json!({
         "target_database_url": route.database_url.as_str(),
-        // The loop recreates the target when its schema inputs change, which
-        // drops every per-database privilege with it. This is the file it
-        // replays, and it is the file provision_route already applied, not a
-        // second copy.
-        "target_privileges_file": root.join("privileges.sql"),
-        // The loop clones this template instead of re-provisioning. It carries
-        // everything a drop destroys except the database-level ACL, which is
-        // the file beside it.
-        "target_template_database": template,
-        "target_database_acl_file": root.join("database-acl.sql"),
+        "migration_database_url": credentials.migration.as_str(),
         "system_database_url": system_url,
         "identity_database_url": credentials.identity_reader.as_str(),
         "connection_database_url": credentials.connection_reader.as_str(),

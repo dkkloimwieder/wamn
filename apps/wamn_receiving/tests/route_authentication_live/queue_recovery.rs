@@ -108,9 +108,7 @@ async fn recover(
         sqlx::query("SELECT set_config('app.user_id', $1, false)").bind(&wamn_control_provision::PlatformComponent::Provisioning
                     .principal_id()
                     .to_string()).execute(&mut client).await.map(|result| result.rows_affected())?;
-        sqlx::query("INSERT INTO wamn_run.environment_policies \
-                   (project_env_key, expected_environment) VALUES ($1, $2)").bind(&project_env_key).bind(&identity.environment.as_str()).execute(&mut client).await.map(|result| result.rows_affected())
-            .context("write the environment's run policy")?;
+
         super::bind_fixture_principal(&mut client).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(("INSERT INTO receiving.item (id, item_number) VALUES \
                    ('00000000-0000-0000-0000-000000000101', 'ITEM-101'); \

@@ -6,7 +6,7 @@ use wamn_compiler::manifest::PackageManifest;
 
 pub(super) async fn reconcile_entity_maps(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    plan: &wamn_schema_control::PackageMigrationPlan,
+    plan: &wamn_catalog::package_schema::PackageMetadata,
     manifest: &PackageManifest,
 ) -> anyhow::Result<()> {
     let schemas = plan
@@ -42,7 +42,7 @@ pub(super) async fn reconcile_entity_maps(
             .get(&model.model_id)
             .expect("the migration plan preserves every manifest model")
             .owner;
-        let schema = wamn_schema_control::BareSchemaName::new(&model.schema)
+        let schema = wamn_postgres::schema::BareSchemaName::new(&model.schema)
             .context("validate manifest model schema for entity-map query")?;
         let mapping_sql = format!(
             "SELECT mapped.package_id, mapped.entity_id, mapped.table_name, \
@@ -120,7 +120,7 @@ pub(super) async fn reconcile_entity_maps(
     }
 
     for excluded in &plan.cdc_excluded_relations {
-        let schema = wamn_schema_control::BareSchemaName::new(&excluded.schema)
+        let schema = wamn_postgres::schema::BareSchemaName::new(&excluded.schema)
             .context("validate internal relation schema for CDC-exclusion query")?;
         let mapping_sql = format!(
             "SELECT mapped.package_id, mapped.relation_id, mapped.table_name, \

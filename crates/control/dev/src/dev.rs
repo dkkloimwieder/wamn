@@ -777,7 +777,7 @@ mod tests {
                 },
                 DevInvalidation::Ignore,
                 DevInvalidation::Rerun {
-                    from: DevStage::Introspect,
+                    from: DevStage::Build,
                 },
             ],
             events,
@@ -790,13 +790,13 @@ mod tests {
 
         let expected = DEV_STAGE_ORDER[DevStage::Build.position()..]
             .iter()
-            .chain(&DEV_STAGE_ORDER[DevStage::Introspect.position()..])
+            .chain(&DEV_STAGE_ORDER[DevStage::Build.position()..])
             .copied()
             .collect::<Vec<_>>();
         assert_eq!(runner.invoked, expected);
         assert_eq!(observer.outcomes.len(), 2);
         assert_eq!(observer.outcomes[0].from(), DevStage::Build);
-        assert_eq!(observer.outcomes[1].from(), DevStage::Introspect);
+        assert_eq!(observer.outcomes[1].from(), DevStage::Build);
         assert!(
             observer
                 .outcomes

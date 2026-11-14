@@ -9,8 +9,7 @@ use wamn_release_control::publish_release::{
 #[test]
 fn application_packages_with_different_model_schemas_publish_and_pass_apply_analysis() {
     use crate::environment::analyse::{
-        Authorities, Installed, Observation, Policy, ProjectState, ReleaseFacts, notices, refusals,
-        select_application,
+        Authorities, Policy, ProjectState, ReleaseFacts, refusals, select_application,
     };
     let mut manifests = BTreeMap::new();
     let mut components = ReleaseComponents::default();
@@ -68,7 +67,7 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
                 "target": "cloud", "policy":"dev","revocation_seconds":60,
                 "applications": {"erp": {"current": published.digest.as_str(), "revocation_seconds":5,"hostname": "erp.acme.example", "packages": ["consumer", "integration"]}}}).to_string().as_bytes()
         ).unwrap();
-    let mut authorities = Authorities {
+    let authorities = Authorities {
         release_name: "acme--dev--erp".to_owned(),
         artifact_bindings: BTreeSet::new(),
         connections: BTreeMap::new(),
@@ -98,36 +97,4 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
         crate::environment::analyse::application_release_name(&document, "erp").unwrap(),
         crate::environment::analyse::application_release_name(&document, "other").unwrap()
     );
-    let fingerprints: BTreeMap<_, _> = packages
-        .iter()
-        .map(|package| (package.package_id().to_owned(), "sha256:selected".into()))
-        .collect();
-    for package in &packages {
-        authorities.project.as_mut().unwrap().installed.insert(
-            package.package_id().to_owned(),
-            Installed {
-                current: "0.9.0".into(),
-                physical_schema_fingerprint: "sha256:installed".into(),
-            },
-        );
-    }
-    let schema_notices = notices(&selected, "erp", &authorities, &fingerprints);
-    for package in &packages {
-        assert!(schema_notices.iter().any(|notice| {
-            notice.application == "erp"
-                && notice
-                    .identity
-                    .ends_with(&format!("/catalog.packages/{}", package.package_id()))
-                && notice.observed
-                    == Observation::SchemaDifference {
-                        installed: Some("sha256:installed".into()),
-                        selected: "sha256:selected".into(),
-                    }
-                && !notice.next_action.is_empty()
-        }));
-    }
-    for installed in authorities.project.as_mut().unwrap().installed.values_mut() {
-        installed.physical_schema_fingerprint = "sha256:selected".into();
-    }
-    assert!(notices(&selected, "erp", &authorities, &fingerprints).is_empty());
 }

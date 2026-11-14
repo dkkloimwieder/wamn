@@ -19,8 +19,6 @@ use wamn_kubernetes::job;
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct ExpectedDatabase {
     active: Option<String>,
-    pub pending: Option<String>,
-    pub initialization_identity: Option<String>,
 }
 
 impl ExpectedDatabase {
@@ -35,14 +33,8 @@ impl ExpectedDatabase {
         Ok(match row {
             Some(row) => Self {
                 active: Some(row.get(0)),
-                pending: row.get(1),
-                initialization_identity: None,
             },
-            None => Self {
-                active: None,
-                pending: None,
-                initialization_identity: None,
-            },
+            None => Self { active: None },
         })
     }
 
@@ -68,16 +60,9 @@ impl ExpectedDatabase {
         };
         let actual = Self::read(platform, document).await?;
         ensure!(
-            actual.active == self.active && actual.pending == self.pending,
+            actual.active == self.active,
             "SQL Job database instance changed before execution"
         );
-        if let Some(expected) = &self.initialization_identity {
-            let state = schema::state(platform, document).await?;
-            ensure!(
-                state.initialization_identity.as_ref() == Some(expected),
-                "SQL Job database initialization changed before execution"
-            );
-        }
         if !exclusive {
             crate::provision_project_env::registry::require_connected(
                 &mut *lock.client().await,
@@ -111,7 +96,7 @@ pub async fn initialize(
             .map(wamn_catalog::PackageCoordinate::package_id),
     );
     ensure!(refusals.is_empty(), "{}", refusals.join("; "));
-    let (packages, _) = analyse::read_release_packages(platform, &manifest).await?;
+    let packages = analyse::read_release_packages(platform, &manifest).await?;
     let project_url = ensure::project_url(platform, &document.triple()).await?;
     let database = wamn_postgres::identity(&project_url)?.1;
     let mut admin = wamn_postgres::connect(admin_url).await?;
@@ -138,7 +123,6 @@ pub async fn apply_deployed(
     document: &EnvironmentDocument,
     application: &str,
     release: &str,
-    resolution: Option<&wamn_package_control::apply_package::MigrationResolution>,
 ) -> anyhow::Result<()> {
     run_schema_deployed(
         platform,
@@ -146,18 +130,9 @@ pub async fn apply_deployed(
         Operation::ApplySchema {
             application,
             release,
-            resolution,
         },
     )
     .await
-}
-
-/// Record an explicit assertion through the installed platform SQL Job.
-pub async fn adopt_deployed(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-) -> anyhow::Result<()> {
-    run_schema_deployed(platform, document, Operation::AdoptSchema).await
 }
 
 async fn run_schema_deployed(
@@ -186,14 +161,14 @@ pub async fn project_schema_deployed(
     document: &EnvironmentDocument,
     image: &str,
     apply: bool,
-    resolution: Option<&wamn_package_control::migrations::MigrationResolution>,
+
     directory: &Path,
 ) -> anyhow::Result<()> {
     let cluster = reset::recorded_cluster(platform, document).await?;
     run_deployed(
         platform,
         document,
-        Operation::ProjectSchema { apply, resolution },
+        Operation::ProjectSchema { apply },
         image,
         &cluster,
         directory,
@@ -209,7 +184,6 @@ pub struct ProjectSchemaRequest<'a> {
     pub migration_database_url: &'a str,
     pub sources: &'a [sqlx::migrate::Migration],
     pub apply: bool,
-    pub resolution: Option<&'a wamn_package_control::migrations::MigrationResolution>,
 }
 
 /// Resolve the registry target under the Job's exclusion and execute only substrate SQL.
@@ -224,7 +198,6 @@ pub async fn project_schema(
         migration_database_url,
         sources,
         apply,
-        resolution,
     } = request;
     let lock = expected.lock(platform, document, true).await?;
     crate::provision_project_env::require_connected(&mut *lock.client().await, &document.triple())
@@ -260,23 +233,13 @@ pub enum Operation<'a> {
     /// Record the environment and return its CNPG Database resource.
     Provision,
     /// Inspect or apply only the selected environment's platform substrate.
-    ProjectSchema {
-        apply: bool,
-        resolution: Option<&'a wamn_package_control::migrations::MigrationResolution>,
-    },
-    /// Resolve reset inputs, or restore the recorded inputs after CNPG recreation.
-    Reset {
-        candidate: Option<(&'a str, &'a str)>,
-    },
+    ProjectSchema { apply: bool },
     /// Initialize the selected application's absent baselines after CNPG is ready.
     Initialize,
-    /// Assert selected SQL state without executing package SQL.
-    AdoptSchema,
     /// Advance explicitly selected SQL without activating application code.
     ApplySchema {
         application: &'a str,
         release: &'a str,
-        resolution: Option<&'a wamn_package_control::apply_package::MigrationResolution>,
     },
 }
 
@@ -309,16 +272,11 @@ pub async fn run_deployed(
                 "project-schema-diff"
             }
         }
-        Operation::Reset { .. } => "reset",
         Operation::Initialize => "initialize",
         Operation::ApplySchema { .. } => "schema-apply",
-        Operation::AdoptSchema => "schema-adopt",
     };
     let coordinate = match operation {
-        Operation::Provision
-        | Operation::Reset { .. }
-        | Operation::AdoptSchema
-        | Operation::ProjectSchema { .. } => {
+        Operation::Provision | Operation::ProjectSchema { .. } => {
             wamn_control_provision::environment_names::environment_resource_name(
                 &document.org,
                 &document.project,
@@ -356,7 +314,6 @@ pub async fn run_deployed(
             release,
             ..
         } => Some((application, release)),
-        Operation::Reset { candidate } => candidate,
         Operation::Initialize => {
             document
                 .applications
@@ -374,42 +331,10 @@ pub async fn run_deployed(
     if let Some((application, release)) = candidate {
         arguments.extend(["--application", application, "--release", release]);
     }
-    let resolution = match operation {
-        Operation::ApplySchema {
-            resolution: Some(choice),
-            ..
-        } => Some(choice.to_string()),
-        Operation::ProjectSchema {
-            resolution: Some(choice),
-            ..
-        } => Some(format!(
-            "{}={}",
-            choice.path,
-            match choice.action {
-                wamn_package_control::migrations::Resolution::Applied => "applied",
-                wamn_package_control::migrations::Resolution::Retry => "retry",
-            }
-        )),
-        _ => None,
-    };
-    if let Some(resolution) = &resolution {
-        arguments.extend(["--resolve", resolution]);
-    }
     let mut job = job::manifest(&name, image, &["/usr/local/bin/wamn-ctl"], &arguments);
     environment_input(&mut job, document)?;
     let mut files = BTreeMap::new();
-    let mut expected = ExpectedDatabase::read(platform, document).await?;
-    if matches!(
-        operation,
-        Operation::AdoptSchema | Operation::ApplySchema { .. } | Operation::ProjectSchema { .. }
-    ) {
-        expected.initialization_identity = Some(
-            schema::state(platform, document)
-                .await?
-                .initialization_identity
-                .context("schema mutation requires a known initialization identity")?,
-        );
-    }
+    let expected = ExpectedDatabase::read(platform, document).await?;
     files.insert("database.json".into(), serde_json::to_string(&expected)?);
     let mut secrets = Vec::new();
     let host = crate::provision_project_env::database_host(None, cluster, &document.org);
@@ -546,12 +471,12 @@ pub async fn run_deployed(
     document.org.clone_into(&mut target.namespace);
     let output = job::run(&target, directory, &mut job, &mut secrets).await?;
     match operation {
-        Operation::Provision | Operation::Reset { .. } => {}
+        Operation::Provision => {}
         Operation::ApplySchema { .. } => {
             print!("{output}");
             ensure::ensure_cdc(platform, document).await?;
         }
-        Operation::AdoptSchema | Operation::ProjectSchema { .. } => print!("{output}"),
+        Operation::ProjectSchema { .. } => print!("{output}"),
         Operation::Initialize => ensure::ensure_cdc(platform, document).await?,
     }
     database_resource(operation, &output)
@@ -677,19 +602,6 @@ mod tests {
         );
         assert_eq!(mount["readOnly"], true);
         assert_eq!(pod["automountServiceAccountToken"], false);
-        Ok(())
-    }
-
-    #[test]
-    fn reset_completion_does_not_require_a_database_resource() -> anyhow::Result<()> {
-        for candidate in [None, Some(("alpha", "sha256:release"))] {
-            for log in [
-                "",
-                "SQL execution diagnostics\n{\"database\":\"same-name\"}",
-            ] {
-                assert!(database_resource(Operation::Reset { candidate }, log)?.is_none());
-            }
-        }
         Ok(())
     }
 

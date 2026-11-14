@@ -13,11 +13,11 @@ use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_environment_control::apply_package::{ApplyPackageRequest, apply_package};
 use wamn_execution_host::{
     OperationHost, OperationHostConfig, RouterDeliveryBridge, RouterReadinessProbe,
     RouterReadinessStatus,
 };
-use wamn_package_control::apply_package::{ApplyPackageRequest, apply_package};
 use wamn_package_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_platform_identity::{assign_project_role, create_service, issue_pat, operator_subject};
 
@@ -127,9 +127,8 @@ pub(super) async fn assemble(
         "local.invalid",
     )
     .await?;
-    let run_schema = wamn_schema_control::BareSchemaName::new("wamn_run")?;
-    wamn_environment_control::reconcile_run_plane::reconcile(&mut project, &run_schema, true)
-        .await?;
+    let run_schema = wamn_postgres::schema::BareSchemaName::new("wamn_run")?;
+    wamn_environment_control::platform_migrations::install_project(&mut project).await?;
     sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:local-application',false)").bind(wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string()).execute(&mut project).await.map(|result| result.rows_affected())?;
@@ -194,10 +193,12 @@ pub(super) async fn assemble(
     let mut roots = BTreeMap::new();
     for package in input.packages {
         let applied = apply_package(ApplyPackageRequest {
-            component_source: wamn_package_control::apply_package::component_source_from_env(None)
-                .unwrap(),
+            component_source: wamn_environment_control::apply_package::component_source_from_env(
+                None,
+            )
+            .unwrap(),
             changes: wamn_broker::Publisher::default(),
-            package: wamn_package_control::apply_package::PackageRoot {
+            package: wamn_environment_control::apply_package::PackageRoot {
                 path: package.root.to_path_buf(),
                 artifact_digest: Some(
                     wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(

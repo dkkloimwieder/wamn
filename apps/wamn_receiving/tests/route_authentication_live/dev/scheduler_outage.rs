@@ -180,7 +180,6 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
     let config = write_dev_config(
         root,
         &system_url,
-        &environment.template,
         &environment.route,
         &environment.credentials,
         &inputs.environment,

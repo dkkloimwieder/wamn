@@ -31,9 +31,7 @@ pub const STARTUP_REACHABILITY_BUDGET: Duration = Duration::from_secs(5);
 
 const DOCUMENT_KEY: &str = "$";
 const TARGET_DATABASE_URL: &str = "target_database_url";
-const TARGET_PRIVILEGES_FILE: &str = "target_privileges_file";
-const TARGET_TEMPLATE_DATABASE: &str = "target_template_database";
-const TARGET_DATABASE_ACL_FILE: &str = "target_database_acl_file";
+const MIGRATION_DATABASE_URL: &str = "migration_database_url";
 const SYSTEM_DATABASE_URL: &str = "system_database_url";
 const IDENTITY_DATABASE_URL: &str = "identity_database_url";
 const GUEST_DATABASE_URL: &str = "guest_database_url";
@@ -122,9 +120,7 @@ pub struct SessionIdentity {
 #[serde(deny_unknown_fields)]
 struct DevConfigDocument {
     target_database_url: String,
-    target_privileges_file: PathBuf,
-    target_template_database: String,
-    target_database_acl_file: PathBuf,
+    migration_database_url: String,
     system_database_url: String,
     identity_database_url: String,
     #[serde(default)]
@@ -562,9 +558,7 @@ struct ReachabilityProbe {
 #[derive(Clone)]
 pub struct DevConfig {
     target_database_url: Box<str>,
-    target_privileges_file: PathBuf,
-    target_template_database: Box<str>,
-    target_database_acl_file: PathBuf,
+    migration_database_url: Box<str>,
     system_database_url: Box<str>,
     identity_database_url: Box<str>,
     connection_database_url: Option<String>,
@@ -602,9 +596,6 @@ impl fmt::Debug for DevConfig {
                 TARGET_DATABASE_URL,
                 &self.sanitized_endpoint(TARGET_DATABASE_URL),
             )
-            .field(TARGET_PRIVILEGES_FILE, &self.target_privileges_file)
-            .field(TARGET_TEMPLATE_DATABASE, &self.target_template_database)
-            .field(TARGET_DATABASE_ACL_FILE, &self.target_database_acl_file)
             .field(
                 SYSTEM_DATABASE_URL,
                 &self.sanitized_endpoint(SYSTEM_DATABASE_URL),
@@ -678,32 +669,9 @@ impl DevConfig {
         &self.target_database_url
     }
 
-    /// Privilege SQL `wamn dev up` emitted for the target database.
-    ///
-    /// A schema reset drops the target's per-database privileges. Roles are cluster-level and survive, so
-    /// this file is what has to be replayed. It is read, never re-derived: a
-    /// privilege set the loop computed itself would not be the one the
-    /// environment was provisioned with.
-    pub fn target_privileges_file(&self) -> &Path {
-        &self.target_privileges_file
-    }
-
-    /// Pristine template database `wamn dev up` prepared for this target.
-    ///
-    /// It carries everything a drop destroys except the database-level ACL:
-    /// the platform base grants, the run plane and the workload grants. A run clones
-    /// it, so a run starts from a database that is pristine by construction
-    /// rather than by a replay this module got right.
-    pub fn target_template_database(&self) -> &str {
-        &self.target_template_database
-    }
-
-    /// Database-level ACL `wamn dev up` captured from the healthy target.
-    ///
-    /// `CREATE DATABASE ... TEMPLATE` copies objects and their ACLs, and does
-    /// not copy the ACL of the database itself. This file is that one thing.
-    pub fn target_database_acl_file(&self) -> &Path {
-        &self.target_database_acl_file
+    /// Direct restricted migration login for the target database.
+    pub fn migration_database_url(&self) -> &str {
+        &self.migration_database_url
     }
 
     /// System PostgreSQL URL holding control and identity facts.
@@ -855,6 +823,8 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     let mut config = plan::parse_config(bytes)?;
     let (target_probe, target_identity) =
         database_probe(TARGET_DATABASE_URL, &config.target_database_url)?;
+    let (migration_probe, migration_identity) =
+        database_probe(MIGRATION_DATABASE_URL, &config.migration_database_url)?;
     let (system_probe, system_identity) =
         database_probe(SYSTEM_DATABASE_URL, &config.system_database_url)?;
     let (identity_probe, identity_identity) =
@@ -878,9 +848,21 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         &config.administration_database_url,
     )?;
     validate_disposable_target_database(&target_probe, &target_identity)?;
+    if !migration_identity.same_database(&target_identity)
+        || migration_identity.same_credential(&target_identity)
+    {
+        return Err(DevConfigError::endpoint(
+            DevConfigErrorType::InvalidValue,
+            MIGRATION_DATABASE_URL,
+            migration_probe.sanitized_endpoint,
+            "the migration connection must name the target database with its own login",
+        ));
+    }
+
     validate_runtime_database_credentials(
         &[
             (&target_probe, &target_identity),
+            (&migration_probe, &migration_identity),
             (&system_probe, &system_identity),
         ],
         &[
@@ -1192,9 +1174,7 @@ pub(crate) mod tests {
     pub(crate) fn complete_document(addresses: &[SocketAddr; ENDPOINT_COUNT]) -> Value {
         json!({
             (TARGET_DATABASE_URL): format!("postgresql://target:target-secret@{}/target", addresses[0]),
-            (TARGET_PRIVILEGES_FILE): "/run/wamn-dev/privileges.sql",
-            (TARGET_TEMPLATE_DATABASE): "target--template",
-            (TARGET_DATABASE_ACL_FILE): "/run/wamn-dev/database-acl.sql",
+            (MIGRATION_DATABASE_URL): format!("postgresql://migration:migration-secret@{}/target", addresses[0]),
             (SYSTEM_DATABASE_URL): format!("postgresql://system:system-secret@{}/system", addresses[1]),
             (IDENTITY_DATABASE_URL): format!("postgresql://identity:identity-secret@{}/system", addresses[2]),
             (GUEST_DATABASE_URL): format!("postgresql://guest:guest-secret@{}/target", addresses[3]),

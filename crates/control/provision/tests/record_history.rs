@@ -20,14 +20,13 @@ fn fresh_run_history_stamps_rows() {
         "BEGIN",
         &bind_platform_principal_sql(PlatformComponent::Provisioning),
         r"
-        INSERT INTO wamn_run.environment_policies (project_env_key,expected_environment) VALUES ('history','dev');
         INSERT INTO wamn_run.runs (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment) VALUES ('history','run','fixture',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'package','dev');
     ",
         "INSERT INTO wamn_run.run_queue(project_env_key,run_id) VALUES ('history','run');",
         "COMMIT",
     ]).unwrap();
     let actor = PlatformComponent::Provisioning.principal_id();
-    for relation in ["wamn_run.environment_policies", "wamn_run.run_queue"] {
+    for relation in ["wamn_run.run_queue"] {
         database.execute(&[&format!("DO $$ BEGIN ASSERT (SELECT count(*)=1 AND bool_and(created_by='{actor}'::uuid AND updated_by='{actor}'::uuid AND created_at=updated_at AND isfinite(created_at)) FROM {relation}), '{relation}: stamps'; END $$;")]).unwrap();
     }
 }

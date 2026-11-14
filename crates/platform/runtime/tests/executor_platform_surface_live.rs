@@ -278,9 +278,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
              SELECT '{PROJECT_ENV_KEY}',manifest_digest,'00000000-0000-4000-8000-000000000012',1 FROM catalog.releases; \
              INSERT INTO catalog.connection_binding (project_env_key,manifest_digest,component_digest,package_id,name,connection_id) \
              SELECT '{PROJECT_ENV_KEY}',manifest_digest,'{component_digest}','{PACKAGE_ID}','a-store','00000000-0000-4000-8000-000000000012' FROM catalog.releases; \
-             INSERT INTO wamn_run.environment_policies \
-               (project_env_key,expected_environment) \
-             VALUES ('{PROJECT_ENV_KEY}','{ENVIRONMENT}'); \
              INSERT INTO wamn_run.runs \
                (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,input_json,trigger_source) \

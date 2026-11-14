@@ -4,12 +4,12 @@ DO $apply_connect$ BEGIN
 END $apply_connect$;
 GRANT USAGE ON SCHEMA registry, identity, catalog, wamn_authority TO wamn_apply;
 GRANT SELECT ON registry.orgs, registry.env_policies, registry.environment_projects,
-    registry.target, registry.meta, registry.schema_baseline, identity.org_roles, identity.project_roles,
+    registry.target, registry.meta, identity.org_roles, identity.project_roles,
     identity.project_env_memberships, identity.principals,
     wamn_authority.author_login_projects TO wamn_apply;
 GRANT SELECT (org, id), INSERT (org, id) ON registry.projects TO wamn_apply;
 GRANT INSERT (org, env, project, secret_name, secret_namespace, instance_suffix) ON registry.environment_projects TO wamn_apply;
-GRANT UPDATE (secret_name, secret_namespace, route_host, pending_database)
+GRANT UPDATE (secret_name, secret_namespace, route_host)
     ON registry.environment_projects TO wamn_apply;
 GRANT SELECT (id, principal_id, token_prefix, token_hash, revoked_at, expires_at)
     ON identity.pats TO wamn_apply;

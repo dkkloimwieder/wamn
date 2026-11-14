@@ -93,15 +93,13 @@ pub(super) fn read_package_manifests(
     let mut contracts = BTreeMap::new();
     for root in roots {
         let path = wamn_compiler::package_manifest_path(root);
-        let directory =
-            wamn_package_control::apply_package::read_package_directory(root).map_err(|error| {
-                PublishManifestError {
-                    source: Some(error.into()),
-                    ..PublishManifestError::new(
-                        PublishManifestErrorType::PackageManifest,
-                        format!("read package directory {}", root.display()),
-                    )
-                }
+        let directory = wamn_package_control::package_source::read_package_directory(root)
+            .map_err(|error| PublishManifestError {
+                source: Some(error.into()),
+                ..PublishManifestError::new(
+                    PublishManifestErrorType::PackageManifest,
+                    format!("read package directory {}", root.display()),
+                )
             })?;
         let manifest =
             wamn_compiler::manifest::PackageManifest::from_slice(&directory.manifest_bytes)

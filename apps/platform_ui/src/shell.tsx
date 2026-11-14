@@ -142,7 +142,6 @@ export function controlHolds(mine: Pick<control.ControlMineResult, "orgAdmin" | 
     schema.SCHEMA_DIFF_ROUTE.operation,
     schema.SCHEMA_APPLY_ROUTE.operation,
     schema.SCHEMA_RESET_ROUTE.operation,
-    schema.SCHEMA_ADOPT_ROUTE.operation,
     operation.OPERATION_STATUS_ROUTE.operation,
     environment.ENVIRONMENT_LIST_ROUTE.operation,
     environment.ENVIRONMENT_STATUS_ROUTE.operation,

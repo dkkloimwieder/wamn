@@ -1,10 +1,47 @@
 //! SQLx applies image-owned platform migrations under authenticated platform authority.
 
-use anyhow::{Context as _, ensure};
+use anyhow::ensure;
 use sqlx::migrate::{Migration, Migrator};
 use wamn_control_provision::migrations::MigrationDatabase;
 
-pub use wamn_package_control::schema_baseline::embedded_sources;
+pub fn embedded_sources(target: MigrationDatabase) -> Vec<Migration> {
+    wamn_control_provision::migrations::embedded(target)
+        .iter()
+        .cloned()
+        .collect()
+}
+
+pub async fn observe(
+    client: &mut sqlx::PgConnection,
+    database: MigrationDatabase,
+    sources: &[Migration],
+) -> anyhow::Result<crate::migrations::SchemaReport> {
+    let table = match database {
+        MigrationDatabase::System => "registry._sqlx_migrations",
+        MigrationDatabase::Project => "platform._sqlx_migrations",
+    };
+    crate::migrations::observe(client, table, sources).await
+}
+pub async fn observe_system(
+    client: &mut sqlx::PgConnection,
+) -> anyhow::Result<crate::migrations::SchemaReport> {
+    observe(
+        client,
+        MigrationDatabase::System,
+        &embedded_sources(MigrationDatabase::System),
+    )
+    .await
+}
+pub async fn observe_project(
+    client: &mut sqlx::PgConnection,
+) -> anyhow::Result<crate::migrations::SchemaReport> {
+    observe(
+        client,
+        MigrationDatabase::Project,
+        &embedded_sources(MigrationDatabase::Project),
+    )
+    .await
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum MigrationTarget<'a> {
@@ -28,23 +65,6 @@ pub async fn apply_reported(
     apply_target(client, target.database(), sources).await
 }
 
-pub(crate) async fn initialize_project(
-    admin: &mut sqlx::PgConnection,
-    migration_input: &str,
-    sources: &[Migration],
-) -> anyhow::Result<usize> {
-    let present: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT FROM pg_event_trigger WHERE evtname='wamn_migration_privileges')",
-    )
-    .fetch_one(&mut *admin)
-    .await?;
-    if !present {
-        sqlx::raw_sql(wamn_control_provision::MIGRATION_PRIVILEGES_SQL)
-            .execute(admin)
-            .await?;
-    }
-    restore_project(migration_input, sources).await
-}
 pub async fn restore_project(
     migration_input: &str,
     sources: &[Migration],
@@ -62,16 +82,12 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let database = target.database();
     database.require_login(client).await?;
-    let report = wamn_package_control::schema_baseline::observe(client, database, sources).await?;
+    let report = observe(client, database, sources).await?;
     write!(output, "{report}")?;
     output.flush()?;
     if apply {
         apply_reported(client, target, sources).await?;
-        write!(
-            output,
-            "{}",
-            wamn_package_control::schema_baseline::observe(client, database, sources).await?
-        )?;
+        write!(output, "{}", observe(client, database, sources).await?)?;
         output.flush()?;
     }
     Ok(())
@@ -88,14 +104,10 @@ async fn apply_target(
             "wamn_system",
             "SELECT pg_advisory_xact_lock(hashtextextended('wamn.platform.system-schema:' || current_database(), 0))",
         ),
-        MigrationDatabase::Project => (
-            "platform",
-            "wamn_db_owner",
-            wamn_package_control::apply_package::LOCK_SQL,
-        ),
+        MigrationDatabase::Project => ("platform", "wamn_db_owner", crate::apply_package::LOCK_SQL),
     };
     let login = database.require_login(client).await?;
-    let key = wamn_package_control::migrations::lock_session(client, lock, &[]).await?;
+    let key = crate::migrations::lock_session(client, lock, &[]).await?;
     let result = async {
         let component = wamn_control_provision::PlatformComponent::Provisioning;
         sqlx::query(
@@ -118,7 +130,7 @@ async fn apply_target(
                 .await?;
         }
         let migrator = Migrator::with_migrations(sources.to_vec());
-        wamn_package_control::migrations::run(client, migrator, table).await
+        crate::migrations::run(client, migrator, table).await
     }
     .await;
     // Connections are dedicated. A cancellation closes them; a completed call releases exclusion.
@@ -130,63 +142,57 @@ async fn apply_target(
     result
 }
 
-/// The reset caller keeps its recorded platform substrate until S6-B unifies reset.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct ProjectReset {
-    pub initialization_sha256: String,
-    pub applied: Vec<wamn_package_control::schema_baseline::MigrationFile>,
-}
-impl ProjectReset {
-    pub async fn read(
-        client: &mut sqlx::PgConnection,
-        sources: &[Migration],
-    ) -> anyhow::Result<Self> {
-        let report = wamn_package_control::schema_baseline::observe(
-            client,
-            MigrationDatabase::Project,
-            sources,
-        )
+/// Install an empty project's platform schemas without repairing an existing installation.
+pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<bool> {
+    let present: bool = sqlx::query_scalar("SELECT to_regclass('platform.\"user\"') IS NOT NULL")
+        .fetch_one(&mut *client)
         .await?;
-        ensure!(
-            report.missing.is_empty() && report.warnings.is_empty(),
-            "project SQLx history does not match this image"
-        );
-        Ok(Self {
-            initialization_sha256: report
-                .initialization
-                .context("project initialization is absent")?
-                .sha256,
-            applied: report.installed,
-        })
+    if present {
+        return Ok(false);
     }
-    pub fn validate(&self, sources: &[Migration]) -> anyhow::Result<()> {
-        ensure!(
-            self.initialization_sha256 == wamn_control_provision::schema_baseline::project_sha256(),
-            "project initialization differs"
-        );
-        for applied in &self.applied {
-            ensure!(
-                sources
-                    .iter()
-                    .any(|migration| migration.version == applied.version
-                        && hex::encode(&migration.checksum) == applied.checksum),
-                "recorded platform migration differs: {}",
-                applied.version
-            );
-        }
-        Ok(())
+    for family in [
+        wamn_control_provision::WorkloadRoleFamily::Retention,
+        wamn_control_provision::WorkloadRoleFamily::AuditRetention,
+    ] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::sql::ensure_workload_acl_role_sql(family),
+        ))
+        .execute(&mut *client)
+        .await?;
     }
-    pub fn sources(&self, sources: &[Migration]) -> anyhow::Result<Vec<Migration>> {
-        self.validate(sources)?;
-        let selected = sources
-            .iter()
-            .filter(|source| {
-                self.applied
-                    .iter()
-                    .any(|applied| applied.version == source.version)
-            })
-            .cloned()
-            .collect();
-        Ok(selected)
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_platform_group_role_sql(),
+    ))
+    .execute(&mut *client)
+    .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_app_acl_role_sql(),
+    ))
+    .execute(&mut *client)
+    .await?;
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut *client)
+        .await?;
+    let result = async {
+        sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+            .execute(&mut *client)
+            .await?;
+        sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+            .execute(&mut *client)
+            .await?;
+        sqlx::raw_sql(include_str!("../../../../deploy/sql/run-state.sql"))
+            .execute(&mut *client)
+            .await?;
+        sqlx::raw_sql(include_str!("../../../../deploy/sql/run-queue.sql"))
+            .execute(&mut *client)
+            .await?;
+        anyhow::Ok(())
     }
+    .await;
+    sqlx::raw_sql("RESET ROLE").execute(&mut *client).await?;
+    result?;
+    sqlx::raw_sql(wamn_control_provision::MIGRATION_PRIVILEGES_SQL)
+        .execute(client)
+        .await?;
+    Ok(true)
 }

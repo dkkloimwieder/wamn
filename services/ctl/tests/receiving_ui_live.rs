@@ -11,7 +11,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::process::Command;
 use wamn_control_provision::PlatformComponent;
 use wamn_dev_control::dev::environment::{
-    DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, reconcile_journey_run_plane,
+    DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, initialize_journey_platform,
 };
 use wamn_platform_identity::{create_or_reuse_user, grant_project_env_membership};
 
@@ -165,13 +165,13 @@ async fn drive(browser_run: Browser) -> anyhow::Result<()> {
         let config: Value = serde_json::from_slice(&std::fs::read(root.join("dev.json"))?)?;
         let target = config["target_database_url"].as_str().context("target database URL")?;
         let project_env_key = wamn_registry::project_env_key(ORG, PROJECT, ENVIRONMENT);
-        reconcile_journey_run_plane(&JourneyTarget { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
+        initialize_journey_platform(&JourneyTarget { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
         let mut business = wamn_postgres::connect(target).await?;
 
         let mut tx = admin.begin().await?;
         wamn_platform_identity::org::grant_project_admin(&mut tx, &user, ORG, PROJECT).await?;
         tx.commit().await?;
-        reconcile_journey_run_plane(&JourneyTarget { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
+        initialize_journey_platform(&JourneyTarget { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
         sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.project_env_key', $2, false), set_config('app.operation', 'admin:receiving-browser-fixture', false)").bind(&actor.to_string().as_str()).bind(&project_env_key).execute(&mut business).await.map(|result| result.rows_affected())?;
         sqlx::raw_sql(include_str!("fixtures/receiving_ui.sql")).execute(&mut business).await.map(drop)?;
         drop(business);

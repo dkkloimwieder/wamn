@@ -69,8 +69,6 @@ fn local_configuration_files(config: &DevConfig, environment_file: &Path) -> Vec
     let local = config.local_artifacts();
     vec![
         environment_file.to_owned(),
-        config.target_privileges_file().to_owned(),
-        config.target_database_acl_file().to_owned(),
         local.flow_http_component.clone(),
     ]
 }

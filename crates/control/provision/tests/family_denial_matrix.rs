@@ -81,7 +81,7 @@ const PROBE_PASSWORD: &str = "w68-matrix-probe";
 /// catalog relations the platform families read, and a package-shaped logged
 /// relation pair with its history tables. A family reaching one it does not own
 /// is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 25] = [
+const MATRIX_RELATIONS: [&str; 24] = [
     "platform.environment",
     "platform.permission",
     "platform.user_role",
@@ -104,7 +104,6 @@ const MATRIX_RELATIONS: [&str; 25] = [
     "retention_fixture.entry_history",
     "retention_fixture.ledger",
     "retention_fixture.ledger_history",
-    "wamn_run.environment_policies",
     "wamn_run.run_queue",
     "wamn_run.runs",
 ];
@@ -172,7 +171,6 @@ const MATRIX: [FamilyReach; 9] = [
             "platform.permission|SELECT|table",
             "platform.setting|SELECT|table",
             "platform.user_role|SELECT|table",
-            "wamn_run.environment_policies|SELECT|table",
             "wamn_run.runs|DELETE|table",
             "wamn_run.runs|SELECT|table",
         ],
@@ -197,7 +195,6 @@ const MATRIX: [FamilyReach; 9] = [
             "platform.\"user\"|SELECT|column",
             "platform.connection|SELECT|table",
             "platform.integration|SELECT|table",
-            "wamn_run.environment_policies|SELECT|table",
             "wamn_run.run_queue|DELETE|table",
             "wamn_run.run_queue|INSERT|column",
             "wamn_run.run_queue|SELECT|table",
@@ -610,8 +607,6 @@ FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
   INSERT INTO catalog.releases
     (project_env_key, manifest_digest, canonical_bytes)
     VALUES (t, 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{}');
-  INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment)
-    VALUES (t, 'dev');
   INSERT INTO wamn_run.runs
     (project_env_key, run_id, package_id, environment, status, trigger_source,
      wiring_id, wiring_version, wiring_hash, binding_world_json, input_json)
@@ -1256,7 +1251,7 @@ fn the_project_env_key_targeted_platform_member_reads_nothing_outside_its_grants
         "2",
         "the retention family cannot read the relation its grant set names"
     );
-    for relation in ["wamn_run.environment_policies", "wamn_run.run_queue"] {
+    for relation in ["wamn_run.run_queue"] {
         assert_eq!(
             sqlstate(
                 &as_retention,
@@ -1410,7 +1405,7 @@ fn every_governed_relation_carries_the_project_key_expression_index() {
     // A minimum, so an empty schema cannot satisfy the equality above trivially.
     // The five run-plane relations are named because they are the ones whose
     // policies the platform arms share.
-    for relation in ["wamn_run.runs", "wamn_run.environment_policies"] {
+    for relation in ["wamn_run.runs"] {
         assert!(
             governed.iter().any(|row| row == relation),
             "{relation} carries no governed predicate at all"

@@ -160,8 +160,6 @@ pub enum SystemState {
     Complete,
     /// A control-store schema exists without a baseline record.
     Incomplete,
-    /// The recorded schema belongs to a different artifact.
-    BaselineMismatch { installed: String, expected: String },
 }
 
 impl fmt::Display for SystemState {
@@ -170,10 +168,9 @@ impl fmt::Display for SystemState {
             Self::Absent => formatter.write_str("system initialization absent"),
             Self::Complete => formatter.write_str("system initialization complete"),
             Self::Incomplete => formatter.write_str(
-                "incomplete system initialization: no system baseline record. Restore a verified system database backup, then rerun provision-system. Do not replay bootstrap or reset the database",
+                "incomplete system initialization: no SQLx history. Restore a verified system database backup, then rerun provision-system. Do not replay bootstrap or reset the database",
             ),
-            Self::BaselineMismatch { installed, expected } => write!(formatter,
-                "system schema baseline mismatch: installed {installed}, expected {expected}. Use the matching system schema artifact. Do not replay or reset the system database"),
+
         }
     }
 }
@@ -193,33 +190,15 @@ pub async fn system_state(client: &mut sqlx::PgConnection) -> anyhow::Result<Sys
     if !present {
         return Ok(SystemState::Absent);
     }
-    let baseline: bool =
-        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SYSTEM_STATE_2)
-            .fetch_one(&mut *client)
-            .await
-            .context("look for the system baseline table")?
-            .get(0);
-    if !baseline {
-        return Ok(SystemState::Incomplete);
-    }
-    let Some(row) =
-        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SYSTEM_STATE)
-            .fetch_optional(&mut *client)
-            .await
-            .context("read the system schema baseline")?
-    else {
-        return Ok(SystemState::Incomplete);
-    };
-    let installed: String = row.get(0);
-    let expected = wamn_control_provision::schema_baseline::system_sha256();
-    if installed == expected {
-        Ok(SystemState::Complete)
+    let complete: bool =
+        sqlx::query_scalar("SELECT to_regclass('registry._sqlx_migrations') IS NOT NULL")
+            .fetch_one(client)
+            .await?;
+    Ok(if complete {
+        SystemState::Complete
     } else {
-        Ok(SystemState::BaselineMismatch {
-            installed,
-            expected,
-        })
-    }
+        SystemState::Incomplete
+    })
 }
 
 /// Initialize an empty system database, then run the selected image's migrations.
@@ -264,7 +243,7 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
                     .context("finish system initialization read")?;
                 return Ok(false);
             }
-            state => anyhow::bail!("{state}"),
+            state @ SystemState::Incomplete => anyhow::bail!("{state}"),
         }
 
         sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -295,9 +274,12 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
                 .map(drop)
                 .context("install the control store")?;
         }
-        wamn_package_control::schema_baseline::record_system(admin)
-            .await
-            .context("record the system schema baseline")?;
+        wamn_control_provision::migration::prepare_history(
+            admin,
+            "registry._sqlx_migrations",
+            "wamn_system",
+        )
+        .await?;
         sqlx::raw_sql("RESET ROLE")
             .execute(&mut *admin)
             .await

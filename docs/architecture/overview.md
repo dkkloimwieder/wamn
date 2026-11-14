@@ -33,12 +33,11 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-control-provision` | Provisioning SQL and credential roles |
 | `wamn-broker` | NATS connections, streams, shared memory buckets, and authorization |
 | `wamn-kubernetes` | Kubernetes HTTP client, Secrets, Job execution, and command runners |
-| `wamn-schema-control` | Run storage declarations during the schema lifecycle transition |
 | `wamn-catalog` | Component, wiring, and release facts |
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
-| `wamn-package-control` | Package admission, artifacts, and application |
+| `wamn-package-control` | Package admission and artifacts |
 | `wamn-release-control` | Release publication and charts |
-| `wamn-environment-control` | Environment provisioning, reconciliation, and platform operations |
+| `wamn-environment-control` | Environment provisioning, package application, schema lifecycle, and platform operations |
 | `wamn-dev-control` | Development orchestration and process supervision |
 | `wamn-ctl` | Command-line client of the four control crates |
 
@@ -81,6 +80,8 @@ Project initialization installs the history helpers and a privilege event trigge
 The trigger refuses `GRANT`, `REVOKE`, and `ALTER DEFAULT PRIVILEGES` from the authenticated migration login.
 SQLx checksums refuse changes to applied migrations.
 
+Identity fills application user rows at provisioning and updates them when grants change.
+Project initialization installs platform SQL once. SQLx applies later platform changes.
 The provisioning owner locks and compares environment identity before refreshing its `project_env_key` projection.
 That refresh clears the instance assignment even when the suffix stays unchanged.
 The developer coordinator assigns an instance with one update and refuses a missing projection.
@@ -186,13 +187,16 @@ It never uses the chart default for this requirement.
 Local targets are exempt.
 
 The package stage runs in the project database before any Kubernetes write.
-It compares the installed schema digest with this binary and installs each new package from its verified artifact.
+It checks applied migration versions and checksums through SQLx and installs each new package from its verified artifact.
 It applies the stage of each successor and writes the release cache row.
 It also creates the number sequence row of each package default that the environment lacks.
 With `release = none`, `apply` uninstalls the release chart instead of writing it.
 Every step is an ensure that is judged by observation, so applying again repairs a crash.
-The reconciler creates each run plane from the current SQL declarations.
-It repairs current schema and grant drift without converting older run-plane layouts.
+Initialization installs the platform, catalog and run schemas once.
+Explicit platform schema apply runs new SQLx migrations and refuses changed checksums.
+Application schema reset stops users, removes migration-owned objects and clears application state.
+It discards old replication changes and queued events, reapplies migrations, restores selected releases and resumes users.
+The database, credentials, platform schemas and CDC objects stay.
 
 `rollback` compares each successful revision's release digest and client pin with the current pair.
 It selects the newest revision with a different pair and status `deployed` or `superseded`.
@@ -249,7 +253,7 @@ The platform UI reads status through a control operation with a read-only Servic
 The hierarchy is org, environment, project, application.
 `registry.environments` owns each environment's policy, status, disposable setting, and target.
 `registry.projects` holds org-level project definitions.
-`registry.environment_projects` places a project under an environment and owns its database Secret, instance suffix, route host, and pending database reset.
+`registry.environment_projects` places a project under an environment and owns its database Secret, instance suffix, and route host.
 Applications are releases under those project deployments.
 Environment coordinates contain org and environment.
 Project database coordinates also contain the project.
@@ -285,8 +289,8 @@ It then marks the org membership inactive.
 The global principal and access in other orgs stay.
 Reactivation restores the org membership and no removed grants.
 
-A package schema change requires a new release and a reset of the application tables.
-The [owner ruling](../audit/README.md) defines this baseline policy.
+A package schema change uses immutable SQLx migrations from a published release.
+Migrate mode preserves data. Reset mode clears application state before it reapplies those migrations.
 
 ## Runtime owners
 
