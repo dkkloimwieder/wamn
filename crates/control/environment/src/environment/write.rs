@@ -6,7 +6,7 @@ pub(super) mod plan;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use serde_yaml::{Mapping, Value};
 
 use super::Platform;
@@ -48,35 +48,18 @@ pub(super) async fn prepare(
     .await?;
     let policy = &analysis.authorities.policy;
     let budget = Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?);
-    let installed = crate::platform::resources::release_values(
-        &platform.target,
-        &platform.target.namespace,
-        &analysis.authorities.release_name,
-    )
-    .await?;
-    let (mut rendered, names) = release_values(
+    let (rendered, names) = release_values(
         document,
         &analysis.application,
         &release.manifest,
         &release.digest,
         &platform.release_artifact_base,
-        u32::try_from(policy.drain_bound_seconds)?,
+        platform
+            .component_artifact_base
+            .as_deref()
+            .context("missing component registry")?,
         &analysis.actor,
-        platform.host_group.as_deref(),
-        installed.as_ref(),
     )?;
-    let suffix = &analysis
-        .authorities
-        .row
-        .as_ref()
-        .context("missing provisioned environment")?
-        .instance_suffix;
-    rendered["runtime-operator"]["runtime"]["hostGroups"][0]["env"]
-        .as_sequence_mut()
-        .context("application host variables")?
-        .push(serde_yaml::to_value(
-            serde_json::json!({"name":"WAMN_SESSION_INSTANCE_SUFFIX", "value":suffix}),
-        )?);
     let release_name = analysis.authorities.release_name.clone();
     let private = PrivateDirectory::create()?;
     let values = private.path("values.yaml");
@@ -129,58 +112,30 @@ pub(super) async fn write(
     })
 }
 
-/// Render apply values with the platform overlay and derived credential references.
-pub fn render(input: &ValuesInput, path: Option<&Path>) -> anyhow::Result<Value> {
-    let mut input = input.clone();
-    input.host_group = match path {
-        Some(path) => host_group(Some(path), &input.org, &input.project, &input.env)?,
-        None => plan::host_group(input.host_group, &input.org, &input.project, &input.env)?,
-    };
-    release_chart::values(&input)
+/// Render application values without host configuration.
+pub fn render(input: &ValuesInput) -> anyhow::Result<Value> {
+    release_chart::values(input)
 }
 
-/// Build release values from the document, artifact, policy, and host overlay.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Release values combine document, artifact, policy, and chart inputs"
-)]
+/// Build release values from the application selection and artifact repositories.
 pub fn release_values(
     document: &EnvironmentDocument,
     application: &str,
     manifest: &wamn_catalog::ServingManifest,
     manifest_digest: &str,
     artifact_base: &str,
-    drain_bound_seconds: u32,
+    component_base: &str,
     actor: &str,
-    host_group_path: Option<&Path>,
-    installed: Option<&serde_json::Value>,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
-    let group = host_group(
-        host_group_path,
-        &document.org,
-        &document.project,
-        &document.env,
-    )?;
-    let (mut values, roles) = plan::release_values(
+    plan::release_values(
         document,
         application,
         manifest,
         manifest_digest,
         artifact_base,
-        drain_bound_seconds,
+        component_base,
         actor,
-        group,
-    )?;
-    let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
-    if let Some(image) = super::runtime::host_image(
-        installed,
-        group["name"]
-            .as_str()
-            .context("application host group name")?,
-    ) {
-        group["image"] = serde_yaml::to_value(image)?;
-    }
-    Ok((values, roles))
+    )
 }
 
 /// The host group body: the platform's part, read from

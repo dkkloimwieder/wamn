@@ -112,8 +112,10 @@ impl SelectedChart {
                     "selected host group must be in hosts"
                 );
                 let reference: oci_client::Reference = self.host.parse()?;
-                let mut image = self.values["runtime-operator"]["runtime"]["image"].clone();
-                // Helm falls back to the old chart's registry for an empty group registry.
+                let mut image = serde_json::json!({
+                    "tag": format!("{}@{}", reference.tag().context("host has no tag")?, reference.digest().context("host has no digest")?),
+                    "pull_policy": "IfNotPresent"
+                });
                 image["registry"] = reference.registry().into();
                 image["repository"] = reference.repository().into();
                 selected["image"] = image;
@@ -209,22 +211,10 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
         require_file(&directory.join("platform").join(name).join("Chart.yaml"))?;
     }
     let values = read_yaml(&directory.join("values.yaml"))?;
-    let image = &values["runtime-operator"]["runtime"]["image"];
-    let repository = image["repository"]
+    let host = values["platform"]["host"]["image"]
         .as_str()
-        .context("host has no repository")?;
-    let tag = image["tag"].as_str().context("host has no tag")?;
-    let registry = match image.get("registry") {
-        None => "",
-        Some(registry) => registry
-            .as_str()
-            .context("host registry must be a string")?,
-    };
-    let host = if registry.is_empty() {
-        format!("{repository}:{tag}")
-    } else {
-        format!("{registry}/{repository}:{tag}")
-    };
+        .context("host has no image")?
+        .to_owned();
     validate_image(&host).context("invalid selected host image")?;
     validate_platform_images(&values["platform"]).context("invalid selected platform image")?;
     for name in ["ctl", "control", "identity", "edge", "roles/http"] {
@@ -373,6 +363,20 @@ pub fn prepare_payload(repository: &Path, chart: &Path) -> anyhow::Result<()> {
     ] {
         copy_package_output(&repository.join(source), &platform.join(name))?;
     }
+    let defaults = read_yaml(&chart.join("values.yaml"))?;
+    let path = platform.join("environment").join("values.yaml");
+    let mut values = read_yaml(&path)?;
+    let reference: oci_client::Reference = defaults["platform"]["host"]["image"]
+        .as_str()
+        .context("host image")?
+        .parse()?;
+    values["runtime-operator"]["runtime"]["image"] = serde_json::json!({
+        "registry":reference.registry(), "repository":reference.repository(),
+        "tag":format!("{}@{}", reference.tag().context("host tag")?, reference.digest().context("host digest")?),
+        "pull_policy":"IfNotPresent"
+    });
+    std::fs::write(path, serde_yaml::to_string(&values)?)?;
+
     for source in ["identity", "edge", "release"] {
         let output = std::process::Command::new("helm")
             .arg("package")
@@ -521,7 +525,7 @@ mod tests {
     fn selection_requires_each_selected_core_image() {
         let chart = prepared_chart();
         let mut values = select(&chart.0).unwrap().values;
-        let mut pointers = vec!["/runtime-operator/runtime/image/tag".to_owned()];
+        let mut pointers = Vec::new();
         image_pointers(&values["platform"], "/platform", &mut pointers);
         for pointer in pointers {
             let original = values.pointer_mut(&pointer).unwrap().take();
@@ -541,7 +545,7 @@ mod tests {
         let digest = "a".repeat(64);
         values["platform"]["extra"] =
             json!({"nested": [{"image": format!("extra.example/optional@sha256:{digest}")}]});
-        let mut pointers = vec!["/runtime-operator/runtime/image/tag".to_owned()];
+        let mut pointers = Vec::new();
         image_pointers(&values["platform"], "/platform", &mut pointers);
         write_values(&chart, &values);
         assert!(select(&chart.0).is_ok());

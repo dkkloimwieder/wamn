@@ -7,11 +7,17 @@ brokerCertificates: []
 
 global:
   certificates:
+    # The operator release owns the CA and the certificate Secrets in this
+    # namespace. The host still mounts them, because `global.tls.enabled` stays
+    # at its default true.
     generate: false
+  # The one NATS of the platform (docs/plan/alignment.md R2).
   nats:
     schedulerUrl: nats://wamn-nats.platform.svc.cluster.local:4222
     dataUrl: nats://wamn-nats.platform.svc.cluster.local:4222
+
 runtime-operator:
+  # The cluster-singular halves of the subchart. The operator release owns them.
   operator:
     enabled: false
   nats:
@@ -19,6 +25,51 @@ runtime-operator:
   gateway:
     enabled: false
   runtime:
+    # The host image of the platform image set: `tag` is `<tag>@sha256:<hex>`,
+    # because the subchart renders only `repository:tag`.
+    image:
+      registry: ""
+      repository: ""
+      tag: ""
+      pull_policy: IfNotPresent
+    # The drain bound of the environment policy, which
+    # `wamn_control::release_chart::values` writes (R20). Null removes the
+    # subchart's default, so the chart does not render without it.
+    terminationGracePeriodSeconds: null
+    drainDelaySeconds: 5
+    natsConnectTimeoutSeconds: 60
+    probes:
+      endpoint:
+        enabled: true
+        port: 8081
+        startupFailureThreshold: 60
+    # Residency in bytes. A release probe chose 64 KiB of linear memory: keeping more makes each drop clear it.
+    # These values leave allocator capacity unchanged. Dev and bench read this list.
+    env:
+      - name: WAMN_PG_GUEST_POOL_MAX
+        value: "16"
+      - name: WAMN_PG_PLATFORM_POOL_MAX
+        value: "8"
+      - name: WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT
+        value: "65536"
+      - name: WASMTIME_POOLING_TABLE_KEEP_RESIDENT
+        value: "4096"
+      # Two resident pages during eager instantiation. Native stack zeroing stays off,
+      # so Wasmtime currently retains stacks independently of this value.
+      - name: WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT
+        value: "8192"
+    resources:
+      defaultHeapMemory: 256MiB
+      coreInstances: 512
+      maxConcurrentStarts: 4
+      guestMemoryMode: count
+      requests:
+        memory: "64Mi"
+      limits:
+        memory: "768Mi"
+    # Provisioning supplies the environment host group.
     hostGroups: []
+    # Provisioning creates one account per environment. Install values name it.
     serviceAccount:
       create: false
+      name: ""

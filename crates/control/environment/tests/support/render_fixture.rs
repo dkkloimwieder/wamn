@@ -9,26 +9,6 @@ use wamn_test_infrastructure::rendering::kubernetes_documents;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 pub const NAMESPACE: &str = "wamn-system";
-/// The host group keys and variables that the release chart derives.
-const DERIVED_KEYS: [&str; 6] = [
-    "name",
-    "namespace",
-    "service",
-    "extraArgs",
-    "image",
-    "plugins",
-];
-const DERIVED_VARIABLES: [&str; 8] = [
-    "WAMN_ORG",
-    "WAMN_PROJECT",
-    "WAMN_DRAIN_BOUND_SECONDS",
-    "OTEL_EXPORTER_OTLP_ENDPOINT",
-    "OTEL_SERVICE_NAME",
-    "OTEL_TRACES_SAMPLER",
-    "OTEL_TRACES_SAMPLER_ARG",
-    "WASMCLOUD_HOST_ENVIRONMENT",
-];
-
 /// Render a case's host values through apply, with the case's platform inputs.
 pub fn host_values(
     input: &wamn_test_infrastructure::rendering::HostValuesInput,
@@ -37,27 +17,22 @@ pub fn host_values(
     use serde_json::json;
     use wamn_test_infrastructure::rendering::{RenderedHostValues, host_defaults};
 
-    let mut values = wamn_environment::environment::write::render(
-        &release_chart::ValuesInput {
-            org: input.event.org.clone(),
-            project: input.event.project.clone(),
-            env: input.event.environment.clone(),
-            manifest_digest: input.manifest_digest.clone(),
-            artifact_base: input.release_artifact_base.clone(),
-            route_host: "fixture.invalid".into(),
-            applications: std::collections::BTreeMap::from([(
-                schema.to_owned(),
-                wamn_catalog::ApplicationDefinition {
-                    packages: [schema.to_owned()].into(),
-                    connections: std::collections::BTreeMap::new(),
-                },
-            )]),
-            roles: Vec::new(),
-            drain_bound_seconds: 70,
-            actor: "prekind render".into(),
-            host_group: serde_yaml::Mapping::new(),
-        },
-        None,
+    let document = wamn_environment::environment::document::EnvironmentDocument::from_json(
+        &serde_json::to_vec(&json!({
+            "org":input.event.org,"project":input.event.project,"env":input.event.environment,
+            "target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}
+        }))?,
+    )?;
+    let mut values = serde_yaml::to_value(
+        wamn_environment::environment::ensure::environment_host_values(
+            &document,
+            70,
+            input.stream_replicas,
+            input.dup_window_secs,
+            None,
+            false,
+            None,
+        )?,
     )?;
     let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
     group["namespace"] = input.namespace.clone().into();
@@ -90,6 +65,10 @@ pub fn host_values(
                 .iter_mut()
                 .find(|entry| entry["name"] == variable)
                 .context("apply credential variable")?;
+            entry
+                .as_mapping_mut()
+                .context("host variable mapping")?
+                .remove("value");
             entry["valueFrom"]["secretKeyRef"]["name"] = name.into();
         }
     }
@@ -116,7 +95,14 @@ pub fn host_values(
             "/etc/wamn/registry/config.json".into(),
         ),
     ] {
-        variables.push(serde_yaml::to_value(json!({"name": name, "value": value}))?);
+        if let Some(variable) = variables
+            .iter_mut()
+            .find(|variable| variable["name"] == name)
+        {
+            variable["value"] = value.into();
+        } else {
+            variables.push(serde_yaml::to_value(json!({"name": name, "value": value}))?);
+        }
     }
     group["volumes"]
         .as_sequence_mut()
@@ -155,39 +141,6 @@ pub fn host_values(
     })
 }
 
-/// Extract the platform inputs before the release chart derives its fields again.
-pub fn host_group(overlay: &str) -> anyhow::Result<serde_yaml::Mapping> {
-    let values: serde_yaml::Value =
-        serde_yaml::from_str(overlay).context("parse the host overlay")?;
-    let groups = values["runtime"]["hostGroups"]
-        .as_sequence()
-        .context("the host overlay has host groups")?;
-    ensure!(groups.len() == 1, "the host overlay has one host group");
-    let mut group = groups[0]
-        .as_mapping()
-        .context("the host group is a mapping")?
-        .clone();
-    for key in DERIVED_KEYS {
-        group.remove(key);
-    }
-    group
-        .get_mut("env")
-        .and_then(serde_yaml::Value::as_sequence_mut)
-        .context("the host group has env")?
-        .retain(|entry| {
-            entry["name"]
-                .as_str()
-                .is_none_or(|name| !DERIVED_VARIABLES.contains(&name))
-        });
-    if let Some(ports) = group
-        .get_mut("ports")
-        .and_then(serde_yaml::Value::as_sequence_mut)
-    {
-        ports.retain(|port| port["name"] != "files");
-    }
-    Ok(group)
-}
-
 /// Render the source chart with fixture image references, without pulling images.
 pub fn template(values: &serde_yaml::Value, namespace: &str) -> anyhow::Result<Vec<Value>> {
     let work = ScratchRoot::create()?;
@@ -205,11 +158,34 @@ pub fn template(values: &serde_yaml::Value, namespace: &str) -> anyhow::Result<V
     )?;
     let file = work.path().join("values.yaml");
     std::fs::write(&file, serde_yaml::to_string(values)?)?;
-    let name = values["runtime-operator"]["runtime"]["hostGroups"][0]["name"]
-        .as_str()
-        .context("application host group")?;
+    let application = values["applications"]
+        .as_mapping()
+        .and_then(|applications| applications.keys().next())
+        .and_then(serde_yaml::Value::as_str);
+    let name = if let Some(application) = application {
+        let coordinate: Vec<_> = values["environment"]
+            .as_str()
+            .context("application coordinate")?
+            .split('/')
+            .collect();
+        release_chart::release_name(coordinate[0], coordinate[2], coordinate[1], application)?
+    } else {
+        values["runtime-operator"]["runtime"]["hostGroups"][0]["name"]
+            .as_str()
+            .context("environment host group")?
+            .to_owned()
+    };
+    let chart = if application.is_none() {
+        wamn_environment::platform::artifact_plan::prepare_payload(
+            &wamn_fixture_package::repository_root(),
+            &chart,
+        )?;
+        chart.join("platform/environment")
+    } else {
+        chart
+    };
     let output = std::process::Command::new("helm")
-        .args(["template", name, "--namespace", namespace])
+        .args(["template", &name, "--namespace", namespace])
         .arg(&chart)
         .arg("--values")
         .arg(&file)
@@ -271,82 +247,6 @@ pub fn assert_complete(documents: &[Value], secrets: &[Value]) -> anyhow::Result
                             mounted_secret_key(pod, container, path, &all, namespace)?;
                         }
                     }
-                }
-            }
-        }
-    }
-    for workload in documents
-        .iter()
-        .filter(|doc| doc["kind"] == "WorkloadDeployment")
-    {
-        let spec = &workload["spec"]["template"]["spec"];
-        let selector = spec["hostSelector"]
-            .as_object()
-            .context("workload host selector")?;
-        let hosts = documents
-            .iter()
-            .filter(|doc| {
-                doc["kind"] == "Deployment"
-                    && selector.iter().all(|(key, value)| {
-                        doc["spec"]["template"]["metadata"]["labels"][if key == "hostgroup" {
-                            "wasmcloud.com/hostgroup"
-                        } else {
-                            key
-                        }] == *value
-                    })
-            })
-            .collect::<Vec<_>>();
-        ensure!(
-            !hosts.is_empty(),
-            "no host group matches {}",
-            workload["metadata"]["name"]
-        );
-        for host in hosts {
-            let pod = &host["spec"]["template"]["spec"];
-            let container = pod["containers"]
-                .as_array()
-                .context("host containers")?
-                .iter()
-                .find(|container| {
-                    container["env"]
-                        .as_array()
-                        .is_some_and(|env| env.iter().any(|var| var["name"] == "WAMN_ORG"))
-                })
-                .context("host container")?;
-            let env = container["env"].as_array().context("host environment")?;
-            let require = |name: &str| -> anyhow::Result<&Value> {
-                env.iter()
-                    .find(|var| var["name"] == name)
-                    .with_context(|| format!("host {} lacks {name}", host["metadata"]["name"]))
-            };
-            for interface in spec["hostInterfaces"]
-                .as_array()
-                .context("workload host interfaces")?
-            {
-                match (
-                    interface["namespace"].as_str(),
-                    interface["package"].as_str(),
-                ) {
-                    // The events binding is the host group's `plugins` entry,
-                    // which the chart renders into the host configuration file
-                    // (docs/plan/alignment.md R6).
-                    (Some("wasmcloud"), Some("nats")) if interface["name"] == "events" => {
-                        ensure!(
-                            container["args"]
-                                .as_array()
-                                .is_some_and(|args| args.iter().any(|arg| arg
-                                    .as_str()
-                                    .is_some_and(|arg| arg.starts_with("--user-config=")))),
-                            "the host lacks the plugins entry of the events binding"
-                        );
-                    }
-                    (Some("wamn"), Some("postgres")) => {
-                        require("WAMN_PG_URL")?;
-                    }
-                    (Some("wamn"), Some("operation")) => {
-                        require("WAMN_EXECUTOR_PLATFORM_PG_URL")?;
-                    }
-                    _ => {}
                 }
             }
         }
@@ -501,8 +401,8 @@ pub fn fixture_roles(
 pub fn environment(
     document: &wamn_environment::environment::document::EnvironmentDocument,
     manifest: &wamn_catalog::ServingManifest,
-    host_group: &Path,
-    drain_bound_seconds: u32,
+    _host_group: &Path,
+    _drain_bound_seconds: u32,
 ) -> anyhow::Result<serde_yaml::Value> {
     let mut selections = document.applications.values();
     let selection = selections
@@ -516,22 +416,18 @@ pub fn environment(
     for application in applications.values_mut() {
         application.connections.clear();
     }
-    wamn_environment::environment::write::render(
-        &release_chart::ValuesInput {
-            org: document.org.clone(),
-            project: document.project.clone(),
-            env: document.env.clone(),
-            manifest_digest: manifest.digest().as_str().to_owned(),
-            artifact_base: "registry.invalid/wamn/releases".into(),
-            route_host: selection.hostname.clone(),
-            applications,
-            roles: fixture_roles(manifest, &document.org, &document.project, &document.env),
-            drain_bound_seconds,
-            actor: "prekind render".into(),
-            host_group: serde_yaml::Mapping::new(),
-        },
-        Some(host_group),
-    )
+    wamn_environment::environment::write::render(&release_chart::ValuesInput {
+        org: document.org.clone(),
+        project: document.project.clone(),
+        env: document.env.clone(),
+        manifest_digest: manifest.digest().as_str().to_owned(),
+        artifact_base: "registry.invalid/wamn/releases".into(),
+        route_host: selection.hostname.clone(),
+        applications,
+        roles: fixture_roles(manifest, &document.org, &document.project, &document.env),
+        actor: "prekind render".into(),
+        component_base: "registry.invalid/wamn/components".into(),
+    })
 }
 
 /// Render the credential Secrets from apply's producer list, with disposable URLs.

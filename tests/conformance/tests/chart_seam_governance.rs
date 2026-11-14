@@ -59,7 +59,7 @@ impl Drop for RenderDirectory {
 fn render_chart(root: &Path, release: &str, values: &[&str]) -> Vec<Value> {
     let metadata: Value = serde_yaml::from_str(&read_repository_file(
         root,
-        "deploy/platform/release/Chart.yaml",
+        "deploy/platform/environment/Chart.yaml",
     ))
     .expect("release chart metadata");
     let version = metadata["dependencies"]
@@ -69,7 +69,7 @@ fn render_chart(root: &Path, release: &str, values: &[&str]) -> Vec<Value> {
         .find(|dependency| dependency["name"] == "runtime-operator")
         .and_then(|dependency| dependency["version"].as_str())
         .expect("the release chart selects the operator version");
-    let chart = format!("deploy/platform/release/charts/runtime-operator-{version}.tgz");
+    let chart = format!("deploy/platform/environment/charts/runtime-operator-{version}.tgz");
     let mut helm = Command::new("helm");
     helm.current_dir(root)
         .args(["template", release, &chart, "--namespace", "platform"]);

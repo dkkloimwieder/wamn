@@ -199,12 +199,23 @@ pub fn environment_host_values(
         );
     }
     group["name"] = name.into();
-    let mut arguments = vec![format!("--environment={}", document.env)];
+    let mut arguments = vec![
+        format!("--environment={}", document.env),
+        "--files-addr=0.0.0.0:8082".into(),
+    ];
     arguments.extend(registry_arguments);
     if insecure_registry {
         arguments.push("--allow-insecure-registries".into());
     }
     group["extraArgs"] = json!(arguments);
+    group
+        .as_object_mut()
+        .context("host group is not an object")?
+        .entry("ports")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .context("host ports are not a list")?
+        .push(json!({"name":"files", "containerPort":8082, "protocol":"TCP"}));
     let variables = group["env"]
         .as_array_mut()
         .context("host env is not a list")?;
@@ -292,7 +303,16 @@ pub(super) async fn provision_environment_host(
             .as_deref()
             .context("missing component registry")?,
     )?;
-    let group = super::runtime::host_group(control, None, &component_base)?;
+    let mut group = super::runtime::host_group(control, None, &component_base)?;
+    let instance =
+        read_project_env_instance(&platform.system_database_url, &document.triple()).await?;
+    group
+        .get_mut("env")
+        .and_then(serde_yaml::Value::as_sequence_mut)
+        .context("host variables are not a list")?
+        .push(serde_yaml::to_value(
+            serde_json::json!({"name":"WAMN_SESSION_INSTANCE_SUFFIX", "value":instance}),
+        )?);
     let desired = environment_host_values(
         document,
         u32::try_from(policy.drain_bound_seconds)?,
@@ -1064,7 +1084,7 @@ mod tests {
             reapplied["runtime-operator"]["runtime"]["hostGroups"][0]["image"],
             image
         );
-        let entry = json!({"chart":chart.0, "version":crate::platform::artifact_plan::select(&chart.0)?.version,
+        let entry = json!({"chart":chart.0.join("platform/environment"), "version":crate::platform::artifact_plan::select(&chart.0)?.version,
             "name":environment_host_name(&document.org, &document.project, &document.env)?,
             "namespace":"hosts", "values":reapplied});
         let objects = wamn_kubernetes::helm::template(&entry)?;

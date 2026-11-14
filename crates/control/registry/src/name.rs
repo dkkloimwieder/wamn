@@ -248,7 +248,7 @@ pub fn environment_resource_name(org: &str, project: &str, env: &str) -> Result<
     Ok(format!("e-{slug}-{}", &hash[..HASH_LEN]))
 }
 
-/// The Helm release and host group of one application.
+/// The Helm release of one application.
 pub fn application_release_name(
     org: &str,
     project: &str,

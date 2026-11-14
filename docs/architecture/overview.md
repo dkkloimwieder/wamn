@@ -128,10 +128,10 @@ Frozen candidate execution retains its own admitted facts throughout the travers
 
 ## Environment lifecycle
 
-An environment is one Helm release of the `release` chart in `deploy/platform/release`.
-The release name is `r-<slug>-<hash>`, derived from the coordinate `org/env/project`.
-The name is also the host group of the environment.
-The chart holds the pinned runtime-operator subchart in host-only mode, which renders only the host.
+Each application has its own Helm release of `deploy/platform/release`.
+The release name is `r-<slug>-<hash>`, derived from `org/env/project/application`.
+The environment chart owns the shared host and its runtime-operator dependency.
+Application releases contain no host Deployment or runtime-operator dependency.
 It adds one WorkloadDeployment for the `http` role.
 The `http` role starts the separate route component with `poolSize` 0. A Service of the same name routes to it.
 

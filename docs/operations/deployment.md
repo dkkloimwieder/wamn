@@ -233,7 +233,8 @@ wamn status --env environments/dev/environment.k
 
 Publication needs no destination database.
 Run `wamn env apply environments/dev/environment.k` before applying application SQL and deploying code.
-Each application owns its Helm release, host group, workloads, Services, and route ConfigMaps.
+Each application owns its Helm history, workloads, Services, and route ConfigMaps.
+The environment chart owns the shared host. Application workloads and file Services select that host.
 The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
 Code-only deploy, reapply, and rollback preserve installed SQL and other applications' data, permissions, routes, and workloads.
 Helm is the only owner of release history. Deploy names the application and release digest.
@@ -561,7 +562,7 @@ The bucket must allow reads without credentials.
 Edge deployment remains outside the local platform milestone.
 
 Release hosts expose workload HTTP on port 80, probes on port 8081, and native file transfers on port 8082.
-The `<release>-files` Service selects the host group pods and maps port 80 to the named `files` port.
+The `<release>-files` Service selects the shared environment host and maps port 80 to the named `files` port.
 The edge sends `/api/<application>/files` and its child paths there before the general `/api/` route.
 File requests keep the full path. Other API requests lose the `/api` prefix.
 

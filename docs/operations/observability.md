@@ -20,7 +20,7 @@ See [execution observability](../architecture/execution.md) for context propagat
 
 The host samples 10% of new traces at their start and keeps sampled parents. The collector does not sample traces.
 
-**The host's OTLP endpoint is chart-owned: the `release` chart sets `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` on every host it renders; the control host group file sets the same two.**
+**The host's OTLP endpoint is chart-owned: the `environment` chart sets `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` on every host it renders; the control host group file sets the same two.**
 
 **The bucket has a 30-day lifecycle. Nothing deletes objects by hand.**
 

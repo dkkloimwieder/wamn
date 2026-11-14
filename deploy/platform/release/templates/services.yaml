@@ -26,8 +26,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    wasmcloud.com/hostgroup: {{ (default $.Release.Name $.Values.name) | quote }}
-    wamn.release: {{ required "runtime-operator.runtime.podLabels.wamn.release is required" (index $.Values "runtime-operator" "runtime" "podLabels" "wamn.release") | quote }}
+    wasmcloud.com/hostgroup: {{ required "hostGroup is required" $.Values.hostGroup | quote }}
   ports:
     - name: files
       port: 80

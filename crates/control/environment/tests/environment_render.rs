@@ -6,7 +6,6 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Instant;
-use wamn_control_provision::WorkloadRoleFamily;
 use wamn_environment::environment::document::EnvironmentDocument;
 use wamn_registry::Triple;
 #[path = "support/release_documents.rs"]
@@ -71,7 +70,6 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
     use std::collections::BTreeMap;
     use wamn_environment::environment::{document::DeclaredRelease, write};
 
-    let work = ScratchRoot::create()?;
     let mut releases = BTreeMap::new();
     let mut applications = serde_json::Map::new();
     for application in ["orders", "receiving"] {
@@ -105,11 +103,6 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         "org":ORG,"project":PROJECT,"env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,
         "applications":applications
     }))?)?;
-    let group = work.path().join("host.yaml");
-    std::fs::write(
-        &group,
-        serde_yaml::to_string(&fixture_host_group(&document, "registry.invalid"))?,
-    )?;
     let render = |document: &EnvironmentDocument,
                   application: &str,
                   release: &wamn_catalog::ServingManifest|
@@ -121,10 +114,8 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             release,
             release.digest().as_str(),
             "registry.invalid/wamn/releases",
-            70,
+            "registry.invalid/wamn/components",
             "render",
-            Some(&group),
-            None,
         )?;
         assert_eq!(
             values["applications"]
@@ -271,10 +262,8 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
             &release,
             release.digest().as_str(),
             "registry.invalid/releases",
-            70,
+            "registry.invalid/wamn/components",
             "reset-render",
-            Some(&group),
-            None,
         )?;
         Ok(values)
     };
@@ -286,12 +275,6 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
             .iter()
             .all(|object| object["kind"] != "WorkloadDeployment")
     );
-    let hosts = stopped
-        .iter()
-        .filter(|object| object["kind"] == "Deployment")
-        .collect::<Vec<_>>();
-    assert!(!hosts.is_empty());
-    assert!(hosts.iter().all(|host| host["spec"]["replicas"] == 0));
     let resumed = template(&reapply()?, NAMESPACE)?;
     let workloads = resumed
         .iter()
@@ -448,29 +431,8 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
 
 fn pat_release(project: &str) -> anyhow::Result<()> {
     use wamn_release_control::release_chart::ValuesInput;
-    use wamn_test_infrastructure::rendering::{EventIdentity, HostRoleSecret, HostValuesInput};
     let target = Triple::new("acme", "dev", project);
     let secrets = credential_secrets(&target, NAMESPACE);
-    let guest = wamn_control_provision::workload_secret_name(
-        WorkloadRoleFamily::App,
-        "acme",
-        project,
-        "dev",
-    );
-    let roles = wamn_control_provision::host_credentials::HOST_CREDENTIALS
-        .iter()
-        .map(|credential| credential.family)
-        .filter(|family| !matches!(family, WorkloadRoleFamily::App))
-        .map(|family| HostRoleSecret {
-            family,
-            name: wamn_control_provision::workload_secret_name(family, "acme", project, "dev"),
-        })
-        .collect();
-    let event = EventIdentity {
-        org: "acme".into(),
-        project: project.into(),
-        environment: "dev".into(),
-    };
     let manifest = manifest(&fixture_releases()?[2])?;
     let object_store_secret_name = (project == "wms").then(|| {
         wamn_registry::name::workload_secret_name(
@@ -484,23 +446,6 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
     if let Some(name) = &object_store_secret_name {
         secrets.push(prerequisite(name, &["credentials.json"], NAMESPACE));
     }
-    let rendered = render_fixture::host_values(
-        &HostValuesInput {
-            namespace: NAMESPACE.into(),
-            host_tag: "prekind".into(),
-            replicas: 3,
-            component_artifact_base: "registry.invalid/wamn/components".into(),
-            release_artifact_base: "registry.invalid/wamn/releases".into(),
-            manifest_digest: manifest.digest().as_str().into(),
-            stream_replicas: 1,
-            dup_window_secs: 120,
-            event,
-            guest_secret_name: guest,
-            role_secrets: roles,
-            object_store_secret_name,
-        },
-        project,
-    )?;
     let roles = render_fixture::fixture_roles(&manifest, "acme", project, "dev");
     let values = wamn_release_control::release_chart::values(&ValuesInput {
         org: "acme".into(),
@@ -523,9 +468,8 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         )]
         .into(),
         roles,
-        drain_bound_seconds: 70,
         actor: "prekind".into(),
-        host_group: render_fixture::host_group(&rendered.overlay)?,
+        component_base: "registry.invalid/wamn/components".into(),
     })?;
     secrets.extend(operator_prerequisites(NAMESPACE));
     secrets.push(prerequisite("wamn-oauth", &["key"], NAMESPACE));

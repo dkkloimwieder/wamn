@@ -371,7 +371,8 @@ pub fn stop_values(values: &mut Value) -> anyhow::Result<()> {
     values["roles"] = serde_json::json!([]);
     for group in values["runtime-operator"]["runtime"]["hostGroups"]
         .as_array_mut()
-        .context("host groups")?
+        .into_iter()
+        .flatten()
     {
         group["replicas"] = 0.into();
     }
