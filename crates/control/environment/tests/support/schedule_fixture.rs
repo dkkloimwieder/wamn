@@ -12,6 +12,7 @@ pub use wamn_catalog::{
     ComponentDeclaration, ComponentDescriptor, SERVING_MANIFEST_FORMAT_VERSION, ServingManifest,
     WiringDocument,
 };
+pub use wamn_connections::connection_credentials::ConnectionCredentials;
 pub use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 pub use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 pub use wamn_engine::component_admission::{
@@ -19,15 +20,14 @@ pub use wamn_engine::component_admission::{
 };
 pub use wamn_engine::engine::build_engine;
 pub use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
+pub use wamn_events_capability::WamnJetstream;
 pub use wamn_execution_host::{OperationHost, OperationHostConfig};
+pub use wamn_http_capability::transport::HttpTransport;
 pub use wamn_identity_protocol::{PlatformComponent, workflow_user_id};
-pub use wamn_registry::Triple;
-pub use wamn_runtime::connection_credentials::ConnectionCredentials;
-pub use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-pub use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
-pub use wamn_runtime::plugins::wamn_postgres::{
+pub use wamn_postgres_capability::{
     AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
 };
+pub use wamn_registry::Triple;
 pub use wamn_workflow::author_workflow::{
     AuthorWorkflowError, AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution,
     WorkflowTrigger, author_workflow_in_databases,
@@ -522,8 +522,8 @@ impl Fixture {
                 Arc::clone(&self.engine),
                 Arc::clone(&self.postgres),
                 Arc::new(HttpTransport::new().unwrap()),
-                Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(
-                    Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
+                Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
+                    Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
                     wamn_broker::Publisher::default(),
                     Arc::new(ConnectionCredentials::empty()),
                     &self.postgres,
@@ -548,11 +548,9 @@ impl Fixture {
             driver,
             Arc::clone(&self.postgres),
             Arc::new(
-                WamnJetstream::new(
-                    wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig::default(),
-                )
-                .await
-                .expect("event transport initializes"),
+                WamnJetstream::new(wamn_events_capability::WamnJetstreamConfig::default())
+                    .await
+                    .expect("event transport initializes"),
             ),
             &self.release,
             QueueServiceConfig {
@@ -591,7 +589,7 @@ pub fn lifecycle_refusal(result: Result<(), WorkflowLifecycleError>) -> Workflow
     result.expect_err("the enable refuses").error_type()
 }
 
-pub use wamn_runtime::plugins::wamn_jetstream::EventBatchAdmission;
+pub use wamn_events_capability::EventBatchAdmission;
 pub use wamn_workflow::admission::ScheduleRunAdmitted;
 
 pub async fn event(fixture: &mut Fixture, id: &str, sequence: i64, role: Option<&str>) {
@@ -616,7 +614,7 @@ pub async fn admit(
     envelope: &str,
     sequence: u64,
     lsn: u64,
-) -> Result<(), wamn_runtime::plugins::wamn_postgres::ProductionLeaseError> {
+) -> Result<(), wamn_postgres_capability::ProductionLeaseError> {
     wamn_workflow::event_admission::admit_event_batch(
         &fixture.postgres,
         PROJECT,

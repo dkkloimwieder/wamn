@@ -32,7 +32,7 @@ The [generated CRUD test](../../crates/schema/generator/tests/statement_admissio
 
 ## Runtime lease coverage
 
-The [standard lease test](../../crates/platform/runtime/tests/production_lease_live.rs) exercises leases with a declared executor credential.
+The [standard lease test](../../crates/platform/postgres-capability/tests/production_lease_live.rs) exercises leases with a declared executor credential.
 The fixture superuser records the attempt because no effect writer exists.
 
 ## Record history
@@ -62,7 +62,7 @@ The [stamp rules](../architecture/data-access.md#record-history) define the expe
 - The [platform grant test](../../crates/control/environment/tests/platform_grants_live.rs) reads the `wamn_app` privileges in `platform` from the server catalogs, on a fresh install and after migrations `0025`, `0028`, `0029`, `0030` and `0031`. It makes sure that `wamn_app` holds `SELECT` on the listed tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, the existing grants of `platform.write_log`, and nothing else in `platform`. A second case applies `0031` to a database with one row of each table in the old shape. It makes sure that each row stays without `project_id`, that each history entry keeps its row under the new key, and that the counter functions run on the sequence id alone. A counter function refuses an id that is not a sequence.
 - The [generation tests](../../crates/schema/generator/tests/generation.rs) refuse each invalid declaration, retention, and history name, and keep the revision on a true no-op. They also make sure that a logged relation keeps the schema state id. A custom operation reads a history table with only its select grant.
 - The [operation grant tests](../../crates/control/provision/src/operation_grants.rs) make sure that the Receiving history read is its own operation grant. The [router driver tests](../../crates/execution/workflow/src/router_driver.rs) make sure that the host refuses a caller without that grant.
-- The [session identity tests](../../crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs) test the principal and operation bindings and the refusal before PostgreSQL. A pooled connection keeps no earlier operation.
+- The [session identity tests](../../crates/platform/postgres-capability/src/session_identity/tests.rs) test the principal and operation bindings and the refusal before PostgreSQL. A pooled connection keeps no earlier operation.
 - The [identity live test](../../crates/identity/platform/tests/identity_live.rs) reads the system database stamp columns and triggers from the server. It also tests the seeded `wamn:provisioning` row, the platform CHECK, and the `actor-required` refusal.
 - The [PAT test](../../crates/identity/platform/tests/pat_live.rs) makes sure that issuance and revocation stamp `wamn:provisioning` and that a token refuses a platform principal.
 

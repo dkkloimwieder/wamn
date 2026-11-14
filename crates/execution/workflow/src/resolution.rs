@@ -3,7 +3,7 @@ use anyhow::Context as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use wamn_catalog::{AdmittedComponent, WiringDocument};
-use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
+use wamn_postgres_capability::WamnPostgres;
 
 /// An immutable wiring and its resolved catalog facts.
 ///

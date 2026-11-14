@@ -15,7 +15,9 @@ pub async fn install(
     project_env_key: &str,
     root: &Path,
     manifest: &PackageManifest,
-    source: Option<&wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
+    source: Option<
+        &wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
+    >,
 ) -> anyhow::Result<u64> {
     if manifest.connections.is_empty() {
         return Ok(0);
@@ -98,11 +100,13 @@ pub async fn prepare_release(
     project_env_key: &str,
     release: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
-    source: Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
+    source: Option<
+        wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
+    >,
 ) -> anyhow::Result<()> {
     use wamn_engine::artifact_source::ArtifactSource as _;
     let source = source
-        .map(wamn_runtime::component_artifact_source::ComponentArtifactSource::new)
+        .map(wamn_component_artifact::component_artifact_source::ComponentArtifactSource::new)
         .transpose()?;
     for component in &release.components {
         if component.package_id == wamn_catalog::PALETTE_PACKAGE_ID {

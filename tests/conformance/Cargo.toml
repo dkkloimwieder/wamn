@@ -34,7 +34,7 @@ wamn-release-control = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-runtime = { workspace = true }
+wamn-connections = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 serde_yaml = { workspace = true }
 sqlx = { workspace = true, features = ["chrono", "json", "macros", "postgres", "runtime-tokio", "rust_decimal", "uuid"] }

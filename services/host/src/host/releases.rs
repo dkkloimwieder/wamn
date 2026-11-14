@@ -8,15 +8,16 @@ use anyhow::Context as _;
 use tokio::sync::{Mutex, watch};
 use wamn_broker::Publisher;
 use wamn_catalog::{ApplicationDefinition, ServingManifest};
+use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
+use wamn_events_capability::WamnJetstream;
 use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig,
 };
+use wamn_http_capability::transport::HttpTransport;
 use wamn_kubernetes::kubernetes_api::KubernetesApi;
-use wamn_runtime::connection_facts::ConnectionFacts;
-use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::{WamnJetstream, WamnPostgres};
+use wamn_postgres_capability::WamnPostgres;
 use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -48,7 +49,7 @@ pub(super) struct Resources {
         wamn_package_artifact::registry_credentials::RegistryCredentialSource,
     )>,
     pub queue_lease_ttl_ms: u64,
-    pub leases: Arc<wamn_runtime::resource_lease::ResourceLeases>,
+    pub leases: Arc<wamn_connections::resource_lease::ResourceLeases>,
 }
 
 pub(super) struct ResidentRelease {
@@ -197,7 +198,7 @@ impl Releases {
         )?);
         if let Some((registry, credentials)) = &r.registry {
             operations.set_integrations(Arc::new(
-                wamn_runtime::integrations::Integrations::new(
+                wamn_integrations::Integrations::new(
                     Arc::clone(&r.facts),
                     &release,
                     &r.postgres,
@@ -219,11 +220,9 @@ impl Releases {
         let files = Arc::new(wamn_execution_host::file_route::FileRoutes::new(
             Arc::clone(&operations.context),
             Arc::clone(&r.postgres),
-            Arc::new(
-                wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
-                    &r.postgres,
-                )),
-            ),
+            Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+                &r.postgres,
+            ))),
             connections,
             r.configuration.project.clone(),
             r.administration_url.clone(),

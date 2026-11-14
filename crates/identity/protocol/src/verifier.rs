@@ -19,7 +19,7 @@ use crate::token::{
 
 /// Where a verifier gets the issuer's public keys.
 ///
-/// The cloud source fetches them over HTTPS (`IssuerKeys` in `wamn-runtime`).
+/// The cloud source fetches them over HTTPS (`IssuerKeys` in `wamn-authentication`).
 /// The edge source reads them from a file ([`FileKeys`](crate::file_keys::FileKeys)).
 #[async_trait]
 pub trait KeySource: Send + Sync {

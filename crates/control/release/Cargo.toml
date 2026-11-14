@@ -29,14 +29,14 @@ wamn-package-artifact = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-record-history = { workspace = true }
-wamn-runtime = { workspace = true }
+wamn-component-artifact = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-compiler = { workspace = true }
 wamn-package-control = { workspace = true }
 
 [dev-dependencies]
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
-wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-component-artifact = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }

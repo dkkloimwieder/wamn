@@ -33,19 +33,19 @@ use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
     ComponentDescriptor, SERVING_MANIFEST_FORMAT_VERSION, WiringDocument, WiringNode,
 };
+use wamn_component_artifact::component_artifact_source::{
+    ComponentArtifactSource, ComponentArtifactSourceConfig,
+};
+use wamn_connections::connection_credentials::ConnectionCredentials;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_engine::component_artifact::{component_artifact_config_bytes, component_artifact_layout};
 use wamn_engine::engine::build_engine;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{OperationHost, OperationHostConfig};
+use wamn_http_capability::transport::HttpTransport;
 use wamn_identity_protocol::AuthorityClass;
-use wamn_runtime::component_artifact_source::{
-    ComponentArtifactSource, ComponentArtifactSourceConfig,
-};
-use wamn_runtime::connection_credentials::ConnectionCredentials;
-use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
+use wamn_postgres_capability::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 use wamn_workflow::RouterDriver;
 use wash_runtime::plugin::wasi_logging::TracingLogger;
 
@@ -334,8 +334,8 @@ async fn build_with_credentials(
     )
     .context("build the component puller registry client")?;
 
-    let facts = Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(
-        Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
+    let facts = Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
+        Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(credentials),
         &postgres,

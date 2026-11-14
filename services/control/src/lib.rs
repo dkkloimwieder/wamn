@@ -15,12 +15,12 @@ use anyhow::{Context as _, ensure};
 use http_body_util::BodyExt as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_environment::environment::Platform;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_identity_client::PatIssuerConfig;
-use wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator;
 
 /// Public component configuration. Database passwords stay in CNPG Secrets.
 #[derive(Debug, Deserialize)]
@@ -52,7 +52,7 @@ pub struct Configuration {
     pub event_observer: Option<Nats>,
     #[serde(default)]
     pub identity: Identity,
-    pub oauth_encryption: Option<wamn_runtime::oauth_encryption::Configuration>,
+    pub oauth_encryption: Option<wamn_connections::oauth_encryption::Configuration>,
 }
 
 /// The platform broker connection, using mounted TLS credentials.
@@ -310,8 +310,8 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     let pool = wamn_postgres::pool(&database, 4).await?;
     let cleanup_pool = pool.clone();
     let mut cleanup_ticks = tokio::time::interval(std::time::Duration::from_secs(60));
-    let keys = wamn_runtime::session_keys::IssuerKeys::new(
-        wamn_runtime::session_keys::IssuerKeysConfig::new(
+    let keys = wamn_authentication::session_keys::IssuerKeys::new(
+        wamn_authentication::session_keys::IssuerKeysConfig::new(
             &config.session_issuer,
             &format!(
                 "{}/.well-known/jwks.json",
@@ -329,15 +329,17 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         .oauth_encryption
         .as_ref()
         .map(|configuration| {
-            let envelope = Arc::new(wamn_runtime::oauth_encryption::Envelope::open(
+            let envelope = Arc::new(wamn_connections::oauth_encryption::Envelope::open(
                 configuration,
             )?);
-            wamn_runtime::oauth_authorization::Authorization::new(&config.public_origin, envelope)
-                .map(Arc::new)
+            wamn_http_capability::oauth_authorization::Authorization::new(
+                &config.public_origin,
+                envelope,
+            )
+            .map(Arc::new)
         })
         .transpose()?;
-    let transport =
-        Arc::new(wamn_runtime::plugins::connection_http::transport::HttpTransport::new()?);
+    let transport = Arc::new(wamn_http_capability::transport::HttpTransport::new()?);
     let changes = wamn_broker::Publisher::connect(&config.nats.connection()).await?;
     let handlers = Arc::new(
         HostRouteDelivery::new(
@@ -373,7 +375,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         .with_operation_jobs(wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?)
         .with_registry_token_metadata(config.registry_token_metadata)
         .with_connection_health(Arc::new(
-            wamn_runtime::connection_health::ConnectionHealth::new(transport)
+            wamn_execution_host::connection_health::ConnectionHealth::new(transport)
                 .with_registry(integration_registry, registry_credentials),
         ))
         .with_oauth(oauth.as_ref().map(Arc::clone)),

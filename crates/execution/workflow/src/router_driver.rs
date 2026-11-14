@@ -22,7 +22,8 @@ use wamn_execution_host::{
     component_invocation, invocation_span, node_trace_context,
 };
 use wamn_identity_protocol::PlatformComponent;
-use wamn_runtime::plugins::connection_http::{
+
+use wamn_capability_authority::connection::{
     ConnectionExecutionClosure, InvocationEntry, WiringPosition,
 };
 

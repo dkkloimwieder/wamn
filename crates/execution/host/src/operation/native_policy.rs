@@ -5,17 +5,17 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::Context as _;
 use tokio::time::Instant;
+use wamn_blobstore::plugin::{self as blobstore, WAMN_BLOBSTORE_ID, WamnBlobstore};
 use wamn_catalog::{AdmittedComponent, ServingComponent};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_scope::INVOCATION_SCOPES_ID;
 use wamn_engine::native_routes::{OperationRefusal, OperationRefusalType};
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_runtime::invocation::{AuthorizedInvocation, InvocationRequest, PrincipalVerification};
-use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
-use wamn_runtime::plugins::wamn_blobstore::plugin::{
-    self as blobstore, WAMN_BLOBSTORE_ID, WamnBlobstore,
+use wamn_http_capability::{self, CONNECTION_HTTP_ID, ConnectionHttp};
+use wamn_postgres_capability::invocation::{
+    AuthorizedInvocation, InvocationRequest, PrincipalVerification,
 };
-use wamn_runtime::plugins::wamn_postgres::{
+use wamn_postgres_capability::{
     PreparedStatementMembers, PreparedStatementSet, UnprovisionedPrincipal, WAMN_POSTGRES_ID,
     WamnPostgres,
 };
@@ -36,12 +36,12 @@ pub(super) const NATIVE_POLICY_ID: &str = "wamn:native-operation-policy";
 /// Capabilities bound by the host invocation policy.
 pub(super) struct NativePolicyResources {
     pub(super) files: Option<Arc<crate::file_route::FileRoutes>>,
-    pub(super) integrations: Option<Arc<wamn_runtime::integrations::Integrations>>,
+    pub(super) integrations: Option<Arc<wamn_integrations::Integrations>>,
     pub(super) postgres: Arc<WamnPostgres>,
     pub(super) logging: Arc<TracingLogger>,
     pub(super) connection_http: Arc<ConnectionHttp>,
     pub(super) blobstore: Arc<WamnBlobstore>,
-    pub(super) context: Arc<wamn_runtime::invocation::ReleaseContext>,
+    pub(super) context: Arc<wamn_postgres_capability::invocation::ReleaseContext>,
     pub(super) release: Arc<LoadedRelease>,
     pub(super) project: String,
 }
@@ -235,7 +235,7 @@ impl NativePolicy {
                 && acquisition.identity.project.as_deref() == Some(self.resources.project.as_str())
                 && acquisition.identity.release.as_ref()
                     == Some(
-                        &wamn_runtime::plugins::wamn_postgres::ReleaseIdentity::from_loaded(
+                        &wamn_capability_authority::identity::ReleaseIdentity::from_loaded(
                             &self.resources.release
                         )
                     ),
@@ -275,7 +275,7 @@ impl InvocationPolicy for NativePolicy {
         }
         let application = match component.application.as_deref() {
             Some(application) => application,
-            None => connection_http::released_invocation_application(
+            None => wamn_capability_authority::connection::released_invocation_application(
                 self.resources.release.manifest(),
                 self.resources.release.target(),
                 &facts.acquisition.invocation,
@@ -405,7 +405,7 @@ impl InvocationPolicy for NativePolicy {
         // HTTP already owns the claim. Palette and event-handler exports have no write envelope.
         if !matches!(
             request.facts.acquisition.invocation.entry,
-            wamn_runtime::plugins::connection_http::InvocationEntry::Wiring(_)
+            wamn_capability_authority::connection::InvocationEntry::Wiring(_)
         ) || route.is_none_or(|route| {
             route.type_.is_read() || route.type_ == wamn_catalog::OperationType::EventHandler
         }) {
@@ -543,7 +543,7 @@ impl NativePolicy {
             wamn_engine::flow_http_routing::add_to_linker(linker)?;
         }
         if interfaces.contains("wamn", "connection", &["http"]) {
-            connection_http::add_to_linker(linker)?;
+            wamn_http_capability::add_to_linker(linker)?;
         }
         if interfaces.contains(
             "wasmcloud",

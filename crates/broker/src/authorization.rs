@@ -650,8 +650,9 @@ mod tests {
                     .connect(url.clone())
                     .await
                     .unwrap();
-            let cache = std::sync::Arc::new(wamn_runtime::auth_cache::AuthCache::default());
-            wamn_runtime::auth_cache::test_util::watched(&client, target, cache).await;
+            let cache =
+                std::sync::Arc::new(wamn_capability_authority::auth_cache::AuthCache::default());
+            wamn_capability_authority::auth_cache::test_util::watched(&client, target, cache).await;
         }
         let _ = server.kill();
         let _ = server.wait();

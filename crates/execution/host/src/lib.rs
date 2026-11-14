@@ -29,3 +29,5 @@ pub mod credential_cleanup;
 
 #[cfg(feature = "test-util")]
 pub use control_route::ProjectionPause;
+
+pub mod connection_health;

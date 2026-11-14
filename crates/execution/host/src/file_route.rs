@@ -23,17 +23,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, ReadBuf};
 use uuid::Uuid;
+use wamn_blobstore::files::{FileStorageError, FileStorageErrorType, FileStore, MAX_URL_LIFETIME};
+use wamn_blobstore::plugin::WamnBlobstore;
 use wamn_catalog::{ComponentConnectionType, HostAttachment, HostHandler};
 use wamn_engine::flow_http_routing::{
     AuthenticatedCaller, CredentialType, FlowHttpRouting, Header,
 };
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_protocol::PrincipalId;
-use wamn_runtime::plugins::wamn_blobstore::files::{
-    FileStorageError, FileStorageErrorType, FileStore, MAX_URL_LIFETIME,
-};
-use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
-use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
+use wamn_postgres_capability::WamnPostgres;
 use wasmtime_wasi_http::WasiBody;
 
 const FILE_COLUMNS: &str =
@@ -208,7 +206,7 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
 pub struct RegistryFileConnections {
     pub client: Option<sqlx::PgPool>,
     pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
-    pub facts: Arc<wamn_runtime::connection_facts::ConnectionFacts>,
+    pub facts: Arc<wamn_connections::connection_facts::ConnectionFacts>,
     pub org: String,
     pub project: String,
     pub environment: String,
@@ -320,7 +318,9 @@ impl FileConnections for RegistryFileConnections {
             .connection(&id)
             .await
             .map_err(|error| failed("binding", error))?
-            .filter(|fact| fact.status == wamn_runtime::connection_memory::ConnectionStatus::Active)
+            .filter(|fact| {
+                fact.status == wamn_connections::connection_memory::ConnectionStatus::Active
+            })
             .ok_or_else(|| refused(FileRefusal::BindingRefused, "connection"))?;
         let generation = self
             .facts
@@ -379,7 +379,7 @@ struct UploadQuery {
 /// File handlers of one released application environment.
 pub struct FileRoutes {
     pub(crate) release: Arc<LoadedRelease>,
-    pub(crate) context: Arc<wamn_runtime::invocation::ReleaseContext>,
+    pub(crate) context: Arc<wamn_postgres_capability::invocation::ReleaseContext>,
     pub(crate) postgres: Arc<WamnPostgres>,
     pub(crate) blobstore: Arc<WamnBlobstore>,
     pub(crate) connections: Arc<dyn FileConnections>,
@@ -398,7 +398,7 @@ impl fmt::Debug for FileRoutes {
 /// A session advisory lock holds no database transaction during object I/O.
 impl FileRoutes {
     pub fn new(
-        context: Arc<wamn_runtime::invocation::ReleaseContext>,
+        context: Arc<wamn_postgres_capability::invocation::ReleaseContext>,
         postgres: Arc<WamnPostgres>,
         blobstore: Arc<WamnBlobstore>,
         connections: Arc<dyn FileConnections>,
@@ -697,7 +697,7 @@ impl FileRoutes {
             .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
         if !matches!(
             invocation.closure,
-            wamn_runtime::plugins::connection_http::ConnectionExecutionClosure::Released
+            wamn_capability_authority::connection::ConnectionExecutionClosure::Released
         ) {
             return Err(refused(FileRefusal::PermissionDenied, "operation"));
         }
@@ -1158,14 +1158,14 @@ mod tests {
         ApplicationDefinition, ComponentConnection, ComponentDescriptor, HostRouteSet,
         PackageCoordinate, ServingComponent, ServingManifest, ServingRelease,
     };
+    use wamn_connections::connection_credentials::ConnectionCredentials;
+    use wamn_connections::connection_facts::ConnectionFacts;
+    use wamn_connections::connection_memory::ConnectionMemory;
     use wamn_engine::flow_http_routing::{
         AuthRejection, AuthenticationRequest, RouteAuthenticator, unauthorized,
     };
     use wamn_engine::release_manifest::ReleaseTarget;
-    use wamn_runtime::connection_credentials::ConnectionCredentials;
-    use wamn_runtime::connection_facts::ConnectionFacts;
-    use wamn_runtime::connection_memory::ConnectionMemory;
-    use wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig;
+    use wamn_postgres_capability::WamnPostgresConfig;
 
     fn release() -> Arc<LoadedRelease> {
         let mut descriptor =
@@ -1274,7 +1274,7 @@ mod tests {
         );
         let release = release();
         let context = Arc::new(
-            wamn_runtime::invocation::ReleaseContext::new(
+            wamn_postgres_capability::invocation::ReleaseContext::new(
                 Arc::clone(&release),
                 Arc::new(ConnectionFacts::new(
                     Arc::new(ConnectionMemory::default()),
@@ -1733,7 +1733,7 @@ mod tests {
     }
     #[tokio::test]
     async fn signed_urls_refuse_an_unregistered_export_before_catalog_access() {
-        use wamn_runtime::plugins::connection_http::{
+        use wamn_capability_authority::connection::{
             ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
         };
         let files = files();

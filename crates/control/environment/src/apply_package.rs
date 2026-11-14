@@ -38,7 +38,7 @@ const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key
 pub struct ApplyPackageRequest {
     /// Component repository configuration for digest-addressed binary reads.
     pub component_source:
-        Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
+        Option<wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
 
     /// Package root containing strict wamn.json and migrations/, with the
     /// digest of the verified artifact it was opened from.
@@ -68,9 +68,10 @@ impl ApplyPackageRequest {
 /// Read the existing component repository variable with the package registry's transport.
 pub fn component_source_from_env(
     registry: Option<&wamn_package_control::package_artifact::PackageRegistry>,
-) -> anyhow::Result<Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>>
-{
-    use wamn_runtime::component_artifact_source::{
+) -> anyhow::Result<
+    Option<wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
+> {
+    use wamn_component_artifact::component_artifact_source::{
         ComponentArtifactSourceConfig, OCI_CA_PATHS_ENV,
     };
     let base = match std::env::var("WAMN_COMPONENT_ARTIFACT_BASE") {
@@ -127,7 +128,7 @@ pub struct ApplyOutcome {
 #[derive(Debug)]
 pub(crate) struct PreparedPackage {
     pub component_source:
-        Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
+        Option<wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
     pub root: PathBuf,
     pub directory: PackageDirectory,
     pub manifest: PackageManifest,

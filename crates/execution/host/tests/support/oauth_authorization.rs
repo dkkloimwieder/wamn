@@ -100,9 +100,11 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     .build()
     .await?;
     let oauth = Arc::new(
-        wamn_runtime::oauth_authorization::Authorization::new(
+        wamn_http_capability::oauth_authorization::Authorization::new(
             &format!("http://{}", ingress.addr()),
-            Arc::new(wamn_runtime::oauth_encryption::Envelope::from_file(&key)?),
+            Arc::new(wamn_connections::oauth_encryption::Envelope::from_file(
+                &key,
+            )?),
         )?
         .with_store(store),
     );
@@ -134,7 +136,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
         }
     });
     ingress.start().await?;
-    let (_nats_server, nats) = wamn_runtime::auth_cache::test_util::nats().await;
+    let (_nats_server, nats) = wamn_capability_authority::auth_cache::test_util::nats().await;
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
@@ -246,9 +248,9 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     .fetch_one(&mut admin)
     .await?;
     assert_eq!(row.get::<String, _>("refresh_status"), "ok");
-    let envelope = wamn_runtime::oauth_encryption::Envelope::from_file(&key)?;
+    let envelope = wamn_connections::oauth_encryption::Envelope::from_file(&key)?;
     let plaintext = envelope
-        .decrypt(&wamn_runtime::oauth_encryption::Encrypted {
+        .decrypt(&wamn_connections::oauth_encryption::Encrypted {
             ciphertext: row.get("ciphertext"),
             wrapped_key: row.get("wrapped_key"),
             nonce: row.get("nonce"),

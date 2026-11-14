@@ -1,0 +1,1677 @@
+//! PostgreSQL identity validation and injection from the shared invocation record.
+
+use sqlx::{Row as _, Statement as _};
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+
+use anyhow::Context as _;
+use tracing::Instrument as _;
+
+use wamn_engine::release_manifest::LoadedRelease;
+use wamn_event_wire::Causation;
+use wamn_identity_protocol::AuthorityClass;
+use wamn_registry::identifiers::{valid_project, valid_project_env_key};
+
+use wamn_capability_authority::connection::ConnectionInvocation;
+#[cfg(test)]
+use wamn_capability_authority::identity::CandidateBindingWorld;
+use wamn_capability_authority::identity::{
+    ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, SessionIdentity,
+};
+
+use super::pool::{
+    ClassCredentials, CredentialProvider, PoolKey, ProjectConfig, ProjectPool,
+    StaticCredentialProvider, WamnPostgresConfig,
+};
+use super::statements::VerifiedStatement;
+use super::{DEFAULT_PROJECT, PgError, RowSet};
+use crate::invocation::Authority;
+
+mod pools;
+pub(super) mod transactions;
+
+/// The status row of the environment, which `wamn_app` reads under its
+/// database boundary.
+const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM platform.environment";
+
+/// The user row of one principal, each role it holds and each permission
+/// of that role, in one read. No row means no user row. A role without
+/// permissions, such as `admin`, yields one row with a null permission, and a
+/// principal without roles yields one row with a null role.
+const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.permission, u.type = 'user' \
+    FROM platform.\"user\" u LEFT JOIN platform.user_role r \
+    ON r.user_id = u.id \
+    LEFT JOIN platform.permission p \
+    ON p.role_name = r.role_name \
+    WHERE u.id = $1::text::uuid";
+
+const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_role.role_name, permission.permission \
+    FROM platform.\"user\" AS \"user\" \
+    JOIN platform.user_role AS user_role \
+      ON user_role.user_id = \"user\".id \
+    LEFT JOIN platform.permission AS permission \
+      ON permission.role_name = user_role.role_name \
+    WHERE \"user\".id = $1::text::uuid AND \"user\".status = 'active'";
+
+/// The application authority a caller holds now: whether it holds `admin`, and
+/// the stable operation references its other roles grant under the loaded
+/// release (docs/architecture/execution.md#routing-and-availability).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeldOperationGrants {
+    pub admin: bool,
+    /// A service holds permissions but never selects a user's active role.
+    pub user: bool,
+    pub references: BTreeSet<String>,
+    /// The names of the held roles.
+    pub roles: BTreeSet<String>,
+}
+
+impl HeldOperationGrants {
+    /// Fold rows of `(role_name, permission)`, where a null permission is a
+    /// role without permissions. The held references are the rows.
+    pub fn from_rows(rows: &[sqlx::postgres::PgRow]) -> Result<Self, sqlx::Error> {
+        let mut held = Self::default();
+        for row in rows {
+            let role: String = row.try_get(0)?;
+            held.admin |= role == wamn_identity_protocol::ADMIN_ROLE;
+            if let Some(reference) = row.try_get::<Option<String>, _>(1)? {
+                held.references.insert(reference);
+            }
+            held.roles.insert(role);
+        }
+        Ok(held)
+    }
+
+    /// The one role a caller with these grants acts with
+    /// (docs/architecture/execution.md#environment-workflows): `admin` for a
+    /// holder of `admin`, the single role of a caller that holds exactly one,
+    /// and none for a caller that holds no role or more than one.
+    pub fn active_role(&self) -> Option<Box<str>> {
+        if !self.user {
+            return None;
+        }
+        self.pat_role()
+    }
+
+    /// A PAT caller selects only a role held by its own active principal.
+    /// Service callers never inherit the role of a user session.
+    pub fn pat_role(&self) -> Option<Box<str>> {
+        if self.admin {
+            return Some(wamn_identity_protocol::ADMIN_ROLE.into());
+        }
+        let mut roles = self.roles.iter();
+        match (roles.next(), roles.next()) {
+            (Some(role), None) => Some(role.as_str().into()),
+            _ => None,
+        }
+    }
+}
+
+fn principal_grants_from_rows(
+    rows: &[sqlx::postgres::PgRow],
+) -> Result<wamn_capability_authority::auth_cache::PrincipalGrants, sqlx::Error> {
+    let mut grants = wamn_capability_authority::auth_cache::PrincipalGrants {
+        present: !rows.is_empty(),
+        ..Default::default()
+    };
+    for row in rows {
+        grants.active = row.try_get(0)?;
+        grants.user = row.try_get(3)?;
+        if let Some(role) = row.try_get::<Option<String>, _>(1)? {
+            let permissions = grants.roles.entry(role).or_default();
+            permissions.extend(row.try_get::<Option<String>, _>(2)?);
+        }
+    }
+    Ok(grants)
+}
+
+/// A session presents authority that its principal does not currently hold.
+#[derive(Debug)]
+pub struct SessionGrantRefusal {
+    type_: &'static str,
+}
+
+impl std::fmt::Display for SessionGrantRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.type_)
+    }
+}
+
+impl std::error::Error for SessionGrantRefusal {}
+
+#[derive(Debug)]
+pub(super) struct SessionIdentityError {
+    pub(super) type_: SessionIdentityErrorType,
+    pub(super) context: &'static str,
+    pub(super) source: anyhow::Error,
+}
+
+#[derive(Debug)]
+pub(super) enum SessionIdentityErrorType {
+    Authorization,
+    Infrastructure,
+}
+
+impl std::fmt::Display for SessionIdentityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.context, self.source)
+    }
+}
+
+impl std::error::Error for SessionIdentityError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+fn principal_read_error(context: &'static str, source: sqlx::Error) -> SessionIdentityError {
+    SessionIdentityError {
+        type_: if source
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code)
+            .as_deref()
+            == Some("42501")
+        {
+            SessionIdentityErrorType::Authorization
+        } else {
+            SessionIdentityErrorType::Infrastructure
+        },
+        context,
+        source: source.into(),
+    }
+}
+
+/// The grants an active principal holds, from all its roles or only from the
+/// `signed` roles it still holds.
+fn session_grants(
+    grants: &wamn_capability_authority::auth_cache::PrincipalGrants,
+    roles: &[wamn_identity_protocol::RoleName],
+) -> anyhow::Result<HeldOperationGrants> {
+    if !grants.active || !grants.user {
+        return Err(SessionGrantRefusal {
+            type_: "session principal is not an active user",
+        }
+        .into());
+    }
+    if !roles
+        .iter()
+        .all(|role| grants.roles.contains_key(role.as_str()))
+    {
+        return Err(SessionGrantRefusal {
+            type_: "session principal does not hold a signed role",
+        }
+        .into());
+    }
+    Ok(held_grants(grants, Some(roles)))
+}
+
+fn held_grants(
+    grants: &wamn_capability_authority::auth_cache::PrincipalGrants,
+    signed: Option<&[wamn_identity_protocol::RoleName]>,
+) -> HeldOperationGrants {
+    let mut held = HeldOperationGrants {
+        user: grants.user,
+        ..HeldOperationGrants::default()
+    };
+    if !grants.active || !grants.present {
+        return held;
+    }
+    for (role, permissions) in &grants.roles {
+        if signed.is_some_and(|signed| !signed.iter().any(|signed| signed.as_str() == role)) {
+            continue;
+        }
+        held.admin |= role == wamn_identity_protocol::ADMIN_ROLE;
+        held.references.extend(permissions.iter().cloned());
+        held.roles.insert(role.clone());
+    }
+    held
+}
+
+/// Names the shape only: the credential provider and the live pools carry
+/// connection material that must not reach a log.
+impl std::fmt::Debug for WamnPostgres {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WamnPostgres")
+            .finish_non_exhaustive()
+    }
+}
+
+pub struct WamnPostgres {
+    pub(super) operation_metrics: super::operation::OperationMetrics,
+    pub(super) operation_workloads:
+        std::sync::RwLock<HashMap<String, Arc<super::operation::OperationWorkload>>>,
+    /// Resolves a project id → its database connection + policy.
+    provider: Arc<dyn CredentialProvider>,
+    /// Guest-visible project pools, built lazily and never shared with host-owned
+    /// identity or authorization work.
+    guest_pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
+    /// Host-owned identity, authorization, and plan-supply project pools. Keeping a
+    /// distinct cache makes cross-lifecycle session reuse unrepresentable.
+    platform_pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
+    /// The single invocation and workload authority registry.
+    pub scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
+    /// Connections destroyed instead of repooled (chaos-acceptance-test observability).
+    pub(super) destroyed: Arc<AtomicU64>,
+    /// How many times each half of the un-fused workload bind has run.
+    pub(super) bind_counters: super::BindCounters,
+    /// The auth facts this host keeps
+    /// (docs/architecture/execution.md#auth-memory).
+    auth: Arc<wamn_capability_authority::auth_cache::AuthCache>,
+    hierarchy_reader: std::sync::RwLock<HashMap<String, sqlx::PgPool>>,
+}
+
+/// The bound principal has no `platform."user"` row in the project_env_key it identity
+/// (`wamn-0h0g.9.19`).
+///
+/// A credential for such a principal is a provisioning defect: every write it
+/// makes records an actor that names no row. The bind refuses it, and the
+/// refusal is an authorization fact, so the owning boundary translates it to
+/// the `permission-denied` the operation vocabulary already carries. The host
+/// router does that translation in
+/// `crates/execution/host/src/operation/native_policy.rs`.
+///
+/// It carries the project_env_key, the project database read, and the principal id, so
+/// an operator can find the missing row. It carries no connection material.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnprovisionedPrincipal {
+    project_env_key: String,
+    project: String,
+    principal_id: String,
+}
+
+impl UnprovisionedPrincipal {
+    /// The project_env_key whose `platform."user"` table was read.
+    #[must_use]
+    pub fn project_env_key(&self) -> &str {
+        &self.project_env_key
+    }
+
+    /// The project database the read used.
+    #[must_use]
+    pub fn project(&self) -> &str {
+        &self.project
+    }
+
+    /// The `app.user_id` identity that named no row.
+    #[must_use]
+    pub fn principal_id(&self) -> &str {
+        &self.principal_id
+    }
+}
+
+impl std::fmt::Display for UnprovisionedPrincipal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "principal {} has no platform.\"user\" row in project_env_key {} of project {}",
+            self.principal_id, self.project_env_key, self.project
+        )
+    }
+}
+
+impl std::error::Error for UnprovisionedPrincipal {}
+
+/// Apply the shared parsed SQL policy before running guest SQL.
+pub(super) fn reject_identity_mutation(sql: &str) -> Result<(), PgError> {
+    wamn_compiler::declared_sql::require_declared_statement(sql)
+        .map_err(|error| PgError::QueryError(("WAMN0".into(), error.to_string())))
+}
+
+/// Refuse a transactional statement that has no executing principal.
+///
+/// A write stamps its executing principal, so such a statement is a platform
+/// defect. The host refuses it before it reaches PostgreSQL, with the SQLSTATE
+/// and message that the record-history trigger raises.
+pub(super) fn refuse_unattributed_statement(
+    statement: &VerifiedStatement,
+    user_id: Option<&str>,
+) -> Result<(), PgError> {
+    if statement.transactional && user_id.is_none() {
+        tracing::warn!(
+            target: "wamn::security",
+            "refused a transactional statement with no executing principal"
+        );
+        return Err(PgError::QueryError((
+            "55000".to_string(),
+            "actor-required".to_string(),
+        )));
+    }
+    Ok(())
+}
+
+/// Reject a malformed session identity before it is bound (R16). Since R2 these
+/// validators are NO LONGER the injection boundary — every identity value binds as a
+/// parameter into [`transactions::IDENTITY_SQL`], so a `'`/`;`/`--` value is inert data — but a
+/// malformed identity still fails closed: they define what a *legal* id is (and
+/// the no-hyphen `valid_schema` rule still matters where a schema name is quoted
+/// into DDL elsewhere).
+fn validate_session_identity(
+    project_env_key: &str,
+    schema: Option<&str>,
+    runner: Option<&str>,
+    role: Option<&str>,
+    user_id: Option<&str>,
+    operation: Option<&str>,
+    application: Option<&str>,
+) -> Result<(), PgError> {
+    if !valid_project_env_key(project_env_key) {
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "invalid project_env_key identity".to_string(),
+        )));
+    }
+    if let Some(schema) = schema
+        && !valid_schema(schema)
+    {
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "invalid search_path schema".to_string(),
+        )));
+    }
+    if let Some(runner) = runner
+        && !valid_runner(runner)
+    {
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "invalid runner owner".to_string(),
+        )));
+    }
+    if let Some(role) = role
+        && !role
+            .parse::<wamn_identity_protocol::RoleName>()
+            .is_ok_and(|parsed| parsed.as_str() == role)
+    {
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "invalid caller role".to_string(),
+        )));
+    }
+    if let Some(user_id) = user_id
+        && !valid_user_id(user_id)
+    {
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "invalid caller user id".to_string(),
+        )));
+    }
+    if let Some(operation) = operation
+        && !valid_operation(operation)
+    {
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "invalid executing operation".to_string(),
+        )));
+    }
+    if let Some(application) = application
+        && !valid_application(application)
+    {
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "invalid executing application".to_string(),
+        )));
+    }
+    Ok(())
+}
+
+/// An `app.operation`: a non-empty operation token or platform component name.
+/// The value binds as a parameter, so no charset rule applies. `''` is the
+/// unbound value, so it is not an identity.
+fn valid_operation(operation: &str) -> bool {
+    !operation.is_empty()
+}
+
+/// An `app.application`: a non-empty application name. The value binds as a
+/// parameter, so no charset rule applies. `''` is the unbound value, so it is
+/// not an identity.
+fn valid_application(application: &str) -> bool {
+    !application.is_empty()
+}
+
+/// A caller's `app.user_id`: the canonical `8-4-4-4-12` hex uuid a `users.id`
+/// renders as. Local rather than imported because this identity is a uuid, not one
+/// of the `[A-Za-z0-9_-]` identities `wamn-registry` owns. Since R2 it
+/// is not the injection boundary (the value binds as `$6`); it fails closed on a
+/// value the compiled `NULLIF(…, '')::uuid` coercion would raise 22P02 on inside
+/// every ownership predicate.
+fn valid_user_id(user_id: &str) -> bool {
+    let mut groups = user_id.split('-');
+    for len in [8, 4, 4, 4, 12] {
+        match groups.next() {
+            Some(g) if g.len() == len && g.bytes().all(|b| b.is_ascii_hexdigit()) => {}
+            _ => return false,
+        }
+    }
+    groups.next().is_none()
+}
+
+/// True if `sql`'s first keyword is `SET` (covers `SET LOCAL` / `SET SESSION` /
+/// `SET ROLE` / `SET SESSION AUTHORIZATION`) or `RESET`, or if it calls
+/// `set_config` anywhere (CTE, sub-select, target list). `current_setting`
+/// (a *read* of a GUC) is deliberately allowed. Matching is case-insensitive;
+/// leading whitespace and SQL comments are stripped so a comment prefix cannot
+/// hide the keyword.
+impl WamnPostgres {
+    /// Plugin over a single default database (the [`WamnPostgresConfig`]
+    /// credentials). Pools are built lazily; `credentials: None` ⇒ every call
+    /// returns `connection-unavailable`.
+    pub fn new(cfg: WamnPostgresConfig) -> anyhow::Result<Self> {
+        Ok(Self::with_provider(Arc::new(
+            StaticCredentialProvider::default_only(ProjectConfig::from_global_config(cfg)),
+        )))
+    }
+
+    /// Plugin over an explicit [`CredentialProvider`] (multi-project / tests).
+    pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
+        Self {
+            provider,
+            guest_pools: std::sync::RwLock::new(HashMap::new()),
+            platform_pools: std::sync::RwLock::new(HashMap::new()),
+            scopes: Arc::default(),
+            operation_workloads: std::sync::RwLock::default(),
+            operation_metrics: super::operation::OperationMetrics::default(),
+            destroyed: Arc::new(AtomicU64::new(0)),
+            bind_counters: super::BindCounters::default(),
+            auth: Arc::default(),
+            hierarchy_reader: std::sync::RwLock::default(),
+        }
+    }
+
+    /// Read the revocation bounds stated by this project and its applications.
+    /// Shared auth facts use the shortest bound, so every application stays within its contract.
+    pub async fn configure_revocation(
+        &mut self,
+        project: &str,
+        applications: &[&str],
+    ) -> anyhow::Result<()> {
+        let (mut connection, _) = self
+            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let mut bound = std::time::Duration::MAX;
+        for (target_type, target_id) in std::iter::once(("project", project)).chain(
+            applications
+                .iter()
+                .map(|application| ("application", *application)),
+        ) {
+            let row = sqlx::query(sqlx::AssertSqlSafe(("SELECT value::text FROM platform.setting WHERE target_type=$1 AND target_id=$2 AND key='revocation-seconds'").to_string())).bind(&target_type).bind(&target_id).fetch_optional(&mut *connection).await.context("read revocation configuration")?
+                .with_context(|| format!("{target_type} {target_id} must state revocation-seconds"))?;
+            let value: String = row.try_get(0)?;
+            let seconds: u64 = serde_json::from_str(&value).with_context(|| {
+                format!(
+                    "{target_type} {target_id} revocation-seconds must be a nonnegative integer"
+                )
+            })?;
+            bound = bound.min(std::time::Duration::from_secs(seconds));
+        }
+        drop(connection);
+        self.auth = Arc::new(wamn_capability_authority::auth_cache::AuthCache::with_ttl(
+            bound,
+        ));
+        Ok(())
+    }
+
+    /// Bind the host's existing identity reader for inherited authorization.
+    pub fn set_hierarchy_reader(&self, key: &str, reader: sqlx::PgPool) {
+        self.hierarchy_reader
+            .write()
+            .expect("hierarchy reader lock poisoned")
+            .insert(key.to_owned(), reader);
+    }
+
+    async fn inherited_grants(
+        &self,
+        key: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
+        mut grants: wamn_capability_authority::auth_cache::PrincipalGrants,
+    ) -> anyhow::Result<wamn_capability_authority::auth_cache::PrincipalGrants> {
+        if self.inherits_administration(key, principal).await? {
+            grants.present = true;
+            grants.active = true;
+            grants.user = true;
+            grants
+                .roles
+                .entry(wamn_identity_protocol::ADMIN_ROLE.to_owned())
+                .or_default();
+        }
+        Ok(grants)
+    }
+
+    async fn inherits_administration(
+        &self,
+        key: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
+    ) -> anyhow::Result<bool> {
+        let reader = self
+            .hierarchy_reader
+            .read()
+            .expect("hierarchy reader lock poisoned")
+            .get(key)
+            .cloned();
+        let Some(reader) = reader else {
+            return Ok(false);
+        };
+        let coordinate = wamn_registry::name::parse_project_env_key(key)
+            .ok_or_else(|| anyhow::anyhow!("invalid project deployment coordinate"))?;
+        Ok(wamn_platform_identity::control::is_project_admin(
+            &mut *reader.acquire().await?,
+            principal,
+            &coordinate.org,
+            &coordinate.project,
+            Some(coordinate.env.as_str()),
+        )
+        .await?)
+    }
+
+    /// The auth facts this host keeps. A message on
+    /// [`replicate`](wamn_capability_authority::auth_cache::replicate) keeps them in step with
+    /// the other hosts.
+    pub fn auth_cache(&self) -> &Arc<wamn_capability_authority::auth_cache::AuthCache> {
+        &self.auth
+    }
+
+    /// Build from the deployment's configuration: the default project from the
+    /// credential the COMPOSITION ROOT names.
+    ///
+    /// # Why the caller passes the credential (`wamn-0h0g.22.8.3`)
+    ///
+    /// `wamn-0h0g.22.8.2` removed the ambient `WAMN_PG_URL` read from
+    /// [`WamnPostgresConfig::from_env`], because a credential picked up
+    /// implicitly there made the runtime a SECOND credential source competing
+    /// with whatever a caller supplied — the conflict
+    /// [`AmbientCredentialState`](super::credential_exactness::AmbientCredentialState)
+    /// already declares.
+    ///
+    /// The environment is still the TRANSPORT; that is how Kubernetes injects a
+    /// Secret, and `deploy/platform` does exactly that via `secretKeyRef`. What
+    /// changed is WHERE it is read: once, at trusted composition, where it is
+    /// the named explicit source rather than a silent fallback buried in the
+    /// config layer. `services/executor` already composed this way; this is the
+    /// host taking the same shape.
+    ///
+    /// `wamn-0h0g.22.16`: the parameter is the caller's PER-CLASS credential
+    /// set, not one url, so the composition root states which authority each
+    /// login belongs to instead of leaving one login to serve every authority
+    /// implicitly.
+    pub fn from_env(credentials: Option<ClassCredentials>) -> anyhow::Result<Self> {
+        let cfg = WamnPostgresConfig::from_env();
+        let default = credentials.map(|credentials| ProjectConfig::from_global(credentials, &cfg));
+        Ok(Self::with_provider(Arc::new(
+            StaticCredentialProvider::default_only(default),
+        )))
+    }
+
+    /// Build from the deployment's configuration with the composition root's
+    /// credential bound to its declared project rather than the default key.
+    ///
+    /// A per-project serving host already carries the trusted project identity.
+    /// Registering that host's Secret under `default` makes every named-project
+    /// lookup refuse despite having the exact credential. No other project is
+    /// registered, so an unlisted project still refuses at resolution.
+    pub fn from_env_for_project(
+        project: &str,
+        credentials: Option<ClassCredentials>,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            valid_project(project),
+            "invalid composed project {project:?}: a lowercase slug [a-z0-9-] of at most 40 bytes, \
+             starting and ending alphanumeric, with no consecutive hyphens and not under the \
+             reserved `wamn` prefix, is required"
+        );
+        let cfg = WamnPostgresConfig::from_env();
+        let mut projects = HashMap::new();
+        if let Some(credentials) = credentials {
+            projects.insert(
+                project.to_owned(),
+                ProjectConfig::from_global(credentials, &cfg),
+            );
+        }
+        Ok(Self::with_provider(Arc::new(
+            StaticCredentialProvider::new(projects, None),
+        )))
+    }
+
+    /// Register the project_env_key identity for a component id. The bench harness calls
+    /// this directly; the host path feeds it from workload bind.
+    pub fn set_project_env_key(
+        &self,
+        component_id: &str,
+        project_env_key: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_project_env_key(project_env_key),
+            "invalid project_env_key {project_env_key:?}: canonical org--environment--project coordinates required"
+        );
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            project_env_key.clone_into(&mut record.identity.project_env_key);
+        });
+        Ok(())
+    }
+
+    pub(super) fn project_env_key_for(&self, component_id: &str) -> Option<String> {
+        self.scopes
+            .read::<Authority, _>(component_id, |record| {
+                record.identity.project_env_key.clone()
+            })
+            .filter(|key| !key.is_empty())
+    }
+
+    /// Register which project's database a component uses. The bench harness
+    /// calls this directly; the host path feeds it from the `wamn.project`
+    /// workload config. Absent ⇒ the default project.
+    pub fn set_project(&self, component_id: &str, project: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_project(project),
+            "invalid project {project:?}: a lowercase slug [a-z0-9-] of at most 40 bytes, \
+             starting and ending alphanumeric, with no consecutive hyphens and not under the \
+             reserved `wamn` prefix, is required"
+        );
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.project = Some(project.to_string());
+        });
+        Ok(())
+    }
+
+    pub(super) fn project_for(&self, component_id: &str) -> String {
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.project.clone())
+            .flatten()
+            .unwrap_or_else(|| DEFAULT_PROJECT.to_string())
+    }
+
+    /// Register the `search_path` schema for a component id. When set, every
+    /// transaction the plugin opens for that component also runs
+    /// `SET LOCAL search_path`, so the guest's unqualified table names resolve
+    /// to a host-chosen schema. The bench harness calls this directly; the host
+    /// path feeds it from the `wamn.schema` workload config.
+    pub fn set_schema(&self, component_id: &str, schema: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_schema(schema),
+            "invalid schema {schema:?}: 1-63 chars of [A-Za-z0-9_] starting with a letter/underscore required"
+        );
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.schema = Some(schema.to_string());
+        });
+        Ok(())
+    }
+
+    pub(super) fn schema_for(&self, component_id: &str) -> Option<String> {
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.schema.clone())
+            .flatten()
+    }
+
+    /// Register the durable-queue lease owner for a component id (fqg.4). When
+    /// set, every transaction the plugin opens for that component also runs
+    /// `SET LOCAL app.runner`, so a runner replica reads a stable owner to
+    /// identity/renew queue rows under. The bench harness calls this directly (a
+    /// distinct owner per replica); the host path feeds it from the
+    /// `wamn.runner` workload config.
+    pub fn set_runner(&self, component_id: &str, runner: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_runner(runner),
+            "invalid runner owner {runner:?}: 1-128 chars of [A-Za-z0-9_-] required"
+        );
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.runner = Some(runner.to_string());
+        });
+        Ok(())
+    }
+
+    pub(super) fn runner_for(&self, component_id: &str) -> Option<String> {
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.runner.clone())
+            .flatten()
+    }
+
+    /// Register the caller's `app.role` identity for a component id (4.2). When
+    /// set, every transaction the plugin opens for that component binds
+    /// `app.role`, so a compiled per-role RLS policy conditions on the caller's role
+    /// instead of the `''` minimum that denies it. Host-injected identity like the
+    /// project_env_key: the guest has no path to it, and [`reject_identity_mutation`] refuses
+    /// an in-band override.
+    pub fn set_role(&self, component_id: &str, role: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            role.parse::<wamn_identity_protocol::RoleName>()
+                .is_ok_and(|parsed| parsed.as_str() == role),
+            "invalid caller role {role:?}: a non-empty roles.name is required"
+        );
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.role = Some(role.to_string());
+        });
+        Ok(())
+    }
+
+    pub(super) fn role_for(&self, component_id: &str) -> Option<String> {
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.role.clone())
+            .flatten()
+    }
+
+    /// Register the executing principal's `app.user_id` identity for a component
+    /// id. When set, every transaction the plugin opens for that component
+    /// binds `app.user_id`, so the record-history triggers stamp that
+    /// `users.id`. Host-injected identity like the project_env_key.
+    pub fn set_user_id(&self, component_id: &str, user_id: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_user_id(user_id),
+            "invalid caller user id {user_id:?}: a canonical 8-4-4-4-12 uuid is required"
+        );
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.user_id = Some(user_id.to_string());
+        });
+        Ok(())
+    }
+
+    pub(super) fn user_id_for(&self, component_id: &str) -> Option<String> {
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.user_id.clone())
+            .flatten()
+    }
+
+    /// Register the `app.operation` identity for a component id. When set, every
+    /// transaction the plugin opens for that component binds `app.operation`,
+    /// so the record-history log records the source of each write.
+    /// Host-injected identity like the project_env_key.
+    pub fn set_operation(&self, component_id: &str, operation: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_operation(operation),
+            "invalid executing operation {operation:?}: a non-empty operation is required"
+        );
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.operation = Some(operation.to_string());
+        });
+        Ok(())
+    }
+
+    pub(super) fn operation_for(&self, component_id: &str) -> Option<String> {
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.operation.clone())
+            .flatten()
+    }
+
+    /// Register the `app.application` identity for a component id. When set,
+    /// every transaction the plugin opens for that component binds
+    /// `app.application`, the declared application that runs the operation.
+    /// Host-injected identity like the project_env_key.
+    pub fn set_application(&self, component_id: &str, application: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_application(application),
+            "invalid executing application {application:?}: a non-empty application name is required"
+        );
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.application = Some(application.to_string());
+        });
+        Ok(())
+    }
+
+    pub(super) fn application_for(&self, component_id: &str) -> Option<String> {
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.application.clone())
+            .flatten()
+    }
+
+    /// Register the release this pod carries for a component id. The production
+    /// identity verifies its digest against the admission pin of every run it
+    /// leases. The bench harness and live tests call this directly; the host
+    /// path feeds it from the loaded
+    /// [`LoadedRelease`](wamn_engine::release_manifest::LoadedRelease), whose
+    /// digest is derived from verified manifest content. Absent leaves the identity
+    /// verifying nothing.
+    ///
+    /// The digest arrives as [`ManifestDigest`], so its shape is already validated.
+    ///
+    /// # Why effect authority needs no equality test against this record
+    ///
+    /// The digest comes from the same loaded object every reader resolves
+    /// against, so a run leased under it runs the manifest the pod loaded —
+    /// structurally, not because anything compares them (owner ruling
+    /// `wamn-0h0g.15.102`, after `wamn-0h0g.15.103` struck the asserted carrier).
+    pub fn set_release_identity(
+        &self,
+        component_id: &str,
+        identity: ReleaseIdentity,
+    ) -> anyhow::Result<()> {
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.release = Some(identity);
+        });
+        Ok(())
+    }
+
+    pub(super) fn release_identity_for(&self, component_id: &str) -> Option<ReleaseIdentity> {
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.release.clone())
+            .flatten()
+    }
+
+    /// Declare (`Some`) or clear (`None`) the causation context of the run a
+    /// component is driving (l5i9.12.2). While set, each write transaction the plugin
+    /// opens for the component carries a `wamn.causation` message. Host-injected
+    /// like the other identity registries — callers set it directly, exactly like
+    /// [`set_project_env_key`](Self::set_project_env_key) / [`set_runner`](Self::set_runner).
+    pub fn set_current_run(&self, component_id: &str, ctx: Option<Causation>) {
+        self.scopes
+            .update::<Authority, _>(component_id, |record| record.causation = ctx);
+    }
+
+    pub(super) fn current_run_for(&self, component_id: &str) -> Option<Causation> {
+        if self.active_read(component_id) {
+            return None;
+        }
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.causation.clone())
+            .flatten()
+    }
+
+    /// Bind the exact invocation facts before entering one pooled component
+    /// (`wamn-0h0g.7.9`), so a postgres effect can name the wiring and node
+    /// position it was raised under.
+    ///
+    /// Test fixtures populate the same authority record that execution readers use.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn bind_invocation(
+        &self,
+        component_id: &str,
+        invocation: ConnectionInvocation,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(!component_id.is_empty(), "component id must be present");
+        crate::invocation::validate_invocation(&invocation)?;
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            anyhow::ensure!(record.invocation.is_none(), "invocation is already bound");
+            record.invocation = Some(invocation);
+            Ok(())
+        })
+    }
+
+    /// Release the invocation when the instance returns to the pool.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn revoke_invocation(&self, component_id: &str) {
+        self.scopes
+            .update_existing::<Authority, _>(component_id, |record| record.invocation = None);
+    }
+
+    /// The invocation currently bound to one pooled instance.
+    #[must_use]
+    pub fn invocation(&self, component_id: &str) -> Option<ConnectionInvocation> {
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.invocation.clone())
+            .flatten()
+    }
+
+    /// Bind workload identity and verify that its executing principal is provisioned.
+    /// An absent optional member clears that member's previous authority.
+    pub async fn bind_session_identity(
+        &self,
+        component_id: &str,
+        identity: &SessionIdentity,
+    ) -> anyhow::Result<()> {
+        self.write_session_identity(component_id, identity)?;
+        // An acquisition that names no principal reads nothing. The
+        // record-history triggers already refuse such a write with
+        // actor-required.
+        if let Some(user_id) = identity.user_id.as_deref() {
+            let project = identity.project.as_deref().unwrap_or(DEFAULT_PROJECT);
+            self.require_provisioned_principal(&identity.project_env_key, project, user_id)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Bind `identity` as [`bind_session_identity`](Self::bind_session_identity)
+    /// does, without its principal read, for the call inside a request element whose
+    /// transaction a bind of the same identity began (`wamn-uq4r`).
+    ///
+    /// The request element's bind read the principal's user row moments before, in the
+    /// same invocation, so a second read answers nothing new and takes a
+    /// second guest connection. The caller passes the identity of that bind.
+    pub fn bind_request_element_session_identity(
+        &self,
+        component_id: &str,
+        identity: &SessionIdentity,
+    ) -> anyhow::Result<()> {
+        self.write_session_identity(component_id, identity)
+    }
+
+    fn write_session_identity(
+        &self,
+        component_id: &str,
+        identity: &SessionIdentity,
+    ) -> anyhow::Result<()> {
+        validate_identity(identity)?;
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity = identity.clone();
+            record.causation = None;
+            record.statements.active = None;
+        });
+        Ok(())
+    }
+
+    pub(crate) async fn verify_scope_principal(&self, scope: &str) -> anyhow::Result<()> {
+        let identity = self
+            .session_identity(scope)
+            .ok_or_else(|| anyhow::anyhow!("invocation scope was revoked"))?;
+        if let Some(user) = identity.user_id.as_deref() {
+            self.require_provisioned_principal(
+                &identity.project_env_key,
+                identity.project.as_deref().unwrap_or(DEFAULT_PROJECT),
+                user,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Read one `platform."user"` row and refuse the principal that owns none
+    /// (`wamn-0h0g.9.19`).
+    ///
+    /// The read uses the project_env_key's own guest login, for two reasons. It is the
+    /// only authority class every composition root names, because the platform
+    /// classes are unnamed when their generation is absent. And it is the
+    /// credential that already holds `SELECT` on this table, so the test
+    /// needs no new grant. The database is the org boundary.
+    ///
+    /// A read that cannot run refuses the bind with its own error rather than
+    /// the `UnprovisionedPrincipal` refusal. An unreachable table is an
+    /// infrastructure defect and not an authorization fact, and the bind must
+    /// fail closed either way.
+    async fn require_provisioned_principal(
+        &self,
+        project_env_key: &str,
+        project: &str,
+        principal_id: &str,
+    ) -> anyhow::Result<()> {
+        let principal = principal_id
+            .parse()
+            .context("invalid executing principal id")?;
+        let grants = self
+            .read_principal_grants(
+                project,
+                project_env_key,
+                &principal,
+                AuthorityClass::GuestSql,
+            )
+            .await?;
+        if !grants.present {
+            tracing::warn!(
+                project_env_key,
+                project,
+                principal_id,
+                "wamn:postgres: refusing a bind for a principal with no platform.\"user\" row"
+            );
+            return Err(UnprovisionedPrincipal {
+                project_env_key: project_env_key.to_owned(),
+                project: project.to_owned(),
+                principal_id: principal_id.to_owned(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    /// Read back the identity set one component id currently resolves to.
+    ///
+    /// `None` is the base denial policy: no project_env_key is bound, so
+    /// [`require_project_env_key`](Self::require_project_env_key) refuses every call made under
+    /// this id. That is what an idle, never-acquired execution instance must
+    /// report, and it is the read half of the checkout-identity seam — the pair
+    /// this and [`bind_session_identity`](Self::bind_session_identity) form is what
+    /// lets a test assert that two concurrent acquisitions never share one
+    /// identity.
+    pub fn session_identity(&self, component_id: &str) -> Option<SessionIdentity> {
+        crate::invocation::identity(&self.scopes, component_id)
+    }
+
+    /// End SQL authority while retaining the invocation's result-signing authority.
+    pub fn revoke_session_identity(&self, component_id: &str) {
+        self.scopes
+            .update_existing::<Authority, _>(component_id, |record| {
+                record.identity = SessionIdentity::default();
+                record.causation = None;
+                record.statements.active = None;
+            });
+    }
+
+    /// Release every scope owned by a stopped workload.
+    pub(super) fn clear_component_identity(&self, workload_id: &str) {
+        self.scopes.revoke_workload(workload_id);
+        self.operation_workloads
+            .write()
+            .expect("operation workloads lock poisoned")
+            .retain(|scope, _| !scope.starts_with(workload_id));
+    }
+
+    /// Resolve immutable component facts from the loaded release and current connection facts.
+    pub async fn connection_effect_snapshot(
+        &self,
+        component_id: &str,
+        project_env_key: &str,
+        lookup: &ConnectionEffectLookup<'_>,
+        facts: &wamn_connections::connection_facts::ConnectionFacts,
+        loaded: &LoadedRelease,
+    ) -> anyhow::Result<Option<ConnectionEffectSnapshot>> {
+        let refusal = |message: String| SessionIdentityError {
+            type_: SessionIdentityErrorType::Authorization,
+            context: "connection authority identity",
+            source: anyhow::anyhow!(message),
+        };
+        let registered = self.project_env_key_for(component_id).ok_or_else(|| {
+            refusal(format!(
+                "scope {component_id:?} has no bound environment identity"
+            ))
+        })?;
+        if registered != project_env_key {
+            return Err(refusal(format!(
+                "scope {component_id:?} belongs to another environment"
+            ))
+            .into());
+        }
+        let invocation = self
+            .invocation(component_id)
+            .context("no admitted connection invocation")?;
+        let manifest = loaded.manifest();
+        let application = wamn_capability_authority::connection::released_invocation_application(
+            manifest,
+            loaded.target(),
+            &invocation,
+        )
+        .context("release does not authorize this invocation")?;
+        let packages = &loaded.target().applications[application].packages;
+        let component = manifest
+            .components
+            .iter()
+            .find(|component| {
+                component.package_id == lookup.package_id
+                    && component.descriptor.component_digest == lookup.component_digest
+                    && component.descriptor.component == invocation.component
+            })
+            .context("release does not carry the executing component")?;
+        let operation = component
+            .descriptor
+            .operations
+            .get(lookup.operation)
+            .context("release does not carry the executing operation")?;
+        let entry_matches = match (&invocation.entry, lookup.entry.wiring) {
+            (wamn_capability_authority::connection::InvocationEntry::Route, None) => {
+                lookup.entry.package_id == invocation.origin.package_id
+            }
+            (
+                wamn_capability_authority::connection::InvocationEntry::Wiring(position),
+                Some(wiring),
+            ) => {
+                lookup.entry.package_id == position.package_id
+                    && wiring.wiring_id == position.wiring_id
+                    && u32::try_from(wiring.wiring_version).ok() == Some(position.wiring_version)
+                    && wiring.node_id == position.node_id
+            }
+            _ => false,
+        };
+        if !entry_matches
+            || lookup.package_id != invocation.package_id
+            || lookup.component_digest != invocation.component_digest
+            || lookup.operation != invocation.operation
+            || lookup.origin_package_id != invocation.origin.package_id
+            || lookup.origin_component_digest != invocation.origin.component_digest
+            || lookup.origin_component != invocation.origin.component
+            || lookup.origin_interface_version != invocation.origin.interface_version
+            || lookup.origin_operation != invocation.origin.operation
+        {
+            return Ok(None);
+        }
+        let declaration = invocation
+            .connection(manifest, lookup.store_alias)
+            .and_then(wamn_catalog::OperationConnection::host)
+            .context("operation declares no such connection alias")?;
+        anyhow::ensure!(
+            facts.project_env_key() == project_env_key,
+            "HTTP effect authorization project_env_key {project_env_key:?} disagrees with the connection facts"
+        );
+        let release = facts.release(lookup.manifest_digest).await?;
+        let mut bindings = release.bindings.iter().filter(|binding| {
+            binding.component_digest == lookup.component_digest
+                && binding.name == lookup.store_alias
+                && packages.contains(&binding.package_id)
+                && (lookup.package_id == wamn_catalog::PALETTE_PACKAGE_ID
+                    || binding.package_id == lookup.package_id)
+        });
+        let binding = bindings.next();
+        let read_only = match binding {
+            Some(binding) => declaration
+                .mode
+                .read_only(&binding.package_id, lookup.store_alias)
+                .context("loaded release has no mode for this binding")?,
+            None => true,
+        };
+        for other in bindings {
+            anyhow::ensure!(
+                binding.is_some_and(|binding| binding.connection_id == other.connection_id
+                    && binding.version == other.version)
+                    && declaration
+                        .mode
+                        .read_only(&other.package_id, lookup.store_alias)
+                        == Some(read_only),
+                "connection alias has conflicting binding selections"
+            );
+        }
+        let (fact, generation) = match binding {
+            Some(binding) => match facts.connection(&binding.connection_id).await? {
+                Some(fact) => {
+                    let generation = facts
+                        .generation(&binding.connection_id, fact.active_generation)
+                        .await?;
+                    (Some(fact), Some(generation))
+                }
+                None => (None, None),
+            },
+            None => (None, None),
+        };
+        let integration_type = generation
+            .as_ref()
+            .map(|generation| generation.integration_type.as_str());
+        let descriptor = integration_type
+            .and_then(wamn_catalog::RequirementType::for_integration)
+            .filter(|type_| {
+                matches!(
+                    (type_, declaration.requirement_type),
+                    (
+                        wamn_catalog::RequirementType::Http,
+                        wamn_catalog::ComponentConnectionType::Http
+                    ) | (
+                        wamn_catalog::RequirementType::Blobstore,
+                        wamn_catalog::ComponentConnectionType::Blobstore
+                    )
+                )
+            })
+            .map(wamn_catalog::RequirementType::descriptor);
+        let requirement = descriptor.as_ref().map(|descriptor| {
+            wamn_catalog::ComponentConnectionRequirement::new(
+                lookup.component_digest,
+                lookup.store_alias,
+                descriptor.clone(),
+            )
+        });
+        let active_generation = fact.as_ref().map(|fact| fact.active_generation);
+        let definition = generation
+            .as_ref()
+            .map(|generation| generation.parameters.clone());
+        let definition_hash = definition
+            .as_ref()
+            .map(wamn_connections::connection_generation::definition_hash);
+        let requirement_hash = requirement
+            .as_ref()
+            .map(wamn_catalog::ComponentConnectionRequirement::requirement_hash);
+        let validation_hash = descriptor
+            .as_ref()
+            .zip(requirement_hash.as_ref())
+            .zip(definition_hash.as_ref())
+            .map(|((descriptor, requirement), definition)| {
+                wamn_connections::connection_generation::definition_hash(
+                    &wamn_connections::connection_generation::binding_validation_subject(
+                        descriptor,
+                        requirement,
+                        definition,
+                    ),
+                )
+            });
+        let name = generation
+            .as_ref()
+            .map(|generation| generation.name.clone());
+        let credential_handle = if integration_type == Some("gcs") {
+            None
+        } else {
+            name.as_deref()
+                .zip(active_generation)
+                .map(|(name, generation)| facts.credential_handle(name, generation))
+                .transpose()?
+        };
+        Ok(Some(ConnectionEffectSnapshot {
+            read_only,
+            connection_name: name,
+            wiring_hash: invocation
+                .entry
+                .wiring()
+                .map(|position| position.wiring_hash.clone()),
+            component: Some(component.descriptor.component.clone()),
+            interface_version: Some(component.descriptor.interface_version.clone()),
+            operation: Some(lookup.operation.to_owned()),
+            registered_operation: operation.registered_operation.clone(),
+            requirement_json: requirement
+                .map(|requirement| serde_json::to_value(requirement).expect("requirement JSON")),
+            requirement_hash,
+            node_permitted: true,
+            binding_active: fact.is_some(),
+            binding_valid: descriptor.is_some(),
+            instance_id: fact
+                .as_ref()
+                .and(binding)
+                .map(|binding| binding.connection_id.to_string()),
+            validation_hash,
+            requirement_type: descriptor
+                .as_ref()
+                .map(|descriptor| descriptor.requirement_type.clone()),
+            contract: descriptor.map(|descriptor| descriptor.contract),
+            instance_enabled: fact.as_ref().is_some_and(|fact| {
+                fact.status == wamn_connections::connection_memory::ConnectionStatus::Active
+            }),
+            active_generation,
+            pinned_generation: lookup.candidate_binding.map(|binding| binding.generation),
+            instance_revision: active_generation,
+            generation: active_generation,
+            definition,
+            definition_hash,
+            credential_handle,
+        }))
+    }
+
+    /// The grants of the signed roles of a verified session that the active
+    /// user still holds, from [`principal_grants`](Self::principal_grants).
+    pub async fn session_operation_permissions(
+        &self,
+        project: &str,
+        project_env_key: &str,
+        roles: &[wamn_identity_protocol::RoleName],
+        principal: &wamn_identity_protocol::PrincipalId,
+    ) -> anyhow::Result<HeldOperationGrants> {
+        let grants = self
+            .principal_grants(project, project_env_key, principal)
+            .await?;
+        session_grants(&grants, roles)
+    }
+
+    /// The current WAL position used by weak ETags.
+    ///
+    /// The shared WAL position covers commits from every writer without a counter.
+    /// Unrelated writes can invalidate the tag too. Read it before the query snapshot.
+    pub async fn model_version(&self, project: &str) -> anyhow::Result<String> {
+        anyhow::ensure!(valid_project(project), "invalid model-version project");
+        let (mut connection, _policy) = self
+            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let statement = sqlx::Executor::prepare(
+            &mut *connection,
+            sqlx::SqlSafeStr::into_sql_str("SELECT pg_current_wal_lsn()::text"),
+        )
+        .await
+        .context("prepare the WAL position for model versions")?;
+        let row = sqlx::query(statement.sql().clone())
+            .fetch_one(&mut *connection)
+            .await
+            .context("read the WAL position for model versions")?;
+        Ok(row.try_get(0)?)
+    }
+
+    /// The grants every role of an active org-issued user gives it in this
+    /// project_env_key, from [`principal_grants`](Self::principal_grants).
+    ///
+    /// Route authentication first requires membership in the release environment.
+    pub async fn user_operation_permissions(
+        &self,
+        project: &str,
+        project_env_key: &str,
+        principal_id: &wamn_identity_protocol::PrincipalId,
+    ) -> anyhow::Result<HeldOperationGrants> {
+        let grants = self
+            .principal_grants(project, project_env_key, principal_id)
+            .await?;
+        Ok(held_grants(&grants, None))
+    }
+
+    /// The user row, roles and permissions of one principal, from the host's
+    /// memory or, on a miss, from one read under the callable-HTTP authority
+    /// with no session identity. The read also answers the provisioned-principal
+    /// test of the identity bind.
+    pub async fn principal_grants(
+        &self,
+        project: &str,
+        project_env_key: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
+    ) -> anyhow::Result<wamn_capability_authority::auth_cache::PrincipalGrants> {
+        let grants = self
+            .read_principal_grants(
+                project,
+                project_env_key,
+                principal,
+                AuthorityClass::CallableHttp,
+            )
+            .await?;
+        self.inherited_grants(project_env_key, principal, grants)
+            .await
+    }
+
+    async fn read_principal_grants(
+        &self,
+        project: &str,
+        project_env_key: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
+        class: AuthorityClass,
+    ) -> anyhow::Result<wamn_capability_authority::auth_cache::PrincipalGrants> {
+        anyhow::ensure!(
+            valid_project(project),
+            "invalid operation-permission project"
+        );
+        anyhow::ensure!(
+            valid_project_env_key(project_env_key),
+            "invalid operation-permission project_env_key"
+        );
+        let ticket = match self
+            .auth
+            .grants(project_env_key, principal.to_string().as_str())
+        {
+            Ok(grants) => return Ok(grants),
+            Err(ticket) => ticket,
+        };
+        let (mut connection, _policy) = match class {
+            AuthorityClass::GuestSql => self.checkout_guest(project, project_env_key).await?,
+            _ => self.checkout_platform(project, class).await?,
+        };
+        let statement = match sqlx::Executor::prepare(
+            &mut *connection,
+            sqlx::SqlSafeStr::into_sql_str(PRINCIPAL_GRANTS_SQL),
+        )
+        .await
+        {
+            Ok(statement) => statement,
+            Err(error) => {
+                self.destroy(connection);
+                return Err(principal_read_error("prepare the principal grants", error).into());
+            }
+        };
+        let rows = sqlx::query(statement.sql().clone())
+            .bind(principal.to_string().as_str())
+            .fetch_all(&mut *connection)
+            .instrument(tracing::info_span!("wamn.auth.perm.query"))
+            .await
+            .map_err(|error| principal_read_error("read the principal grants", error))?;
+        let grants = principal_grants_from_rows(&rows).context("decode the principal grants")?;
+        self.auth
+            .keep_grants(
+                project_env_key,
+                principal.to_string().as_str(),
+                ticket,
+                grants.clone(),
+            )
+            .await;
+        Ok(grants)
+    }
+
+    /// The application roles and stored permissions a caller holds, read by a
+    /// host route (docs/architecture/execution.md#host-run-routes) in an
+    /// [administration transaction](Self::administration_transaction).
+    pub async fn held_operation_grants(
+        &self,
+        project: &str,
+        project_env_key: &str,
+        principal_id: &wamn_identity_protocol::PrincipalId,
+        operation: &str,
+    ) -> anyhow::Result<HeldOperationGrants> {
+        let rows = self
+            .administration_transaction(
+                project,
+                project_env_key,
+                principal_id,
+                operation,
+                async |client| {
+                    sqlx::query(USER_OPERATION_PERMISSIONS_SQL)
+                        .bind(principal_id.to_string().as_str())
+                        .fetch_all(&mut *client)
+                        .await
+                        .context("read held operation grants")
+                },
+            )
+            .await??;
+        let mut held =
+            HeldOperationGrants::from_rows(&rows).context("decode held operation grant")?;
+        if self
+            .inherits_administration(project_env_key, principal_id)
+            .await?
+        {
+            held.admin = true;
+            held.user = true;
+            held.roles
+                .insert(wamn_identity_protocol::ADMIN_ROLE.to_owned());
+        }
+        Ok(held)
+    }
+
+    /// Run `work` in a host-owned READ COMMITTED transaction under the
+    /// administration credential of `project`, for a host route
+    /// (docs/architecture/execution.md#host-run-routes). The transaction binds
+    /// the caller and the route's sealed operation id as `app.user_id` and
+    /// `app.operation`, so every row it writes is stamped with them. It commits
+    /// when `work` returns `Ok` and rolls back when `work` returns `Err`, whose
+    /// value is the inner result. The outer error is a failure of the
+    /// transaction itself. Whether the environment of `project_env_key` is inactive,
+    /// from its row of `platform.environment`, read as `wamn_app`
+    /// (docs/architecture/execution.md#routing-and-availability). No row means
+    /// active. The host keeps the answer in its [auth
+    /// memory](wamn_capability_authority::auth_cache).
+    pub async fn environment_inactive(
+        &self,
+        project: &str,
+        project_env_key: &str,
+    ) -> anyhow::Result<bool> {
+        anyhow::ensure!(valid_project(project), "invalid environment-status project");
+        anyhow::ensure!(
+            valid_project_env_key(project_env_key),
+            "invalid environment-status project_env_key"
+        );
+        let ticket = match self.auth.environment_inactive(project_env_key) {
+            Ok(inactive) => return Ok(inactive),
+            Err(ticket) => ticket,
+        };
+        let (mut connection, _pool) = self
+            .checkout_guest(project, project_env_key)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let statement = sqlx::Executor::prepare(
+            &mut *connection,
+            sqlx::SqlSafeStr::into_sql_str(ENVIRONMENT_INACTIVE_SQL),
+        )
+        .await
+        .context("prepare the environment status")?;
+        let row = match sqlx::query(statement.sql().clone())
+            .fetch_optional(&mut *connection)
+            .await
+        {
+            Ok(row) => row,
+            Err(error) => {
+                self.destroy(connection);
+                return Err(error).context("read the environment status");
+            }
+        };
+        let inactive = row.is_some_and(|row| row.get(0));
+        self.auth
+            .keep_environment_inactive(project_env_key, ticket, inactive)
+            .await;
+        Ok(inactive)
+    }
+
+    pub async fn administration_transaction<T, E>(
+        &self,
+        project: &str,
+        project_env_key: &str,
+        principal_id: &wamn_identity_protocol::PrincipalId,
+        operation: &str,
+        work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, E>,
+    ) -> anyhow::Result<Result<T, E>> {
+        anyhow::ensure!(valid_project(project), "invalid host-route project");
+        anyhow::ensure!(
+            valid_project_env_key(project_env_key),
+            "invalid host-route project_env_key"
+        );
+        let (mut connection, policy) = self
+            .checkout_platform(project, AuthorityClass::Administration)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Err(error) = self
+            .begin_with_identity(
+                &mut connection,
+                AuthorityClass::Administration,
+                false,
+                project_env_key,
+                None,
+                None,
+                None,
+                Some(principal_id.to_string().as_str()),
+                Some(operation),
+                None,
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(connection);
+            return Err(anyhow::anyhow!(error.to_string()));
+        }
+        let result = work(&mut connection).await;
+        let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
+        if let Err(error) = transactions::finish_transaction(&mut connection, end).await {
+            self.destroy(connection);
+            return Err(error).context("end the host route transaction");
+        }
+        Ok(result)
+    }
+
+    /// The caller of one node of a workflow run that executes as `principal_id`
+    /// with `role` active, from the grants the principal holds now, read
+    /// through the host's auth memory as a request reads them
+    /// (docs/architecture/execution.md#environment-workflows). None when the
+    /// principal is inactive or no longer holds `role`.
+    pub async fn workflow_node_caller(
+        &self,
+        project: &str,
+        project_env_key: &str,
+        principal_id: &str,
+        role: &str,
+    ) -> anyhow::Result<Option<wamn_engine::flow_http_routing::AuthenticatedCaller>> {
+        let principal: wamn_identity_protocol::PrincipalId = principal_id
+            .parse()
+            .context("the run's principal is not a principal id")?;
+        let grants = self
+            .read_principal_grants(
+                project,
+                project_env_key,
+                &principal,
+                AuthorityClass::GuestSql,
+            )
+            .await?;
+        let grants = self
+            .inherited_grants(project_env_key, &principal, grants)
+            .await?;
+        Ok(grants
+            .active
+            .then(|| {
+                wamn_capability_authority::auth_cache::role_caller(
+                    principal.to_string().as_str(),
+                    role,
+                    &grants.roles,
+                )
+            })
+            .flatten())
+    }
+
+    pub(super) fn require_project_env_key(&self, component_id: &str) -> Result<String, PgError> {
+        self.project_env_key_for(component_id).ok_or_else(|| {
+            tracing::warn!(
+                component_id,
+                "wamn:postgres call from component with no project_env_key identity"
+            );
+            PgError::QueryError((
+                "WAMN0".to_string(),
+                "no project_env_key identity configured for this component".to_string(),
+            ))
+        })
+    }
+}
+
+pub(super) enum OneShotResult {
+    Rows(RowSet),
+    Count(u64),
+}
+
+#[cfg(test)]
+pub(crate) mod tests;
+
+/// A durable-queue lease owner. An identity-format contract: bounded
+/// `[A-Za-z0-9_-]`, no quotes/backslashes. Since R2 this is NO LONGER the
+/// injection boundary on the plugin path — the runner binds as a parameter into
+/// `IDENTITY_SQL`, so a quote/backslash is inert data — but a malformed owner still
+/// fails closed.
+pub fn valid_runner(runner: &str) -> bool {
+    !runner.is_empty()
+        && runner.len() <= 128
+        && runner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// A `search_path` schema name. Stricter than a project: no hyphens. Since R2 the
+/// value binds as a parameter into `IDENTITY_SQL` on the plugin path rather than
+/// being spliced into SQL — but the no-hyphen rule still matters where a schema
+/// name is quoted into DDL elsewhere (e.g. the migrate / copy paths), and a
+/// malformed schema still fails closed.
+pub fn valid_schema(schema: &str) -> bool {
+    !schema.is_empty()
+        && schema.len() <= 63
+        && schema
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && schema
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+pub(crate) fn validate_identity(identity: &SessionIdentity) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        valid_project_env_key(&identity.project_env_key),
+        "invalid project environment key"
+    );
+    anyhow::ensure!(
+        identity.project.as_deref().is_none_or(valid_project),
+        "invalid project"
+    );
+    anyhow::ensure!(
+        identity.schema.as_deref().is_none_or(valid_schema),
+        "invalid schema"
+    );
+    anyhow::ensure!(
+        identity.runner.as_deref().is_none_or(valid_runner),
+        "invalid runner"
+    );
+    anyhow::ensure!(
+        identity.role.as_deref().is_none_or(|role| role
+            .parse::<wamn_identity_protocol::RoleName>()
+            .is_ok_and(|parsed| parsed.as_str() == role)),
+        "invalid role"
+    );
+    anyhow::ensure!(
+        identity.user_id.as_deref().is_none_or(valid_user_id),
+        "invalid principal"
+    );
+    anyhow::ensure!(
+        identity.operation.as_deref().is_none_or(valid_operation),
+        "invalid operation"
+    );
+    anyhow::ensure!(
+        identity
+            .application
+            .as_deref()
+            .is_none_or(valid_application),
+        "invalid application"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "test-util")]
+impl WamnPostgres {
+    /// Supply isolated auth memory for capability boundary fixtures.
+    pub fn with_auth_cache_for_test(
+        mut self,
+        auth: Arc<wamn_capability_authority::auth_cache::AuthCache>,
+    ) -> Self {
+        self.auth = auth;
+        self
+    }
+}

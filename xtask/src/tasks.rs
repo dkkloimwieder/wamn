@@ -240,7 +240,6 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
         ),
     ] {
         let mut refused = network.to_vec();
-        refused.push("wamn-runtime");
         if package == "wamn-edge" {
             refused.extend([
                 "wamn-workflow",
@@ -269,7 +268,14 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
             "{package} links forbidden dependencies through wash-runtime"
         );
     }
-    for package in ["wamn-runtime", "wamn-execution-host"] {
+    for package in [
+        "wamn-postgres-capability",
+        "wamn-http-capability",
+        "wamn-blobstore",
+        "wamn-authentication",
+        "wamn-events-capability",
+        "wamn-execution-host",
+    ] {
         let all = linked(root, package, &[]).await?;
         ensure!(
             !["wamn-workflow"].iter().any(|name| all.contains(*name)),

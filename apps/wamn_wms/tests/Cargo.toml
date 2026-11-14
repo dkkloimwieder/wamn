@@ -34,7 +34,6 @@ wamn-environment = { workspace = true, features = ["test-util"] }
 # The publisher a run-plane reconciliation takes (Publisher).
 wamn-platform-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-runtime = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }

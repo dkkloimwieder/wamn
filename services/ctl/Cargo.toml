@@ -57,7 +57,7 @@ wamn-registry = { workspace = true }
 # independently issued/revoked PATs for provision-project-env.
 wamn-platform-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-runtime = { workspace = true }
+wamn-component-artifact = { workspace = true }
 
 [dev-dependencies]
 wamn-kubernetes.workspace = true

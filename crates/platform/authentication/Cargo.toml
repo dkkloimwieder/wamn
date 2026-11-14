@@ -1,0 +1,57 @@
+[package]
+name = "wamn-authentication"
+description = "Protected route authentication and issuer verification."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-capability-authority/test-util", "wamn-connections/test-util", "wamn-postgres-capability/test-util"]
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+hex = { workspace = true }
+hmac = { workspace = true }
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
+rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
+tokio-rustls = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v4"] }
+wamn-broker = { workspace = true }
+wamn-capability-authority = { workspace = true }
+wamn-catalog = { workspace = true }
+wamn-connections = { workspace = true }
+wamn-control-provision = { workspace = true }
+wamn-digest = { workspace = true }
+wamn-engine = { workspace = true }
+wamn-identity-protocol = { workspace = true }
+wamn-package-artifact = { workspace = true }
+wamn-platform-identity = { workspace = true }
+wamn-postgres = { workspace = true }
+wamn-postgres-capability = { workspace = true }
+wamn-registry = { workspace = true }
+
+[dev-dependencies]
+http-route = { path = "../../../apps/platform/ingress/http-route" }
+hyper = { workspace = true, features = ["server"] }
+rcgen = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+wamn-authentication = { path = ".", features = ["test-util"] }
+wamn-catalog = { workspace = true, features = ["test-util"] }
+wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-engine = { workspace = true, features = ["test-util"] }
+wamn-package-artifact = { workspace = true, features = ["test-util"] }
+wamn-platform-identity = { workspace = true, features = ["test-util"] }
+wamn-test-postgres = { workspace = true }
+wat = "=1.254.2"
+
+[lints]
+workspace = true

@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-integrations.workspace = true
 wamn-kubernetes.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
@@ -22,7 +23,14 @@ wamn-registry = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-identity-client = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-capability-authority = { workspace = true }
+wamn-connections = { workspace = true }
+wamn-postgres-capability = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-http-capability = { workspace = true }
+wamn-blobstore = { workspace = true }
+wamn-authentication = { workspace = true }
+wamn-events-capability = { workspace = true }
+wamn-component-artifact = { workspace = true }
 wamn-engine = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel", "wasmcloud-nats", "wasm_component_model_implements"] }
 anyhow = { workspace = true }
@@ -44,7 +52,14 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 url = { workspace = true }
 
 [dev-dependencies]
-wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-capability-authority = { workspace = true, features = ["test-util"] }
+wamn-connections = { workspace = true, features = ["test-util"] }
+wamn-postgres-capability = { workspace = true, features = ["test-util"] }
+wamn-http-capability = { workspace = true, features = ["test-util"] }
+wamn-blobstore = { workspace = true, features = ["test-util"] }
+wamn-authentication = { workspace = true, features = ["test-util"] }
+wamn-events-capability = { workspace = true, features = ["test-util"] }
+wamn-component-artifact = { workspace = true, features = ["test-util"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 tracing-opentelemetry = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }

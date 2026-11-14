@@ -11,7 +11,7 @@ use wash_runtime::washlet::{HostCommandHandler, HostControlDefaults, types::v2};
 use super::projects::Environment;
 use super::releases::ResidentRelease;
 use wamn_execution_host::platform_http::PlatformHttp;
-use wamn_runtime::plugins::WamnPostgres;
+use wamn_postgres_capability::WamnPostgres;
 
 pub(super) struct Commands {
     pub postgres: Arc<WamnPostgres>,
@@ -194,7 +194,7 @@ impl HostCommandHandler for Commands {
                             Some(operations.release_identity()),
                         ),
                     )?;
-                    let invoker: Arc<dyn wamn_runtime::plugins::wamn_postgres::OperationInvoker> =
+                    let invoker: Arc<dyn wamn_postgres_capability::OperationInvoker> =
                         Arc::clone(operations) as Arc<_>;
                     self.postgres
                         .bind_operation_invoker(&workload_id, Arc::downgrade(&invoker))?;

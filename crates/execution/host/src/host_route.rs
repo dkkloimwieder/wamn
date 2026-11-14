@@ -22,7 +22,7 @@ use wamn_identity_client::PatIssuerConfig;
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::control::{control_projects_page, is_org_admin, org_projects_page};
 use wamn_platform_identity::paging::Order;
-use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
+use wamn_postgres_capability::WamnPostgres;
 
 use crate::application_route::ApplicationRoutes;
 use crate::control_route::{ControlRoutes, Refusal, control_page};
@@ -97,10 +97,10 @@ pub struct HostRouteDelivery {
     execution: Option<Arc<dyn ControlExecution>>,
     handlers: HostRouteHandlers,
     files: Option<Arc<crate::file_route::FileRoutes>>,
-    connection_health: Option<Arc<wamn_runtime::connection_health::ConnectionHealth>>,
-    oauth: Option<Arc<wamn_runtime::oauth_authorization::Authorization>>,
+    connection_health: Option<Arc<crate::connection_health::ConnectionHealth>>,
+    oauth: Option<Arc<wamn_http_capability::oauth_authorization::Authorization>>,
     control_authenticator:
-        Option<Arc<wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator>>,
+        Option<Arc<wamn_authentication::route_authentication::ControlRouteAuthenticator>>,
 }
 
 impl fmt::Debug for HostRouteDelivery {
@@ -134,7 +134,7 @@ impl HostRouteDelivery {
     /// Authenticate the native control endpoint with its org session authority.
     pub fn with_control_authenticator(
         mut self,
-        authenticator: Arc<wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator>,
+        authenticator: Arc<wamn_authentication::route_authentication::ControlRouteAuthenticator>,
     ) -> Self {
         self.control_authenticator = Some(authenticator);
         self
@@ -160,7 +160,7 @@ impl HostRouteDelivery {
     /// Use the process-owned artifact and transport resources for candidate tests.
     pub fn with_connection_health(
         mut self,
-        health: Arc<wamn_runtime::connection_health::ConnectionHealth>,
+        health: Arc<crate::connection_health::ConnectionHealth>,
     ) -> Self {
         self.connection_health = Some(health);
         self
@@ -169,7 +169,7 @@ impl HostRouteDelivery {
     /// Share the control callback configuration with the administration routes.
     pub fn with_oauth(
         mut self,
-        oauth: Option<Arc<wamn_runtime::oauth_authorization::Authorization>>,
+        oauth: Option<Arc<wamn_http_capability::oauth_authorization::Authorization>>,
     ) -> Self {
         self.oauth = oauth;
         self

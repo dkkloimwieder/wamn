@@ -24,6 +24,7 @@ name = "rest_connector_publication"
 path = "../../../apps/rest_connector/tests/publication.rs"
 
 [dependencies]
+wamn-integrations.workspace = true
 wamn-events.workspace = true
 wamn-platform-install.workspace = true
 wamn-postgres.workspace = true
@@ -58,7 +59,13 @@ wamn-platform-identity = { workspace = true }
 wamn-identity-client = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-run-state = { workspace = true }
-wamn-runtime = { workspace = true }
+wamn-capability-authority = { workspace = true }
+wamn-connections = { workspace = true }
+wamn-postgres-capability = { workspace = true }
+wamn-http-capability = { workspace = true }
+wamn-blobstore = { workspace = true }
+wamn-events-capability = { workspace = true }
+wamn-component-artifact = { workspace = true }
 wamn-compiler = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 wamn-package-control = { workspace = true }
@@ -72,7 +79,13 @@ wamn-build.workspace = true
 object_store.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio"] }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
-wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-capability-authority = { workspace = true, features = ["test-util"] }
+wamn-connections = { workspace = true, features = ["test-util"] }
+wamn-postgres-capability = { workspace = true, features = ["test-util"] }
+wamn-http-capability = { workspace = true, features = ["test-util"] }
+wamn-blobstore = { workspace = true, features = ["test-util"] }
+wamn-events-capability = { workspace = true, features = ["test-util"] }
+wamn-component-artifact = { workspace = true, features = ["test-util"] }
 wamn-execution-host = { workspace = true }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }

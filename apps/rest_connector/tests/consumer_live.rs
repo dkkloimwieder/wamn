@@ -12,7 +12,7 @@ use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, 
 use wamn_environment::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
 use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
 use wamn_package_control::component_admission::ComponentAdmission;
-use wamn_runtime::plugins::wamn_postgres::{
+use wamn_postgres_capability::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 
@@ -483,12 +483,13 @@ pub async fn invoke(
     manifest: &wamn_catalog::ServingManifest,
     admissions: &[ComponentAdmission],
 ) -> anyhow::Result<()> {
+    use wamn_connections::connection_credentials::ConnectionCredentials;
     use wamn_engine::artifact_source::LocalComponentSource;
     use wamn_engine::operation::native_workload::NativeComponent;
     use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-    use wamn_runtime::connection_credentials::ConnectionCredentials;
-    use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-    use wamn_runtime::plugins::connection_http::{
+    use wamn_http_capability::transport::HttpTransport;
+
+    use wamn_capability_authority::connection::{
         ConnectionExecutionClosure, InvocationEntry, WiringPosition,
     };
     use wash_runtime::plugin::wasi_logging::TracingLogger;
@@ -521,8 +522,8 @@ pub async fn invoke(
         Arc::new(wamn_engine::build_engine(&[])?),
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new()?),
-        Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(
-            Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
+        Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
+            Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             &postgres,

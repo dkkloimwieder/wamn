@@ -13,13 +13,13 @@ use wamn_broker::Publisher;
 
 use serde_json::json;
 
+use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
 use wamn_catalog::{HostRouteSet, SERVING_MANIFEST_FORMAT_VERSION};
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
-use wamn_runtime::plugins::route_authentication::PlatformRouteAuthenticator;
-use wamn_runtime::plugins::wamn_postgres::{
+use wamn_postgres_capability::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
 
@@ -256,7 +256,7 @@ pub(super) struct ApplicationHost {
     pub(super) first: String,
     _clocks: (
         wamn_identity_protocol::verifier::SessionTestClock,
-        wamn_runtime::session_keys::TestClock,
+        wamn_authentication::session_keys::TestClock,
     ),
     _database: wamn_test_postgres::OwnedDatabase,
     _postgres: wamn_test_postgres::OwnedPostgres,

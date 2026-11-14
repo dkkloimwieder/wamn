@@ -9,6 +9,10 @@ license.workspace = true
 test-util = []
 
 [dependencies]
+wamn-integrations.workspace = true
+moka = { workspace = true, features = ["sync"] }
+oci-client.workspace = true
+wamn-package-artifact.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
@@ -22,7 +26,12 @@ wamn-event-wire = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-identity-client = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-capability-authority = { workspace = true }
+wamn-connections = { workspace = true }
+wamn-postgres-capability = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-http-capability = { workspace = true }
+wamn-blobstore = { workspace = true }
+wamn-authentication = { workspace = true }
 wamn-engine = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-logging"] }
 futures-util = { workspace = true }
@@ -59,7 +68,12 @@ wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }
 wamn-environment = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
-wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-capability-authority = { workspace = true, features = ["test-util"] }
+wamn-connections = { workspace = true, features = ["test-util"] }
+wamn-postgres-capability = { workspace = true, features = ["test-util"] }
+wamn-http-capability = { workspace = true, features = ["test-util"] }
+wamn-blobstore = { workspace = true, features = ["test-util"] }
+wamn-authentication = { workspace = true, features = ["test-util"] }
 wamn-identity-protocol = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }

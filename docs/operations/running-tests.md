@@ -203,7 +203,7 @@ It serves the native `/readyz` endpoint while the second host waits for its leas
 Run these tests with the build environment in [building](building.md):
 
 ```bash
-cargo test --locked --offline -p wamn-runtime resource_lease::tests -- --test-threads=1
+cargo test --locked --offline -p wamn-connections resource_lease::tests -- --test-threads=1
 cargo test --locked --offline -p wamn-environment --test integration_restart_live -- --ignored --test-threads=1
 cargo test --locked --offline -p wamn-host --bin wamn-host host::lease_tests::sigterm_drains_calls_then_hands_the_lease_to_a_ready_host -- --ignored --exact --test-threads=1
 ```
@@ -513,7 +513,7 @@ Do not infer execution from the aggregate Cargo pass count.
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::session_identity::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
 | `[CAPTURE-GAP]` | `crates/control/environment/tests/capture_gap_live.rs`: requires a Kubernetes target, a stamped release chart, PostgreSQL 18 with `wal_level=logical`, and the platform NATS inputs below. It stops and restarts the reader Deployment during recovery |
-| `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored in live-postgres, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
+| `[SQLX-TRANSACTION]` | `crates/platform/postgres-capability/tests/sqlx_transaction_live.rs`: ignored in live-postgres, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
 
 The source owners declare additional credentials, artifact paths, and selected assertions.
 Do not substitute shared services for missing test inputs.
@@ -1154,5 +1154,5 @@ The test starts private database, broker, registry, TLS, and Modbus fixtures.
 It tests good and bad candidates, version selection, cached compilation, authority refusal, and unchanged generation and credential counts.
 
 ```bash
-cargo test --locked --offline -p wamn-execution-host --test control_route_live --features wamn-runtime/wasm_component_model_implements,wash-runtime/washlet connection_test::candidate_http_and_modbus_health_commit_nothing -- --ignored --exact --nocapture
+cargo test --locked --offline -p wamn-execution-host --test control_route_live --features wamn-postgres-capability/wasm_component_model_implements,wash-runtime/washlet connection_test::candidate_http_and_modbus_health_commit_nothing -- --ignored --exact --nocapture
 ```

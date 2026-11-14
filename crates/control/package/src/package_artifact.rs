@@ -196,12 +196,14 @@ pub fn read_descriptors(root: &Path) -> anyhow::Result<Vec<ComponentDescriptor>>
 pub(crate) async fn connection_components(
     root: &Path,
     manifest: &PackageManifest,
-    source: Option<&wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
+    source: Option<
+        &wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
+    >,
 ) -> anyhow::Result<Vec<(String, Vec<String>, Vec<u8>)>> {
     let descriptors = read_descriptors(root)?;
     if !descriptors.is_empty() {
+        use wamn_component_artifact::component_artifact_source::ComponentArtifactSource;
         use wamn_engine::artifact_source::ArtifactSource as _;
-        use wamn_runtime::component_artifact_source::ComponentArtifactSource;
         let target = ComponentPackageCoordinate::new(
             ADMISSION_PROJECT_ENV_KEY,
             &manifest.package.id,

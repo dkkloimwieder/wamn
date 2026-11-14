@@ -576,7 +576,7 @@ pub mod workflow {
     ) -> anyhow::Result<String> {
         use std::sync::Arc;
         use wamn_engine::native_routes::{DeliveryRequest, Source};
-        use wamn_runtime::plugins::wamn_postgres::{
+        use wamn_postgres_capability::{
             AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
         };
 
@@ -716,7 +716,7 @@ pub mod workflow {
         input: &Value,
         key: &str,
     ) -> anyhow::Result<String> {
-        use wamn_runtime::plugins::wamn_postgres::{
+        use wamn_postgres_capability::{
             AuthorityClass, ClassCredentials, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
             WamnPostgresConfig,
         };

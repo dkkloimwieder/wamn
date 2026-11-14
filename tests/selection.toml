@@ -155,20 +155,28 @@ targets = [
   { workspace="root", package="wamn-run-state", target="test:queue", tier="unit" },
   { workspace="root", package="wamn-run-state", target="test:run_state_live", tier="live-postgres" },
   { workspace="root", package="wamn-run-state", target="test:store", tier="live-postgres" },
-  { workspace="root", package="wamn-runtime", target="lib:wamn_runtime", tier="live-nats" },
-  { workspace="root", package="wamn-runtime", target="test:connection_authority", tier="contract" },
-  { workspace="root", package="wamn-runtime", target="test:environment_status_route", tier="live-postgres" },
-  { workspace="root", package="wamn-runtime", target="test:executor_platform_surface_live", tier="live-postgres" },
-  { workspace="root", package="wamn-runtime", target="test:executor_plugin_no_trap_live", tier="contract" },
-  { workspace="root", package="wamn-runtime", target="test:guest_environment_isolation", tier="contract" },
-  { workspace="root", package="wamn-runtime", target="test:metadata_token", tier="contract" },
-  { workspace="root", package="wamn-runtime", target="test:native_dispatch_deadline", tier="contract" },
-  { workspace="root", package="wamn-runtime", target="test:production_lease_live", tier="live-postgres" },
-  { workspace="root", package="wamn-runtime", target="test:release_manifest_source", tier="contract" },
-  { workspace="root", package="wamn-runtime", target="test:session_keys", tier="contract" },
-  { workspace="root", package="wamn-runtime", target="test:session_route_authentication", tier="live-postgres" },
-  { workspace="root", package="wamn-runtime", target="test:session_verifier", tier="contract" },
-  { workspace="root", package="wamn-runtime", target="test:sqlx_transaction_live", tier="live-postgres" },
+  { workspace="root", package="wamn-capability-authority", target="lib:wamn_capability_authority", tier="live-nats" },
+  { workspace="root", package="wamn-connections", target="lib:wamn_connections", tier="live-nats" },
+  { workspace="root", package="wamn-postgres-capability", target="lib:wamn_postgres_capability", tier="live-nats" },
+  { workspace="root", package="wamn-http-capability", target="lib:wamn_http_capability", tier="live-postgres" },
+  { workspace="root", package="wamn-blobstore", target="lib:wamn_blobstore", tier="live-postgres" },
+  { workspace="root", package="wamn-authentication", target="lib:wamn_authentication", tier="live-nats" },
+  { workspace="root", package="wamn-events-capability", target="lib:wamn_events_capability", tier="live-nats" },
+  { workspace="root", package="wamn-component-artifact", target="lib:wamn_component_artifact", tier="contract" },
+  { workspace="root", package="wamn-integrations", target="lib:wamn_integrations", tier="contract" },
+  { workspace="root", package="wamn-capability-authority", target="test:connection_authority", tier="contract" },
+  { workspace="root", package="wamn-authentication", target="test:environment_status_route", tier="live-postgres" },
+  { workspace="root", package="wamn-postgres-capability", target="test:executor_platform_surface_live", tier="live-postgres" },
+  { workspace="root", package="wamn-postgres-capability", target="test:executor_plugin_no_trap_live", tier="contract" },
+  { workspace="root", package="wamn-component-artifact", target="test:guest_environment_isolation", tier="contract" },
+  { workspace="root", package="wamn-component-artifact", target="test:metadata_token", tier="contract" },
+  { workspace="root", package="wamn-component-artifact", target="test:native_dispatch_deadline", tier="contract" },
+  { workspace="root", package="wamn-postgres-capability", target="test:production_lease_live", tier="live-postgres" },
+  { workspace="root", package="wamn-component-artifact", target="test:release_manifest_source", tier="contract" },
+  { workspace="root", package="wamn-authentication", target="test:session_keys", tier="contract" },
+  { workspace="root", package="wamn-authentication", target="test:session_route_authentication", tier="live-postgres" },
+  { workspace="root", package="wamn-authentication", target="test:session_verifier", tier="contract" },
+  { workspace="root", package="wamn-postgres-capability", target="test:sqlx_transaction_live", tier="live-postgres" },
   { workspace="root", package="wamn-compiler", target="lib:wamn_compiler", tier="live-postgres" },
   { workspace="root", package="wamn-compiler", target="test:build_live", tier="live-postgres" },
   { workspace="root", package="wamn-compiler", target="test:client_component", tier="contract" },
@@ -273,7 +281,7 @@ root_features = ["wamn-environment/ops"]
 
 [[rules]]
 # Bindgen reads shared WIT outside Cargo dependency edges.
-inputs = ['^wit/(wamn-(connection|flow-http-routing|integration|node|operation-0\.1|postgres-0\.4)|wasmcloud-blobstore)/', '^crates/platform/runtime/wit/deps/']
+inputs = ['^wit/(wamn-(connection|flow-http-routing|integration|node|operation-0\.1|postgres-0\.4)|wasmcloud-blobstore)/', '^crates/platform/capability-authority/wit/deps/']
 workspaces = ["root", "apps", "no-std"]
 
 [[rules]]
@@ -509,8 +517,18 @@ target = ["test:application_composition"]
 prerequisites = ["http-route"]
 
 [[preparation]]
-packages = ["wamn-runtime"]
-target = ["lib:wamn_runtime"]
+packages = ["wamn-capability-authority"]
+target = ["lib:wamn_capability_authority"]
+prerequisites = ["nats"]
+
+[[preparation]]
+packages = ["wamn-connections"]
+target = ["lib:wamn_connections"]
+prerequisites = ["nats", "sqlx-command"]
+
+[[preparation]]
+packages = ["wamn-postgres-capability"]
+target = ["lib:wamn_postgres_capability"]
 prerequisites = ["nats", "sqlx-command"]
 
 [[preparation]]
@@ -667,10 +685,10 @@ target = ["test:platform_apply_kind"]
 tests = ["connection_and_caller_kind"]
 features = []
 prerequisites = ["docker", "kind", "helm", "kubectl", "openssl", "script"]
-inputs = ["^crates/control/dev/", "^crates/platform/runtime/", "^crates/execution/host/", "^services/host/"]
+inputs = ["^crates/control/dev/", "^crates/platform/(capability-authority|connections|postgres-capability|http-capability|blobstore|authentication|events-capability|component-artifact|integrations)/", "^crates/execution/host/", "^services/host/"]
 execution = "libtest"
 mode = "local"
-select_packages = ["wamn-runtime", "wamn-execution-host", "wamn-host", "wamn-dev"]
+select_packages = ["wamn-capability-authority", "wamn-connections", "wamn-postgres-capability", "wamn-http-capability", "wamn-blobstore", "wamn-authentication", "wamn-events-capability", "wamn-component-artifact", "wamn-integrations", "wamn-execution-host", "wamn-host", "wamn-dev"]
 ignored = true
 resource_lock = ""
 
@@ -678,15 +696,15 @@ resource_lock = ""
 id = "jetstream"
 tier = "live-nats"
 workspace = "root"
-package = "wamn-runtime"
-target = ["lib:wamn_runtime"]
-tests = ["plugins::wamn_jetstream::tests::live_derived_publish_replay_converges_through_jetstream_dedup"]
+package = "wamn-events-capability"
+target = ["lib:wamn_events_capability"]
+tests = ["tests::live_derived_publish_replay_converges_through_jetstream_dedup"]
 features = []
 prerequisites = ["nats", "private-nats"]
 inputs = []
 execution = "libtest"
 mode = "local"
-select_packages = ["wamn-runtime"]
+select_packages = ["wamn-events-capability"]
 ignored = true
 resource_lock = "private-nats"
 
@@ -823,3 +841,18 @@ prerequisites = ["ctl"]
 packages = ["wamn-wms-tests"]
 target = ["test:wms_browser_kind"]
 prerequisites = ["ctl", "sync-bench"]
+
+[[preparation]]
+packages = ["wamn-http-capability"]
+target = ["lib:wamn_http_capability"]
+prerequisites = ["sqlx-command"]
+
+[[preparation]]
+packages = ["wamn-blobstore"]
+target = ["lib:wamn_blobstore"]
+prerequisites = ["sqlx-command"]
+
+[[preparation]]
+packages = ["wamn-authentication"]
+target = ["lib:wamn_authentication"]
+prerequisites = ["nats", "sqlx-command"]

@@ -5,7 +5,7 @@
 //! [`Refusal`](operation::Refusal) and one caller type. Each host implements
 //! [`operation::HostWithStore`] on its own [`HasData`] marker over
 //! [`ActiveCtx`], and links it with [`operation::add_to_linker`]: the cloud
-//! over PostgreSQL in `wamn-runtime`, the edge in `wamn-edge`.
+//! over PostgreSQL in `wamn-postgres-capability`, the edge in `wamn-edge`.
 //!
 //! [`HasData`]: wash_runtime::wasmtime::component::HasData
 

@@ -12,7 +12,7 @@ wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements
 
 [dependencies]
 wamn-digest.workspace = true
-# No `oci` feature here: the registry source lives in wamn-runtime.
+# No `oci` feature here: the registry source lives in wamn-component-artifact.
 wash-runtime = { workspace = true }
 wasmtime = { workspace = true }
 wamn-catalog = { workspace = true }
@@ -51,7 +51,7 @@ wit-parser.workspace = true
 tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }
 # The engine tests encode their guests from WAT in-process. Same exact pins as
-# wamn-runtime.
+# wamn-component-artifact.
 wat = "=1.254.2"
 wit-component = { workspace = true, features = ["dummy-module"] }
 wit-parser = { workspace = true }

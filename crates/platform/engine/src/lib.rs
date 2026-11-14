@@ -19,7 +19,7 @@
 //!   artifacts.
 //! - [`artifact_source`]: the [`ArtifactSource`](artifact_source::ArtifactSource)
 //!   trait that supplies verified component bytes, its digest tests, and the
-//!   local file source. The OCI registry source lives in `wamn-runtime`.
+//!   local file source. The OCI registry source lives in `the capability crates`.
 //! - [`release_manifest`]: an immutable release manifest for a project deployment.
 //! - [`invocation_trace`]: restores host-captured tracing context when native
 //!   dispatch polls host callbacks.
@@ -37,9 +37,9 @@
 //! - OCI: `oci-client`, `oci-wasm`.
 //! - HTTP clients: `hyper-util`, `hyper-rustls`, `reqwest`.
 //! - OTLP gRPC: `opentelemetry-otlp`, `tonic`.
-//! - Upper layers: `wamn-workflow`, `wamn-runtime`.
+//! - Upper layers: `wamn-workflow`, `the capability crates`.
 //!
-//! The edge links this crate and never `wamn-runtime`, so every crate on that
+//! The edge links this crate and never `the capability crates`, so every crate on that
 //! list is a cost the edge would pay. `wamn-workflow` is on it because
 //! routes-router rule 7 keeps the router out of the base platform and the edge.
 //! wash-runtime itself links `async-nats`, `redis`, `tonic`,

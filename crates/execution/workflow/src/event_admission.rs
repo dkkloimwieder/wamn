@@ -4,11 +4,11 @@ use crate::events::EventTrigger;
 use sqlx::Row as _;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::SourceEvent;
+use wamn_events_capability::EventBatchAdmission;
 use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
+use wamn_postgres_capability::WamnPostgres;
 use wamn_run_state::admission::{self, RunAdmission, RunAdmitted, RunTrigger};
 use wamn_run_state::run_store::ProductionLeaseError;
-use wamn_runtime::plugins::wamn_jetstream::EventBatchAdmission;
-use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 
 /// Re-read trigger rows, resolve their graphs and actor, and insert all runs
 /// and queue entries before committing. Any refusal rolls back the batch.
@@ -172,7 +172,7 @@ pub async fn admit_event_batch(
 
 /// Pull and settle application deliveries through the broker transport.
 pub async fn admit_application_events(
-    jetstream: &wamn_runtime::plugins::wamn_jetstream::WamnJetstream,
+    jetstream: &wamn_events_capability::WamnJetstream,
     postgres: &WamnPostgres,
     project: &str,
     application: &str,

@@ -252,26 +252,26 @@ pub const EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATIO
 pub const EXECUTION_HOST_SRC_CONTROL_ROUTE_OPERATION_JOB_OPERATION_JOB: &str =
     "SELECT 1 FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3";
 
-/// crates/platform/runtime/src/oauth_token.rs::lock registry statement.
+/// crates/platform/connections/src/oauth_token.rs::lock registry statement.
 pub const PLATFORM_RUNTIME_SRC_OAUTH_TOKEN_LOCK: &str =
     "SELECT registry.lock_oauth_connection($1,$2,$3,$4)";
 
-/// crates/platform/runtime/src/connection_credentials.rs::integration_version registry statement.
+/// crates/platform/connections/src/connection_credentials.rs::integration_version registry statement.
 pub const PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_INTEGRATION_VERSION: &str =
     "SELECT version, digest FROM registry.read_integration_version($1,$2)";
 
-/// crates/platform/runtime/src/connection_credentials.rs::env_connections registry statement.
+/// crates/platform/connections/src/connection_credentials.rs::env_connections registry statement.
 pub const PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_ENV_CONNECTIONS: &str =
     "SELECT name, id FROM registry.read_env_connections($1,$2,$3)";
 
-/// crates/platform/runtime/src/connection_credentials.rs::credential_secret registry statement.
+/// crates/platform/connections/src/connection_credentials.rs::credential_secret registry statement.
 pub const PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CREDENTIAL_SECRET: &str =
     "SELECT store, ref, version FROM registry.read_connection_secret($1,$2,$3,$4)";
 
-/// crates/platform/runtime/src/connection_credentials.rs::connection_generation registry statement.
+/// crates/platform/connections/src/connection_credentials.rs::connection_generation registry statement.
 pub const PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CONNECTION_GENERATION: &str = "SELECT name, integration_type, runtime_type, auth_type, external_system, parameters FROM registry.read_connection_generation($1,$2,$3,$4,$5)";
 
-/// crates/platform/runtime/src/connection_credentials.rs::connection_fact registry statement.
+/// crates/platform/connections/src/connection_credentials.rs::connection_fact registry statement.
 pub const PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CONNECTION_FACT: &str = "SELECT active_generation, active, credential_id, exclusive, target_id, resource_key, target_type, service_principal_id FROM registry.read_connection_fact($1,$2,$3,$4)";
 
 /// crates/identity/platform/src/application.rs::project_authority registry statement.

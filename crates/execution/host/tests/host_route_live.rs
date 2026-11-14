@@ -12,15 +12,15 @@ use wamn_broker::Publisher;
 
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
+use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
 use wamn_catalog::HostRouteSet;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, FlowHttpRouting};
 use wamn_engine::native_routes::{DeliveryError, DeliveryOutcome, DeliveryRequest, Source};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
-use wamn_runtime::plugins::route_authentication::PlatformRouteAuthenticator;
 
-#[path = "../../../platform/runtime/tests/support/session_fixture.rs"]
+#[path = "../../../platform/postgres-capability/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared fixture also provides verifier-only fetch barriers."
@@ -805,7 +805,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
     let release = Arc::new(LoadedRelease::control_root());
     let routing =
         FlowHttpRouting::for_test(Some(Arc::clone(&release))).with_authenticator(Arc::new(
-            wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator::new(
+            wamn_authentication::route_authentication::ControlRouteAuthenticator::new(
                 verifier,
                 control.clone(),
             ),

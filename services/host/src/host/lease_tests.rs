@@ -1,17 +1,17 @@
 //! Live lease handoff through the host's SIGTERM and queue drain owner.
 
-use wamn_runtime::connection_credentials::ConnectionCredentials;
-use wamn_runtime::connection_facts::ConnectionFacts;
-use wamn_runtime::connection_memory::{self, ConnectionMemory};
+use wamn_connections::connection_credentials::ConnectionCredentials;
+use wamn_connections::connection_facts::ConnectionFacts;
+use wamn_connections::connection_memory::{self, ConnectionMemory};
 
 use super::*;
 use sqlx::Row as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use wamn_runtime::auth_cache::test_util::{nats, until};
-use wamn_runtime::connection_memory::{ConnectionFact, ConnectionStatus};
-use wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig;
-use wamn_runtime::resource_lease::ResourceLeases;
+use wamn_capability_authority::auth_cache::test_util::{nats, until};
+use wamn_connections::connection_memory::{ConnectionFact, ConnectionStatus};
+use wamn_connections::resource_lease::ResourceLeases;
+use wamn_postgres_capability::WamnPostgresConfig;
 
 async fn facts(
     client: &async_nats::Client,

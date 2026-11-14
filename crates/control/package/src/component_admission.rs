@@ -33,14 +33,14 @@ use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
     ComponentDescriptor, ComponentSqlField, ComponentSqlStatement, bind_component_statement_facts,
 };
+use wamn_component_artifact::component_artifact_source::{
+    ComponentArtifactSource, ComponentArtifactSourceConfig,
+};
 use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_engine::component_admission::validate_component_admission;
 use wamn_engine::component_artifact::component_artifact_layout;
 use wamn_package_artifact::read_ca_bundles;
 use wamn_package_artifact::registry_credentials::RegistryCredentials;
-use wamn_runtime::component_artifact_source::{
-    ComponentArtifactSource, ComponentArtifactSourceConfig,
-};
 
 use wamn_compiler::declared_sql;
 
@@ -695,9 +695,9 @@ mod tests {
         AdmittedComponentOperation, ComponentOperationDeclaration, ComponentPackageCoordinate,
         component_artifact_reference,
     };
+    use wamn_component_artifact::component_artifact_source::OCI_CA_PATHS_ENV;
     use wamn_engine::component_artifact::component_artifact_config_bytes;
     use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
-    use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
     use super::*;
 

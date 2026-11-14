@@ -1,0 +1,34 @@
+[package]
+name = "wamn-events-capability"
+description = "Native event publication and admission."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+test-util = ["wamn-engine/test-util", "wamn-capability-authority/test-util", "wamn-postgres-capability/test-util"]
+
+[dependencies]
+anyhow = { workspace = true }
+async-nats = { workspace = true, features = ["jetstream", "kv"] }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
+tracing = { workspace = true }
+wamn-broker = { workspace = true }
+wamn-capability-authority = { workspace = true }
+wamn-engine = { workspace = true }
+wamn-event-wire = { workspace = true }
+wamn-postgres-capability = { workspace = true }
+wamn-registry = { workspace = true }
+wamn-run-state = { workspace = true }
+wash-runtime = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+wamn-engine = { workspace = true, features = ["test-util"] }
+wamn-test-postgres = { workspace = true }
+
+[lints]
+workspace = true

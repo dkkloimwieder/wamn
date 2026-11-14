@@ -5,9 +5,9 @@ use sqlx::Row as _;
 use wamn_catalog::WiringDocument;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
+use wamn_postgres_capability::WamnPostgres;
 use wamn_run_state::admission::{self, RunAdmission, RunAdmitted, RunTrigger};
 use wamn_run_state::run_store::{ProductionLeaseError, ProductionLeaseErrorType};
-use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 
 /// What a schedule admission did.
 #[derive(Debug, Clone, PartialEq, Eq)]

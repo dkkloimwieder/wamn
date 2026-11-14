@@ -7,16 +7,17 @@ use anyhow::Context as _;
 use tracing::Instrument as _;
 use wash_runtime::host::probes::Liveness;
 
+use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
 use wamn_engine::native_routes::{OperationRefusal, OperationRefusalType};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
+use wamn_events_capability::{DerivedPublishRequest, WamnJetstream};
 use wamn_identity_protocol::PlatformComponent;
-use wamn_run_state::FailType;
-use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
-use wamn_runtime::plugins::wamn_postgres::{
+use wamn_postgres_capability::{
     ProductionCompletionResult, ProductionLeaseRenewal, ProductionLeaseResult,
-    ProductionReapResult, ReleaseIdentity, SessionIdentity, WamnPostgres,
+    ProductionReapResult, WamnPostgres,
 };
+use wamn_run_state::FailType;
 
 use crate::resolution::{WorkflowResolutionError, WorkflowResolutionErrorType};
 use crate::router_action::{ProductionRouterAction, production_router_action};
@@ -374,9 +375,7 @@ async fn drive_lease(
                     target,
                     run_id,
                     lease_generation,
-                    &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::failed(
-                        result, fail_type,
-                    ),
+                    &wamn_postgres_capability::ProductionCompletion::failed(result, fail_type),
                 )
                 .await?;
                 return Ok(());
@@ -438,7 +437,7 @@ async fn drive_lease(
                 target,
                 run_id,
                 lease_generation,
-                &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::completed(event),
+                &wamn_postgres_capability::ProductionCompletion::completed(event),
             )
             .await?;
         }
@@ -494,7 +493,7 @@ async fn commit_completion(
     target: &QueueTarget,
     run_id: &str,
     lease_generation: i64,
-    completion: &wamn_runtime::plugins::wamn_postgres::ProductionCompletion,
+    completion: &wamn_postgres_capability::ProductionCompletion,
 ) -> anyhow::Result<()> {
     let result = postgres
         .complete(&target.invocation, run_id, lease_generation, completion)

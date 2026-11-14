@@ -152,7 +152,7 @@ pub fn build_inputs(root: &Path) -> anyhow::Result<BTreeSet<PathBuf>> {
         root.to_owned(),
         workspace.join("platform"),
         repository.join("wit"),
-        repository.join("crates/platform/runtime/wit/deps"),
+        repository.join("crates/platform/capability-authority/wit/deps"),
         workspace.join("Cargo.toml"),
         workspace.join("Cargo.lock"),
         repository.join("Cargo.toml"),
