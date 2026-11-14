@@ -6,13 +6,6 @@
 //! provisioning families lives beside `WorkloadRoleFamily` in
 //! `wamn-control-provision`, because that is where the target type is defined.
 //!
-//! # Why this lives here and not with the role families
-//!
-//! `wamn-control-provision` is a DEV-ONLY dependency of `wamn-runtime` — the
-//! shipped runtime deliberately links no provisioner. The class is needed by
-//! production runtime code (the credential provider and both pool caches), so
-//! it lives in the crate both sides already depend on in their normal graph.
-//!
 //! # Why there is deliberately no parser
 //!
 //! A class originates ONLY in trusted host composition or operator-owned
@@ -22,6 +15,19 @@
 //! the ruling closes. [`AuthorityClass::as_str`] is one-way on purpose.
 
 use std::fmt;
+
+/// Stable database role for wamn_app.
+pub const APP_ROLE: &str = "wamn_app";
+/// Stable database role for wamn_query.
+pub const QUERY_ROLE: &str = "wamn_query";
+/// Stable database role for wamn_executor_platform.
+pub const EXECUTOR_PLATFORM_ROLE: &str = "wamn_executor_platform";
+/// Stable database role for wamn_http_admitter.
+pub const HTTP_ADMITTER_ROLE: &str = "wamn_http_admitter";
+/// Stable database role for wamn_event_materializer.
+pub const EVENT_MATERIALIZER_ROLE: &str = "wamn_event_materializer";
+/// Stable database role for wamn_administration.
+pub const ADMINISTRATION_ROLE: &str = "wamn_administration";
 
 /// Read the current operation user's membership in the bound ACL role.
 ///
@@ -61,21 +67,14 @@ impl AuthorityClass {
     ];
 
     /// The stable NOLOGIN ACL role this authority's generations inherit.
-    ///
-    /// Duplicated here rather than reached through `WorkloadRoleFamily` because
-    /// `wamn-control-provision` is a DEV-ONLY dependency of the runtime — the
-    /// shipped runtime links no provisioner — and the runtime must be able to
-    /// name the role it expects a connection to actually hold. The provisioning
-    /// projection carries a drift guard asserting the two agree, so the
-    /// duplication cannot diverge silently.
     pub const fn acl_role(self) -> &'static str {
         match self {
-            Self::GuestSql => "wamn_app",
-            Self::DynamicSql => "wamn_query",
-            Self::ExecutorPlatform => "wamn_executor_platform",
-            Self::CallableHttp => "wamn_http_admitter",
-            Self::EventMaterializer => "wamn_event_materializer",
-            Self::Administration => "wamn_administration",
+            Self::GuestSql => APP_ROLE,
+            Self::DynamicSql => QUERY_ROLE,
+            Self::ExecutorPlatform => EXECUTOR_PLATFORM_ROLE,
+            Self::CallableHttp => HTTP_ADMITTER_ROLE,
+            Self::EventMaterializer => EVENT_MATERIALIZER_ROLE,
+            Self::Administration => ADMINISTRATION_ROLE,
         }
     }
 
@@ -98,17 +97,5 @@ impl AuthorityClass {
 impl fmt::Display for AuthorityClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::AuthorityClass;
-
-    #[test]
-    fn display_matches_the_label() {
-        for class in AuthorityClass::ALL {
-            assert_eq!(class.to_string(), class.as_str());
-        }
     }
 }

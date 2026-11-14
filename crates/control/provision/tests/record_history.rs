@@ -20,7 +20,7 @@ fn fresh_run_history_stamps_rows() {
         "BEGIN",
         &bind_platform_principal_sql(PlatformComponent::Provisioning),
         r"
-        INSERT INTO wamn_run.runs (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment) VALUES ('history','run','fixture',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'package','dev');
+        INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ('history','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{}') ON CONFLICT DO NOTHING; INSERT INTO wamn_run.runs (project_env_key, run_id, wiring_id, wiring_version, wiring_hash, package_id, environment, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json, manifest_digest) VALUES ('history', 'run', 'fixture', 1, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', 'package', 'dev', 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');
     ",
         "INSERT INTO wamn_run.run_queue(project_env_key,run_id) VALUES ('history','run');",
         "COMMIT",

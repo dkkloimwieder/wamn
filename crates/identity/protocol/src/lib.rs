@@ -65,3 +65,10 @@ impl fmt::Display for SessionError {
 }
 
 impl std::error::Error for SessionError {}
+
+/// Credential authority selected by trusted host code.
+pub mod authority_class;
+pub use authority_class::AuthorityClass;
+/// Framed project identity hashing.
+pub mod project_identity;
+pub use project_identity::app_identity_hash;

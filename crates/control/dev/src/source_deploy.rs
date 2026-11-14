@@ -32,7 +32,16 @@ pub async fn publish_from_env(
     root: &Path,
     database_url: &str,
 ) -> anyhow::Result<(String, ManifestDigest)> {
-    publish_source_from_env(document, build(document, root, database_url).await?).await
+    publish_source_from_env(document, build(document, root, database_url, false).await?).await
+}
+
+/// Build and publish immutable development coordinates derived from source content.
+pub async fn publish_development_from_env(
+    document: &EnvironmentDocument,
+    root: &Path,
+    database_url: &str,
+) -> anyhow::Result<(String, ManifestDigest)> {
+    publish_source_from_env(document, build(document, root, database_url, true).await?).await
 }
 
 /// Publish the selected source closure's existing build output without rebuilding.
@@ -45,10 +54,10 @@ pub async fn publish_built_from_env(
     let packages = roots
         .iter()
         .map(|root| {
-            let manifest = read_package_manifest(root)?;
+            let record = build_record::read(&wamn_compiler::output_root(root))?;
             Ok(PackageCoordinate::new(
-                manifest.package.id,
-                manifest.package.version,
+                record.package.id,
+                record.package.version,
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
@@ -106,16 +115,22 @@ async fn build(
     document: &EnvironmentDocument,
     root: &Path,
     database_url: &str,
+    development: bool,
 ) -> anyhow::Result<SourceBuild> {
     let (application, roots) = sources(document, root)?;
     let mut packages = Vec::with_capacity(roots.len());
     for root in &roots {
-        let record = build_package(&BuildRequest::new(
-            root,
-            &default_output_root(root),
-            database_url,
-        ))
-        .await?;
+        let mut request = BuildRequest::new(root, &default_output_root(root), database_url);
+        if development {
+            request.development_digest = Some(content_digest(root)?);
+        }
+        let record = build_package(&request).await?;
+        if let Some(digest) = request.development_digest {
+            ensure!(
+                digest == content_digest(root)?,
+                "source changed during development build; retry"
+            );
+        }
         packages.push(PackageCoordinate::new(
             record.package.id,
             record.package.version,
@@ -126,6 +141,77 @@ async fn build(
         roots,
         packages,
     })
+}
+
+fn content_digest(root: &Path) -> anyhow::Result<String> {
+    let workspace = wamn_compiler::package_workspace(root);
+    let repository = workspace
+        .parent()
+        .context("package workspace has no repository parent")?;
+    let mut files = BTreeMap::new();
+    for input in [
+        root.to_owned(),
+        workspace.join("platform"),
+        repository.join("wit"),
+        repository.join("crates/platform/runtime/wit/deps"),
+        repository.join("crates/schema"),
+        repository.join("xtask/build"),
+        workspace.join("Cargo.toml"),
+        workspace.join("Cargo.lock"),
+        repository.join("Cargo.toml"),
+        repository.join("Cargo.lock"),
+        repository.join("rust-toolchain.toml"),
+    ] {
+        if input.exists() {
+            hash_inputs(repository, &input, &mut files)?;
+        }
+    }
+    let manifest = read_package_manifest(root)?;
+    for dependency in manifest.base_dependencies.values() {
+        let built = build_record::read(&package_output(
+            &default_output_root(root),
+            &dependency.package,
+        ))?;
+        files.insert(
+            format!("base/{}", dependency.package),
+            wamn_digest::bytes_sha256(&built.to_bytes()),
+        );
+    }
+    Ok(wamn_digest::bytes_sha256(
+        &wamn_digest::canonical_json_bytes(&serde_json::to_value(files)?),
+    ))
+}
+
+fn hash_inputs(
+    repository: &Path,
+    path: &Path,
+    files: &mut BTreeMap<String, String>,
+) -> anyhow::Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.is_dir() || metadata.is_file(),
+        "development build input must be a regular file: {}",
+        path.display()
+    );
+    if metadata.is_dir() {
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            if !matches!(
+                entry.file_name().to_str(),
+                Some("target" | "generated" | "node_modules" | "dist" | ".git")
+            ) {
+                hash_inputs(repository, &entry.path(), files)?;
+            }
+        }
+    } else if metadata.is_file() {
+        let name = path
+            .strip_prefix(repository)?
+            .to_str()
+            .context("build input path must be UTF-8")?
+            .to_owned();
+        files.insert(name, wamn_digest::bytes_sha256(&std::fs::read(path)?));
+    }
+    Ok(())
 }
 
 async fn publish_built(

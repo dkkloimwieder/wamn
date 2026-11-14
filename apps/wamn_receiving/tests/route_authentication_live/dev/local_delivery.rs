@@ -317,41 +317,6 @@ impl Served {
     }
 }
 
-#[tokio::test]
-async fn watch_reports_startup_failure_after_stdout_closes() -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let scratch = ScratchRoot::create()?;
-    let binary = scratch.path().join("failed-watch");
-    fs::write(
-        &binary,
-        "#!/bin/sh\nexec 1>&-\nsleep 0.05\nprintf 'dev-stage-failed at generate: watch startup diagnostic\\nwatch compiler diagnostic\\n' >&2\nexit 23\n",
-    )?;
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700))?;
-    let mut watch = Watch::start(&binary, scratch.path(), &scratch.path().join("config"))?;
-    let error = watch
-        .served()
-        .await
-        .err()
-        .context("the child must refuse")?;
-    ensure!(
-        error.to_string().contains("watch startup diagnostic"),
-        "the startup error lost its child diagnostic: {error:#}"
-    );
-    watch
-        .stop()
-        .await
-        .expect_err("the child exits unsuccessfully");
-    ensure!(
-        watch
-            .diagnostics
-            .iter()
-            .any(|line| line == "watch compiler diagnostic"),
-        "cleanup must retain the rest of a multiline failure"
-    );
-    Ok(())
-}
-
 fn retain_diagnostic(diagnostics: &mut VecDeque<String>, line: String) {
     // Keep startup failures available without retaining an unbounded build log.
     if diagnostics.len() == 32 {

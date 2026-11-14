@@ -2,6 +2,8 @@
 use crate::graph::{
     Delivery, ErrorDetail, NodeError, NodeOutcome, Outcome, RateLimitDetail, Step, Wiring,
 };
+use crate::resolution::ResolvedActiveWiring;
+use crate::resolution::WorkflowRunKey;
 use anyhow::Context as _;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -23,7 +25,6 @@ use wamn_identity_protocol::PlatformComponent;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, InvocationEntry, WiringPosition,
 };
-use wamn_runtime::plugins::wamn_postgres::{ResolvedActiveWiring, WorkflowRunKey};
 
 /// The pinned graph and execution identity of one queued workflow.
 #[derive(Debug)]
@@ -81,8 +82,9 @@ impl RouterDriver {
             anyhow::ensure!(target.project_env_key == request.project_env_key && target.environment == request.environment, "router-request-release-target-mismatch");
             let application_packages = &target.applications.get(&request.package_id)
                 .with_context(|| format!("the environment declares no application {:?}", request.package_id))?.packages;
-            let ResolvedActiveWiring { version, graph_hash, document, node_components, components, .. } = self.operations.postgres.resolve_workflow(
+            let ResolvedActiveWiring { version, graph_hash, document, node_components, components, .. } = crate::resolution::resolve_workflow(&self.operations.postgres,
                 &self.operations.project,
+                &self.operations.release,
                 &WorkflowRunKey {
                     project_env_key: &request.project_env_key, environment: &request.environment,
                     application: &request.package_id, application_packages,

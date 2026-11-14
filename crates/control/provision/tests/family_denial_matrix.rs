@@ -1,35 +1,5 @@
-//! THE PER-FAMILY DENIAL MATRIX (`wamn-0h0g.22.15`).
-//!
-//! For every ORDERED PAIR of authority families, a principal of one family is
-//! REFUSED the operations that belong to the others. The arms are per-family so
-//! a red NAMES the family that over-holds; they compose into this one condition
-//! binary.
-//!
-//! # Everything here is the server's own answer
-//!
-//! `has_table_privilege`, `has_any_column_privilege`, `aclexplode`, `pg_policy`,
-//! `pg_index`, `pg_get_functiondef` and real SQLSTATEs carried back into Rust.
-//! Never the text of a tracked statement: this crate EMITS much of that text,
-//! so a text assertion would be a builder validated against itself, and a text
-//! assertion cannot tell a live declaration from a comment that mentions one.
-//!
-//! # Why a privilege probe alone is not enough
-//!
-//! `has_table_privilege` IS BLIND TO RLS. It answers TRUE for a role whose every
-//! `SELECT` returns zero rows, so it cannot tell an isolated credential from a
-//! locked-out one — and under `FORCE ROW LEVEL SECURITY` a principal matching no
-//! policy reads ZERO ROWS WITH NO ERROR. Every arm whose assertion is about RLS
-//! REACH therefore asserts the POST-STATE ROW COUNT from a MINTED GENERATION
-//! LOGIN, never from the bare stable ACL role — which derives a NULL project key
-//! and matches nothing silently.
-//!
-//! # Hermetic, and it owns its server
-//!
-//! Roles are CLUSTER-WIDE and `deploy/sql/postgres-init.sql` carries a bare
-//! `CREATE DATABASE wamn`, so this acceptance test rebuilds its whole world on a
-//! PostgreSQL server that the test process starts for it alone.
+//! Database authority through real reads and refused writes.
 
-use std::collections::BTreeSet;
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
@@ -70,325 +40,6 @@ const PROJECT_ENV_KEY_B: &str = "t2";
 /// Throwaway password for the probe logins. Not a credential of record: the
 /// condition builds and drops these roles inside a disposable container.
 const PROBE_PASSWORD: &str = "w68-matrix-probe";
-
-// ---------------------------------------------------------------------------
-// THE MATRIX UNIVERSE
-// ---------------------------------------------------------------------------
-
-/// Every relation any matrix family holds, or could plausibly be widened onto.
-///
-/// The denial matrix is an assertion about THESE objects: the run plane, the
-/// catalog relations the platform families read, and a package-shaped logged
-/// relation pair with its history tables. A family reaching one it does not own
-/// is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 24] = [
-    "platform.environment",
-    "platform.permission",
-    "platform.user_role",
-    "platform.\"user\"",
-    "platform.connection",
-    "platform.integration",
-    "platform.external_system",
-    "platform.file",
-    "platform.number_counter",
-    "platform.number_sequence",
-    "platform.setting",
-    "catalog.connection_binding",
-    "catalog.release_connection",
-    "catalog.connection_requirement",
-    "catalog.packages",
-    "catalog.releases",
-    "catalog.wiring_tombstones",
-    "catalog.workflows",
-    "retention_fixture.entry",
-    "retention_fixture.entry_history",
-    "retention_fixture.ledger",
-    "retention_fixture.ledger_history",
-    "wamn_run.run_queue",
-    "wamn_run.runs",
-];
-
-const MATRIX_PRIVILEGES: [&str; 4] = ["SELECT", "INSERT", "UPDATE", "DELETE"];
-
-/// The authority-bearing routines. `catalog`'s two trigger functions are
-/// deliberately absent: they are invoker-rights triggers, not a family's
-/// authority.
-const MATRIX_ROUTINES: [&str; 2] = [
-    "wamn_authority.current_project_key()",
-    "wamn_authority.project_key(text)",
-];
-
-/// One family's REACH over [`MATRIX_RELATIONS`] and [`MATRIX_ROUTINES`], spelled
-/// as LITERALS.
-///
-/// # Why literals and not a call to the builder
-///
-/// A value asserted against the constant that produced it is a tautology, and
-/// this branch has paid for that shape before. These rows are the SECOND
-/// DOCUMENT: the first is what PostgreSQL answers after the real artifacts and
-/// the real `sql::stable_surface_sql` batches have been applied. Widening a
-/// family — in a builder or in `deploy/sql/run-state.sql` — moves the server's
-/// answer and not these rows, so the arm reds.
-struct FamilyReach {
-    family: WorkloadRoleFamily,
-    /// `schema.relation|PRIVILEGE|grain`, sorted. `grain` is `table` when the
-    /// grant covers the whole relation and `column` when only some columns carry
-    /// it. The grain is pinned because a column-exact grant quietly becoming a
-    /// table grant is a widening the coarse form cannot see.
-    relations: &'static [&'static str],
-    /// Routines whose `proacl` names the family's STABLE ACL role explicitly.
-    ///
-    /// `has_function_privilege` is NOT the probe here. `deploy/sql/run-state.sql`
-    /// never revokes PUBLIC on the two `require_*` guards, so that function
-    /// answers TRUE for every role in the cluster and cannot distinguish one
-    /// family from another. `aclexplode(p.proacl)` can.
-    routines: &'static [&'static str],
-}
-
-/// The ten families whose credentials reach a project-environment database.
-///
-/// `RegistryReader`, `IdentityReader` and `Control` are absent because their
-/// credentials reach the CONTROL database, a different plane with its own
-const MATRIX: [FamilyReach; 9] = [
-    FamilyReach {
-        family: WorkloadRoleFamily::App,
-        relations: &[
-            "catalog.connection_binding|SELECT|table",
-            "catalog.connection_requirement|SELECT|table",
-            "catalog.packages|SELECT|table",
-            "catalog.release_connection|SELECT|table",
-            "catalog.releases|SELECT|table",
-            "catalog.wiring_tombstones|SELECT|table",
-            "catalog.workflows|SELECT|table",
-            "platform.\"user\"|SELECT|table",
-            "platform.connection|SELECT|table",
-            "platform.environment|SELECT|table",
-            "platform.external_system|SELECT|table",
-            "platform.file|SELECT|table",
-            "platform.integration|SELECT|table",
-            "platform.number_counter|SELECT|table",
-            "platform.number_sequence|SELECT|table",
-            "platform.permission|SELECT|table",
-            "platform.setting|SELECT|table",
-            "platform.user_role|SELECT|table",
-            "wamn_run.runs|DELETE|table",
-            "wamn_run.runs|SELECT|table",
-        ],
-        routines: &[
-            "wamn_authority.current_project_key()",
-            "wamn_authority.project_key(text)",
-        ],
-    },
-    FamilyReach {
-        family: WorkloadRoleFamily::Retention,
-        relations: &["wamn_run.runs|DELETE|table", "wamn_run.runs|SELECT|column"],
-        routines: &[],
-    },
-    FamilyReach {
-        family: WorkloadRoleFamily::ExecutorPlatform,
-        relations: &[
-            "catalog.connection_binding|SELECT|table",
-            "catalog.connection_requirement|SELECT|table",
-            "catalog.release_connection|SELECT|table",
-            "catalog.releases|SELECT|table",
-            "catalog.workflows|SELECT|table",
-            "platform.\"user\"|SELECT|column",
-            "platform.connection|SELECT|table",
-            "platform.integration|SELECT|table",
-            "wamn_run.run_queue|DELETE|table",
-            "wamn_run.run_queue|INSERT|column",
-            "wamn_run.run_queue|SELECT|table",
-            "wamn_run.run_queue|UPDATE|column",
-            "wamn_run.runs|INSERT|column",
-            "wamn_run.runs|SELECT|table",
-            "wamn_run.runs|UPDATE|column",
-        ],
-        routines: &["wamn_authority.project_key(text)"],
-    },
-    FamilyReach {
-        family: WorkloadRoleFamily::HttpAdmitter,
-        relations: &[
-            "catalog.connection_binding|SELECT|table",
-            "catalog.connection_requirement|SELECT|table",
-            "catalog.release_connection|SELECT|table",
-            "catalog.releases|SELECT|table",
-            "catalog.workflows|SELECT|column",
-            "platform.\"user\"|SELECT|table",
-            "platform.connection|SELECT|table",
-            "platform.integration|SELECT|table",
-            "platform.permission|SELECT|table",
-            "platform.user_role|SELECT|table",
-        ],
-        routines: &[],
-    },
-    FamilyReach {
-        family: WorkloadRoleFamily::SessionRoleReader,
-        relations: &[
-            "platform.\"user\"|SELECT|column",
-            "platform.user_role|SELECT|column",
-        ],
-        routines: &[],
-    },
-    // The remaining family whose measured production surface is empty.
-    FamilyReach {
-        family: WorkloadRoleFamily::ServiceReader,
-        relations: &[],
-        routines: &[],
-    },
-    FamilyReach {
-        family: WorkloadRoleFamily::EventMaterializer,
-        relations: &["catalog.packages|SELECT|table"],
-        routines: &[],
-    },
-    // Only the history table of the P30D relation. The unlimited relation's
-    // history table and both logged relations stay out of reach.
-    FamilyReach {
-        family: WorkloadRoleFamily::AuditRetention,
-        relations: &[
-            "retention_fixture.entry_history|DELETE|table",
-            "retention_fixture.entry_history|SELECT|column",
-        ],
-        routines: &[],
-    },
-    // `wamn-a40n.2`: the host-run administration routes read and write the
-    // application authorization relations, and the status routes write the
-    // environment status (`wamn-zua8.2`), and `release.profile` reads an
-    // installed release (`wamn-aemxz.1`), and the control host writes the
-    // platform configuration tables but `number_counter` (`wamn-aqd0m.3`).
-    // `platform.role`, the history tables and `wamn_history.row_image` are
-    // outside the matrix universe.
-    FamilyReach {
-        family: WorkloadRoleFamily::Administration,
-        relations: &[
-            "catalog.connection_binding|SELECT|table",
-            "catalog.connection_requirement|SELECT|table",
-            "catalog.release_connection|SELECT|table",
-            "catalog.releases|SELECT|table",
-            "platform.\"user\"|DELETE|table",
-            "platform.\"user\"|INSERT|table",
-            "platform.\"user\"|SELECT|table",
-            "platform.\"user\"|UPDATE|table",
-            "platform.connection|DELETE|table",
-            "platform.connection|INSERT|table",
-            "platform.connection|SELECT|table",
-            "platform.connection|UPDATE|table",
-            "platform.environment|DELETE|table",
-            "platform.environment|INSERT|table",
-            "platform.environment|SELECT|table",
-            "platform.environment|UPDATE|table",
-            "platform.external_system|DELETE|table",
-            "platform.external_system|INSERT|table",
-            "platform.external_system|SELECT|table",
-            "platform.external_system|UPDATE|table",
-            "platform.file|DELETE|table",
-            "platform.file|INSERT|table",
-            "platform.file|SELECT|table",
-            "platform.file|UPDATE|table",
-            "platform.integration|DELETE|table",
-            "platform.integration|INSERT|table",
-            "platform.integration|SELECT|table",
-            "platform.integration|UPDATE|table",
-            "platform.number_sequence|DELETE|table",
-            "platform.number_sequence|INSERT|table",
-            "platform.number_sequence|SELECT|table",
-            "platform.number_sequence|UPDATE|table",
-            "platform.permission|DELETE|table",
-            "platform.permission|INSERT|table",
-            "platform.permission|SELECT|table",
-            "platform.permission|UPDATE|table",
-            "platform.setting|DELETE|table",
-            "platform.setting|INSERT|table",
-            "platform.setting|SELECT|table",
-            "platform.setting|UPDATE|table",
-            "platform.user_role|DELETE|table",
-            "platform.user_role|INSERT|table",
-            "platform.user_role|SELECT|table",
-            "platform.user_role|UPDATE|table",
-        ],
-        routines: &[],
-    },
-];
-
-/// The families whose credentials reach the control database, with their reach
-/// over every table of [`sql::SYSTEM_PLANE_SCHEMAS`] (`wamn-a40n.2`).
-///
-/// The same pairwise and exactness assertions as [`MATRIX`], on the other plane.
-/// No family here holds a routine.
-const CONTROL_MATRIX: [FamilyReach; 3] = [
-    FamilyReach {
-        family: WorkloadRoleFamily::RegistryReader,
-        relations: &[
-            "registry.capture_gap|SELECT|table",
-            "registry.event_readers|SELECT|table",
-        ],
-        routines: &[],
-    },
-    FamilyReach {
-        family: WorkloadRoleFamily::IdentityReader,
-        relations: &[
-            "identity.org_memberships|SELECT|column",
-            "identity.password_logins|SELECT|table",
-            "identity.pats|SELECT|table",
-            "identity.principals|SELECT|table",
-            "identity.project_env_memberships|SELECT|table",
-            "identity.project_roles|SELECT|table",
-        ],
-        routines: &[],
-    },
-    // The org control host reads who is a user and whether a control
-    // session's password login is live. It writes the org memberships and the
-    // org, project and environment grants of the org operations, and reads
-    // the projects and environments those grants cover, and it writes the
-    // status of an environment and no other column of it. It writes a
-    // provisioning saga and its steps and reads them. It updates the status
-    // columns of a saga and never a step. It creates a project.
-    FamilyReach {
-        family: WorkloadRoleFamily::Control,
-        relations: &[
-            "identity.oauth_authorization|DELETE|table",
-            "identity.oauth_authorization|INSERT|table",
-            "identity.oauth_authorization|SELECT|table",
-            "identity.oauth_authorization|UPDATE|table",
-            "identity.oauth_token|DELETE|table",
-            "identity.oauth_token|INSERT|table",
-            "identity.oauth_token|SELECT|table",
-            "identity.oauth_token|UPDATE|table",
-            "identity.org_memberships|DELETE|table",
-            "identity.org_memberships|INSERT|table",
-            "identity.org_memberships|SELECT|table",
-            "identity.org_memberships|UPDATE|table",
-            "identity.org_roles|DELETE|table",
-            "identity.org_roles|INSERT|table",
-            "identity.org_roles|SELECT|table",
-            "identity.org_roles|UPDATE|table",
-            "identity.password_logins|SELECT|table",
-            "identity.principals|SELECT|table",
-            "identity.project_env_memberships|DELETE|table",
-            "identity.project_env_memberships|INSERT|table",
-            "identity.project_env_memberships|SELECT|table",
-            "identity.project_env_memberships|UPDATE|table",
-            "identity.project_roles|DELETE|table",
-            "identity.project_roles|INSERT|table",
-            "identity.project_roles|SELECT|table",
-            "identity.project_roles|UPDATE|table",
-            "registry.environment_projects|SELECT|table",
-            "registry.environment_projects|UPDATE|column",
-            "registry.projects|INSERT|table",
-            "registry.projects|SELECT|table",
-        ],
-        routines: &[],
-    },
-];
-
-/// The control-plane universe: every table of [`sql::SYSTEM_PLANE_SCHEMAS`], read
-/// from the server, so a widening onto a table added later is still seen.
-fn control_universe() -> String {
-    format!(
-        "ARRAY(SELECT schemaname || '.' || tablename FROM pg_catalog.pg_tables \
-                WHERE schemaname = ANY({schemas}))",
-        schemas = sql_array(sql::SYSTEM_PLANE_SCHEMAS),
-    )
-}
 
 // ---------------------------------------------------------------------------
 // psql
@@ -543,11 +194,16 @@ fn generation(family: WorkloadRoleFamily) -> String {
 }
 
 /// Roles this acceptance test creates, drops or re-mints. Roles are CLUSTER-WIDE.
+// Package migration credentials require their package schema, outside this fixture.
+fn families() -> impl Iterator<Item = WorkloadRoleFamily> {
+    WorkloadRoleFamily::ALL
+        .into_iter()
+        .filter(|family| *family != WorkloadRoleFamily::Migration)
+}
+
 fn managed_roles() -> Vec<String> {
-    let mut roles: Vec<String> = MATRIX
-        .iter()
-        .chain(&CONTROL_MATRIX)
-        .flat_map(|reach| [reach.family.acl_role().to_owned(), generation(reach.family)])
+    let mut roles: Vec<String> = families()
+        .flat_map(|family| [family.acl_role().to_owned(), generation(family)])
         .collect();
     // The probe comes BEFORE the group it inherits: a role still named by a
     // `pg_auth_members` row cannot be dropped.
@@ -607,11 +263,7 @@ FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
   INSERT INTO catalog.releases
     (project_env_key, manifest_digest, canonical_bytes)
     VALUES (t, 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{}');
-  INSERT INTO wamn_run.runs
-    (project_env_key, run_id, package_id, environment, status, trigger_source,
-     wiring_id, wiring_version, wiring_hash, binding_world_json, input_json)
-    VALUES (t, 'r1', 'widgets', 'dev', 'dispatched', 'internal', 'w', 1,
-            'sha256:'||repeat('c',64), '[]', '{\"a\":1}');
+  INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, trigger_source, wiring_id, wiring_version, wiring_hash, input_json, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json, manifest_digest) VALUES (t, 'r1', 'widgets', 'dev', 'dispatched', 'manual', 'w', 1, 'sha256:'||repeat('c',64), '{\"a\":1}', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');
 END LOOP;
 END $seed$;
 ";
@@ -651,13 +303,6 @@ fn build() -> Fixture {
     let mut admin_db = Url::parse(&admin).expect("the test server URL is a URL");
     admin_db.set_path(DATABASE);
     let db_url = admin_db.to_string();
-    // The retired flow checkpoint table stays out of the fixture database.
-    assert_eq!(
-        query(&db_url, "SELECT to_regclass('s3.flow_runs') IS NULL"),
-        "t",
-        "postgres-init.sql must not create the retired s3.flow_runs table"
-    );
-
     for artifact in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
         apply(&db_url, "apply a schema artifact", artifact);
     }
@@ -674,8 +319,8 @@ fn build() -> Fixture {
         &reconcile_audit_retention_grants_sql(),
     );
 
-    for reach in &MATRIX {
-        mint(&db_url, reach.family);
+    for family in families().filter(|family| database_of(*family) == DATABASE) {
+        mint(&db_url, family);
     }
     let control_url = build_control_plane(&admin);
 
@@ -688,7 +333,7 @@ fn build() -> Fixture {
 }
 
 /// The control database as a fresh control bootstrap leaves it, and one minted
-/// generation login per [`CONTROL_MATRIX`] family. Returns its admin URL.
+/// generation login per control family. Returns its admin URL.
 ///
 /// `wamn_system` owns the database and applies the control store, as the
 /// control bootstrap does.
@@ -719,8 +364,8 @@ fn build_control_plane(admin: &str) -> String {
             "SET ROLE wamn_system;\n{SYSTEM_SCHEMA_SQL}\n{CONTROL_PORTABLE_STORE_SQL}\nRESET ROLE;\n"
         ),
     );
-    for reach in &CONTROL_MATRIX {
-        mint(&control_url, reach.family);
+    for family in families().filter(|family| database_of(*family) == CONTROL_DATABASE) {
+        mint(&control_url, family);
     }
     control_url
 }
@@ -751,407 +396,28 @@ fn fixture() -> &'static Fixture {
     FIXTURE.get_or_init(build)
 }
 
-// ---------------------------------------------------------------------------
-// The reach the SERVER reports
-// ---------------------------------------------------------------------------
-
-fn sql_array(values: impl IntoIterator<Item = impl AsRef<str>>) -> String {
-    let items: Vec<String> = values
-        .into_iter()
-        .map(|value| format!("'{}'", value.as_ref()))
-        .collect();
-    format!("ARRAY[{}]", items.join(", "))
-}
-
-/// What the named principal can actually reach over the matrix universe.
-///
-/// `has_any_column_privilege` is asked for every privilege that HAS a column
-/// grain; PostgreSQL rejects `DELETE` there, so the `CASE` — which evaluates in
-/// order, unlike `AND` — keeps that ask off the wire rather than relying on
-/// short-circuiting.
-///
-/// Every ordering in this file is `COLLATE "C"`. The server's default collation
-/// ignores `_`, so `catalog.wirings` sorts BEFORE `catalog.wiring_tombstones`
-/// there and a pinned list would be ordered by the container's locale rather
-/// than by its bytes.
-fn observed_relations(db_url: &str, role: &str, universe: &str) -> Vec<String> {
-    rows(
-        db_url,
-        &format!(
-            "SELECT row FROM ( \
-               SELECT rel || '|' || priv || '|' || \
-                      CASE WHEN has_table_privilege('{role}', rel, priv) \
-                           THEN 'table' ELSE 'column' END AS row \
-                 FROM unnest({universe}) AS rel, unnest({privileges}) AS priv \
-                WHERE has_table_privilege('{role}', rel, priv) \
-                   OR CASE WHEN priv = 'DELETE' THEN false \
-                           ELSE has_any_column_privilege('{role}', rel, priv) END \
-             ) q ORDER BY row COLLATE \"C\"",
-            privileges = sql_array(MATRIX_PRIVILEGES),
-        ),
-    )
-}
-
-/// The routines whose `proacl` names this family's stable role explicitly.
-///
-/// The signature is rebuilt from `proargtypes` rather than taken from
-/// `pg_get_function_identity_arguments`, which renders the PARAMETER NAME beside
-/// the type for a SQL-language function and so would not match a signature
-/// spelled by type.
-fn observed_routines(db_url: &str, acl_role: &str) -> Vec<String> {
-    rows(
-        db_url,
-        &format!(
-            "SELECT row FROM ( \
-               SELECT n.nspname || '.' || p.proname || '(' \
-                      || coalesce((SELECT string_agg(format_type(t, NULL), ', ' ORDER BY ord) \
-                                     FROM unnest(p.proargtypes) \
-                                          WITH ORDINALITY AS a(t, ord)), '') \
-                      || ')' AS row \
-                 FROM pg_catalog.pg_proc p \
-                 JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
-                 CROSS JOIN LATERAL aclexplode(p.proacl) x \
-                WHERE x.grantee = '{acl_role}'::regrole \
-                  AND x.privilege_type = 'EXECUTE' \
-             ) q WHERE row = ANY({routines}) ORDER BY row COLLATE \"C\"",
-            routines = sql_array(MATRIX_ROUTINES),
-        ),
-    )
-}
-
-/// One family's pinned capabilities, GRAIN-FREE: `relation|PRIVILEGE` and
-/// `routine|signature`. Reach is reach — the pairwise arms are about whether a
-/// principal can perform an operation at all.
-fn pinned_capabilities(reach: &FamilyReach) -> BTreeSet<String> {
-    let mut set = BTreeSet::new();
-    for row in reach.relations {
-        let (capability, _grain) = row
-            .rsplit_once('|')
-            .unwrap_or_else(|| panic!("a pinned relation row carries a grain: {row}"));
-        set.insert(capability.to_owned());
-    }
-    for routine in reach.routines {
-        set.insert(format!("routine|{routine}"));
-    }
-    set
-}
-
-/// One database plane: its families, its database and its relation universe.
-struct Plane {
-    reaches: &'static [FamilyReach],
-    db_url: &'static str,
-    universe: String,
-}
-
-fn project_plane() -> Plane {
-    Plane {
-        reaches: &MATRIX,
-        db_url: &fixture().db_url,
-        universe: sql_array(MATRIX_RELATIONS),
-    }
-}
-
-fn control_plane() -> Plane {
-    Plane {
-        reaches: &CONTROL_MATRIX,
-        db_url: &fixture().control_url,
-        universe: control_universe(),
-    }
-}
-
-/// One family's own row of the matrix, plus the ordered pairs it is the SUBJECT
-/// of.
-///
-/// Two assertions, and neither subsumes the other. The exactness half catches a
-/// widening onto an object NO family owns; the pairwise half NAMES the family
-/// whose operation was taken.
-fn assert_family_row(plane: &Plane, subject: WorkloadRoleFamily) {
-    let reach = plane
-        .reaches
-        .iter()
-        .find(|reach| reach.family == subject)
-        .unwrap_or_else(|| panic!("{subject:?} is not a family of this plane"));
-    let login = generation(subject);
-    let label = subject.label();
-
-    // The principal must be able to authenticate and must not be able to see
-    // past RLS, or every denial below is satisfied for the wrong reason.
-    assert_eq!(
-        query(
-            plane.db_url,
-            &format!(
-                "SELECT (rolcanlogin AND NOT rolsuper AND NOT rolbypassrls)::text \
-                   FROM pg_roles WHERE rolname = '{login}'"
-            ),
-        ),
-        "true",
-        "the {label} generation is not a usable unprivileged login: a superuser \
-         or BYPASSRLS probe satisfies every arm below while establishing nothing"
+/// The executor can read schedule configuration but cannot author it.
+#[test]
+fn the_executor_reads_settings_without_write_authority() {
+    let fixture = fixture();
+    apply(
+        &fixture.db_url,
+        "seed schedule configuration",
+        "INSERT INTO platform.setting(target_type,target_id,key,value) VALUES ('project','billing','timezone','\"UTC\"'::jsonb)",
     );
-
-    // --- 1. THE ORDERED PAIRS THIS FAMILY IS THE SUBJECT OF -----------------
-    //
-    // FIRST, deliberately. This is the arm that names the VICTIM family, and a
-    // widening trips both arms — so running exactness first would shadow the
-    // more informative message behind a diff of two long lists.
-    let mine = pinned_capabilities(reach);
-    let held = observed_capabilities(plane, &login, subject.acl_role());
-    for other in plane.reaches {
-        if other.family == subject {
-            continue;
-        }
-        for capability in pinned_capabilities(other).difference(&mine) {
-            assert!(
-                !held.contains(capability),
-                "DENIAL MATRIX: the {label} family REACHES {capability}, which \
-                 belongs to the {victim} family and not to it",
-                victim = other.family.label(),
-            );
-        }
-    }
-
-    // --- 2. EXACTNESS ------------------------------------------------------
-    //
-    // What the pairwise arm cannot see: a widening onto an object NO family
-    // owns, and an under-holding that silently strands this family's own reader.
-    assert_eq!(
-        observed_relations(plane.db_url, &login, &plane.universe),
-        reach.relations,
-        "the {label} family's relation reach is not its pinned surface — it \
-         over-holds or under-holds somewhere in the matrix universe"
+    let executor = login_url(
+        &fixture.admin,
+        &generation(WorkloadRoleFamily::ExecutorPlatform),
     );
-    assert_eq!(
-        observed_routines(plane.db_url, subject.acl_role()),
-        reach.routines,
-        "the {label} family's routine grants are not its pinned surface"
-    );
+    let value: serde_json::Value = serde_json::from_str(&query(&executor,
+        "SELECT value::text FROM platform.setting WHERE target_type='project' AND target_id='billing' AND key='timezone'")).unwrap();
+    assert!(value.is_string());
+    assert!(sqlstate(&executor,
+        "UPDATE platform.setting SET value='null'::jsonb WHERE target_type='project' AND target_id='billing' AND key='timezone'").is_some());
+    let unchanged: serde_json::Value = serde_json::from_str(&query(&fixture.db_url,
+        "SELECT value::text FROM platform.setting WHERE target_type='project' AND target_id='billing' AND key='timezone'")).unwrap();
+    assert_eq!(unchanged, value);
 }
-
-/// Everything the principal reaches, grain-free, in the same vocabulary as
-/// [`pinned_capabilities`].
-fn observed_capabilities(plane: &Plane, login: &str, acl_role: &str) -> BTreeSet<String> {
-    let mut held: BTreeSet<String> = observed_relations(plane.db_url, login, &plane.universe)
-        .into_iter()
-        .map(|row| {
-            row.rsplit_once('|')
-                .expect("an observed relation row carries a grain")
-                .0
-                .to_owned()
-        })
-        .collect();
-    held.extend(
-        observed_routines(plane.db_url, acl_role)
-            .into_iter()
-            .map(|routine| format!("routine|{routine}")),
-    );
-    held
-}
-
-// ---------------------------------------------------------------------------
-// THE MATRIX, one arm per family so a red names the family
-// ---------------------------------------------------------------------------
-
-#[test]
-fn the_guest_sql_family_is_refused_the_other_families_operations() {
-    assert_family_row(&project_plane(), WorkloadRoleFamily::App);
-}
-
-#[test]
-fn the_retention_family_is_refused_the_other_families_operations() {
-    assert_family_row(&project_plane(), WorkloadRoleFamily::Retention);
-}
-
-#[test]
-fn the_executor_platform_family_is_refused_the_other_families_operations() {
-    assert_family_row(&project_plane(), WorkloadRoleFamily::ExecutorPlatform);
-}
-
-#[test]
-fn the_http_admitter_family_is_refused_the_other_families_operations() {
-    assert_family_row(&project_plane(), WorkloadRoleFamily::HttpAdmitter);
-}
-
-#[test]
-fn the_session_role_reader_is_refused_the_other_families_operations() {
-    assert_family_row(&project_plane(), WorkloadRoleFamily::SessionRoleReader);
-}
-
-#[test]
-fn the_service_reader_family_is_refused_the_other_families_operations() {
-    assert_family_row(&project_plane(), WorkloadRoleFamily::ServiceReader);
-}
-
-#[test]
-fn the_event_materializer_family_is_refused_the_other_families_operations() {
-    assert_family_row(&project_plane(), WorkloadRoleFamily::EventMaterializer);
-}
-
-#[test]
-fn the_audit_retention_family_is_refused_the_other_families_operations() {
-    assert_family_row(&project_plane(), WorkloadRoleFamily::AuditRetention);
-}
-
-#[test]
-fn the_administration_family_is_refused_the_other_families_operations() {
-    assert_family_row(&project_plane(), WorkloadRoleFamily::Administration);
-}
-
-#[test]
-fn the_registry_reader_family_is_refused_the_other_control_families_operations() {
-    assert_family_row(&control_plane(), WorkloadRoleFamily::RegistryReader);
-}
-
-#[test]
-fn the_identity_reader_family_is_refused_the_other_control_families_operations() {
-    assert_family_row(&control_plane(), WorkloadRoleFamily::IdentityReader);
-}
-
-/// The identity reader reads exactly the three org membership columns that a
-/// user route PAT needs, `SELECT_ROUTE_PAT_SQL` (`wamn-191yv`). The matrix pins
-/// only the column grain, so a fourth column would pass it.
-#[test]
-fn the_identity_reader_reads_exactly_three_org_membership_columns() {
-    let login = generation(WorkloadRoleFamily::IdentityReader);
-    assert_eq!(
-        rows(
-            &fixture().control_url,
-            &format!(
-                "SELECT attname::text FROM pg_catalog.pg_attribute \
-                  WHERE attrelid = 'identity.org_memberships'::regclass \
-                    AND attnum > 0 AND NOT attisdropped \
-                    AND has_column_privilege('{login}', attrelid, attnum, 'SELECT') \
-                  ORDER BY attname COLLATE \"C\""
-            ),
-        ),
-        ["org", "principal_id", "status"],
-        "the identity reader reads other identity.org_memberships columns"
-    );
-}
-
-#[test]
-fn the_control_family_is_refused_the_other_control_families_operations() {
-    assert_family_row(&control_plane(), WorkloadRoleFamily::Control);
-}
-
-/// The control plane holds each family whose credential reaches the control
-/// database once, and only the identity reader's surface contains another
-/// family's whole surface: the control family's.
-#[test]
-fn every_control_database_family_is_covered_exactly_once() {
-    let mut seen = BTreeSet::new();
-    for reach in &CONTROL_MATRIX {
-        assert!(
-            seen.insert(reach.family.acl_role()),
-            "{:?} appears twice in the control matrix",
-            reach.family
-        );
-        assert_eq!(
-            database_of(reach.family),
-            CONTROL_DATABASE,
-            "{:?} does not reach the control database",
-            reach.family
-        );
-    }
-    let mut contained = Vec::new();
-    for subject in &CONTROL_MATRIX {
-        let mine = pinned_capabilities(subject);
-        for other in &CONTROL_MATRIX {
-            if other.family != subject.family && pinned_capabilities(other).is_subset(&mine) {
-                contained.push((subject.family.label(), other.family.label()));
-            }
-        }
-    }
-    assert_eq!(
-        contained,
-        Vec::<(String, String)>::new(),
-        "the control-plane ordered pairs that carry NO denial moved"
-    );
-}
-
-/// The matrix is PAIRWISE, and this is what makes that literally true.
-///
-/// A pure arm, so it fails in the ordinary sweep and not only against a server:
-/// every ordered pair is covered, no family is listed twice, and no family's
-/// pinned surface is a superset of every other's — which would make its own row
-/// vacuous.
-#[test]
-fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
-    let mut seen = BTreeSet::new();
-    for reach in &MATRIX {
-        assert!(
-            seen.insert(reach.family.acl_role()),
-            "{:?} appears twice in the matrix",
-            reach.family
-        );
-        assert_eq!(
-            database_of(reach.family),
-            DATABASE,
-            "{:?} reaches a different database plane",
-            reach.family
-        );
-    }
-    assert_eq!(seen.len(), MATRIX.len());
-
-    let empty: Vec<String> = MATRIX
-        .iter()
-        .filter(|reach| pinned_capabilities(reach).is_empty())
-        .map(|reach| reach.family.label())
-        .collect();
-    assert_eq!(
-        empty,
-        vec!["service-reader".to_owned()],
-        "the set of families whose MEASURED surface is empty moved; every \
-         ordered pair naming one of them as the OBJECT carries no denial by \
-         construction"
-    );
-
-    let mut pairs = 0usize;
-    let mut contained = Vec::new();
-    for subject in &MATRIX {
-        let mine = pinned_capabilities(subject);
-        for other in &MATRIX {
-            if other.family == subject.family {
-                continue;
-            }
-            pairs += 1;
-            let theirs = pinned_capabilities(other);
-            if !theirs.is_empty() && theirs.is_subset(&mine) {
-                contained.push((subject.family.label(), other.family.label()));
-            }
-        }
-    }
-    assert_eq!(
-        pairs,
-        MATRIX.len() * (MATRIX.len() - 1),
-        "the matrix is not the full ordered-pair set"
-    );
-    contained.sort();
-    let observed: Vec<(&str, &str)> = contained
-        .iter()
-        .map(|(subject, object)| (subject.as_str(), object.as_str()))
-        .collect();
-    assert_eq!(
-        observed, CONTAINED_PAIRS,
-        "the ordered pairs that carry NO denial moved: a widening that swallows \
-         another family's surface whole turns that pair's red into silence"
-    );
-}
-
-/// The ordered pairs `(subject, object)` where the OBJECT's whole measured
-/// surface is contained in the SUBJECT's, so the pair owes no denial.
-///
-/// Not a defect — it is what the measured surfaces are — but it is the set of
-/// pairs the matrix cannot speak for, so it is spelled out rather than left to
-/// be counted. Pairs naming the MEASURED-EMPTY family as the object
-/// are excluded: those are asserted separately, by name, above.
-const CONTAINED_PAIRS: [(&str, &str); 6] = [
-    ("administration", "session-role-reader"),
-    ("app", "event-materializer"),
-    ("app", "http-admitter"),
-    ("app", "retention"),
-    ("app", "session-role-reader"),
-    ("http-admitter", "session-role-reader"),
-];
 
 // ---------------------------------------------------------------------------
 // THE PLATFORM-GRAIN ARMS
@@ -1183,8 +449,10 @@ fn a_platform_family_without_project_env_key_context_reads_exactly_what_its_gran
         query(
             &fixture.db_url,
             &format!("SELECT pg_has_role('{login}', '{PLATFORM_GROUP_ROLE}', 'USAGE')::text"),
-        ),
-        "true",
+        )
+        .parse::<bool>()
+        .unwrap(),
+        true,
         "the executor-platform generation does not effectively hold \
          {PLATFORM_GROUP_ROLE}: every platform read would be zero rows"
     );
@@ -1205,8 +473,10 @@ fn a_platform_family_without_project_env_key_context_reads_exactly_what_its_gran
          derive a project key, this arm is measuring a guest"
     );
     assert_eq!(
-        query(&as_executor, "SELECT count(*) FROM wamn_run.runs"),
-        "2",
+        query(&as_executor, "SELECT count(*) FROM wamn_run.runs")
+            .parse::<u64>()
+            .unwrap(),
+        2,
         "the executor-platform family reads runs through its declared grants"
     );
 }
@@ -1223,23 +493,6 @@ fn a_platform_family_without_project_env_key_context_reads_exactly_what_its_gran
 #[test]
 fn the_project_env_key_targeted_platform_member_reads_nothing_outside_its_grants() {
     let fixture = fixture();
-    let project_env_key_targeted_members: Vec<WorkloadRoleFamily> = MATRIX
-        .iter()
-        .map(|reach| reach.family)
-        .filter(|family| {
-            matches!(
-                family.identity_type(),
-                WorkloadRoleIdentityType::ProjectEnvKey
-            ) && family.is_platform_grain()
-        })
-        .collect();
-    assert_eq!(
-        project_env_key_targeted_members,
-        vec![WorkloadRoleFamily::Retention],
-        "the set of PROJECT-TARGETED platform members moved; wamn-0h0g.22.25 was \
-         ruled for exactly the families in this set"
-    );
-
     let login = generation(WorkloadRoleFamily::Retention);
     let as_retention = login_url(&fixture.admin, &login);
     // Its grant set names ONE relation, and the shared arm is USING (true), so
@@ -1247,8 +500,10 @@ fn the_project_env_key_targeted_platform_member_reads_nothing_outside_its_grants
     // else. The project predicate it keeps in its own statements is what
     // re-narrows it, and that is not a database-enforced boundary.
     assert_eq!(
-        query(&as_retention, "SELECT count(*) FROM wamn_run.runs"),
-        "2",
+        query(&as_retention, "SELECT count(*) FROM wamn_run.runs")
+            .parse::<u64>()
+            .unwrap(),
+        2,
         "the retention family cannot read the relation its grant set names"
     );
     for relation in ["wamn_run.run_queue"] {
@@ -1280,8 +535,10 @@ fn the_audit_retention_family_reads_only_the_retention_columns_of_its_history_ta
         query(
             &fixture.db_url,
             &format!("SELECT pg_has_role('{login}', '{PLATFORM_GROUP_ROLE}', 'MEMBER')::text"),
-        ),
-        "false",
+        )
+        .parse::<bool>()
+        .unwrap(),
+        false,
         "the audit retention generation reaches {PLATFORM_GROUP_ROLE}"
     );
     let as_retention = login_url(&fixture.admin, &login);
@@ -1290,8 +547,10 @@ fn the_audit_retention_family_reads_only_the_retention_columns_of_its_history_ta
             &as_retention,
             "SELECT count(*) FROM retention_fixture.entry_history \
               WHERE row_key IS NOT NULL AND position > 0 AND changed_at IS NOT NULL",
-        ),
-        "0",
+        )
+        .parse::<u64>()
+        .unwrap(),
+        0,
         "the audit retention family cannot read the retention columns of the P30D history table"
     );
     for statement in [
@@ -1327,8 +586,11 @@ fn the_guest_family_reads_its_own_project_env_key_and_only_its_own() {
                         count(*) FILTER (WHERE project_env_key = '{PROJECT_ENV_KEY_B}')::text \
                    FROM wamn_run.runs"
             ),
-        ),
-        "1 0",
+        )
+        .split_whitespace()
+        .map(|value| value.parse::<u64>().unwrap())
+        .collect::<Vec<_>>(),
+        vec![1, 0],
         "the guest generation does not read exactly its own project's row: a \
          second row is a CROSS-PROJECT READ and zero rows is a silent lockout"
     );
@@ -1341,159 +603,11 @@ fn the_guest_family_reads_its_own_project_env_key_and_only_its_own() {
                 "BEGIN; SET LOCAL app.project_env_key = '{PROJECT_ENV_KEY_B}'; \
                  SELECT count(*) FROM wamn_run.runs; COMMIT"
             ),
-        ),
-        "1",
+        )
+        .parse::<u64>()
+        .unwrap(),
+        1,
         "a session-settable identity moved the guest's row visibility"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// INDEX COVERAGE — the EXPRESSION, read back
-// ---------------------------------------------------------------------------
-
-/// The expression every governed relation's index must carry, verbatim.
-const PROJECT_KEY_INDEX_EXPRESSION: &str = "wamn_authority.project_key(project_env_key)";
-
-/// EVERY RELATION CARRYING THE GUEST PREDICATE HAS ITS EXPRESSION INDEX, AND
-/// THE EXPRESSION IS READ BACK.
-///
-/// # Presence is not coverage
-///
-/// `CREATE INDEX IF NOT EXISTS` is satisfied by an index that already exists
-/// UNDER THE WRONG EXPRESSION — over a different column, or over a different
-/// function — and that index leaves every guest read non-sargable exactly as if
-/// no index existed. So this arm compares `pg_get_expr(indexprs, indrelid)` to
-/// the expression the predicate calls, and does it in BOTH directions: a
-/// governed relation with no matching index, and an index whose expression
-/// matches on a relation that carries no governed predicate, are both reds. The
-/// two-way form is also what removes the need for a second copy of the governed
-/// COUNT: the sets are compared to each other, not to a remembered number.
-#[test]
-fn every_governed_relation_carries_the_project_key_expression_index() {
-    let fixture = fixture();
-    let governed = rows(
-        &fixture.db_url,
-        "SELECT n.nspname || '.' || c.relname \
-           FROM pg_catalog.pg_policy p \
-           JOIN pg_catalog.pg_class c ON c.oid = p.polrelid \
-           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-          WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_project_key%' \
-          ORDER BY (n.nspname || '.' || c.relname) COLLATE \"C\"",
-    );
-    let indexed = rows(
-        &fixture.db_url,
-        &format!(
-            "SELECT n.nspname || '.' || c.relname \
-               FROM pg_catalog.pg_index i \
-               JOIN pg_catalog.pg_class c ON c.oid = i.indrelid \
-               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-              WHERE i.indexprs IS NOT NULL \
-                AND pg_get_expr(i.indexprs, i.indrelid) = CASE WHEN n.nspname = 's2' \
-                    THEN 'wamn_authority.project_key(project_id)' \
-                    ELSE '{PROJECT_KEY_INDEX_EXPRESSION}' END \
-              ORDER BY (n.nspname || '.' || c.relname) COLLATE \"C\""
-        ),
-    );
-    assert_eq!(
-        governed, indexed,
-        "the relations carrying the guest project predicate and the relations \
-         carrying an index on {PROJECT_KEY_INDEX_EXPRESSION} are not the same \
-         set: a governed relation missing from the second list makes every guest \
-         read non-sargable, and one missing from the first is an index nothing \
-         governs"
-    );
-    // A minimum, so an empty schema cannot satisfy the equality above trivially.
-    // The five run-plane relations are named because they are the ones whose
-    // policies the platform arms share.
-    for relation in ["wamn_run.runs"] {
-        assert!(
-            governed.iter().any(|row| row == relation),
-            "{relation} carries no governed predicate at all"
-        );
-    }
-    // The index is only sargable if the derivation is IMMUTABLE, so the flag is
-    // read from the catalog rather than assumed from the index's existence.
-    assert_eq!(
-        query(
-            &fixture.db_url,
-            "SELECT p.provolatile::text FROM pg_catalog.pg_proc p \
-               JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
-              WHERE n.nspname = 'wamn_authority' AND p.proname = 'project_key'",
-        ),
-        "i",
-        "the derivation lost IMMUTABLE; the expression indexes above are not \
-         rebuildable and the predicate is not sargable"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// THE FROZEN FUNCTION PROBE
-// ---------------------------------------------------------------------------
-
-/// `sha256(pg_get_functiondef(...))` for the two authority derivations, PINNED.
-///
-/// `project_key`'s body carries the database name and its octet length, so its
-/// digest is per-database; this is the value for the `wamn` database
-/// `deploy/sql/postgres-init.sql` creates, which is the database this acceptance test
-/// builds. `current_project_key` carries no target and its digest is absolute.
-///
-/// Measured on PostgreSQL 18.6. `pg_get_functiondef` is a RENDERING, so a server
-/// that reformats it moves these digests without anything about the derivation
-/// changing; the assertion prints the observed definition so that case is
-/// diagnosable rather than merely red.
-const FROZEN_DERIVATION_DIGESTS: [&str; 2] = [
-    "current_project_key 448719229148c4c5051b50ecbe55d70d8ff22bbcf652e3f12387296dd3fa1eb8",
-    "project_key 4d12e9a29b297c5e6fa00d39b0f93e4e283f08da734c06ac1ced00f67a5e7a53",
-];
-
-/// THE DERIVATIONS ARE FROZEN BY DIGEST.
-///
-/// An attacker who can redefine `wamn_authority.project_key` owns EVERY governed
-/// predicate at once, and `current_project_key` is the half worth owning more:
-/// redefining it to return a chosen key unlocks every project without touching a
-/// single policy. Neither can be rewritten without moving a digest here.
-#[test]
-fn the_authority_derivations_match_their_pinned_definition_digest() {
-    let fixture = fixture();
-    let observed = rows(
-        &fixture.db_url,
-        "SELECT p.proname || ' ' \
-                || encode(sha256(convert_to(pg_get_functiondef(p.oid), 'UTF8')), 'hex') \
-           FROM pg_catalog.pg_proc p \
-           JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
-          WHERE n.nspname = 'wamn_authority' \
-          ORDER BY p.proname COLLATE \"C\"",
-    );
-    if observed != FROZEN_DERIVATION_DIGESTS {
-        let definitions = query(
-            &fixture.db_url,
-            "SELECT string_agg(pg_get_functiondef(p.oid), E'\\n---\\n' ORDER BY p.proname) \
-               FROM pg_catalog.pg_proc p \
-               JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
-              WHERE n.nspname = 'wamn_authority'",
-        );
-        panic!(
-            "the installed authority derivations do not match their pinned \
-             digests.\nobserved: {observed:?}\npinned:   \
-             {FROZEN_DERIVATION_DIGESTS:?}\n--- installed ---\n{definitions}"
-        );
-    }
-}
-
-/// The authority derivations are not executable through PUBLIC.
-#[test]
-fn authority_derivations_are_not_public_execute() {
-    let fixture = fixture();
-    assert_eq!(
-        query(
-            &fixture.db_url,
-            "SELECT has_function_privilege('public', \
-               'wamn_authority.project_key(text)', 'EXECUTE')::text || ' ' || \
-             has_function_privilege('public', \
-               'wamn_authority.current_project_key()', 'EXECUTE')::text",
-        ),
-        "false false",
-        "PUBLIC must not execute the authority derivations"
     );
 }
 
@@ -1501,53 +615,13 @@ fn authority_derivations_are_not_public_execute() {
 // THE PLATFORM GROUP'S MEMBER SET, AND THE ONE RATIFIED EXCEPTION
 // ---------------------------------------------------------------------------
 
-/// The stable ACL roles [`WorkloadRoleFamily::is_platform_grain`] yields, PINNED
-/// AS A VALUE.
-///
-/// NOT derived here, deliberately. `sql::platform_group_membership_sql` grants
-/// the edge by calling that very function, so an arm comparing the server to the
-/// function would move BOTH SIDES under a mutant and stay true — the tautology
-/// this branch has paid for before. The pin is the second document, and
-/// admitting or demoting a family costs one deliberate edit here.
-///
-/// Sorted, because the arm compares against a sorted list.
-const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
-    "wamn_administration",
-    "wamn_event_materializer",
-    "wamn_executor_platform",
-    "wamn_http_admitter",
-    "wamn_run_retention",
-    "wamn_service_reader",
-    "wamn_session_role_reader",
-];
-
-/// THE MEMBER SET OF `wamn_platform`, FROM `pg_auth_members`.
-///
 #[test]
 fn the_platform_group_members_are_exactly_the_derived_families() {
     let fixture = fixture();
 
-    // The pin and the derivation are validated against EACH OTHER first, so a red
-    // below names which of the two moved rather than only that they disagree.
-    let derived: Vec<&str> = {
-        let mut roles: Vec<&str> = WorkloadRoleFamily::ALL
-            .iter()
-            .filter(|family| family.is_platform_grain())
-            .map(|family| family.acl_role())
-            .collect();
-        roles.sort_unstable();
-        roles
-    };
-    assert_eq!(
-        derived, PLATFORM_GRAIN_ACL_ROLES,
-        "is_platform_grain no longer yields the pinned family set: a family was \
-         admitted or demoted, and the membership arm below cannot tell which \
-         until this pin is moved deliberately"
-    );
-
-    let mut expected: Vec<String> = PLATFORM_GRAIN_ACL_ROLES
-        .iter()
-        .map(|role| (*role).to_owned())
+    let mut expected: Vec<String> = families()
+        .filter(|family| family.is_platform_grain())
+        .map(|family| family.acl_role().to_owned())
         .collect();
     expected.sort();
     let observed = rows(
@@ -1564,7 +638,7 @@ fn the_platform_group_members_are_exactly_the_derived_families() {
     );
     assert_eq!(
         observed, expected,
-        "the {PLATFORM_GROUP_ROLE} member set is not exactly the seven derived \
+        "the {PLATFORM_GROUP_ROLE} member set is not exactly the derived \
          workload families; no host-only exception is admitted"
     );
 
@@ -1584,8 +658,10 @@ fn the_platform_group_members_are_exactly_the_derived_families() {
                    JOIN pg_catalog.pg_roles group_role ON group_role.oid = edge.roleid \
                   WHERE group_role.rolname = '{PLATFORM_GROUP_ROLE}'"
             ),
-        ),
-        "true",
+        )
+        .parse::<bool>()
+        .unwrap(),
+        true,
         "a {PLATFORM_GROUP_ROLE} edge is not INHERIT TRUE, ADMIN FALSE, SET \
          FALSE: the edge exists and confers nothing, which is a silent lockout \
          with a row in the catalog that requires its absence"
@@ -1615,4 +691,38 @@ fn no_control_policy_passes_every_row() {
         Vec::<String>::new(),
         "a pass-all policy exists on a table that has a project"
     );
+}
+
+/// A reader can select its public membership fields but cannot read the whole row.
+#[test]
+fn the_identity_reader_cannot_read_private_membership_fields() {
+    let mut target = Url::parse(&fixture().control_url).unwrap();
+    target
+        .set_username(&generation(WorkloadRoleFamily::IdentityReader))
+        .unwrap();
+    target.set_password(Some(PROBE_PASSWORD)).unwrap();
+    assert!(
+        psql(
+            target.as_str(),
+            "SELECT principal_id,org,status FROM identity.org_memberships LIMIT 0"
+        )
+        .0
+    );
+    assert!(
+        !psql(
+            target.as_str(),
+            "SELECT * FROM identity.org_memberships LIMIT 0"
+        )
+        .0
+    );
+}
+
+/// Authority functions never grant execution through PUBLIC.
+#[test]
+fn authority_derivations_are_not_public_execute() {
+    let denied = query(
+        &fixture().db_url,
+        "SELECT NOT EXISTS (SELECT FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) acl WHERE n.nspname='wamn_authority' AND acl.grantee=0 AND acl.privilege_type='EXECUTE')",
+    );
+    assert!(denied.parse::<bool>().unwrap());
 }

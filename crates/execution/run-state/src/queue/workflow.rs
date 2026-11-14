@@ -13,101 +13,27 @@ use crate::RunStatus;
 /// The `available_at` of a parked queue row.
 const PARKED_AT: &str = "'infinity'::timestamptz";
 
-/// Admit one event workflow with its executor, actor, frozen nodes and delivery id.
-/// Binds: `project_env_key`, application, release, environment, workflow, version, hash,
-/// principal, role, delivery, actor, node digests, key, input,
-/// source run, root run, depth.
-pub fn insert_event_run_sql() -> String {
+/// Admit a workflow run with its frozen identity and trigger metadata.
+/// Binds: project, application, release, environment, workflow, version, hash,
+/// principal, role, trigger, invoker, invoking user, nodes, key, input, parent, root, depth.
+pub fn insert_run_sql() -> String {
     format!(
         "INSERT INTO runs (project_env_key, package_id, manifest_digest, environment, \
-             wiring_id, wiring_version, wiring_hash, trigger_source, \
-             execution_principal_id, execution_role, invoked_by, invoked_by_user_id, \
-             node_digests_json, idempotency_key, input_json, status, \
-             event_source_run_id, event_root_run_id, event_depth) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'event', $8::text::uuid, $9, $10, \
-                 $11::text::uuid, $12::text::jsonb, $13, $14::text::jsonb, '{dispatched}', $15, $16, $17) \
-         ON CONFLICT (project_env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
-         RETURNING run_id",
-        dispatched = RunStatus::Dispatched.as_sql(),
+        wiring_id, wiring_version, wiring_hash, execution_principal_id, execution_role, \
+        trigger_source, invoked_by, invoked_by_user_id, node_digests_json, idempotency_key, \
+        input_json, status, event_source_run_id, event_root_run_id, event_depth) \
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::uuid, $9, $10, $11, \
+            $12::text::uuid, $13::text::jsonb, $14, $15::text::jsonb, '{dispatched}', $16, $17, $18) \
+        ON CONFLICT (project_env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
+        RETURNING run_id",
+        dispatched = RunStatus::Dispatched.as_sql()
     )
 }
 
-/// Read the original event run by project, idempotency key and input.
-pub fn select_event_run_sql() -> &'static str {
+/// Read an earlier admission with the same key, trigger and input.
+pub fn select_run_sql() -> &'static str {
     "SELECT run_id FROM runs WHERE project_env_key = $1 AND idempotency_key = $2 \
-        AND trigger_source = 'event' AND input_json = $3::text::jsonb"
-}
-
-/// Admit one manual run of an environment workflow
-/// (docs/architecture/execution.md#environment-workflows): the host admits it
-/// against the release it serves, and the run carries its executing principal
-/// and active role, its caller and the component digest of every node. `ON
-/// CONFLICT DO NOTHING` on the idempotency key returns no row for a repeated
-/// key, and the caller then reads the first run with [`select_manual_run_sql`].
-///
-/// Binds: `$1` `project_env_key`, `$2` application package, `$3` release manifest
-/// digest, `$4` environment, `$5` workflow id, `$6` workflow version, `$7`
-/// wiring hash, `$8` executing principal, `$9` execution role, `$10` the
-/// invoking user, `$11` node digests JSON text, `$12` idempotency key, `$13`
-/// input JSON text.
-pub fn insert_manual_run_sql() -> String {
-    format!(
-        "INSERT INTO runs (project_env_key, package_id, manifest_digest, environment, \
-             wiring_id, wiring_version, wiring_hash, trigger_source, \
-             execution_principal_id, execution_role, invoked_by, invoked_by_user_id, \
-             node_digests_json, idempotency_key, input_json, status) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', $8::text::uuid, $9, 'manual', \
-                 $10::text::uuid, $11::text::jsonb, $12, $13::text::jsonb, '{dispatched}') \
-         ON CONFLICT (project_env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
-         RETURNING run_id",
-        dispatched = RunStatus::Dispatched.as_sql(),
-    )
-}
-
-/// The run a repeated manual start admitted first: the same key and the
-/// same input. It returns no row when the key belongs to another input or
-/// another grain.
-///
-/// Binds: `$1` `project_env_key`, `$2` idempotency key, `$3` input JSON text.
-pub fn select_manual_run_sql() -> &'static str {
-    "SELECT run_id FROM runs WHERE project_env_key = $1 AND idempotency_key = $2 \
-        AND trigger_source = 'manual' AND input_json = $3::text::jsonb"
-}
-
-/// Admit one schedule run of an environment workflow
-/// (docs/architecture/execution.md#workflows): the host admits it at a due
-/// moment against the release it serves. The run executes as the `workflow`
-/// user with one role, is invoked by the schedule with no user, and carries the
-/// component digest of every node. `ON CONFLICT DO NOTHING` on the idempotency
-/// key returns no row for a repeated due moment, and the caller then reads the
-/// first run with [`select_workflow_schedule_run_sql`].
-///
-/// Binds: `$1` `project_env_key`, `$2` application package, `$3` release manifest
-/// digest, `$4` environment, `$5` workflow id, `$6` workflow version, `$7`
-/// wiring hash, `$8` executing principal, `$9` execution role, `$10` node
-/// digests JSON text, `$11` idempotency key, `$12` input JSON text.
-pub fn insert_workflow_schedule_run_sql() -> String {
-    format!(
-        "INSERT INTO runs (project_env_key, package_id, manifest_digest, environment, \
-             wiring_id, wiring_version, wiring_hash, trigger_source, \
-             execution_principal_id, execution_role, invoked_by, \
-             node_digests_json, idempotency_key, input_json, status) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'schedule', $8::text::uuid, $9, 'schedule', \
-                 $10::text::jsonb, $11, $12::text::jsonb, '{dispatched}') \
-         ON CONFLICT (project_env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
-         RETURNING run_id",
-        dispatched = RunStatus::Dispatched.as_sql(),
-    )
-}
-
-/// The run an earlier admission of the same due moment wrote: the same key
-/// and the same input. It returns no row when the key belongs to another
-/// input or another grain.
-///
-/// Binds: `$1` `project_env_key`, `$2` idempotency key, `$3` input JSON text.
-pub fn select_workflow_schedule_run_sql() -> &'static str {
-    "SELECT run_id FROM runs WHERE project_env_key = $1 AND idempotency_key = $2 \
-        AND trigger_source = 'schedule' AND input_json = $3::text::jsonb"
+        AND input_json = $3::text::jsonb AND trigger_source = $4"
 }
 
 /// Queue one admitted run. Binds: `$1` `project_env_key`, `$2` run id.

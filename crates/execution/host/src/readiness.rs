@@ -60,7 +60,6 @@ async fn prepare_synchronous_release(
             &operations.project,
             &operations.release.target().project_env_key,
             operations.release.release().manifest_digest.as_str(),
-            &operations.release.target().environment,
             &digests,
         )
         .await?;

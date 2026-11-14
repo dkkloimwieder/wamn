@@ -62,6 +62,7 @@ wamn-identity-protocol = { workspace = true }
 wamn-runtime = { workspace = true }
 
 [dev-dependencies]
+wamn-kubernetes.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 reqwest = { workspace = true, features = ["rustls"] }
 wit-parser = { workspace = true }

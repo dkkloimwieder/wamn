@@ -595,12 +595,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
              SELECT t, 'platform_fixture', '1.0.0', {hash} \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              \n\
-             INSERT INTO wamn_run.runs \
-               (project_env_key, run_id, package_id, environment, \
-                wiring_id, wiring_version, wiring_hash, binding_world_json) \
-             SELECT t, 'r', 'platform_fixture', 'dev', 'fixture', 1, \
-                    'sha256:' || repeat('d', 64), '[]'::jsonb \
-               FROM unnest(ARRAY['t1', 't2']) AS t;\n",
+             INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) SELECT project_env_key,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}' FROM catalog.packages GROUP BY project_env_key ON CONFLICT DO NOTHING; INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, wiring_id, wiring_version, wiring_hash, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json, manifest_digest) SELECT t, 'r', 'platform_fixture', 'dev', 'fixture', 1, 'sha256:' || repeat('d', 64), 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{{}}', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' FROM unnest(ARRAY['t1', 't2']) AS t;\n",
             wamn_control_provision::PlatformComponent::Provisioning.principal_id()
         ),
     );

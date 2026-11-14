@@ -6,97 +6,20 @@
 //! create case posts `widget.create` request elements and reads `inventory.widget` and
 //! `platform.write_log` directly: a retry with the same request answers the stored
 //! result and adds no row, a changed request is refused, a refused request element
-//! leaves its key free, and two concurrent calls with one key write one row. The batch
-//! case posts `widget.record_batch`: a retry with its lines in another order and its
-//! amounts spelled another way is the same request.
+//! leaves its key free, and two concurrent calls with one key write one row.
+//! The batch retry case now runs in the `application_routes_kind` product target.
 
 use sqlx::Row as _;
 use std::path::PathBuf;
 
-use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 use crate::local_application::{LocalApplication, LocalApplicationConfig, LocalPackage};
 
-struct Routes {
-    endpoint: String,
-    host: String,
-    bearer: String,
-    client: reqwest::Client,
-}
-
-impl Routes {
-    /// Post one `widget.create` request element, and return its answer request element.
-    async fn create(
-        &self,
-        request_id: &str,
-        key: &str,
-        id: &str,
-        code: &str,
-    ) -> anyhow::Result<Value> {
-        self.post(
-            "/widget/create",
-            json!({"request_id": request_id, "id": id, "idempotency_key": key, "code": code}),
-        )
-        .await
-    }
-
-    /// Post one `widget.record_batch` request element with `lines` of `[widget_id,
-    /// amount]`, and return its answer request element.
-    async fn record_batch(
-        &self,
-        request_id: &str,
-        key: &str,
-        lines: &[(&str, &str)],
-    ) -> anyhow::Result<Value> {
-        let line = lines
-            .iter()
-            .map(|(widget_id, amount)| json!({"widget_id": widget_id, "amount": amount}))
-            .collect::<Vec<_>>();
-        self.post(
-            "/widget/record_batch",
-            json!({"request_id": request_id, "value": {
-                "idempotency_key": key,
-                "note": null,
-                "maker_id": null,
-                "expected_edit_version": "1",
-                "grade": "first",
-                "inspector_id": null,
-                "line": line,
-            }}),
-        )
-        .await
-    }
-
-    /// Post one request element to `path`, and return its answer request element
-    /// without its request id.
-    async fn post(&self, path: &str, request_element: Value) -> anyhow::Result<Value> {
-        let request_id = request_element["request_id"].clone();
-        let response = self
-            .client
-            .post(format!("{}{path}", self.endpoint))
-            .header("Host", &self.host)
-            .bearer_auth(&self.bearer)
-            .json(&json!([request_element]))
-            .send()
-            .await?;
-        let status = response.status().as_u16();
-        let text = response.text().await?;
-        anyhow::ensure!(status == 200, "{path} answered {status}: {text}");
-        let answer: Value = serde_json::from_str(&text)?;
-        let mut request_element = answer[0].clone();
-        anyhow::ensure!(
-            request_element["request_id"] == request_id,
-            "the answer keeps the request id: {answer}"
-        );
-        request_element
-            .as_object_mut()
-            .context("an answer request element is an object")?
-            .remove("request_id");
-        Ok(request_element)
-    }
-}
+#[path = "../tests/support/write_log_routes.rs"]
+mod write_log_routes;
+use write_log_routes::Routes;
 
 async fn start(
     system_url: &str,
@@ -280,122 +203,6 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
     let answer: Value = serde_json::from_str(&text)?;
     anyhow::ensure!(answer[1]["error"]["code"] == "idempotency_conflict");
     anyhow::ensure!(counts(&mut database, "k-3").await? == (1, 1));
-
-    application.shutdown().await?;
-    Ok(())
-}
-
-/// A retry of `widget.record_batch` with its lines in another order and its
-/// amounts spelled another way answers the stored result, because the host
-/// applies the route's canonical form before it hashes the request element. A retry with
-/// another amount is another request (`docs/history/host-transaction.md` 7,
-/// ruling (a)).
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
-async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
-    );
-    let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
-    let scratch = ScratchRoot::create()?;
-    let (application, routes) = start(system.url(), project.url(), &scratch).await?;
-    let mut database = wamn_postgres::connect(project.url()).await?;
-
-    let mut widgets = Vec::new();
-    for (key, code) in [("w-1", "standard"), ("w-2", "priority")] {
-        let created = routes
-            .create(key, key, &uuid::Uuid::now_v7().to_string(), code)
-            .await?;
-        widgets.push(
-            created["value"]["id"]
-                .as_str()
-                .with_context(|| format!("the create answers an id: {created}"))?
-                .to_owned(),
-        );
-    }
-    let (first, second) = (widgets[0].as_str(), widgets[1].as_str());
-
-    let recorded = routes
-        .record_batch("b-1", "k-batch", &[(second, "1.50"), (first, "2")])
-        .await?;
-    anyhow::ensure!(
-        recorded.get("value").is_some(),
-        "the first batch records: {recorded}"
-    );
-    let retry = routes
-        .record_batch("b-2", "k-batch", &[(first, "02"), (second, "01.50")])
-        .await?;
-    anyhow::ensure!(
-        retry == recorded,
-        "a retry with reordered lines answers {recorded}, not {retry}"
-    );
-    let changed = routes
-        .record_batch("b-3", "k-batch", &[(first, "3"), (second, "1.50")])
-        .await?;
-    anyhow::ensure!(
-        changed["error"]["code"] == "idempotency_conflict"
-            && changed["error"]["detail"]["field"] == "value.idempotency_key",
-        "a changed amount is another request: {changed}"
-    );
-    let logged: i64 = sqlx::query(
-        "SELECT count(*) FROM platform.write_log \
-              WHERE operation = 'platform-fixture:widget/record-batch' \
-                AND idempotency_key = 'k-batch'",
-    )
-    .fetch_one(&mut database)
-    .await?
-    .get(0);
-    anyhow::ensure!(logged == 1, "one key logs one row, not {logged}");
-
-    let element = |request_id: &str, key: &str, amount: &str| {
-        json!({
-            "request_id": request_id,
-            "value": {
-                "idempotency_key": key,
-                "note": null,
-                "maker_id": null,
-                "expected_edit_version": "1",
-                "grade": "first",
-                "inspector_id": null,
-                "line": [{"widget_id": first, "amount": amount}],
-            }
-        })
-    };
-    let response = routes
-        .client
-        .post(format!("{}/widget/record_batch", routes.endpoint))
-        .header("Host", &routes.host)
-        .bearer_auth(&routes.bearer)
-        .json(&json!([
-            element("sibling-before", "sibling-before", "1"),
-            element("refused-element", "refused-element", "-1"),
-            element("sibling-after", "sibling-after", "2"),
-        ]))
-        .send()
-        .await?;
-    assert_eq!(response.status(), reqwest::StatusCode::OK);
-    let answer: Value = response.json().await?;
-    assert_eq!(answer.as_array().unwrap().len(), 3);
-    for (index, request_id) in [(0, "sibling-before"), (2, "sibling-after")] {
-        assert_eq!(answer[index]["request_id"], request_id);
-        assert!(answer[index].get("value").is_some(), "{answer}");
-    }
-    assert_eq!(answer[1]["request_id"], "refused-element");
-    assert_eq!(answer[1]["error"]["code"], "invalid_input");
-    let committed: Vec<String> = sqlx::query(
-        "SELECT idempotency_key FROM platform.write_log
-         WHERE operation = 'platform-fixture:widget/record-batch'
-         AND idempotency_key IN ('sibling-before', 'refused-element', 'sibling-after')
-         ORDER BY idempotency_key",
-    )
-    .fetch_all(&mut database)
-    .await?
-    .into_iter()
-    .map(|row| row.get(0))
-    .collect();
-    assert_eq!(committed, ["sibling-after", "sibling-before"]);
 
     application.shutdown().await?;
     Ok(())

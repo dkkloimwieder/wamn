@@ -9,7 +9,7 @@ use wamn_environment::author_workflow::{
 };
 use wamn_environment::workflow_lifecycle::WorkflowVersion;
 use wamn_identity_protocol::PrincipalId;
-use wamn_workflow::{PostgresWorkflows, Workflows as _};
+use wamn_workflow::PostgresWorkflows;
 
 use crate::execution::Execution;
 

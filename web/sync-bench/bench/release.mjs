@@ -1,6 +1,7 @@
 /** Two built shells and two generated bindings against the local WMS host. */
 import assert from "node:assert/strict";
-import { request } from "node:http";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -18,6 +19,8 @@ const outDir = resolve(scratch, "shell");
 // The two bindings import @wfe/sync, so they live inside this package, where it resolves.
 const bindings = resolve(root, "src/generated/release");
 const endpoint = new URL(process.env.WAMN_ENDPOINT);
+const request = endpoint.protocol === "https:" ? httpsRequest : httpRequest;
+const apiPrefix = endpoint.pathname.replace(/\/$/, "");
 const audience = process.env.WAMN_AUD;
 const user = process.env.WAMN_USER_ID;
 const locationId = process.env.WAMN_LOCATION_ID;
@@ -85,7 +88,7 @@ const proxy = {
           hostname: endpoint.hostname,
           port: endpoint.port,
           method: incoming.method,
-          path: url.pathname.slice("/wamn".length) + url.search,
+          path: apiPrefix + url.pathname.slice("/wamn".length) + url.search,
           headers,
         },
         (response) => {

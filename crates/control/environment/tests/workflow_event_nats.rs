@@ -92,10 +92,14 @@ mod event_batch {
                 .route_event(&mut fixture.postgres, &admission)
                 .await
                 .unwrap();
-            events
-                .admit_application_events(&fixture.postgres, &billing)
-                .await
-                .unwrap();
+            wamn_workflow::event_admission::admit_application_events(
+                &events,
+                &fixture.postgres,
+                PROJECT,
+                &billing,
+            )
+            .await
+            .unwrap();
             let delivery = format!("event:{sequence}:{id}");
             expected.insert(
                 ("billing".to_owned(), delivery.clone()),
@@ -129,34 +133,50 @@ mod event_batch {
                 let mut messages = consumer.fetch().max_messages(1).messages().await.unwrap();
                 let message = messages.next().await.unwrap().unwrap();
                 assert!(
-                    fixture
-                        .postgres
-                        .admit_event_batch(PROJECT, &retired, &admission)
-                        .await
-                        .is_err(),
+                    wamn_workflow::event_admission::admit_event_batch(
+                        &fixture.postgres,
+                        PROJECT,
+                        &retired,
+                        &admission
+                    )
+                    .await
+                    .is_err(),
                     "a host cannot admit a workflow absent from its loaded manifest"
                 );
-                fixture
-                    .postgres
-                    .admit_event_batch(PROJECT, loaded, &admission)
-                    .await
-                    .unwrap();
+                wamn_workflow::event_admission::admit_event_batch(
+                    &fixture.postgres,
+                    PROJECT,
+                    loaded,
+                    &admission,
+                )
+                .await
+                .unwrap();
                 message
                     .ack_with(async_nats::jetstream::AckKind::Nak(None))
                     .await
                     .unwrap();
-                events
-                    .admit_application_events(&fixture.postgres, &retired)
-                    .await
-                    .unwrap();
+                wamn_workflow::event_admission::admit_application_events(
+                    &events,
+                    &fixture.postgres,
+                    PROJECT,
+                    &retired,
+                )
+                .await
+                .unwrap();
             } else if lsn == 41 {
                 let (old, new) = tokio::join!(
-                    fixture
-                        .postgres
-                        .admit_event_batch(PROJECT, &fixture.release, &admission),
-                    fixture
-                        .postgres
-                        .admit_event_batch(PROJECT, &upgraded, &admission),
+                    wamn_workflow::event_admission::admit_event_batch(
+                        &fixture.postgres,
+                        PROJECT,
+                        &fixture.release,
+                        &admission
+                    ),
+                    wamn_workflow::event_admission::admit_event_batch(
+                        &fixture.postgres,
+                        PROJECT,
+                        &upgraded,
+                        &admission
+                    ),
                 );
                 old.unwrap();
                 new.unwrap();
@@ -168,15 +188,23 @@ mod event_batch {
                     ]
                     .contains(&expected_digest.as_str())
                 );
-                events
-                    .admit_application_events(&fixture.postgres, &upgraded)
-                    .await
-                    .unwrap();
+                wamn_workflow::event_admission::admit_application_events(
+                    &events,
+                    &fixture.postgres,
+                    PROJECT,
+                    &upgraded,
+                )
+                .await
+                .unwrap();
             } else {
-                events
-                    .admit_application_events(&fixture.postgres, loaded)
-                    .await
-                    .unwrap();
+                wamn_workflow::event_admission::admit_application_events(
+                    &events,
+                    &fixture.postgres,
+                    PROJECT,
+                    loaded,
+                )
+                .await
+                .unwrap();
             }
             expected.insert((APP.to_owned(), delivery), expected_digest);
             let rows =

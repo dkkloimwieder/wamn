@@ -1,6 +1,7 @@
 /** Case 2: two offline context reopens, three creates, sign-in and a second shell. */
 import assert from "node:assert/strict";
-import { request } from "node:http";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
@@ -16,6 +17,8 @@ const locationId = process.env.WAMN_LOCATION_ID;
 const firstId = process.env.WAMN_FIRST_ID;
 assert.ok(scratch && audience && user && locationId && firstId, "fixture inputs are required");
 const endpoint = new URL(process.env.WAMN_ENDPOINT);
+const request = endpoint.protocol === "https:" ? httpsRequest : httpRequest;
+const apiPrefix = endpoint.pathname.replace(/\/$/, "");
 const [, , , , application, environment] = audience.split(":");
 const outboxName = outboxDatabase(application, environment, user);
 const rowsName = rowsDatabase(application, environment, user);
@@ -109,7 +112,7 @@ const proxy = {
               hostname: endpoint.hostname,
               port: endpoint.port,
               method: incoming.method,
-              path: url.pathname.slice("/wamn".length) + url.search,
+              path: apiPrefix + url.pathname.slice("/wamn".length) + url.search,
               headers,
             },
             (response) => {

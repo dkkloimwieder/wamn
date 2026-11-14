@@ -120,12 +120,7 @@ async fn seed_run(
     age_days: i64,
 ) {
     sqlx::query(sqlx::AssertSqlSafe(format!(
-                "INSERT INTO {SCHEMA}.runs ( \
-                   project_env_key, run_id, wiring_id,wiring_version,wiring_hash,binding_world_json, package_id, manifest_digest, \
-                   environment, status, input_json, created_at \
-                 ) VALUES ($1, $2, 'fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, '{PACKAGE_ID}', '{RELEASE_DIGEST}', 'test', $3, \
-                           jsonb_build_object('payload', $1::text), \
-                           now() - ($4::bigint * interval '1 day'))"
+                "INSERT INTO {SCHEMA}.runs (project_env_key, run_id, wiring_id, wiring_version, wiring_hash, package_id, manifest_digest, environment, status, input_json, created_at, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) VALUES ($1, $2, 'fixture-wiring', 1, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', '{PACKAGE_ID}', '{RELEASE_DIGEST}', 'test', $3, jsonb_build_object('payload', $1::text), now() - ($4::bigint * interval '1 day'), 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{{}}')"
             ))).bind(&project_env_key).bind(&run_id).bind(&status).bind(&age_days).execute(&mut *admin).await.map(|result| result.rows_affected())
         .expect("seed a run");
     sqlx::query(sqlx::AssertSqlSafe(

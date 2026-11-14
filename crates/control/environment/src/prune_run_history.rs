@@ -186,27 +186,21 @@ pub async fn prune(
         .map(|result| result.rows_affected())
         .context("set search_path")?;
 
-    let days = i64::from(retention_days);
-    let sql = wamn_run_state::sql::prune_terminal_runs_sql();
     if apply {
-        sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
-            .bind(project_env_key)
-            .bind(days)
-            .execute(&mut *client)
+        wamn_run_state::persistence::prune_terminal_runs(client, project_env_key, retention_days)
             .await
-            .map(|result| result.rows_affected())
             .context("prune terminal runs")
     } else {
-        let mut tx = client.begin().await.context("begin dry-run tx")?;
-        let n = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
-            .bind(project_env_key)
-            .bind(days)
-            .execute(&mut *tx)
-            .await
-            .map(|result| result.rows_affected())
-            .context("prune terminal runs (dry-run)")?;
+        let mut tx = client.begin().await.context("begin dry-run transaction")?;
+        let count = wamn_run_state::persistence::prune_terminal_runs(
+            &mut tx,
+            project_env_key,
+            retention_days,
+        )
+        .await
+        .context("prune terminal runs (dry-run)")?;
         tx.rollback().await.context("roll back dry-run")?;
-        Ok(n)
+        Ok(count)
     }
 }
 

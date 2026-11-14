@@ -1,33 +1,23 @@
 [package]
 name = "wamn-run-state"
-description = "The durable execution-state contract. Its default graph is pure and guest-safe."
+description = "Run admission, leases, settlement and history pruning."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[features]
-# The framed target digest alone.
-# The shipped runtime needs exactly this much to make sure that a resolved guest
-# credential belongs to the project it is about to serve (wamn-0h0g.22.6.7).
-project-key = [
-    "dep:hex",
-    "dep:sha2",
-]
-test-util = []
-
 [dependencies]
-# Canonical JSON hashing and node-error taxonomy.
-# Capture policy itself is run-state-owned and no longer comes from `Flow`.
-# Persisted decision payloads are opaque JSON. No schemars: these are internal
-# store facts, not published package contracts.
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-# The storage traits are taken as trait objects. A macro crate: no runtime.
-async-trait = { workspace = true }
-hex = { workspace = true, optional = true }
-sha2 = { workspace = true, optional = true }
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "chrono"] }
+chrono.workspace = true
+wamn-event-wire.workspace = true
+postgres-protocol.workspace = true
 
 [dev-dependencies]
+anyhow.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+wamn-identity-protocol.workspace = true
+wamn-postgres.workspace = true
 wamn-catalog = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }

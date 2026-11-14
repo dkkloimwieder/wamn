@@ -26,7 +26,8 @@ A workflow of type `invoker` runs as the caller with its active role.
 A caller with `admin` acts as `admin`, and a caller with exactly one role acts with that role.
 A caller with no role or more than one role is refused with `active_role_required`.
 
-`wamn workflow author --schedule '<cron>'` authors a schedule workflow: a five-field cron, evaluated in UTC.
+`wamn workflow author --schedule '<cron>'` authors a schedule workflow: a five-field cron, evaluated in the project `timezone` setting of the environment database.
+The default is UTC. Due moments and their keys always use UTC.
 An invalid cron is refused at author.
 `workflow.start` does not start a schedule workflow, and it refuses `workflow_not_enabled`.
 A schedule run executes as the `workflow` user: with its execution role for type `role`, and with `admin` for type `invoker`.

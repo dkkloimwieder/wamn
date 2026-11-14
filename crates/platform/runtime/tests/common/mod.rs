@@ -1,13 +1,11 @@
 //! Shared fixtures for production queue tests.
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::sync::Arc;
 
-use serde_json::{Value, json};
-
 use url::Url;
-use wamn_run_state::AuthorityClass;
+use wamn_identity_protocol::AuthorityClass;
 use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ProductionLeaseResult, ReleaseIdentity, WamnPostgres, WamnPostgresConfig,
 };
@@ -33,7 +31,6 @@ pub const WIRING_VERSION: i32 = 1;
 pub const EMPTY_HASH: &str =
     "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 const EXECUTOR_PASSWORD: &str = "lease-live-executor-password";
-pub const PRIOR_WINNER_HASH: &str = "sha256:prior-caller-winner";
 
 pub async fn connect(url: &str) -> anyhow::Result<Client> {
     let mut client = wamn_postgres::connect(url).await?;
@@ -139,9 +136,9 @@ pub async fn seed_run(client: &mut Client, run_id: &str, package_id: &str) -> an
     sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (project_env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
-                    environment,wiring_id,wiring_version,input_json,trigger_source) \
+                    environment,wiring_id,wiring_version,input_json,trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) \
                  VALUES ($1,$2,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','dispatched',$3,'{POD_MANIFEST_DIGEST}','test',$4,$5, \
-                         '{{\"input\":true}}','http')"
+                         '{{\"input\":true}}','manual','00000000-0000-0000-0000-000000000001','admin','manual','00000000-0000-0000-0000-000000000001','{{}}')"
             ))).bind(&PROJECT_ENV_KEY).bind(&run_id).bind(&package_id).bind(&WIRING_ID).bind(&WIRING_VERSION).execute(&mut *client).await.map(|result| result.rows_affected())?;
     sqlx::query(sqlx::AssertSqlSafe(
         (&format!(
@@ -194,47 +191,6 @@ pub async fn seed_exhausted_run(client: &mut Client, run_id: &str) -> anyhow::Re
     Ok(())
 }
 
-pub async fn make_callerless(client: &mut Client, run_id: &str) -> anyhow::Result<()> {
-    sqlx::query(sqlx::AssertSqlSafe(
-        (&format!(
-            "UPDATE {SCHEMA}.runs SET trigger_source=NULL \
-                  WHERE project_env_key=$1 AND run_id=$2"
-        ))
-            .to_string(),
-    ))
-    .bind(&PROJECT_ENV_KEY)
-    .bind(&run_id)
-    .execute(&mut *client)
-    .await
-    .map(|result| result.rows_affected())?;
-    Ok(())
-}
-
-pub async fn install_prior_caller_winner(
-    client: &mut Client,
-    run_id: &str,
-) -> anyhow::Result<Value> {
-    sqlx::query(sqlx::AssertSqlSafe(
-        (&format!(
-            "UPDATE {SCHEMA}.runs \
-                    SET trigger_source='http', caller_outcome_type='responded', \
-                        caller_outcome_json='{{\"winner\":\"prior\"}}', \
-                        caller_http_status=207, caller_release_node_id='prior-node', \
-                        caller_outcome_hash=$3, \
-                        caller_released_at='2025-01-02T03:04:05.123456Z' \
-                  WHERE project_env_key=$1 AND run_id=$2"
-        ))
-            .to_string(),
-    ))
-    .bind(&PROJECT_ENV_KEY)
-    .bind(&run_id)
-    .bind(&PRIOR_WINNER_HASH)
-    .execute(&mut *client)
-    .await
-    .map(|result| result.rows_affected())?;
-    caller_fields(client, run_id).await
-}
-
 /// The crash-evidence attempt count a run's queue row carries.
 pub async fn queue_attempts(client: &mut Client, run_id: &str) -> anyhow::Result<i32> {
     Ok(sqlx::query(sqlx::AssertSqlSafe(
@@ -264,60 +220,6 @@ pub async fn release_record(client: &mut Client, run_id: &str) -> anyhow::Result
     .fetch_one(&mut *client)
     .await?;
     Ok(row.get(0))
-}
-
-pub async fn caller_fields(client: &mut Client, run_id: &str) -> anyhow::Result<Value> {
-    let encoded: String = sqlx::query(sqlx::AssertSqlSafe(
-        (&format!(
-            "SELECT jsonb_build_object( \
-                    'type',caller_outcome_type, 'body',caller_outcome_json, \
-                    'status',caller_http_status, 'node',caller_release_node_id, \
-                    'hash',caller_outcome_hash, 'released-at',caller_released_at)::text \
-                   FROM {SCHEMA}.runs WHERE project_env_key=$1 AND run_id=$2"
-        ))
-            .to_string(),
-    ))
-    .bind(&PROJECT_ENV_KEY)
-    .bind(&run_id)
-    .fetch_one(&mut *client)
-    .await?
-    .get(0);
-    Ok(serde_json::from_str(&encoded)?)
-}
-
-pub async fn assert_callerless_terminal(
-    client: &mut Client,
-    run_id: &str,
-    status: &str,
-) -> anyhow::Result<()> {
-    assert_eq!(
-        caller_fields(client, run_id).await?,
-        json!({
-            "type": null,
-            "body": null,
-            "status": null,
-            "node": null,
-            "hash": null,
-            "released-at": null
-        })
-    );
-    assert_terminal_status_dequeued(client, run_id, status).await
-}
-
-pub async fn assert_prior_winner_terminal(
-    client: &mut Client,
-    run_id: &str,
-    status: &str,
-    winner: &Value,
-) -> anyhow::Result<()> {
-    assert_eq!(caller_fields(client, run_id).await?, *winner);
-    assert_eq!(winner["type"], "responded");
-    assert_eq!(winner["body"], json!({"winner": "prior"}));
-    assert_eq!(winner["status"], 207);
-    assert_eq!(winner["node"], "prior-node");
-    assert_eq!(winner["hash"], PRIOR_WINNER_HASH);
-    assert!(winner["released-at"].as_str().is_some());
-    assert_terminal_status_dequeued(client, run_id, status).await
 }
 
 pub async fn assert_terminal_status_dequeued(

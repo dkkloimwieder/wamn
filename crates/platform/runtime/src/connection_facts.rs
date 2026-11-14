@@ -177,13 +177,7 @@ impl ConnectionFacts {
         Ok(Some(call))
     }
 
-    /// Configure the local connection reader once at host setup.
-    pub fn configure_postgres_credentials(&self) {
-        self.postgres
-            .set_connection_credentials(&self.reader, &self.project);
-    }
-
-    /// The reader of the facts, for the local application.
+    /// The credential reader used by connection authentication.
     pub(crate) fn reader(&self) -> Arc<ConnectionCredentials> {
         Arc::clone(&self.reader)
     }

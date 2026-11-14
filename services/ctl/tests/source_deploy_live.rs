@@ -1,6 +1,6 @@
 //! Source preparation is isolated and failures leave authored selections unchanged.
 
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -42,7 +42,7 @@ manifest.Package {{
 async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() -> anyhow::Result<()>
 {
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
-    let mut database = wamn_test_postgres::database();
+    let database = wamn_test_postgres::database();
     let mut client = wamn_postgres::connect(database.url()).await?;
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -68,7 +68,7 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
         }
     }))?)?;
     std::fs::write(&file, document.to_kcl())?;
-    let deploy = |root: &Path, schema: bool| -> anyhow::Result<()> {
+    let deploy = |root: &Path, schema: bool, development: bool| -> anyhow::Result<()> {
         let application = if root.ends_with("appb") { "b" } else { "a" };
         let selected = wamn_environment::environment::analyse::select_application(
             &document,
@@ -76,7 +76,9 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
         )?;
         std::fs::write(&file, selected.to_kcl())?;
         let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
-        if schema {
+        if development {
+            command.arg("dev").arg("--overlay-root");
+        } else if schema {
             command.args(["schema", "apply"]);
         } else {
             command.args([
@@ -87,7 +89,7 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
         }
         let output = command
             .arg(root)
-            .arg("--env")
+            .arg(if development { "--config" } else { "--env" })
             .arg(&file)
             .env("DATABASE_URL", database.url())
             .env("WAMN_CONTROL_URL", "http://127.0.0.1:0")
@@ -114,33 +116,49 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
         Ok(())
     };
     let b = package(scratch.path(), "appb", "1.0.0")?;
-    deploy(&b, false)?;
+    deploy(&b, false, false)?;
     let b_output = wamn_compiler::output_root(&b);
     build_record::read(&b_output)?;
     // B's source is unavailable while A builds.
     std::fs::remove_dir_all(&b)?;
     let a = package(scratch.path(), "appa", "1.0.0")?;
-    deploy(&a, false)?;
+    deploy(&a, false, false)?;
     let output = wamn_compiler::output_root(&a);
     build_record::read(&output)?;
     package(scratch.path(), "appa", "2.0.0")?;
-    deploy(&a, false)?;
+    deploy(&a, false, false)?;
     build_record::read(&b_output)?;
     // Generation succeeds, but publication refuses the absent component.
     build_record::read(&output)?;
     // Source schema apply uses the same builder before publication can fail.
     let schema_version = "3.0.0";
     package(scratch.path(), "appa", schema_version)?;
-    deploy(&a, true)?;
+    deploy(&a, true, false)?;
     let schema_build = build_record::read(&output)?;
     assert_eq!(schema_build.package.version, schema_version);
-    let last_build = std::fs::read(output.join(build_record::BUILD_RECORD_FILE))?;
-    std::fs::write(a.join("migrations/0001_initial.sql"), "INVALID SQL")?;
-    deploy(&a, false)?;
+    let authored = wamn_compiler::compile_manifest(&a)?;
+    deploy(&a, false, true)?;
+    let first = build_record::read(&output)?;
+    assert_ne!(first.package.version, schema_version);
+    deploy(&a, false, true)?;
+    let repeated = build_record::read(&output)?;
+    assert_eq!(first, repeated);
+    std::fs::write(a.join("component.rs"), "fn changed_source() {}")?;
+    deploy(&a, false, true)?;
+    let changed = build_record::read(&output)?;
+    assert_ne!(first.package.version, changed.package.version);
+    let source = wamn_compiler::manifest::PackageManifest::from_slice(
+        &wamn_compiler::compile_manifest(&a)?,
+    )?;
     assert_eq!(
-        std::fs::read(output.join(build_record::BUILD_RECORD_FILE))?,
-        last_build
+        source.package.version,
+        wamn_compiler::manifest::PackageManifest::from_slice(&authored)?
+            .package
+            .version,
     );
+    std::fs::write(a.join("migrations/0001_initial.sql"), "INVALID SQL")?;
+    deploy(&a, false, false)?;
+    assert_eq!(build_record::read(&output)?, changed);
     assert_eq!(
         sqlx::query("SELECT value FROM untouched")
             .fetch_one(&mut client)

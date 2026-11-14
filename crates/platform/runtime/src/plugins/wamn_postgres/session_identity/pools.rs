@@ -7,7 +7,7 @@ use super::super::pool::Object;
 use sqlx::postgres::PgPoolOptions;
 use tracing::Instrument as _;
 
-use wamn_run_state::AuthorityClass;
+use wamn_identity_protocol::AuthorityClass;
 
 use super::super::pool::{
     CheckoutProbe, PoolKey, PoolLifecycle, ProjectPool, ResolvedCredential, destroy_connection,

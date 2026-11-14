@@ -12,8 +12,8 @@ use tracing::Instrument as _;
 use wamn_catalog::ManifestDigest;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
+use wamn_identity_protocol::AuthorityClass;
 use wamn_registry::identifiers::{valid_project, valid_project_env_key};
-use wamn_run_state::AuthorityClass;
 
 use crate::plugins::connection_http::ConnectionInvocation;
 
@@ -246,7 +246,6 @@ pub struct WamnPostgres {
     pub(super) operation_metrics: super::operation::OperationMetrics,
     pub(super) operation_workloads:
         std::sync::RwLock<HashMap<String, Arc<super::operation::OperationWorkload>>>,
-    pub(super) local_application: Option<Arc<crate::local_application::LocalApplication>>,
     /// Resolves a project id → its database connection + policy.
     provider: Arc<dyn CredentialProvider>,
     /// Guest-visible project pools, built lazily and never shared with host-owned
@@ -697,15 +696,6 @@ fn valid_user_id(user_id: &str) -> bool {
 /// leading whitespace and SQL comments are stripped so a comment prefix cannot
 /// hide the keyword.
 impl WamnPostgres {
-    /// Select an explicitly local definition closure without changing database authority.
-    pub fn with_local_application(
-        mut self,
-        application: crate::local_application::LocalApplication,
-    ) -> Self {
-        self.local_application = Some(Arc::new(application));
-        self
-    }
-
     /// Plugin over a single default database (the [`WamnPostgresConfig`]
     /// credentials). Pools are built lazily; `credentials: None` ⇒ every call
     /// returns `connection-unavailable`.
@@ -718,7 +708,6 @@ impl WamnPostgres {
     /// Plugin over an explicit [`CredentialProvider`] (multi-project / tests).
     pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
         Self {
-            local_application: None,
             provider,
             guest_pools: std::sync::RwLock::new(HashMap::new()),
             platform_pools: std::sync::RwLock::new(HashMap::new()),
@@ -1343,17 +1332,6 @@ impl WamnPostgres {
             .write()
             .expect("operation workloads lock poisoned")
             .retain(|scope, _| !scope.starts_with(workload_id));
-    }
-
-    /// Share the host reader with local binding readiness and dispatch.
-    pub(crate) fn set_connection_credentials(
-        &self,
-        credentials: &Arc<crate::connection_credentials::ConnectionCredentials>,
-        project: &str,
-    ) {
-        if let Some(local) = &self.local_application {
-            local.set_connection_credentials(Arc::clone(credentials), project);
-        }
     }
 
     /// Resolve immutable component facts from the loaded release and current connection facts.

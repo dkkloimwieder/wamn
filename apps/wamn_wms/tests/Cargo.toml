@@ -53,3 +53,7 @@ object_store = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "wms_browser_kind"
+path = "wms_browser_kind.rs"

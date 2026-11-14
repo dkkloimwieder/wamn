@@ -4,7 +4,8 @@
  * Build sync-bench first. The last stdout line is the JSON result for Rust.
  */
 import assert from "node:assert/strict";
-import { request } from "node:http";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { chromium } from "playwright";
 import { preparedPreview } from "./preview.ts";
 import { packagingRead, trackListReads } from "./reads.ts";
@@ -13,6 +14,8 @@ import { outboxDatabase, rowsDatabase } from "../../runtime/src/sync/names.ts";
 const scenario = process.argv[2];
 assert.ok(["offline", "refusal", "lost-reply"].includes(scenario));
 const endpoint = new URL(process.env.WAMN_ENDPOINT);
+const request = endpoint.protocol === "https:" ? httpsRequest : httpRequest;
+const apiPrefix = endpoint.pathname.replace(/\/$/, "");
 const audience = process.env.WAMN_AUD;
 const userId = process.env.WAMN_USER_ID;
 const locationId = process.env.WAMN_LOCATION_ID;
@@ -30,7 +33,7 @@ function host(method, path, headers, body) {
         hostname: endpoint.hostname,
         port: endpoint.port,
         method,
-        path,
+        path: apiPrefix + path,
         headers: { ...headers, host: process.env.WAMN_ROUTE_HOST, authorization: `Bearer ${process.env.WAMN_BEARER}` },
       },
       (response) => {

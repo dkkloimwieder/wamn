@@ -4,17 +4,16 @@ use sqlx::{Connection as _, Row as _};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use serde_json::json;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wamn_catalog::{ComponentDescriptor, PackageCoordinate, ServingComponent, ServingManifest};
 use wamn_compiler::manifest::PackageManifest;
-use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentityType};
 use wamn_digest::bytes_sha256;
 use wamn_environment::environment::{Platform, document::EnvironmentDocument, ensure, expand, sql};
 
-use wamn_environment::provision_project_env::{finish_database, require_connected};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 const PROJECT_ENV_KEY: &str = "acme--dev--apps";
@@ -767,7 +766,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
 
     assert_eq!(before_sql, continuity(&mut observer).await?);
     // The failed candidate remains cached, but the runtime resolves the mounted digest.
-    let resolved = wamn_runtime::plugins::wamn_postgres::release_components(&mounted)?;
+    let resolved = Arc::clone(mounted.components());
     assert_eq!(
         resolved
             .iter()
@@ -842,8 +841,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             .await?
             .is_some()
     );
-    sqlx::query("INSERT INTO wamn_run.runs(project_env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'old-work','a','dev','dispatched',$2,'work',1,$2,'[]')").bind(&PROJECT_ENV_KEY).bind(&old_a.digest().as_str()).execute(&mut observer).await.map(|result| result.rows_affected())?;
-    sqlx::query("INSERT INTO wamn_run.runs(project_env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'b-work','b','dev','dispatched',$2,'work',1,$2,'[]')").bind(&PROJECT_ENV_KEY).bind(&b.digest().as_str()).execute(&mut observer).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, manifest_digest, wiring_id, wiring_version, wiring_hash, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) VALUES ($1, 'old-work', 'a', 'dev', 'dispatched', $2, 'work', 1, $2, 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}')").bind(&PROJECT_ENV_KEY).bind(&old_a.digest().as_str()).execute(&mut observer).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, manifest_digest, wiring_id, wiring_version, wiring_hash, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) VALUES ($1, 'b-work', 'b', 'dev', 'dispatched', $2, 'work', 1, $2, 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}')").bind(&PROJECT_ENV_KEY).bind(&b.digest().as_str()).execute(&mut observer).await.map(|result| result.rows_affected())?;
     for (live, pinned) in [(true, true), (false, true), (false, false)] {
         if !pinned {
             sqlx::query("UPDATE wamn_run.runs SET status='completed' WHERE run_id='old-work'")

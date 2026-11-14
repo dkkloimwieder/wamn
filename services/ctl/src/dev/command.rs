@@ -64,7 +64,7 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
         let result = async {
             let document = EnvironmentDocument::compile(&args.config)?;
             let (application, _) = wamn_dev::source_deploy::sources(&document, &args.overlay_root)?;
-            crate::application_verbs::deploy(crate::application_verbs::DeployArgs {
+            crate::application_verbs::develop(crate::application_verbs::DeployArgs {
                 package: Some(args.overlay_root.clone()),
                 release: None,
                 application,

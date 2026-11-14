@@ -1,69 +1,8 @@
-//! The queued-run lifecycle as a storage trait, and its decision types.
-//!
-//! The host-owned Postgres adapter (`WamnPostgres` in `wamn-runtime`) is the
-//! first implementation. The lease result stays with the adapter as
-//! [`RunStore::LeaseResult`], because a candidate lease carries the adapter's
-//! frozen connection-binding world.
+//! Completion and error types for the queued-run lifecycle.
 
 use std::fmt::{Display, Formatter};
 
-use async_trait::async_trait;
-
 use crate::{FailType, RunStatus};
-
-/// The queued-run lifecycle: lease, lease renewal, completion with caller
-/// release, the exhausted-run reap, and deadline reports.
-#[async_trait]
-pub trait RunStore: Send + Sync {
-    /// The result of one lease turn.
-    type LeaseResult: Send;
-
-    /// Grant a lease to the next leasable run.
-    async fn lease_next(
-        &self,
-        component_id: &str,
-        package_ids: &[String],
-        environment: &str,
-        lease_ttl_ms: i64,
-    ) -> Result<Self::LeaseResult, ProductionLeaseError>;
-
-    /// Extend a held lease, fenced by lease generation.
-    async fn renew(
-        &self,
-        component_id: &str,
-        run_id: &str,
-        lease_generation: i64,
-        lease_ttl_ms: i64,
-    ) -> Result<ProductionLeaseRenewal, ProductionLeaseError>;
-
-    /// Record the outcome and release a waiting caller.
-    async fn complete(
-        &self,
-        component_id: &str,
-        run_id: &str,
-        lease_generation: i64,
-        completion: &ProductionCompletion,
-    ) -> Result<ProductionCompletionResult, ProductionLeaseError>;
-
-    /// Reap at most one run whose crash budget is exhausted.
-    async fn reap_exhausted(
-        &self,
-        component_id: &str,
-        package_ids: &[String],
-        environment: &str,
-        grace_ms: i64,
-    ) -> Result<ProductionReapResult, ProductionLeaseError>;
-
-    /// Record host deadline adjustments for a held run. Returns false when the
-    /// run no longer belongs to this lease.
-    async fn record_deadline_adjustments(
-        &self,
-        component_id: &str,
-        run_id: &str,
-        lease_generation: i64,
-        adjustments: &serde_json::Value,
-    ) -> Result<bool, ProductionLeaseError>;
-}
 
 /// Stable category for a production-lease failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +56,40 @@ impl ProductionLeaseError {
         }
     }
 
+    /// A storage failure with its native source.
+    pub fn storage(
+        operation: &'static str,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        Self::with_source(ProductionLeaseErrorType::Storage, operation, source)
+    }
+
+    /// A refusal of the run persistence contract.
+    pub fn contract(operation: &'static str, detail: impl Into<String>) -> Self {
+        Self::new(ProductionLeaseErrorType::Contract, operation, detail)
+    }
+
+    /// Invalid stored or supplied data, retaining its parser error.
+    pub fn invalid(
+        operation: &'static str,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        Self::with_source(ProductionLeaseErrorType::Contract, operation, source)
+    }
+
+    /// Preserve the database message and constraint, without row-bearing DETAIL or HINT.
+    /// Run rows contain application inputs, results, and invocation context.
+    pub fn postgres(operation: &'static str, error: &sqlx::Error) -> Self {
+        let detail = match error.as_database_error() {
+            Some(database) => match database.constraint() {
+                Some(constraint) => format!("{} ({constraint})", database.message()),
+                None => database.message().to_owned(),
+            },
+            None => error.to_string(),
+        };
+        ProductionLeaseError::new(ProductionLeaseErrorType::Storage, operation, detail)
+    }
+
     /// Return the stable failure category.
     pub fn error_type(&self) -> ProductionLeaseErrorType {
         self.type_
@@ -144,65 +117,6 @@ impl std::error::Error for ProductionLeaseError {
     }
 }
 
-/// Caller result stored before a queue run becomes terminal.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProductionCallerOutcome {
-    type_: &'static str,
-    body: serde_json::Value,
-    http_status: u16,
-    release_node_id: Option<String>,
-}
-
-impl ProductionCallerOutcome {
-    /// A router `respond` verdict and its exact wiring node coordinate.
-    pub fn responded(
-        body: serde_json::Value,
-        http_status: u16,
-        release_node_id: impl Into<String>,
-    ) -> Self {
-        Self {
-            type_: "responded",
-            body,
-            http_status,
-            release_node_id: Some(release_node_id.into()),
-        }
-    }
-
-    /// A router failure returned to an attached caller.
-    pub fn failed(
-        body: serde_json::Value,
-        http_status: u16,
-        release_node_id: Option<String>,
-    ) -> Self {
-        Self {
-            type_: "failed",
-            body,
-            http_status,
-            release_node_id,
-        }
-    }
-
-    /// The persisted outcome type: `responded` or `failed`.
-    pub fn outcome_type(&self) -> &'static str {
-        self.type_
-    }
-
-    /// The body returned to the caller.
-    pub fn body(&self) -> &serde_json::Value {
-        &self.body
-    }
-
-    /// The HTTP status returned to the caller.
-    pub fn http_status(&self) -> u16 {
-        self.http_status
-    }
-
-    /// The wiring node that released the caller, if known.
-    pub fn release_node_id(&self) -> Option<&str> {
-        self.release_node_id.as_deref()
-    }
-}
-
 /// Storage-shaped terminal fact derived from one router outcome.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductionCompletion {
@@ -210,33 +124,26 @@ pub struct ProductionCompletion {
     terminal_reason: &'static str,
     result: serde_json::Value,
     fail_type: Option<FailType>,
-    caller: Option<ProductionCallerOutcome>,
 }
 
 impl ProductionCompletion {
-    /// A completed router walk, optionally carrying a caller response.
-    pub fn completed(result: serde_json::Value, caller: Option<ProductionCallerOutcome>) -> Self {
+    /// A completed router walk, with its result.
+    pub fn completed(result: serde_json::Value) -> Self {
         Self {
             status: RunStatus::Completed,
             terminal_reason: "router-completed",
             result,
             fail_type: None,
-            caller,
         }
     }
 
     /// A failed router walk and its persisted failure class.
-    pub fn failed(
-        result: serde_json::Value,
-        fail_type: FailType,
-        caller: Option<ProductionCallerOutcome>,
-    ) -> Self {
+    pub fn failed(result: serde_json::Value, fail_type: FailType) -> Self {
         Self {
             status: RunStatus::Failed,
             terminal_reason: "router-failed",
             result,
             fail_type: Some(fail_type),
-            caller,
         }
     }
 
@@ -258,11 +165,6 @@ impl ProductionCompletion {
     /// The persisted failure class of a failed walk.
     pub fn fail_type(&self) -> Option<FailType> {
         self.fail_type
-    }
-
-    /// The caller outcome released with the run, if a caller is attached.
-    pub fn caller(&self) -> Option<&ProductionCallerOutcome> {
-        self.caller.as_ref()
     }
 }
 
@@ -288,6 +190,6 @@ pub enum ProductionReapResult {
     /// No exhausted row was visible to this project.
     Empty,
     /// The selected row was marked infrastructure-failure and
-    /// dequeued with exact caller compare-and-set semantics.
+    /// dequeued under the queue locks.
     Reaped { run_id: String },
 }

@@ -43,6 +43,14 @@ pub struct StatusArgs {
 }
 
 pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
+    deploy_source(args, false).await
+}
+
+pub(crate) async fn develop(args: DeployArgs) -> anyhow::Result<()> {
+    deploy_source(args, true).await
+}
+
+async fn deploy_source(args: DeployArgs, development: bool) -> anyhow::Result<()> {
     let host = ControlHost::from_env()?;
     let digest = match args.package {
         Some(package) => {
@@ -50,10 +58,19 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
                 &environment::document::EnvironmentDocument::compile(&args.env)?,
                 Some(&args.application),
             )?;
-            crate::operation_verbs::publish(&document, &package)
+            let published = if development {
+                let database_url = std::env::var("DATABASE_URL")
+                    .context("set DATABASE_URL for disposable build databases")?;
+                wamn_dev::source_deploy::publish_development_from_env(
+                    &document,
+                    &package,
+                    &database_url,
+                )
                 .await?
-                .1
-                .to_string()
+            } else {
+                crate::operation_verbs::publish(&document, &package).await?
+            };
+            published.1.to_string()
         }
         None => args
             .release

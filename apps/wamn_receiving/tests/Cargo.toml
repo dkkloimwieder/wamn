@@ -12,6 +12,7 @@ path = "lib.rs"
 
 [dev-dependencies]
 wamn-postgres.workspace = true
+wamn-kubernetes.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
 wamn-digest.workspace = true
@@ -50,7 +51,7 @@ wamn-event-wire = { workspace = true }
 wamn-integration-tests = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
-wamn-run-state = { workspace = true, features = ["test-util"] }
+wamn-run-state = { workspace = true }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-workflow = { workspace = true }
 wamn-engine = { workspace = true }
@@ -66,3 +67,7 @@ wat = "=1.254.2"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "receiving_routes_kind"
+path = "receiving_routes_kind.rs"

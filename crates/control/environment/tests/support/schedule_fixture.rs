@@ -35,8 +35,7 @@ pub use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 pub use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 pub use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 pub use wamn_runtime::plugins::wamn_postgres::{
-    AuthorityClass, ClassCredentials, ScheduleRunAdmission, ScheduleRunAdmitted, WamnPostgres,
-    WamnPostgresConfig,
+    AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
 };
 pub use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 
@@ -482,21 +481,16 @@ impl Fixture {
     }
 
     pub async fn admit(&self, id: &str, at: &str) -> ScheduleRunAdmitted {
-        self.postgres
-            .admit_schedule_run(
-                PROJECT,
-                PROJECT_ENV_KEY,
-                &ScheduleRunAdmission {
-                    environment: ENVIRONMENT,
-                    application: APP,
-                    application_packages: &declared()[APP].packages,
-                    workflow_id: id,
-                    manifest_digest: &self.digest,
-                    due: due(at),
-                },
-            )
-            .await
-            .expect("the schedule admission answers")
+        wamn_workflow::admission::admit_schedule_run(
+            &self.postgres,
+            PROJECT,
+            &self.release,
+            APP,
+            id,
+            due(at),
+        )
+        .await
+        .expect("the schedule admission answers")
     }
 
     pub async fn queued(&self, id: &str, at: &str) -> String {
@@ -585,6 +579,7 @@ pub fn lifecycle_refusal(result: Result<(), WorkflowLifecycleError>) -> Workflow
 }
 
 pub use wamn_runtime::plugins::wamn_postgres::EventBatchAdmission;
+pub use wamn_workflow::admission::ScheduleRunAdmitted;
 
 pub async fn event(fixture: &mut Fixture, id: &str, sequence: i64, role: Option<&str>) {
     let graph = workflow(id);
@@ -609,20 +604,19 @@ pub async fn admit(
     sequence: u64,
     lsn: u64,
 ) -> Result<(), wamn_runtime::plugins::wamn_postgres::ProductionLeaseError> {
-    fixture
-        .postgres
-        .admit_event_batch(
-            PROJECT,
-            &fixture.release,
-            &EventBatchAdmission {
-                source_package: APPLICATION,
-                entity: "order",
-                envelope,
-                sequence,
-                source_event_id: &wamn_event_wire::msg_id(PROJECT, ENVIRONMENT, lsn),
-            },
-        )
-        .await
+    wamn_workflow::event_admission::admit_event_batch(
+        &fixture.postgres,
+        PROJECT,
+        &fixture.release,
+        &EventBatchAdmission {
+            source_package: APPLICATION,
+            entity: "order",
+            envelope,
+            sequence,
+            source_event_id: &wamn_event_wire::msg_id(PROJECT, ENVIRONMENT, lsn),
+        },
+    )
+    .await
 }
 
 pub async fn changed_order(fixture: &mut Fixture) -> i64 {

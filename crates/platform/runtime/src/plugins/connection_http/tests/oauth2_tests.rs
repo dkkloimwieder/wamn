@@ -255,7 +255,7 @@ impl Fixture {
             ClassCredentials, ProjectConfig, StaticCredentialProvider,
         };
         use wamn_engine::release_manifest::ReleaseTarget;
-        use wamn_run_state::AuthorityClass;
+        use wamn_identity_protocol::AuthorityClass;
 
         for name in ["handle", "other-handle"] {
             self.put_auth(

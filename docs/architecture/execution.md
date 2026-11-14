@@ -426,7 +426,9 @@ Before execution, the host admits one invocation record with caller, SQL, identi
 PostgreSQL, HTTP, storage and logging read that record from one registry.
 The record retains signing authority through commit and replay.
 Cancellation or shutdown revokes the record. Normal completion releases it after result signing.
-The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` owns durable queue leases and settlement through the `RunStore` trait of `wamn-run-state`.
+The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` drives delivery.
+`wamn-run-state` owns admission, leases, settlement and pruning as functions over an authorized connection.
+`WamnPostgres` authorizes the connection and commits or rolls back each transaction.
 The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
 Each host replica polls the durable queue and leases work through database leases. Replicas need no wake service or process-local handoff.
@@ -482,17 +484,18 @@ That refusal carries SQLSTATE `55000` and the message `actor-required`, as the s
 
 ## Workflows
 
-A workflow is a released wiring that runs off the request path.
-The [workflow contract](../../crates/execution/workflow/src/contract.rs) in `wamn-workflow` is the trait `Workflows`, with four operations.
+A workflow is an authored graph that runs off the request path.
+The host admits runs against its loaded release. Run-state functions own their persistence.
+The release loader resolves admitted component facts and verifies their stored effect projections once.
+Workflow resolution and host execution share those immutable facts.
 
-- `start` admits one released wiring under a service principal. It writes the run and queue row together. A repeated key returns the first run.
+- `start` admits one enabled workflow under its execution principal. It writes the run and queue row together. A repeated key returns the first run.
 - `park` moves the `available_at` of a queued run to `infinity`, so no lease takes it. The run keeps the status `dispatched`, and a running or finished run refuses.
 - `release` returns a parked run to the queue.
 - `list` returns the runs of one environment, newest first, with their status and their queued and parked flags.
 
-`PostgresWorkflows` admits automation with project-admin authority.
-The `wamn workflow park`, `release` and `runs` commands call it ([queued automation](../operations/queued-automation.md)).
-Its SQL lives in `wamn-run-state` beside the lease SQL.
+The `wamn workflow park`, `release` and `runs` commands call authenticated control routes ([queued automation](../operations/queued-automation.md)).
+Control binds the authorized connection. Run-state functions perform the reads and writes.
 
 An event workflow is an enabled row of `catalog.workflows` in an environment application.
 Its trigger names the source package, entity, operations, and an optional JMESPath condition over the old and new images.
@@ -513,25 +516,28 @@ A former event handler runs as a one-node workflow under a run row.
 `list`, `park`, and `release` operate on these event runs.
 
 A package declares no schedule (docs/plan/workflows.md R9).
-A schedule workflow is a row of `catalog.workflows` with trigger `schedule` and a five-field cron in UTC, parsed by `croner`.
-A release published before this change may carry `workflow.schedules` in its manifest; the host reads it with the field ignored.
+A schedule workflow is a row of `catalog.workflows` with trigger `schedule` and a five-field cron, parsed by `croner`.
+The cron uses the project `timezone` setting in the environment database.
+An absent setting uses UTC. A setting with an invalid type or zone refuses that tick.
 
 The environment document declares its applications: each name with the packages of the release that belong to it.
 `environment::apply` refuses a release package that belongs to no application or to two, and a declared package that the release does not carry.
 The release chart passes the map to the host as canonical JSON in `--applications`, beside `--environment`, and keeps it in the Helm revision's values, where `env show` and `wamn workflow author` read it.
 A host that serves a release from the registry refuses to start without `--applications`. A local candidate host takes the map when it is given and otherwise declares none.
 A workflow belongs to one declared application, by name: `workflow author` and `workflow.start` refuse a name that the environment does not declare.
-An application is a name, never a package. The workflow condition resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue leases the release's packages and the declared application names, and the executor resolves the run's nodes within that application's packages.
+An application is a name, never a package. The workflow condition resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue leases the declared application names, and the executor resolves the run's nodes within that application's packages.
 
 Every application host runs one schedule task, which wakes at each minute boundary.
 Its first tick is strictly after startup.
-At each tick it reads the enabled schedule rows of every declared application with one `SELECT` (`application = ANY(...)`), and calls `WamnPostgres::admit_schedule_run` for each row whose cron names that minute.
+At each tick it reads the enabled schedule rows of every declared application with one `SELECT` (`application = ANY(...)`), and calls `wamn_workflow::admission::admit_schedule_run` for each row whose cron names that minute.
 A host whose environment declares no application runs no schedule task.
 An enable or a disable between ticks takes effect at the next tick.
 The task polls the rows; it does not reload on an enable or disable message over NATS, which would cost one more subject and a stale window when the broker is lost.
 The run has input `{"due":"<due RFC 3339>"}` and key `schedule:<application>/<workflow id>:<due RFC 3339>`, with UTC spelled as `Z`.
 Replicas use the same key, so concurrent admissions return one run.
 The run executes as the `workflow` user with its execution role, or with `admin` for type `invoker`.
+Schedule reads and admissions use the runtime executor pool. Admission uses the release already loaded by the host.
+The due moment and its key remain UTC across daylight saving changes.
 
 Apply creates one service principal per application that composes `wamn_integration`, in each environment.
 Its subject is `wamn-app-<org>--<env>--<project>--<package id>`.

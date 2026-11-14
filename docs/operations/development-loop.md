@@ -43,7 +43,13 @@ The watcher does not reset application data on each save.
 
 Package tags are immutable.
 Publication refuses changed bytes for an existing package coordinate.
-The watcher preserves that publication contract and reports the refusal.
+The development builder assigns each source snapshot an immutable prerelease coordinate.
+For example, `0.1.0-dev.h0123456789ab` uses the first 12 hexadecimal digits of its content digest.
+The prefix `h` keeps all-digit digests valid in semantic versions.
+The digest includes package sources, shared build inputs, and built bases.
+A repeated save uses the same coordinate. Changed content gets a new coordinate.
+The builder records the matching base versions and component digests in overlays.
+It writes development SQL history to build output without changing authored history.
 
 ## Measure one change
 

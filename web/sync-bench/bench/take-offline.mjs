@@ -1,11 +1,14 @@
 /** Online take-offline and counts. The Rust fixture adds 20,000 locations. */
 import assert from "node:assert/strict";
-import { request } from "node:http";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { chromium } from "playwright";
 import { preparedPreview } from "./preview.ts";
 import { rowsDatabase } from "../../runtime/src/sync/names.ts";
 
 const endpoint = new URL(process.env.WAMN_ENDPOINT);
+const request = endpoint.protocol === "https:" ? httpsRequest : httpRequest;
+const apiPrefix = endpoint.pathname.replace(/\/$/, "");
 const audience = process.env.WAMN_AUD;
 const userId = process.env.WAMN_USER_ID;
 const firstId = process.env.WAMN_FIRST_ID;
@@ -49,7 +52,7 @@ try {
           {
             hostname: endpoint.hostname,
             port: endpoint.port,
-            path: `${url.pathname.replace(/^\/wamn/, "")}${url.search}`,
+            path: `${apiPrefix}${url.pathname.replace(/^\/wamn/, "")}${url.search}`,
             method: incoming.method(),
             headers,
           },

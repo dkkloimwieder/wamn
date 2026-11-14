@@ -1215,7 +1215,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .with_oauth_encryption(oauth_encryption.clone()),
     );
 
-    facts.configure_postgres_credentials();
     let integration_registry = if let Some(base) = &args.component_artifact_base {
         let registry_name = wamn_catalog::parse_component_artifact_base(base)?;
         let credentials = match RegistryPullCredential::select(args.registry_auth_file.as_deref(), args.registry_token_metadata)? {
@@ -1538,11 +1537,19 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if let Some(release) = application {
         let events = Arc::clone(&jetstream);
         let postgres = Arc::clone(&postgres);
+        let args_project = args.project.clone();
         schedule_tasks.spawn(serve_application_events(
             Arc::clone(release),
             stopping.clone(),
             async move |release: &Arc<LoadedRelease>| {
-                if let Err(error) = events.admit_application_events(&postgres, release).await {
+                if let Err(error) = wamn_workflow::event_admission::admit_application_events(
+                    &events,
+                    &postgres,
+                    &args_project,
+                    release,
+                )
+                .await
+                {
                     tracing::warn!(?error, "application event admission failed");
                 }
             },
@@ -1571,47 +1578,19 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
     // Each host admits schedules with its own loaded application release.
     if let Some(release) = application {
-        let url = executor_platform_url
-            .clone()
-            .context("workflow schedules require WAMN_EXECUTOR_PLATFORM_PG_URL")?;
-        let schedule_release = Arc::clone(release);
-        let schedule_postgres = Arc::clone(&postgres);
-        let schedule_project = args.project.clone();
-        let mut stopped = stopping.clone();
-        let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let task_connected = Arc::clone(&connected);
+        let schedules = wamn_workflow::schedule::PostgresSchedules::new(
+            Arc::clone(&postgres),
+            &args.project,
+            Arc::clone(release),
+        );
+        let schedule_stopping = stopping.clone();
         let task = schedule_tasks.spawn(async move {
-            loop {
-                if *stopped.borrow() { return; }
-                let connection = tokio::select! {
-                    _ = stopped.changed() => return,
-                    connection = wamn_postgres::pool(&url, 2) => connection,
-                };
-                match connection {
-                    Ok(client) => {
-                        let schedules = wamn_workflow::schedule::PostgresSchedules::new(
-                            client,
-                            Arc::clone(&schedule_postgres),
-                            &schedule_project,
-                            Arc::clone(&schedule_release),
-                        );
-                        task_connected.store(true, std::sync::atomic::Ordering::Relaxed);
-                        let schedule_stopping = stopped.clone();
-                        tokio::select! {
-                            _ = stopped.changed() => return,
-                            result = wamn_workflow::schedule::serve(&schedules, schedule_stopping) => tracing::warn!(?result, "workflow schedule task stopped"),
-                        }
-                    }
-                    Err(error) => tracing::warn!(%error, "connect workflow schedule admission"),
-                }
-                task_connected.store(false, std::sync::atomic::Ordering::Relaxed);
-                tokio::select! {
-                    _ = stopped.changed() => return,
-                    () = tokio::time::sleep(Duration::from_secs(1)) => {},
-                }
+            if let Err(error) = wamn_workflow::schedule::serve(&schedules, schedule_stopping).await
+            {
+                tracing::warn!(%error, "workflow schedule task stopped");
             }
         });
-        probe_state.register(Arc::new(ScheduleProbe { connected, task }));
+        probe_state.register(Arc::new(ScheduleProbe { task }));
     }
 
     let mut ingress_connections = None;
@@ -1983,7 +1962,6 @@ fn shutdown_budget(drain_bound_seconds: u64) -> Duration {
 
 #[derive(Debug)]
 struct ScheduleProbe {
-    connected: Arc<std::sync::atomic::AtomicBool>,
     task: tokio::task::AbortHandle,
 }
 
@@ -1992,7 +1970,7 @@ impl probes::ReadinessCheck for ScheduleProbe {
         "workflow_schedule"
     }
     fn ready(&self) -> bool {
-        self.connected.load(std::sync::atomic::Ordering::Relaxed) && !self.task.is_finished()
+        !self.task.is_finished()
     }
     fn unrecoverable(&self) -> bool {
         self.task.is_finished()
@@ -2388,24 +2366,6 @@ host:
             Duration::from_secs(226)
         );
         assert!(cleanup_budget_for_plugins(7, Duration::MAX).is_err());
-    }
-
-    #[tokio::test]
-    async fn schedule_probe_distinguishes_reconnect_from_task_exit() {
-        use probes::ReadinessCheck as _;
-        let task = tokio::spawn(std::future::pending::<()>());
-        let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let probe = ScheduleProbe {
-            connected: Arc::clone(&connected),
-            task: task.abort_handle(),
-        };
-        assert!(!probe.ready());
-        assert!(!probe.unrecoverable());
-        connected.store(true, std::sync::atomic::Ordering::Relaxed);
-        assert!(probe.ready());
-        let _ = task.await;
-        assert!(!probe.ready());
-        assert!(probe.unrecoverable());
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-//! UTC schedule evaluation and host-owned schedule workflow admission
+//! Calendar schedule evaluation and host-owned schedule workflow admission
 //! (docs/architecture/execution.md#workflows).
 //!
 //! The task wakes at every minute boundary, reads the enabled schedule
@@ -6,50 +6,29 @@
 //! admits a run for each row whose cron names that minute. A row enabled or disabled between ticks takes
 //! effect at the next tick.
 
-use sqlx::Row as _;
 use std::sync::Arc;
 
+use crate::admission::{ScheduleRunAdmitted, admit_schedule_run, due_text};
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use wamn_catalog::parse_workflow_schedule;
 use wamn_runtime::plugins::WamnPostgres;
-use wamn_runtime::plugins::wamn_postgres::{ScheduleRunAdmission, ScheduleRunAdmitted, due_text};
 
 /// One enabled schedule workflow of a declared application.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnabledSchedule {
     pub application: String,
     pub workflow_id: String,
-    /// Five-field cron, evaluated in UTC.
+    /// Five-field cron, evaluated in the environment time zone.
     pub schedule: String,
+    /// The due instant expressed in the environment time zone.
+    pub local_tick: chrono::NaiveDateTime,
 }
-
-/// Where the schedule task reads its rows and admits its runs.
-#[async_trait::async_trait]
-pub trait ScheduleRows: Send + Sync {
-    /// The enabled schedule workflows of the declared applications.
-    async fn enabled(&self) -> anyhow::Result<Vec<EnabledSchedule>>;
-
-    /// Admit the run of `schedule` due at `due`.
-    async fn admit(
-        &self,
-        schedule: &EnabledSchedule,
-        due: DateTime<Utc>,
-    ) -> anyhow::Result<ScheduleRunAdmitted>;
-}
-
-/// The enabled schedule workflows of the declared applications. Binds: `$1`
-/// project, `$2` environment, `$3` the application name.
-const ENABLED_SCHEDULES_SQL: &str = "\
-SELECT application, workflow_id, schedule FROM catalog.workflows \
- WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
-   AND enabled AND trigger = 'schedule'";
 
 /// The schedule rows of the application that the host serves. It
 /// reads them on the task's executor connection and admits through
-/// [`WamnPostgres::admit_schedule_run`].
+/// [`admit_schedule_run`].
 pub struct PostgresSchedules {
-    client: sqlx::PgPool,
     postgres: Arc<WamnPostgres>,
     project: String,
     release: Arc<wamn_engine::release_manifest::LoadedRelease>,
@@ -68,13 +47,11 @@ impl PostgresSchedules {
     /// Serve the schedules of `applications` in `project_env_key` and `environment`,
     /// against the release `manifest_digest`.
     pub fn new(
-        client: sqlx::PgPool,
         postgres: Arc<WamnPostgres>,
         project: impl Into<String>,
         release: Arc<wamn_engine::release_manifest::LoadedRelease>,
     ) -> Self {
         Self {
-            client,
             postgres,
             project: project.into(),
             release,
@@ -82,58 +59,51 @@ impl PostgresSchedules {
     }
 }
 
-#[async_trait::async_trait]
-impl ScheduleRows for PostgresSchedules {
-    async fn enabled(&self) -> anyhow::Result<Vec<EnabledSchedule>> {
+impl PostgresSchedules {
+    /// Read schedules through the executor pool owned by the runtime.
+    pub async fn enabled(&self, tick: DateTime<Utc>) -> anyhow::Result<Vec<EnabledSchedule>> {
         let target = self.release.target();
-        let (application, _) = target
-            .applications
-            .first_key_value()
-            .context("schedule host has no application")?;
-        let rows = sqlx::query(ENABLED_SCHEDULES_SQL)
-            .bind(&target.project_env_key)
-            .bind(&target.environment)
-            .bind(application)
-            .fetch_all(&self.client)
-            .await
-            .context("read the enabled workflow schedules")?;
-        rows.iter()
-            .map(|row| {
-                Ok(EnabledSchedule {
-                    application: row.try_get(0)?,
-                    workflow_id: row.try_get(1)?,
-                    schedule: row.try_get(2)?,
-                })
+        let applications: Vec<_> = target.applications.keys().cloned().collect();
+        self.postgres
+            .executor_read(&self.project, &target.project_env_key, async |connection| {
+                Ok(wamn_run_state::admission::enabled_schedules(
+                    connection,
+                    &target.project_env_key,
+                    &target.environment,
+                    &applications,
+                    &self.project,
+                    tick,
+                )
+                .await?
+                .into_iter()
+                .map(
+                    |(application, workflow_id, schedule, local_tick)| EnabledSchedule {
+                        application,
+                        workflow_id,
+                        schedule,
+                        local_tick,
+                    },
+                )
+                .collect())
             })
-            .collect::<Result<_, sqlx::Error>>()
-            .context("decode an enabled workflow schedule")
+            .await
     }
 
-    async fn admit(
+    /// Admit one due schedule against the loaded release.
+    pub async fn admit(
         &self,
         schedule: &EnabledSchedule,
         due: DateTime<Utc>,
     ) -> anyhow::Result<ScheduleRunAdmitted> {
-        let target = self.release.target();
-        let application = target
-            .applications
-            .get(&schedule.application)
-            .with_context(|| format!("application {:?} is not declared", schedule.application))?;
-        self.postgres
-            .admit_schedule_run(
-                &self.project,
-                &target.project_env_key,
-                &ScheduleRunAdmission {
-                    environment: &target.environment,
-                    application: &schedule.application,
-                    application_packages: &application.packages,
-                    workflow_id: &schedule.workflow_id,
-                    manifest_digest: self.release.release().manifest_digest.as_str(),
-                    due,
-                },
-            )
-            .await
-            .map_err(|error| anyhow::anyhow!("admit the schedule run: {error}"))
+        Ok(admit_schedule_run(
+            &self.postgres,
+            &self.project,
+            &self.release,
+            &schedule.application,
+            &schedule.workflow_id,
+            due,
+        )
+        .await?)
     }
 }
 
@@ -144,32 +114,19 @@ fn next_minute(after: DateTime<Utc>) -> DateTime<Utc> {
 }
 
 /// Whether the cron of `schedule` names the minute `tick`.
-fn is_due(schedule: &str, tick: DateTime<Utc>) -> anyhow::Result<bool> {
+pub fn is_due(schedule: &str, tick: chrono::NaiveDateTime) -> anyhow::Result<bool> {
     parse_workflow_schedule(schedule)?
-        .is_time_matching(&tick)
+        .is_time_matching(&tick.and_utc())
         .context("match the workflow schedule")
 }
 
 /// Serve the schedule workflows of `rows` until host shutdown. The first
 /// tick is strictly after startup. Failed or missed ticks are not retried.
 pub async fn serve(
-    rows: &dyn ScheduleRows,
-    stopping: tokio::sync::watch::Receiver<bool>,
-) -> anyhow::Result<()> {
-    serve_with_clock(rows, stopping, Utc::now, |tick| {
-        tokio::time::sleep((tick - Utc::now()).to_std().unwrap_or_default())
-    })
-    .await
-}
-
-/// Serve schedules with a supplied clock and a wait for each minute boundary.
-pub async fn serve_with_clock<F: std::future::Future<Output = ()>>(
-    rows: &dyn ScheduleRows,
+    rows: &PostgresSchedules,
     mut stopping: tokio::sync::watch::Receiver<bool>,
-    now: impl Fn() -> DateTime<Utc>,
-    wait_until: impl Fn(DateTime<Utc>) -> F,
 ) -> anyhow::Result<()> {
-    let mut tick = next_minute(now());
+    let mut tick = next_minute(Utc::now());
     loop {
         if *stopping.borrow() {
             return Ok(());
@@ -177,17 +134,17 @@ pub async fn serve_with_clock<F: std::future::Future<Output = ()>>(
         tokio::select! {
             biased;
             _ = stopping.changed() => return Ok(()),
-            () = wait_until(tick) => {}
+            () = tokio::time::sleep((tick - Utc::now()).to_std().unwrap_or_default()) => {}
         }
-        if next_minute(tick) <= now() {
+        if next_minute(tick) <= Utc::now() {
             tracing::warn!(due = %due_text(tick), "missed workflow schedule tick");
-            tick = next_minute(now());
+            tick = next_minute(Utc::now());
             continue;
         }
         let enabled = tokio::select! {
             biased;
             _ = stopping.changed() => return Ok(()),
-            enabled = rows.enabled() => enabled,
+            enabled = rows.enabled(tick) => enabled,
         };
         match enabled {
             Err(error) => {
@@ -195,7 +152,7 @@ pub async fn serve_with_clock<F: std::future::Future<Output = ()>>(
             }
             Ok(enabled) => {
                 for schedule in enabled {
-                    match is_due(&schedule.schedule, tick) {
+                    match is_due(&schedule.schedule, schedule.local_tick) {
                         Ok(true) => {}
                         Ok(false) => continue,
                         Err(error) => {
@@ -222,10 +179,10 @@ pub async fn serve_with_clock<F: std::future::Future<Output = ()>>(
                 }
             }
         }
-        if next_minute(tick) <= now() {
+        if next_minute(tick) <= Utc::now() {
             tracing::warn!(due = %due_text(tick), "missed workflow schedule ticks during admission");
         }
-        tick = next_minute(now());
+        tick = next_minute(Utc::now());
     }
 }
 
@@ -250,15 +207,5 @@ mod tests {
         ] {
             assert_eq!(next_minute(utc(now)), utc(expected));
         }
-    }
-
-    #[test]
-    fn a_cron_matches_its_minutes_in_utc() {
-        assert!(is_due("0 0 * * *", utc("2026-10-21T00:00:00Z")).unwrap());
-        assert!(is_due("0 0 * * *", utc("2026-10-20T20:00:00-04:00")).unwrap());
-        assert!(!is_due("0 0 * * *", utc("2026-10-21T00:00:00-04:00")).unwrap());
-        assert!(is_due("0 0 1 * *", utc("2027-01-01T00:00:00Z")).unwrap());
-        assert!(!is_due("0 0 31 2 *", utc("2027-02-28T00:00:00Z")).unwrap());
-        assert!(is_due("* * * * * *", utc("2027-01-01T00:00:00Z")).is_err());
     }
 }

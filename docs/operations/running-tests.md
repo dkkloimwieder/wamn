@@ -363,8 +363,10 @@ It never runs for a single fix.
 Both runners use the shared process boundary in `cargo xtask require-test-result`. `WAMN_TEST_SILENCE_SECONDS` sets its silence limit, with a default of 1800 seconds. Output on either stream resets the limit. Silence past the limit stops the child process group, names the stage, and fails the run.
 It gives no expected duration.
 The epoch interruption case lives in `wamn-engine --test deadline`.
-Paused-time scheduling decisions live in `wamn-workflow --test schedule_decisions`.
+Pure calendar scheduling decisions live in `wamn-workflow --test schedule_decisions`.
 Admission authority stays in `wamn-run-state --test admission_live`.
+`wamn-run-state --test run_state_live` covers atomic admission, lease recovery, fencing and retention.
+Live schedule cases call the service with its real clock and can take several minutes.
 Schedule storage stays in `wamn-environment --test workflow_schedule_live`.
 Broker acknowledgement lives in `wamn-environment --test workflow_event_nats`.
 The connection and caller case lives in `wamn-dev --test platform_apply_kind` and requires an installed development cluster.
@@ -556,6 +558,28 @@ The cases assert retained runs, credential refusals and database grants.
 The development loop uses the installed identity and control services.
 [Development loop](development-loop.md) gives the source publication and deployment commands.
 The focused connection and caller test above uses this product path.
+
+The CLI browser targets `platform_ui_live` and `receiving_ui_live` also use this path.
+They call `wamn env apply` and `wamn dev` against an installed disposable platform.
+Supply `WAMN_TEST_CLUSTER`, `WAMN_DEV_ENV`, `WAMN_TIMINGS_ROOT`, and the existing `WAMN_BROWSER_*` sign-in inputs listed in each test.
+The environment directory contains `environment.k` for one application.
+The platform browser reads invitation mail from the installed identity service's outbox.
+Receiving browser assertions still require the fixed business dataset. The product has no import route for that dataset.
+
+`wamn-integration-tests --test application_routes_kind` tests batch retry, independent batch outcomes, health requests, read limits, sequence bindings, and overlay actor stamps through deployed routes.
+It uses `WAMN_CTL_BIN` for the product binary and the publication inputs from the development procedure.
+Supply the cluster, environment directory, browser base URL, and `WAMN_SYSTEM_ADMIN_URL` named in its prerequisite list.
+The test creates its own environment through control and uses SQL only to observe results.
+It removes the deployed environment after success. Its database remains for explicit data cleanup.
+
+`wamn-receiving-tests --test receiving_routes_kind` checks purchase-order numbers and caller stamps.
+It creates its supplier through the public create route.
+`wamn-wms-tests --test wms_browser_kind` runs the saved-request and shell-update browser cases against deployed WMS routes.
+It creates locations and packaging through HTTP. It uses SQL only to observe the resulting rows.
+Supply `WAMN_SYNC_BENCH_DIST`, Node.js, and Chrome in addition to the shared platform inputs.
+The environment template must select the application's prepared connection bindings.
+Each fixture copies those bindings through the connection routes into its own environment.
+The browser adapters accept HTTP and HTTPS endpoints, including their application path prefix.
 
 ### Platform and environment apply on kind
 
