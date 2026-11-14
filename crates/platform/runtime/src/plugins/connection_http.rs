@@ -27,8 +27,8 @@ use wash_runtime::wasmtime::component::{Accessor, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::connection_authority::{
-    AuthorityDecision, AuthorityError, HttpConnectionAuthority, TlsPolicy, TokioDnsResolver,
-    bound_http_target, bound_oauth_token, parse_http_connection_authority, resolve_http_request,
+    AuthorityDecision, AuthorityError, HttpConnectionAuthority, TokioDnsResolver,
+    bound_http_target, bound_oauth_token, resolve_http_request,
 };
 use crate::plugins::effect_span::{
     EFFECT_OPERATION, EffectEvidence, EffectIdentity, EffectOutcomeGuard, EffectWiring,
@@ -37,8 +37,8 @@ use crate::plugins::effect_span::{
 use wamn_engine::release_manifest::LoadedRelease;
 
 use super::wamn_postgres::{
-    CandidateBindingWorld, ConnectionEffectLookup, ConnectionEffectSnapshot, ConnectionEntryLookup,
-    WamnPostgres, WiringLookup,
+    CandidateBindingWorld, ConnectionEffectSnapshot, ConnectionEntryLookup, WamnPostgres,
+    WiringLookup,
 };
 use crate::connection_credentials::ConnectionGeneration;
 use crate::connection_facts::{ConnectionFacts, Secret};
@@ -48,8 +48,6 @@ mod authentication;
 mod jwt;
 mod network_policy;
 pub mod transport;
-
-use network_policy::ConnectionNetworkPolicy;
 
 use transport::{ClientIdentity, ConnectionIdentity, HttpTransport};
 
@@ -71,13 +69,10 @@ mod bindings {
     });
 }
 
-use bindings::wamn::connection::http::{self, ConnectionError, Header, Request, Response};
+pub use bindings::wamn::connection::http::ConnectionError;
+use bindings::wamn::connection::http::{self, Header, Request, Response};
 
 pub const CONNECTION_HTTP_ID: &str = "wamn-connection-http";
-/// The exact contract spelling the conformance test pins against the
-/// descriptor. Only that test reads it.
-#[cfg(test)]
-const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
 const AUTHORITY_SNAPSHOT_UNAVAILABLE: &str = "connection-authority-unavailable";
 /// The transport detail for unavailable client capacity or construction.
 /// These failures dispatch nothing, including refusal by a shared quota.
@@ -166,6 +161,7 @@ pub struct WiringPosition {
     pub wiring_version: u32,
     pub node_id: String,
     pub occurrence: u32,
+    pub configuration: Arc<std::collections::BTreeMap<String, serde_json::Value>>,
 }
 
 /// Host-attested root identity for an effect's exact dependency path.
@@ -201,7 +197,7 @@ impl std::fmt::Debug for ConnectionHttp {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ConnectionHttp")
-            .field("project_env_key", &self.project_env_key)
+            .field("project_env_key", &self.release.target().project_env_key)
             .field("project", &self.project)
             .finish_non_exhaustive()
     }
@@ -213,18 +209,35 @@ pub struct ConnectionHttp {
     transport: Arc<HttpTransport>,
     facts: Arc<ConnectionFacts>,
     oauth2: Arc<crate::oauth_token::Cache>,
-    project_env_key: Box<str>,
     project: Box<str>,
     allowed_hosts: Arc<[AllowedHost]>,
-    /// Reader 2 of the four the loaded release enumerates (`wamn-0h0g.15.100`): the ONE
-    /// loaded, digest-verified serving manifest, held by reference and never
-    /// loaded, parsed or digest-verified here. The bytes stay immutable for the
-    /// process lifetime. This field has no TTL, refresh, or invalidation.
-    ///
-    /// `None` in a process that was given no release (conditions, benches, the pool's
-    /// own fixtures). Such a process cannot attest a wiring/component closure,
-    /// so it cannot authorize a connection.
-    release: Option<Arc<LoadedRelease>>,
+    release: Arc<LoadedRelease>,
+}
+
+/// A package release for host capability fixtures that execute no released component.
+#[cfg(any(test, feature = "test-util"))]
+pub fn test_release(project_env_key: &str) -> Arc<LoadedRelease> {
+    let manifest = ServingManifest::new(
+        wamn_catalog::ServingRelease {
+            packages: [
+                wamn_catalog::PackageCoordinate::new("capability_fixture", "1.0.0")
+                    .expect("fixture package coordinate"),
+            ]
+            .into(),
+        },
+        Default::default(),
+        Default::default(),
+        Default::default(),
+    )
+    .expect("capability fixture manifest");
+    Arc::new(
+        LoadedRelease::load_canonical_bytes(
+            &manifest.canonical_bytes(),
+            "capability fixture",
+            wamn_engine::release_manifest::ReleaseTarget::new(project_env_key, "dev"),
+        )
+        .expect("capability fixture release"),
+    )
 }
 
 impl ConnectionHttp {
@@ -232,20 +245,17 @@ impl ConnectionHttp {
         postgres: Arc<WamnPostgres>,
         transport: Arc<HttpTransport>,
         facts: Arc<ConnectionFacts>,
-        project_env_key: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         allowed_hosts: Arc<[AllowedHost]>,
-        release: Option<Arc<LoadedRelease>>,
+        release: Arc<LoadedRelease>,
     ) -> Self {
         let project: Box<str> = project.into();
-        postgres.set_connection_credentials(facts.reader(), &project);
         let oauth2 = facts.oauth_tokens();
         Self {
             postgres,
             transport,
             facts,
             oauth2,
-            project_env_key: project_env_key.into(),
             project,
             allowed_hosts,
             release,
@@ -263,7 +273,7 @@ impl ConnectionHttp {
         component_id: &str,
         requirement: &str,
         method: &str,
-    ) -> Result<u16, String> {
+    ) -> Result<u16, ConnectionError> {
         self.send(
             component_id,
             &Request {
@@ -277,7 +287,6 @@ impl ConnectionHttp {
         )
         .await
         .map(|response| response.status)
-        .map_err(|error| format!("{error:?}"))
     }
 
     /// Send once, and at most once more after the external system refuses
@@ -355,9 +364,6 @@ impl ConnectionHttp {
         request: &Request,
         rejected: Option<&str>,
     ) -> Result<Attempt, ConnectionError> {
-        let invocation = self
-            .invocation(component_id)
-            .ok_or(ConnectionError::AttestationInvalid)?;
         if request.requirement.is_empty() || request.method.is_empty() {
             return Err(ConnectionError::Incompatible);
         }
@@ -369,130 +375,36 @@ impl ConnectionHttp {
             );
             ConnectionError::AuthorityDenied
         })?;
-        let release = match &invocation.closure {
-            ConnectionExecutionClosure::Released => Some(
-                self.release
-                    .as_deref()
-                    .ok_or(ConnectionError::AttestationInvalid)?,
-            ),
-            ConnectionExecutionClosure::Candidate { .. } => None,
-        };
-        let (manifest_digest, environment, candidate_binding) = match (&invocation.closure, release)
-        {
-            (ConnectionExecutionClosure::Released, Some(release)) => {
-                let manifest = release.manifest();
-                if release.target().project_env_key != self.project_env_key.as_ref()
-                    || released_invocation_application(manifest, release.target(), &invocation)
-                        .is_none()
-                {
-                    return Err(ConnectionError::AttestationInvalid);
-                }
-                (
-                    release.release().manifest_digest.as_str(),
-                    release.target().environment.as_str(),
-                    None,
-                )
-            }
-            (
-                ConnectionExecutionClosure::Candidate {
-                    manifest_digest,
-                    environment,
-                    binding_world,
-                    ..
-                },
-                None,
-            ) => (
-                manifest_digest.as_str(),
-                environment.as_str(),
-                Some(
-                    binding_world
-                        .binding(&invocation.component_digest, &request.requirement)
-                        .ok_or(ConnectionError::AttestationInvalid)?,
-                ),
-            ),
-            _ => return Err(ConnectionError::AttestationInvalid),
-        };
-        let entry = entry_lookup(&invocation)?;
-        let snapshot = self
-            .postgres
-            .connection_effect_snapshot(
-                component_id,
-                &self.project,
-                &self.project_env_key,
-                &ConnectionEffectLookup {
-                    package_id: &invocation.package_id,
-                    entry,
-                    origin_package_id: &invocation.origin.package_id,
-                    origin_component_digest: &invocation.origin.component_digest,
-                    origin_component: &invocation.origin.component,
-                    origin_interface_version: &invocation.origin.interface_version,
-                    origin_operation: &invocation.origin.operation,
-                    operation: &invocation.operation,
-                    manifest_digest,
-                    environment,
-                    component_digest: &invocation.component_digest,
-                    store_alias: &request.requirement,
-                    candidate_binding,
-                },
-                &self.facts,
-            )
-            .await
-            .map_err(|error| {
-                let database_error = error
-                    .downcast_ref::<sqlx::Error>()
-                    .and_then(sqlx::Error::as_database_error);
-                tracing::warn!(
-                    error = %error,
-                    sqlstate = database_error.and_then(sqlx::error::DatabaseError::code).as_deref(),
-                    database_message = database_error.map(sqlx::error::DatabaseError::message),
-                    "trusted HTTP connection authority snapshot failed"
-                );
-                ConnectionError::Transport(AUTHORITY_SNAPSHOT_UNAVAILABLE.to_string())
-            })?
+        let invocation = self
+            .invocation(component_id)
             .ok_or(ConnectionError::AttestationInvalid)?;
-        match (&invocation.closure, release) {
-            (ConnectionExecutionClosure::Released, Some(release)) => {
-                authorize_release_closure(release.manifest(), &invocation, &snapshot)?;
-            }
-            (ConnectionExecutionClosure::Candidate { .. }, None) => {
-                authorize_candidate_closure(
-                    &invocation,
-                    &snapshot,
-                    candidate_binding.ok_or(ConnectionError::AttestationInvalid)?,
-                )?;
-            }
-            _ => return Err(ConnectionError::AttestationInvalid),
-        }
-        authorize_snapshot(&snapshot, &http_descriptor())?;
+        let environment = self.facts.environment();
+        let snapshot = crate::connection_binding::resolve(
+            &self.postgres,
+            &self.facts,
+            &self.release,
+            component_id,
+            &request.requirement,
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "HTTP connection authority refused");
+            ConnectionError::AttestationInvalid
+        })?;
+        authorize_snapshot(&snapshot, &ConnectionTypeDescriptor::http_v1())?;
         authorize_method(snapshot.read_only, &request.method)?;
 
         let definition = snapshot
             .definition
             .as_ref()
             .ok_or(ConnectionError::CredentialUnavailable)?;
-        let object = definition
-            .as_object()
-            .ok_or(ConnectionError::Incompatible)?;
-        let primary = object
-            .get("primary-authority")
-            .and_then(serde_json::Value::as_str)
-            .ok_or(ConnectionError::Incompatible)?;
-        let tls = match object
-            .get("tls-verification")
-            .and_then(serde_json::Value::as_str)
-        {
-            Some("disabled") => TlsPolicy::Disabled,
-            Some("verify-authority") => TlsPolicy::VerifyAuthority,
-            _ => return Err(ConnectionError::Incompatible),
-        };
-        let proxy = None;
-        let authority = parse_http_connection_authority(primary, tls, proxy)
+        let authority = crate::connection_authority::parse_http_definition(definition)
             .map_err(|error| authority_denied("definition", &error))?;
         let decision = resolve_http_request(
             &authority,
             &target,
             &self.allowed_hosts,
-            &ConnectionNetworkPolicy,
+            &network_policy::allows,
             &TokioDnsResolver,
         )
         .await
@@ -521,7 +433,12 @@ impl ConnectionHttp {
         }
         let identity = ClientIdentity {
             connection: ConnectionIdentity {
-                project_env_key: self.project_env_key.clone(),
+                project_env_key: self
+                    .release
+                    .target()
+                    .project_env_key
+                    .clone()
+                    .into_boxed_str(),
                 project: self.project.clone(),
                 environment: environment.into(),
                 instance: connection.to_string().into(),
@@ -860,7 +777,7 @@ pub(crate) async fn token_endpoint(
         &authority,
         &target,
         platform_hosts.unwrap_or(&exact),
-        &ConnectionNetworkPolicy,
+        &network_policy::allows,
         &TokioDnsResolver,
     )
     .await?;
@@ -1126,29 +1043,7 @@ pub(crate) fn authorize_candidate_closure(
     Ok(())
 }
 
-/// The HTTP connection's own descriptor.
-///
-/// Each call builds its descriptor and authorizes the effect again.
-/// The shared transport retains clients only under the complete isolation key.
-/// `repo-lint` guards that key and refuses client retention without an identity.
-fn http_descriptor() -> ConnectionTypeDescriptor {
-    ConnectionTypeDescriptor::http_v1()
-}
-
-/// Authorize one connection effect against the descriptor for its type.
-///
-/// PARAMETERIZED, not copied (wamn-jpxo). The type and contract used to be
-/// four hardcoded `"http"`/`HTTP_CONTRACT` literals here. A second capability
-/// needs the same authorization, and a forked copy would mint a THIRD reader
-/// of one row shape — which is precisely the live defect `wamn-0h0g.21.9`
-/// records, where `promote.rs` read the wrapped record and this file
-/// pointer-read the top level, so a row satisfying either refused the other.
-/// The authorization logic therefore stays one copy with one reader, and the
-/// capability arrives as an argument.
-///
-/// Taking the whole descriptor rather than a `(type, contract)` pair means a
-/// caller cannot supply a mismatched pair: there is no way to name HTTP's type
-/// beside blobstore's contract.
+/// Require an active binding, the admitted generation and the selected capability's contract.
 pub(crate) fn authorize_snapshot(
     snapshot: &ConnectionEffectSnapshot,
     descriptor: &ConnectionTypeDescriptor,
@@ -1190,7 +1085,7 @@ pub(crate) fn authorize_snapshot(
     Ok(())
 }
 
-fn reserved_header(name: &reqwest::header::HeaderName) -> bool {
+fn reserved_header(name: &hyper::header::HeaderName) -> bool {
     matches!(
         name.as_str(),
         "host"
@@ -1212,10 +1107,10 @@ fn reserved_header(name: &reqwest::header::HeaderName) -> bool {
 fn outbound_headers(
     request: &Request,
     credentials: HashMap<String, String>,
-) -> Result<reqwest::header::HeaderMap, ConnectionError> {
-    let mut headers = reqwest::header::HeaderMap::new();
+) -> Result<hyper::header::HeaderMap, ConnectionError> {
+    let mut headers = hyper::header::HeaderMap::new();
     for header in &request.headers {
-        let name = reqwest::header::HeaderName::from_bytes(header.name.as_bytes())
+        let name = hyper::header::HeaderName::from_bytes(header.name.as_bytes())
             .map_err(|_| ConnectionError::AuthorityDenied)?;
         if matches!(name.as_str(), "x-http-method-override" | "x-http-method") {
             continue;
@@ -1223,20 +1118,20 @@ fn outbound_headers(
         if reserved_header(&name) {
             return Err(ConnectionError::AuthorityDenied);
         }
-        let value = reqwest::header::HeaderValue::from_bytes(&header.value)
+        let value = hyper::header::HeaderValue::from_bytes(&header.value)
             .map_err(|_| ConnectionError::AuthorityDenied)?;
         headers.append(name, value);
     }
     for (name, value) in credentials {
-        let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+        let name = hyper::header::HeaderName::from_bytes(name.as_bytes())
             .map_err(|_| ConnectionError::CredentialUnavailable)?;
-        let value = reqwest::header::HeaderValue::from_str(&value)
+        let value = hyper::header::HeaderValue::from_str(&value)
             .map_err(|_| ConnectionError::CredentialUnavailable)?;
         headers.insert(name, value);
     }
     if let Some(key) = &request.idempotency_key {
-        let value = reqwest::header::HeaderValue::from_str(key)
-            .map_err(|_| ConnectionError::Incompatible)?;
+        let value =
+            hyper::header::HeaderValue::from_str(key).map_err(|_| ConnectionError::Incompatible)?;
         headers.insert("idempotency-key", value);
     }
     inject_trace_context(&mut headers);
@@ -1249,7 +1144,7 @@ fn outbound_headers(
 /// forwards its node context's traceparent with `push_header_unless_present`,
 /// and the host adds context rather than rewriting the guest's.
 struct TraceContextHeaders<'a> {
-    headers: &'a mut reqwest::header::HeaderMap,
+    headers: &'a mut hyper::header::HeaderMap,
 }
 
 impl opentelemetry::propagation::Injector for TraceContextHeaders<'_> {
@@ -1259,13 +1154,13 @@ impl opentelemetry::propagation::Injector for TraceContextHeaders<'_> {
         if value.is_empty() {
             return;
         }
-        let Ok(name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) else {
+        let Ok(name) = hyper::header::HeaderName::from_bytes(key.as_bytes()) else {
             return;
         };
         if self.headers.contains_key(&name) {
             return;
         }
-        let Ok(value) = reqwest::header::HeaderValue::from_str(&value) else {
+        let Ok(value) = hyper::header::HeaderValue::from_str(&value) else {
             return;
         };
         self.headers.insert(name, value);
@@ -1287,7 +1182,7 @@ impl opentelemetry::propagation::Injector for TraceContextHeaders<'_> {
 /// copy of it (`wamn-k9ea`): the condition's whole assertion is that what crosses the
 /// process boundary is what production injects, so a reimplementation there
 /// does not test this one.
-pub fn inject_trace_context(headers: &mut reqwest::header::HeaderMap) {
+pub fn inject_trace_context(headers: &mut hyper::header::HeaderMap) {
     use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
     let context = tracing::Span::current().context();
@@ -1326,7 +1221,7 @@ async fn execute(
     {
         return Err(ConnectionError::Incompatible);
     }
-    let method = reqwest::Method::from_bytes(request.method.as_bytes())
+    let method = hyper::Method::from_bytes(request.method.as_bytes())
         .map_err(|_| ConnectionError::Incompatible)?;
     let headers = outbound_headers(request, credentials)
         .map_err(|error| log_effect_authority_denied("outbound-headers", error))?;
@@ -1391,15 +1286,7 @@ pub async fn health(
     credential: Option<&str>,
 ) -> Result<(), String> {
     async {
-        let base = parameters["primary-authority"]
-            .as_str()
-            .context("HTTP authority missing")?;
-        let tls = match parameters["tls-verification"].as_str() {
-            Some("disabled") => TlsPolicy::Disabled,
-            Some("verify-authority") => TlsPolicy::VerifyAuthority,
-            _ => anyhow::bail!("HTTP TLS policy missing"),
-        };
-        let authority = parse_http_connection_authority(base, tls, None)?;
+        let authority = crate::connection_authority::parse_http_definition(parameters)?;
         let url = url::Url::parse(authority.canonical_base_url())?;
         anyhow::ensure!(url.scheme() == "https", "HTTP health requires TLS");
         let host = url.host_str().context("HTTP authority has no host")?;
@@ -1412,7 +1299,7 @@ pub async fn health(
             &authority,
             &target,
             &allowed,
-            &ConnectionNetworkPolicy,
+            &network_policy::allows,
             &TokioDnsResolver,
         )
         .await?;
@@ -1486,7 +1373,9 @@ impl HostPlugin for ConnectionHttp {
 
     fn world(&self) -> WitWorld {
         WitWorld {
-            imports: HashSet::from([WitInterface::from("wamn:connection/http@0.1.0")]),
+            imports: HashSet::from([WitInterface::from(
+                ConnectionTypeDescriptor::http_v1().contract.as_str(),
+            )]),
             exports: HashSet::new(),
         }
     }
@@ -1520,7 +1409,7 @@ fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
     let span = effect_span!(
         "wamn.connection_http",
         EffectIdentity {
-            project_env_key: &plugin.project_env_key,
+            project_env_key: &plugin.release.target().project_env_key,
             project: &plugin.project,
             component: component_id,
         },
@@ -1656,6 +1545,14 @@ mod tests {
     use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
     use crate::plugins::wamn_postgres::WamnPostgresConfig;
 
+    pub(super) fn interface_address() -> std::net::IpAddr {
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0").expect("address selection socket");
+        socket
+            .connect("192.0.2.1:9")
+            .expect("select a private interface");
+        socket.local_addr().expect("interface address").ip()
+    }
+
     fn digest(byte: char) -> String {
         format!("sha256:{}", byte.to_string().repeat(64))
     }
@@ -1677,6 +1574,7 @@ mod tests {
                     wiring_version: 3,
                     node_id: "notify".to_string(),
                     occurrence: 2,
+                    configuration: Default::default(),
                 },
             ),
             package_id: "package_a".to_string(),
@@ -1753,7 +1651,7 @@ mod tests {
                 "store-alias": "erp",
                 "requirement": {
                     "requirement-type": "http",
-                    "contract": HTTP_CONTRACT,
+                    "contract": ConnectionTypeDescriptor::http_v1().contract,
                 },
             })),
             requirement_hash: Some(digest('d')),
@@ -1763,7 +1661,7 @@ mod tests {
             instance_id: Some("manager".to_string()),
             validation_hash: Some(digest('e')),
             requirement_type: Some("http".to_string()),
-            contract: Some(HTTP_CONTRACT.to_string()),
+            contract: Some(ConnectionTypeDescriptor::http_v1().contract),
             instance_enabled: true,
             active_generation: Some(7),
             pinned_generation: None,
@@ -1773,6 +1671,64 @@ mod tests {
             definition_hash: Some(digest('c')),
             credential_handle: Some("manager-v7".to_string()),
         }
+    }
+
+    #[test]
+    fn admitted_connection_facts_cannot_be_retargeted() {
+        use crate::plugins::wamn_postgres::CandidateConnectionBinding;
+        let mut snapshot = snapshot();
+        snapshot.pinned_generation = snapshot.generation;
+        let mut admitted = invocation();
+        let binding = CandidateConnectionBinding {
+            read_only: snapshot.read_only,
+            component_digest: admitted.component_digest.clone(),
+            store_alias: "erp".into(),
+            requirement_hash: snapshot.requirement_hash.clone().unwrap(),
+            instance_id: snapshot.instance_id.clone().unwrap(),
+            instance_revision: snapshot.instance_revision.unwrap(),
+            requirement_type: snapshot.requirement_type.clone().unwrap(),
+            contract: snapshot.contract.clone().unwrap(),
+            validation_hash: snapshot.validation_hash.clone().unwrap(),
+            generation: snapshot.generation.unwrap(),
+            definition_hash: snapshot.definition_hash.clone().unwrap(),
+            credential_set_handle: snapshot.credential_handle.clone(),
+        };
+        admitted.closure = ConnectionExecutionClosure::Candidate {
+            manifest_digest: digest('f'),
+            environment: "dev".into(),
+            wiring_hash: fixture_wiring_hash(),
+            component: admitted.component.clone(),
+            interface_version: admitted.origin.interface_version.clone(),
+            binding_world: Arc::new(
+                CandidateBindingWorld::from_json(serde_json::to_value([&binding]).unwrap())
+                    .unwrap(),
+            ),
+        };
+        assert!(authorize_candidate_closure(&admitted, &snapshot, &binding).is_ok());
+        for change in [
+            (|snapshot: &mut ConnectionEffectSnapshot| snapshot.wiring_hash = None)
+                as fn(&mut ConnectionEffectSnapshot),
+            |snapshot| snapshot.component = None,
+            |snapshot| snapshot.interface_version = None,
+            |snapshot| snapshot.operation = None,
+            |snapshot| snapshot.read_only = !snapshot.read_only,
+            |snapshot| snapshot.instance_id = None,
+            |snapshot| snapshot.instance_revision = Some(0),
+            |snapshot| snapshot.requirement_hash = None,
+            |snapshot| snapshot.requirement_type = None,
+            |snapshot| snapshot.contract = None,
+            |snapshot| snapshot.validation_hash = None,
+            |snapshot| snapshot.pinned_generation = None,
+            |snapshot| snapshot.generation = None,
+            |snapshot| snapshot.definition_hash = None,
+            |snapshot| snapshot.credential_handle = None,
+        ] {
+            let mut changed = snapshot.clone();
+            change(&mut changed);
+            assert!(authorize_candidate_closure(&admitted, &changed, &binding).is_err());
+        }
+        admitted.origin.operation = "another-operation".into();
+        assert!(authorize_candidate_closure(&admitted, &snapshot, &binding).is_err());
     }
 
     fn position(invocation: &mut ConnectionInvocation) -> &mut WiringPosition {
@@ -1950,16 +1906,6 @@ mod tests {
         );
     }
 
-    /// `HTTP_CONTRACT` is pinned by conformance as an exact source line, while
-    /// `authorize_snapshot` now compares against the descriptor. If those two
-    /// spellings ever drift, authorization would silently start demanding a
-    /// contract nothing mints.
-    #[test]
-    fn the_pinned_contract_literal_matches_the_descriptor() {
-        assert_eq!(http_descriptor().contract, HTTP_CONTRACT);
-        assert_eq!(http_descriptor().requirement_type, "http");
-    }
-
     /// The parameter must actually discriminate. A snapshot carrying a valid
     /// HTTP authority chain is still refused when authorized against another
     /// capability's descriptor — otherwise the argument is decoration, and one
@@ -1967,7 +1913,8 @@ mod tests {
     #[test]
     fn a_valid_http_snapshot_is_refused_against_another_capabilitys_descriptor() {
         let valid = snapshot();
-        authorize_snapshot(&valid, &http_descriptor()).expect("valid against its own descriptor");
+        authorize_snapshot(&valid, &ConnectionTypeDescriptor::http_v1())
+            .expect("valid against its own descriptor");
         assert!(
             matches!(
                 authorize_snapshot(&valid, &ConnectionTypeDescriptor::blobstore_v1()),
@@ -1980,34 +1927,34 @@ mod tests {
     #[test]
     fn component_grain_snapshot_refuses_each_missing_authority_layer() {
         let valid = snapshot();
-        authorize_snapshot(&valid, &http_descriptor())
+        authorize_snapshot(&valid, &ConnectionTypeDescriptor::http_v1())
             .expect("the fixture snapshot carries every authority layer");
 
         let mut missing_node = valid.clone();
         missing_node.node_permitted = false;
         assert!(matches!(
-            authorize_snapshot(&missing_node, &http_descriptor()),
+            authorize_snapshot(&missing_node, &ConnectionTypeDescriptor::http_v1()),
             Err(ConnectionError::AttestationInvalid)
         ));
 
         let mut inactive_binding = valid.clone();
         inactive_binding.binding_active = false;
         assert!(matches!(
-            authorize_snapshot(&inactive_binding, &http_descriptor()),
+            authorize_snapshot(&inactive_binding, &ConnectionTypeDescriptor::http_v1()),
             Err(ConnectionError::Unbound)
         ));
 
         let mut stale_generation = valid.clone();
         stale_generation.generation = Some(6);
         assert!(matches!(
-            authorize_snapshot(&stale_generation, &http_descriptor()),
+            authorize_snapshot(&stale_generation, &ConnectionTypeDescriptor::http_v1()),
             Err(ConnectionError::CredentialUnavailable)
         ));
 
         let mut wrong_contract = valid;
         wrong_contract.contract = Some("wamn:connection/postgres@0.1.0".to_string());
         assert!(matches!(
-            authorize_snapshot(&wrong_contract, &http_descriptor()),
+            authorize_snapshot(&wrong_contract, &ConnectionTypeDescriptor::http_v1()),
             Err(ConnectionError::Incompatible)
         ));
     }
@@ -2165,10 +2112,9 @@ mod tests {
             postgres,
             Arc::new(HttpTransport::new().expect("HTTP transport")),
             facts,
-            "org-a",
             "project-a",
             Vec::<AllowedHost>::new().into(),
-            None,
+            crate::plugins::connection_http::test_release("org-a"),
         )
     }
 

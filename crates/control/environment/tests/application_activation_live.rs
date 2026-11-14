@@ -139,6 +139,7 @@ fn component(
         .map(|alias| wamn_catalog::ComponentConnection {
             store_alias: (*alias).into(),
             requirement_type: wamn_catalog::ComponentConnectionType::Http,
+            mode: wamn_catalog::ConnectionMode::Write,
         })
         .collect();
     let admitted = descriptor
@@ -766,28 +767,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
 
     assert_eq!(before_sql, continuity(&mut observer).await?);
     // The failed candidate remains cached, but the runtime resolves the mounted digest.
-    let postgres = wamn_runtime::plugins::wamn_postgres::WamnPostgres::new(
-        wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig {
-            credentials: Some(
-                wamn_runtime::plugins::wamn_postgres::ClassCredentials::every_class(
-                    observer_url.to_string(),
-                ),
-            ),
-            guest_pool_max_size: 1,
-            platform_pool_max_size: 1,
-            wait_timeout_ms: 2000,
-            statement_timeout_ms: 5000,
-            row_limit: 100,
-        },
-    )?;
-    let resolved = postgres
-        .resolve_release_components(
-            wamn_runtime::plugins::wamn_postgres::DEFAULT_PROJECT,
-            PROJECT_ENV_KEY,
-            "dev",
-            mounted.release().manifest_digest.as_str(),
-        )
-        .await?;
+    let resolved = wamn_runtime::plugins::wamn_postgres::release_components(&mounted)?;
     assert_eq!(
         resolved
             .iter()

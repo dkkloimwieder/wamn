@@ -18,7 +18,6 @@ wasmtime = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-component-policy = { workspace = true }
 # `invoke_operation` takes the intent store trait. Run-state is pure.
-wamn-run-state = { workspace = true }
 # A route delivery derives its causation, and a registration source names the
 # platform component that runs it. Both crates are pure.
 wamn-event-wire = { workspace = true }

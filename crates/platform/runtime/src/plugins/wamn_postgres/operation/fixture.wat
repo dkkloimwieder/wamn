@@ -52,7 +52,7 @@
   (import "wamn:operation/operation@0.1.0" (instance $operation
     (type $id' string)
     (export "sealed-operation-id" (type $id (eq $id')))
-    (type $refusal' (variant (case "uncertain") (case "resolved" string) (case "conflict")
+    (type $refusal' (variant (case "conflict")
       (case "unknown-operation") (case "grant-denied") (case "invalid-caller")
       (case "not-begun") (case "already-begun") (case "postgres" $pg-error) (case "reads-claim-nothing") (case "in-progress") (case "outcome-unknown")))
     (export "refusal" (type $refusal (eq $refusal')))
@@ -77,7 +77,6 @@
     (data (i32.const 560) "\ff\00\80")
     (data (i32.const 576) "update.sql")
     (data (i32.const 608) "{ \22value\22 : 7 }")
-    (data (i32.const 736) "external-evidence")
     (global $next (mut i32) (i32.const 1024))
     (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
       (local $ptr i32)
@@ -127,11 +126,6 @@
         end
       end)
     (func (export "delivery-id") (result i32) i32.const 256)
-    (func (export "resolved-refusal") (result i32)
-      i32.const 704 i32.const 1 i32.store
-      i32.const 712 i32.const 736 i32.store
-      i32.const 716 i32.const 17 i32.store
-      i32.const 704)
     (func $commit-call
       i32.const 608 i32.const 15 i32.const 64 call $commit)
     (func $run-statement
@@ -169,7 +163,7 @@
     (func (export "run") (param $caller i32) (param $mode i32) (result i32)
       local.get $mode i32.const 23 i32.eq
       local.get $mode i32.const 24 i32.eq i32.or if
-        local.get $caller call $begin-call i32.const 8 call $refused
+        local.get $caller call $begin-call i32.const 6 call $refused
         i32.const 80 i32.load8_u
         local.get $mode i32.const 23 i32.eq
         if (result i32) i32.const 1 else i32.const 8 end
@@ -192,10 +186,10 @@
         i32.const 1 call $return i32.const 0 return
       end
       local.get $mode i32.const 21 i32.eq if
-        local.get $caller call $begin-call i32.const 3 call $refused
-        call $commit-call i32.const 6 call $refused
-        i32.const 64 call $rollback i32.const 6 call $refused
-        i32.const 64 call $wal i32.const 6 call $refused
+        local.get $caller call $begin-call i32.const 1 call $refused
+        call $commit-call i32.const 4 call $refused
+        i32.const 64 call $rollback i32.const 4 call $refused
+        i32.const 64 call $wal i32.const 4 call $refused
         i32.const 1 call $return i32.const 0 return
       end
       local.get $mode i32.const 19 i32.ge_u if
@@ -210,7 +204,7 @@
           i32.const 64 call $finish-read
           i32.const 64 i32.load8_u if unreachable end
         else
-          i32.const 4 call $refused
+          i32.const 2 call $refused
         end
         i32.const 1 call $return i32.const 0 return
       end
@@ -218,11 +212,11 @@
         ;; Reads cannot begin, even with a key and hash.
         i32.const 1 local.get $caller i32.const 640 i32.const 21 i32.const 544 i32.const 3
         i32.const 560 i32.const 3 i32.const 64 call $begin
-        i32.const 9 call $refused
+        i32.const 7 call $refused
         i32.const 1 local.get $caller i32.const 640 i32.const 21 i32.const 64 call $authorize
         i32.const 64 i32.load8_u if unreachable end
-        call $commit-call i32.const 6 call $refused
-        i32.const 64 call $wal i32.const 6 call $refused
+        call $commit-call i32.const 4 call $refused
+        i32.const 64 call $wal i32.const 4 call $refused
         i32.const 128 call $transaction
         i32.const 128 i32.load8_u i32.eqz if unreachable end
         i32.const 672 i32.const 8 i32.const 0 i32.const 0
@@ -233,7 +227,7 @@
         i32.const 1 call $return i32.const 0 return
       end
       local.get $mode i32.const 16 i32.eq if
-        i32.const 64 call $wal i32.const 6 call $refused
+        i32.const 64 call $wal i32.const 4 call $refused
         i32.const 1 call $return i32.const 0 return
       end
       local.get $mode i32.const 17 i32.eq if
@@ -245,11 +239,11 @@
         call $wal-call
         call $commit-call
         i32.const 64 i32.load8_u if unreachable end
-        i32.const 64 call $wal i32.const 6 call $refused
+        i32.const 64 call $wal i32.const 4 call $refused
         i32.const 1 call $return i32.const 0 return
       end
       local.get $mode i32.const 13 i32.eq if
-        i32.const 64 call $rollback i32.const 6 call $refused
+        i32.const 64 call $rollback i32.const 4 call $refused
         i32.const 1 call $return i32.const 0 return
       end
       local.get $mode i32.const 14 i32.ge_u if
@@ -260,7 +254,7 @@
         i32.const 64 call $rollback
         i32.const 64 i32.load8_u if unreachable end
         ;; Rollback clears the operation, including its claim and authority.
-        call $commit-call i32.const 6 call $refused
+        call $commit-call i32.const 4 call $refused
         local.get $mode i32.const 15 i32.eq if
           ;; The same key begins new work, not a replay.
           local.get $caller call $begin-call
@@ -286,21 +280,21 @@
       local.get $mode i32.const 11 i32.eq if
         ;; An unknown operation refuses before opening a transaction.
         i32.const 512 i32.const 120 i32.store8
-        local.get $caller call $begin-call i32.const 3 call $refused
+        local.get $caller call $begin-call i32.const 1 call $refused
         i32.const 512 i32.const 98 i32.store8
       end
       local.get $mode i32.eqz if
-        call $commit-call i32.const 6 call $refused
+        call $commit-call i32.const 4 call $refused
       else
         local.get $caller call $begin-call
         local.get $mode i32.const 3 i32.eq if
-          i32.const 4 call $refused
+          i32.const 2 call $refused
         else
           local.get $mode i32.const 6 i32.eq if
-            i32.const 2 call $refused
+            i32.const 0 call $refused
           else
             local.get $mode i32.const 7 i32.eq if
-              i32.const 0 call $refused
+              i32.const 8 call $refused
             else
               i32.const 64 i32.load8_u if unreachable end
               local.get $mode i32.const 5 i32.eq if
@@ -313,12 +307,12 @@
                 i32.const 64 i32.load8_u if unreachable end
                 i32.const 72 i32.load8_u i32.const 1 i32.ne if unreachable end
                 ;; A replay cannot commit or run a statement.
-                call $commit-call i32.const 6 call $refused
+                call $commit-call i32.const 4 call $refused
               else
                 i32.const 72 i32.load8_u if unreachable end
                 local.get $mode i32.const 1 i32.eq if
                   call $run-statement
-                  local.get $caller call $begin-call i32.const 7 call $refused
+                  local.get $caller call $begin-call i32.const 5 call $refused
                   ;; The refused begin left the open operation untouched.
                   call $run-statement
                   call $commit-call
@@ -334,7 +328,7 @@
                 local.get $mode i32.const 9 i32.ne i32.and if
                   call $commit-call
                   local.get $mode i32.const 12 i32.eq if
-                    i32.const 8 call $refused
+                    i32.const 6 call $refused
                     i32.const 544 i32.const 110 i32.store8
                     local.get $caller call $begin-call
                     i32.const 64 i32.load8_u if unreachable end
@@ -363,8 +357,6 @@
       (export "return" (func $return))))))
   (func (export "delivery-id") (result string)
     (canon lift (core func $main "delivery-id") (memory $memory "memory")))
-  (func (export "resolved-refusal") (result $refusal)
-    (canon lift (core func $main "resolved-refusal") (memory $memory "memory")))
   (func (export "run") async (param "caller" (own $caller)) (param "mode" u32) (result bool)
     (canon lift (core func $main "run") (memory $memory "memory")
       (realloc (func $memory "realloc")) async (callback (func $main "callback")))))

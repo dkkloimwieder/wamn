@@ -153,10 +153,8 @@ targets = [
   { workspace="root", package="wamn-run-state", target="test:queue", tier="unit" },
   { workspace="root", package="wamn-run-state", target="test:run_state_live", tier="live-postgres" },
   { workspace="root", package="wamn-run-state", target="test:store", tier="live-postgres" },
-  { workspace="root", package="wamn-run-state-sqlite", target="test:intent_store", tier="contract" },
   { workspace="root", package="wamn-runtime", target="lib:wamn_runtime", tier="live-nats" },
   { workspace="root", package="wamn-runtime", target="test:connection_authority", tier="contract" },
-  { workspace="root", package="wamn-runtime", target="test:effect_snapshot_live", tier="live-nats" },
   { workspace="root", package="wamn-runtime", target="test:environment_status_route", tier="live-postgres" },
   { workspace="root", package="wamn-runtime", target="test:executor_platform_surface_live", tier="live-postgres" },
   { workspace="root", package="wamn-runtime", target="test:executor_plugin_no_trap_live", tier="contract" },
@@ -282,7 +280,7 @@ workspaces = ["root", "apps", "no-std"]
 
 [[rules]]
 # Host and materializer bindings read these shared interfaces.
-inputs = ['^wit/wamn-router-delivery-0\.4/', '^apps/platform/execution/materializer/wit/deps/wasi-cli/', '^apps/platform/execution/materializer/wit/deps/wasi-clocks/']
+inputs = ['^apps/platform/execution/materializer/wit/deps/wasi-cli/', '^apps/platform/execution/materializer/wit/deps/wasi-clocks/']
 workspaces = ["root", "apps"]
 
 [[rules]]

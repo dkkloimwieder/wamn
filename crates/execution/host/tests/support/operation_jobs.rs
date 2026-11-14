@@ -40,15 +40,18 @@ async fn operations_refuse_unrelated_project_authority_before_execution() -> any
     }
     let (_server, nats) = wamn_runtime::auth_cache::test_util::nats().await;
     let writer = Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?));
-    let delivery = HostRouteDelivery::control(HostRouteHandlers::Control {
-        status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
-        administration: None,
-        control: wamn_postgres::pool(&control_url, 4).await?,
-        writer,
-        identity: None,
-        org: ORG.into(),
-        changes: Publisher::new(nats),
-    });
+    let delivery = HostRouteDelivery::new(
+        Arc::new(LoadedRelease::control_root()),
+        HostRouteHandlers::Control {
+            status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
+            administration: None,
+            control: wamn_postgres::pool(&control_url, 4).await?,
+            writer,
+            identity: None,
+            org: ORG.into(),
+            changes: Publisher::new(nats),
+        },
+    );
     for (id, attachment) in HostRouteSet::Control
         .attachments()
         .filter(|(_, attachment)| {

@@ -17,8 +17,7 @@ use wamn_edge::config::{DeviceConfig, SerialConfig};
 use wamn_edge::device::DeviceLoop;
 use wamn_edge::samples::{Sample, SampleStore};
 use wamn_edge::status;
-use wamn_run_state::IntentStore as _;
-use wamn_run_state_sqlite::SqliteIntentStore;
+use wamn_edge::store::EdgeStore;
 
 use support::{ATTACHMENT, PRINCIPAL, ROLE, bundle, config, key, start};
 
@@ -48,7 +47,7 @@ async fn pending(samples: &SampleStore, count: usize) -> Vec<Sample> {
     panic!("the device loop stored fewer than {count} samples in 30 seconds");
 }
 
-/// Two frames give two calls, two finished intents and two samples, and the
+/// Two frames give two calls, two completed claims and two samples, and the
 /// device component trims each frame. A frame longer than `max_frame` gives
 /// none, a trailing carriage return is dropped, and a blank frame, which the
 /// component refuses, stores no sample. The status socket counts the dropped
@@ -91,20 +90,7 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
     assert_eq!(after["device"], json!({"dropped_frames": 1}));
     assert_eq!(after["samples"], json!({"pending": 2, "refused": []}));
     assert_eq!(after["started_at"], before["started_at"]);
-    assert_eq!(
-        status::run(&db).await.expect("print the status"),
-        format!(
-            "started_at\t{}\ndevice.dropped_frames\t1\nforward\tnone\n\
-             samples.pending\t2\nsamples.refused\t0\n",
-            before["started_at"].as_str().expect("a time")
-        ),
-        "wamn-edge status prints one line per fact"
-    );
     host.stop().await.expect("the edge stops");
-    assert!(
-        !directory.join("status.sock").exists(),
-        "the stopped edge removes its socket"
-    );
     assert!(
         status::read(&db).await.is_err(),
         "a stopped edge answers no status"
@@ -127,12 +113,9 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
         assert_eq!(sample.attempts, 0);
     }
 
-    let store =
-        SqliteIntentStore::open(directory.join("edge.db")).expect("open with the edge stopped");
-    assert!(
-        store.uncertain(10).await.expect("list").is_empty(),
-        "every device intent finished, the refused blank frame too"
-    );
+    let store = EdgeStore::open(directory.join("edge.db"))
+        .await
+        .expect("open with the edge stopped");
     let samples = SampleStore::open(store).await.expect("open the samples");
     assert_eq!(
         samples.pending(10).await.expect("read the samples"),

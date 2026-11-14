@@ -1272,6 +1272,7 @@ mod tests {
         request.declaration.connections = vec![wamn_catalog::ComponentConnection {
             store_alias: "erp".to_string().into(),
             requirement_type: wamn_catalog::ComponentConnectionType::Http,
+            mode: wamn_catalog::ConnectionMode::Write,
         }];
 
         let facts = validate_component_admission(&engine, &bytes, request)

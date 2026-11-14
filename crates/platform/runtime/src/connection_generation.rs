@@ -15,3 +15,24 @@ pub fn binding_validation_subject(
 pub fn definition_hash(definition: &Value) -> String {
     wamn_digest::canonical_json_sha256(definition)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binding_identity_changes_with_the_validated_definition() {
+        let descriptor = wamn_catalog::ConnectionTypeDescriptor::blobstore_v1();
+        let original = definition_hash(&binding_validation_subject(
+            &descriptor,
+            "sha256:req",
+            "sha256:def",
+        ));
+        let changed = definition_hash(&binding_validation_subject(
+            &descriptor,
+            "sha256:req",
+            "sha256:other",
+        ));
+        assert_ne!(original, changed);
+    }
+}

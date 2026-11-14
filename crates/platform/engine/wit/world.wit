@@ -1,14 +1,7 @@
 package wamn:engine@0.1.0;
 
-/// Host-side bindgen world for the three host imports of the http-route
-/// ingress guest. The host IMPLEMENTS `wamn:flow-http-routing/routing`, serving
-/// routes out of the loaded release, and `wamn:router-delivery/delivery`, which
-/// hands each request to the host's delivery. See src/flow_http_routing.rs and
-/// src/router_delivery.rs. Each host implements `wamn:operation/operation`
-/// over its own store; this world only generates the binding. See
-/// src/entry_operation.rs.
+/// The HTTP route guest imports authentication and the shared operation boundary.
 world route-plugins {
   import wamn:flow-http-routing/routing@0.1.0;
-  import wamn:router-delivery/delivery@0.4.0;
   import wamn:operation/operation@0.1.0;
 }

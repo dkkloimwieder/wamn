@@ -68,7 +68,7 @@ impl AuthorizedInvocation {
             members,
             principal,
         } = request;
-        wamn_engine::router_delivery::authorize_registered_operation(
+        wamn_engine::native_routes::authorize_registered_operation(
             caller.as_ref(),
             registered_operation,
         )?;
@@ -108,10 +108,6 @@ pub(crate) fn identity(scopes: &InvocationScopes, scope: &str) -> Option<Session
 }
 
 pub(crate) fn validate_invocation(invocation: &ConnectionInvocation) -> anyhow::Result<()> {
-    let digest = invocation
-        .component_digest
-        .strip_prefix("sha256:")
-        .unwrap_or_default();
     let entry_valid = match &invocation.entry {
         InvocationEntry::Route => !matches!(
             invocation.closure,
@@ -128,10 +124,7 @@ pub(crate) fn validate_invocation(invocation: &ConnectionInvocation) -> anyhow::
     anyhow::ensure!(
         !invocation.package_id.is_empty()
             && entry_valid
-            && digest.len() == 64
-            && digest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            && wamn_catalog::ArtifactHash::parse(invocation.component_digest.as_str()).is_ok(),
         "connection-http-invocation-invalid"
     );
     if let ConnectionExecutionClosure::Candidate {
@@ -143,16 +136,12 @@ pub(crate) fn validate_invocation(invocation: &ConnectionInvocation) -> anyhow::
         ..
     } = &invocation.closure
     {
-        let graph = wiring_hash.strip_prefix("sha256:").unwrap_or_default();
         anyhow::ensure!(
             !manifest_digest.is_empty()
                 && !environment.is_empty()
                 && !component.is_empty()
                 && !interface_version.is_empty()
-                && graph.len() == 64
-                && graph
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+                && wamn_catalog::DefinitionHash::parse(wiring_hash).is_ok(),
             "connection-http-candidate-closure-invalid"
         );
     }

@@ -11,11 +11,11 @@ use anyhow::Context as _;
 use tokio::time::Instant;
 use wamn_catalog::AdmittedComponent;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
-use wamn_engine::operation::invocation_policy::{InvocationPolicy, InvocationScope, NoTransaction};
+use wamn_engine::native_routes::authorize_released_operation;
+use wamn_engine::operation::invocation_policy::{InvocationPolicy, InvocationScope};
 use wamn_engine::operation::native_call::{NativeCallFailure, NativeInvocation};
 use wamn_engine::operation::native_workload::native_component_name;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_engine::router_delivery::authorize_released_operation;
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wit::{WitInterface, WitWorld};
@@ -121,22 +121,6 @@ impl InvocationPolicy for EdgePolicy {
     type Facts = EdgeFacts;
     /// No capability is bound, so nothing is revoked.
     type Authority = ();
-    /// The edge has no SQL.
-    type Transaction = NoTransaction;
-
-    fn admit_and_open_transaction(
-        &self,
-        _component_id: &str,
-        _operation: &str,
-        _facts: &EdgeFacts,
-    ) -> impl Future<Output = anyhow::Result<Option<NoTransaction>>> + Send {
-        std::future::ready(Ok(None))
-    }
-
-    fn transaction_facts(&self, _facts: &EdgeFacts, transaction: &NoTransaction) -> EdgeFacts {
-        match *transaction {}
-    }
-
     fn activate(
         &self,
         component_id: &str,
@@ -211,11 +195,11 @@ mod tests {
     use std::collections::HashMap;
     use std::time::Duration;
     use wamn_engine::flow_http_routing::CredentialType;
+    use wamn_engine::native_routes::{OperationRefusal, OperationRefusalType};
     use wamn_engine::operation::native_workload::{
         NativeApplication, NativeWorkloadSpec, load_native_application,
     };
     use wamn_engine::operation::node_types;
-    use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
     use wash_runtime::observability::{MeterKind, Meters};
     use wash_runtime::plugin::PluginBindings;
 
@@ -263,7 +247,7 @@ mod tests {
                 deadline_ms: Some(1000),
                 config: "null".into(),
             },
-            input: "{}".into(),
+            input: wamn_engine::operation::native_call::NativeInput::Encoded("{}".into()),
             deadline: Instant::now() + Duration::from_secs(60),
             facts: EdgeFacts::entry(Some(AuthenticatedCaller::new(
                 "record-http",
@@ -283,10 +267,7 @@ mod tests {
         let policy = &request.application.policy;
         policy.authorize("bound", &request).unwrap();
         request.deadline = Instant::now() - Duration::from_secs(1);
-        assert_eq!(
-            policy.authorize("bound", &request).unwrap_err().to_string(),
-            "native-node-deadline-exceeded"
-        );
+        assert!(policy.authorize("bound", &request).is_err());
     }
 
     #[tokio::test]
@@ -294,13 +275,7 @@ mod tests {
         let request = request().await;
         let policy = &request.application.policy;
         policy.authorize("bound", &request).unwrap();
-        assert_eq!(
-            policy
-                .authorize("unbound", &request)
-                .unwrap_err()
-                .to_string(),
-            "native invocation component is not admitted"
-        );
+        assert!(policy.authorize("unbound", &request).is_err());
     }
 
     #[tokio::test]

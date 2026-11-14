@@ -34,7 +34,7 @@ pub async fn install(
 /// Select application-owned connections that can supply a platform declaration.
 pub fn palette_connections<'a>(
     connection: &wamn_catalog::ComponentConnection,
-    packages: &'a [PackageManifest],
+    packages: impl IntoIterator<Item = &'a PackageManifest>,
 ) -> std::collections::BTreeMap<
     (&'a str, &'a str),
     &'a wamn_compiler::manifest::ConnectionDeclaration,
@@ -78,6 +78,7 @@ mod palette_tests {
                 parameter: "store_alias".into(),
             },
             requirement_type: wamn_catalog::ComponentConnectionType::Blobstore,
+            mode: wamn_catalog::ConnectionMode::Write,
         };
         let selected = super::palette_connections(&connection, &packages);
         for package in &packages {

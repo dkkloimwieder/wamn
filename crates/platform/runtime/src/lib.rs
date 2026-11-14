@@ -5,6 +5,9 @@
 pub mod auth_cache;
 pub mod component_artifact_source;
 pub mod connection_authority;
+mod connection_binding;
+#[cfg(feature = "test-util")]
+pub use connection_binding::resolve as resolve_connection_for_test;
 pub mod connection_facts;
 pub mod connection_generation;
 pub mod connection_health;

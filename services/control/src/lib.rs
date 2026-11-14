@@ -16,6 +16,7 @@ use http_body_util::BodyExt as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use wamn_engine::flow_http_routing::FlowHttpRouting;
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_environment::environment::Platform;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_identity_client::PatIssuerConfig;
@@ -339,17 +340,20 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         Arc::new(wamn_runtime::plugins::connection_http::transport::HttpTransport::new()?);
     let changes = wamn_broker::Publisher::connect(&config.nats.connection()).await?;
     let handlers = Arc::new(
-        HostRouteDelivery::control(HostRouteHandlers::Control {
-            control: pool.clone(),
-            writer: Arc::new(tokio::sync::Mutex::new(
-                wamn_postgres::connect(&database).await?,
-            )),
-            identity: Some(config.identity.connection()),
-            administration: Some(config.administration_dir.clone()),
-            status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
-            org: config.org.clone(),
-            changes: changes.clone(),
-        })
+        HostRouteDelivery::new(
+            Arc::new(LoadedRelease::control_root()),
+            HostRouteHandlers::Control {
+                control: pool.clone(),
+                writer: Arc::new(tokio::sync::Mutex::new(
+                    wamn_postgres::connect(&database).await?,
+                )),
+                identity: Some(config.identity.connection()),
+                administration: Some(config.administration_dir.clone()),
+                status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
+                org: config.org.clone(),
+                changes: changes.clone(),
+            },
+        )
         .with_control_authenticator(Arc::new(ControlRouteAuthenticator::new(verifier, pool)))
         .with_control_execution(Arc::new(execution::Execution {
             org: config.org.clone(),

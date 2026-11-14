@@ -34,7 +34,7 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
 - Any `Cargo.toml` or `Cargo.lock` also runs `cargo xtask compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it.
-- Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies. Changes to `wit/wamn-router-delivery-0.4/`, materializer WASI WIT select root and apps.
+- Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies. Changes to materializer WASI WIT select root and apps.
 - A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
 - A path that no package owns and no rule names selects every applicable workspace and suite.
 - Documentation-only changes select nothing, including quality, and exit successfully.
@@ -532,7 +532,6 @@ Do not infer execution from the aggregate Cargo pass count.
 | Existing reference | Current owner and required setup |
 | --- | --- |
 | `[IDENTITY-LIVE]` | Runtime `plugins::wamn_postgres::session_identity::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
-| `[EFFECT-SNAPSHOT]` | `crates/platform/runtime/tests/effect_snapshot_live.rs`: ignored in live-nats, starts its own server with `pg_stat_statements`, and needs the NATS inputs below. It runs the production cluster snapshot as a provisioned HTTP admitter, holds the process lock, and makes sure that a repeated snapshot sends no statement. |
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::session_identity::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
 | `[CAPTURE-GAP]` | `crates/control/environment/tests/capture_gap_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs the platform NATS inputs below. It does not test the refusal of an active slot, because only a streaming reader holds a slot active |
@@ -542,7 +541,7 @@ The source owners declare additional credentials, artifact paths, and selected a
 Do not substitute shared services for missing test inputs.
 For deployed runs, use [cluster commands](cluster-tests.md).
 
-The broker cases in `auth_drops_live`, `connection_drops_live`, and `effect_snapshot_live` use the platform NATS client.
+The broker cases in `auth_drops_live` and `connection_drops_live` use the platform NATS client.
 Set `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT`, and `WAMN_NATS_TLS_KEY` for a private TLS broker.
 Each case creates its memory buckets through the production function and needs permission to create and delete keys.
 The [delivery fixture](#local-saved-edit-acceptance) supplies an owned broker and development certificates.
@@ -945,12 +944,12 @@ The native host tests start an owned MinIO container and disposable PostgreSQL s
 They require PostgreSQL 18 binaries at `/usr/lib/postgresql/18/bin` and a running Docker daemon.
 They also require the pinned MinIO and mc images in `support/files.rs`.
 The fixture removes its containers and servers after each test.
-The tests upload more than 64 MiB through a stream, compare hashes, and repair committed staging bytes.
+Native uploads accept at most 64 MiB. The tests stream uploads, compare hashes, and repair committed staging bytes.
 They enforce sessions, operation grants, file ownership, private exposure, and read binding refusals.
 Signed URL tests call `FileRoutes::signed_url`, then require 403 after expiry and a 900-second lifetime cap.
 The package fixture also declares a public projection with a three-second signed read result.
 The test generates its contracts and admits its Wasm component through the production package admission path.
-It invokes that operation through `RouterDeliveryBridge` as a session caller that holds only the operation grant.
+It invokes that operation through the shared operation entry as a session caller that holds only the operation grant.
 The returned URL serves the private bytes, then returns 403 after expiry. Direct `file.get` returns 403.
 This test needs no external host, guest build, NATS server, or additional environment variables.
 Run that case alone with the exports above, Docker, and the PostgreSQL binaries:

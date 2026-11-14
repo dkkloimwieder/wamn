@@ -1,4 +1,4 @@
-//! The route path: the operation host, the delivery bridge, and release
+//! The operation host, native platform endpoints, and release
 //! readiness.
 //!
 //! A route calls its one operation through `wamn_engine::invoke_operation`.
@@ -14,23 +14,19 @@ mod host_route;
 pub mod oauth_callback;
 mod operation;
 pub mod platform_http;
-mod read_cache;
 mod readiness;
-mod route;
-mod router_delivery;
 
 pub use host_route::{ControlExecution, HostRouteDelivery, HostRouteHandlers};
 pub use operation::{
-    CallIntents, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,
-    OperationHostConfig, component_invocation, invocation_span, node_trace_context,
-    remote_trace_context,
+    InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost, OperationHostConfig,
+    component_invocation, invocation_span, node_trace_context, remote_trace_context,
 };
 pub use readiness::{
     RELEASE_READINESS_INVALIDATED, RELEASE_READINESS_PROBE_FAILED, RouterReadinessProbe,
     RouterReadinessSnapshot, RouterReadinessStatus, synchronous_request_type,
     synchronous_route_count,
 };
-pub use router_delivery::{DeadlineAdjustment, RouterDeliveryBridge};
+pub use wamn_engine::native_routes::DeadlineAdjustment;
 
 pub mod credential_cleanup;
 

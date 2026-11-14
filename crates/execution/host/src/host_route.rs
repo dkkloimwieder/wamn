@@ -2,10 +2,8 @@
 //!
 //! A host route keeps the route table, credentials, CSRF treatment and
 //! operation grant of any route, but the host serves it with a fixed handler
-//! instead of a component. [`HostRouteDelivery`] serves the host routes of
-//! the loaded release and passes every other delivery to the release's
-//! [`RouteDelivery`], the router delivery bridge. The control serving root
-//! has no component, so a control host has no bridge behind it.
+//! instead of a component. [`HostRouteDelivery`] serves the native platform
+//! routes of the loaded release.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -15,11 +13,11 @@ use serde_json::{Value, json};
 use wamn_broker::Publisher;
 use wamn_catalog::{HostAttachment, HostHandler};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
-use wamn_engine::release_manifest::LoadedRelease;
-use wamn_engine::router_delivery::{
-    DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, RouteDelivery, Source,
-    SourceRef, resolve_authorized_host_route,
+use wamn_engine::native_routes::{
+    DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
+    resolve_authorized_host_route,
 };
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_client::PatIssuerConfig;
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::control::{control_projects_page, is_org_admin, org_projects_page};
@@ -90,7 +88,7 @@ impl fmt::Debug for HostRouteHandlers {
 
 /// Serves the host routes of a loaded release.
 pub struct HostRouteDelivery {
-    release: Option<Arc<LoadedRelease>>,
+    release: Arc<LoadedRelease>,
     #[cfg(feature = "test-util")]
     projection_pause: Option<Arc<crate::control_route::ProjectionPause>>,
     registry_token_metadata: bool,
@@ -98,7 +96,6 @@ pub struct HostRouteDelivery {
     worker: Option<wamn_kubernetes::job::Worker>,
     execution: Option<Arc<dyn ControlExecution>>,
     handlers: HostRouteHandlers,
-    next: Option<Arc<dyn RouteDelivery>>,
     files: Option<Arc<crate::file_route::FileRoutes>>,
     connection_health: Option<Arc<wamn_runtime::connection_health::ConnectionHealth>>,
     oauth: Option<Arc<wamn_runtime::oauth_authorization::Authorization>>,
@@ -110,24 +107,16 @@ impl fmt::Debug for HostRouteDelivery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("HostRouteDelivery")
-            .field(
-                "release",
-                &self.release.as_ref().map(|release| release.release()),
-            )
-            .field("next", &self.next.is_some())
+            .field("release", &self.release.release())
             .finish_non_exhaustive()
     }
 }
 
 impl HostRouteDelivery {
-    /// `next` serves every delivery that is not a host route.
-    pub fn new(
-        release: Arc<LoadedRelease>,
-        handlers: HostRouteHandlers,
-        next: Option<Arc<dyn RouteDelivery>>,
-    ) -> Self {
+    /// Serve the native platform routes of the loaded release.
+    pub fn new(release: Arc<LoadedRelease>, handlers: HostRouteHandlers) -> Self {
         Self {
-            release: Some(release),
+            release,
             handlers,
             operation_jobs: None,
             worker: None,
@@ -135,30 +124,6 @@ impl HostRouteDelivery {
             registry_token_metadata: false,
             #[cfg(feature = "test-util")]
             projection_pause: None,
-            next,
-            files: None,
-            connection_health: None,
-            oauth: None,
-            control_authenticator: None,
-        }
-    }
-
-    /// Serve org control routes without an application release or guest runtime.
-    pub fn control(handlers: HostRouteHandlers) -> Self {
-        assert!(
-            matches!(handlers, HostRouteHandlers::Control { .. }),
-            "control requires org handlers"
-        );
-        Self {
-            release: None,
-            handlers,
-            operation_jobs: None,
-            worker: None,
-            execution: None,
-            registry_token_metadata: false,
-            #[cfg(feature = "test-util")]
-            projection_pause: None,
-            next: None,
             files: None,
             connection_health: None,
             oauth: None,
@@ -176,14 +141,11 @@ impl HostRouteDelivery {
     }
 
     fn attachments(&self) -> impl Iterator<Item = (&'static str, &'static HostAttachment)> + '_ {
-        let sets = self
-            .release
-            .as_ref()
-            .map(|release| &release.manifest().host_routes);
-        wamn_catalog::HostRouteSet::Control
-            .attachments()
-            .filter(move |_| sets.is_none())
-            .chain(sets.into_iter().flatten().flat_map(|set| set.attachments()))
+        self.release
+            .manifest()
+            .host_routes
+            .iter()
+            .flat_map(|set| set.attachments())
     }
 
     #[cfg(feature = "test-util")]
@@ -292,23 +254,14 @@ impl HostRouteDelivery {
                 let held = postgres
                     .held_operation_grants(
                         project,
-                        &self
-                            .release
-                            .as_ref()
-                            .expect("application handlers require a release")
-                            .target()
-                            .project_env_key,
+                        &self.release.target().project_env_key,
                         &principal,
                         &attachment.operation,
                     )
                     .await
                     .map_err(Refusal::Failed)?;
                 let permissions = if held.admin {
-                    served_references(
-                        self.release
-                            .as_ref()
-                            .expect("application handlers require a release"),
-                    )
+                    served_references(&self.release)
                 } else {
                     held.references.into_iter().collect()
                 };
@@ -374,10 +327,7 @@ impl HostRouteDelivery {
                     postgres,
                     project,
                     changes,
-                    release: self
-                        .release
-                        .as_ref()
-                        .expect("application handlers require a release"),
+                    release: &self.release,
                     identity: identity
                         .as_ref()
                         .map(|(client, org)| (client, org.as_str())),
@@ -398,10 +348,7 @@ impl HostRouteDelivery {
                     postgres,
                     project,
                     changes,
-                    release: self
-                        .release
-                        .as_ref()
-                        .expect("application handlers require a release"),
+                    release: &self.release,
                     identity: identity
                         .as_ref()
                         .map(|(client, org)| (client, org.as_str())),
@@ -496,41 +443,20 @@ fn report(outcome: Result<DeliveryOutcome, DeliveryError>) -> DeliveryReport {
     }
 }
 
-#[async_trait::async_trait]
-impl RouteDelivery for HostRouteDelivery {
-    async fn deliver(
+impl HostRouteDelivery {
+    pub async fn deliver(
         &self,
         request: DeliveryRequest,
         caller: Option<AuthenticatedCaller>,
     ) -> DeliveryReport {
-        let resolved =
-            match &request.source {
-                Source::Attachment(id) => match &self.release {
-                    Some(release) => resolve_authorized_host_route(
-                        release.manifest(),
-                        SourceRef::Attachment(id),
-                        caller.as_ref(),
-                    ),
-                    None => self.attachments().find(|(source, _)| source == id).map(
-                        |(_, attachment)| {
-                            if caller
-                                .as_ref()
-                                .is_some_and(|caller| caller.attachment_id() == id)
-                            {
-                                Ok(attachment)
-                            } else {
-                                Err(DeliveryError::InvalidRequest)
-                            }
-                        },
-                    ),
-                },
-                Source::Registration(_) => None,
-            };
+        let resolved = match &request.source {
+            Source::Attachment(id) => {
+                resolve_authorized_host_route(self.release.manifest(), id, caller.as_ref())
+            }
+            Source::Registration(_) => None,
+        };
         let Some(resolved) = resolved else {
-            return match &self.next {
-                Some(next) => next.deliver(request, caller).await,
-                None => report(Err(DeliveryError::SourceNotFound)),
-            };
+            return report(Err(DeliveryError::SourceNotFound));
         };
         let attachment = match resolved {
             Ok(attachment) => attachment,
@@ -552,9 +478,9 @@ impl RouteDelivery for HostRouteDelivery {
                 request_element.insert("request_id".to_owned(), json!(request_id));
             }
             request_element.insert(member.to_owned(), value);
-            report(Ok(DeliveryOutcome::Respond(
-                Value::Array(vec![Value::Object(request_element)]).to_string(),
-            )))
+            report(Ok(
+                Value::Array(vec![Value::Object(request_element)]).to_string()
+            ))
         };
         match self
             .handle(
@@ -696,7 +622,7 @@ impl HostRouteDelivery {
             )
             .await;
         match report.outcome {
-            Ok(DeliveryOutcome::Respond(body)) => match serde_json::from_str(&body) {
+            Ok(body) => match serde_json::from_str(&body) {
                 Ok(body) => answer(200, body),
                 Err(_) => answer(503, json!({"error":{"code":"execution-failed"}})),
             },

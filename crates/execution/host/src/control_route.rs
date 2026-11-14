@@ -61,7 +61,7 @@ use tokio::sync::Mutex;
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_control_provision::control_administration_key;
-use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
+use wamn_engine::native_routes::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
 use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_identity_protocol::PrincipalId;

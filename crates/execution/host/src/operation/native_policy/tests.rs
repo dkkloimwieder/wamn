@@ -404,17 +404,17 @@ fn member_instances_component() -> (Vec<u8>, Vec<u8>) {
     (composed, child)
 }
 
-/// A root without SQL and without a `statements` import: `run` calls the
-/// child and answers the child's four codes, own run first, then the root
-/// path's run, `begin` and plain `run`. An input of `[]` makes it fail after
-/// the child wrote, so the host rolls back.
+/// A root calls its SQL member and returns a correlated result. A `null`
+/// configuration makes it refuse after the member writes.
 fn sql_free_root_component() -> Vec<u8> {
+    let answer = serde_json::json!([{"request_id":"element", "value":37}]).to_string();
     wat::parse_str(format!(
         r#"(component
       {NODE_TYPES}
       (import "{CHILD}" (instance $child (export "run" (func async (result u32)))))
       (core module $memory
         (memory (export "memory") 16)
+        (data (i32.const 700) {answer:?})
         (global $next (mut i32) (i32.const 1024))
         (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
           (local $ptr i32) global.get $next local.get $align i32.const 1 i32.sub i32.add
@@ -430,16 +430,12 @@ fn sql_free_root_component() -> Vec<u8> {
         (import "host" "return" (func $return
           (param i32 i32 i32 i32 i32 i32 i32 i32 i64)))
         (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
-        (func (export "run") (param $input i32) (result i32) (local $child i32)
-          call $child local.set $child
-          i32.const 700 local.get $child i32.store8
-          i32.const 701 local.get $child i32.const 8 i32.shr_u i32.store8
-          i32.const 702 local.get $child i32.const 16 i32.shr_u i32.store8
-          i32.const 703 local.get $child i32.const 24 i32.shr_u i32.store8
-          local.get $input i32.load offset=100 i32.const 2 i32.eq if
+        (func (export "run") (param $input i32) (result i32)
+          call $child drop
+          local.get $input i32.load offset=92 i32.const 4 i32.eq if
             i32.const 1 i32.const 2 i32.const 0 i32.const 0 i32.const 0 i32.const 0
             i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0 return end
-          i32.const 0 i32.const 700 i32.const 4 i32.const 0 i32.const 0 i32.const 0
+          i32.const 0 i32.const 700 i32.const {answer_len} i32.const 0 i32.const 0 i32.const 0
           i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0))
       (core instance $main (instantiate $main (with "memory" (instance $memory))
         (with "host" (instance (export "child" (func $child)) (export "return" (func $return))))))
@@ -450,7 +446,8 @@ fn sql_free_root_component() -> Vec<u8> {
       (instance $handler (export "json" (type $json)) (export "node-context" (type $context))
         (export "node-error" (type $error)) (export "emission" (type $emission))
         (export "run" (func $run)))
-      (export "{ROOT}" (instance $handler)))"#
+      (export "{ROOT}" (instance $handler)))"#,
+        answer_len = answer.len()
     ))
     .expect("encode the SQL-free root")
 }
@@ -637,6 +634,17 @@ struct Fixture {
     entered: Arc<Notify>,
 }
 
+impl wamn_engine::operation::ApplicationHost for Fixture {
+    type Policy = NativePolicy;
+
+    fn released_application(
+        &self,
+        _components: &Arc<[AdmittedComponent]>,
+    ) -> impl Future<Output = anyhow::Result<Arc<NativeApplication<NativePolicy>>>> + Send {
+        std::future::ready(Ok(Arc::clone(&self.application)))
+    }
+}
+
 impl Fixture {
     async fn new(case: Case) -> Self {
         Self::build(case, matches!(case, Case::CalleeGrant), false).await
@@ -734,7 +742,19 @@ impl Fixture {
                     .collect(),
             },
             components: BTreeSet::from([served]),
-            routes: BTreeSet::new(),
+            routes: if matches!(case, Case::SqlFreeRoot) {
+                BTreeSet::from([wamn_catalog::ServingRoute {
+                    package_id: root.target.package_id.clone(),
+                    component: root.component.clone(),
+                    operation: ROOT.into(),
+                    type_: wamn_catalog::OperationType::Command,
+                    idempotency: Some("value.key".into()),
+                    reads: BTreeSet::new(),
+                    revision: None,
+                }])
+            } else {
+                BTreeSet::new()
+            },
             attachments: BTreeMap::new(),
 
             host_routes: BTreeSet::new(),
@@ -776,17 +796,15 @@ impl Fixture {
                     Arc::clone(&postgres),
                     Arc::new(HttpTransport::new().expect("HTTP transport")),
                     Arc::clone(&facts),
-                    "org-a",
                     "test",
                     Arc::from(Vec::new()),
-                    Some(Arc::clone(&release)),
+                    Arc::clone(&release),
                 )),
                 blobstore: Arc::new(WamnBlobstore::new(
                     Arc::clone(&postgres),
                     facts,
-                    "org-a",
                     "test",
-                    Some(Arc::clone(&release)),
+                    Arc::clone(&release),
                 )),
                 postgres,
                 logging: Arc::new(
@@ -905,6 +923,7 @@ impl Fixture {
                         },
                         entry: wamn_runtime::plugins::connection_http::InvocationEntry::Wiring(
                             wamn_runtime::plugins::connection_http::WiringPosition {
+                                configuration: Default::default(),
                                 package_id: "workflow".into(),
                                 wiring_hash: format!("sha256:{}", "a".repeat(64)),
                                 wiring_id: "trusted-wiring".into(),

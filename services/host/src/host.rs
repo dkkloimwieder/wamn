@@ -1374,6 +1374,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         )
         .with_oauth_encryption(oauth_encryption.clone()),
     );
+
+    facts.configure_postgres_credentials();
     let integration_registry = if let Some(base) = &args.component_artifact_base {
         let registry_name = wamn_catalog::parse_component_artifact_base(base)?;
         let credentials = match RegistryPullCredential::select(args.registry_auth_file.as_deref(), args.registry_token_metadata)? {
@@ -1589,9 +1591,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
                 Arc::clone(&postgres),
                 Arc::clone(&facts),
-                release.target().project_env_key.clone(),
                 args.project.clone(),
-                Some(Arc::clone(release)),
+                Arc::clone(release),
             ),
         );
         Arc::new(wamn_execution_host::file_route::FileRoutes::new(
@@ -1651,7 +1652,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                         .map(|(org, client)| (client.clone(), org.clone())),
                     changes: auth_changes.clone(),
                 },
-                None,
             )
             .with_files(files.clone()),
         ))
@@ -1704,7 +1704,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     org: connection.org.clone(),
                     changes: auth_changes.clone(),
                 },
-                None,
             )
             .with_registry_token_metadata(args.registry_token_metadata)
             .with_connection_health(Arc::new(health))
@@ -3684,6 +3683,7 @@ host:
         let manifest = anonymous_release(vec![wamn_catalog::ComponentConnection {
             store_alias: "upstream".into(),
             requirement_type: wamn_catalog::ComponentConnectionType::Http,
+            mode: wamn_catalog::ConnectionMode::Write,
         }]);
         let authenticated_routes = requires_pat_route_authentication(&manifest)
             || requires_session_route_authentication(&manifest);

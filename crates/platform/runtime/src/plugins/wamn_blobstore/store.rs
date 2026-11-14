@@ -42,20 +42,6 @@ pub enum StoreError {
     },
 }
 
-impl StoreError {
-    /// Stable wire code, for the WIT error mapping.
-    pub fn code(&self) -> &'static str {
-        match self {
-            Self::Confinement(refusal) => refusal.code(),
-            Self::Intake(error) => error.code(),
-            Self::NoSuchObject => "no_such_object",
-            Self::Backend(_) => "backend_failure",
-            Self::ResponseLost(_) => "response_lost",
-            Self::Refused { .. } => "verb_refused",
-        }
-    }
-}
-
 impl core::fmt::Display for StoreError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -98,13 +84,18 @@ pub struct BoundContainer {
     container: String,
     prefix: String,
     read_only: bool,
-    authority: Option<ConnectionAuthority>,
+    authority: ConnectionAuthority,
 }
 
 #[derive(Clone)]
-struct ConnectionAuthority {
-    facts: Arc<crate::connection_facts::ConnectionFacts>,
-    id: uuid::Uuid,
+pub(super) enum ConnectionAuthority {
+    Live {
+        facts: Arc<crate::connection_facts::ConnectionFacts>,
+        id: uuid::Uuid,
+        generation: i64,
+    },
+    #[cfg(any(test, feature = "test-util"))]
+    Fixture,
 }
 
 impl core::fmt::Debug for BoundContainer {
@@ -120,18 +111,29 @@ impl core::fmt::Debug for BoundContainer {
 
 impl BoundContainer {
     /// Bind a component to one container and prefix.
-    pub fn new(
+    pub(super) fn new(
         store: Arc<dyn ObjectStore>,
         container: impl Into<String>,
         prefix: impl Into<String>,
+        authority: ConnectionAuthority,
     ) -> Self {
         Self {
             store,
             container: container.into(),
             prefix: prefix.into(),
             read_only: false,
-            authority: None,
+            authority,
         }
+    }
+
+    /// Build an isolated storage fixture without a connection reader.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn for_test(
+        store: Arc<dyn ObjectStore>,
+        container: impl Into<String>,
+        prefix: impl Into<String>,
+    ) -> Self {
+        Self::new(store, container, prefix, ConnectionAuthority::Fixture)
     }
 
     pub(super) fn with_read_only(mut self, read_only: bool) -> Self {
@@ -139,30 +141,44 @@ impl BoundContainer {
         self
     }
 
+    #[cfg(test)]
     pub(super) fn with_connection_authority(
         mut self,
         facts: Arc<crate::connection_facts::ConnectionFacts>,
         id: uuid::Uuid,
+        generation: i64,
     ) -> Self {
-        self.authority = Some(ConnectionAuthority { facts, id });
+        self.authority = ConnectionAuthority::Live {
+            facts,
+            id,
+            generation,
+        };
         self
     }
 
     pub(super) async fn permit_connection(&self, verb: &'static str) -> Result<(), StoreError> {
-        if let Some(authority) = &self.authority
-            && !authority
-                .facts
-                .connection(&authority.id)
-                .await
-                .ok()
-                .flatten()
-                .is_some_and(|fact| {
-                    fact.status == crate::connection_memory::ConnectionStatus::Active
-                })
+        let (facts, id, generation) = match &self.authority {
+            ConnectionAuthority::Live {
+                facts,
+                id,
+                generation,
+            } => (facts, id, generation),
+            #[cfg(any(test, feature = "test-util"))]
+            ConnectionAuthority::Fixture => return Ok(()),
+        };
+        if !facts
+            .connection(id)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|fact| {
+                fact.status == crate::connection_memory::ConnectionStatus::Active
+                    && fact.active_generation == *generation
+            })
         {
             return Err(StoreError::Refused {
                 verb,
-                reason: "the connection is disabled, unavailable, or not enabled by this project",
+                reason: "the connection is disabled, unavailable, or its generation changed",
             });
         }
         Ok(())
@@ -232,6 +248,31 @@ impl BoundContainer {
             Err(object_store::Error::NotFound { .. }) => Err(StoreError::NoSuchObject),
             Err(error) => Err(StoreError::Backend(error)),
         }
+    }
+
+    /// Read an inclusive byte range without loading the complete object.
+    pub async fn get_range(
+        &self,
+        author_key: &str,
+        start: u64,
+        end: u64,
+    ) -> Result<Vec<u8>, StoreError> {
+        self.permit_connection("get").await?;
+        let path = self.path(author_key)?;
+        let meta = self.store.head(&path).await.map_err(|error| match error {
+            object_store::Error::NotFound { .. } => StoreError::NoSuchObject,
+            error => StoreError::Backend(error),
+        })?;
+        let to = end.saturating_add(1).min(meta.size);
+        if start >= to {
+            return Ok(Vec::new());
+        }
+        self.permit_connection("get").await?;
+        self.store
+            .get_range(&path, start..to)
+            .await
+            .map(|bytes| bytes.to_vec())
+            .map_err(StoreError::ResponseLost)
     }
 
     /// Whether an object exists at the caller's key.
@@ -362,7 +403,7 @@ mod tests {
     fn bound(prefix: &str) -> (BoundContainer, Arc<InMemory>) {
         let store = Arc::new(InMemory::new());
         (
-            BoundContainer::new(
+            BoundContainer::for_test(
                 Arc::clone(&store) as Arc<dyn ObjectStore>,
                 "wamn-labels",
                 prefix,
@@ -406,6 +447,7 @@ mod tests {
                 "project-a",
             ),
             uuid::Uuid::nil(),
+            1,
         );
         assert!(matches!(
             container.put("item", vec![]).await,
@@ -438,37 +480,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_open_container_refuses_its_disabled_environment_connection() {
+    async fn an_open_container_refuses_a_disabled_or_rotated_connection() {
         use crate::connection_credentials::test_util::Fixture;
         let _lock = wamn_test_postgres::lock();
-        let mut fixture = Fixture::new().await;
-        fixture
-            .put("store", "secret", &["project-a", "project-b"])
-            .await;
-        let (container, _) = bound("p");
-        let facts = connection_facts(fixture.reader("project-a").await, "project-a");
-        let connection = facts.env_connections().await.unwrap().connections["store"];
-        let container = container.with_connection_authority(facts, connection);
-        let (other, _) = bound("p");
-        let facts = connection_facts(fixture.reader("project-b").await, "project-b");
-        let connection = facts.env_connections().await.unwrap().connections["store"];
-        let other = other.with_connection_authority(facts, connection);
-        container.put("item", vec![1]).await.unwrap();
-        sqlx::raw_sql("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-a\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").execute(&mut fixture.admin).await.map(drop).unwrap();
-        assert!(matches!(
-            container.get("item").await,
-            Err(StoreError::Refused { .. })
-        ));
-        other.put("item", vec![2]).await.unwrap();
-        sqlx::raw_sql("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-b\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").execute(&mut fixture.admin).await.map(drop).unwrap();
-        assert!(matches!(
-            other.get("item").await,
-            Err(StoreError::Refused { .. })
-        ));
-        assert!(matches!(
-            other.put("new", vec![]).await,
-            Err(StoreError::Refused { .. })
-        ));
+        for rotate in [false, true] {
+            let mut fixture = Fixture::new().await;
+            fixture
+                .put("store", "secret", &["project-a", "project-b"])
+                .await;
+            let (container, _) = bound("p");
+            let facts = connection_facts(fixture.reader("project-a").await, "project-a");
+            let connection = facts.env_connections().await.unwrap().connections["store"];
+            let container = container.with_connection_authority(facts, connection, 1);
+            let (other, _) = bound("p");
+            let facts = connection_facts(fixture.reader("project-b").await, "project-b");
+            let connection = facts.env_connections().await.unwrap().connections["store"];
+            let other = other.with_connection_authority(facts, connection, 1);
+            container.put("item", vec![1]).await.unwrap();
+            if rotate {
+                fixture.put("store", "rotated-secret", &["project-a"]).await;
+            } else {
+                sqlx::raw_sql("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-a\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").execute(&mut fixture.admin).await.map(drop).unwrap();
+            }
+            assert!(matches!(
+                container.get("item").await,
+                Err(StoreError::Refused { .. })
+            ));
+            other.put("item", vec![2]).await.unwrap();
+            sqlx::raw_sql("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-b\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").execute(&mut fixture.admin).await.map(drop).unwrap();
+            assert!(matches!(
+                other.get("item").await,
+                Err(StoreError::Refused { .. })
+            ));
+            assert!(matches!(
+                other.put("new", vec![]).await,
+                Err(StoreError::Refused { .. })
+            ));
+        }
     }
 
     #[tokio::test]
@@ -482,6 +530,14 @@ mod tests {
             .expect("put");
         assert!(container.has("a.zpl").await.expect("has succeeds"));
         assert_eq!(container.get("a.zpl").await.expect("get"), b"^XA^XZ");
+        assert_eq!(container.get_range("a.zpl", 1, 2).await.unwrap(), b"XA");
+        assert!(
+            container
+                .get_range("a.zpl", 10, 20)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             container.list().await.expect("list"),
             vec!["a.zpl".to_string()]
@@ -555,7 +611,10 @@ mod tests {
             .get("../org-b/secret")
             .await
             .expect_err("must refuse");
-        assert_eq!(error.code(), "key_parent_traversal");
+        assert!(matches!(
+            error,
+            StoreError::Confinement(KeyRefusal::ParentTraversal)
+        ));
         assert!(
             container.list().await.expect("list").is_empty(),
             "the neighbour's object must not be visible to this binding"
@@ -576,15 +635,15 @@ mod tests {
     async fn getting_an_absent_object_is_no_such_object() {
         let (container, _store) = bound("p");
         let error = container.get("absent").await.expect_err("must fail");
-        assert_eq!(error.code(), "no_such_object");
+        assert!(matches!(error, StoreError::NoSuchObject));
     }
 
     /// Two bindings on one store cannot see each other's objects.
     #[tokio::test]
     async fn two_prefixes_on_one_store_are_isolated() {
         let store = Arc::new(InMemory::new()) as Arc<dyn ObjectStore>;
-        let a = BoundContainer::new(Arc::clone(&store), "wamn-labels", "org-a");
-        let b = BoundContainer::new(Arc::clone(&store), "wamn-labels", "org-b");
+        let a = BoundContainer::for_test(Arc::clone(&store), "wamn-labels", "org-a");
+        let b = BoundContainer::for_test(Arc::clone(&store), "wamn-labels", "org-b");
 
         a.put("shared-name.zpl", b"a's".to_vec())
             .await
@@ -612,10 +671,10 @@ mod tests {
             head.last_modified_unix_nanos > 0,
             "the timestamp must come from the store, not a fabricated zero"
         );
-        assert_eq!(
-            container.head("absent").await.expect_err("absent").code(),
-            "no_such_object"
-        );
+        assert!(matches!(
+            container.head("absent").await,
+            Err(StoreError::NoSuchObject)
+        ));
     }
 
     /// Clearing empties the component's own PREFIX, never the container. A
@@ -624,8 +683,8 @@ mod tests {
     #[tokio::test]
     async fn clear_empties_only_the_bound_prefix() {
         let store = Arc::new(InMemory::new()) as Arc<dyn ObjectStore>;
-        let mine = BoundContainer::new(Arc::clone(&store), "wamn-labels", "org-a");
-        let theirs = BoundContainer::new(Arc::clone(&store), "wamn-labels", "org-b");
+        let mine = BoundContainer::for_test(Arc::clone(&store), "wamn-labels", "org-a");
+        let theirs = BoundContainer::for_test(Arc::clone(&store), "wamn-labels", "org-b");
 
         mine.put("x.zpl", b"mine".to_vec()).await.expect("put");
         mine.put("deep/y.zpl", b"mine".to_vec()).await.expect("put");

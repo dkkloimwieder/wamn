@@ -1,13 +1,11 @@
-//! The generated host side of the http-route guest's three host imports.
+//! The generated host side of the http-route guest's host imports.
 //!
-//! One bindgen covers all three interfaces, so the caller resource that routing
-//! returns is the same Rust type that delivery and the operation take back. The WIT packages
-//! live under the repository-root `wit/`, and this world only names them.
+//! One bindgen shares the caller resource between authentication and the
+//! operation boundary. The WIT packages live under the repository-root `wit/`.
 
 wash_runtime::wasmtime::component::bindgen!({
     path: [
         "../../../wit/wamn-flow-http-routing",
-        "../../../wit/wamn-router-delivery-0.4",
         "../../../wit/wamn-postgres-0.4",
         "../../../wit/wamn-node",
         "../../../wit/wamn-operation-0.1",

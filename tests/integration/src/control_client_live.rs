@@ -196,7 +196,6 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
             org: ORG.to_owned(),
             changes: Publisher::default(),
         },
-        None,
     ));
 
     let (endpoint, _task) = serve(routing, delivery).await?;

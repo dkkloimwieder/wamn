@@ -15,8 +15,8 @@ use uuid::Uuid;
 use wamn_broker::Publisher;
 use wamn_catalog::HostRouteSet;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
+use wamn_engine::native_routes::{DeliveryRequest, Source};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-use wamn_engine::router_delivery::{DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source};
 use wamn_execution_host::file_route::{FileRefusal, FileRoutes, RegistryFileConnections};
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_runtime::connection_credentials::ConnectionCredentials;
@@ -66,9 +66,9 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     let original = application_fixture::load_release()?;
     let mut manifest = serde_json::to_value(original.manifest())?;
     manifest["components"][0]["descriptor"]["connections"] = json!([
-        {"store-alias":"files","requirement-type":"blobstore"},
-        {"store-alias":"files-read","requirement-type":"blobstore"},
-        {"store-alias":"files-no-cdn","requirement-type":"blobstore"}
+        {"store-alias":"files","requirement-type":"blobstore","mode":"write"},
+        {"store-alias":"files-read","requirement-type":"blobstore","mode":"read"},
+        {"store-alias":"files-no-cdn","requirement-type":"blobstore","mode":"write"}
     ]);
     let manifest: wamn_catalog::ServingManifest = serde_json::from_value(manifest)?;
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
@@ -162,9 +162,8 @@ impl FileHost {
         let blobstore = Arc::new(WamnBlobstore::new(
             Arc::clone(&postgres),
             Arc::clone(&facts),
-            PROJECT_ENV_KEY,
             PROJECT,
-            Some(Arc::clone(&release)),
+            Arc::clone(&release),
         ));
         let routes = Arc::new(FileRoutes::new(
             Arc::clone(&release),
@@ -189,7 +188,6 @@ impl FileHost {
                 identity: None,
                 changes: wamn_broker::Publisher::default(),
             },
-            None,
         )
         .with_files(Some(Arc::clone(&routes)));
         Ok(Self {
@@ -320,9 +318,7 @@ impl FileHost {
             .await
             .outcome
             .map_err(|error| anyhow::anyhow!("file operation delivery: {error:?}"))?;
-        let DeliveryOutcome::Respond(response) = outcome else {
-            anyhow::bail!("file operation did not respond: {outcome:?}");
-        };
+        let response = outcome;
         let [request_element]: [Value; 1] = serde_json::from_str(&response)?;
         Ok(request_element)
     }
@@ -667,10 +663,9 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn native_upload_streams_more_than_64_mib_and_hashes_the_stored_bytes() -> anyhow::Result<()>
-{
+async fn native_upload_streams_the_limit_and_hashes_the_stored_bytes() -> anyhow::Result<()> {
     let mut fixture = FileHost::start("file_transfer").await?;
-    let size = 65usize * 1024 * 1024 + 17;
+    let size = wamn_runtime::plugins::wamn_blobstore::intake::MAX_OBJECT_BYTES;
     let stream = futures_util::stream::unfold(size, |remaining| async move {
         if remaining == 0 {
             None
@@ -719,101 +714,6 @@ async fn native_upload_streams_more_than_64_mib_and_hashes_the_stored_bytes() ->
     assert_eq!(
         hex::encode(Sha256::digest(&stored)),
         row.get::<String, _>(1)
-    );
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn legacy_unsegmented_file_still_reads_signs_exposes_and_deletes() -> anyhow::Result<()> {
-    let mut fixture = FileHost::start("file_legacy_key").await?;
-    let id = Uuid::new_v4();
-    let key = format!("_wamn_files/live/{id}");
-    fixture
-        .minio
-        .mc(
-            &[
-                "cp",
-                "/input",
-                &format!("file/files-a/generation-one/{key}"),
-            ],
-            b"legacy bytes",
-        )
-        .await?;
-    sqlx::query("INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key) \
-         VALUES ($1::text::uuid,'files',$2::text::uuid,'legacy.txt','text/plain',12,$3,$4)").bind(&id.to_string()).bind(&fixture.registry.connection_id).bind(&hex::encode(Sha256::digest(b"legacy bytes"))).bind(&key).execute(&mut fixture.writer).await.map(|result| result.rows_affected())?;
-    let read = fixture
-        .read("files", id, Some(&fixture.token(false)))
-        .await?;
-    assert_eq!(read.0, 200);
-    assert_eq!(read.2, b"legacy bytes");
-    let caller = fixture.bind_operation()?;
-    let signed = fixture
-        .routes
-        .signed_url(
-            &fixture.blobstore,
-            "file-operation",
-            &caller,
-            id,
-            Duration::from_secs(60),
-        )
-        .await?;
-    assert_eq!(
-        url::Url::parse(&signed)?.path(),
-        format!("/files-a/generation-one/{key}")
-    );
-    let client = fixture.minio.client()?;
-    assert_eq!(
-        client.get(signed).send().await?.bytes().await?.as_ref(),
-        b"legacy bytes"
-    );
-    let exposed = fixture
-        .mutate("expose", id, "files", Some("public"))
-        .await?;
-    let url = exposed["value"]["url"]
-        .as_str()
-        .context("legacy public URL")?;
-    assert_eq!(
-        url::Url::parse(url)?.path(),
-        format!("/generation-one/public/{key}")
-    );
-    assert_eq!(
-        client.get(url).send().await?.bytes().await?.as_ref(),
-        b"legacy bytes"
-    );
-    fixture
-        .mutate("expose", id, "files", Some("application"))
-        .await?;
-    assert_eq!(client.get(url).send().await?.status(), 404);
-    fixture
-        .mutate("expose", id, "files", Some("public"))
-        .await?;
-    assert_eq!(
-        sqlx::query("SELECT blob_key FROM platform.file WHERE id=$1::text::uuid")
-            .bind(&id.to_string())
-            .fetch_one(&mut fixture.writer)
-            .await?
-            .get::<String, _>(0),
-        key
-    );
-    let deleted = fixture.mutate("delete", id, "files", None).await?;
-    assert_eq!(deleted["value"]["file_id"], json!(id));
-    assert_eq!(
-        fixture
-            .read("files", id, Some(&fixture.token(false)))
-            .await?
-            .0,
-        404
-    );
-    assert_eq!(client.get(url).send().await?.status(), 404);
-    assert!(
-        fixture
-            .minio
-            .mc(
-                &["stat", &format!("file/files-a/generation-one/{key}")],
-                b""
-            )
-            .await
-            .is_err()
     );
     Ok(())
 }
@@ -1260,9 +1160,10 @@ fn package_signed_read_admits_the_real_node_abi_and_manifest_owned_authority() -
 #[tokio::test(flavor = "multi_thread")]
 async fn package_operation_returns_a_private_file_signed_url_that_expires() -> anyhow::Result<()> {
     use wamn_engine::artifact_source::LocalComponentSource;
-    use wamn_execution_host::{OperationHost, OperationHostConfig, RouterDeliveryBridge};
+    use wamn_execution_host::{
+        NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig, component_invocation,
+    };
     use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-    use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
     use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 
     let package = signed_read::signed_read_fixture(PROJECT_ENV_KEY)?;
@@ -1330,28 +1231,23 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     operations
         .released_application(&Arc::from([package.component.clone()]))
         .await?;
-    let bridge =
-        RouterDeliveryBridge::new(operations, Arc::new(WamnJetstream::from_env()), PROJECT)?;
-    let report = bridge
-        .deliver(
-            DeliveryRequest {
-                source: Source::Attachment(signed_read::ATTACHMENT.into()),
-                delivery_id: Uuid::new_v4().to_string(),
-                payload: json!([{"value":{"document":id}}]).to_string(),
-                caller: None,
-                trace: None,
-                parent_causation: None,
-                if_none_match: None,
-            },
-            Some(caller),
-        )
-        .await;
-    let outcome = report
-        .outcome
-        .map_err(|error| anyhow::anyhow!("signed read delivery: {error:?}"))?;
-    let DeliveryOutcome::Respond(payload) = outcome else {
-        anyhow::bail!("signed read did not return its operation result: {outcome:?}");
-    };
+    let input = json!([{"value":{"document":id}}]);
+    let payload = wamn_engine::operation::invoke_operation(&*operations, wamn_engine::operation::OperationCall {
+        closure: wamn_engine::operation::OperationClosure::Released(&Arc::from([package.component.clone()])),
+        component: &package.component, operation: signed_read::OPERATION, input: &input,
+        context: wamn_engine::operation::node_types::NodeContext {
+            wiring_id: String::new(), wiring_version: 0, node_id: String::new(),
+            delivery_id: Uuid::new_v4().to_string(), input_port: None, occurrence: 0,
+            traceparent: None, tracestate: None, deadline_ms: Some(30_000), config: "null".into(),
+        }, deadline_ms: 30_000,
+        facts: NativeFacts::entry(NodeAcquisition {
+            identity: operations.identity(PROJECT_ENV_KEY, Some(operations.release_identity())),
+            invocation: component_invocation(&package.component, signed_read::OPERATION,
+                wamn_runtime::plugins::connection_http::InvocationEntry::Route,
+                wamn_runtime::plugins::connection_http::ConnectionExecutionClosure::Released, None),
+            causation: None, platform: None,
+        }, Some(caller)),
+    }).await?.map_err(|error| anyhow::anyhow!("signed read refused: {error:?}"))?.payload;
     let [request_element]: [Value; 1] = serde_json::from_str(&payload)?;
     let url = request_element["value"]["document"]
         .as_str()

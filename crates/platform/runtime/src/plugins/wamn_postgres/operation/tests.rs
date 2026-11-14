@@ -135,33 +135,6 @@ impl GuestCall for Run {
         instance: Instance,
     ) -> GuestCallFuture<'_> {
         Box::pin(async move {
-            if self.mode == 22 {
-                let resolved = accessor.with(|mut access| {
-                    let export = instance
-                        .get_export_index(&mut access, None, "resolved-refusal")
-                        .unwrap();
-                    let function = instance.get_func(&mut access, export).unwrap();
-                    function.typed::<(), (super::Refusal,)>(&access).unwrap();
-                    function
-                });
-                let mut results = [Val::Bool(false)];
-                resolved
-                    .call_concurrent(accessor, &[], &mut results)
-                    .await?;
-                assert_eq!(
-                    results[0],
-                    Val::Variant(
-                        "resolved".into(),
-                        Some(Box::new(Val::String("external-evidence".into()))),
-                    ),
-                );
-                let dropped = accessor.with(|mut access| access.get().dropped.token());
-                tokio::spawn(async move {
-                    dropped.cancelled().await;
-                    self.reply.send(()).expect("fixture receiver exists");
-                });
-                return Ok(None);
-            }
             let modes = if self.mode == 8 {
                 vec![8, 9, 10]
             } else {
@@ -379,22 +352,6 @@ async fn value(database: &wamn_test_postgres::Database) -> i32 {
         .await
         .unwrap()
         .get(0)
-}
-
-#[tokio::test]
-async fn resolved_refusal_carries_its_basis_across_wit() {
-    let postgres = Arc::new(
-        WamnPostgres::new(WamnPostgresConfig {
-            credentials: None,
-            guest_pool_max_size: 1,
-            platform_pool_max_size: 1,
-            wait_timeout_ms: 1000,
-            statement_timeout_ms: 1000,
-            row_limit: 10,
-        })
-        .unwrap(),
-    );
-    run_guest(postgres, Arc::new(LoadedRelease::control_root()), 22).await;
 }
 
 fn offline_fixture() -> (Arc<WamnPostgres>, Arc<LoadedRelease>) {

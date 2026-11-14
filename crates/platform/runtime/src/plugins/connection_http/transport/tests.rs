@@ -57,9 +57,12 @@ impl Server {
             }
             None => (None, None),
         };
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener");
+        let listener = TcpListener::bind((
+            crate::plugins::connection_http::tests::interface_address(),
+            0,
+        ))
+        .await
+        .expect("test listener");
         let peer = listener.local_addr().expect("test address");
         let accepts = Arc::new(AtomicUsize::new(0));
         let requests = Arc::new(AtomicUsize::new(0));
@@ -435,18 +438,15 @@ fn decision(peer: SocketAddr, tls: bool) -> AuthorityDecision {
         } else {
             TlsPolicy::Disabled
         },
-        None,
     )
     .expect("test authority");
     AuthorityDecision {
         logical_url: url.into(),
         logical_authority: parsed.authority().clone(),
         host_header: parsed.authority().http_authority().into(),
-        transport: TransportDecision::Direct {
-            origin: PinnedEndpoint {
-                address: peer,
-                tls_identity: tls.then(|| TlsIdentity::Dns("logical.invalid".into())),
-            },
+        transport: PinnedEndpoint {
+            address: peer,
+            tls_identity: tls.then(|| TlsIdentity::Dns("logical.invalid".into())),
         },
     }
 }
@@ -619,17 +619,15 @@ async fn trusted_certificate_for_a_different_logical_name_is_rejected() {
     let server = Server::start(Reply::Ok, Some(true)).await;
     let transport = server.transport();
     let url = format!("https://different.invalid:{}/resource", server.peer.port());
-    let parsed = parse_http_connection_authority(&url, TlsPolicy::VerifyAuthority, None)
-        .expect("test authority");
+    let parsed =
+        parse_http_connection_authority(&url, TlsPolicy::VerifyAuthority).expect("test authority");
     let decision = AuthorityDecision {
         logical_url: url.into(),
         logical_authority: parsed.authority().clone(),
         host_header: parsed.authority().http_authority().into(),
-        transport: TransportDecision::Direct {
-            origin: PinnedEndpoint {
-                address: server.peer,
-                tls_identity: Some(TlsIdentity::Dns("different.invalid".into())),
-            },
+        transport: PinnedEndpoint {
+            address: server.peer,
+            tls_identity: Some(TlsIdentity::Dns("different.invalid".into())),
         },
     };
     assert!(
@@ -750,9 +748,7 @@ async fn every_client_identity_field_and_peer_separates_pools() {
             .expect("isolated client");
     }
     assert_eq!(server.accepts.load(Ordering::SeqCst), variants.len());
-    let TransportDecision::Direct { origin } = &mut decision.transport else {
-        panic!("test direct transport");
-    };
+    let origin = &mut decision.transport;
     origin.address = second_server.peer;
     transport
         .execute(initial, &decision, request(&decision))

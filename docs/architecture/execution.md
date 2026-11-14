@@ -5,17 +5,17 @@ The host binds the route to one component operation or to an admitted wiring in 
 A route target calls its operation once, with no graph walk and no retry.
 For a wiring, the router decides which operation runs next. Native dispatch executes each operation.
 A hot HTTP request creates no run or queue row.
-Route concurrency limits refuse excess work with HTTP 429.
+The warm pool holds reusable instances. Overflow calls use fresh stores.
 
 ## Routing and availability
 
 The HTTP ingress path authenticates the caller before invoking application code.
 The host compares the route, operation, permissions, wiring, and release facts before dispatch.
-The host side of the ingress guest's two imports lives in `wamn-engine`: the [route plugin](../../crates/platform/engine/src/flow_http_routing.rs) and the [delivery plugin](../../crates/platform/engine/src/router_delivery.rs).
-`wamn-engine` also owns the generated [binding](../../crates/platform/engine/src/entry_operation.rs) of the guest's `wamn:operation` import, and each host implements it: the cloud over PostgreSQL in `wamn-runtime`, the edge over the SQLite intent store of `wamn-run-state-sqlite`.
-A host plugs in through two traits.
-`RouteAuthenticator` reads the credential of a protected route, and `RouteDelivery` serves one delivery request.
-The cloud implements them as [`PlatformRouteAuthenticator`](../../crates/platform/runtime/src/plugins/route_authentication.rs) and [`RouterDeliveryBridge`](../../crates/execution/host/src/router_delivery.rs).
+The engine owns HTTP authentication and the generated `wamn:operation` binding.
+The separate HTTP component reads released route data through `wasi:config` and calls typed application exports through that binding.
+The cloud implements the operation boundary over PostgreSQL. The edge implements it over its own SQLx SQLite store.
+`RouteAuthenticator` reads the credential of a protected route.
+The cloud uses [`PlatformRouteAuthenticator`](../../crates/platform/runtime/src/plugins/route_authentication.rs), and the edge uses its local session verifier.
 Publish decides authorization, and the runtime trusts the loaded release.
 An application's components compose at build into one component, so a call inside an application reaches no host.
 The host begins a transaction for an operation whose admitted operation declares one, whatever SQL it holds. The required permission is the entry's own operation, and nothing derives into it.
@@ -103,7 +103,7 @@ Control roots have no release record.
 Publish refuses an authored attachment under `/wamn_control/`.
 
 [`HostRouteDelivery`](../../crates/execution/host/src/host_route.rs) serves the host routes of the loaded release.
-It passes every other delivery to the router delivery bridge.
+It refuses an attachment outside the native platform endpoints.
 The caller must match the attachment, and the route makes sure of its operation grant as any route does.
 A route of authority `Admin` passes only `admin`.
 A route of authority `Granted` passes `admin` and any role that holds the operation of the route as a stored permission row.
@@ -247,13 +247,12 @@ For a `get`, the host runs the read and then compares.
 On not-modified, the router answers 304 with the ETag, the `Cache-Control` and `Vary` of the route, and no body.
 A read without a revision field, or with no declared relations, has no ETag, and a failed version read leaves the list without one.
 A `get` tag follows `row_version`, so a row that is deleted and created again under the same natural key can match an old tag.
-[`read_cache`](../../crates/execution/host/src/read_cache.rs) owns the tags.
+The separate HTTP component owns the tags.
 
 The entry-only `wamn:operation/operation@0.1.0` interface also provides `wal-position()`.
 It reads the WAL position on the open operation's connection and refuses `not-begun` outside an operation.
 The [operation boundary](data-access.md#the-write-log) owns its transaction lifetime.
 The separate route component computes ETags and handles conditional reads for base routes.
-The delivery bridge retains this behavior for wiring attachments.
 The routing provider also projects the ETag inputs from the loaded release.
 Those inputs declare the release digest and either the result's revision field or the sorted relations for a list.
 A get without a revision field and a list without relations carry no ETag inputs.
@@ -283,21 +282,22 @@ The memory of a read is bounded by the statement's declared limit and the platfo
 The test `a_read_of_100000_rows_refuses_at_the_ceiling` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) shows the refusal.
 The route component invokes the application through the host converter.
 The typed query returns its page. The host retains the read's WAL position for a list ETag.
-Platform endpoints use native handlers. Workflow and edge delivery move in later S7 steps.
+Platform endpoints use native handlers. Workflows and edge calls use the shared operation entry.
 
-`invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.
-The router driver and the edge pass that context for each write operation.
-Composed base routes claim through `begin-operation`, with the same item keys and canonical request hashes.
+The shared entry calls one typed export under one invocation authority.
+The operation owner claims each write request before execution and returns stored outcomes on replay.
+SQL claims share the transaction of their work. Operations with external effects commit their claims before those effects.
 In the cloud the store is the [write log](data-access.md#the-write-log).
-On the edge it is the SQLite intent store of `wamn-run-state-sqlite`, one file with one writer.
-Its `intents` table holds one row for each operation call, unique by `project` and idempotency key.
-Here, `project` holds the edge organization ID.
-A begin with a known key and another input hash is a conflict.
-A begin with a finished key answers the stored outcome.
-The cloud answers an unfinished claim with `in-progress` for 30 seconds, then `outcome-unknown`.
+The edge owns one SQLx SQLite file with one writer.
+Its claims are unique by partition, stable operation reference and caller key. The partition holds the edge organization ID.
+The device and HTTP paths use the same admission, claim, dispatch and completion functions.
+Device completion stores its sample and outcome in one transaction.
+A changed request under the same key is a conflict. A finished key returns its stored outcome.
+An unfinished claim answers `in-progress` for 30 seconds, then `outcome-unknown`.
 A late completion records its result, and the next retry returns it.
+Unfinished claims expire after 30 days, far above the maximum call duration.
 The client checks the external system before sending a new key.
-The edge keeps its current intent resolution until its invocation path changes.
+Sample refusals have their own local operator decision. The generic intent resolution commands are removed.
 A retry that the write log answers commits nothing, so change capture publishes no event for it and no post-commit work runs a second time.
 Publish writes the key field (`idempotency`) into the serving manifest route.
 The server hashes parsed JSON with sorted object keys. It leaves out `request_id` and the key field.
@@ -362,8 +362,8 @@ One absolute deadline covers initialization and execution.
 A guest cannot extend that deadline.
 
 Connection activation changes the generation selected for new work.
-Admitted runs that carry a generation pin continue to use that exact immutable generation.
-A disabled instance or an unavailable pinned credential refuses execution without selecting a newer generation.
+Admitted runs never substitute a newer connection generation for their pin.
+Connection effects refuse a changed generation, a disabled connection, or an unavailable pinned credential.
 Superseded generation records remain immutable. Retaining a record does not extend the lifetime of its credential.
 
 
@@ -810,7 +810,11 @@ The [engine](../../crates/platform/engine/src/integration.rs) compiles the compo
 The [dispatch](../../crates/platform/runtime/src/integrations.rs) links an instance per (connection id, generation, credential id) from that compiled component.
 Typed integration imports use labels, the connection names that code declares.
 The host resolves each label by its component digest, package, and name.
-HTTP and blobstore select a declared connection name at run time.
+HTTP and blobstore share one authority resolver.
+Their immutable component declarations, including connection modes, come from the loaded release.
+The admitted invocation supplies the workflow position and node configuration.
+Connection memory supplies current binding and credential state.
+The host does not rebuild release or workflow authority from SQL on an effect call.
 
 An exclusive connection acquires a resource lease, a lock held by its host, before its first call.
 The host shares one dedicated system database session across its cloud leases.

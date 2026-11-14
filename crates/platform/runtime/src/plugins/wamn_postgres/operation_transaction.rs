@@ -218,40 +218,6 @@ impl OperationTransaction {
     }
 }
 
-impl wamn_engine::operation::Transaction for OperationTransaction {
-    async fn commit(&self) -> Result<(), wamn_engine::operation::CommitFailure> {
-        use wamn_engine::operation::CommitFailure;
-        // The generated error literals of a failed write log commit.
-        let code = |error: &PgError| match error {
-            PgError::SerializationFailure | PgError::ConnectionUnavailable => "retry",
-            PgError::StatementTimeout => "timeout",
-            _ => "internal_error",
-        };
-        OperationTransaction::commit(self)
-            .await
-            .map_err(|failure| match failure {
-                PgCommitFailure::RolledBack(error) => CommitFailure::RolledBack {
-                    code: code(&error),
-                    message: format!("the commit rolled back: {error:?}"),
-                },
-                PgCommitFailure::Uncertain(error) => CommitFailure::Uncertain {
-                    message: format!("the commit outcome is unknown: {error:?}"),
-                },
-            })
-    }
-
-    async fn rollback(&self) -> anyhow::Result<()> {
-        OperationTransaction::rollback(self).await.map_err(|error| {
-            anyhow::anyhow!("roll back the request element transaction: {error:?}")
-        })
-    }
-
-    /// The request element claims in the write log, inside this transaction.
-    fn intent_store(&self) -> Option<&dyn wamn_run_state::IntentStore> {
-        Some(self)
-    }
-}
-
 impl WamnPostgres {
     /// Begin the host transaction of one operation request element under the identity that
     /// `scope` binds.

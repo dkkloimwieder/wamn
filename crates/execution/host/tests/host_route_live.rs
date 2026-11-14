@@ -15,10 +15,8 @@ use sha2::{Digest as _, Sha256};
 use wamn_catalog::HostRouteSet;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, FlowHttpRouting};
+use wamn_engine::native_routes::{DeliveryError, DeliveryOutcome, DeliveryRequest, Source};
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_engine::router_delivery::{
-    DeliveryError, DeliveryOutcome, DeliveryRequest, RouteDelivery, Source,
-};
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_runtime::plugins::route_authentication::{
     PlatformRouteAuthenticator, SessionRouteAuthentication,
@@ -57,13 +55,9 @@ async fn deliver(
     attachment: &str,
     caller: Option<AuthenticatedCaller>,
 ) -> Result<Value, DeliveryError> {
-    match outcome(delivery, attachment, caller, json!({})).await? {
-        DeliveryOutcome::Respond(body) => {
-            let [request_element]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
-            Ok(request_element["value"].clone())
-        }
-        other => panic!("a host route responds: {other:?}"),
-    }
+    let body = outcome(delivery, attachment, caller, json!({})).await?;
+    let [request_element]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
+    Ok(request_element["value"].clone())
 }
 
 /// Deliver one request element, as a generated client sends it: a read carries
@@ -212,7 +206,6 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
             identity: None,
             changes: Publisher::default(),
         },
-        None,
     );
     let route = permission_mine();
     let bearer = |body: &Value| format!("Bearer {}", signed(&header(), body));
@@ -341,7 +334,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     // The one outcome of the one request element: its value, or its declared error.
     let request_element = async |reference: &str, payload: Value| -> Value {
         match call(&admin_claims, reference, payload).await {
-            Ok(DeliveryOutcome::Respond(body)) => {
+            Ok(body) => {
                 let [request_element]: [Value; 1] = serde_json::from_str(&body).unwrap();
                 request_element
             }
@@ -647,9 +640,7 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
             )
             .await
             .outcome?;
-        let DeliveryOutcome::Respond(body) = outcome else {
-            panic!("{reference} responds: {outcome:?}");
-        };
+        let body = outcome;
         let [request_element]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
         Ok::<_, DeliveryError>(request_element)
     };
@@ -833,7 +824,6 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
             org: ORG.to_owned(),
             changes: Publisher::default(),
         },
-        None,
     );
     let route = HostRouteSet::Control
         .attachments()
@@ -942,13 +932,9 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
     // Every page, not only the first, carries org_admin.
     let mut input = json!({"limit": 1});
     for (index, project) in projects.iter().enumerate() {
-        let DeliveryOutcome::Respond(body) =
-            outcome(&delivery, &route, Some(caller.clone()), input)
-                .await
-                .expect("the host answers")
-        else {
-            panic!("a host route responds");
-        };
+        let body = outcome(&delivery, &route, Some(caller.clone()), input)
+            .await
+            .expect("the host answers");
         let [request_element]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
         let page = &request_element["value"];
         assert_eq!(page["org_admin"], true);
@@ -1103,7 +1089,7 @@ async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> 
                     caller,
                 )
                 .await;
-            let Ok(DeliveryOutcome::Respond(body)) = report.outcome else {
+            let Ok(body) = report.outcome else {
                 panic!("the route must answer");
             };
             stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await?;

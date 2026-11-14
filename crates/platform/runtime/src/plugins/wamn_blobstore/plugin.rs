@@ -14,19 +14,13 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 use crate::plugins::effect_span::{EffectIdentity, effect_span, record_wiring};
 
 use super::binding::{self, BindingError};
-use super::store::BoundContainer;
-use wamn_catalog::ServingManifest;
-use wamn_engine::release_manifest::ReleaseTarget;
+use super::store::{BoundContainer, ConnectionAuthority};
+use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider};
 
 use crate::connection_facts::ConnectionFacts;
 use crate::connection_memory::{ConnectionFact, ConnectionStatus};
-use crate::plugins::connection_http::{
-    ConnectionExecutionClosure, ConnectionInvocation, authorize_candidate_closure,
-    authorize_release_closure, entry_lookup,
-};
-use crate::plugins::wamn_postgres::{
-    CandidateConnectionBinding, ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres,
-};
+use crate::plugins::connection_http::ConnectionInvocation;
+use crate::plugins::wamn_postgres::WamnPostgres;
 use wamn_engine::release_manifest::LoadedRelease;
 
 /// Plugin id, as the host registry knows it.
@@ -36,94 +30,9 @@ pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
 pub struct WamnBlobstore {
     postgres: Arc<WamnPostgres>,
     facts: Arc<ConnectionFacts>,
-    pub(super) project_env_key: Box<str>,
     pub(super) project: Box<str>,
-    /// The mounted, digest-verified serving manifest, when this host serves a
-    /// release. A CANDIDATE closure carries its effective release and
-    /// environment in the invocation; a RELEASED one does not, and this is the
-    /// only thing that can supply them without guessing at the coordinates
-    /// that decide which binding authorizes.
-    release: Option<Arc<LoadedRelease>>,
-}
-
-/// The release digest and environment one invocation authorizes under.
-///
-/// A CANDIDATE closure states them itself. A RELEASED one takes them from the
-/// mounted serving manifest and its digest, after TWO TESTS — because a
-/// mounted manifest is an input like any other:
-///
-/// - it must belong to THIS project, or a manifest served for another one would
-///   hand a guest an effective release under which some other project's binding
-///   authorizes;
-/// - it must actually CONTAIN the package the invocation names, or a release
-///   that never shipped this package would still supply coordinates for it.
-///
-/// Pure and separate from the plugin, so the decision gating every released
-/// effect can be asserted without a database or an object store.
-fn release_coordinates(
-    invocation: &ConnectionInvocation,
-    release: Option<(&ServingManifest, &str, &ReleaseTarget)>,
-    project_env_key: &str,
-) -> Result<(String, String), BindingError> {
-    match (&invocation.closure, release) {
-        (
-            ConnectionExecutionClosure::Candidate {
-                manifest_digest,
-                environment,
-                ..
-            },
-            None,
-        ) => Ok((manifest_digest.clone(), environment.clone())),
-        (ConnectionExecutionClosure::Released, Some((manifest, manifest_digest, scope))) => {
-            if scope.project_env_key != project_env_key
-                || crate::plugins::connection_http::released_invocation_application(
-                    manifest, scope, invocation,
-                )
-                .is_none()
-            {
-                return Err(BindingError::Unauthorized);
-            }
-            Ok((manifest_digest.to_owned(), scope.environment.clone()))
-        }
-        // A released closure with no mounted manifest, or a candidate handed
-        // one, is a caller mismatch rather than a policy question. It refuses
-        // instead of picking whichever arm looks closer, because guessing here
-        // decides which binding authorizes.
-        _ => Err(BindingError::Unauthorized),
-    }
-}
-
-/// Authorize one invocation's execution closure against the snapshot the
-/// connection authority returned.
-///
-/// A RELEASED closure must be carried by the mounted manifest. A CANDIDATE
-/// closure must agree with the wiring hash, component and interface version
-/// frozen at admission, and the snapshot must equal the frozen binding row.
-///
-/// Both rules come from the HTTP capability and are called, not copied. The
-/// blobstore applied the released rule alone and let every candidate closure
-/// through with no closure test at all (`wamn-b2m6.6`). One spelling of each
-/// rule now authorizes both surfaces.
-///
-/// Pure and separate from the plugin, so the decision gating every effect can
-/// be asserted without a database or an object store. It returns the reason it
-/// refused and the caller logs it, which keeps every refusal named.
-fn authorize_closure(
-    invocation: &ConnectionInvocation,
-    released_manifest: Option<&ServingManifest>,
-    candidate_binding: Option<&CandidateConnectionBinding>,
-    snapshot: &ConnectionEffectSnapshot,
-) -> Result<(), &'static str> {
-    match (released_manifest, candidate_binding) {
-        (Some(manifest), None) => authorize_release_closure(manifest, invocation, snapshot)
-            .map_err(|_| "the release closure does not carry this component and wiring"),
-        (None, Some(binding)) => authorize_candidate_closure(invocation, snapshot, binding)
-            .map_err(|_| "the candidate closure disagrees with the frozen wiring or binding"),
-        // A closure with neither authorization input, or with both, is a
-        // caller mismatch. It refuses rather than authorizing under whichever
-        // input is present.
-        _ => Err("closure type disagrees with the authorization inputs"),
-    }
+    /// The process's loaded release supplies immutable connection declarations.
+    release: Arc<LoadedRelease>,
 }
 
 impl std::fmt::Debug for WamnBlobstore {
@@ -131,7 +40,7 @@ impl std::fmt::Debug for WamnBlobstore {
         // The vault is never rendered.
         formatter
             .debug_struct("WamnBlobstore")
-            .field("project_env_key", &self.project_env_key)
+            .field("project_env_key", &self.release.target().project_env_key)
             .field("project", &self.project)
             .finish_non_exhaustive()
     }
@@ -143,16 +52,13 @@ impl WamnBlobstore {
     pub fn new(
         postgres: Arc<WamnPostgres>,
         facts: Arc<ConnectionFacts>,
-        project_env_key: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
-        release: Option<Arc<LoadedRelease>>,
+        release: Arc<LoadedRelease>,
     ) -> Self {
         let project: Box<str> = project.into();
-        postgres.set_connection_credentials(facts.reader(), &project);
         Self {
             postgres,
             facts,
-            project_env_key: project_env_key.into(),
             project,
             release,
         }
@@ -163,302 +69,188 @@ impl WamnBlobstore {
         self.postgres.invocation(component_id)
     }
 
-    /// Open file storage after the native host authorizes the package-declared binding.
-    ///
-    /// `definition` must come from `generation` of this connection. For existing files,
-    /// use the row's generation, never the connection's current generation. The native
-    /// route supplies the binding mode after its package and environment authorization.
-    /// Credentials are resolved through the registry for exactly that generation.
+    /// Open file storage after the native host authorizes its package binding.
     pub async fn file_store(
         &self,
         connection_name: &str,
         read_only: bool,
     ) -> Result<super::files::FileStore, super::files::FileStorageError> {
         use super::files::{FileStorageError, FileStorageErrorType, FileStore};
-        let refused = |message: &str| {
-            FileStorageError::new(FileStorageErrorType::Refused, "open", message.to_owned())
-        };
-        let release = self
-            .release
-            .as_ref()
-            .filter(|release| release.target().project_env_key == self.project_env_key.as_ref())
-            .ok_or_else(|| refused("file storage requires this environment's loaded release"))?;
-        let connection_id = *self
-            .facts
-            .env_connections()
-            .await
-            .map_err(|error| refused(&error.to_string()))?
-            .connections
-            .get(connection_name)
-            .ok_or_else(|| refused("the environment has no such file connection"))?;
-        let fact = active_fact(&self.facts, &connection_id)
-            .await
-            .map_err(|error| refused(&error.to_string()))?
-            .ok_or_else(|| refused("file connection is absent or disabled"))?;
-        let generation = fact.active_generation;
-        let configuration = self
-            .facts
-            .generation(&connection_id, generation)
-            .await
-            .map_err(|error| refused(&error.to_string()))?;
-        if configuration.runtime_type != "host"
-            || !matches!(
-                configuration.integration_type.as_str(),
-                "gcs" | "s3" | "disk"
-            )
-        {
-            return Err(refused("the connection is not a file connection"));
-        }
-        // The version of the live release, or else the newest published
-        // version of the host type.
-        let version = self
-            .facts
-            .release(release.release().manifest_digest.as_str())
-            .await
-            .map_err(|error| refused(&error.to_string()))?
-            .version(&connection_id);
-        self.facts
-            .version(&configuration.integration_type, version)
-            .await
-            .map_err(|error| refused(&error.to_string()))?;
-        let mut definition = configuration.parameters.clone();
-        definition
-            .as_object_mut()
-            .ok_or_else(|| refused("the file connection parameters are not an object"))?
-            .insert(
-                "provider".to_owned(),
-                configuration.integration_type.clone().into(),
+        let open = async {
+            use anyhow::Context as _;
+            let release = &self.release;
+            anyhow::ensure!(
+                self.facts.project_env_key() == release.target().project_env_key,
+                "file connection target mismatch"
             );
-        let definition = &definition;
-        wamn_catalog::RequirementType::Blobstore
-            .require_definition(definition)
-            .map_err(|error| refused(&error))?;
-        let handle = self
-            .facts
-            .credential_handle(connection_name, generation)
-            .map_err(|error| {
-                FileStorageError::new(
-                    FileStorageErrorType::Refused,
-                    "credential handle",
-                    error.into_boxed_dyn_error(),
-                )
-            })?;
-        let is_gcs = definition
-            .get("provider")
-            .and_then(serde_json::Value::as_str)
-            == Some("gcs");
-        let bound = binding::resolve_coordinates(definition, (!is_gcs).then_some(handle.as_str()))
-            .map_err(|error| {
-                FileStorageError::new(FileStorageErrorType::Refused, "binding", error)
-            })?;
-        let (store, signer): (Arc<dyn ObjectStore>, Arc<dyn object_store::signer::Signer>) =
-            match &bound.provider {
-                binding::BlobstoreProvider::S3 { endpoint, .. } => {
-                    let credential = fact
-                        .credential_id
-                        .ok_or_else(|| refused("connection generation has no credential"))?;
-                    let secret = self.facts.secret(&credential).await.map_err(|error| {
-                        FileStorageError::new(
-                            FileStorageErrorType::Refused,
-                            "open",
-                            error.into_boxed_dyn_error(),
-                        )
-                    })?;
-                    let client = build_s3_store(endpoint, &bound.container, secret.expose())
-                        .map_err(|error| {
-                            FileStorageError::new(
-                                FileStorageErrorType::Refused,
-                                "open",
-                                error.into_boxed_dyn_error(),
-                            )
-                        })?;
-                    (Arc::<object_store::aws::AmazonS3>::clone(&client), client)
-                }
-                binding::BlobstoreProvider::Gcs => {
-                    // Without a stored key, object_store signs through IAM signBlob
-                    // using credentials supplied by the pod metadatan identity.
-                    let client = build_gcs_store(&bound.container).map_err(|error| {
-                        FileStorageError::new(
-                            FileStorageErrorType::Refused,
-                            "open",
-                            error.into_boxed_dyn_error(),
-                        )
-                    })?;
-                    (
-                        Arc::<object_store::gcp::GoogleCloudStorage>::clone(&client),
-                        client,
-                    )
-                }
-            };
-        let container = BoundContainer::new(store, bound.container, bound.prefix)
-            .with_read_only(read_only)
-            .with_connection_authority(Arc::clone(&self.facts), connection_id);
-        FileStore::new(
-            container,
-            Some(signer),
-            bound.cdn_host.as_deref(),
-            generation,
-            &release.target().environment,
-        )
+            let id = *self
+                .facts
+                .env_connections()
+                .await?
+                .connections
+                .get(connection_name)
+                .context("no file connection")?;
+            let fact = active_fact(&self.facts, &id)
+                .await?
+                .context("file connection disabled")?;
+            let configuration = self.facts.generation(&id, fact.active_generation).await?;
+            anyhow::ensure!(
+                configuration.runtime_type == "host"
+                    && matches!(configuration.integration_type.as_str(), "s3" | "gcs"),
+                "not a file connection"
+            );
+            let version = self
+                .facts
+                .release(release.release().manifest_digest.as_str())
+                .await?
+                .version(&id);
+            self.facts
+                .version(&configuration.integration_type, version)
+                .await?;
+            let bound = BlobstoreDefinition::parse_for(
+                &configuration.parameters,
+                provider(&configuration.integration_type)?,
+            )?;
+            let client = self.client(id, &fact, &bound).await?;
+            let container = BoundContainer::new(
+                Arc::clone(&client.store),
+                bound.container,
+                bound.prefix,
+                ConnectionAuthority::Live {
+                    facts: Arc::clone(&self.facts),
+                    id,
+                    generation: fact.active_generation,
+                },
+            )
+            .with_read_only(read_only);
+            FileStore::new(
+                container,
+                Arc::clone(&client.signer),
+                bound.cdn_host,
+                &release.target().environment,
+            )
+            .map_err(anyhow::Error::from)
+        }
+        .await;
+        open.map_err(|error| {
+            FileStorageError::new(
+                FileStorageErrorType::Refused,
+                "open",
+                error.into_boxed_dyn_error(),
+            )
+        })
     }
 
-    /// Resolve one store alias into a confined container.
-    ///
-    /// The guest names its own declared STORE ALIAS, never a container: the
-    /// container is environment-owned, so a guest that had to name it would
-    /// need the coordinate the confinement exists to keep from it.
+    /// Resolve one declared alias under the shared invocation authority.
     pub(super) async fn container_for(
         &self,
         component_id: &str,
         store_alias: &str,
     ) -> Result<BoundContainer, BindingError> {
-        // EVERY REFUSAL NAMES ITSELF. The guest sees one opaque error and the
-        // router logs one context line, so a refusal that stays silent here
-        // is undiagnosable from any evidence -- six cluster runs' worth
-        // (wamn-362o.45). The warn carries the alias and component, never
-        // the credential.
-        let refused = |reason: &'static str| {
-            tracing::warn!(
-                store_alias,
-                component_id,
-                reason,
-                "blobstore binding refused"
-            );
-            BindingError::Unauthorized
-        };
-        let invocation = self
-            .invocation(component_id)
-            .ok_or_else(|| refused("no invocation is registered for the component"))?;
-        let entry = entry_lookup(&invocation)
-            .map_err(|_| refused("wiring version does not fit the authority's column"))?;
-        let released = match &invocation.closure {
-            ConnectionExecutionClosure::Released => {
-                Some(self.release.as_deref().ok_or_else(|| {
-                    refused("a released closure with no release manifest mounted")
-                })?)
-            }
-            ConnectionExecutionClosure::Candidate { .. } => None,
-        };
-        let released_manifest = released.map(LoadedRelease::manifest);
-        // The binding frozen at candidate admission for exactly this component
-        // and alias. The authority query is narrowed to it, and the snapshot is
-        // compared against it once the row comes back. A candidate closure
-        // refuses here when the frozen world holds no row for it, before any
-        // query runs.
-        let candidate_binding = match &invocation.closure {
-            ConnectionExecutionClosure::Released => None,
-            ConnectionExecutionClosure::Candidate { binding_world, .. } => Some(
-                binding_world
-                    .binding(&invocation.component_digest, store_alias)
-                    .ok_or_else(|| refused("the frozen world holds no binding for this alias"))?,
-            ),
-        };
-        let (manifest_digest, environment) = release_coordinates(
-            &invocation,
-            released.map(|release| {
-                (
-                    release.manifest(),
-                    release.release().manifest_digest.as_str(),
-                    release.target(),
-                )
-            }),
-            &self.project_env_key,
+        let snapshot = crate::connection_binding::resolve(
+            &self.postgres,
+            &self.facts,
+            &self.release,
+            component_id,
+            store_alias,
         )
-        .map_err(|_| {
-            refused(
-                "release coordinates: project, package or closure type disagree with the manifest",
-            )
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, component_id, store_alias, "blobstore authority refused");
+            BindingError::unauthorized()
         })?;
-        let snapshot = self
-            .postgres
-            .connection_effect_snapshot(
-                component_id,
-                &self.project,
-                &self.project_env_key,
-                &ConnectionEffectLookup {
-                    package_id: &invocation.package_id,
-                    entry,
-                    origin_package_id: &invocation.origin.package_id,
-                    origin_component_digest: &invocation.origin.component_digest,
-                    origin_component: &invocation.origin.component,
-                    origin_interface_version: &invocation.origin.interface_version,
-                    origin_operation: &invocation.origin.operation,
-                    operation: &invocation.operation,
-                    manifest_digest: &manifest_digest,
-                    environment: &environment,
-                    component_digest: &invocation.component_digest,
-                    store_alias,
-                    candidate_binding,
-                },
-                &self.facts,
-            )
-            .await
-            .map_err(|error| {
-                tracing::warn!(error = %error, "blobstore connection authority snapshot failed");
-                BindingError::Unauthorized
-            })?
-            .ok_or_else(|| {
-                let wiring = invocation.effect_wiring();
-                tracing::warn!(
-                    store_alias,
-                    component_id,
-                    package_id = %invocation.package_id,
-                    manifest_digest = %manifest_digest,
-                    environment = %environment,
-                    wiring_id = wiring.wiring_id,
-                    wiring_version = wiring.wiring_version,
-                    node_id = wiring.node_id,
-                    component_digest = %invocation.component_digest,
-                    "blobstore binding refused: the connection authority holds no binding for this closure"
-                );
-                BindingError::Unauthorized
-            })?;
-        authorize_closure(&invocation, released_manifest, candidate_binding, &snapshot)
-            .map_err(refused)?;
-        let connection: uuid::Uuid = snapshot
+        let id = snapshot
             .instance_id
             .as_deref()
             .and_then(|id| id.parse().ok())
-            .ok_or(BindingError::Unauthorized)?;
-        let fact = active_fact(&self.facts, &connection)
+            .ok_or(BindingError::unauthorized())?;
+        let fact = active_fact(&self.facts, &id)
             .await
-            .map_err(|_| BindingError::Unauthorized)?
-            .filter(|fact| snapshot.generation == Some(fact.active_generation))
-            .ok_or(BindingError::Unauthorized)?;
-        let bound = binding::resolve(&snapshot).map_err(|error| {
-            tracing::warn!(store_alias, component_id, error = %error, "blobstore binding refused: the binding does not resolve");
-            error
+            .map_err(|_| BindingError::unauthorized())?
+            .filter(|fact| Some(fact.active_generation) == snapshot.generation)
+            .ok_or(BindingError::unauthorized())?;
+        let configuration = self
+            .facts
+            .generation(&id, fact.active_generation)
+            .await
+            .map_err(|_| BindingError::unauthorized())?;
+        let provider =
+            provider(&configuration.integration_type).map_err(|_| BindingError::unauthorized())?;
+        let bound = binding::resolve(&snapshot, provider)?;
+        let client = self.client(id, &fact, &bound).await.map_err(|error| {
+            tracing::warn!(%error, "blobstore client unavailable");
+            BindingError::unauthorized()
         })?;
-        let store: Arc<dyn ObjectStore> = match &bound.provider {
-            binding::BlobstoreProvider::S3 { endpoint, .. } => {
-                let credential = fact.credential_id.ok_or_else(|| {
-                    tracing::warn!(
-                        store_alias,
-                        component_id,
-                        "blobstore binding refused: the connection generation has no credential"
-                    );
-                    BindingError::NoCredential
-                })?;
-                let secret = self
-                    .facts
-                    .secret(&credential)
-                    .await
-                    .map_err(|_| BindingError::NoCredential)?;
-                build_s3_store(endpoint, &bound.container, secret.expose())
-                    .map(|store| store as Arc<dyn ObjectStore>)
-            }
-            binding::BlobstoreProvider::Gcs => {
-                build_gcs_store(&bound.container).map(|store| store as Arc<dyn ObjectStore>)
-            }
+        Ok(BoundContainer::new(
+            Arc::clone(&client.store),
+            bound.container,
+            bound.prefix,
+            ConnectionAuthority::Live {
+                facts: Arc::clone(&self.facts),
+                id,
+                generation: fact.active_generation,
+            },
+        )
+        .with_read_only(snapshot.read_only))
+    }
+
+    async fn client(
+        &self,
+        id: uuid::Uuid,
+        fact: &ConnectionFact,
+        bound: &BlobstoreDefinition,
+    ) -> anyhow::Result<Arc<StoreClient>> {
+        let key = (id, fact.active_generation);
+        if let Some(client) = self.facts.stores.get(&key) {
+            return Ok(client);
         }
-        .map_err(|error| {
-            tracing::warn!(error = %error, "blobstore client construction failed");
-            BindingError::Unauthorized
-        })?;
-        let mut container = BoundContainer::new(store, bound.container, bound.prefix)
-            .with_read_only(snapshot.read_only);
-        container = container.with_connection_authority(Arc::clone(&self.facts), connection);
-        Ok(container)
+        let secret = if bound.provider == BlobstoreProvider::S3 {
+            let credential = fact
+                .credential_id
+                .ok_or_else(|| anyhow::anyhow!("storage credential unavailable"))?;
+            Some(self.facts.secret(&credential).await?)
+        } else {
+            None
+        };
+        self.facts
+            .stores
+            .try_get_with(key, || {
+                let client = match bound.provider {
+                    BlobstoreProvider::S3 => {
+                        let client = build_s3_store(
+                            bound.endpoint.as_deref().expect("validated s3 endpoint"),
+                            &bound.container,
+                            secret.as_ref().expect("s3 credential loaded").expose(),
+                        )?;
+                        StoreClient {
+                            store: Arc::<object_store::aws::AmazonS3>::clone(&client),
+                            signer: client,
+                        }
+                    }
+                    BlobstoreProvider::Gcs => {
+                        let client = build_gcs_store(&bound.container)?;
+                        StoreClient {
+                            store: Arc::<object_store::gcp::GoogleCloudStorage>::clone(&client),
+                            signer: client,
+                        }
+                    }
+                };
+                Ok::<_, anyhow::Error>(Arc::new(client))
+            })
+            .map_err(|error| anyhow::anyhow!("storage client construction failed: {error}"))
+    }
+}
+
+pub(crate) struct StoreClient {
+    store: Arc<dyn ObjectStore>,
+    signer: Arc<dyn object_store::signer::Signer>,
+}
+
+fn provider(integration_type: &str) -> anyhow::Result<BlobstoreProvider> {
+    match integration_type {
+        "s3" => Ok(BlobstoreProvider::S3),
+        "gcs" => Ok(BlobstoreProvider::Gcs),
+        _ => anyhow::bail!("not a storage integration"),
     }
 }
 
@@ -483,22 +275,19 @@ fn build_s3_store(
     container: &str,
     secret: &str,
 ) -> anyhow::Result<Arc<object_store::aws::AmazonS3>> {
-    let credential: serde_json::Value = serde_json::from_str(secret)
-        .map_err(|_| anyhow::anyhow!("object-store credential is not JSON"))?;
-    let access_key = credential
-        .get("ACCESS_KEY_ID")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("object-store credential lacks ACCESS_KEY_ID"))?;
-    let secret_key = credential
-        .get("ACCESS_SECRET_KEY")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("object-store credential lacks ACCESS_SECRET_KEY"))?;
-
+    #[derive(serde::Deserialize)]
+    struct Credential {
+        #[serde(rename = "ACCESS_KEY_ID")]
+        access_key: String,
+        #[serde(rename = "ACCESS_SECRET_KEY")]
+        secret_key: String,
+    }
+    let credential: Credential = serde_json::from_str(secret)?;
     let store = AmazonS3Builder::new()
         .with_endpoint(endpoint)
         .with_bucket_name(container)
-        .with_access_key_id(access_key)
-        .with_secret_access_key(secret_key)
+        .with_access_key_id(credential.access_key)
+        .with_secret_access_key(credential.secret_key)
         .with_region("us-east-1")
         .with_allow_http(endpoint.starts_with("http://"))
         .with_virtual_hosted_style_request(false)
@@ -526,21 +315,15 @@ pub async fn health(
 ) -> anyhow::Result<()> {
     use object_store::list::{PaginatedListOptions, PaginatedListStore};
 
-    let field = |name: &str| {
-        parameters[name]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("storage parameter missing: {name}"))
-    };
-    let container = field("container")?;
-    let prefix = object_store::path::Path::parse(field("prefix")?)?;
-    let store: Arc<dyn PaginatedListStore> = match integration_type {
-        "gcs" => build_gcs_store(container)?,
-        "s3" => build_s3_store(
-            field("endpoint")?,
-            container,
+    let bound = BlobstoreDefinition::parse_for(parameters, provider(integration_type)?)?;
+    let prefix = object_store::path::Path::parse(&bound.prefix)?;
+    let store: Arc<dyn PaginatedListStore> = match bound.provider {
+        BlobstoreProvider::Gcs => build_gcs_store(&bound.container)?,
+        BlobstoreProvider::S3 => build_s3_store(
+            bound.endpoint.as_deref().expect("validated s3 endpoint"),
+            &bound.container,
             credential.ok_or_else(|| anyhow::anyhow!("storage credential unavailable"))?,
         )?,
-        _ => anyhow::bail!("unsupported storage integration"),
     };
     let prefix = format!("{}/", prefix.as_ref().trim_end_matches('/'));
     store
@@ -575,7 +358,7 @@ pub(super) fn blobstore_span(
     let span = effect_span!(
         "wamn.blobstore",
         EffectIdentity {
-            project_env_key: &plugin.project_env_key,
+            project_env_key: &plugin.release.target().project_env_key,
             project: &plugin.project,
             component: component_id,
         },
@@ -627,26 +410,10 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
-
-    use wamn_catalog::{
-        AdmittedComponentOperation, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
-        ServingComponent, ServingRelease,
-    };
-
     use super::*;
-    use crate::plugins::connection_http::{ConnectionOrigin, InvocationEntry};
+    use crate::plugins::connection_http::{ConnectionExecutionClosure, ConnectionOrigin};
     use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
-    use crate::plugins::wamn_postgres::{CandidateBindingWorld, WamnPostgresConfig};
-
-    /// The hash of the fixture wiring's graph, the one the manifest carries.
-    fn fixture_wiring_hash() -> String {
-        wamn_catalog::fixture_graph("orders", 3)
-            .wiring_hash()
-            .as_str()
-            .to_owned()
-    }
-
+    use crate::plugins::wamn_postgres::WamnPostgresConfig;
     fn released() -> ConnectionInvocation {
         ConnectionInvocation {
             origin: ConnectionOrigin {
@@ -659,11 +426,15 @@ mod tests {
             entry: crate::plugins::connection_http::InvocationEntry::Wiring(
                 crate::plugins::connection_http::WiringPosition {
                     package_id: "warehouse".to_string(),
-                    wiring_hash: fixture_wiring_hash(),
+                    wiring_hash: wamn_catalog::fixture_graph("orders", 3)
+                        .wiring_hash()
+                        .as_str()
+                        .to_owned(),
                     wiring_id: "orders".to_string(),
                     wiring_version: 3,
                     node_id: "archive".to_string(),
                     occurrence: 1,
+                    configuration: Default::default(),
                 },
             ),
             package_id: "package_a".to_string(),
@@ -674,473 +445,6 @@ mod tests {
             effects: None,
         }
     }
-
-    fn candidate_with(binding_world: Arc<CandidateBindingWorld>) -> ConnectionInvocation {
-        ConnectionInvocation {
-            closure: ConnectionExecutionClosure::Candidate {
-                manifest_digest: CANDIDATE_RELEASE.to_string(),
-                environment: "staging".to_string(),
-                wiring_hash: fixture_wiring_hash(),
-                component: "archiver".to_string(),
-                interface_version: "0.1.0".to_string(),
-                binding_world,
-            },
-            ..released()
-        }
-    }
-
-    fn candidate() -> ConnectionInvocation {
-        candidate_with(Arc::new(
-            CandidateBindingWorld::from_json(serde_json::json!([]))
-                .expect("an empty candidate binding world decodes"),
-        ))
-    }
-
-    /// The release digest a candidate closure states.
-    const CANDIDATE_RELEASE: &str =
-        "sha256:9999999999999999999999999999999999999999999999999999999999999999";
-
-    /// The digest of the mounted release a released closure resolves through.
-    const MOUNTED_RELEASE: &str =
-        "sha256:4444444444444444444444444444444444444444444444444444444444444444";
-
-    fn manifest(project_env_key: &str, package: &str) -> (ServingManifest, ReleaseTarget) {
-        let invocation = released();
-        let mut descriptor = wamn_catalog::ComponentDescriptor::named(
-            &invocation.component,
-            &invocation.origin.interface_version,
-            &invocation.component_digest,
-        );
-        descriptor.operations.insert(
-            invocation.operation,
-            wamn_catalog::AdmittedComponentOperation {
-                registered_operation: None,
-                committed_result_schema: None,
-                host_transaction: false,
-                input_ports: vec![],
-                output_ports: vec![],
-                parameters: vec![],
-                statements: BTreeMap::new(),
-            },
-        );
-        let manifest = ServingManifest {
-            composed_entry: None,
-            format_version: SERVING_MANIFEST_FORMAT_VERSION,
-            release: ServingRelease {
-                packages: BTreeSet::from([
-                    PackageCoordinate::new(package, "1.0.0").expect("a canonical coordinate")
-                ]),
-            },
-            components: BTreeSet::from([wamn_catalog::ServingComponent {
-                package_id: package.to_owned(),
-                runtime_schema: None,
-                statement_instances: BTreeMap::new(),
-                descriptor,
-            }]),
-            routes: BTreeSet::new(),
-            attachments: BTreeMap::new(),
-
-            host_routes: BTreeSet::new(),
-        };
-        (
-            manifest,
-            ReleaseTarget::new(project_env_key, "warehouse-eu-3").with_applications(
-                [(
-                    "warehouse".to_owned(),
-                    wamn_catalog::ApplicationDefinition {
-                        connections: std::collections::BTreeMap::new(),
-                        packages: [package.to_owned()].into(),
-                    },
-                )]
-                .into(),
-            ),
-        )
-    }
-
-    #[test]
-    fn palette_release_coordinates_require_the_exact_component_and_workflow_application() {
-        let (mut manifest, target) = manifest("org-a", "package_a");
-        let mut component = manifest.components.pop_first().unwrap();
-        component.package_id = wamn_catalog::PALETTE_PACKAGE_ID.to_owned();
-        manifest.components.insert(component);
-        let mut invocation = released();
-        invocation.package_id = wamn_catalog::PALETTE_PACKAGE_ID.to_owned();
-        invocation.origin.package_id = invocation.package_id.clone();
-        assert!(
-            release_coordinates(
-                &invocation,
-                Some((&manifest, MOUNTED_RELEASE, &target)),
-                "org-a"
-            )
-            .is_ok()
-        );
-        let InvocationEntry::Wiring(position) = &mut invocation.entry else {
-            unreachable!()
-        };
-        position.package_id = "other-application".to_owned();
-        assert!(
-            release_coordinates(
-                &invocation,
-                Some((&manifest, MOUNTED_RELEASE, &target)),
-                "org-a"
-            )
-            .is_err()
-        );
-        let InvocationEntry::Wiring(position) = &mut invocation.entry else {
-            unreachable!()
-        };
-        position.package_id = "warehouse".to_owned();
-        invocation.component_digest = format!("sha256:{}", "b".repeat(64));
-        assert!(
-            release_coordinates(
-                &invocation,
-                Some((&manifest, MOUNTED_RELEASE, &target)),
-                "org-a"
-            )
-            .is_err()
-        );
-    }
-
-    /// A candidate closure states its own coordinates and needs no manifest.
-    #[test]
-    fn a_candidate_closure_carries_its_own_coordinates() {
-        let coordinates =
-            release_coordinates(&candidate(), None, "org-a").expect("a candidate resolves");
-        assert_eq!(
-            coordinates,
-            (CANDIDATE_RELEASE.to_string(), "staging".to_string())
-        );
-    }
-
-    /// EXIT CONDITION: a released closure resolves through the mounted manifest,
-    /// where before it refused outright and the capability was unusable in any
-    /// released deployment.
-    ///
-    /// The fixture environment is deliberately UNGUESSABLE. A hardcoded
-    /// "prod" reads the same as a manifest lookup when the fixture itself says
-    /// "prod", and a mutant that hardcoded it survived this test until the
-    /// value was changed — the distinguishing-step law in miniature.
-    #[test]
-    fn a_released_closure_resolves_through_the_mounted_manifest() {
-        let (manifest, scope) = manifest("org-a", "package_a");
-        let coordinates = release_coordinates(
-            &released(),
-            Some((&manifest, MOUNTED_RELEASE, &scope)),
-            "org-a",
-        )
-        .expect("a released closure resolves");
-        assert_eq!(
-            coordinates,
-            (MOUNTED_RELEASE.to_string(), "warehouse-eu-3".to_string())
-        );
-    }
-
-    /// A manifest for ANOTHER project must not supply coordinates: it would
-    /// hand this guest an effective release under which some other project's
-    /// binding authorizes — a cross-project reach wearing a mounted file.
-    #[test]
-    fn a_manifest_for_another_project_env_key_refuses() {
-        let (manifest, scope) = manifest("org-b", "package_a");
-        assert_eq!(
-            release_coordinates(
-                &released(),
-                Some((&manifest, MOUNTED_RELEASE, &scope)),
-                "org-a"
-            ),
-            Err(BindingError::Unauthorized)
-        );
-    }
-
-    /// A release that never shipped this package must not supply coordinates
-    /// for it.
-    #[test]
-    fn a_manifest_without_the_invoked_package_refuses() {
-        let (manifest, scope) = manifest("org-a", "package_b");
-        assert_eq!(
-            release_coordinates(
-                &released(),
-                Some((&manifest, MOUNTED_RELEASE, &scope)),
-                "org-a"
-            ),
-            Err(BindingError::Unauthorized)
-        );
-    }
-
-    /// No mounted manifest means no released coordinates. This is the
-    /// fail-closed arm the capability had for EVERY release before the loaded release
-    /// was wired, and it stays correct when the loaded release is absent.
-    #[test]
-    fn a_released_closure_without_a_manifest_refuses() {
-        assert_eq!(
-            release_coordinates(&released(), None, "org-a"),
-            Err(BindingError::Unauthorized)
-        );
-    }
-
-    /// A candidate closure handed a manifest is a caller mismatch, not a
-    /// policy question — it refuses rather than picking whichever arm looks
-    /// closer, because guessing here decides which binding authorizes.
-    #[test]
-    fn a_candidate_closure_handed_a_manifest_refuses() {
-        let (manifest, scope) = manifest("org-a", "package_a");
-        assert_eq!(
-            release_coordinates(
-                &candidate(),
-                Some((&manifest, MOUNTED_RELEASE, &scope)),
-                "org-a"
-            ),
-            Err(BindingError::Unauthorized)
-        );
-    }
-
-    /// The store alias the candidate fixtures freeze a binding for.
-    const CANDIDATE_ALIAS: &str = "cold-store";
-
-    /// The binding world private admission froze, in its persisted JSON shape,
-    /// carrying one row for this component and alias.
-    fn frozen_world() -> CandidateBindingWorld {
-        CandidateBindingWorld::from_json(serde_json::json!([{
-            "component-digest": format!("sha256:{}", "a".repeat(64)),
-            "store-alias": CANDIDATE_ALIAS,
-            "requirement-hash": format!("sha256:{}", "c".repeat(64)),
-            "instance-id": "cold-store-instance",
-            "instance-revision": 2,
-            "requirement-type": "blobstore",
-            "contract": "wasmcloud:blobstore",
-            "validation-hash": format!("sha256:{}", "d".repeat(64)),
-            "generation": 7,
-            "definition-hash": format!("sha256:{}", "e".repeat(64)),
-            "credential-set-handle": "cold-store-v7",
-            "read-only": false,
-        }]))
-        .expect("the frozen binding row is complete and canonical")
-    }
-
-    /// The one row the frozen world carries, found the way `container_for`
-    /// finds it.
-    fn frozen_binding(world: &CandidateBindingWorld) -> &CandidateConnectionBinding {
-        world
-            .binding(&released().component_digest, CANDIDATE_ALIAS)
-            .expect("the frozen world carries a binding for this component and alias")
-    }
-
-    /// An authority snapshot that agrees with the candidate closure and equals
-    /// the frozen row in every field the frozen row names.
-    fn matching_snapshot(binding: &CandidateConnectionBinding) -> ConnectionEffectSnapshot {
-        ConnectionEffectSnapshot {
-            connection_name: None,
-            read_only: false,
-            wiring_hash: Some(fixture_wiring_hash()),
-            component: Some("archiver".to_string()),
-            interface_version: Some("0.1.0".to_string()),
-            operation: Some("orders:archive/store@1.0.0".to_string()),
-            registered_operation: Some("package-a:orders/archive@1.0.0".to_string()),
-            requirement_json: None,
-            requirement_hash: Some(binding.requirement_hash.clone()),
-            node_permitted: true,
-            binding_active: true,
-            binding_valid: true,
-            instance_id: Some(binding.instance_id.clone()),
-            validation_hash: Some(binding.validation_hash.clone()),
-            requirement_type: Some(binding.requirement_type.clone()),
-            contract: Some(binding.contract.clone()),
-            instance_enabled: true,
-            active_generation: Some(binding.generation),
-            pinned_generation: Some(binding.generation),
-            instance_revision: Some(binding.instance_revision),
-            generation: Some(binding.generation),
-            definition: None,
-            definition_hash: Some(binding.definition_hash.clone()),
-            credential_handle: binding.credential_set_handle.clone(),
-        }
-    }
-
-    /// A manifest that carries the released fixture's component and wiring, so
-    /// the tests cover both admission and refusal in the released case.
-    fn carrying_manifest(snapshot: &ConnectionEffectSnapshot) -> ServingManifest {
-        let invocation = released();
-        let (mut manifest, _scope) = manifest("org-a", "package_a");
-        manifest.components = BTreeSet::from([ServingComponent {
-            runtime_schema: None,
-            statement_instances: std::collections::BTreeMap::new(),
-            descriptor: {
-                let mut descriptor = wamn_catalog::ComponentDescriptor::named(
-                    snapshot
-                        .component
-                        .clone()
-                        .expect("the fixture snapshot names a component"),
-                    snapshot
-                        .interface_version
-                        .clone()
-                        .expect("the fixture snapshot names an interface version"),
-                    invocation.component_digest.clone(),
-                );
-                descriptor.operations = BTreeMap::from([(
-                    snapshot
-                        .operation
-                        .clone()
-                        .expect("the fixture snapshot names an operation"),
-                    AdmittedComponentOperation {
-                        host_transaction: false,
-                        input_ports: Vec::new(),
-                        output_ports: Vec::new(),
-                        parameters: Vec::new(),
-                        committed_result_schema: None,
-                        registered_operation: snapshot.registered_operation.clone(),
-                        statements: BTreeMap::new(),
-                    },
-                )]);
-                descriptor
-            },
-            package_id: invocation.package_id,
-        }]);
-        manifest
-    }
-
-    /// THE DEFECT (`wamn-b2m6.6`). A candidate closure whose authority snapshot
-    /// disagrees with the binding frozen at admission is refused.
-    ///
-    /// The blobstore ran NO closure test on a candidate. It passed
-    /// `candidate_binding: None` to the authority and authorized only when a
-    /// released manifest was mounted, so a snapshot naming another credential,
-    /// another instance or another generation reached `binding::resolve` and
-    /// the effect went out. The HTTP surface refused the same snapshot.
-    #[test]
-    fn a_candidate_snapshot_that_disagrees_with_the_frozen_binding_refuses() {
-        let world = Arc::new(frozen_world());
-        let binding = frozen_binding(&world);
-        let invocation = candidate_with(Arc::clone(&world));
-        let mut snapshot = matching_snapshot(binding);
-        snapshot.credential_handle = Some("cold-store-v8".to_string());
-
-        assert_eq!(
-            authorize_closure(&invocation, None, Some(binding), &snapshot),
-            Err("the candidate closure disagrees with the frozen wiring or binding"),
-        );
-    }
-
-    /// A snapshot taken from another wiring is refused even when it equals the
-    /// frozen binding row, because the frozen closure names the wiring too.
-    #[test]
-    fn a_candidate_snapshot_from_another_wiring_refuses() {
-        let world = Arc::new(frozen_world());
-        let binding = frozen_binding(&world);
-        let invocation = candidate_with(Arc::clone(&world));
-        let mut snapshot = matching_snapshot(binding);
-        snapshot.wiring_hash = Some(format!("sha256:{}", "f".repeat(64)));
-
-        assert_eq!(
-            authorize_closure(&invocation, None, Some(binding), &snapshot),
-            Err("the candidate closure disagrees with the frozen wiring or binding"),
-        );
-    }
-
-    /// The rule admits the run it was frozen for. A test that refuses every
-    /// candidate satisfies the two tests above and breaks the surface.
-    #[test]
-    fn a_candidate_snapshot_that_matches_the_frozen_binding_is_admitted() {
-        let world = Arc::new(frozen_world());
-        let binding = frozen_binding(&world);
-        let invocation = candidate_with(Arc::clone(&world));
-        let snapshot = matching_snapshot(binding);
-
-        assert_eq!(
-            authorize_closure(&invocation, None, Some(binding), &snapshot),
-            Ok(())
-        );
-    }
-
-    /// A candidate closure whose frozen world holds no binding for the alias
-    /// has nothing to authorize against, so it refuses. `container_for` refuses
-    /// on the same missing row before it queries the authority, which is what
-    /// the HTTP surface does.
-    #[test]
-    fn a_candidate_closure_with_no_frozen_binding_refuses() {
-        let world = frozen_world();
-        assert!(
-            world
-                .binding(&released().component_digest, "hot-store")
-                .is_none()
-        );
-        let snapshot = matching_snapshot(frozen_binding(&world));
-
-        assert_eq!(
-            authorize_closure(&candidate(), None, None, &snapshot),
-            Err("closure type disagrees with the authorization inputs"),
-        );
-    }
-
-    /// The released path is unchanged: a manifest that carries the component
-    /// and the wiring admits.
-    #[test]
-    fn a_released_closure_the_manifest_carries_is_admitted() {
-        let world = frozen_world();
-        let snapshot = matching_snapshot(frozen_binding(&world));
-        let manifest = carrying_manifest(&snapshot);
-
-        assert_eq!(
-            authorize_closure(&released(), Some(&manifest), None, &snapshot),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn a_candidate_cannot_retarget_its_frozen_origin() {
-        let world = Arc::new(frozen_world());
-        let binding = frozen_binding(&world);
-        let mut invocation = candidate_with(Arc::clone(&world));
-        let snapshot = matching_snapshot(binding);
-        invocation.origin.operation = "other-operation".to_string();
-        assert_eq!(
-            authorize_closure(&invocation, None, Some(binding), &snapshot),
-            Err("the candidate closure disagrees with the frozen wiring or binding"),
-        );
-    }
-
-    /// A route entry resolves no wiring. The released rule then requires the
-    /// manifest to carry the route of the origin export.
-    #[test]
-    fn a_released_route_entry_is_admitted_only_when_the_manifest_carries_the_route() {
-        let world = frozen_world();
-        let mut snapshot = matching_snapshot(frozen_binding(&world));
-        let mut manifest = carrying_manifest(&snapshot);
-        snapshot.wiring_hash = None;
-        let mut route = released();
-        route.entry = crate::plugins::connection_http::InvocationEntry::Route;
-
-        assert_eq!(
-            authorize_closure(&route, Some(&manifest), None, &snapshot),
-            Err("the release closure does not carry this component and wiring"),
-        );
-        manifest.routes.insert(wamn_catalog::ServingRoute {
-            package_id: route.origin.package_id.clone(),
-            component: route.origin.component.clone(),
-            operation: route.origin.operation.clone(),
-            type_: wamn_catalog::OperationType::Command,
-            reads: BTreeSet::new(),
-            revision: None,
-            idempotency: None,
-        });
-        assert_eq!(
-            authorize_closure(&route, Some(&manifest), None, &snapshot),
-            Ok(())
-        );
-    }
-
-    /// And a manifest that carries neither still refuses, so the released arm
-    /// applies the released rule rather than passing everything through.
-    #[test]
-    fn a_released_closure_the_manifest_does_not_carry_refuses() {
-        let world = frozen_world();
-        let snapshot = matching_snapshot(frozen_binding(&world));
-        let (manifest, _scope) = manifest("org-a", "package_a");
-
-        assert_eq!(
-            authorize_closure(&released(), Some(&manifest), None, &snapshot),
-            Err("the release closure does not carry this component and wiring"),
-        );
-    }
-
     /// A plugin that opens no connection, so a span assertion needs no database
     /// and no object store.
     fn offline_plugin() -> WamnBlobstore {
@@ -1163,7 +467,12 @@ mod tests {
             "project-a",
             "dev",
         ));
-        WamnBlobstore::new(postgres, facts, "org-a", "project-a", None)
+        WamnBlobstore::new(
+            postgres,
+            facts,
+            "project-a",
+            crate::plugins::connection_http::test_release("org-a"),
+        )
     }
 
     /// The blobstore surface fills the SAME vocabulary the HTTP surface fills,

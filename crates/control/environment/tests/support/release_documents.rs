@@ -316,7 +316,9 @@ pub mod http {
                 declaration["connections"]
                     .as_array_mut()
                     .expect("HTTP requirements")
-                    .push(json!({"store-alias": handle, "requirement-type": "http"}));
+                    .push(
+                        json!({"store-alias": handle, "requirement-type": "http", "mode": "write"}),
+                    );
             }
         }
         Ok(declaration)
@@ -640,9 +642,7 @@ pub mod workflow {
         key: &str,
     ) -> anyhow::Result<String> {
         use std::sync::Arc;
-        use wamn_engine::router_delivery::{
-            DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source,
-        };
+        use wamn_engine::native_routes::{DeliveryRequest, Source};
         use wamn_runtime::plugins::wamn_postgres::{
             AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
         };
@@ -725,7 +725,6 @@ pub mod workflow {
                 identity: None,
                 changes: wamn_broker::Publisher::default(),
             },
-            None,
         );
         let report = host.deliver(DeliveryRequest {
         source: Source::Attachment(attachment), delivery_id: key.to_owned(),
@@ -734,7 +733,7 @@ pub mod workflow {
         }}]).to_string(),
         caller: None, trace: None, parent_causation: None, if_none_match: None,
     }, Some(caller)).await;
-        let Ok(DeliveryOutcome::Respond(body)) = report.outcome else {
+        let Ok(body) = report.outcome else {
             anyhow::bail!("workflow.start failed: {:?}", report.outcome);
         };
         let body: Value = serde_json::from_str(&body)

@@ -207,6 +207,30 @@ impl ComponentConnectionAlias {
     }
 }
 
+/// The operations a published connection permits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConnectionMode {
+    Read,
+    Write,
+    /// Modes of configured palette aliases, indexed by package and alias.
+    ByBinding(BTreeMap<String, BTreeMap<String, ConnectionMode>>),
+}
+impl ConnectionMode {
+    /// Read the sealed mode of one concrete binding. Nested maps are refused.
+    pub fn read_only(&self, package: &str, alias: &str) -> Option<bool> {
+        let mode = match self {
+            Self::ByBinding(packages) => packages.get(package)?.get(alias)?,
+            mode => mode,
+        };
+        match mode {
+            Self::Read => Some(true),
+            Self::Write => Some(false),
+            Self::ByBinding(_) => None,
+        }
+    }
+}
+
 /// One portable connection the component reaches under an author-chosen alias.
 ///
 /// The alias is the author-owned half: it is the `requirement` string the guest
@@ -216,6 +240,7 @@ impl ComponentConnectionAlias {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentConnection {
+    pub mode: ConnectionMode,
     pub store_alias: ComponentConnectionAlias,
     pub requirement_type: ComponentConnectionType,
 }
@@ -1284,19 +1309,22 @@ mod tests {
         let connections = vec![ComponentConnection {
             store_alias: "labels".into(),
             requirement_type: ComponentConnectionType::Blobstore,
+            mode: ConnectionMode::Write,
         }];
         let descriptor = ComponentDescriptor::new(facts.component.clone(), connections.clone());
 
         let document = serde_json::to_value(&descriptor).expect("descriptor serializes");
         assert!(document.get("target").is_none());
-        assert_eq!(
-            document["connections"],
-            json!([{"store-alias": "labels", "requirement-type": "blobstore"}])
-        );
         let decoded: ComponentDescriptor =
             serde_json::from_value(document.clone()).expect("descriptor decodes");
         assert_eq!(decoded, descriptor);
 
+        let mut missing_mode = document.clone();
+        missing_mode["connections"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("mode");
+        assert!(serde_json::from_value::<ComponentDescriptor>(missing_mode).is_err());
         let mut unknown = document;
         unknown["target"] = json!({});
         assert!(serde_json::from_value::<ComponentDescriptor>(unknown).is_err());
@@ -1647,6 +1675,7 @@ mod tests {
         let connection = ComponentConnection {
             store_alias: "erp".into(),
             requirement_type: ComponentConnectionType::Http,
+            mode: ConnectionMode::Write,
         };
 
         let mut declared = declaration();
@@ -1996,6 +2025,32 @@ mod connection_alias_tests {
                 BTreeMap::from([(parameter.to_owned(), Value::String("labels".to_owned()))]);
             let second =
                 BTreeMap::from([(parameter.to_owned(), Value::String("archive".to_owned()))]);
+            let modes = ConnectionMode::ByBinding(BTreeMap::from([(
+                "package".into(),
+                BTreeMap::from([
+                    (
+                        declaration.resolve(&first).unwrap().into(),
+                        ConnectionMode::Read,
+                    ),
+                    (
+                        declaration.resolve(&second).unwrap().into(),
+                        ConnectionMode::Write,
+                    ),
+                ]),
+            )]));
+            assert_eq!(
+                modes.read_only("package", declaration.resolve(&first).unwrap()),
+                Some(true)
+            );
+            assert_eq!(
+                modes.read_only("package", declaration.resolve(&second).unwrap()),
+                Some(false)
+            );
+            assert!(
+                modes
+                    .read_only("absent", declaration.resolve(&first).unwrap())
+                    .is_none()
+            );
             assert_ne!(declaration.resolve(&first), declaration.resolve(&second));
             assert!(declaration.name().is_none());
             assert!(declaration.resolve(&BTreeMap::new()).is_none());

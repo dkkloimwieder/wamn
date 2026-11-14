@@ -325,7 +325,7 @@ pub async fn invoke_owned<P: InvocationPolicy>(
     invoke(target, request, true).await
 }
 
-/// The intent engine persists the raw result, then finishes its delivery.
+/// The operation owner persists the raw result before it signs the response.
 pub async fn invoke_raw<P: InvocationPolicy>(
     target: &DispatchTarget,
     request: NativeInvocation<P>,

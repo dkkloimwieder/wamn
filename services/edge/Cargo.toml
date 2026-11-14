@@ -11,13 +11,10 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
+sqlx = { workspace = true, features = ["sqlite"] }
 wamn-digest.workspace = true
-# The edge links the engine and run-state and never wamn-runtime. The
-# dependency test measures what these bring.
+# The edge links the engine without cloud capability plugins.
 wamn-engine = { workspace = true }
-wamn-run-state = { workspace = true }
-# The one writer of the run-state file on the box.
-wamn-run-state-sqlite = { workspace = true }
 # Local routes verify sessions over a key file, and grants name role slugs.
 wamn-identity-protocol = { workspace = true }
 # The admitted component facts and the serving manifest of a release bundle.
@@ -26,9 +23,7 @@ wamn-catalog = { workspace = true }
 # The project of the box's environment coordinate (R1).
 wamn-registry = { workspace = true }
 # The plain host, its ingress and the route guest's workload. No `oci`.
-wash-runtime = { workspace = true }
-# The samples table lives in the run-state file beside the intents.
-rusqlite = { workspace = true }
+wash-runtime = { workspace = true, features = ["wasi-config"] }
 # The host owns the serial port: raw mode and the baud rate, with no serial
 # crate.
 rustix = { workspace = true, features = ["termios"] }

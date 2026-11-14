@@ -253,19 +253,8 @@ impl Authorization {
                 .finish(),
         );
         let parameters = &context["parameters"];
-        let tls = match parameters["tls-verification"].as_str() {
-            Some("disabled") => crate::connection_authority::TlsPolicy::Disabled,
-            Some("verify-authority") => crate::connection_authority::TlsPolicy::VerifyAuthority,
-            _ => return Err(refused("invalid connection TLS policy")),
-        };
-        let authority = crate::connection_authority::parse_http_connection_authority(
-            parameters["primary-authority"]
-                .as_str()
-                .ok_or_else(|| refused("missing connection authority"))?,
-            tls,
-            None,
-        )
-        .map_err(|error| failed("invalid connection authority", error))?;
+        let authority = crate::connection_authority::parse_http_definition(parameters)
+            .map_err(|error| failed("invalid connection authority", error))?;
         let decision = crate::plugins::connection_http::token_endpoint(
             &authority,
             auth.token_authority.as_deref(),

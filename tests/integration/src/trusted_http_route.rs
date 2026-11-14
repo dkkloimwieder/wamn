@@ -58,7 +58,7 @@ pub const WIRING_ID: &str = "hot-route";
 pub const WIRING_VERSION: u32 = 1;
 pub const NODE_ID: &str = "call-upstream";
 /// The alias the guest names in `Request.requirement`, resolved at the
-/// component grain by `CONNECTION_EFFECT_SNAPSHOT_SQL`.
+/// component grain by the shared connection authority resolver.
 pub const STORE_ALIAS: &str = "upstream";
 pub const PROJECT: &str = "default";
 pub const COMPONENT: &str = "http-request";
@@ -448,6 +448,7 @@ fn release_manifest(
                 vec![ComponentConnection {
                     store_alias: STORE_ALIAS.to_owned().into(),
                     requirement_type: ComponentConnectionType::Http,
+            mode: wamn_catalog::ConnectionMode::Write,
                 }],
             ),
         }],
@@ -814,7 +815,9 @@ mod tests {
     }
 
     async fn origin() -> anyhow::Result<Origin> {
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let interface = std::net::UdpSocket::bind("0.0.0.0:0")?;
+        interface.connect("192.0.2.1:9")?;
+        let listener = TcpListener::bind((interface.local_addr()?.ip(), 0)).await?;
         let address = listener.local_addr()?;
         let (sent, requests) = mpsc::channel(16);
         let task = tokio::spawn(async move {

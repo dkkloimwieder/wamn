@@ -32,12 +32,7 @@ serde_yaml = { workspace = true }
 humantime = { workspace = true }
 async-nats = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
-# wamn-1fhk: the RouterDeliveryBridge's meter is INJECTED, not taken from
-# `opentelemetry::global` inside the bridge, so that a test can own its own
-# provider and read back exactly the series one bridge emitted. Production is the
-# side that has no second provider to own, so the process-global meter is handed
-# in at the one construction site here — which is why this dep edge belongs to
-# the host and not to the bridge's crate.
+# Delivery metrics and request tracing share the process observability provider.
 # `trace` reads the sampler's decision from the active context (src/observability.rs).
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time", "sync", "net", "io-util", "process"] }

@@ -311,10 +311,10 @@ Migrate mode preserves data. Reset mode clears application state before it reapp
 
 Five layers run a component, and each layer depends only on the layers below it:
 
-1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) holds pure run decisions and two storage traits. `RunStore` is the queued-run lifecycle. `IntentStore` is the per-call intent record. `wamn-runtime`, `wamn-run-state-sqlite` and the edge implement it.
+1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) holds pure run decisions. `RunStore` defines the queued-run lifecycle. Concrete operation owners hold their own claim storage.
 2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, `invoke_operation`, and the host side of the `wamn:operation` binding that the separate route component calls. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
 3. [`wamn-runtime`](../../crates/platform/runtime/src/lib.rs) holds the plugin set: Postgres, JetStream, blobstore, HTTP connections, credentials, logging, route authentication, and the OCI registry source. `WamnPostgres` is the Postgres adapter of `RunStore`.
-4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) holds the route path, `OperationHost`, and the delivery bridge.
+4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) holds `OperationHost`, native platform endpoints and release readiness.
 5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) owns the private graph walk, the node invocation driver, the durable queue, and the workflow contract (start, park, release, list). It indexes catalog graphs directly. A route never enters it.
 
 The services compose these layers.

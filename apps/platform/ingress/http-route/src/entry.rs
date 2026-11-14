@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use serde_json::{Value, json};
 
-use crate::entry_response::{refusal, resolved, uncertain, with_request_id};
+use crate::entry_response::{refusal, with_request_id};
 
 use super::bindings::wamn::flow_http_routing::routing::AuthenticatedCaller;
 use super::bindings::wamn::node::types::{NodeContext, NodeError};
@@ -206,8 +206,6 @@ async fn execute(
             Err(error @ (operation::Refusal::InProgress | operation::Refusal::OutcomeUnknown)) => {
                 commit_failure(error, &intent)
             }
-            Err(operation::Refusal::Uncertain) => uncertain(&intent),
-            Err(operation::Refusal::Resolved(basis)) => resolved(&intent, &basis),
             Err(error) => return Err(boundary(&error, operation_id)),
             Ok(operation::Begun::New(delivery_id)) => {
                 let result = call(
@@ -292,7 +290,7 @@ async fn signed_answer(body: String, request_id: &str) -> Result<String, Deliver
     Ok(values.remove(0).to_string())
 }
 
-fn commit_failure(error: operation::Refusal, intent: &str) -> Value {
+fn commit_failure(error: operation::Refusal, _intent: &str) -> Value {
     use super::bindings::wamn::postgres::types::PgError;
     match error {
         operation::Refusal::InProgress => refusal(
@@ -305,7 +303,6 @@ fn commit_failure(error: operation::Refusal, intent: &str) -> Value {
             "check the external system before sending a new key",
             &serde_json::Value::Null,
         ),
-        operation::Refusal::Uncertain => uncertain(intent),
         operation::Refusal::Postgres(error) => {
             let code = match error {
                 PgError::StatementTimeout => "timeout",

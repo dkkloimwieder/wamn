@@ -276,6 +276,20 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let mut connections = facts.connections;
+    for connection in &mut connections {
+        let alias = connection
+            .store_alias
+            .name()
+            .context("package connection needs a fixed alias")?;
+        let declaration = package_manifest
+            .connections
+            .get(alias)
+            .with_context(|| format!("package declares no connection {alias}"))?;
+        connection.mode = match declaration.mode {
+            wamn_compiler::manifest::ConnectionMode::Read => wamn_catalog::ConnectionMode::Read,
+            wamn_compiler::manifest::ConnectionMode::Write => wamn_catalog::ConnectionMode::Write,
+        };
+    }
     connections.sort_by(|left, right| left.store_alias.cmp(&right.store_alias));
 
     Ok(ComponentAdmission {
@@ -1154,6 +1168,7 @@ mod tests {
             &ComponentConnection {
                 store_alias: "erp".to_owned().into(),
                 requirement_type: ComponentConnectionType::Http,
+                mode: wamn_catalog::ConnectionMode::Write,
             },
             "erp",
         );

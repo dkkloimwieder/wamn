@@ -150,7 +150,7 @@
   "connections": [
     {
       "store-alias": { "parameter": "requirement" },
-      "requirement-type": "http"
+      "requirement-type": "http", "mode": "write"
     }
   ]
 }

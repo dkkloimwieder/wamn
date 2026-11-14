@@ -19,8 +19,8 @@ use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{AdmittedComponent, ComponentSqlField, ServingComponent, ServingRoute};
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::native_routes::bounded_node_deadline_ms;
 use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
-use wamn_engine::router_delivery::bounded_node_deadline_ms;
 use wamn_event_wire::Causation;
 use wamn_identity_protocol::PlatformComponent;
 use wamn_runtime::connection_facts::ConnectionFacts;
@@ -35,7 +35,7 @@ use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::valid_runner;
 use wamn_runtime::plugins::wamn_postgres::{
     PreparedStatementMembers, PreparedStatementSet, ReleaseIdentity, SessionIdentity,
-    StatementField, VerifiedStatement, VerifiedStatementSet, WamnPostgres, WriteLogStore,
+    StatementField, VerifiedStatement, VerifiedStatementSet, WamnPostgres,
 };
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -48,34 +48,6 @@ use wamn_engine::warm_reuse::WarmReuse;
 
 mod native_policy;
 mod signed_result;
-
-/// What one cloud call needs to log its intents
-/// (`docs/history/host-transaction.md` 5, issue 4).
-#[derive(Debug)]
-pub struct CallIntents {
-    /// The two-step store of an operation without SQL. An operation with SQL
-    /// claims in its request element transaction instead.
-    store: WriteLogStore,
-    project_env_key: String,
-    release: String,
-    package: String,
-    type_: wamn_catalog::OperationType,
-    key_field: Option<String>,
-}
-
-impl CallIntents {
-    /// The intent context of the call.
-    pub fn context(&self) -> wamn_engine::operation::IntentContext<'_> {
-        wamn_engine::operation::IntentContext {
-            store: &self.store,
-            partition: &self.project_env_key,
-            release: &self.release,
-            package: &self.package,
-            type_: self.type_,
-            key_field: self.key_field.as_deref(),
-        }
-    }
-}
 
 use invocation_policy::ApplicationHost;
 use native_call::prepare_native;
@@ -362,54 +334,12 @@ impl OperationHost {
         }
     }
 
-    /// The complete component list of the carried release, read once.
-    ///
-    /// A wiring reads the same list beside its graph, so a route and a wiring
-    /// load one application.
-    /// The intents of a call of `operation` on `component`, from the route
-    /// that the release publishes for it. An operation without a route logs
-    /// none.
-    pub fn call_intents(
-        &self,
-        component: &AdmittedComponent,
-        operation: &str,
-    ) -> anyhow::Result<Option<CallIntents>> {
-        let manifest = self.release.manifest();
-        let Some(route) = manifest.route(
-            &component.target.package_id,
-            &component.component,
-            operation,
-        ) else {
-            return Ok(None);
-        };
-        let project_env_key = self.release.target().project_env_key.clone();
-        Ok(Some(CallIntents {
-            store: WriteLogStore::new(
-                Arc::clone(&self.postgres),
-                self.project.clone(),
-                project_env_key.clone(),
-            ),
-            project_env_key,
-            release: self.release.release().manifest_digest.to_string(),
-            package: route.package_id.clone(),
-            type_: route.type_,
-            key_field: route.idempotency.clone(),
-        }))
-    }
-
     pub async fn release_components(&self) -> anyhow::Result<Arc<[AdmittedComponent]>> {
         let loaded = self
             .native
             .get_or_try_init(|| async {
-                let components = self
-                    .postgres
-                    .resolve_release_components(
-                        &self.project,
-                        &self.release.target().project_env_key,
-                        &self.release.target().environment,
-                        self.release.release().manifest_digest.as_str(),
-                    )
-                    .await?;
+                let components =
+                    wamn_runtime::plugins::wamn_postgres::release_components(&self.release)?;
                 self.load_released_application(Arc::from(components)).await
             })
             .await?;
@@ -509,17 +439,15 @@ impl OperationHost {
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.http_transport),
                     Arc::clone(&self.facts),
-                    self.release.target().project_env_key.as_str(),
                     self.project.as_str(),
                     Arc::clone(&self.allowed_hosts),
-                    Some(Arc::clone(&self.release)),
+                    Arc::clone(&self.release),
                 )),
                 blobstore: Arc::new(WamnBlobstore::new(
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.facts),
-                    self.release.target().project_env_key.as_str(),
                     self.project.as_str(),
-                    Some(Arc::clone(&self.release)),
+                    Arc::clone(&self.release),
                 )),
                 release: Arc::clone(&self.release),
                 project: self.project.clone(),

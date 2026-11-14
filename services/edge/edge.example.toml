@@ -17,14 +17,14 @@ digest = "sha256:000000000000000000000000000000000000000000000000000000000000000
 
 [session]
 # The session key file that the release installs, and the target that a
-# session must name. The organization also partitions every intent.
+# session must name. The organization also partitions every operation claim.
 keys = "/var/lib/wamn-edge/release/session-keys.json"
 issuer = "https://identity.example.test"
 org = "org-a"
 audience = "org-a/edge"
 
 [store]
-# The SQLite file of intents and samples. One edge process holds it.
+# The SQLite file of operation claims and samples. One edge process holds it.
 db = "/var/lib/wamn-edge/edge.db"
 
 [http]
@@ -43,7 +43,7 @@ role = "device"
 
 # The scale on the serial port. Set the scale to send one line on print or on
 # stable weight, never as a continuous stream. Each frame is one call, one
-# intent and one sample, so a continuous stream writes the SD card on every
+# claim and one sample, so a continuous stream writes the SD card on every
 # frame and wears it out.
 [device.serial]
 path = "/dev/ttyUSB0"

@@ -1959,6 +1959,7 @@ mod tests {
             },
             entry: crate::plugins::connection_http::InvocationEntry::Wiring(
                 crate::plugins::connection_http::WiringPosition {
+                    configuration: Default::default(),
                     package_id: "package_a".to_string(),
                     wiring_hash: format!("sha256:{}", "a".repeat(64)),
                     wiring_id: "orders".to_string(),

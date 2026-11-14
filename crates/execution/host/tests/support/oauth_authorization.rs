@@ -146,7 +146,6 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
             org: ORG.to_owned(),
             changes: Publisher::new(nats),
         },
-        None,
     )
     .with_oauth(Some(Arc::clone(&oauth)));
     let selection = json!({"project":"billing","env":"dev","name":"oauth"});

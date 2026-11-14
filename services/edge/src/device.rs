@@ -1,12 +1,12 @@
 //! The device loop: each frame of the device is one call of one attachment's
-//! operation, one intent and one sample.
+//! operation, one claim and one sample.
 //!
 //! The loop calls as the fixed local principal that the configuration names,
 //! with the permissions of its role in the release grants (spec 4.4). Each
-//! frame gets a new sample key, which is the request id and so the intent key
+//! frame gets a new sample key, which is the request id and so the caller key
 //! of its one request element. The input is `[{"request_id", "value": {"frame",
 //! "captured_at"}}]`. Calls run one at a time. A completed request element stores its
-//! `value` as the sample, in the transaction that finishes its intent.
+//! `value` as the sample, in the transaction that completes its claim.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,11 +17,9 @@ use serde_json::json;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
-use wamn_engine::operation::logs_intent;
-use wamn_engine::router_delivery::{DeliveryOutcome, SourceRef};
 
 use crate::config::DeviceConfig;
-use crate::delivery::EdgeDelivery;
+use crate::operation::EdgeOperation;
 use crate::release::EdgeRelease;
 use crate::samples::SampleStore;
 use crate::serial;
@@ -63,7 +61,7 @@ impl DeviceLoop {
 pub fn start(
     config: &DeviceConfig,
     release: &EdgeRelease,
-    delivery: Arc<EdgeDelivery>,
+    delivery: Arc<EdgeOperation>,
     samples: SampleStore,
     stopped: watch::Receiver<bool>,
 ) -> anyhow::Result<DeviceLoop> {
@@ -80,9 +78,25 @@ pub fn start(
             .collect(),
         Some(config.role.as_str().into()),
     );
-    let route = delivery.device_route(&config.attachment, &caller)?;
+    let manifest = release.release().manifest();
+    let attachment = manifest
+        .attachment(&config.attachment)
+        .context("device attachment is missing")?;
+    let wamn_catalog::AttachmentTarget::Route {
+        component,
+        operation,
+    } = attachment.target();
+    let route = manifest
+        .route(attachment.package_id(), &component, &operation)
+        .context("device route is missing")?;
+    let fact = release
+        .components()
+        .iter()
+        .find_map(|component| component.operations.get(&operation))
+        .context("device operation is missing")?;
+    wamn_engine::native_routes::authorize_released_operation(Some(&caller), fact)?;
     anyhow::ensure!(
-        logs_intent(route.type_),
+        !route.type_.is_read(),
         "{} is a {:?} route; the device loop calls a route that changes records",
         config.attachment,
         route.type_
@@ -113,7 +127,7 @@ pub fn start(
 async fn run(
     attachment: String,
     caller: AuthenticatedCaller,
-    delivery: Arc<EdgeDelivery>,
+    delivery: Arc<EdgeOperation>,
     samples: SampleStore,
     mut frames: mpsc::Receiver<String>,
     mut stopped: watch::Receiver<bool>,
@@ -133,32 +147,15 @@ async fn run(
             "request_id": sample_key,
             "value": {"frame": frame, "captured_at": captured_at},
         }]);
-        let outcome = delivery
-            .call(
-                SourceRef::Attachment(&attachment),
-                Some(caller.clone()),
-                sample_key.clone(),
-                &input,
-                (None, None),
-                &samples.intents(&captured_at),
-            )
-            .await;
-        match outcome {
-            Ok(DeliveryOutcome::Respond(answer)) if stored(&answer) => {
+        match delivery
+            .sample(caller.clone(), &sample_key, &captured_at, &input)
+            .await
+        {
+            Ok(()) => {
+                samples.notify_stored();
                 tracing::debug!(%sample_key, "the device call stored its sample");
             }
-            Ok(outcome) => {
-                tracing::warn!(%sample_key, ?outcome, "the device call stored no sample");
-            }
-            Err(error) => {
-                tracing::warn!(%sample_key, ?error, "the device call failed");
-            }
+            Err(error) => tracing::warn!(%sample_key, %error, "device call failed"),
         }
     }
-}
-
-/// Whether the answer of one device call is a request element without an error.
-fn stored(answer: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(answer)
-        .is_ok_and(|answer| answer[0].get("value").is_some() && answer[0].get("error").is_none())
 }

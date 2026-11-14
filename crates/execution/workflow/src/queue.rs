@@ -7,8 +7,8 @@ use anyhow::Context as _;
 use tracing::Instrument as _;
 use wash_runtime::host::probes::Liveness;
 
+use wamn_engine::native_routes::{OperationRefusal, OperationRefusalType};
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
 use wamn_event_wire::Causation;
 use wamn_identity_protocol::PlatformComponent;
 use wamn_run_state::{FailType, RunStore as _};

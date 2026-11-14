@@ -142,7 +142,7 @@ pub async fn invoke(
         registered.as_deref(),
         Some("rest-consumer-fixture:item/record@0.1.1")
     );
-    wamn_engine::router_delivery::authorize_registered_operation(
+    wamn_engine::native_routes::authorize_registered_operation(
         Some(&caller),
         registered.as_deref(),
     )?;
@@ -155,17 +155,16 @@ pub async fn invoke(
         )
         .await?
         .ok_or_else(|| anyhow::anyhow!("the workflow user holds the role without the command"))?;
-    let refusal = wamn_engine::router_delivery::authorize_registered_operation(
+    let refusal = wamn_engine::native_routes::authorize_registered_operation(
         Some(&without),
         registered.as_deref(),
     )
     .expect_err("a role without the consumer command refuses the record node");
     assert_eq!(
         refusal.refusal_type(),
-        wamn_engine::router_delivery::OperationRefusalType::PermissionDenied
+        wamn_engine::native_routes::OperationRefusalType::PermissionDenied
     );
     let write = &wiring.nodes["write"];
-    let intents = host.call_intents(component, &write.operation)?;
     // The command stores the due time in its normalized timestamptz form.
     for (due, stored) in [
         ("2026-10-22T12:00:00Z", "2026-10-22T12:00:00.000000Z"),
@@ -199,6 +198,7 @@ pub async fn invoke(
                             component,
                             &write.operation,
                             InvocationEntry::Wiring(WiringPosition {
+                                configuration: Default::default(),
                                 package_id: "netsuite".into(),
                                 wiring_hash: wiring.wiring_hash().to_string(),
                                 wiring_id: wiring.wiring_id.clone(),
@@ -215,9 +215,6 @@ pub async fn invoke(
                     Some(caller.clone()),
                 ),
             },
-            intents
-                .as_ref()
-                .map(wamn_execution_host::CallIntents::context),
         )
         .await?;
         let emission =
