@@ -34,6 +34,7 @@ use wamn_control_provision::{
 use wamn_identity::tls_config_with_operator_ca;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::token::SessionClaims;
+use wamn_package_artifact::http_client::{HttpClient, HttpRequest, HttpResponse, Redirects};
 use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
 use wamn_platform_identity::session_token::sign_session_token;
 use wamn_platform_identity::{
@@ -43,9 +44,6 @@ use wamn_registry::Triple;
 
 const ISSUER: &str = "https://identity.pat-test.internal";
 const PASSWORD: &str = "operator-pat-disposable-fixture-password";
-const FORBIDDEN: &str = "{\"error\":\"operator certificate required\"}";
-const INVALID: &str = "{\"error\":\"invalid PAT request\"}";
-const UNAVAILABLE: &str = "{\"error\":\"identity unavailable\"}";
 
 // Upstream errors and response bodies can contain secrets. Never format them.
 trait ExpectRedacted<T> {
@@ -322,7 +320,7 @@ async fn operator_pat_issuance_over_https() {
         .await
         .expect_redacted("anonymous refusal"),
         403,
-        FORBIDDEN,
+        "operator certificate required",
     )
     .await;
     assert_failure(
@@ -341,7 +339,7 @@ async fn operator_pat_issuance_over_https() {
         .await
         .expect_redacted("JWT and header refusal"),
         403,
-        FORBIDDEN,
+        "operator certificate required",
     )
     .await;
     assert!(
@@ -355,7 +353,7 @@ async fn operator_pat_issuance_over_https() {
             .await
             .expect_redacted("user PAT refusal"),
         400,
-        INVALID,
+        "invalid PAT request",
     )
     .await;
     let service_pat = success(
@@ -388,7 +386,7 @@ async fn operator_pat_issuance_over_https() {
         .await
         .expect_redacted("PAT cannot authenticate an operator"),
         403,
-        FORBIDDEN,
+        "operator certificate required",
     )
     .await;
     let before_refusals = snapshots(&mut system, false).await;
@@ -471,7 +469,7 @@ async fn operator_pat_issuance_over_https() {
         .await
         .expect_redacted("database refusal"),
         503,
-        UNAVAILABLE,
+        "identity unavailable",
     )
     .await;
     assert!(
@@ -505,7 +503,7 @@ async fn operator_pat_issuance_over_https() {
         .await
         .expect_redacted("unconfigured operator authority refusal"),
         403,
-        FORBIDDEN,
+        "operator certificate required",
     )
     .await;
     stop(
@@ -534,12 +532,12 @@ async fn operator_pat_issuance_over_https() {
 }
 
 fn request(
-    client: &reqwest::Client,
+    client: &HttpClient,
     endpoint: &str,
     principal: &PrincipalId,
     label: &str,
     lifetime: u64,
-) -> reqwest::RequestBuilder {
+) -> HttpRequest {
     client
         .post(format!("{endpoint}/pats"))
         .header("content-type", "application/json")
@@ -550,7 +548,7 @@ fn request(
 }
 
 async fn success(
-    client: &reqwest::Client,
+    client: &HttpClient,
     endpoint: &str,
     principal: &PrincipalId,
     label: &str,
@@ -633,7 +631,7 @@ async fn pat_versions(system: &mut Client, exclude_prefix: &str) -> Vec<String> 
 }
 
 async fn malformed_requests(
-    client: &reqwest::Client,
+    client: &HttpClient,
     endpoint: &str,
     principal: &PrincipalId,
     disabled: &PrincipalId,
@@ -655,7 +653,7 @@ async fn malformed_requests(
                 .await
                 .expect_redacted("invalid request response"),
             400,
-            INVALID,
+            "invalid PAT request",
         )
         .await;
     }
@@ -684,7 +682,7 @@ async fn malformed_requests(
                 .await
                 .expect_redacted("malformed request response"),
             400,
-            INVALID,
+            "invalid PAT request",
         )
         .await;
     }
@@ -702,7 +700,7 @@ async fn malformed_requests(
         assert_failure(
             request.send().await.expect_redacted("content type refusal"),
             400,
-            INVALID,
+            "invalid PAT request",
         )
         .await;
     }
@@ -721,17 +719,21 @@ async fn malformed_requests(
     }
 }
 
-async fn assert_failure(response: reqwest::Response, status: u16, body: &str) {
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Refusal {
+    error: String,
+}
+
+async fn assert_failure(response: HttpResponse, status: u16, error: &str) {
     assert_eq!(response.status().as_u16(), status);
     assert_eq!(response.headers()["cache-control"], "no-store");
     assert_eq!(response.headers()["content-type"], "application/json");
-    assert!(
-        response.text().await.expect_redacted("fixed refusal body") == body,
-        "fixed non-secret refusal"
-    );
+    let refusal: Refusal = response.json().await.expect_redacted("refusal fields");
+    assert!(refusal.error == error, "refusal code");
 }
 
-async fn public_routes(endpoint: &str, client: &reqwest::Client) {
+async fn public_routes(endpoint: &str, client: &HttpClient) {
     assert_eq!(
         client
             .get(format!("{endpoint}/healthz"))
@@ -908,22 +910,18 @@ fn certificate(issuer: &Issuer<'_, KeyPair>, operator: bool, expired: bool) -> M
     }
 }
 
-fn https_client(ca: &[u8], material: Option<&Material>) -> reqwest::Client {
-    let mut builder = reqwest::Client::builder()
+fn https_client(ca: &[u8], material: Option<&Material>) -> HttpClient {
+    let mut builder = HttpClient::builder()
         .https_only(true)
-        .no_proxy()
-        .retry(reqwest::retry::never())
-        .redirect(reqwest::redirect::Policy::none())
+        .redirects(Redirects::None)
         .timeout(Duration::from_secs(5))
-        .tls_backend_rustls()
-        .tls_certs_only(
-            reqwest::Certificate::from_pem_bundle(ca).expect_redacted("trusted server CA"),
-        );
+        .roots(ca)
+        .expect_redacted("trusted server CA");
     if let Some(material) = material {
         let pem = [material.certificate.as_slice(), material.key.as_slice()].concat();
-        builder = builder.identity(
-            reqwest::Identity::from_pem(&pem).expect_redacted("operator certificate identity"),
-        );
+        builder = builder
+            .identity_pem(&pem)
+            .expect_redacted("operator certificate identity");
     }
     builder.build().expect_redacted("HTTPS fixture client")
 }

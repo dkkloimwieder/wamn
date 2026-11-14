@@ -8,6 +8,7 @@ use std::fs;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
+use wamn_package_artifact::http_client::HttpClient;
 use wamn_test_application::Application;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -54,12 +55,12 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
                 (id, purchase_order_number, supplier_id, status, acme_inspection_required, acme_quality_status)
              VALUES ('00000000-0000-0000-0000-000000000727', 'PO-FEED-EMPTY',
                 '00000000-0000-0000-0000-000000000730', 'open', false, 'not_required');").to_string())).execute(&mut client).await.map(drop)?;
-        let http = reqwest::Client::new();
+        let http = HttpClient::builder().build().expect("HTTP client");
         let read = async |path: &str, input: Value| -> anyhow::Result<Value> {
             let request_element = input.as_object().context("read input is an object")?;
             let query = read_query::encode_read_query(request_element);
             let response = http.get(format!("{}{path}?{query}", application.routes.endpoint))
-                .header(reqwest::header::HOST, &application.routes.host)
+                .header(hyper::header::HOST, &application.routes.host)
                 .bearer_auth(&application.routes.bearer).send().await?;
             let status = response.status();
             let body: Value = response.json().await?;
@@ -149,10 +150,10 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
                 == 1,
             "the caller did not hold admin alone"
         );
-        let http = reqwest::Client::new();
+        let http = HttpClient::builder().build().expect("HTTP client");
         let record = async |path: &str, key: &str, order: &str, line: &str| {
             http.post(format!("{}{path}", application.routes.endpoint))
-                .header(reqwest::header::HOST, &application.routes.host)
+                .header(hyper::header::HOST, &application.routes.host)
                 .bearer_auth(&application.routes.bearer)
                 .json(&json!([{"request_id":key,"value":{
                     "idempotency_key":key,
@@ -191,7 +192,7 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
         )
         .await?;
         ensure!(
-            direct.status() == reqwest::StatusCode::FORBIDDEN,
+            direct.status() == hyper::StatusCode::FORBIDDEN,
             "the operation the entry calls was admitted directly: {}",
             direct.status()
         );
@@ -335,9 +336,9 @@ async fn record(
     order: &str,
     line: &str,
 ) -> anyhow::Result<Value> {
-    let response = reqwest::Client::new()
+    let response = HttpClient::builder().build().expect("HTTP client")
         .post(format!("{}{path}", application.routes.endpoint))
-        .header(reqwest::header::HOST, &application.routes.host)
+        .header(hyper::header::HOST, &application.routes.host)
         .bearer_auth(&application.routes.bearer)
         .json(&json!([{"request_id":key,"value":{
             "idempotency_key":key,
@@ -544,9 +545,9 @@ async fn acme_inspection(application: &Application, database_url: &str) -> anyho
     // A retry through Acme with its lines in another order and its time
     // spelled another way is the same request under Acme's canonical form.
     let reordered = async |lines: [&str; 2], occurred_at: &str| -> anyhow::Result<Value> {
-        let response = reqwest::Client::new()
+        let response = HttpClient::builder().build().expect("HTTP client")
             .post(format!("{}/acme/acme/record_receipt", application.routes.endpoint))
-            .header(reqwest::header::HOST, &application.routes.host)
+            .header(hyper::header::HOST, &application.routes.host)
             .bearer_auth(&application.routes.bearer)
             .json(&json!([{"request_id":"part-reordered","value":{
                 "idempotency_key":"part-reordered",
@@ -712,7 +713,7 @@ async fn member_instances(project: &mut sqlx::PgConnection) -> anyhow::Result<()
 /// inside one leave them unchanged
 /// (docs/architecture/data-access.md#inputs-queries-and-transactions).
 async fn reads(application: &Application) -> anyhow::Result<()> {
-    let http = reqwest::Client::new();
+    let http = HttpClient::builder().build().expect("HTTP client");
     let order = "00000000-0000-0000-0000-000000000720";
     for (path, request_element) in [
         ("/location/list", json!({})),
@@ -731,7 +732,7 @@ async fn reads(application: &Application) -> anyhow::Result<()> {
         let query = read_query::encode_read_query(&request_element);
         let response = http
             .get(format!("{}{path}?{query}", application.routes.endpoint))
-            .header(reqwest::header::HOST, &application.routes.host)
+            .header(hyper::header::HOST, &application.routes.host)
             .bearer_auth(&application.routes.bearer)
             .send()
             .await?;

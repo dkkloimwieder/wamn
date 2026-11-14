@@ -141,7 +141,7 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
         ]))
         .send()
         .await?;
-    anyhow::ensure!(response.status() == reqwest::StatusCode::OK);
+    anyhow::ensure!(response.status() == hyper::StatusCode::OK);
     let text = response.text().await?;
     anyhow::ensure!(
         text.starts_with("[ \n{ \"value\": {\"z\":1e+00, \"a\":-0.00} ,\"request_id\":\"r-8\"}\t,"),

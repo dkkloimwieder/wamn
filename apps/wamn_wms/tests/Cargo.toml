@@ -20,7 +20,7 @@ wamn-compiler = { workspace = true }
 # Event identity and subject tokens shared with application consumers.
 wamn-event-wire = { workspace = true }
 anyhow = { workspace = true }
-reqwest = { workspace = true, features = ["rustls", "json"] }
+wamn-package-artifact = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["process", "net", "time", "rt", "macros", "io-util", "signal"] }
@@ -48,6 +48,7 @@ wamn-registry = { workspace = true }
 wamn-cdc-reader = { workspace = true }
 pg_walstream = { workspace = true }
 object_store = { workspace = true }
+hyper = { workspace = true }
 
 [lints]
 workspace = true

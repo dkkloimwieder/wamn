@@ -325,6 +325,11 @@ Five layers run a component, and each layer depends only on the layers below it:
 5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) owns the private graph walk, the node invocation driver, the durable queue, and the workflow contract (start, park, release, list). It indexes catalog graphs directly. A route never enters it.
 
 `wamn-package-artifact` owns shared registry clients, release artifact transfer and the pod metadata service.
+Its `http_client` module owns TLS trust and request deadlines for buffered native requests.
+`wamn-kubernetes::http_transport` builds Hyper connectors and clients for buffered and streaming callers, including the edge and web front.
+Callers select mutual TLS, extra or exclusive trust roots, redirects and address overrides there.
+The transport never retries a request or reads proxy configuration from the environment.
+Response reads keep the original request deadline. Callers retain their own body limits and boundary error mapping.
 The host uses wash-runtime's logger and its own tracing exporter.
 
 The services compose these layers.

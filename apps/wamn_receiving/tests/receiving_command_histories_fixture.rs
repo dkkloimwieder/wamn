@@ -15,6 +15,7 @@ use uuid::Uuid;
 use wamn_broker::nats::PlatformNats;
 use wamn_broker::{Publisher, auth_changes::AuthDrops};
 use wamn_identity_protocol::PrincipalId;
+use wamn_package_artifact::http_client::HttpClient;
 
 use database::{
     Fixture, assert_state, bind_fixture_principal, connect, seed, snapshot, wait_for_blocked,
@@ -67,7 +68,7 @@ struct AuthNatsInputs {
 
 #[derive(Clone)]
 struct Route {
-    client: reqwest::Client,
+    client: HttpClient,
     endpoint: String,
     host: String,
     bearer: String,
@@ -75,7 +76,7 @@ struct Route {
 
 #[derive(Debug)]
 struct Response {
-    status: reqwest::StatusCode,
+    status: hyper::StatusCode,
     body: Value,
 }
 
@@ -83,7 +84,7 @@ impl Route {
     async fn wait_for_receipt_status(
         &self,
         body: &Value,
-        expected: reqwest::StatusCode,
+        expected: hyper::StatusCode,
     ) -> Result<()> {
         let started = tokio::time::Instant::now();
         tokio::time::timeout(AUTH_PROPAGATION, async {
@@ -97,8 +98,8 @@ impl Route {
                     return Ok(());
                 }
                 ensure!(
-                    response.status == reqwest::StatusCode::OK
-                        || response.status == reqwest::StatusCode::FORBIDDEN,
+                    response.status == hyper::StatusCode::OK
+                        || response.status == hyper::StatusCode::FORBIDDEN,
                     "REC-AUTHORITY unexpected response during auth propagation: {response:?}"
                 );
             }
@@ -128,7 +129,7 @@ impl Route {
 
 fn request_element(response: &Response, request_id: &str) -> Result<Value> {
     ensure!(
-        response.status == reqwest::StatusCode::OK,
+        response.status == hyper::StatusCode::OK,
         "command {request_id}: status={} body={}",
         response.status,
         response.body
@@ -1008,7 +1009,7 @@ async fn authority(
     }
     let denied = async {
         route
-            .wait_for_receipt_status(&probe_body, reqwest::StatusCode::FORBIDDEN)
+            .wait_for_receipt_status(&probe_body, hyper::StatusCode::FORBIDDEN)
             .await?;
         route.post(RECEIPT_PATH, &body).await
     }
@@ -1021,7 +1022,7 @@ async fn authority(
     let denied = denied?;
     restored?;
     ensure!(
-        denied.status == reqwest::StatusCode::FORBIDDEN
+        denied.status == hyper::StatusCode::FORBIDDEN
             && denied.body
                 == json!({"error":{
         "code":"permission-denied","operation":inputs.record_receipt_operation}}),
@@ -1032,7 +1033,7 @@ async fn authority(
         "REC-AUTHORITY unauthorized business mutation"
     );
     route
-        .wait_for_receipt_status(&probe_body, reqwest::StatusCode::OK)
+        .wait_for_receipt_status(&probe_body, hyper::StatusCode::OK)
         .await?;
     succeeded(&route.post(RECEIPT_PATH, &body).await?, "authority")?;
     assert_state(&snapshot(db, &fixture).await?, [2, 0], "open", 2, 1)?;
@@ -1160,7 +1161,7 @@ pub(crate) fn assert_histories_with_cancellation(
     }
     let secret: Value = serde_json::from_slice(&std::fs::read(&inputs.operator_secret)?)?;
     let route = Route {
-        client: reqwest::Client::builder()
+        client: HttpClient::builder()
             .timeout(Duration::from_secs(15))
             .build()?,
         endpoint: inputs.route_endpoint.trim_end_matches('/').to_owned(),

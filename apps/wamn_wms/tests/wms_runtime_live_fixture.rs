@@ -22,6 +22,7 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 
 use crate::business_fixture::RuntimePhase;
+use wamn_package_artifact::http_client::HttpClient;
 
 const REQUEST_ID_A: &str = "contention-a";
 const REQUEST_ID_B: &str = "contention-b";
@@ -43,12 +44,7 @@ impl Route {
         }
     }
 
-    async fn post(
-        &self,
-        client: &reqwest::Client,
-        path: &str,
-        body: &Value,
-    ) -> anyhow::Result<Value> {
+    async fn post(&self, client: &HttpClient, path: &str, body: &Value) -> anyhow::Result<Value> {
         let (status, text) = self.post_response(client, path, body).await?;
         anyhow::ensure!(
             status.is_success(),
@@ -60,7 +56,7 @@ impl Route {
     /// Send the one request element of a read as a GET, as its route is published.
     async fn get(
         &self,
-        client: &reqwest::Client,
+        client: &HttpClient,
         path: &str,
         request_element: &Value,
     ) -> anyhow::Result<Value> {
@@ -89,10 +85,10 @@ impl Route {
 
     async fn post_response(
         &self,
-        client: &reqwest::Client,
+        client: &HttpClient,
         path: &str,
         body: &Value,
-    ) -> anyhow::Result<(reqwest::StatusCode, String)> {
+    ) -> anyhow::Result<(hyper::StatusCode, String)> {
         let response = client
             .post(format!("{}{path}", self.endpoint))
             .header("Host", &self.host)
@@ -152,7 +148,7 @@ pub(crate) async fn assert_contention_and_replay(
     runtime: &RuntimePhase,
     initial_revision: i64,
 ) -> anyhow::Result<Value> {
-    let client = reqwest::Client::builder()
+    let client = HttpClient::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .context("build the route client")?;
@@ -274,7 +270,7 @@ fn value<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
 /// A code that is blank after a trim refuses in the operation, on its field, before
 /// the CHECK that guards the same rule could answer (wamn-iowb.4).
 pub(crate) async fn assert_blank_codes_refuse(route: &Route) -> anyhow::Result<()> {
-    let client = reqwest::Client::builder()
+    let client = HttpClient::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .context("build the route client")?;
@@ -364,7 +360,7 @@ pub(crate) async fn assert_remaining_operations(
     route: &Route,
     runtime: &RuntimePhase,
 ) -> anyhow::Result<Value> {
-    let client = reqwest::Client::builder()
+    let client = HttpClient::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .context("build the route client")?;

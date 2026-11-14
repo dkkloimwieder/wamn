@@ -45,7 +45,7 @@ wamn-package-artifact.workspace = true
 wash-runtime = { workspace = true, features = ["oci"] }
 oci-client.workspace = true
 docker_credential = "=1.4.0"
-reqwest = { workspace = true, features = ["rustls", "json"] }
+hyper.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "fs", "process", "io-util", "signal"] }
 uuid = { workspace = true, features = ["v7"] }
 rustix = { workspace = true, features = ["process"] }

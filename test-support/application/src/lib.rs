@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use sqlx::Row as _;
 use wamn_environment::environment::document::{DeclaredRelease, EnvironmentDocument};
 use wamn_environment::platform::{document::ClusterDocument, document::Provider, provider};
+use wamn_package_artifact::http_client::HttpClient;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 mod routes;
@@ -132,7 +133,7 @@ impl Application {
             ),
             host: hostname,
             bearer,
-            client: reqwest::Client::builder()
+            client: HttpClient::builder()
                 .timeout(std::time::Duration::from_secs(60))
                 .build()?,
         };

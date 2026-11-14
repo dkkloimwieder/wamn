@@ -27,7 +27,6 @@ wamn-release-control.workspace = true
 postgres-protocol.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_yaml.workspace = true
-reqwest = { workspace = true, features = ["rustls", "json"] }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
 wamn-postgres.workspace = true
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
@@ -53,6 +52,7 @@ wamn-identity-protocol = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-publish = { workspace = true, features = ["test-util"] }
 wamn-environment = { workspace = true, features = ["test-util", "ops"] }
+hyper = { workspace = true }
 
 [lints]
 workspace = true

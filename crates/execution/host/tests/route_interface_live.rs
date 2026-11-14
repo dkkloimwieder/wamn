@@ -20,6 +20,7 @@ use anyhow::Context as _;
 use base64::Engine as _;
 use serde_json::{Value, json};
 
+use wamn_package_artifact::http_client::{HttpClient, HttpRequest};
 use wamn_test_application::Application;
 
 const ROUTE_PREFIX: &str = "/route";
@@ -31,7 +32,7 @@ struct Paths {
     endpoint: String,
     host: String,
     bearer: String,
-    client: reqwest::Client,
+    client: HttpClient,
 }
 
 impl Paths {
@@ -58,11 +59,7 @@ impl Paths {
         .await
     }
 
-    async fn send(
-        &self,
-        request: reqwest::RequestBuilder,
-        path: &str,
-    ) -> anyhow::Result<(u16, Value)> {
+    async fn send(&self, request: HttpRequest, path: &str) -> anyhow::Result<(u16, Value)> {
         let response = request
             .header("Host", &self.host)
             .bearer_auth(&self.bearer)

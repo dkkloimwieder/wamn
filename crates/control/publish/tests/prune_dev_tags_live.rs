@@ -85,7 +85,7 @@ async fn prune_preserves_pins_and_shared_digests_and_removes_expired_dev_tags() 
                 .push_manifest_raw(
                     &alias.reference,
                     bytes,
-                    reqwest::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
+                    hyper::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
                 )
                 .await?;
         }

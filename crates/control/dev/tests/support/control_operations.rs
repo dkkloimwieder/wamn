@@ -8,12 +8,13 @@ use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_catalog::HostRouteSet;
 use wamn_environment::platform::{artifact_plan, document::Provider};
+use wamn_package_artifact::http_client::{HttpClient, HttpError};
 
 use super::{Journey, get, read_query, success};
 
 struct Control<'a> {
     journey: &'a Journey<'a>,
-    client: &'a reqwest::Client,
+    client: &'a HttpClient,
     url: &'a str,
     identity_url: &'a str,
     email: &'a str,
@@ -62,23 +63,21 @@ impl Control<'_> {
                 .post(endpoint)
                 .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":value}]))
         };
-        let mut request = request
-            .bearer_auth(
-                session["access_token"]
-                    .as_str()
-                    .context("session access token")?,
-            )
-            .build()?;
+        let mut request = request.bearer_auth(
+            session["access_token"]
+                .as_str()
+                .context("session access token")?,
+        );
         drop(session);
         // Only the type port-forward URL needs the route host. The GKE URL
         // already names it, and the load balancer refuses a second Host over HTTP/2.
         if self.journey.run.document.provider == Provider::Kind {
-            request.headers_mut().insert(
-                reqwest::header::HOST,
-                self.journey.run.document.route_hosts.control.parse()?,
+            request = request.header(
+                hyper::header::HOST,
+                &self.journey.run.document.route_hosts.control,
             );
         }
-        let response = self.client.execute(request).await?.error_for_status()?;
+        let response = request.send().await?.error_for_status()?;
         let [answer]: [Value; 1] = response.json().await?;
         Ok(answer)
     }
@@ -131,7 +130,7 @@ impl Control<'_> {
 pub(super) async fn exercise(
     journey: &Journey<'_>,
     artifacts: &BTreeMap<&str, String>,
-    identity: &reqwest::Client,
+    identity: &HttpClient,
     identity_url: &str,
     control_url: &str,
     password: &str,
@@ -333,8 +332,8 @@ async fn denial(control: &Control<'_>, identity_url: &str, release: &str) -> any
         answer
             .as_ref()
             .err()
-            .and_then(|error| error.downcast_ref::<reqwest::Error>()?.status())
-            == Some(reqwest::StatusCode::FORBIDDEN),
+            .and_then(|error| error.downcast_ref::<HttpError>()?.status())
+            == Some(hyper::StatusCode::FORBIDDEN),
         "cross-project deploy was not denied: {answer:?}"
     );
     ensure!(

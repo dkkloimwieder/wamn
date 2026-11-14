@@ -3,6 +3,7 @@ use anyhow::{Context as _, ensure};
 use futures_util::StreamExt as _;
 use std::time::Duration;
 use tokio::time::{Instant, sleep, timeout};
+use wamn_package_artifact::http_client::HttpClient;
 use wamn_test_application::Application;
 const OUTAGE: Duration = Duration::from_secs(30);
 const RECOVERY_BUDGET: Duration = Duration::from_secs(60);
@@ -12,7 +13,7 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
     let application: Application = panic!("wamn-eulfr.12.10: no product scheduler outage fixture");
     let host_name: String = panic!("wamn-eulfr.12.10: no product heartbeat observer");
     let route = Route {
-        http: reqwest::Client::new(),
+        http: HttpClient::builder().build().expect("HTTP client"),
         url: format!("{}/location/list", application.routes.endpoint),
         host: application.routes.host.clone(),
         token: application.routes.bearer.clone(),
@@ -58,7 +59,7 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
 
 /// The authenticated location read of the served route.
 struct Route {
-    http: reqwest::Client,
+    http: HttpClient,
     url: String,
     host: String,
     token: String,
@@ -75,7 +76,7 @@ impl Route {
             .await
             .with_context(|| format!("the route did not answer {when}"))?;
         ensure!(
-            response.status() == reqwest::StatusCode::OK,
+            response.status() == hyper::StatusCode::OK,
             "the route answered {} {when}",
             response.status()
         );

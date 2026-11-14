@@ -1259,18 +1259,18 @@ mod tests {
         let resolved =
             resolve_route_methods(&authored, &types).expect("every route resolves a method");
         for (id, method) in [
-            ("get-http", reqwest::Method::GET),
-            ("query-http", reqwest::Method::GET),
-            ("load-http", reqwest::Method::GET),
-            ("update-http", reqwest::Method::POST),
-            ("record-http", reqwest::Method::POST),
-            ("wiring-http", reqwest::Method::POST),
+            ("get-http", hyper::Method::GET),
+            ("query-http", hyper::Method::GET),
+            ("load-http", hyper::Method::GET),
+            ("update-http", hyper::Method::POST),
+            ("record-http", hyper::Method::POST),
+            ("wiring-http", hyper::Method::POST),
         ] {
             assert_eq!(
                 resolved[id].definition["route"]["method"]
                     .as_str()
                     .unwrap()
-                    .parse::<reqwest::Method>()
+                    .parse::<hyper::Method>()
                     .unwrap(),
                 method,
                 "{id}"

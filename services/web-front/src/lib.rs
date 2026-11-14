@@ -14,13 +14,14 @@ use hyper::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, HOST};
 use hyper::service::service_fn;
 use hyper::{Method, Response, StatusCode};
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::TokioIo;
 use object_store::{ObjectStore, ObjectStoreExt as _};
 use rustls::pki_types::pem::PemObject as _;
 use serde::Deserialize;
 use tokio::net::TcpListener;
 #[cfg(test)]
 use tokio::sync::RwLock;
+use wamn_kubernetes::http_transport::{self, Protocols, Schemes};
 
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
@@ -454,7 +455,6 @@ fn response_headers(headers: &mut hyper::HeaderMap) {
 
 fn proxy(ca: &[u8]) -> anyhow::Result<Proxy> {
     let mut connector = HttpConnector::new();
-    connector.enforce_http(false);
     connector.set_connect_timeout(Some(Duration::from_secs(10)));
     let mut roots = rustls::RootCertStore::empty();
     for cert in rustls::pki_types::CertificateDer::pem_slice_iter(ca) {
@@ -467,12 +467,26 @@ fn proxy(ca: &[u8]) -> anyhow::Result<Proxy> {
     .with_safe_default_protocol_versions()?
     .with_root_certificates(roots)
     .with_no_client_auth();
-    let connector = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(tls)
-        .https_or_http()
-        .enable_http1()
-        .wrap_connector(connector);
-    Ok(Client::builder(TokioExecutor::new()).build(connector))
+    let connector =
+        http_transport::tls_connector(tls, connector, Schemes::HttpAndHttps, Protocols::Http1);
+    Ok(http_transport::client(connector, |_| {}))
+}
+
+#[cfg(test)]
+fn native_connector() -> anyhow::Result<Connector> {
+    use hyper_rustls::ConfigBuilderExt as _;
+    let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()?
+    .with_native_roots()?
+    .with_no_client_auth();
+    Ok(http_transport::tls_connector(
+        tls,
+        HttpConnector::new(),
+        Schemes::HttpAndHttps,
+        Protocols::Http1,
+    ))
 }
 
 /// Run the cluster web server until interrupted.
@@ -547,8 +561,7 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
 pub async fn probe(path: &Path) -> anyhow::Result<()> {
     let _: WebConfig = serde_json::from_slice(&std::fs::read(path)?)?;
     let releases = Releases::in_cluster()?;
-    let client: Client<HttpConnector, Empty<Bytes>> =
-        Client::builder(TokioExecutor::new()).build_http();
+    let client: Client<HttpConnector, Empty<Bytes>> = http_transport::http_client();
     for (host, route) in releases.routes().await? {
         let row = releases.read(&route.namespace, &route.release).await?;
         if row.platform_ui.is_empty() && !row.clients.contains_key(&host) {
@@ -669,16 +682,11 @@ mod tests {
                     .serve_connection(TokioIo::new(stream), service).await.unwrap();
             }
         });
-        let connector = hyper_rustls::HttpsConnectorBuilder::new()
-            .with_provider_and_native_roots(rustls::crypto::aws_lc_rs::default_provider())
-            .unwrap()
-            .https_or_http()
-            .enable_http1()
-            .build();
-        let proxy = Client::builder(TokioExecutor::new()).build(connector.clone());
+        let connector = native_connector().unwrap();
+        let proxy = http_transport::client(connector.clone(), |_| {});
         let releases = Releases {
             api: wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
-                Client::builder(TokioExecutor::new()).build(connector),
+                http_transport::client(connector, |_| {}),
                 endpoint,
                 String::new(),
                 "hosts".into(),
@@ -709,8 +717,7 @@ mod tests {
                 .await
                 .unwrap();
         });
-        let client: Client<HttpConnector, Full<Bytes>> =
-            Client::builder(TokioExecutor::new()).build_http();
+        let client: Client<HttpConnector, Full<Bytes>> = http_transport::http_client();
         for path in ["/api/query", "/config.json"] {
             let request = hyper::Request::builder()
                 .uri(format!("{front}{path}"))

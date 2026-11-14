@@ -103,7 +103,7 @@ struct Order {
 /// The shared parts of every call.
 #[derive(Debug)]
 struct Target {
-    client: reqwest::Client,
+    client: wamn_package_artifact::http_client::HttpClient,
     base: String,
     authorization: String,
 }
@@ -252,12 +252,12 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         .pointer("/stringData/token")
         .and_then(Value::as_str)
         .context("the PAT file holds .stringData.token")?;
-    let mut headers = reqwest::header::HeaderMap::new();
+    let mut headers = hyper::header::HeaderMap::new();
     if args.base_url.is_some() {
-        headers.insert(reqwest::header::HOST, args.host.parse()?);
+        headers.insert(hyper::header::HOST, args.host.parse()?);
     }
     let target = Arc::new(Target {
-        client: reqwest::Client::builder()
+        client: wamn_package_artifact::http_client::HttpClient::builder()
             .default_headers(headers)
             .pool_max_idle_per_host(args.concurrency)
             .timeout(Duration::from_secs(30))
@@ -743,7 +743,9 @@ async fn post(target: &Target, path: &str, items: &Value) -> anyhow::Result<Valu
 
 /// The value of the one outcome, or an error for any status, transport or
 /// refusal.
-async fn outcome(response: reqwest::Response) -> anyhow::Result<Value> {
+async fn outcome(
+    response: wamn_package_artifact::http_client::HttpResponse,
+) -> anyhow::Result<Value> {
     let status = response.status();
     let body: Value = response.json().await?;
     ensure!(

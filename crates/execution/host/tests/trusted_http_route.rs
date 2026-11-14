@@ -764,7 +764,7 @@ async fn seed_additional_wirings(
 }
 
 fn generation_url(admin_url: &str, role: &str) -> anyhow::Result<String> {
-    let mut url = reqwest::Url::parse(admin_url).context("parse the disposable admin URL")?;
+    let mut url = url::Url::parse(admin_url).context("parse the disposable admin URL")?;
     url.set_username(role)
         .map_err(|()| anyhow::anyhow!("set the production generation username"))?;
     url.set_password(Some(GENERATION_PASSWORD))

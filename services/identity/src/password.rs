@@ -1087,6 +1087,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::net::TcpListener;
     use wamn_control_provision::identity_role::identity_issuer_login;
+    use wamn_package_artifact::http_client::HttpClient;
 
     #[test]
     fn a_filter_lists_only_its_org_and_project() {
@@ -1448,8 +1449,7 @@ mod tests {
                     .unwrap();
             }
         });
-        let client = reqwest::Client::builder()
-            .no_proxy()
+        let client = HttpClient::builder()
             .timeout(Duration::from_secs(10))
             .build()
             .unwrap();

@@ -7,6 +7,7 @@ use std::sync::{
 
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full};
+use wamn_package_artifact::http_client::HttpClient;
 
 pub struct DeleteProxy {
     pub endpoint: String,
@@ -20,7 +21,7 @@ impl DeleteProxy {
         let endpoint = format!("http://{}", listener.local_addr()?);
         let refuse = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&refuse);
-        let client = reqwest::Client::builder().no_proxy().build()?;
+        let client = HttpClient::builder().build()?;
         let task = tokio::spawn(async move {
             let mut requests = tokio::task::JoinSet::new();
             loop {
