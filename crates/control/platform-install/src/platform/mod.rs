@@ -8,8 +8,6 @@ pub mod deploy;
 pub mod document;
 pub mod edge;
 pub mod identity;
-pub(crate) mod job;
-pub use job::system_schema;
 pub mod installation;
 pub mod installed;
 pub mod oauth;

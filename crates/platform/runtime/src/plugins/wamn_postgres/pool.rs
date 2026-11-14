@@ -10,7 +10,7 @@ use anyhow::Context as _;
 use sqlx::PgPool;
 pub(super) type Object = sqlx::pool::PoolConnection<sqlx::Postgres>;
 
-use wamn_run_state::{AuthorityClass, app_identity_hash};
+use wamn_identity_protocol::{AuthorityClass, app_identity_hash};
 
 use super::DEFAULT_PROJECT;
 use wamn_engine::engine::MAX_HOST_CALL_DURATION;

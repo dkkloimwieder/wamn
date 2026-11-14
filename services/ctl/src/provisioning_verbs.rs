@@ -1,29 +1,15 @@
-//! Arguments and output of the `provision-system`, `provision-org`,
-//! `provision-project-env`, `enable-cdc-project-env`, `recover-capture-gap`, and
-//! `close-capture-gap` verbs.
+//! Internal bootstrap steps and authenticated capture-gap clients.
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::{Args, ValueEnum};
 use serde_json::Value;
-use wamn_control_provision::DB_OWNER_ROLE;
 use wamn_control_provision::Template;
-use wamn_environment::capture_gap::{
-    self, CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
-};
-use wamn_environment::enable_cdc_project_env::{
-    self, EnableCdcProjectEnvOutcome, EnableCdcProjectEnvRequest,
-};
-use wamn_environment::provision_org::{self, OrgRecord, ProvisionOrgRequest, ProvisionedOrg};
-use wamn_environment::provision_project_env::{
-    self, ProvisionProjectEnvOutcome, ProvisionProjectEnvRequest, ensure_secret_path,
-    parse_pat_prefix,
-};
-use wamn_environment::provision_system::{self, ProvisionSystemRequest};
 use wamn_identity_client::PatIssuerConfig;
-use wamn_registry::Triple;
+use wamn_platform_install::provision_org::{self, OrgRecord, ProvisionOrgRequest, ProvisionedOrg};
+use wamn_platform_install::provision_system::{self, ProvisionSystemRequest};
 
 #[derive(Debug, Args)]
 pub struct ProvisionSystemArgs {
@@ -57,307 +43,19 @@ pub async fn provision_system(args: ProvisionSystemArgs) -> anyhow::Result<()> {
 }
 
 #[derive(Debug, Args)]
-pub struct ProvisionProjectEnvArgs {
-    /// Org id (must already be registered — `provision-org`, or the T3 pool for a
-    /// trials org). Names the target cluster and the `wamn-db-<org>--…` database.
-    #[arg(long, required_unless_present = "revoke_pat_prefix")]
-    pub org: Option<String>,
-
-    /// Project id: a lowercase slug `[a-z0-9-]` (start/end alphanumeric). The
-    /// reserved `wamn` prefix is rejected.
-    #[arg(long, required_unless_present = "revoke_pat_prefix")]
-    pub project: Option<String>,
-
-    /// Environment slug: any policy in the ORG's `registry.env_policies` set
-    /// (stamped from its template — `dev`/`prod`, plus `canary` on the dedicated
-    /// templates; others are addable per org). Derives the target cluster via
-    /// `cluster_of` — a dedicated org's `<org>-<owner(env)>`, or the shared pool.
-    #[arg(long, required_unless_present = "revoke_pat_prefix")]
-    pub env: Option<String>,
-
-    /// The `registry.target` name where the environment runs, for example
-    /// `cloud`. Required to provision. The first provision records it, and it
-    /// never changes.
-    #[arg(long)]
-    pub target: Option<String>,
-
-    /// Mark this environment DISPOSABLE: its admitted component facts may be
-    /// REPLACED rather than frozen, so an author's no-op edit does not lock them
-    /// out of their own package version (wamn-10yt.38).
-    ///
-    /// `wamn dev up` provisions its own per-run target with this. Nothing else
-    /// passes it, and the default is what keeps every other environment's
-    /// admitted fact immutable BY CONSTRUCTION rather than by a caller
-    /// remembering to withhold a flag. The marker is recorded on the
-    /// environment's registry row and projected into the control store; the
-    /// admit path reads THAT, never an argument of its own.
-    #[arg(long, default_value_t = false)]
-    pub disposable: bool,
-
-    /// Superuser Postgres URL to the T1 system DB (`wamn_system`): read the org's
-    /// placement, read-or-mint the stored instance suffix, and record the project
-    /// + project-env. Env `WAMN_SYSTEM_ADMIN_URL`.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
-    pub system_database_url: Option<String>,
-
-    /// Override the target CNPG `Cluster` name. When omitted, it is read from the
-    /// org's placement in the registry.
-    #[arg(long)]
-    pub cluster: Option<String>,
-
-    /// Per-project-env `CONNECTION LIMIT` (noisy-neighbour governance within a
-    /// cluster). Default: no limit (`-1`).
-    #[arg(long)]
-    pub connection_limit: Option<i64>,
-
-    /// Namespace of the CNPG `Cluster`. Everything that lives beside it (the
-    /// `Database`, the `ObjectStore`, the `ScheduledBackup`) shares it.
-    #[arg(long, env = "WAMN_CLUSTER_NAMESPACE", default_value = "wamn-system")]
-    pub cluster_namespace: String,
-
-    /// Host every emitted credential URL names. Defaults to the target
-    /// Service `<cluster>-rw.<cluster_namespace>.svc.cluster.local`, never the admin host.
-    #[arg(long)]
-    pub db_host: Option<String>,
-
-    /// Port every emitted credential URL names.
-    #[arg(long, default_value_t = 5432)]
-    pub db_port: u16,
-
-    /// Namespace the emitted credential `Secret` is applied to.
-    #[arg(long, env = "WAMN_NAMESPACE", default_value = "wamn-system")]
-    pub namespace: String,
-
-    /// Secret namespace to RECORD in the registry `SecretRef`. Omit to record
-    /// `NULL` (the resolving component's own namespace).
-    #[arg(long)]
-    pub secret_namespace: Option<String>,
-
-    /// Explicit target project-database admin URL for the generation actions that
-    /// address the project database (for example, HTTP admission).
-    /// Provisioning authority only: never persisted or emitted.
-    #[arg(
-        long,
-        env = "WAMN_TARGET_ADMIN_DATABASE_URL",
-        hide_env_values = true,
-        value_name = "URL"
-    )]
-    pub target_admin_database_url: Option<String>,
-
-    /// Write the CNPG `Database` CR (JSON) here; `-` = stdout. Absent ⇒ printed
-    /// with a labeled header.
-    #[arg(long)]
-    pub emit_database: Option<PathBuf>,
-
-    /// Write the role-ensure SQL (apply to the target cluster BEFORE the `Database`
-    /// CR — the CR's `owner` must exist) here; `-` = stdout.
-    #[arg(long)]
-    pub emit_role_sql: Option<PathBuf>,
-
-    /// Write the JSON merge patch that puts the prepared administration login
-    /// into the control host's Secret `wamn-control-administration-<org>`.
-    /// Every administration prepare, the first one and each rotation,
-    /// requires it, because the control host holds the same login.
-    #[arg(long, value_name = "PATH", value_parser = parse_secret_path)]
-    pub emit_control_administration_patch: Option<PathBuf>,
-
-    /// Write the privilege SQL (`ALTER DATABASE … OWNER TO wamn_db_owner`, then
-    /// `REVOKE CONNECT,TEMPORARY FROM PUBLIC` and `REVOKE CONNECT` from
-    /// `wamn_app`; apply AFTER the database is
-    /// ready) here; `-` = stdout.
-    #[arg(long)]
-    pub emit_privilege_sql: Option<PathBuf>,
-
-    /// Write the database credential `Secret` (JSON) here. Required for
-    /// provisioning unless the run only issues a PAT, and must name a file;
-    /// credentials are never written to stdout.
-    #[arg(
-        long,
-        value_name = "PATH",
-        value_parser = parse_secret_path,
-        required_unless_present_any = [
-            "revoke_pat_prefix",
-
-            "emit_management_author_pat_secret",
-            "emit_operator_pat_secret"
-        ]
-    )]
-    pub emit_secret: Option<PathBuf>,
-
-    /// Operator authentication for PAT issuance through `wamn-identity`.
-    #[command(flatten)]
-    pub pat_issuer: PatIssuerArgs,
-
-    /// Issue a management-author PAT and write its Kubernetes `Secret` JSON here.
-    #[arg(
-        long,
-        value_name = "PATH",
-        value_parser = parse_secret_path,
-        conflicts_with = "revoke_pat_prefix"
-    )]
-    pub emit_management_author_pat_secret: Option<PathBuf>,
-
-    /// Issue an operator PAT and write its Kubernetes `Secret` JSON here.
-    #[arg(
-        long,
-        value_name = "PATH",
-        value_parser = parse_secret_path,
-        conflicts_with = "revoke_pat_prefix"
-    )]
-    pub emit_operator_pat_secret: Option<PathBuf>,
-
-    /// Revoke one PAT by its non-secret 16-lowercase-hex lookup prefix. This is
-    /// a separate invocation and performs no provisioning or Kubernetes work.
-    #[arg(
-        long,
-        value_name = "16-LOWERCASE-HEX",
-        value_parser = parse_pat_prefix
-    )]
-    pub revoke_pat_prefix: Option<String>,
-}
-
-#[derive(Debug, Args)]
-pub struct EnableCdcProjectEnvArgs {
-    /// Org id (the project-env must already be provisioned and recorded).
-    #[arg(long)]
-    pub org: String,
-
-    /// Project id.
-    #[arg(long)]
-    pub project: String,
-
-    /// Environment slug.
-    #[arg(long)]
-    pub env: String,
-
-    /// The application DATA schema the publication covers (not the
-    /// `platform` auth schema).
-    #[arg(long, default_value = "public")]
-    pub schema: String,
-
-    /// Superuser Postgres URL to the T1 system DB (`wamn_system`): derive the
-    /// target cluster, resolve the stored project-env instance suffix, and record
-    /// the `registry.event_readers` registration. Env `WAMN_SYSTEM_ADMIN_URL`.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
-    pub system_database_url: Option<String>,
-
-    /// Override the target CNPG `Cluster` name. When omitted, it is derived from
-    /// the org's placement in the registry.
-    #[arg(long)]
-    pub cluster: Option<String>,
-
-    /// Password for the per-project-env replication role (embedded in the
-    /// emitted URL + role SQL). Supply it with `--replication-password` or the
-    /// env var `WAMN_REPLICATION_PASSWORD`.
-    ///
-    /// **Deliberately has no `default_value`.** A default here would mint a
-    /// `LOGIN REPLICATION` role
-    /// with a publicly known password, and `REPLICATION` authority is
-    /// cluster-wide: it can open a replication session against any database on
-    /// the cluster and decode co-project WAL. Provisioning refuses instead
-    /// (wamn-0h0g.12.134).
-    #[arg(
-        long,
-        env = "WAMN_REPLICATION_PASSWORD",
-        hide_env_values = true,
-        value_name = "PASSWORD ($WAMN_REPLICATION_PASSWORD)"
-    )]
-    pub replication_password: String,
-
-    /// Host the reader reaches the project-env database at. Defaults to the
-    /// Service `<cluster>-rw.<cluster_namespace>.svc.cluster.local`.
-    #[arg(long)]
-    pub db_host: Option<String>,
-
-    /// Port the reader reaches the database at.
-    #[arg(long, default_value_t = 5432)]
-    pub db_port: u16,
-
-    /// Namespace the emitted `Secret` is applied to.
-    #[arg(long, env = "WAMN_NAMESPACE", default_value = "wamn-system")]
-    pub namespace: String,
-
-    /// Secret namespace to RECORD in the registration's replication `SecretRef`.
-    /// Omit to record `NULL` (the resolving service's own namespace).
-    #[arg(long)]
-    pub secret_namespace: Option<String>,
-
-    /// Exact environment source stream. Must match the declared coordinates.
-    #[arg(long)]
-    pub stream: Option<String>,
-
-    /// NATS stream copies, separate from workload instances.
-    #[arg(long, env = "WAMN_EVT_STREAM_REPLICAS")]
-    pub stream_replicas: usize,
-
-    /// Declared duplicate detection window in seconds.
-    #[arg(long, env = "WAMN_EVT_DUP_WINDOW_SECS")]
-    pub dup_window_secs: u64,
-
-    /// One native NATS pull consumer configuration as JSON. Repeat as needed.
-    #[arg(long, value_name = "JSON")]
-    pub consumer_config: Vec<String>,
-
-    /// Write the CDC SQL (schema guard + failover slot + grants; psql the
-    /// PROJECT-ENV database) here; `-` = stdout.
-    #[arg(long)]
-    pub emit_cdc_sql: Option<PathBuf>,
-
-    /// Write the CNPG `Publication` CR (JSON) here; `-` = stdout. Apply it
-    /// after the CDC SQL and wait for `status.applied` before any write.
-    #[arg(long)]
-    pub emit_publication: Option<PathBuf>,
-
-    /// Namespace of the CNPG `Cluster`, which the `Publication` shares.
-    #[arg(long, env = "WAMN_CLUSTER_NAMESPACE", default_value = "wamn-system")]
-    pub cluster_namespace: String,
-
-    /// Write the replication-credential `Secret` (JSON) here; `-` = stdout.
-    #[arg(long)]
-    pub emit_secret: Option<PathBuf>,
-}
-
-#[derive(Debug, Args)]
 pub struct RecoverCaptureGapArgs {
-    /// Org id.
-    #[arg(long)]
-    pub org: String,
-
-    /// Project id.
     #[arg(long)]
     pub project: String,
-
-    /// Environment slug.
     #[arg(long)]
     pub env: String,
-
-    /// Superuser Postgres URL to the T1 system DB (`wamn_system`): the instance
-    /// suffix, the reader registration, and the gap row.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
-    pub system_database_url: String,
-
-    /// Superuser connection to the project database, which holds the slot.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
-    pub admin_database_url: String,
 }
 
 #[derive(Debug, Args)]
 pub struct CloseCaptureGapArgs {
-    /// Org id.
-    #[arg(long)]
-    pub org: String,
-
-    /// Project id.
     #[arg(long)]
     pub project: String,
-
-    /// Environment slug.
     #[arg(long)]
     pub env: String,
-
-    /// Superuser Postgres URL to the T1 system DB (`wamn_system`).
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
-    pub system_database_url: String,
 }
 
 /// TLS credentials and the identity service endpoint for operator PAT issuance.
@@ -421,257 +119,28 @@ impl From<PatIssuerArgs> for PatIssuerConfig {
     }
 }
 
-fn parse_secret_path(value: &str) -> Result<PathBuf, String> {
-    let path = PathBuf::from(value);
-    ensure_secret_path(&path, "secret output").map_err(|error| error.to_string())?;
-    Ok(path)
-}
-
-/// Provision one project-env, run one workload-generation action, or revoke one
-/// PAT, and print what it did.
-pub async fn provision(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
-    if let Some(prefix) = args.revoke_pat_prefix.as_deref() {
-        let system_url = args
-            .system_database_url
-            .as_deref()
-            .context("--revoke-pat-prefix requires --system-database-url")?;
-        let changes =
-            wamn_broker::Publisher::connect(&wamn_broker::nats::PlatformNats::from_env()?).await?;
-        provision_project_env::revoke_provisioning_pat(system_url, prefix, &changes).await?;
-        println!("revoked PAT prefix {prefix}");
-        return Ok(());
-    }
-
-    anyhow::ensure!(
-        args.target.is_some(),
-        "--target is required to provision a project-env"
-    );
-
-    let mut request = provisioning_request(args);
-    if request.emit_management_author_pat_secret.is_some()
-        || request.emit_operator_pat_secret.is_some()
-    {
-        // Preserve transport validation before opening any external connection.
-        wamn_identity_client::PatClient::new(&request.pat_issuer)?;
-        request.changes =
-            wamn_broker::Publisher::connect(&wamn_broker::nats::PlatformNats::from_env()?).await?;
-    }
-    let outcome = provision_project_env::provision_project_env(&request).await?;
-    print_provisioned(&request, &outcome)
-}
-
-fn provisioning_request(args: ProvisionProjectEnvArgs) -> ProvisionProjectEnvRequest {
-    ProvisionProjectEnvRequest {
-        changes: wamn_broker::Publisher::default(),
-        org: args.org.expect(
-            "clap parser invariant: --org is required unless --revoke-pat-prefix is present",
-        ),
-        project: args.project.expect(
-            "clap parser invariant: --project is required unless --revoke-pat-prefix is present",
-        ),
-        env: args.env.expect(
-            "clap parser invariant: --env is required unless --revoke-pat-prefix is present",
-        ),
-        policy: None,
-        target: args
-            .target
-            .expect("provision requires --target before it builds the request"),
-        disposable: args.disposable.then_some(true),
-        system_database_url: args.system_database_url,
-        cluster: args.cluster,
-        connection_limit: args.connection_limit,
-        cluster_namespace: args.cluster_namespace,
-        namespace: args.namespace,
-        secret_namespace: args.secret_namespace,
-        emit_database: args.emit_database,
-        emit_role_sql: args.emit_role_sql,
-        emit_privilege_sql: args.emit_privilege_sql,
-        emit_secret: args.emit_secret,
-        pat_issuer: args.pat_issuer.into(),
-        emit_management_author_pat_secret: args.emit_management_author_pat_secret,
-        emit_operator_pat_secret: args.emit_operator_pat_secret,
-    }
-}
-
-/// Print the lines that report one project-env provisioning.
-pub fn print_provisioned(
-    request: &ProvisionProjectEnvRequest,
-    outcome: &ProvisionProjectEnvOutcome,
-) -> anyhow::Result<()> {
-    println!(
-        "{}",
-        provision_summary(&outcome.triple, &outcome.database, &outcome.cluster)
-    );
-
-    emit_json(
-        request.emit_database.as_deref(),
-        "Database CR (kubectl apply)",
-        &outcome.database_values,
-    )?;
-    emit_text(
-        request.emit_role_sql.as_deref(),
-        "role SQL (psql the TARGET cluster BEFORE the Database CR)",
-        &outcome.role_sql,
-    );
-    emit_text(
-        request.emit_privilege_sql.as_deref(),
-        "privilege SQL (psql the TARGET cluster AFTER the Database is ready)",
-        &outcome.privilege_sql,
-    );
-    if let Some(path) = &request.emit_secret {
-        println!(
-            "wrote {} (database credential Secret; kubectl apply)",
-            path.display()
-        );
-    }
-
-    println!(
-        "recorded project {:?} + project-env {} in the registry (wamn_system)",
-        request.project, outcome.triple
-    );
-    println!(
-        "environment namespace {:?} (instance suffix {:?})",
-        outcome.namespace, outcome.instance
-    );
-
-    for secret in &outcome.pat_secrets {
-        println!(
-            "wrote {} ({} PAT Secret; kubectl apply)",
-            secret.path.display(),
-            secret.purpose
-        );
-    }
-    Ok(())
-}
-
 /// Recover one capture gap and print the row it wrote.
 pub async fn recover_capture_gap(args: RecoverCaptureGapArgs) -> anyhow::Result<()> {
-    let RecoveredCaptureGap {
-        triple,
-        slot,
-        reason,
-        start_lsn,
-        start_at,
-        end_lsn,
-        created_at,
-    } = capture_gap::recover_capture_gap(&RecoverCaptureGapRequest {
-        org: args.org,
-        project: args.project,
-        env: args.env,
-        system_database_url: args.system_database_url,
-        admin_database_url: args.admin_database_url,
-        nats: wamn_broker::nats::PlatformNats::from_env()?,
-    })
-    .await?;
-    println!(
-        "capture gap of {triple} recorded at {created_at}: slot {slot:?} created again, \
-         reason {reason:?}, start_lsn {}, start_at {start_at}, end_lsn {end_lsn}",
-        start_lsn.as_deref().unwrap_or("null"),
-    );
+    let value = crate::operation_verbs::ControlHost::from_env()?
+        .call(
+            "capture_gap.recover",
+            &serde_json::json!({"project":args.project,"env":args.env}),
+        )
+        .await?;
+    println!("{value}");
     Ok(())
 }
 
-/// Close the newest capture gap of one reader and print it.
+/// Close the newest recorded gap through authenticated control.
 pub async fn close_capture_gap(args: CloseCaptureGapArgs) -> anyhow::Result<()> {
-    let ClosedCaptureGap {
-        triple,
-        slot,
-        created_at,
-        resync_at,
-    } = capture_gap::close_capture_gap(&CloseCaptureGapRequest {
-        org: args.org,
-        project: args.project,
-        env: args.env,
-        system_database_url: args.system_database_url,
-    })
-    .await?;
-    println!(
-        "capture gap of {triple} recorded at {created_at} for slot {slot:?} closed: resync_at {resync_at}"
-    );
+    let value = crate::operation_verbs::ControlHost::from_env()?
+        .call(
+            "capture_gap.close",
+            &serde_json::json!({"project":args.project,"env":args.env}),
+        )
+        .await?;
+    println!("{value}");
     Ok(())
-}
-
-/// Overlay CDC capture onto one provisioned project-env and print what it did.
-pub async fn enable_cdc(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
-    let request = EnableCdcProjectEnvRequest {
-        org: args.org,
-        project: args.project,
-        env: args.env,
-        schemas: vec![args.schema],
-        system_database_url: args.system_database_url,
-        cluster: args.cluster,
-        replication_password: args.replication_password,
-        db_host: args.db_host,
-        db_port: args.db_port,
-        namespace: args.namespace,
-        cluster_namespace: args.cluster_namespace,
-        secret_namespace: args.secret_namespace,
-        stream: args.stream,
-        nats: wamn_broker::nats::PlatformNats::from_env()?,
-        stream_replicas: args.stream_replicas,
-        dup_window_secs: args.dup_window_secs,
-        consumer_config: args.consumer_config,
-        emit_cdc_sql: args.emit_cdc_sql,
-        emit_publication: args.emit_publication,
-        emit_secret: args.emit_secret,
-    };
-    let outcome = enable_cdc_project_env::enable_cdc_project_env(&request).await?;
-    let EnableCdcProjectEnvOutcome {
-        triple,
-        cdc_name,
-        cluster,
-        stream,
-        secret_name,
-        cdc_sql,
-        publication,
-        secret,
-    } = &outcome;
-
-    println!(
-        "cdc for project-env {triple}: publication/slot/role {cdc_name:?} over schemas {:?} \
-         on cluster {cluster:?}; stream {stream:?}; replication secret {secret_name:?}",
-        request.schemas,
-    );
-
-    emit_text(
-        request.emit_cdc_sql.as_deref(),
-        "CDC SQL (psql the PROJECT-ENV database — the slot is database-bound)",
-        cdc_sql,
-    );
-    emit_json(
-        request.emit_publication.as_deref(),
-        "Publication CR (kubectl apply after the CDC SQL)",
-        publication,
-    )?;
-    emit_json(
-        request.emit_secret.as_deref(),
-        "replication-credential Secret (kubectl apply)",
-        secret,
-    )?;
-
-    println!("recorded event-reader registration for {triple} in the registry (wamn_system)");
-
-    Ok(())
-}
-
-fn provision_summary(triple: &Triple, database: &str, cluster: &str) -> String {
-    format!(
-        "project-env {triple}: database {database:?} on cluster {cluster:?} (owner {DB_OWNER_ROLE})"
-    )
-}
-
-/// Print that a JSON document was written to a path, or print it with a labeled
-/// header when the path is absent (`-` also means stdout).
-fn emit_json(path: Option<&Path>, label: &str, doc: &Value) -> anyhow::Result<()> {
-    emit_text(path, label, &serde_json::to_string_pretty(doc)?);
-    Ok(())
-}
-
-fn emit_text(path: Option<&Path>, label: &str, text: &str) {
-    match path {
-        Some(p) if p.as_os_str() != "-" => println!("wrote {} ({label})", p.display()),
-        _ => println!("--- {label} ---\n{text}"),
-    }
 }
 
 /// The named org preset `provision-org` stamps (the `Tier` successor —
@@ -757,72 +226,6 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
     write_json(&output, &provisioned.values)
 }
 
-/// Arguments of `recover-org-cluster` — render the CNPG `Cluster` that restores one
-/// org recovery domain from its WAL/PITR object store (wamn-fibe).
-#[cfg(feature = "ops")]
-#[derive(Debug, Args)]
-pub struct RecoverOrgClusterArgs {
-    /// Org id whose cluster is recovered. With `--owner` it names the SOURCE
-    /// cluster `<org>-<owner>`, the one `provision-org` created.
-    #[arg(long)]
-    pub org: String,
-
-    /// The template preset the org was stamped from — it supplies the policy the
-    /// restored cluster is sized by, so use the one `provision-org` was run with.
-    #[arg(long, value_enum)]
-    pub template: TemplateArg,
-
-    /// The shared pool cluster a `trials` org sits on. Ignored for dedicated
-    /// templates. A pooled org owns no cluster and cannot be recovered here.
-    #[arg(long, default_value = "wamn-pg")]
-    pub pool: String,
-
-    /// The recovery-domain owner env, e.g. `prod`. CNPG recovery is
-    /// whole-cluster, so this is the unit that is restored.
-    #[arg(long)]
-    pub owner: String,
-
-    /// Name of the NEW cluster the restore lands in. Default
-    /// `<org>-<owner>-restore`. It must differ from the source: the live cluster
-    /// is never the target of a recovery.
-    #[arg(long)]
-    pub target: Option<String>,
-
-    /// Stop the replay at this RFC3339 timestamp (`recoveryTarget.targetTime`) —
-    /// the instant just before the loss. Omit to replay every archived WAL
-    /// segment, which is what a lost-cluster restore wants.
-    #[arg(long = "at")]
-    pub target_time: Option<String>,
-
-    /// Write the recovery chart values here; `-` = stdout (default).
-    #[arg(long)]
-    pub emit_cluster: Option<PathBuf>,
-}
-
-/// Render one recovery: the `Cluster` bootstrapped from the source's object
-/// store, plus the backup resources the restored cluster needs for its own
-/// future backups. Pure — this reads no database and applies nothing.
-#[cfg(feature = "ops")]
-pub fn recover_org_cluster(args: RecoverOrgClusterArgs) -> anyhow::Result<()> {
-    let template = args.template.template();
-    let (org, _) = template.stamp(&args.org, &args.pool);
-    let owner = wamn_registry::Env::new(&args.owner);
-    let target = args
-        .target
-        .unwrap_or_else(|| format!("{}-{}-restore", org.id, owner));
-    let values = wamn_environment::platform::org::recovery_values(
-        &org,
-        &owner,
-        &template.policies,
-        &target,
-        args.target_time.as_deref(),
-    )?;
-    write_json(
-        &args.emit_cluster.unwrap_or_else(|| PathBuf::from("-")),
-        &values,
-    )
-}
-
 /// Print the lines that report one org provisioning run.
 fn print_provisioned_org(provisioned: &ProvisionedOrg) {
     let id = &provisioned.org.id;
@@ -847,6 +250,3 @@ fn write_json(path: &PathBuf, doc: &Value) -> anyhow::Result<()> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

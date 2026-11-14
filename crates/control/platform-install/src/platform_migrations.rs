@@ -93,3 +93,61 @@ pub async fn apply_target(
     ensure!(unlocked, "platform schema session lock disappeared");
     result
 }
+
+/// Install an empty project's platform schemas without repairing an existing installation.
+pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<bool> {
+    let present: bool = sqlx::query_scalar("SELECT to_regclass('platform.\"user\"') IS NOT NULL")
+        .fetch_one(&mut *client)
+        .await?;
+    if present {
+        return Ok(false);
+    }
+    for family in [
+        wamn_control_provision::WorkloadRoleFamily::Retention,
+        wamn_control_provision::WorkloadRoleFamily::AuditRetention,
+    ] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::sql::ensure_workload_acl_role_sql(family),
+        ))
+        .execute(&mut *client)
+        .await?;
+    }
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_platform_group_role_sql(),
+    ))
+    .execute(&mut *client)
+    .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_app_acl_role_sql(),
+    ))
+    .execute(&mut *client)
+    .await?;
+    sqlx::raw_sql("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE")
+        .execute(&mut *client)
+        .await?;
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut *client)
+        .await?;
+    let result = async {
+        sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+            .execute(&mut *client)
+            .await?;
+        sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+            .execute(&mut *client)
+            .await?;
+        sqlx::raw_sql(include_str!("../../../../deploy/sql/run-state.sql"))
+            .execute(&mut *client)
+            .await?;
+        sqlx::raw_sql(include_str!("../../../../deploy/sql/run-queue.sql"))
+            .execute(&mut *client)
+            .await?;
+        anyhow::Ok(())
+    }
+    .await;
+    sqlx::raw_sql("RESET ROLE").execute(&mut *client).await?;
+    result?;
+    sqlx::raw_sql(wamn_control_provision::MIGRATION_PRIVILEGES_SQL)
+        .execute(client)
+        .await?;
+    Ok(true)
+}

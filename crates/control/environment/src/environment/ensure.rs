@@ -508,7 +508,6 @@ pub(crate) async fn ensure_project_database_with_migrations(
         "GRANT CONNECT ON DATABASE {} TO wamn_apply; GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE;",
         postgres_protocol::escape::escape_identifier(&database),
     ))).execute(&mut *admin).await.map(drop)?;
-    ensure_migration_role(admin).await?;
     let mut project = connect(&project_admin).await?;
     if crate::platform_migrations::install_project(&mut project).await? {
         let migration_input = crate::provision_project_env::workload::provision_platform_migration(
@@ -552,18 +551,6 @@ pub async fn restore_project_database_access(
     )
     .await
     .context("restore workload database access")
-}
-
-/// Prepare the single migration privilege role through the administrator.
-pub(super) async fn ensure_migration_role(admin: &mut sqlx::PgConnection) -> anyhow::Result<()> {
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::ensure_workload_acl_role_sql(
-            wamn_control_provision::WorkloadRoleFamily::Migration,
-        ),
-    ))
-    .execute(admin)
-    .await?;
-    Ok(())
 }
 
 /// Prepare replication authority before the admin connection leaves ensure.
@@ -726,8 +713,21 @@ pub(crate) async fn ensure_cdc_inputs(
         &administrator_env
     };
     let admin_url = wamn_postgres::database_configuration(administrator, &database)?;
+    let capture = if wamn_postgres::configuration(&platform.system_database_url)?
+        .trim_start()
+        .starts_with('{')
+    {
+        wamn_platform_install::environment::capture_connection(
+            &platform.system_database_url,
+            &document.triple(),
+        )
+        .await?
+    } else {
+        admin_url.clone()
+    };
     crate::enable_cdc_project_env::apply_cdc_sql(
         admin_url.as_str(),
+        &capture,
         &schemas,
         &cdc_name,
         &database,
@@ -791,7 +791,7 @@ pub(crate) async fn ensure_cdc_inputs(
 /// Provision the environment's source and advisory streams, with the same
 /// target, consumers and duplicate window as [`enable_cdc`], and no slot,
 /// publication or reader. Without an event broker there is nothing to provision.
-async fn ensure_streams(
+pub(super) async fn ensure_streams(
     platform: &Platform,
     document: &EnvironmentDocument,
     manifests: &[wamn_compiler::manifest::PackageManifest],
@@ -922,6 +922,17 @@ pub async fn cdc_in_place(
 /// The URL of the environment's project database: the system URL's login on
 /// the database the registry row names.
 pub(super) async fn project_url(platform: &Platform, triple: &Triple) -> anyhow::Result<String> {
+    if wamn_postgres::configuration(&platform.system_database_url)?
+        .trim_start()
+        .starts_with('{')
+    {
+        return wamn_platform_install::environment::connection(
+            &platform.system_database_url,
+            triple,
+        )
+        .await?
+        .to_json();
+    }
     let instance = read_project_env_instance(&platform.system_database_url, triple).await?;
     wamn_postgres::database_configuration(
         &platform.system_database_url,
@@ -1152,4 +1163,32 @@ mod tests {
         assert_eq!(reapplied, fresh);
         Ok(())
     }
+}
+
+/// Slot creation uses the capture role; schema ownership grants no replication privilege.
+pub(super) async fn prepare_cdc_with_connection(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    capture: &str,
+) -> anyhow::Result<()> {
+    let instance =
+        read_project_env_instance(&platform.system_database_url, &document.triple()).await?;
+    let role = wamn_control_provision::cdc_object_name(
+        &document.org,
+        &document.project,
+        &document.env,
+        &instance,
+    );
+    let mut connection = connect(capture).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::create_failover_slot_sql(&role),
+    ))
+    .execute(&mut connection)
+    .await?;
+    let name = wamn_control_provision::project_env_cdc_secret_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    );
+    wamn_kubernetes::kubectl::apply(&platform.target.kubeconfig,&platform.target.context,&document.org,&serde_json::json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":name,"namespace":document.org},"data":{"connection.json":capture}})).await
 }

@@ -336,7 +336,7 @@ pub struct HostArgs {
     pub local_application_digest: Option<String>,
 
     /// Local flow-http workload bytes for an org control host.
-    #[arg(long, requires = "control", conflicts_with = "local_application")]
+    #[arg(long, requires_all = ["org", "session_issuer"], conflicts_with_all = ["local_application", "release_artifact_base", "release_manifest_digest", "session_instance_suffix"])]
     pub local_control: Option<PathBuf>,
 
     /// OAuth envelope provider as JSON: local, or gcp with project and region.
@@ -387,22 +387,6 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_SESSION_JWKS_CA", requires = "session_issuer")]
     pub session_jwks_ca: Option<PathBuf>,
 
-    /// Serve the control serving root of `--org` in place of an application
-    /// release (docs/architecture/execution.md#host-run-routes). A control host
-    /// reads `wamn_system` through the org's `control` login in
-    /// `WAMN_CONTROL_URL`, admits only browser sessions of the org's control
-    /// audience, and holds no project credential.
-    #[arg(
-        long,
-        env = "WAMN_CONTROL",
-        requires_all = ["org", "session_issuer"],
-        conflicts_with_all = [
-            "release_artifact_base", "release_manifest_digest", "local_application",
-            "session_instance_suffix"
-        ]
-    )]
-    pub control: bool,
-
     /// HTTPS base URL of the identity service, which a control host calls
     /// with the operator certificate for `user.invite`. Its path is
     /// preserved. Without it, `user.invite` fails and the other routes serve.
@@ -410,7 +394,7 @@ pub struct HostArgs {
         long = "pat-issuer",
         env = "WAMN_PAT_ISSUER",
         hide_env_values = true,
-        requires_all = ["control", "pat_client_cert", "pat_client_key"]
+        requires_all = ["local_control", "pat_client_cert", "pat_client_key"]
     )]
     pub pat_issuer: Option<String>,
 
@@ -1054,7 +1038,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     //
     // It also runs after the CA install above, which is why the release pull can
     // reach a registry behind the chart's own CA.
-    let release = if args.control {
+    let release = if args.local_control.is_some() {
         Some(Arc::new(LoadedRelease::control_root()))
     } else if let Some(directory) = args.local_application.as_deref() {
         let target = served_release_target(&args)?;
@@ -1103,7 +1087,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
     // The control serving root authenticates through its own control login,
     // never through the project credentials an application release needs.
-    let application = release.as_ref().filter(|_| !args.control);
+    let application = release.as_ref().filter(|_| args.local_control.is_none());
     let pat_routes = application
         .is_some_and(|loaded_release| requires_pat_route_authentication(loaded_release.manifest()));
     let session_routes = application.is_some_and(|loaded_release| {
@@ -1195,7 +1179,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         connect_scheduler_nats(&args, args.host_name.as_deref().unwrap_or(&router_owner)).await?;
     // The host's own code acts for its environment by the data connection, and
     // the control host for its org (docs/plan/alignment.md R5, R7).
-    let data_nats_user = if args.control {
+    let data_nats_user = if args.local_control.is_some() {
         args.org.as_deref().map(control_nats_user)
     } else {
         application
@@ -1533,7 +1517,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // A control host has no event streams, so its event plugin gets no
     // connection and activation does nothing.
     let mut jetstream_config = WamnJetstreamConfig::from_env();
-    if !args.control {
+    if args.local_control.is_none() {
         jetstream_config = jetstream_config.with_nats(data_nats_client.clone());
     }
     let jetstream = Arc::new(WamnJetstream::new(jetstream_config));
@@ -1547,7 +1531,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // (docs/architecture/execution.md#auth-memory).
     let project_env_key = release
         .as_ref()
-        .filter(|_| !args.control)
+        .filter(|_| args.local_control.is_none())
         .map(|release| release.target().project_env_key.clone());
     let auth_changes = replicate(
         &data_nats_client,
@@ -1564,7 +1548,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .as_ref()
             .map(|reader| (reader.clone(), session_verifier)),
     );
-    let control = if args.control {
+    let control = if args.local_control.is_some() {
         Some(control_connection(&args).await?)
     } else {
         None
@@ -1659,7 +1643,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     } else {
         None
     };
-    let oauth = if args.control {
+    let oauth = if args.local_control.is_some() {
         oauth_encryption
             .map(|envelope| {
                 let origin = args
@@ -1794,11 +1778,19 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if let Some(release) = application {
         let events = Arc::clone(&jetstream);
         let postgres = Arc::clone(&postgres);
+        let args_project = args.project.clone();
         schedule_tasks.spawn(serve_application_events(
             Arc::clone(release),
             stopping.clone(),
             async move |release: &Arc<LoadedRelease>| {
-                if let Err(error) = events.admit_application_events(&postgres, release).await {
+                if let Err(error) = wamn_workflow::event_admission::admit_application_events(
+                    &events,
+                    &postgres,
+                    &args_project,
+                    release,
+                )
+                .await
+                {
                     tracing::warn!(?error, "application event admission failed");
                 }
             },
@@ -1827,47 +1819,19 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
     // Each host admits schedules with its own loaded application release.
     if let Some(release) = application {
-        let url = executor_platform_url
-            .clone()
-            .context("workflow schedules require WAMN_EXECUTOR_PLATFORM_PG_URL")?;
-        let schedule_release = Arc::clone(release);
-        let schedule_postgres = Arc::clone(&postgres);
-        let schedule_project = args.project.clone();
-        let mut stopped = stopping.clone();
-        let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let task_connected = Arc::clone(&connected);
+        let schedules = wamn_workflow::schedule::PostgresSchedules::new(
+            Arc::clone(&postgres),
+            &args.project,
+            Arc::clone(release),
+        );
+        let schedule_stopping = stopping.clone();
         let task = schedule_tasks.spawn(async move {
-            loop {
-                if *stopped.borrow() { return; }
-                let connection = tokio::select! {
-                    _ = stopped.changed() => return,
-                    connection = wamn_postgres::pool(&url, 2) => connection,
-                };
-                match connection {
-                    Ok(client) => {
-                        let schedules = wamn_workflow::schedule::PostgresSchedules::new(
-                            client,
-                            Arc::clone(&schedule_postgres),
-                            &schedule_project,
-                            Arc::clone(&schedule_release),
-                        );
-                        task_connected.store(true, std::sync::atomic::Ordering::Relaxed);
-                        let schedule_stopping = stopped.clone();
-                        tokio::select! {
-                            _ = stopped.changed() => return,
-                            result = wamn_workflow::schedule::serve(&schedules, schedule_stopping) => tracing::warn!(?result, "workflow schedule task stopped"),
-                        }
-                    }
-                    Err(error) => tracing::warn!(%error, "connect workflow schedule admission"),
-                }
-                task_connected.store(false, std::sync::atomic::Ordering::Relaxed);
-                tokio::select! {
-                    _ = stopped.changed() => return,
-                    () = tokio::time::sleep(Duration::from_secs(1)) => {},
-                }
+            if let Err(error) = wamn_workflow::schedule::serve(&schedules, schedule_stopping).await
+            {
+                tracing::warn!(%error, "workflow schedule task stopped");
             }
         });
-        probe_state.register(Arc::new(ScheduleProbe { connected, task }));
+        probe_state.register(Arc::new(ScheduleProbe { task }));
     }
 
     let mut ingress_connections = None;
@@ -1981,7 +1945,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // holds the process's only loaded manifest for as long as `run` is on the
     // stack, which is the whole serving period.
     match release.as_ref() {
-        Some(_) if args.control => tracing::info!(
+        Some(_) if args.local_control.is_some() => tracing::info!(
             org = args.org.as_deref(),
             "wamn-host serves the control serving root"
         ),
@@ -2511,7 +2475,6 @@ fn shutdown_budget(drain_bound_seconds: u64) -> Duration {
 
 #[derive(Debug)]
 struct ScheduleProbe {
-    connected: Arc<std::sync::atomic::AtomicBool>,
     task: tokio::task::AbortHandle,
 }
 
@@ -2520,7 +2483,7 @@ impl probes::ReadinessCheck for ScheduleProbe {
         "workflow_schedule"
     }
     fn ready(&self) -> bool {
-        self.connected.load(std::sync::atomic::Ordering::Relaxed) && !self.task.is_finished()
+        !self.task.is_finished()
     }
     fn unrecoverable(&self) -> bool {
         self.task.is_finished()
@@ -2916,24 +2879,6 @@ host:
             Duration::from_secs(226)
         );
         assert!(cleanup_budget_for_plugins(7, Duration::MAX).is_err());
-    }
-
-    #[tokio::test]
-    async fn schedule_probe_distinguishes_reconnect_from_task_exit() {
-        use probes::ReadinessCheck as _;
-        let task = tokio::spawn(std::future::pending::<()>());
-        let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let probe = ScheduleProbe {
-            connected: Arc::clone(&connected),
-            task: task.abort_handle(),
-        };
-        assert!(!probe.ready());
-        assert!(!probe.unrecoverable());
-        connected.store(true, std::sync::atomic::Ordering::Relaxed);
-        assert!(probe.ready());
-        let _ = task.await;
-        assert!(!probe.ready());
-        assert!(probe.unrecoverable());
     }
 
     #[tokio::test]
@@ -3551,31 +3496,6 @@ host:
             neither.to_string(),
             "a release-backed host requires --registry-auth-file or --registry-token-metadata"
         );
-    }
-
-    #[test]
-    fn local_control_uses_the_control_authority_without_an_application_release() {
-        assert!(parse(["host", "--local-control", "/local"]).is_err());
-        let parsed = parse([
-            "host",
-            "--control",
-            "--org",
-            "acme",
-            "--session-issuer",
-            "https://identity.invalid",
-            "--session-jwks-ca",
-            "/ca.pem",
-            "--local-control",
-            "/local",
-        ])
-        .expect("local control host arguments");
-        assert!(parsed.args.control);
-        assert_eq!(
-            parsed.args.local_control.as_deref(),
-            Some(Path::new("/local"))
-        );
-        assert!(parsed.args.local_application.is_none());
-        assert!(parsed.args.release_manifest_digest.is_none());
     }
 
     #[test]

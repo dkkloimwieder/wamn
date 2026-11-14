@@ -338,9 +338,8 @@ impl OperationHost {
         let loaded = self
             .native
             .get_or_try_init(|| async {
-                let components =
-                    wamn_runtime::plugins::wamn_postgres::release_components(&self.release)?;
-                self.load_released_application(Arc::from(components)).await
+                self.load_released_application(Arc::clone(self.release.components()))
+                    .await
             })
             .await?;
         anyhow::ensure!(

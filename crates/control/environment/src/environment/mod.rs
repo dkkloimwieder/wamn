@@ -9,6 +9,7 @@ pub mod document;
 pub mod drain;
 pub mod ensure;
 pub mod expand;
+pub mod lifecycle;
 pub mod lock;
 pub mod operation;
 pub mod readiness;

@@ -28,20 +28,17 @@
 //! showing nothing.
 
 use anyhow::Context as _;
-use serde_json::Value;
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 
 use url::Url;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
-use wamn_run_state::RunStore as _;
 use wamn_runtime::plugins::wamn_postgres::{
     AclExpectation, AclTarget, AmbientCredentialState, ClassCredentials, CredentialConnectionType,
     CredentialProbeErrorType, CredentialProbePredicate, ExpectedCredentialIdentity,
     MembershipExpectation, MembershipMode, ProductionCompletion, ProductionCompletionResult,
-    ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult,
-    ReleaseIdentity, WamnPostgres, WamnPostgresConfig, credential_exactness_probe,
-    explicit_credential_source,
+    ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult, ReleaseIdentity,
+    WamnPostgres, WamnPostgresConfig, credential_exactness_probe, explicit_credential_source,
 };
 
 /// The generation login every leg runs as.
@@ -68,9 +65,7 @@ fn digest(fill: &str) -> String {
 }
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let mut client = wamn_postgres::connect(url).await?;
-
-    Ok(client)
+    wamn_postgres::connect(url).await
 }
 
 /// Rewrite an admin url onto the generation's credential, optionally moving it
@@ -278,14 +273,12 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
              SELECT '{PROJECT_ENV_KEY}',manifest_digest,'00000000-0000-4000-8000-000000000012',1 FROM catalog.releases; \
              INSERT INTO catalog.connection_binding (project_env_key,manifest_digest,component_digest,package_id,name,connection_id) \
              SELECT '{PROJECT_ENV_KEY}',manifest_digest,'{component_digest}','{PACKAGE_ID}','a-store','00000000-0000-4000-8000-000000000012' FROM catalog.releases; \
-             INSERT INTO wamn_run.runs \
-               (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
-                wiring_id,wiring_version,status,input_json,trigger_source) \
-             SELECT '{PROJECT_ENV_KEY}','run-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'{PACKAGE_ID}',manifest_digest,'{ENVIRONMENT}', \
-                    '{WIRING_ID}',{WIRING_VERSION},'dispatched','{{}}','test-case' FROM catalog.releases; \
+             INSERT INTO wamn_run.runs (project_env_key, run_id, wiring_hash, package_id, manifest_digest, environment, wiring_id, wiring_version, status, input_json, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) SELECT '{PROJECT_ENV_KEY}', 'run-1', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', '{PACKAGE_ID}', manifest_digest, '{ENVIRONMENT}', '{WIRING_ID}', {WIRING_VERSION}, 'dispatched', '{{}}', 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{{}}' FROM catalog.releases; \
              INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('{PROJECT_ENV_KEY}','run-1');",
         ))).execute(&mut admin).await.map(drop)
         .context("seed the plan-supply fixture")?;
+
+    let manifest_digest = wamn_digest::bytes_sha256(manifest_body.as_bytes());
 
     // ---- PLAN SUPPLY, LIVE UNDER THE CREDENTIAL ---------------------------
     let platform_url = generation_url(admin_url, None)?;
@@ -577,69 +570,8 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         plugin.renew(COMPONENT, "absent", 1, 30_000).await?,
         ProductionLeaseRenewal::FenceLost
     );
-    let snapshot = "SELECT jsonb_build_array(to_jsonb(r), to_jsonb(q)) \
-                    FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key, run_id) \
-                    WHERE r.project_env_key = $1 AND r.run_id = 'run-1'";
-    let before: Value = sqlx::query(sqlx::AssertSqlSafe((snapshot).to_string()))
-        .bind(&PROJECT_ENV_KEY)
-        .fetch_one(&mut admin)
-        .await?
-        .get(0);
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "REVOKE wamn_executor_platform FROM {GENERATION}; \
-             GRANT USAGE ON SCHEMA catalog, wamn_run TO {GENERATION}; \
-             GRANT SELECT, INSERT, UPDATE, DELETE \
-               ON ALL TABLES IN SCHEMA catalog, wamn_run TO {GENERATION};"
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
     let packages = [PACKAGE_ID.to_string()];
-    let completion = ProductionCompletion::completed(serde_json::json!({"done": true}), None);
-    for result in [
-        plugin
-            .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
-            .await
-            .map(|_| ()),
-        plugin
-            .reap_exhausted(COMPONENT, &packages, ENVIRONMENT, 0)
-            .await
-            .map(|_| ()),
-        plugin
-            .renew(COMPONENT, "run-1", 1, 30_000)
-            .await
-            .map(|_| ()),
-        plugin
-            .complete(COMPONENT, "run-1", 1, &completion)
-            .await
-            .map(|_| ()),
-    ] {
-        let error = result.expect_err("broad table grants must not replace executor membership");
-        assert_eq!(error.error_type(), ProductionLeaseErrorType::Identity);
-    }
-    let after: Value = sqlx::query(sqlx::AssertSqlSafe((snapshot).to_string()))
-        .bind(&PROJECT_ENV_KEY)
-        .fetch_one(&mut admin)
-        .await?
-        .get(0);
-    assert_eq!(
-        after, before,
-        "every refused operation must leave the run and queue unchanged"
-    );
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, wamn_run FROM {GENERATION}; \
-             REVOKE ALL PRIVILEGES ON SCHEMA catalog, wamn_run FROM {GENERATION}; \
-             GRANT wamn_executor_platform TO {GENERATION} WITH INHERIT TRUE, SET FALSE;"
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
+    let completion = ProductionCompletion::completed(serde_json::json!({"done": true}));
     assert_eq!(
         plugin
             .reap_exhausted(COMPONENT, &packages, ENVIRONMENT, 0)

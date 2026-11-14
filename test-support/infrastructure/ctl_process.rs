@@ -8,7 +8,6 @@ use anyhow::Context as _;
 use tokio::process::Command;
 
 const CTL_BINARY_ENV: &str = "WAMN_CTL_BIN";
-const CTL_OPS_BINARY_ENV: &str = "WAMN_CTL_OPS_BIN";
 
 /// Run `wamn-ctl` with `args`, returning its captured process output.
 pub async fn run<I, S>(args: I) -> anyhow::Result<Output>
@@ -18,17 +17,6 @@ where
 {
     let binary = ctl_binary();
     run_binary("wamn-ctl", &binary, args).await
-}
-
-/// Run `wamn-ctl-ops` and require a successful exit status.
-pub async fn require_ops_success<I, S>(args: I) -> anyhow::Result<Output>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let binary = ctl_ops_binary();
-    let output = run_binary("wamn-ctl-ops", &binary, args).await?;
-    require_success("wamn-ctl-ops", output)
 }
 
 async fn run_binary<I, S>(name: &str, binary: &OsStr, args: I) -> anyhow::Result<Output>
@@ -66,10 +54,6 @@ fn require_success(name: &str, output: Output) -> anyhow::Result<Output> {
 
 fn ctl_binary() -> OsString {
     binary(CTL_BINARY_ENV, "wamn-ctl")
-}
-
-fn ctl_ops_binary() -> OsString {
-    binary(CTL_OPS_BINARY_ENV, "wamn-ctl-ops")
 }
 
 fn binary(env: &str, name: &str) -> OsString {

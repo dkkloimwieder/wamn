@@ -16,7 +16,7 @@ mod operation;
 pub mod platform_http;
 mod readiness;
 
-pub use host_route::{HostRouteDelivery, HostRouteHandlers};
+pub use host_route::{ControlExecution, HostRouteDelivery, HostRouteHandlers};
 pub use operation::{
     InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost, OperationHostConfig,
     component_invocation, invocation_span, node_trace_context, remote_trace_context,

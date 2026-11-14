@@ -39,7 +39,7 @@ wamn-catalog = { workspace = true }
 # The platform principal rows take their component list, names, and derived
 # ids from the platform model.
 wamn-identity-protocol = { workspace = true }
-wamn-run-state = { workspace = true, features = ["project-key"] }
+wamn-run-state = { workspace = true }
 # The audit retention role name is a record history platform fixture name.
 wamn-record-history = { workspace = true }
 

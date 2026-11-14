@@ -20,6 +20,30 @@ struct Cli {
 #[cfg(target_os = "linux")]
 #[derive(Debug, Subcommand)]
 enum Command {
+    #[command(subcommand)]
+    Env(wamn_ctl::environment_requests::Command),
+    RevokePat(wamn_ctl::environment_requests::RevokePat),
+    RecoverCaptureGap(wamn_ctl::provisioning_verbs::RecoverCaptureGapArgs),
+    CloseCaptureGap(wamn_ctl::provisioning_verbs::CloseCaptureGapArgs),
+    GrantProjectEnvMembership(wamn_ctl::identity_verbs::ProjectEnvMembershipArgs),
+    RevokeProjectEnvMembership(wamn_ctl::identity_verbs::ProjectEnvMembershipArgs),
+    GrantRole(wamn_ctl::role_verbs::UserRoleArgs),
+    RevokeRole(wamn_ctl::role_verbs::UserRoleArgs),
+    CreateRole(wamn_ctl::role_verbs::RoleArgs),
+    DeleteRole(wamn_ctl::role_verbs::RoleArgs),
+    GrantPermission(wamn_ctl::role_verbs::PermissionArgs),
+    RevokePermission(wamn_ctl::role_verbs::PermissionArgs),
+    /// Create an API service and save its private PAT.
+    CreateApiService(wamn_ctl::identity_verbs::ApiServiceArgs),
+    /// Manage connections through control routes.
+    Connection(wamn_ctl::component_verbs::ConnectionArgs),
+    /// Manage project external systems.
+    ExternalSystem(wamn_ctl::component_verbs::ExternalSystemArgs),
+    /// Read published integration types.
+    IntegrationType(wamn_ctl::component_verbs::IntegrationTypeArgs),
+    /// Manage workflows through authenticated routes.
+    #[command(subcommand)]
+    Workflow(wamn_ctl::workflow_verbs::WorkflowCommand),
     /// Build source or select published bytes, then deploy one application release.
     Deploy(wamn_ctl::application_verbs::DeployArgs),
     /// Restore one application's last successful release, or an explicit target, without reversing SQL.
@@ -100,6 +124,29 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
     match Cli::parse().command {
+        Command::Env(command) => wamn_ctl::environment_requests::run(command).await,
+        Command::RevokePat(args) => wamn_ctl::environment_requests::revoke_pat(args).await,
+        Command::RecoverCaptureGap(args) => {
+            wamn_ctl::provisioning_verbs::recover_capture_gap(args).await
+        }
+        Command::CloseCaptureGap(args) => {
+            wamn_ctl::provisioning_verbs::close_capture_gap(args).await
+        }
+
+        Command::GrantProjectEnvMembership(args) => wamn_ctl::identity_verbs::grant(args).await,
+        Command::RevokeProjectEnvMembership(args) => wamn_ctl::identity_verbs::revoke(args).await,
+        Command::GrantRole(args) => wamn_ctl::role_verbs::grant(args).await,
+        Command::RevokeRole(args) => wamn_ctl::role_verbs::revoke(args).await,
+        Command::CreateRole(args) => wamn_ctl::role_verbs::create_role(args).await,
+        Command::DeleteRole(args) => wamn_ctl::role_verbs::delete_role(args).await,
+        Command::GrantPermission(args) => wamn_ctl::role_verbs::grant_permission(args).await,
+        Command::RevokePermission(args) => wamn_ctl::role_verbs::revoke_permission(args).await,
+
+        Command::CreateApiService(args) => wamn_ctl::identity_verbs::create_api_service(args).await,
+        Command::Connection(args) => wamn_ctl::component_verbs::connection(args).await,
+        Command::ExternalSystem(args) => wamn_ctl::component_verbs::external_system(args).await,
+        Command::IntegrationType(args) => wamn_ctl::component_verbs::integration_type(args).await,
+        Command::Workflow(command) => wamn_ctl::workflow_verbs::run(command).await,
         Command::Deploy(args) => wamn_ctl::application_verbs::deploy(args).await,
         Command::Rollback(args) => wamn_ctl::application_verbs::rollback(args).await,
         Command::Status(args) => wamn_ctl::application_verbs::status(args).await,
@@ -296,40 +343,6 @@ mod tests {
     }
 
     #[test]
-    fn integration_build_and_publish_parse() {
-        assert!(matches!(
-            Cli::try_parse_from(["wamn", "integration", "build", "fixture"])
-                .unwrap()
-                .command,
-            Command::Integration(_)
-        ));
-        assert!(matches!(
-            Cli::try_parse_from([
-                "wamn",
-                "integration",
-                "publish",
-                "fixture",
-                "--artifact-base",
-                "localhost/integrations",
-                "--registry-auth-file",
-                "/tmp/auth.json",
-                "--database-url",
-                "postgresql://control/system",
-                "--version",
-                "1",
-                "--parameter-schema",
-                "/tmp/schema.json",
-                "--operations",
-                "example:fixture/client",
-            ])
-            .unwrap()
-            .command,
-            Command::Integration(_)
-        ));
-        assert!(Cli::try_parse_from(["wamn", "integration", "build"]).is_err());
-    }
-
-    #[test]
     fn reset_parses_without_run_inputs() {
         let reset =
             Cli::try_parse_from(["wamn", "dev", "reset", "--config", "/tmp/dev.json"]).unwrap();
@@ -346,85 +359,24 @@ mod platform_tests {
     use wamn_environment::platform::document::UpgradeTarget;
 
     #[test]
-    fn platform_schema_requires_explicit_system_target_and_chart() {
-        use wamn_ctl::platform_verbs::{PlatformSchemaCommand, PlatformSchemaTarget};
-
+    fn platform_schema_refuses_a_system_environment() {
         for action in ["diff", "apply"] {
-            let arguments = [
-                "wamn",
-                "platform",
-                "schema",
-                action,
-                "--target",
-                "system",
-                "--chart",
-                "/prepared/chart",
-            ];
-            let cli = Cli::try_parse_from(arguments).unwrap();
-            let Command::Platform(ProductPlatformCommand::Schema(command)) = cli.command else {
-                panic!("expected platform schema");
-            };
-            let args = match command {
-                PlatformSchemaCommand::Diff(args) => {
-                    assert_eq!(action, "diff");
-                    args
-                }
-                PlatformSchemaCommand::Apply(args) => {
-                    assert_eq!(action, "apply");
-                    args
-                }
-            };
-            assert!(matches!(args.target, PlatformSchemaTarget::System));
-            assert_eq!(args.chart, std::path::Path::new("/prepared/chart"));
-            assert!(Cli::try_parse_from(&arguments[..4]).is_err());
-            assert!(Cli::try_parse_from(&arguments[..6]).is_err());
             assert!(
-                Cli::try_parse_from(
-                    arguments[..4]
-                        .iter()
-                        .copied()
-                        .chain(["--chart", "/prepared/chart"])
-                )
+                Cli::try_parse_from([
+                    "wamn",
+                    "platform",
+                    "schema",
+                    action,
+                    "--target",
+                    "system",
+                    "--env",
+                    "environment.k"
+                ])
                 .is_err()
             );
-            let mut project = arguments;
-            project[5] = "project";
-            assert!(Cli::try_parse_from(project).is_err());
-        }
-    }
-
-    #[test]
-    fn platform_schema_selects_project_only_with_an_environment() {
-        use wamn_ctl::platform_verbs::{PlatformSchemaCommand, PlatformSchemaTarget};
-        for action in ["diff", "apply"] {
-            let arguments = [
-                "wamn",
-                "platform",
-                "schema",
-                action,
-                "--target",
-                "project",
-                "--chart",
-                "/prepared/chart",
-                "--env",
-                "environment.k",
-            ];
-            assert!(Cli::try_parse_from(&arguments[..8]).is_err());
-            let mut system = arguments;
-            system[5] = "system";
-            assert!(Cli::try_parse_from(system).is_err());
-            let cli = Cli::try_parse_from(arguments).unwrap();
-            let Command::Platform(ProductPlatformCommand::Schema(command)) = cli.command else {
-                panic!("expected platform schema");
-            };
-            let args = match command {
-                PlatformSchemaCommand::Diff(args) => args,
-                PlatformSchemaCommand::Apply(args) => args,
-            };
-            assert!(matches!(args.target, PlatformSchemaTarget::Project));
-            assert_eq!(
-                args.env.as_deref(),
-                Some(std::path::Path::new("environment.k"))
+            assert!(
+                Cli::try_parse_from(["wamn", "platform", "schema", action, "--target", "project"])
+                    .is_err()
             );
         }
     }

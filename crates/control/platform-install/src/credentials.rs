@@ -49,7 +49,33 @@ pub async fn remove_roles(
         None,
         names,
     )
-    .await
+    .await?;
+    let observer = configuration(
+        namespace,
+        cluster,
+        format!("{cluster}-rw.{namespace}.svc.cluster.local"),
+        5432,
+        "postgres".into(),
+        "wamn_apply".into(),
+        "wamn-apply".into(),
+    );
+    let mut connection = wamn_postgres::connect(&observer.to_json()?).await?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        let present: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=ANY($1))")
+                .bind(names)
+                .fetch_one(&mut connection)
+                .await?;
+        if !present {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            tokio::time::Instant::now() < deadline,
+            "CNPG did not remove the retired logins"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 async fn refresh(
@@ -75,7 +101,12 @@ async fn refresh(
             );
         }
         for roles in declarations.values_mut() {
-            roles.retain(|role| !removing.contains(&role.name));
+            for role in roles
+                .iter_mut()
+                .filter(|role| removing.contains(&role.name))
+            {
+                role.ensure = "absent".into();
+            }
         }
         let object: Value = kubectl::get(
             kubeconfig,
@@ -125,7 +156,11 @@ pub async fn prepare(
     target: &wamn_kubernetes::Target,
     declarations: &crate::roles::Declarations,
 ) -> anyhow::Result<()> {
-    for declaration in declarations.values().flatten() {
+    for declaration in declarations
+        .values()
+        .flatten()
+        .filter(|role| role.ensure == "present")
+    {
         let username = declaration.name.as_str();
         let secret_name = declaration.password_secret.name.as_str();
         secret::update(

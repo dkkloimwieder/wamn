@@ -152,7 +152,7 @@ $$;
 
 -- Admission pins, including the release's `manifest_digest`, never change
 -- (docs/architecture/overview.md#release-identity). A leasing pod shows it carries that
--- release by its digest. A candidate run carries no release pin.
+-- release by its digest.
 CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -160,13 +160,11 @@ AS $$
 BEGIN
     IF NEW.package_id IS DISTINCT FROM OLD.package_id
        OR NEW.environment IS DISTINCT FROM OLD.environment
-       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode
        OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id
        OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version
        OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash
-       OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json
+       OR NEW.trigger_source IS DISTINCT FROM OLD.trigger_source
        OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest
-       OR NEW.service_principal_id IS DISTINCT FROM OLD.service_principal_id
        OR NEW.execution_principal_id IS DISTINCT FROM OLD.execution_principal_id
        OR NEW.execution_role IS DISTINCT FROM OLD.execution_role
        OR NEW.invoked_by IS DISTINCT FROM OLD.invoked_by
@@ -234,8 +232,6 @@ CREATE TABLE wamn_run.runs (
         CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
                           'infrastructure-failure')),
     trigger_source  text,
-    -- The service identity of an operator-admitted automation run.
-    service_principal_id uuid,
     -- A manual or schedule workflow run (docs/plan/workflows.md R3, R2):
     -- executed as this principal with this one role active, invoked by
     -- `invoked_by` (what caused it) and `invoked_by_user_id` (the user of a
@@ -246,19 +242,13 @@ CREATE TABLE wamn_run.runs (
     invoked_by      text,
     invoked_by_user_id uuid,
     node_digests_json jsonb,
-    capture_mode    text NOT NULL DEFAULT 'off'
-        CONSTRAINT runs_capture_mode_check CHECK (capture_mode IN ('full', 'off')),
     -- The admission transaction freezes the execution identity.
     wiring_id       text,
     wiring_version  int,
     wiring_hash     text,
-    -- Canonically ordered, non-secret requirement/binding/generation facts
-    -- derived by private management admission. Array order is
-    -- (component-digest, store-alias); callers never author this value.
-    binding_world_json jsonb,
     -- Admission pins the exact release by its manifest digest, the SHA-256 of
     -- its RFC 8785 canonical manifest. At lease, the worker shows its mounted
-    -- release has that digest. A candidate run carries no pin.
+    -- release has that digest.
     manifest_digest text,
     input_json      jsonb,
     result_json     jsonb,
@@ -269,14 +259,6 @@ CREATE TABLE wamn_run.runs (
         CHECK (admission_context_version = '0.1'),
     platform_revision text NOT NULL DEFAULT 'legacy',
     idempotency_key text,
-    caller_outcome_type text
-        CHECK (caller_outcome_type IN ('responded', 'failed')),
-    caller_outcome_json jsonb,
-    caller_http_status int CHECK (caller_http_status BETWEEN 100 AND 599),
-    caller_release_node_id text,
-    caller_outcome_hash text,
-    caller_released_at timestamptz,
-    response_deadline_at timestamptz,
     run_deadline_at timestamptz,
     terminal_reason text,
     fail_type       text CHECK (fail_type IN ('terminal', 'retry-exhausted', 'invalid-input',
@@ -309,18 +291,6 @@ CREATE TABLE wamn_run.runs (
     -- At insert both columns take the same `now()`, so equal is admitted.
     CONSTRAINT runs_updated_after_created
         CHECK (updated_at >= created_at),
-    CONSTRAINT runs_check6
-        CHECK ((caller_released_at IS NULL) = (caller_outcome_type IS NULL)),
-    CONSTRAINT runs_check7
-        CHECK (caller_outcome_type IS NULL OR caller_outcome_json IS NOT NULL),
-    CONSTRAINT runs_check8
-        CHECK (caller_outcome_type <> 'responded' OR caller_release_node_id IS NOT NULL),
-    CONSTRAINT runs_check9
-        CHECK (response_deadline_at IS NULL OR run_deadline_at IS NULL
-               OR response_deadline_at <= run_deadline_at),
-    CONSTRAINT runs_capture_mode_source_check CHECK (
-      capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'
-    ),
     CONSTRAINT runs_release_record_check CHECK (
       manifest_digest IS NULL
       OR manifest_digest ~ '^sha256:[0-9a-f]{64}$'
@@ -330,94 +300,20 @@ CREATE TABLE wamn_run.runs (
       OR (wiring_id IS NOT NULL AND wiring_version IS NOT NULL
           AND wiring_id <> '' AND wiring_version > 0)
     ),
-    -- Each run carries one complete execution identity. The explicit
-    -- IS NOT NULL arms prevent incomplete records.
+    -- Only the three supported workflow admissions enter the durable queue.
     CONSTRAINT runs_execution_grain_check CHECK (
-      (wiring_id IS NOT NULL AND wiring_version IS NOT NULL
-       AND wiring_id <> '' AND wiring_version > 0
-       AND wiring_hash IS NOT NULL
-       AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
-       AND binding_world_json IS NOT NULL
-       AND jsonb_typeof(binding_world_json) = 'array')
-      OR
-      (trigger_source IS NOT NULL AND trigger_source IN ('http', 'internal', 'studio')
-       AND wiring_id IS NOT NULL AND wiring_version IS NOT NULL
-       AND wiring_id <> '' AND wiring_version > 0
-       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
-       AND manifest_digest IS NOT NULL
-       AND binding_world_json IS NULL)
-      OR
-      (trigger_source IS NOT DISTINCT FROM 'automation'
-       AND service_principal_id IS NOT NULL
-       AND wiring_id IS NOT NULL AND wiring_id <> ''
-       AND wiring_version IS NOT NULL AND wiring_version > 0
-       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
-       AND binding_world_json IS NULL)
-      OR
-      (trigger_source IS NOT DISTINCT FROM 'event'
-       AND registration_id IS NOT NULL AND registration_id <> ''
-       AND service_principal_id IS NULL
-       AND wiring_id IS NOT NULL AND wiring_id <> ''
-       AND wiring_version IS NOT NULL AND wiring_version > 0
-       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
-       AND binding_world_json IS NULL)
-      OR
-      (trigger_source IS NOT DISTINCT FROM 'event'
-       AND registration_id IS NULL
-       AND service_principal_id IS NULL
-       AND wiring_id IS NOT NULL AND wiring_id <> ''
-       AND wiring_version IS NOT NULL AND wiring_version > 0
-       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
-       AND manifest_digest IS NOT NULL
-       AND node_digests_json IS NOT NULL AND jsonb_typeof(node_digests_json) = 'object'
-       AND execution_principal_id IS NOT NULL
-       AND execution_role IS NOT NULL AND execution_role <> ''
-       AND invoked_by IS NOT NULL AND invoked_by <> ''
-       AND binding_world_json IS NULL)
-      OR
-      (trigger_source IS NOT DISTINCT FROM 'manual'
-       AND registration_id IS NULL
-       AND service_principal_id IS NULL
-       AND wiring_id IS NOT NULL AND wiring_id <> ''
-       AND wiring_version IS NOT NULL AND wiring_version > 0
-       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
-       AND manifest_digest IS NOT NULL
-       AND node_digests_json IS NOT NULL
-       AND jsonb_typeof(node_digests_json) = 'object'
-       AND execution_principal_id IS NOT NULL
-       AND execution_role IS NOT NULL AND execution_role <> ''
-       AND invoked_by IS NOT DISTINCT FROM 'manual'
-       AND invoked_by_user_id IS NOT NULL
-       AND binding_world_json IS NULL)
-      OR
-      (trigger_source IS NOT DISTINCT FROM 'schedule'
-       AND registration_id IS NULL
-       AND service_principal_id IS NULL
-       AND wiring_id IS NOT NULL AND wiring_id <> ''
-       AND wiring_version IS NOT NULL AND wiring_version > 0
-       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
-       AND manifest_digest IS NOT NULL
-       AND node_digests_json IS NOT NULL
-       AND jsonb_typeof(node_digests_json) = 'object'
-       AND execution_principal_id IS NOT NULL
-       AND execution_role IS NOT NULL AND execution_role <> ''
-       AND invoked_by IS NOT DISTINCT FROM 'schedule'
-       AND invoked_by_user_id IS NULL
-       AND binding_world_json IS NULL)
-    ),
-    -- Only an event, manual or schedule workflow run carries an execution identity,
-    -- an invoker and frozen node digests.
-    CONSTRAINT runs_execution_identity_check CHECK (
-      trigger_source IS NOT DISTINCT FROM 'manual'
-      OR trigger_source IS NOT DISTINCT FROM 'schedule'
-      OR trigger_source IS NOT DISTINCT FROM 'event'
-      OR (execution_principal_id IS NULL AND execution_role IS NULL
-          AND invoked_by IS NULL AND invoked_by_user_id IS NULL
-          AND node_digests_json IS NULL)
-    ),
-    CONSTRAINT runs_service_principal_check CHECK (
-      (trigger_source IS NOT DISTINCT FROM 'automation')
-      = (service_principal_id IS NOT NULL)
+      trigger_source IS NOT NULL AND trigger_source IN ('manual', 'schedule', 'event')
+      AND wiring_id IS NOT NULL AND wiring_id <> ''
+      AND wiring_version IS NOT NULL AND wiring_version > 0
+      AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
+      AND manifest_digest IS NOT NULL
+      AND node_digests_json IS NOT NULL AND jsonb_typeof(node_digests_json) = 'object'
+      AND execution_principal_id IS NOT NULL
+      AND execution_role IS NOT NULL AND execution_role <> ''
+      AND invoked_by IS NOT NULL AND invoked_by <> ''
+      AND ((trigger_source = 'manual' AND invoked_by = 'manual' AND invoked_by_user_id IS NOT NULL)
+        OR (trigger_source = 'schedule' AND invoked_by = 'schedule' AND invoked_by_user_id IS NULL)
+        OR trigger_source = 'event')
     ),
     PRIMARY KEY (project_env_key, run_id),
     CONSTRAINT runs_release_fk
@@ -430,10 +326,6 @@ CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (project_env_key, idempote
 -- History listing and trusted CDC event-causation traversal.
 CREATE INDEX runs_event_root ON wamn_run.runs (project_env_key, event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
-CREATE INDEX runs_response_deadline ON wamn_run.runs (project_env_key, response_deadline_at)
-    WHERE caller_released_at IS NULL
-      AND response_deadline_at IS NOT NULL
-      AND status IN ('dispatched', 'running');
 CREATE INDEX runs_run_deadline ON wamn_run.runs (project_env_key, run_deadline_at)
     WHERE run_deadline_at IS NOT NULL
       AND status IN ('dispatched', 'running');
@@ -458,8 +350,8 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 -- here or the transition arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF package_id, environment,
-                 capture_mode, wiring_id, wiring_version,
-                 wiring_hash, binding_world_json, manifest_digest, service_principal_id,
+                 wiring_id, wiring_version,
+                 wiring_hash, manifest_digest, trigger_source,
                  execution_principal_id, execution_role, invoked_by, invoked_by_user_id,
                  node_digests_json
 ON wamn_run.runs

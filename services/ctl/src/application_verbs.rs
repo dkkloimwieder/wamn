@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use clap::Args;
 use serde_json::json;
 use std::path::PathBuf;
-use wamn_environment::environment::{self, Platform};
+use wamn_environment::environment;
 
 use crate::operation_verbs::ControlHost;
 
@@ -43,43 +43,14 @@ pub struct StatusArgs {
 }
 
 pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
-    if let Some(host) = ControlHost::from_env()? {
-        let digest = match args.package {
-            Some(package) => {
-                let document = environment::analyse::select_application(
-                    &environment::document::EnvironmentDocument::compile(&args.env)?,
-                    Some(&args.application),
-                )?;
-                crate::operation_verbs::publish(&document, &package)
-                    .await?
-                    .1
-                    .to_string()
-            }
-            None => args
-                .release
-                .context("select a source package or --release")?,
-        };
-        return host
-            .run(
-                "application.deploy",
-                &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
-                json!({"release":digest,"application":args.application}),
-            )
-            .await;
-    }
-    let platform = Platform::apply_from_env()?;
-    let document = environment::document::EnvironmentDocument::read(
-        &platform,
-        &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
-    )
-    .await?;
-    let document = environment::analyse::select_application(&document, Some(&args.application))?;
+    let host = ControlHost::from_env()?;
     let digest = match args.package {
         Some(package) => {
-            let database_url = std::env::var("DATABASE_URL").context(
-                "set DATABASE_URL to the PostgreSQL server for disposable build databases",
+            let document = environment::analyse::select_application(
+                &environment::document::EnvironmentDocument::compile(&args.env)?,
+                Some(&args.application),
             )?;
-            wamn_dev_control::source_deploy::publish(&platform, &document, &package, &database_url)
+            crate::operation_verbs::publish(&document, &package)
                 .await?
                 .1
                 .to_string()
@@ -88,57 +59,32 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
             .release
             .context("select a source package or --release")?,
     };
-    print_analysis(
-        environment::deploy(&platform, &document.triple(), &args.application, &digest).await?,
+    host.run(
+        "application.deploy",
+        &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
+        json!({"release":digest,"application":args.application}),
     )
+    .await
 }
 
 pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
-    if let Some(host) = ControlHost::from_env()? {
-        return host
-            .run(
-                "application.rollback",
-                &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
-                json!({"application":args.application, "release":args.release}),
-            )
-            .await;
-    }
-    let platform = Platform::apply_from_env()?;
-    print_analysis(
-        environment::rollback::rollback(
-            &platform,
+    ControlHost::from_env()?
+        .run(
+            "application.rollback",
             &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
-            &args.application,
-            args.release.as_deref(),
+            json!({"application":args.application,"release":args.release}),
         )
-        .await?,
-    )
+        .await
 }
 
 pub async fn status(args: StatusArgs) -> anyhow::Result<()> {
-    let mut platform = Platform::from_env()?;
-    let admin_url =
-        std::env::var("WAMN_SYSTEM_ADMIN_URL").context("set WAMN_SYSTEM_ADMIN_URL for status")?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(
-            &environment::status::status(
-                &mut platform,
-                &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
-                &admin_url
-            )
-            .await?
-        )?
-    );
-    Ok(())
-}
-
-fn print_analysis(analysis: environment::analyse::Analysis) -> anyhow::Result<()> {
-    for notice in analysis.notices {
-        println!("{}", serde_json::to_string(&notice)?);
-    }
-    for line in analysis.plan {
-        println!("{line}");
-    }
+    let target = environment::document::EnvironmentDocument::compile(&args.env)?.triple();
+    let status = ControlHost::from_env()?
+        .call(
+            "environment.status",
+            &json!({"project":target.project,"env":target.env}),
+        )
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&status)?);
     Ok(())
 }

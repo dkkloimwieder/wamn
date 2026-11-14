@@ -19,3 +19,92 @@ rules:
 - apiGroups: [""]
   resources: [configmaps]
   verbs: [get]
+---
+# Environment workers read the installed platform's public Helm configuration.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wamn-platform-observer
+  namespace: {{ .Release.Namespace }}
+rules:
+- apiGroups: [""]
+  resources: [secrets, configmaps]
+  verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wamn-platform-observer-{{ .Values.org }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: wamn-platform-observer
+subjects:
+- kind: Group
+  name: system:serviceaccounts:{{ .Values.org }}
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wamn-platform-operations
+  namespace: {{ .Release.Namespace }}
+rules:
+- apiGroups: [""]
+  resources: [secrets, configmaps, services, serviceaccounts]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [""]
+  resources: [pods, pods/log, events]
+  verbs: [get, list, watch]
+- apiGroups: [apps]
+  resources: [deployments, statefulsets, daemonsets, replicasets]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [rbac.authorization.k8s.io]
+  resources: [roles, rolebindings]
+  verbs: [get, list, watch, create, update, patch, delete, bind, escalate]
+- apiGroups: [cert-manager.io]
+  resources: [certificates, issuers]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [networking.k8s.io]
+  resources: [networkpolicies, ingresses]
+  verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wamn-platform-operations-{{ .Values.org }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: wamn-platform-operations
+subjects:
+- kind: ServiceAccount
+  name: wamn-operation-{{ .Values.org }}
+  namespace: {{ .Values.org }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: wamn-platform-observer-{{ .Values.org }}
+rules:
+- apiGroups: [""]
+  resources: [namespaces]
+  verbs: [get]
+- apiGroups: [rbac.authorization.k8s.io]
+  resources: [clusterroles, clusterrolebindings]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: wamn-platform-observer-{{ .Values.org }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: wamn-platform-observer-{{ .Values.org }}
+subjects:
+- kind: ServiceAccount
+  name: wamn-operation-{{ .Values.org }}
+  namespace: {{ .Values.org }}

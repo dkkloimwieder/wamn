@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:workflow/disable@0.9.0",
+  "type": "command",
+  "label": "Workflow disable",
+  "grant": "wamn-control:workflow/disable@0.9.0",
+  "permission_token": "workflow.disable",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

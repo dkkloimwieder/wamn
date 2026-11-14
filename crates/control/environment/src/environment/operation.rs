@@ -16,7 +16,7 @@ pub async fn schema(
     release: Option<&str>,
     apply: bool,
 
-    administrator: Option<&str>,
+    credentials: Option<&sql::reset::Credentials>,
 ) -> anyhow::Result<sql::schema::Diff> {
     let document = EnvironmentDocument::read_serving(platform, triple).await?;
     let (release, candidates) =
@@ -32,14 +32,13 @@ pub async fn schema(
             .release
             .as_deref()
             .context("schema apply needs a published release")?;
-        let administrator =
-            administrator.context("schema apply requires the owning database credential")?;
+        let credentials = credentials.context("schema apply requires its owning credentials")?;
         if diff.mode == super::document::SchemaMode::Reset {
-            Box::pin(sql::reset::reset_deployed_with_admin(
+            Box::pin(sql::reset::reset_deployed(
                 platform,
                 triple,
                 Some((application, release)),
-                administrator,
+                credentials,
             ))
             .await?;
         } else {
@@ -47,9 +46,9 @@ pub async fn schema(
             let lock = expected.lock(platform, &document, false).await?;
             let result = lock
                 .protect(async {
-                    sql::schema::apply(platform, &document, application, release, administrator)
-                        .await?;
-                    super::ensure::ensure_cdc_inputs(platform, &document, Some(administrator)).await
+                    sql::schema::apply(platform, &document, application, release).await?;
+                    super::ensure::ensure_cdc_inputs(platform, &document, Some(&credentials.owner))
+                        .await
                 })
                 .await;
             lock.release().await;
@@ -78,7 +77,7 @@ pub async fn execute(
     platform: &Platform,
     request: Request<'_>,
     actor: &wamn_identity_protocol::PrincipalId,
-    administrator: Option<&str>,
+    credentials: Option<&sql::reset::Credentials>,
 ) -> anyhow::Result<Value> {
     ensure!(
         matches!(
@@ -141,17 +140,17 @@ pub async fn execute(
                     .context("schema operation requires an application")?,
                 request.release,
                 request.operation == "apply",
-                administrator,
+                credentials,
             )
             .await?;
             Ok(serde_json::to_value([diff])?)
         }
         "reset" => {
-            Box::pin(sql::reset::reset_deployed_with_admin(
+            Box::pin(sql::reset::reset_deployed(
                 platform,
                 &triple,
                 None,
-                administrator.context("reset administrator")?,
+                credentials.context("reset credentials are absent")?,
             ))
             .await
         }

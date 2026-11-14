@@ -807,7 +807,7 @@ A declared `"P<n>D"` retention is a minimum keep window.
 It promises nothing about removal time, backups, holds, or erasure.
 The retention task removes an expired entry on its next daily run, so its schedule sets the retention precision.
 
-The [`prune-record-history`](../../crates/control/environment/src/prune_record_history.rs) verb of `wamn-ctl-ops` runs the task.
+The [`record retention owner`](../../crates/control/environment/src/prune_record_history.rs) runs the task.
 It uses the project-specific audit retention login. Its shared role is `wamn_audit_retention`.
 It refuses any login that is not an audit retention login for the derived environment project in the connected database.
 The family is not a `wamn_platform` member, because no reader needs the edge.
@@ -1113,7 +1113,7 @@ The guarantee is bounded historical state:
 
 Stamps and log entries are correct for writes through the supported platform paths.
 On those paths, the triggers exist and every writer binds its executing principal and its operation.
-`env apply` applies `app-schema.sql` to the project database and writes its platform rows.
+`environment::apply` applies `app-schema.sql` to the project database and writes its platform rows.
 It writes a service row for each service principal of the project.
 The release stage also creates one service principal for each application with a scheduled workflow, targeted to that environment.
 The stage writes its project service row without assigning a role or permission.
@@ -1121,14 +1121,13 @@ It reads the platform domain from `registry.meta.platform_domain`, and it refuse
 It creates the `platform.number_sequence` row of each sequence that the packages declare, as [Numbering](#numbering) describes.
 It writes a user row for each user with a membership in that project environment, and removes a user row whose membership is gone.
 Authorization derives a user’s administration from the current org, environment and project grants. The application database stores no copy of these inherited grants.
-`wamn-ctl-ops create-user` creates that user in `identity.principals`, and it is the only path that creates one.
-The verb ships in the operational binary, and only a platform operator runs it.
+The identity owner creates that user in `identity.principals`.
 One email address names one principal for the whole platform.
 A user who works in two organizations holds one principal and two memberships.
 A user row carries the email of that user from `identity.principals`.
 The control host writes the user row and the `admin` row when its route grants them, and removes them when its route revokes them, with the administration login, bound to the caller and the route's sealed operation id.
 The application host writes roles, permissions and user roles through its [host routes](execution.md#host-run-routes) with the same login and the same binding.
-A member that `wamn-ctl invite` adds gains the row at the next `wamn-ctl env apply`, because invite holds no project connection.
+The bootstrap invitation writes system membership. The environment lifecycle projects it when the application database is initialized.
 A principal with no user row cannot write in the project.
 The invocation bind refuses it.
 `WamnPostgres::bind_session_identity` refuses a principal that owns no `platform."user"` row in the project database.

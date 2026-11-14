@@ -286,6 +286,7 @@ async fn platform_migrations_refuse_administrators_and_use_scope_credentials() -
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let mut administrator = wamn_postgres::connect(database.url()).await?;
+
     for scope in [MigrationDatabase::System, MigrationDatabase::Project] {
         assert!(scope.require_login(&mut administrator).await.is_err());
         let input =
@@ -323,12 +324,32 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
         &wamn_control_provision::test_database::seed_org_project_env_sql("reset", "fixture", "dev"),
     ])?;
     let triple = wamn_registry::Triple::new("reset", "dev", "fixture");
-    let database = wamn_platform_identity::test_database::project_platform();
+    let database = wamn_test_postgres::database();
+    database.execute(&[&wamn_control_provision::sql::set_database_owner_sql(
+        database.name(),
+    )])?;
+    wamn_platform_install::environment::initialize_database(database.url()).await?;
+    assert!(
+        wamn_platform_install::environment::initialize_database(database.url())
+            .await
+            .is_err()
+    );
+    let mut administrator = wamn_postgres::connect(database.url()).await?;
+    let baseline: bool = sqlx::query_scalar("SELECT to_regclass('platform.\"user\"') IS NOT NULL")
+        .fetch_one(&mut administrator)
+        .await?;
+    assert!(baseline);
+
     let migration_input = wamn_control_provision::test_database::package_migration_input(
         database.url(),
         "reset",
         "fixture",
         "dev",
+    )
+    .await?;
+    let owner_input = wamn_control_provision::test_database::platform_migration_input(
+        database.url(),
+        wamn_control_provision::migrations::MigrationDatabase::Project,
     )
     .await?;
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
@@ -369,12 +390,12 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
         .bind(&b"request"[..]).execute(&mut admin).await?;
     system.execute(&["SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.environments SET disposable=false WHERE org='reset' AND env='dev'"])?;
     assert!(
-        reset_database(system.url(), database.url(), &triple)
+        reset_database(system.url(), &owner_input, &migration_input, &triple)
             .await
             .is_err()
     );
     system.execute(&["SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.environments SET disposable=true WHERE org='reset' AND env='dev'"])?;
-    reset_database(system.url(), database.url(), &triple).await?;
+    reset_database(system.url(), &owner_input, &migration_input, &triple).await?;
     let after: sqlx::postgres::types::Oid =
         sqlx::query_scalar("SELECT oid FROM pg_database WHERE datname=current_database()")
             .fetch_one(&mut admin)

@@ -1,0 +1,22 @@
+{
+  "fields": [
+    {
+      "path": "slot",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "created_at",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "resync_at",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

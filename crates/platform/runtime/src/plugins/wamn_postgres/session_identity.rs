@@ -12,8 +12,8 @@ use tracing::Instrument as _;
 use wamn_catalog::ManifestDigest;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
+use wamn_identity_protocol::AuthorityClass;
 use wamn_registry::identifiers::{valid_project, valid_project_env_key};
-use wamn_run_state::AuthorityClass;
 
 use crate::plugins::connection_http::ConnectionInvocation;
 
@@ -1841,6 +1841,9 @@ impl WamnPostgres {
                 &principal,
                 AuthorityClass::GuestSql,
             )
+            .await?;
+        let grants = self
+            .inherited_grants(project_env_key, &principal, grants)
             .await?;
         Ok(grants
             .active

@@ -35,6 +35,8 @@ pub fn prepared_chart(repository: &Path) -> anyhow::Result<Chart> {
     let mut values: Value = serde_yaml::from_slice(&std::fs::read(&path)?)?;
     values["platform"]["ctl"] =
         json!({"image":format!("ctl.example/wamn-ctl:ctl-build@sha256:{digest}")});
+    values["platform"]["control"]["image"] =
+        json!(format!("control.example/control@sha256:{digest}"));
     values["platform"]["identity"]["image"] =
         json!(format!("identity.example/identity@sha256:{digest}"));
     values["platform"]["edge"]["image"] = json!(format!("edge.example/edge@sha256:{digest}"));

@@ -100,14 +100,38 @@
     "schema/diff.errors.json",
     "schema/apply.errors.json",
     "schema/reset.errors.json",
-    "operation/status.errors.json"
+    "operation/status.errors.json",
+    "api_service/create.errors.json",
+    "application/stop.errors.json",
+    "release/retain.errors.json",
+    "workflow/author.errors.json",
+    "workflow/enable.errors.json",
+    "workflow/disable.errors.json",
+    "workflow/list.errors.json",
+    "workflow/park.errors.json",
+    "workflow/release.errors.json",
+    "workflow/runs.errors.json",
+    "integration/publish.errors.json",
+    "platform/update.errors.json",
+    "platform/operation_status.errors.json",
+    "capture_gap/recover.errors.json",
+    "capture_gap/close.errors.json",
+    "environment/configure.errors.json",
+    "environment/delete.errors.json",
+    "environment/operation_status.errors.json",
+    "pat/revoke.errors.json"
   ],
   "operation.started": [
     "application/deploy.result.json",
     "application/rollback.result.json",
     "schema/diff.result.json",
     "schema/apply.result.json",
-    "schema/reset.result.json"
+    "schema/reset.result.json",
+    "application/stop.result.json",
+    "release/retain.result.json",
+    "platform/update.result.json",
+    "environment/configure.result.json",
+    "environment/delete.result.json"
   ],
   "org_admin.grant-revoke.result": [
     "org_admin/grant.result.json",
@@ -143,5 +167,10 @@
   "user.state.result": [
     "user/activate.result.json",
     "user/deactivate.result.json"
+  ],
+  "operation.status": [
+    "environment/operation_status.result.json",
+    "operation/status.result.json",
+    "platform/operation_status.result.json"
   ]
 }

@@ -24,7 +24,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wash_runtime::host::probes::Liveness;
 use wash_runtime::plugin::wasi_logging::TracingLogger;
 
-use crate::{PostgresWorkflows, RouterDriver, WorkflowErrorType, Workflows as _};
+use crate::{PostgresWorkflows, RouterDriver, WorkflowErrorType};
 use wamn_execution_host::{OperationHost, OperationHostConfig};
 use wamn_identity_protocol::PlatformComponent;
 
@@ -457,11 +457,9 @@ async fn event_run(
         sequence: 7,
         source_event_id: &source_id,
     };
-    postgres
-        .admit_event_batch(&target.project, release, &admission)
+    crate::event_admission::admit_event_batch(postgres, &target.project, release, &admission)
         .await?;
-    postgres
-        .admit_event_batch(&target.project, release, &admission)
+    crate::event_admission::admit_event_batch(postgres, &target.project, release, &admission)
         .await?;
     let runs = sqlx::query("SELECT run_id FROM wamn_run.runs WHERE trigger_source = 'event'")
         .fetch_all(&mut *admin)
@@ -473,8 +471,7 @@ async fn event_run(
     let other = other.to_string();
     admission.envelope = &other;
     assert!(
-        postgres
-            .admit_event_batch(&target.project, release, &admission)
+        crate::event_admission::admit_event_batch(postgres, &target.project, release, &admission)
             .await
             .is_err(),
         "changed input must conflict"
@@ -498,8 +495,7 @@ async fn event_run(
         "the queue leases the released event run"
     );
     let stored = sqlx::query(
-        "SELECT status, result_json::text, trigger_source, execution_principal_id::text, \
-                    service_principal_id IS NULL FROM wamn_run.runs WHERE run_id = $1",
+        "SELECT status, result_json::text, trigger_source, execution_principal_id::text FROM wamn_run.runs WHERE run_id = $1",
     )
     .bind(&run)
     .fetch_one(&mut *admin)
@@ -512,10 +508,6 @@ async fn event_run(
     assert_eq!(
         stored.get::<String, _>(3),
         wamn_identity_protocol::workflow_user_id().to_string()
-    );
-    assert!(
-        stored.get::<bool, _>(4),
-        "an event run has no service principal"
     );
     assert_eq!(
         workflows.park(&run).await.unwrap_err().error_type(),

@@ -4,7 +4,6 @@ use sqlx::Row as _;
 use std::time::Duration;
 
 use tokio::time::timeout;
-use wamn_run_state::RunStore as _;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 use wash_runtime::engine::Engine;
 use wash_runtime::host::probes::Liveness;
@@ -199,7 +198,6 @@ pub(super) async fn run(
             generation,
             &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::completed(
                 serde_json::json!({"stale":true}),
-                None,
             ),
         )
         .await?;

@@ -1,0 +1,22 @@
+{
+  "fields": [
+    {
+      "path": "code",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "digest",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "version",
+      "type": "int32",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

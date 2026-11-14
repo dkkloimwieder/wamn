@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:environment/delete@0.9.0",
+  "type": "command",
+  "label": "environment.delete",
+  "grant": "wamn-control:environment/delete@0.9.0",
+  "permission_token": "environment.delete",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

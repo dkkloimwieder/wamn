@@ -101,14 +101,6 @@ pub(crate) async fn provision(
         )
         .await?;
         wait_role(connection, &username).await?;
-        if family == WorkloadRoleFamily::Migration {
-            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-                "GRANT {} TO wamn_db_owner WITH ADMIN FALSE, INHERIT TRUE, SET TRUE",
-                postgres_protocol::escape::escape_identifier(&username)
-            )))
-            .execute(&mut *connection)
-            .await?;
-        }
         sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
             family, database, &username,
         )))

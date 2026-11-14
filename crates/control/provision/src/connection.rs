@@ -50,7 +50,7 @@ pub fn managed_role(name: String, acl_role: &str, secret: String) -> ManagedRole
 /// Declare the existing capture login without database writer privileges.
 pub fn managed_replication_role(name: String, secret: String) -> ManagedRole {
     let mut role = managed_role(name, "", secret);
-    role.in_roles.clear();
+    role.in_roles = vec!["pg_checkpoint".into()];
     role.inherit = false;
     role.replication = true;
     role

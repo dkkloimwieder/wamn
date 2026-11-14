@@ -11,14 +11,14 @@ use wamn_engine::native_routes::{OperationRefusal, OperationRefusalType};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_identity_protocol::PlatformComponent;
-use wamn_run_state::{FailType, RunStore as _};
+use wamn_run_state::FailType;
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_postgres::{
     ProductionCompletionResult, ProductionLeaseRenewal, ProductionLeaseResult,
-    ProductionReapResult, ReleaseIdentity, SessionIdentity, WamnPostgres, WorkflowResolutionError,
-    WorkflowResolutionErrorType,
+    ProductionReapResult, ReleaseIdentity, SessionIdentity, WamnPostgres,
 };
 
+use crate::resolution::{WorkflowResolutionError, WorkflowResolutionErrorType};
 use crate::router_action::{ProductionRouterAction, production_router_action};
 use crate::{RouterDriver, WorkflowIdentity, WorkflowRunRequest};
 
@@ -181,39 +181,30 @@ async fn serve_queue(
     mut turn: impl AsyncFnMut() -> anyhow::Result<bool>,
     mut pinned_backlog: impl AsyncFnMut() -> anyhow::Result<bool>,
 ) -> anyhow::Result<()> {
-    while !*stopping.borrow() {
-        // Real queue progress, including an empty poll or a retry. Long calls
-        // also beat after a successful durable lease renewal below.
-        liveness.beat();
-        match turn().await {
-            Ok(true) => continue,
-            Ok(false) => {}
-            Err(error) => {
-                tracing::warn!(error = %error, "executor queue turn failed; retrying");
-            }
-        }
-        tokio::select! {
-            _ = stopping.changed() => break,
-            () = tokio::time::sleep(Duration::from_millis(IDLE_POLL_MS)) => {}
-        }
-    }
     loop {
-        match pinned_backlog().await {
-            Ok(false) => return Ok(()),
-            Ok(true) => {}
-            Err(error) => {
-                tracing::warn!(error = %error, "executor queue backlog read failed; retrying");
+        if *stopping.borrow() {
+            match pinned_backlog().await {
+                Ok(false) => return Ok(()),
+                Ok(true) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "executor queue backlog read failed; retrying")
+                }
             }
         }
         liveness.beat();
         match turn().await {
             Ok(true) => continue,
             Ok(false) => {}
-            Err(error) => {
-                tracing::warn!(error = %error, "executor queue drain turn failed; retrying");
+            Err(error) => tracing::warn!(%error, "executor queue turn failed; retrying"),
+        }
+        if *stopping.borrow() {
+            tokio::time::sleep(Duration::from_millis(IDLE_POLL_MS)).await;
+        } else {
+            tokio::select! {
+                _ = stopping.changed() => {},
+                () = tokio::time::sleep(Duration::from_millis(IDLE_POLL_MS)) => {},
             }
         }
-        tokio::time::sleep(Duration::from_millis(IDLE_POLL_MS)).await;
     }
 }
 
@@ -257,30 +248,13 @@ async fn drain_one(
             lease_generation,
             wiring_id,
             wiring_version,
-            router_caller_attached: _,
-            durable_caller_attached: _,
-            candidate: _,
-            service_principal_id: _,
+
             workflow,
         } => {
             let wiring_version = u32::try_from(wiring_version)
                 .context("acquired wiring version is not a positive u32")?;
             let queue_span =
                 queue_delivery_span(target, &package_id, &run_id, &wiring_id, wiring_version);
-            let Some(workflow) = workflow else {
-                let (result, fail_type) =
-                    workflow_resolution_refusal(WorkflowResolutionErrorType::NotFound, &run_id);
-                commit_completion(
-                    postgres,
-                    &run_id,
-                    lease_generation,
-                    &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::failed(
-                        result, fail_type, None,
-                    ),
-                )
-                .await?;
-                return Ok(true);
-            };
             let workflow = *workflow;
             let request = WorkflowRunRequest {
                 project_env_key: target.project_env_key.clone(),
@@ -393,7 +367,7 @@ async fn drive_lease(
                     run_id,
                     lease_generation,
                     &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::failed(
-                        result, fail_type, None,
+                        result, fail_type,
                     ),
                 )
                 .await?;
@@ -455,7 +429,7 @@ async fn drive_lease(
                 postgres,
                 run_id,
                 lease_generation,
-                &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::completed(event, None),
+                &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::completed(event),
             )
             .await?;
         }

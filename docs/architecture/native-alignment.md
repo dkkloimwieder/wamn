@@ -59,7 +59,8 @@ Standard-library guests retain their original WASI imports. Admission permits th
 
 Guest logging uses the pinned runtime's public binding hook and `TracingLogger`.
 The host tracing exporter sends the records. Guest context remains an ordinary attribute.
-Concurrent logging callbacks currently lose the host invocation trace.
+The host replaces only the native record callback to enter the invocation span held by the store's active scope.
+The pinned runtime stays unchanged.
 
 The shared artifact owner builds OCI clients for all artifact readers.
 The OCI readers preserve WAMN configuration blobs and media types.

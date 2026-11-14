@@ -65,7 +65,7 @@ const ROOT: &str = "root:entry/run@1.0.0";
 /// An operation that the root calls. No host runs it: composition embeds it
 /// in the root, which runs under its own grant.
 const CHILD: &str = "child:entry/run@1.0.0";
-const OBSERVE: &str = "test:authority/observe@1.0.0";
+const OBSERVE: &str = "wasi:clocks/monotonic-clock@0.2.0";
 const STATEMENTS: &str = "wamn:postgres/statements@0.4.0";
 const CHILD_MARKER: &str = "WAMN_NATIVE_POLICY_CHILD";
 const BUDGET: Duration = Duration::from_millis(200);
@@ -142,8 +142,10 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
     };
     let observer = format!(
         r#"(import "{OBSERVE}" (instance $observe
-          (export "record" (func (param "phase" u32)))))
-          (core func $observe (canon lower (func $observe "record")))"#
+          (export "now" (func (result u64)))
+          (export "resolution" (func (result u64)))))
+          (core func $observe (canon lower (func $observe "now")))
+          (core func $observe-start (canon lower (func $observe "resolution")))"#
     );
     wat::parse_str(format!(
         r#"(component
@@ -175,22 +177,23 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
         (memory $memory "memory")))
       (core module $main
         (import "memory" "memory" (memory 16))
-        (import "host" "observe" (func $observe (param i32)))
+        (import "host" "observe" (func $observe (result i64)))
+        (import "host" "observe-start" (func $observe-start (result i64)))
         (import "host" "log" (func $log (param i32 i32 i32 i32 i32)))
         (import "host" "return" (func $return
           (param i32 i32 i32 i32 i32 i32 i32 i32 i64)))
         (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
-        (func $start i32.const 0 call $observe {start})
+        (func $start call $observe-start drop {start})
         (start $start)
         (func (export "run") (param $input i32) (result i32)
-          i32.const 1 call $observe
+          call $observe drop
           i32.const 2 i32.const 16 i32.const 5 i32.const 32 i32.const 10 call $log
           {body}
           i32.const 0 local.get $input i32.load offset=96 local.get $input i32.load offset=100
           i32.const 0 i32.const 0 i32.const 0 i32.const 0 i32.const 0 i64.const 0
           call $return i32.const 0))
       (core instance $main (instantiate $main (with "memory" (instance $memory))
-        (with "host" (instance (export "observe" (func $observe)) (export "log" (func $log))
+        (with "host" (instance (export "observe" (func $observe)) (export "observe-start" (func $observe-start)) (export "log" (func $log))
           (export "return" (func $return))))))
       (func $run async (param "ctx" $context) (param "input" $json)
         (result (result $emission (error $error)))
@@ -538,54 +541,63 @@ impl HostPlugin for Observe {
         }
     }
 
+    fn wasi_overrides(&self) -> WitWorld {
+        WitWorld {
+            imports: HashSet::from([WitInterface::from(OBSERVE)]),
+            exports: HashSet::new(),
+        }
+    }
+
     async fn on_workload_item_bind<'a>(
         &self,
         item: &mut WorkloadItem<'a>,
         _interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
         item.linker()?.instance("wamn:node/types@0.1.0")?;
-        let policy = Arc::clone(&self.policy);
-        let events = Arc::clone(&self.events);
-        let entered = Arc::clone(&self.entered);
-        item.linker()?.instance(OBSERVE)?.func_wrap(
-            "record",
-            move |mut store: wash_runtime::wasmtime::StoreContextMut<'_, SharedCtx>,
-                  (phase,): (u32,)| {
-                let mut active = extract_active_ctx(store.data_mut());
-                let trace = wamn_engine::invocation_trace::invocation_trace(&mut active);
-                trace.in_scope(|| {
-                    let scope = active.ctx.component_id.to_string();
-                    let native_identity = policy
-                        .bindings
-                        .read()
-                        .expect("bindings lock")
-                        .contains_key(&scope);
-                    let identity = policy.resources.postgres.session_identity(&scope);
-                    let invocation = policy.resources.postgres.invocation(&scope);
-                    let _effect = invocation
-                        .as_ref()
-                        .filter(|_| phase == 1)
-                        .map(|invocation| {
-                            tracing::info_span!("test.host.observe",
-                                wamn.operation = %invocation.operation,
-                                wamn.component_digest = %invocation.component_digest,
-                            )
-                            .entered()
+        for (method, phase) in [("resolution", 0_u32), ("now", 1_u32)] {
+            let policy = Arc::clone(&self.policy);
+            let events = Arc::clone(&self.events);
+            let entered = Arc::clone(&self.entered);
+            item.wasi_override_instance(OBSERVE)?.func_wrap(
+                method,
+                move |mut store: wash_runtime::wasmtime::StoreContextMut<'_, SharedCtx>, (): ()| {
+                    let mut active = extract_active_ctx(store.data_mut());
+                    let trace = wamn_engine::invocation_trace::invocation_trace(&mut active);
+                    trace.in_scope(|| {
+                        let scope = active.ctx.component_id.to_string();
+                        let native_identity = policy
+                            .bindings
+                            .read()
+                            .expect("bindings lock")
+                            .contains_key(&scope);
+                        let identity = policy.resources.postgres.session_identity(&scope);
+                        let invocation = policy.resources.postgres.invocation(&scope);
+                        let _effect =
+                            invocation
+                                .as_ref()
+                                .filter(|_| phase == 1)
+                                .map(|invocation| {
+                                    tracing::info_span!("test.host.observe",
+                                        wamn.operation = %invocation.operation,
+                                        wamn.component_digest = %invocation.component_digest,
+                                    )
+                                    .entered()
+                                });
+                        events.lock().expect("observations lock").push(Observation {
+                            phase,
+                            scope,
+                            native_identity,
+                            identity,
+                            invocation,
                         });
-                    events.lock().expect("observations lock").push(Observation {
-                        phase,
-                        scope,
-                        native_identity,
-                        identity,
-                        invocation,
-                    });
-                    if phase == 1 {
-                        entered.notify_one();
-                    }
-                    Ok(())
-                })
-            },
-        )?;
+                        if phase == 1 {
+                            entered.notify_one();
+                        }
+                        Ok((0_u64,))
+                    })
+                },
+            )?;
+        }
         Ok(())
     }
 

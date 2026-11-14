@@ -50,7 +50,7 @@ wamn-event-wire = { workspace = true }
 wamn-integration-tests = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
-wamn-run-state = { workspace = true, features = ["test-util"] }
+wamn-run-state = { workspace = true }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-workflow = { workspace = true }
 wamn-engine = { workspace = true }

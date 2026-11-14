@@ -102,7 +102,7 @@ async fn a_platform_checkout_refuses_the_guest_authority() {
 fn guest_url(project_env_key: &str, database: &str) -> String {
     format!(
         "postgres://wamn_app_{}:pw@db/{database}",
-        wamn_run_state::app_identity_hash(project_env_key, database)
+        wamn_identity_protocol::app_identity_hash(project_env_key, database)
     )
 }
 
@@ -234,7 +234,7 @@ async fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
         // rather than relying on a libpq-style implicit OS user.
         credentials: Some(ClassCredentials::every_class(format!(
             "postgres://wamn_app_{}@localhost/pool-lifecycle-test",
-            wamn_run_state::app_identity_hash("test--dev--fixture", "pool-lifecycle-test")
+            wamn_identity_protocol::app_identity_hash("test--dev--fixture", "pool-lifecycle-test")
         ))),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
@@ -691,7 +691,7 @@ pub(in crate::plugins::wamn_postgres) async fn live_guest_url(
     let mut database = live_database(admin_url);
     let role = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(project_env_key, &mut database)
+        wamn_identity_protocol::app_identity_hash(project_env_key, &mut database)
     );
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -1010,7 +1010,7 @@ async fn live_begin_with_identity_sets_the_guest_set_without_a_project_env_key_i
         .unwrap()
         .get(0);
     assert!(
-        who.contains(&wamn_run_state::app_identity_hash(
+        who.contains(&wamn_identity_protocol::app_identity_hash(
             LIVE_PROJECT_ENV_KEY,
             &live_database(admin_url)
         )),
@@ -1118,7 +1118,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
     // too and the tests stay parallel-safe.
     let probe = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let _ = suffix;
     let mut admin = connect_raw(admin_url).await;
@@ -1217,7 +1217,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_identity() {
     // too and the tests stay parallel-safe.
     let probe = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let _ = suffix;
     let mut admin = connect_raw(admin_url).await;
@@ -1656,11 +1656,11 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     // credential the host resolves is bound to PROJECT_ENV_KEY_A by its own digest.
     let role_a = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY_A, &mut database)
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY_A, &mut database)
     );
     let role_b = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY_B, &mut database)
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY_B, &mut database)
     );
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -2068,7 +2068,7 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction() {
     let schema = format!("wamn_coldparse_{}", std::process::id());
     let role = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
@@ -2247,7 +2247,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;
@@ -2382,7 +2382,7 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, LIVE_PLATFORM_PRINCIPAL]).await;
@@ -2455,7 +2455,7 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
@@ -2529,7 +2529,7 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
@@ -2686,7 +2686,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
@@ -2873,7 +2873,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
@@ -2998,7 +2998,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     let mut admin = connect_raw(admin_url).await;
@@ -3588,7 +3588,7 @@ async fn live_an_unverified_declared_statement_is_refused_when_it_runs() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}",
-        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     let mut admin = connect_raw(admin_url).await;

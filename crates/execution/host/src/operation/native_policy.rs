@@ -29,6 +29,8 @@ use super::native_call::{NativeCallFailure, NativeInvocation};
 use super::native_workload::{NativeComponent, native_component_name};
 use super::{NodeAcquisition, prepare_statement_members, prepare_statement_sets};
 
+mod logging;
+
 pub(super) const NATIVE_POLICY_ID: &str = "wamn:native-operation-policy";
 
 /// Capabilities bound by the host invocation policy.
@@ -564,6 +566,7 @@ impl NativePolicy {
                 .logging
                 .on_workload_item_bind(item, interfaces)
                 .await?;
+            logging::bind(item)?;
             item.add_plugin(
                 self.resources.logging.id(),
                 Arc::clone(&self.resources.logging) as _,

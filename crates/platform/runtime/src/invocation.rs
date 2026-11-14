@@ -19,7 +19,7 @@ pub(crate) struct Authority {
     pub invocation: Option<ConnectionInvocation>,
     pub transaction: Option<OperationTransaction>,
     pub wal_position: Option<String>,
-    pub class: Option<wamn_run_state::AuthorityClass>,
+    pub class: Option<wamn_identity_protocol::AuthorityClass>,
     pub statements: crate::plugins::wamn_postgres::statements::StatementScope,
 }
 

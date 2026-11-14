@@ -143,7 +143,7 @@ pub(super) async fn start(
             "platform_ui": args.platform_ui.canonicalize()?, "packages": packages,
             "issuer": issuer.endpoint, "ca": issuer.server_ca,
             "host": args.host_binary.canonicalize()?, "host_env": env,
-            "host_args": ["host", "--control", "--org", org,
+            "host_args": ["host", "--org", org,
                 "--scheduler-nats-url", &args.nats.nats_url, "--data-nats-url", &args.nats.nats_url,
                 "--scheduler-nats-tls-ca", &args.nats.nats_tls_ca,
                 "--scheduler-nats-tls-cert", &args.nats.nats_tls_cert,

@@ -1,12 +1,8 @@
-//! Released and candidate wiring resolution through the existing platform pool.
+//! Authorized reads of release connection facts.
 
 use sqlx::Row as _;
-use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use anyhow::Context as _;
-use wamn_catalog::{AdmittedComponent, WiringDocument};
-use wamn_run_state::AuthorityClass;
 
 use super::WamnPostgres;
 
@@ -27,22 +23,6 @@ SELECT NOT EXISTS ( \
        ) \
 )";
 
-/// An immutable wiring and its resolved catalog facts.
-///
-/// The workflow layer indexes `document` directly.
-#[derive(Debug, Clone)]
-pub struct ResolvedActiveWiring {
-    pub version: u32,
-    /// The release the wiring resolved under, as its manifest digest.
-    pub manifest_digest: String,
-    pub graph_hash: Arc<str>,
-    pub package_version: String,
-    pub document: WiringDocument,
-    /// Complete admitted facts selected by each exact wiring node.
-    pub node_components: Arc<BTreeMap<String, AdmittedComponent>>,
-    pub components: Arc<[AdmittedComponent]>,
-}
-
 impl WamnPostgres {
     /// Read the interfaces declared by the exact package and component.
     pub async fn declared_connection_interfaces(
@@ -52,26 +32,9 @@ impl WamnPostgres {
         package: &str,
         digest: &str,
     ) -> anyhow::Result<Vec<(String, String)>> {
-        let (mut connection, _) = self
-            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        self.executor_read(project, project_env_key, async |connection| {
         Ok(sqlx::query("SELECT name,interface FROM catalog.connection_requirement WHERE project_env_key=$1 AND package_id=$2 AND component_digest=$3").bind(project_env_key).bind(package).bind(digest).fetch_all(&mut *connection).await?.into_iter().map(|row| (row.get(0),row.get(1))).collect())
-    }
-
-    /// Read only names declared by the selected package and component closure.
-    pub async fn declared_connection_names(
-        &self,
-        project: &str,
-        project_env_key: &str,
-        package: &str,
-        digest: &str,
-    ) -> anyhow::Result<std::collections::HashSet<String>> {
-        let (mut connection, _) = self
-            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(sqlx::query("SELECT name FROM catalog.connection_requirement WHERE project_env_key=$1 AND package_id=$2 AND component_digest=$3").bind(project_env_key).bind(package).bind(digest).fetch_all(&mut *connection).await?.into_iter().map(|row|row.get(0)).collect())
+        }).await
     }
 
     /// Read the connection map of release `digest` for the connection
@@ -82,10 +45,7 @@ impl WamnPostgres {
         project_env_key: &str,
         digest: &str,
     ) -> anyhow::Result<crate::connection_memory::ReleaseFact> {
-        let (mut connection, _) = self
-            .checkout_platform(project, AuthorityClass::CallableHttp)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        self.executor_read(project, project_env_key, async |connection| {
         let rows = sqlx::query("SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version FROM catalog.connection_binding b JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) WHERE b.project_env_key=$1 AND b.manifest_digest=$2 ORDER BY 1,2,3").bind(project_env_key).bind(digest).fetch_all(&mut *connection).await.context("read the release connection map")?;
         let versions = sqlx::query("SELECT connection_id,version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2").bind(project_env_key).bind(digest).fetch_all(&mut *connection).await.context("read the release connection versions")?;
         Ok(crate::connection_memory::ReleaseFact {
@@ -104,6 +64,7 @@ impl WamnPostgres {
                 })
                 .collect(),
         })
+        }).await
     }
 
     /// Make sure of the exact component requirements selected by request readiness.
@@ -123,220 +84,26 @@ impl WamnPostgres {
         if component_digests.is_empty() {
             return Ok(true);
         }
-        let component_digests = component_digests.to_vec();
-        let (mut connection, policy) = self
-            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if let Err(error) = self
-            .begin_with_identity(
-                &mut connection,
-                AuthorityClass::ExecutorPlatform,
-                false,
-                project_env_key,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                policy.statement_timeout_ms,
-            )
-            .await
-        {
-            self.destroy(connection);
-            return Err(anyhow::anyhow!(error.to_string()));
-        }
-
-        let result = if let Some(local) = &self.local_application {
-            if local.target.project_env_key != project_env_key
-                || local.target.environment != environment
-                || local.facts.manifest_digest.as_str() != manifest_digest
-            {
-                Err(anyhow::anyhow!("local readiness release target mismatch"))
-            } else {
-                local
-                    .bindings_ready(&mut connection, &component_digests)
-                    .await
+        self.executor_read(project, project_env_key, async |connection| {
+            if let Some(local) = &self.local_application {
+                anyhow::ensure!(
+                    local.target.project_env_key == project_env_key
+                        && local.target.environment == environment
+                        && local.facts.manifest_digest.as_str() == manifest_digest,
+                    "local readiness release target mismatch"
+                );
+                return local.bindings_ready(connection, component_digests).await;
             }
-        } else {
             sqlx::query(RELEASE_COMPONENT_BINDINGS_READY_SQL)
                 .bind(project_env_key)
                 .bind(manifest_digest)
-                .bind(&component_digests)
-                .fetch_one(&mut *connection)
+                .bind(component_digests)
+                .fetch_one(connection)
                 .await
-                .context("query synchronous release connection bindings")
-                .and_then(|row| row.try_get(0).context("decode release binding readiness"))
-        };
-
-        match result {
-            Ok(ready) => {
-                if let Err(error) = sqlx::raw_sql("COMMIT")
-                    .execute(&mut *connection)
-                    .await
-                    .map(|_| ())
-                {
-                    self.destroy(connection);
-                    return Err(error).context("commit release binding readiness snapshot");
-                }
-                Ok(ready)
-            }
-            Err(error) => {
-                if sqlx::raw_sql("ROLLBACK")
-                    .execute(&mut *connection)
-                    .await
-                    .map(|_| ())
-                    .is_err()
-                {
-                    self.destroy(connection);
-                }
-                Err(error)
-            }
-        }
-    }
-}
-
-pub(super) struct DecodedWiring {
-    pub(super) version: u32,
-    pub(super) package_version: String,
-    pub(super) graph_hash: String,
-    pub(super) document: WiringDocument,
-}
-
-/// Read admitted component facts from the process's loaded release.
-pub fn release_components(
-    release: &wamn_engine::release_manifest::LoadedRelease,
-) -> anyhow::Result<Vec<AdmittedComponent>> {
-    let manifest = release.manifest();
-    let components = manifest
-        .components
-        .iter()
-        .map(|component| {
-            let version = if component.package_id == wamn_catalog::PALETTE_PACKAGE_ID {
-                wamn_catalog::PALETTE_PACKAGE_VERSION
-            } else {
-                manifest
-                    .release
-                    .packages
-                    .iter()
-                    .find(|package| package.package_id() == component.package_id)
-                    .context("component package absent from loaded release")?
-                    .package_version()
-            };
-            let target = wamn_catalog::ComponentPackageCoordinate::new(
-                &release.target().project_env_key,
-                &component.package_id,
-                version,
-            )?;
-            Ok(component.descriptor.clone().into_admitted(target).component)
+                .context("query release connection bindings")?
+                .try_get(0)
+                .context("decode release binding readiness")
         })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    verify_served_effect_projections(&components)?;
-    Ok(components)
-}
-
-/// Keep the graph with its already resolved component facts.
-pub(super) fn resolved_wiring(
-    decoded: DecodedWiring,
-    manifest_digest: &str,
-    resolved: BTreeMap<String, AdmittedComponent>,
-    components: Vec<AdmittedComponent>,
-) -> anyhow::Result<ResolvedActiveWiring> {
-    verify_served_effect_projections(&components)?;
-
-    Ok(ResolvedActiveWiring {
-        version: decoded.version,
-        manifest_digest: manifest_digest.to_owned(),
-        graph_hash: Arc::from(decoded.graph_hash),
-        package_version: decoded.package_version,
-        document: decoded.document,
-        node_components: Arc::new(resolved),
-        components: components.into(),
-    })
-}
-
-/// Refuse to serve a component fact whose effects its own audited imports do
-/// not derive.
-///
-/// This is the DELIVERY path. The ctl readers refuse the same row at
-/// publication time, where an operator sees the failure and can act on it; here
-/// a fabricated projection would simply be trusted. `wamn-0h0g.21.10` defaulted
-/// every pre-migration row to `'[]'` — the positive identity of purity — so the
-/// projection is re-derived from the row's own attested imports rather than
-/// believed.
-fn verify_served_effect_projections(components: &[AdmittedComponent]) -> anyhow::Result<()> {
-    for component in components {
-        wamn_catalog::verify_stored_effect_projection(component).with_context(|| {
-            format!(
-                "component {:?} stores an effect projection its audited imports do not derive; \
-                 re-admit it through the validator",
-                component.component
-            )
-        })?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use wamn_catalog::{AdmittedComponentOperation, ComponentPackageCoordinate};
-
-    use super::*;
-
-    /// A component fact exactly as the wamn-0h0g.21.9 converge ALTER leaves
-    /// one: the audited imports it was admitted with, and the `'[]'` the
-    /// DEFAULT wrote over them. Built by hand because admission itself now
-    /// refuses this shape.
-    fn migration_defaulted(imports: &[&str]) -> AdmittedComponent {
-        AdmittedComponent {
-            target: ComponentPackageCoordinate {
-                project_env_key: "org-a".to_owned(),
-                package_id: "orders".to_owned(),
-                package_version: "1.2.0".to_owned(),
-            },
-            component: "transform".to_owned(),
-            interface_version: "0.1.0".to_owned(),
-            operations: BTreeMap::from([(
-                "map".to_owned(),
-                AdmittedComponentOperation {
-                    committed_result_schema: None,
-                    registered_operation: None,
-                    host_transaction: false,
-                    input_ports: Vec::new(),
-                    output_ports: Vec::new(),
-                    parameters: Vec::new(),
-                    statements: BTreeMap::new(),
-                },
-            )]),
-            component_digest: format!("sha256:{}", "a".repeat(64)),
-            imports: imports.iter().map(|name| (*name).to_owned()).collect(),
-            imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
-            effects: Vec::new(),
-        }
-    }
-
-    /// wamn-0h0g.21.11. The delivery path must refuse the fabricated purity
-    /// identity, not merely the publication path. Deleting the call in
-    /// `resolved_wiring` leaves this failing.
-    #[test]
-    fn the_serving_path_refuses_an_effect_projection_no_validator_derived() {
-        let served = vec![migration_defaulted(&["wamn:postgres/client@0.1.0"])];
-
-        let error = verify_served_effect_projections(&served)
-            .expect_err("an underived purity identity is refused before it is served");
-
-        drop(error);
-    }
-
-    /// The other half: a row whose `'[]'` is the value its own imports derive
-    /// is not fabricated, and must keep serving. This is what restricts the
-    /// refusal to exactly the rows a validator never produced.
-    #[test]
-    fn the_serving_path_admits_a_projection_its_imports_derive() {
-        let served = vec![migration_defaulted(&["wasi:clocks/monotonic-clock@0.2.3"])];
-
-        verify_served_effect_projections(&served).expect("a derived pure projection serves");
+        .await
     }
 }

@@ -331,7 +331,7 @@ pub(super) async fn installed(
         .await?
         .context("the environment row is missing after step 4")?;
     Ok(analyse::read_project(
-        &analyse::project_url(platform, document, &row)?,
+        &analyse::project_url(platform, document, &row).await?,
         &wamn_control_provision::project_env_key(&document.org, &document.project, &document.env),
     )
     .await?

@@ -254,7 +254,7 @@ mod tests {
         ] {
             assert_eq!(
                 project_key(project_env_key, database),
-                wamn_run_state::app_identity_hash(project_env_key, database),
+                wamn_identity_protocol::app_identity_hash(project_env_key, database),
                 "project {project_env_key:?}: the provisioner and the runtime must agree"
             );
         }

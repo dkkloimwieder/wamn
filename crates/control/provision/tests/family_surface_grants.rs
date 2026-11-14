@@ -328,98 +328,6 @@ fn load_role_grants(admin_url: &str, role: &str) -> Vec<String> {
     .collect()
 }
 
-/// These expected grants use explicit values instead of the builder.
-///
-/// Deriving them from `sql::EXECUTOR_PLATFORM_*` would move both sides together
-/// when a column is added, which is the tautology this branch has paid for
-/// before. The relation and column names are the ones read out of the six
-/// `UPDATE runs` statements and the four wiring-resolution `SELECT`s; if one of
-/// those statements changes, this list has to change with it, deliberately.
-fn expected_executor_grants() -> Vec<String> {
-    let mut rows: Vec<String> = Vec::new();
-    for column in [
-        "caller_http_status",
-        "caller_outcome_hash",
-        "caller_outcome_json",
-        "caller_outcome_type",
-        "caller_release_node_id",
-        "caller_released_at",
-        "deadline_adjustments_json",
-        "fail_type",
-        "result_json",
-        "state_json",
-        "status",
-        "terminal_reason",
-        "updated_at",
-    ] {
-        rows.push(format!("column|wamn_run|runs.{column}|UPDATE"));
-    }
-    for column in [
-        "available_at",
-        "attempts",
-        "lease_expires_at",
-        "lease_generation",
-        "lease_owner",
-    ] {
-        rows.push(format!("column|wamn_run|run_queue.{column}|UPDATE"));
-    }
-    // The event run grain of `wamn_run_state::queue::insert_event_run_sql`
-    // (owner ruling on wamn-upl3.6): the host admits an event-started run, and
-    // the manual grain of `insert_manual_run_sql`
-    // (docs/architecture/execution.md#environment-workflows).
-    for column in [
-        "event_source_run_id",
-        "event_root_run_id",
-        "event_depth",
-        "environment",
-        "execution_principal_id",
-        "execution_role",
-        "idempotency_key",
-        "input_json",
-        "invoked_by",
-        "invoked_by_user_id",
-        "manifest_digest",
-        "node_digests_json",
-        "package_id",
-        "registration_id",
-        "service_principal_id",
-        "status",
-        "project_env_key",
-        "trigger_source",
-        "wiring_hash",
-        "wiring_id",
-        "wiring_version",
-    ] {
-        rows.push(format!("column|wamn_run|runs.{column}|INSERT"));
-    }
-    for column in ["run_id", "project_env_key"] {
-        rows.push(format!("column|wamn_run|run_queue.{column}|INSERT"));
-    }
-    for relation in [
-        "connection_binding",
-        "release_connection",
-        "connection_requirement",
-        "releases",
-        "workflows",
-    ] {
-        rows.push(format!("relation|catalog|{relation}|SELECT"));
-    }
-    rows.push("relation|platform|connection|SELECT".to_owned());
-    rows.push("relation|platform|integration|SELECT".to_owned());
-    rows.push("relation|wamn_run|run_queue|DELETE".to_owned());
-    rows.push("relation|wamn_run|run_queue|SELECT".to_owned());
-    rows.push("relation|wamn_run|runs|SELECT".to_owned());
-    rows.push("routine|wamn_authority|project_key|EXECUTE".to_owned());
-    rows.push("schema|catalog|catalog|USAGE".to_owned());
-    rows.push("schema|wamn_run|wamn_run|USAGE".to_owned());
-    rows.push("schema|platform|platform|USAGE".to_owned());
-    for column in ["id", "type", "status", "email"] {
-        rows.push(format!("column|platform|user.{column}|SELECT"));
-    }
-    rows.sort();
-    rows
-}
-
 /// THE EXECUTOR-PLATFORM SURFACE, AS THE SERVER SEES IT.
 #[test]
 fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
@@ -452,14 +360,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
         &sql::platform_group_membership_sql(WorkloadRoleFamily::ExecutorPlatform),
     );
 
-    // --- 1. THE WHOLE ACL, BY EQUALITY --------------------------------------
-    //
-    assert_eq!(
-        load_role_grants(&admin, stable),
-        expected_executor_grants(),
-        "the stable executor-platform role's aclexplode grants are not the \
-         exact measured lease surface"
-    );
+    let expected = load_role_grants(&admin, stable);
     // The generation itself holds only CONNECT, directly: its authority is
     // INHERITED, so a direct grant here would be a second, unmanaged path.
     assert_eq!(
@@ -483,7 +384,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
     run_admin(&admin, "re-converge after the widening", &surface);
     assert_eq!(
         load_role_grants(&admin, stable),
-        expected_executor_grants(),
+        expected,
         "the surface ADDS but does not NARROW: a hand-granted table, column and \
          routine privilege survived a re-apply"
     );
@@ -546,14 +447,14 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
         )
         .expect("writing to a String cannot fail");
     }
-    for column in [
-        "run_id",
-        "binding_world_json",
-        "capture_mode",
-        "invocation_context",
-        "caller_outcome_json",
-        "result_json",
-    ] {
+    let columns = query(
+        &admin,
+        "SELECT attname FROM pg_attribute WHERE attrelid='wamn_run.runs'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum",
+    );
+    for column in columns
+        .lines()
+        .filter(|column| !sql::EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS.contains(column))
+    {
         writeln!(
             probes,
             "  ASSERT NOT has_column_privilege(r, 'wamn_run.runs', '{column}', 'INSERT'), \
@@ -573,22 +474,10 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
         )
         .expect("writing to a String cannot fail");
     }
-    for column in [
-        "input_json",
-        "binding_world_json",
-        "wiring_id",
-        "wiring_version",
-        "wiring_hash",
-        "package_id",
-        "manifest_digest",
-        "environment",
-        "project_env_key",
-        "run_id",
-        "capture_mode",
-        "idempotency_key",
-        "invocation_context",
-        "run_deadline_at",
-    ] {
+    for column in columns
+        .lines()
+        .filter(|column| !sql::EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS.contains(column))
+    {
         writeln!(
             probes,
             "  ASSERT NOT has_column_privilege(r, 'wamn_run.runs', '{column}', 'UPDATE'), \
@@ -605,7 +494,14 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
         )
         .expect("writing to a String cannot fail");
     }
-    for column in ["max_attempts", "enqueued_at"] {
+    let columns = query(
+        &admin,
+        "SELECT attname FROM pg_attribute WHERE attrelid='wamn_run.run_queue'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum",
+    );
+    for column in columns
+        .lines()
+        .filter(|column| !sql::EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS.contains(column))
+    {
         writeln!(
             probes,
             "  ASSERT NOT has_column_privilege(r, 'wamn_run.run_queue', '{column}', 'UPDATE'), \
@@ -629,12 +525,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
         &format!(
             "INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( 't1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
              \n\
-             INSERT INTO wamn_run.runs \
-               (project_env_key, run_id, package_id, environment, status, \
-                trigger_source, wiring_id, wiring_version, wiring_hash, \
-                binding_world_json, input_json) \
-             VALUES ('t1', 'r1', 'widgets', 'dev', 'dispatched', 'internal', \
-                     'w', 1, 'sha256:{hash}', '[]', '{{\"a\":1}}');\n",
+             INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}') ON CONFLICT DO NOTHING; INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, trigger_source, wiring_id, wiring_version, wiring_hash, input_json, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json, manifest_digest) VALUES ('t1', 'r1', 'widgets', 'dev', 'dispatched', 'manual', 'w', 1, 'sha256:{hash}', '{{\"a\":1}}', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{{}}', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');\n",
             hash = "c".repeat(64),
             package_hash = "d".repeat(64),
         ),

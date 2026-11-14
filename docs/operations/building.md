@@ -51,16 +51,15 @@ Do not set `RUSTC_WRAPPER=sccache`.
 Build native programs in debug mode by default:
 
 ```bash
-cargo build --locked --offline -p wamn-host -p wamn-ctl -p wamn-identity \
+cargo build --locked --offline -p wamn-host -p wamn-control -p wamn-ctl -p wamn-identity \
   -p wamn-cdc-reader
-cargo build --locked --offline -p wamn-ctl --features ops --bin wamn-ctl-ops
 ```
 
 `wamn-host` uses mimalloc as its global allocator. Cargo builds its bundled C source with the existing C toolchain; no other program changes allocator.
 
 `wamn` owns the developer commands.
-`wamn-ctl` owns provisioning and publication.
-`wamn-ctl-ops` owns database maintenance and retained event advisory commands.
+`wamn-control` serves authenticated org control routes and runs authorized operation Jobs.
+`wamn-ctl` runs internal bootstrap steps.
 The local identity issuer needs `wamn-identity` beside the CLI or at the explicit `WAMN_IDENTITY_BINARY` path.
 
 [`wamn build`](#wamn-build) compiles the components of each package it builds.
@@ -110,7 +109,7 @@ The composed component replaces the overlay's raw output.
 Publication repeats this comparison.
 
 Last, the build copies each component that the package owns to `components/<name>.wasm` in the package's build output. It records each one in `outputs.components` of the package's `build.json`, with its path and `sha256` digest.
-`wamn-ctl push-package` and the dev loop read `build.json` for the bytes of each component.
+Source publication and the dev loop read `build.json` for the bytes of each component.
 `push-package` refuses a component without an entry, and a file whose digest differs from its entry.
 For the `build.json` that `push-package` needs, see [Pushing a package](#pushing-a-package).
 The dev loop watches the package roots, `apps/platform`, and the shared platform WIT sources, so an edit of any of them rebuilds the components.
@@ -283,23 +282,22 @@ Generated client copies stay under `src/generated/`.
 
 ## Pushing a package
 
-`wamn-ctl push-package --package <package root>` pushes one package artifact.
-The command requires a completed `build.json` and reads the compiled package output.
-It verifies component bytes and publishes the recorded build without comparing source files.
-`push-package` never builds, and it never compares file times.
+`wamn schema publish <package root> --env <environment.k>` builds and publishes an application release.
+`wamn deploy <package root> --application <application> --env <environment.k>` also publishes source before it requests deployment.
+The publication owner verifies each component and package artifact.
 
 ## Reading a pushed package
 
 Layer 0 of a package artifact is the canonical `wamn.json` of the package.
 `wamn inspect <digest>` prints layer 0 of the pushed artifact, byte for byte.
 `wamn diff <digest> <digest>` prints each JSON pointer where layer 0 of the two artifacts differs.
-Each argument is the full package artifact digest that `push-package` prints, `sha256:` and 64 hex digits, or the tag `<package_id>-<version>`.
+Each argument is the full package artifact digest that source publication prints, `sha256:` and 64 hex digits, or the tag `<package_id>-<version>`.
 A digest prefix is refused.
 A line that starts with `-` shows the value in the first artifact, and a line that starts with `+` shows the value in the second.
 Identical documents print nothing.
 Both commands pull from the registry only, by full digest or tag, because no database holds a package row.
 They test each layer against its digest.
-They take the registry flags of `wamn-ctl apply-package`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry` and `--oci-ca-path`.
+They accept these registry flags: `--artifact-base`, `--registry-auth-file`, `--insecure-registry` and `--oci-ca-path`.
 
 ```bash
 "$CARGO_TARGET_DIR/debug/wamn" inspect <digest> \
@@ -370,7 +368,7 @@ The native images `host`, `ctl`, and `identity` use one `build-native` stage.
 The host image also carries `wamn-cdc-reader`.
 It compiles every native package in one `cargo build`, so features unify once.
 The `edge-web` image has its own stage, `build-edge-web`. It shares the target cache of `build-native`.
-A second invocation in the same stage builds only `wamn-ctl-ops` with the `ops` feature, because that feature reaches shared code and the shipped `wamn-ctl` builds without it.
+The same native build produces `wamn-control` for the control image.
 The key uses the first 16 hexadecimal characters of the SHA-256 hash of the canonical absolute checkout path, with no trailing newline.
 `cargo xtask lane-start` sets `CARGO_TARGET_DIR=$HOME/.cache/wamn-target/<key>` and exports the key as `WAMN_CHECKOUT_KEY`.
 Pass that key as Docker's `WAMN_CHECKOUT_KEY` build argument.

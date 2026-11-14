@@ -1,16 +1,88 @@
 {{- if .Values.controlService }}
+{{- $name := default .Release.Name .Values.name }}
+{{- $namespace := default .Release.Namespace .Values.namespace }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-configuration
+  namespace: {{ $namespace }}
+data:
+  config.json: {{ .Values.control.configuration | toJson | quote }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.control.account }}
+  namespace: {{ $namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: {{ $name }}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: {{ $name }}}
+    spec:
+      serviceAccountName: {{ .Values.control.account }}
+      {{- if .Values.control.registrySecret }}
+      imagePullSecrets: [{name: {{ .Values.control.registrySecret }}}]
+      {{- end }}
+      containers:
+        - name: control
+          image: {{ .Values.control.image | quote }}
+          args: [--config, /etc/wamn/control/config.json]
+          ports: [{name: http, containerPort: 80}]
+          env:
+            - {name: DOCKER_CONFIG, value: /credentials/registry}
+            {{- if .Values.control.oauthSecret }}
+            - {name: WAMN_OAUTH_KEY_FILE, value: /etc/wamn/oauth/key}
+            {{- end }}
+          volumeMounts:
+            - {name: configuration, mountPath: /etc/wamn/control, readOnly: true}
+            - {name: work, mountPath: /work}
+            - {name: administration, mountPath: /etc/wamn/control-administration, readOnly: true}
+            - {name: identity-ca, mountPath: /etc/identity-ca, readOnly: true}
+            - {name: identity-operator, mountPath: /etc/identity-operator, readOnly: true}
+            - {name: nats, mountPath: /credentials/nats, readOnly: true}
+            - {name: registry, mountPath: /credentials/registry, readOnly: true}
+            {{- if .Values.control.oauthSecret }}
+            - {name: oauth, mountPath: /etc/wamn/oauth, readOnly: true}
+            {{- end }}
+      volumes:
+        - name: configuration
+          configMap: {name: {{ $name }}-configuration}
+        - {name: work, emptyDir: {}}
+        - name: administration
+          configMap: {name: {{ .Values.control.administration }}}
+        - {name: identity-ca, configMap: {name: identity-ca}}
+        - name: identity-operator
+          secret: {secretName: {{ .Values.control.operatorSecret }}}
+        - name: nats
+          secret: {secretName: {{ .Values.control.natsSecret }}}
+        - name: registry
+          {{- if .Values.control.registrySecret }}
+          secret:
+            secretName: {{ .Values.control.registrySecret }}
+            items: [{key: .dockerconfigjson, path: config.json}]
+          {{- else }}
+          configMap: {name: wamn-registry-helper}
+          {{- end }}
+        {{- if .Values.control.oauthSecret }}
+        - name: oauth
+          secret: {secretName: {{ .Values.control.oauthSecret }}}
+        {{- end }}
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ printf "%s-http" (default .Release.Name .Values.name) }}
-  namespace: {{ (default .Release.Namespace .Values.namespace) }}
+  name: {{ $name }}-http
+  namespace: {{ $namespace }}
 spec:
-  selector:
-    wasmcloud.com/hostgroup: {{ (default .Release.Name .Values.name) }}
-  type: ClusterIP
-  ports:
-    - name: http
-      port: 80
-      targetPort: 80
-      protocol: TCP
+  selector: {app.kubernetes.io/name: {{ $name }}}
+  ports: [{name: http, port: 80, targetPort: http}]
 {{- end }}

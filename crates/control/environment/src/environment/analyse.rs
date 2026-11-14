@@ -232,7 +232,7 @@ pub async fn analyse(
     let project = match &row {
         Some(row) => {
             read_project(
-                &project_url(platform, document, row)?,
+                &project_url(platform, document, row).await?,
                 &wamn_control_provision::project_env_key(
                     &document.org,
                     &document.project,

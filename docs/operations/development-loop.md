@@ -56,7 +56,7 @@ The emitted `local_artifacts` configuration names the local output directory and
 The environment document supplies the integration name and version.
 The host reads credential references from Postgres and resolves values through the environment store.
 Set `WAMN_CONTROL_URL` to the control host URL and `WAMN_TOKEN` to the caller session token.
-Before activation, write connections with `wamn-ctl connection write`.
+Before activation, write connections with `wamn connection write`.
 Supply the first credential through `connection write --credential-file <private-file>`.
 Use `connection set-credential` for later credential changes.
 The `dev up` command neither copies nor imports a credential file.
@@ -96,8 +96,8 @@ Startup creates the 32-byte key with mode `0600` only when the file is absent.
 Keep that file across host restarts so that stored OAuth tokens stay readable.
 
 The command starts identity, the org control host, and a local web server, then writes private `dev.json` and exits.
-The control host uses `wamn-host host --control`. Its component configuration references the org control login and its native basic-auth Secret.
-The host serves control HTTP endpoints natively. The platform Helm chart exposes that host through `deploy/platform/release/templates/control.yaml`.
+The temporary local control host uses `wamn-host host --local-control <url>` with an explicit org. Its removal waits for the development measurement. Deployed control uses `wamn-control --config /etc/wamn/control/config.json`.
+The host serves control HTTP endpoints natively. The platform Helm chart exposes deployed control through its Service.
 The administration directory holds the patch from the normal administration credential operation.
 No application release runs in the control host.
 
@@ -308,7 +308,7 @@ Restart the loop with the same configuration after reset.
 ## Pushing from a working tree
 
 The loop does not push packages.
-To push a package that you changed, run `wamn build` for the package first, and then run `wamn-ctl push-package`.
+To publish changed source, use `wamn schema publish <package> --env <environment.k>`.
 `push-package` publishes the existing completed output, including the source snapshot captured by that build ([building](building.md#pushing-a-package)).
 To see what a pushed package holds, run `wamn inspect`.
 To compare two pushed versions, run `wamn diff` ([building](building.md#reading-a-pushed-package)).

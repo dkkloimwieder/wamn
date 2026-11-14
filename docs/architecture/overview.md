@@ -70,10 +70,11 @@ Cloud project, node pool, and OpenTofu tools live in xtask.
 The other control crates live under `crates/control/{package,release,environment,dev}`.
 They run the `git`, `docker`, `kubectl`, and `cargo` processes that their work needs.
 `wamn-dev-control::owned_command` owns the child process groups.
-The environment crate's `ops` feature adds the user-creation, broker-advisory reporting, and history-pruning verbs.
-`wamn-ctl` turns that feature on for its separate `wamn-ctl-ops` binary.
+The environment crate owns history retention. Its library interfaces enforce the retention login and coordinate.
+[Native control](control.md) owns the org control service and its operation worker.
 
-`wamn-ctl` lives at `services/ctl` and owns the command line.
+`wamn` lives at `services/ctl` and owns the user command line.
+`wamn-ctl` is an internal bootstrap worker.
 It holds the clap argument definitions, the printed output, and the exit codes.
 Each verb parses its arguments, calls its owner, and prints the result.
 The `<area>_verbs.rs` modules hold that surface.
@@ -166,25 +167,18 @@ The web front generates its org configuration from the live release.
 `wamn-web-front` owns response headers and proxies `/password/` to identity over HTTPS.
 TLS for browser traffic terminates at ingress.
 
-`wamn-ctl env` has five verbs:
+`wamn deploy`, `wamn rollback`, `wamn status`, and the schema commands call authenticated control routes.
+The CLI requires `WAMN_CONTROL_URL` and `WAMN_TOKEN` for these commands.
+It does not fall back to direct database or Kubernetes access.
+Build, dev and eject run locally. Bootstrap runs locally before control exists.
 
-- `apply <file>`: Move the environment toward its document. `--dry-run` prints the plan without the lock.
-- `rollback <coordinate> --reason <text>`: Restore a successful release and its client pin.
-- `delete <coordinate> [--data]`: Delete the environment.
-- `show <coordinate>`: Print the document that the authorities hold for the environment.
-- `status <coordinate>`: Print the current state as JSON.
-
-`apply`, `rollback` and `delete` take one lifecycle lock for the coordinate and hold it for the whole verb.
-A second verb on the same coordinate refuses while the lock is held.
-If the lock session fails, the verb stops its protected work and returns an error.
-`--dry-run` and `show` take no lock.
-The platform inputs come from environment variables of the verb, not from flags or document fields.
-Apply reads `WAMN_APPLY_DATABASE_URL`, which authenticates as `wamn_apply`.
-Only its ensure phase opens `WAMN_SYSTEM_ADMIN_URL` for role creation and grant repair.
-`delete` and `status` are lifecycle verbs. They read the registry and run their provisioning writes over `WAMN_SYSTEM_ADMIN_URL`, as the install Jobs do.
-Registry and identity data reads and writes use the restricted apply connection, including those inside ensure.
-Project work uses the granted `wamn_db_owner` role.
-Provisioning writes public apply connection data to the org namespace's `wamn-apply` ConfigMap. The native basic-auth Secret of the same name holds the login and password.
+The native service reads one public JSON configuration file through `--config`.
+Database connection objects refer to CNPG Secrets. The configuration holds no database passwords.
+Long application operations run in bounded Jobs through `wamn-kubernetes`.
+A Job receives its authenticated actor and environment coordinate from the service.
+SQL operations mount the owning project SQL and package migration credentials.
+They never mount a superuser credential or start another SQL Job.
+The registry owns the applied environment configuration. Helm owns release history.
 
 `apply` runs these steps:
 
@@ -317,9 +311,9 @@ Migrate mode preserves data. Reset mode clears application state before it reapp
 
 Five layers run a component, and each layer depends only on the layers below it:
 
-1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) holds pure run decisions. `RunStore` defines the queued-run lifecycle. Concrete operation owners hold their own claim storage.
+1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) owns run admission, leases, settlement and pruning on authorized connections. Concrete operation owners hold their own claim storage.
 2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, `invoke_operation`, and the host side of the `wamn:operation` binding that the separate route component calls. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
-3. [`wamn-runtime`](../../crates/platform/runtime/src/lib.rs) holds the plugin set: Postgres, JetStream, blobstore, HTTP connections, credentials, route authentication, and the component registry adapter. `WamnPostgres` is the Postgres adapter of `RunStore`.
+3. [`wamn-runtime`](../../crates/platform/runtime/src/lib.rs) holds the plugin set: Postgres, JetStream, blobstore, HTTP connections, credentials, route authentication, and the component registry adapter. `WamnPostgres` supplies authorized transaction transport for run persistence.
 4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) holds `OperationHost`, native platform endpoints and release readiness.
 5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) owns the private graph walk, the node invocation driver, the durable queue, and the workflow contract (start, park, release, list). It indexes catalog graphs directly. A route never enters it.
 
@@ -330,7 +324,7 @@ The services compose these layers.
 
 A route calls one component export through the route path. A wiring and queued work use the [execution driver](execution.md) in `wamn-workflow`.
 The driver coordinates graph decisions. The engine owns dispatch and workload loading, and the host owns invocation authority.
-The workflow crate owns durable queue leases and settlement through `RunStore`.
+The workflow crate resolves and drives runs. The run-state crate owns their persistence.
 The [capability owners](capabilities.md) supply database, HTTP, object storage, and event access without guest credentials.
 
 The developer host also loads unpublished components and admitted facts from local files.

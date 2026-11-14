@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:workflow/runs@0.9.0",
+  "type": "get",
+  "label": "Workflow runs",
+  "grant": "wamn-control:workflow/runs@0.9.0",
+  "permission_token": "workflow.runs",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

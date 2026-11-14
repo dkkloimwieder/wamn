@@ -6,10 +6,23 @@ use anyhow::{Context as _, ensure};
 use serde_json::Value;
 use sqlx::Connection as _;
 
+/// Each reset phase uses its own role's credential in the same worker process.
+pub struct Credentials {
+    pub owner: String,
+    pub migration: String,
+    pub capture: String,
+}
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credentials").finish_non_exhaustive()
+    }
+}
+
 /// Delete migration-owned objects and application state. Callers stop users first.
 pub async fn reset_database(
     system_url: &str,
     database_url: &str,
+    migration_url: &str,
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<()> {
     let mut system = wamn_postgres::connect(system_url).await?;
@@ -34,11 +47,13 @@ pub async fn reset_database(
     ))
     .execute(&mut *tx)
     .await?;
+    let mut migration = wamn_postgres::connect(migration_url).await?;
+    wamn_control_provision::migration::require_login(&mut migration, &project_env_key).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "DROP OWNED BY {}",
         postgres_protocol::escape::escape_identifier(&login)
     )))
-    .execute(&mut *tx)
+    .execute(&mut migration)
     .await?;
     // SQLx histories are trusted platform objects, separate from application DDL ownership.
     for (table,) in sqlx::query_as::<_, (String,)>("SELECT quote_ident(n.nspname)||'.'||quote_ident(c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='wamn_history' AND c.relname LIKE 'migrations_%' AND c.relkind='r'").fetch_all(&mut *tx).await? {
@@ -90,24 +105,12 @@ pub(in crate::environment) async fn recorded_cluster(
     .await
 }
 
-/// Reset every application from retained sources, or replace one application's SQL source.
+/// Reset every application from retained sources, using explicit owning credentials.
 pub async fn reset_deployed(
     platform: &Platform,
     triple: &wamn_registry::Triple,
     candidate: Option<(&str, &str)>,
-) -> anyhow::Result<Value> {
-    let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("reset administrator URL")?;
-    Box::pin(reset_deployed_with_admin(
-        platform, triple, candidate, &admin,
-    ))
-    .await
-}
-
-pub async fn reset_deployed_with_admin(
-    platform: &Platform,
-    triple: &wamn_registry::Triple,
-    candidate: Option<(&str, &str)>,
-    admin_url: &str,
+    credentials: &Credentials,
 ) -> anyhow::Result<Value> {
     let document = EnvironmentDocument::read_serving(platform, triple).await?;
     let private = ensure::PrivateDirectory::create()?;
@@ -207,7 +210,7 @@ pub async fn reset_deployed_with_admin(
             }
             let url = ensure::project_url(&platform, &document.triple()).await?;
             let admin = wamn_postgres::database_configuration(
-                admin_url,
+                &credentials.owner,
                 &wamn_postgres::identity(&url)?.1,
             )?;
             let event_inputs = platform
@@ -215,17 +218,36 @@ pub async fn reset_deployed_with_admin(
                 .as_ref()
                 .context("reset requires the environment event broker")?;
             let broker = async_nats::jetstream::new(event_inputs.nats.connect().await?);
+            let mut package = wamn_postgres::connect(&credentials.migration).await?;
+            wamn_control_provision::migration::require_login(
+                &mut package,
+                &wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env),
+            )
+            .await?;
+            let mut capture = wamn_postgres::connect(&credentials.capture).await?;
+            let replication: bool = sqlx::query_scalar(
+                "SELECT rolreplication AND NOT rolsuper FROM pg_roles WHERE rolname=session_user",
+            )
+            .fetch_one(&mut capture)
+            .await?;
+            ensure!(replication, "reset requires the capture login");
             stop_users(&platform, &document).await?;
             crate::enable_cdc_project_env::discard_backlog(
                 &platform.system_database_url,
-                &admin,
+                &credentials.capture,
                 &document.triple(),
             )
             .await?;
-            reset_database(&platform.system_database_url, &admin, &document.triple()).await?;
+            reset_database(
+                &platform.system_database_url,
+                &admin,
+                &credentials.migration,
+                &document.triple(),
+            )
+            .await?;
             wamn_broker::streams::discard(&broker, &document.triple()).await?;
             schema::apply_candidates(&platform, &document, candidates, &url).await?;
-            resume_users(&platform, &document, admin_url).await?;
+            resume_users(&platform, &document, &credentials.owner).await?;
             Ok(serde_json::json!({"database": wamn_postgres::identity(&url)?.1, "result":"reset"}))
         })
         .await;
@@ -302,13 +324,10 @@ async fn resume_users(
         .with_context(|| format!("resume application {application}: readiness budget expired"))?
         .with_context(|| format!("resume application {application}"))?;
     }
-    let control = crate::platform::resources::release_values(
-        &platform.target,
-        &platform.target.namespace,
-        &wamn_registry::name::control_resource(&document.org),
-    )
-    .await?
-    .context("installed control host")?;
+    let control = crate::platform::installed::InstalledPlatform::read(&platform.target)
+        .await?
+        .context("installed platform")?
+        .values;
     ensure::provision_materializer(platform, &control, document).await?;
     Ok(())
 }

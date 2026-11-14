@@ -135,8 +135,7 @@ async fn verify_audit_retention_identity(
 /// transaction binds the platform principal, sets `TimeZone` to UTC, takes the
 /// audit retention lock, reads the retention source, and prunes the next
 /// relation after the last one that it pruned. The live retention test
-/// (`services/ctl/tests/prune_record_history_live.rs`) drives this path
-/// through the `wamn-ctl-ops` process.
+/// (`tests/history_retention_live.rs`) drives this library interface.
 pub async fn prune(client: &mut Client) -> anyhow::Result<Vec<PrunedHistory>> {
     let mut pruned = Vec::new();
     let mut last: Option<(String, String)> = None;

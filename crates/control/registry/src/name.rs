@@ -222,14 +222,8 @@ pub fn dev_host_group(key: &str) -> String {
 pub fn operation(org: &str) -> String {
     format!("wamn-operation-{org}")
 }
-/// The input Secret for a control operation.
-pub fn operation_inputs(org: &str, digest: &str) -> String {
-    format!("wamn-operation-{org}-{digest}")
-}
-/// The OCI credential Secret for a control operation.
-pub fn operation_registry(org: &str) -> String {
-    format!("wamn-operation-registry-{org}")
-}
+/// The installed OCI pull credential Secret in each org namespace.
+pub const REGISTRY_PULL: &str = "wamn-registry-pull";
 
 /// The longest slug in a release name: the env name cut to this length.
 pub const SLUG_LEN: usize = 24;

@@ -17,9 +17,8 @@ use crate::{FailType, RunStatus};
 ///
 /// The projection is exactly what the host composer decodes: the run id, prior
 /// lease evidence, the status it validates, the authoritative input it hands
-/// the router, and the immutable wiring pair admission froze, plus the trigger-source
-/// classification that tells the router whether a caller is waiting, and the
-/// selected row's package id. A manual workflow run adds what its queue request
+/// the router, the immutable wiring pair admission froze, and the selected
+/// row's application name. A manual workflow run adds what its queue request
 /// needs: its trigger source, its executing principal and active role, and the
 /// component digest of every node
 /// (docs/architecture/execution.md#environment-workflows). The release is
@@ -36,9 +35,7 @@ use crate::{FailType, RunStatus};
 /// host, which always carries a digest, selects exactly its own release's
 /// runs, and a run pinned to another release never becomes its head. While two
 /// releases coexist, FIFO is per release and a draining host leases only its
-/// own backlog (docs/architecture/execution.md#process-lifecycle). A candidate run carries no pin, so
-/// only a host with no release selects it: candidate selection keeps its own
-/// path. [`grant_production_lease_sql`] tests again the pin.
+/// own backlog (docs/architecture/execution.md#process-lifecycle). [`grant_production_lease_sql`] tests again the pin.
 pub fn select_production_lease_sql() -> String {
     "WITH candidate AS MATERIALIZED ( \
              SELECT q.project_env_key, q.run_id, \
@@ -50,7 +47,7 @@ pub fn select_production_lease_sql() -> String {
               WHERE q.project_env_key = current_setting('app.project_env_key', true) \
                 AND selected_run.package_id = ANY($1::text[]) \
                 AND selected_run.environment = $2 \
-                AND selected_run.manifest_digest IS NOT DISTINCT FROM $3::text \
+                AND selected_run.manifest_digest = $3::text \
                 AND q.available_at <= now() \
                 AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
                 AND ( \
@@ -64,14 +61,7 @@ pub fn select_production_lease_sql() -> String {
          SELECT candidate.run_id, candidate.had_prior_lease, r.status, \
                 r.input_json::text AS input_json, \
                 r.wiring_id, r.wiring_version, \
-                COALESCE( \
-                    r.trigger_source IN ('http','internal','studio') \
-                    OR r.trigger_source IN ('scenario-draft','test-case'), false \
-                ) AS router_caller_attached, \
-                COALESCE(r.trigger_source IN ('http','internal','studio'), false) \
-                    AS durable_caller_attached, \
-                r.wiring_hash, r.binding_world_json::text, r.package_id, \
-                r.service_principal_id::text, r.trigger_source, \
+                r.wiring_hash, r.package_id, \
                 r.execution_principal_id::text, r.execution_role, \
                 r.node_digests_json::text, r.event_root_run_id, r.event_depth \
            FROM candidate \
@@ -123,8 +113,7 @@ pub fn advance_lease_attempts_sql() -> String {
 /// [`advance_lease_attempts_sql`] owns it, outside this statement's abort target.
 ///
 /// The release digest was pinned at admission. The lease verifies the pod
-/// carries that same release on the write that marks the run running. A pod
-/// with no injected release identity binds NULL and verifies nothing.
+/// carries that same release on the write that marks the run running. A host without a release identity cannot lease a run.
 /// The status predicate widened from `dispatched` to the two runnable states the
 /// composer already validates, because a re-lease of a `running` row must reach
 /// the record too; `dispatched` still becomes `running` and `running` stays put.
@@ -146,7 +135,7 @@ pub fn grant_production_lease_sql() -> String {
                FROM leased \
               WHERE r.project_env_key = leased.project_env_key AND r.run_id = leased.run_id \
                 AND r.status IN ('{dispatched}', '{running}') \
-                AND ($4::text IS NULL OR r.manifest_digest = $4) \
+                AND r.manifest_digest = $4 \
               RETURNING r.run_id \
          ) \
          SELECT leased.lease_generation \
@@ -188,7 +177,7 @@ pub fn release_production_lease_sql() -> String {
                 AND q.run_id = $1 AND q.lease_owner = $2 \
                 AND q.lease_generation = $3 \
                 AND q.lease_expires_at > statement_timestamp() \
-                AND r.status IN ('dispatched', 'running') \
+                AND r.status IN ('{dispatched}', '{running}') \
               FOR UPDATE OF r, q \
          ) \
          UPDATE run_queue AS q \
@@ -199,7 +188,9 @@ pub fn release_production_lease_sql() -> String {
                         1000.0 * power(2.0, LEAST(q.attempts, 9)) \
                         * (1.0 + random() * 0.2)) * interval '1 millisecond' \
            FROM held WHERE q.project_env_key = held.project_env_key AND q.run_id = held.run_id \
-         RETURNING q.attempts >= q.max_attempts, held.wiring_id, held.wiring_version"
+         RETURNING q.attempts >= q.max_attempts, held.wiring_id, held.wiring_version",
+        dispatched = RunStatus::Dispatched.as_sql(),
+        running = RunStatus::Running.as_sql(),
     )
 }
 
@@ -234,16 +225,8 @@ pub fn select_exhausted_production_sql() -> String {
 
 /// Mark one already locked exhausted run and dequeue it.
 ///
-/// Params: run id, exact generic failure JSON, RFC 8785 body hash, terminal
-/// instant. Caller outcome compare-and-set semantics match lease refusals:
-/// callerless fields stay NULL and an existing released winner is preserved
-/// byte-for-byte. A component-era management run stores the same truthful
-/// failure as its result because it has no durable caller row for
-/// reconciliation to observe.
-///
-/// The caller supplies the instant (D2b). Both stamps here, `caller_released_at`
-/// and `updated_at`, take it. The status test beside them stays a literal
-/// comparison, so no comparison leaves the server.
+/// Params: run id, generic failure JSON, terminal
+/// instant. Every exhausted run records its failure and loses its queue row.
 pub fn terminalize_exhausted_production_sql() -> String {
     terminalize_exhausted_sql(RunStatus::InfrastructureFailure, None)
 }
@@ -265,28 +248,8 @@ fn terminalize_exhausted_sql(status: RunStatus, fail_type: Option<FailType>) -> 
             UPDATE runs AS r \
             SET status = '{status}', terminal_reason = '{terminal_reason}', \
                 fail_type = {fail_type_sql}, \
-                result_json = CASE \
-                    WHEN {candidate_result} THEN $2::text::jsonb \
-                    ELSE r.result_json END, \
-                caller_outcome_type = CASE \
-                    WHEN {unreleased_attached} THEN 'failed' \
-                    ELSE r.caller_outcome_type END, \
-                caller_outcome_json = CASE \
-                    WHEN {unreleased_attached} THEN $2::text::jsonb \
-                    ELSE r.caller_outcome_json END, \
-                caller_http_status = CASE \
-                    WHEN {unreleased_attached} THEN 500 \
-                    ELSE r.caller_http_status END, \
-                caller_release_node_id = CASE \
-                    WHEN {unreleased_attached} THEN NULL \
-                    ELSE r.caller_release_node_id END, \
-                caller_outcome_hash = CASE \
-                    WHEN {unreleased_attached} THEN $3 \
-                    ELSE r.caller_outcome_hash END, \
-                caller_released_at = CASE \
-                    WHEN {unreleased_attached} THEN $4::timestamptz \
-                    ELSE r.caller_released_at END, \
-                updated_at = $4::timestamptz \
+                result_json = $2::text::jsonb, \
+                updated_at = $3::timestamptz \
            WHERE r.project_env_key = current_setting('app.project_env_key', true) \
              AND r.run_id = $1 \
              AND r.status IN ('{dispatched}', '{running}') \
@@ -302,13 +265,5 @@ fn terminalize_exhausted_sql(status: RunStatus, fail_type: Option<FailType>) -> 
         status = status.as_sql(),
         dispatched = RunStatus::Dispatched.as_sql(),
         running = RunStatus::Running.as_sql(),
-        candidate_result = if fail_type.is_some() {
-            "true"
-        } else {
-            "r.wiring_hash IS NOT NULL \
-                            AND r.binding_world_json IS NOT NULL"
-        },
-        unreleased_attached = "r.trigger_source IN ('http','internal','studio') \
-                               AND r.caller_released_at IS NULL",
     )
 }

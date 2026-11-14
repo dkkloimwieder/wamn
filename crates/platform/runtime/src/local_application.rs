@@ -41,7 +41,6 @@ pub struct LocalBindingFacts {
 /// A validated local definition closure bound to one physical disposable target.
 #[derive(Clone, Debug)]
 pub struct LocalApplication {
-    pub(crate) manifest: ServingManifest,
     pub(crate) target: ReleaseTarget,
     pub(crate) facts: LocalApplicationFacts,
     instance: u32,
@@ -65,7 +64,6 @@ pub async fn load_local_application(
         read_local_target(database_url, &target.project_env_key, &target.environment).await?;
     let facts = load_local_facts(directory, manifest, &target.project_env_key)?;
     Ok(LocalApplication {
-        manifest: manifest.clone(),
         target,
         facts,
         instance,
@@ -748,7 +746,6 @@ mod tests {
                 serde_json::from_value(serde_json::json!({"app":{"packages":["orders"]}})).unwrap(),
             );
         let local = super::LocalApplication {
-            manifest,
             target,
             facts,
             instance: sqlx::query("SELECT oid FROM pg_database WHERE datname=current_database()")

@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:workflow/list@0.9.0",
+  "type": "get",
+  "label": "Workflow list",
+  "grant": "wamn-control:workflow/list@0.9.0",
+  "permission_token": "workflow.list",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

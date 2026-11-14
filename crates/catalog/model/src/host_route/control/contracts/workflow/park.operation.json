@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:workflow/park@0.9.0",
+  "type": "command",
+  "label": "Workflow park",
+  "grant": "wamn-control:workflow/park@0.9.0",
+  "permission_token": "workflow.park",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

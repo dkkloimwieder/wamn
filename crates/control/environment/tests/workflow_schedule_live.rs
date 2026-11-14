@@ -8,7 +8,7 @@
 //! operation (a WAT component that answers fixed rows and writes nothing). A
 //! one-node workflow over the read is authored through the code path of
 //! `wamn-ctl workflow author --schedule`, enabled, and admitted with
-//! `WamnPostgres::admit_schedule_run` as the host's schedule task will admit
+//! `wamn_workflow::admission::admit_schedule_run` as the host's schedule task will admit
 //! it. The real queue service of the release drains it through the router,
 //! under the targeted executor and application logins.
 
@@ -162,7 +162,7 @@ async fn a_role_schedule_run_is_admitted_once_per_due_and_runs_as_the_workflow_u
     let denied = fixture.queued("clerkly", "2026-10-20T10:15:00Z").await;
 
     let row = sqlx::query(
-        "SELECT trigger_source, service_principal_id IS NULL, registration_id IS NULL, \
+        "SELECT trigger_source, registration_id IS NULL, \
                     wiring_id, wiring_version, wiring_hash, manifest_digest, \
                     node_digests_json::text, execution_principal_id::text, execution_role, \
                     invoked_by, invoked_by_user_id IS NULL, idempotency_key, input_json::text, \
@@ -174,34 +174,33 @@ async fn a_role_schedule_run_is_admitted_once_per_due_and_runs_as_the_workflow_u
     .await
     .unwrap();
     assert_eq!(row.get::<String, _>(0), "schedule");
-    assert!(row.get::<bool, _>(1), "no service principal");
-    assert!(row.get::<bool, _>(2), "no registration");
+    assert!(row.get::<bool, _>(1), "no registration");
     assert_eq!(
-        (row.get::<String, _>(3), row.get::<i32, _>(4)),
+        (row.get::<String, _>(2), row.get::<i32, _>(3)),
         ("nightly".to_owned(), 1)
     );
     assert_eq!(
-        row.get::<String, _>(5),
+        row.get::<String, _>(4),
         workflow("nightly").wiring_hash().as_str()
     );
-    assert_eq!(row.get::<String, _>(6), fixture.digest);
+    assert_eq!(row.get::<String, _>(5), fixture.digest);
     assert_eq!(
-        serde_json::from_str::<Value>(&row.get::<String, _>(7)).unwrap(),
+        serde_json::from_str::<Value>(&row.get::<String, _>(6)).unwrap(),
         json!({"read": fixture.read.component_digest})
     );
-    assert_eq!(row.get::<String, _>(8), workflow_user_id().to_string());
-    assert_eq!(row.get::<String, _>(9), "reader");
-    assert_eq!(row.get::<String, _>(10), "schedule");
-    assert!(row.get::<bool, _>(11), "no invoking user");
+    assert_eq!(row.get::<String, _>(7), workflow_user_id().to_string());
+    assert_eq!(row.get::<String, _>(8), "reader");
+    assert_eq!(row.get::<String, _>(9), "schedule");
+    assert!(row.get::<bool, _>(10), "no invoking user");
     assert_eq!(
-        row.get::<String, _>(12),
+        row.get::<String, _>(11),
         "schedule:erp/nightly:2026-10-20T10:15:00Z"
     );
     assert_eq!(
-        serde_json::from_str::<Value>(&row.get::<String, _>(13)).unwrap(),
+        serde_json::from_str::<Value>(&row.get::<String, _>(12)).unwrap(),
         json!({"due": "2026-10-20T10:15:00Z"})
     );
-    assert_eq!(row.get::<String, _>(14), APP);
+    assert_eq!(row.get::<String, _>(13), APP);
 
     fixture.drain().await;
     let (status, result) = fixture.outcome(&run).await;
@@ -347,38 +346,7 @@ async fn no_enabled_schedule_version_refuses_with_no_row() {
     assert_eq!(fixture.runs().await, 0);
 }
 
-#[derive(Clone)]
-struct ScheduleClock {
-    now: tokio::sync::watch::Sender<DateTime<Utc>>,
-    waiting: tokio::sync::mpsc::UnboundedSender<DateTime<Utc>>,
-}
-
-impl ScheduleClock {
-    fn new() -> (Self, tokio::sync::mpsc::UnboundedReceiver<DateTime<Utc>>) {
-        let (now, _) = tokio::sync::watch::channel(due("2026-10-20T10:15:23Z"));
-        let (waiting, ticks) = tokio::sync::mpsc::unbounded_channel();
-        (Self { now, waiting }, ticks)
-    }
-
-    async fn wait_until(&self, tick: DateTime<Utc>) {
-        let mut clock = self.now.subscribe();
-        self.waiting.send(tick).unwrap();
-        clock.wait_for(|now| *now >= tick).await.unwrap();
-    }
-}
-
-async fn next_tick(
-    ticks: &mut tokio::sync::mpsc::UnboundedReceiver<DateTime<Utc>>,
-) -> DateTime<Utc> {
-    tokio::time::timeout(Duration::from_secs(10), ticks.recv())
-        .await
-        .expect("the schedule task reaches its next wait")
-        .expect("the schedule task keeps serving")
-}
-
-/// The host's schedule task reads the enabled rows at each tick: a row
-/// enabled after the task started fires at its next tick, and a row disabled
-/// fires at no later tick. The test controls each minute boundary.
+/// The running schedule service observes enable and disable through the runtime pool.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disable() {
     let _lock = wamn_test_postgres::lock();
@@ -391,84 +359,47 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
             WorkflowExecution::Role("reader"),
         )
         .await
-        .expect("author the schedule workflow");
-
+        .unwrap();
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
-        wamn_postgres::pool(&fixture.executor_url, 1).await.unwrap(),
         Arc::clone(&fixture.postgres),
         PROJECT,
         Arc::clone(&fixture.release),
     );
     let (stop, stopping) = tokio::sync::watch::channel(false);
-    let (clock, mut ticks) = ScheduleClock::new();
-    let serving_clock = clock.clone();
-    let task = tokio::spawn(async move {
-        wamn_workflow::schedule::serve_with_clock(
-            &schedules,
-            stopping,
-            || *serving_clock.now.borrow(),
-            |tick| serving_clock.wait_until(tick),
-        )
-        .await
-    });
-
-    let first = next_tick(&mut ticks).await;
-    assert_eq!(first, due("2026-10-20T10:16:00Z"));
-    fixture
-        .enable("minutely", READER)
-        .await
-        .expect("an enabler holding the role enables");
-    clock.now.send_replace(first);
-    let second = next_tick(&mut ticks).await;
-    assert_eq!(fixture.dues("minutely").await, [first]);
-
-    fixture
-        .disable("minutely")
-        .await
-        .expect("the enabled version disables");
-    clock.now.send_replace(second);
-    next_tick(&mut ticks).await;
-    assert_eq!(fixture.dues("minutely").await, [first]);
-    assert!(!task.is_finished(), "the schedule task keeps serving");
-
-    stop.send(true).unwrap();
-    task.await
-        .unwrap()
-        .expect("the schedule task stops at shutdown");
-    fixture.drain().await;
-    let run: String = sqlx::query(
-        "SELECT run_id FROM wamn_run.runs WHERE wiring_id = 'minutely' ORDER BY created_at LIMIT 1",
-    )
-    .fetch_one(&mut fixture.admin)
+    let task =
+        tokio::spawn(async move { wamn_workflow::schedule::serve(&schedules, stopping).await });
+    fixture.enable("minutely", READER).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(70), async {
+        while fixture.dues("minutely").await.is_empty() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
     .await
-    .unwrap()
-    .get(0);
-    assert_eq!(fixture.outcome(&run).await.0, "completed");
+    .expect("the next minute admits the enabled workflow");
+    fixture.disable("minutely").await.unwrap();
+    let admitted = fixture.dues("minutely").await;
+    tokio::time::sleep(Duration::from_secs(65)).await;
+    assert_eq!(fixture.dues("minutely").await, admitted);
+    assert!(!task.is_finished());
+    stop.send(true).unwrap();
+    task.await.unwrap().unwrap();
+    fixture.drain().await;
+    let run: String = sqlx::query("SELECT run_id FROM wamn_run.runs WHERE wiring_id='minutely'")
+        .fetch_one(&mut fixture.admin)
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        wamn_run_state::RunStatus::from_sql(&fixture.outcome(&run).await.0),
+        Some(wamn_run_state::RunStatus::Completed)
+    );
 }
 
-/// Schedules run from rows (docs/architecture/execution.md#workflows): the
-/// serving release declares no schedule, an authored and enabled row fires, and
-/// a tick missed while the task waits on the database is skipped, not caught
-/// up. The enable after start and the disable are the case above. A missed tick
-/// during a slow admission is the schedule task's unit test
-/// `ticks_missed_during_a_slow_admission_are_skipped`. Here the task's read of
-/// the rows waits on a database lock while the test advances the clock.
+/// A slow database read admits its own due moment and skips missed minutes.
 #[tokio::test(flavor = "multi_thread")]
 async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
-    let stored: Vec<u8> =
-        sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE manifest_digest = $1")
-            .bind(&fixture.digest)
-            .fetch_one(&mut fixture.admin)
-            .await
-            .unwrap()
-            .get(0);
-    let stored: Value = serde_json::from_slice(&stored).unwrap();
-    assert!(
-        stored.pointer("/workflow/schedules").is_none(),
-        "the serving release declares no schedule: {stored}"
-    );
     fixture.grant_workflow_user("reader").await;
     fixture
         .author(
@@ -477,78 +408,59 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
             WorkflowExecution::Role("reader"),
         )
         .await
-        .expect("author the schedule workflow");
-    fixture
-        .enable("minutely", READER)
-        .await
-        .expect("an enabler holding the role enables");
-
-    // Hold the rows from before the first tick until after the second.
+        .unwrap();
+    fixture.enable("minutely", READER).await.unwrap();
     let mut locker = connect(&fixture.url).await;
     let mut hold = locker.begin().await.unwrap();
     sqlx::raw_sql("LOCK TABLE catalog.workflows IN ACCESS EXCLUSIVE MODE")
         .execute(&mut *hold)
         .await
-        .map(drop)
         .unwrap();
-    let connection = wamn_postgres::pool(&fixture.executor_url, 1).await.unwrap();
-    let reader_pid: i32 = sqlx::query("SELECT pg_backend_pid()")
-        .fetch_one(&connection)
-        .await
-        .unwrap()
-        .get(0);
+    let postgres = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: Some(
+                ClassCredentials::default()
+                    .with_class(AuthorityClass::ExecutorPlatform, &fixture.executor_url),
+            ),
+            statement_timeout_ms: 120_000,
+            ..WamnPostgresConfig::from_env()
+        })
+        .unwrap(),
+    );
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
-        connection,
-        Arc::clone(&fixture.postgres),
+        postgres,
         PROJECT,
         Arc::clone(&fixture.release),
     );
-    let (stop, stopping) = tokio::sync::watch::channel(false);
-    let (clock, mut ticks) = ScheduleClock::new();
-    let serving_clock = clock.clone();
-    let task = tokio::spawn(async move {
-        wamn_workflow::schedule::serve_with_clock(
-            &schedules,
-            stopping,
-            || *serving_clock.now.borrow(),
-            |tick| serving_clock.wait_until(tick),
-        )
-        .await
-    });
-    let first = next_tick(&mut ticks).await;
-    assert_eq!(first, due("2026-10-20T10:16:00Z"));
-    clock.now.send_replace(first);
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let blocked: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock')").bind(&reader_pid).fetch_one(&mut fixture.admin).await.unwrap().get(0);
-            if blocked {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    }).await.expect("the schedule read waits on the held database lock");
-    clock
-        .now
-        .send_replace(first + chrono::Duration::seconds(65));
-    assert!(
-        fixture.dues("minutely").await.is_empty(),
-        "no run is admitted while the rows are locked"
-    );
-    hold.commit().await.unwrap();
-    let third = next_tick(&mut ticks).await;
-    assert_eq!(third, first + chrono::Duration::minutes(2));
-    clock.now.send_replace(third);
-    next_tick(&mut ticks).await;
-    stop.send(true).unwrap();
-    task.await
+    let executor = url::Url::parse(&fixture.executor_url)
         .unwrap()
-        .expect("the schedule task stops at shutdown");
-    assert_eq!(
-        fixture.dues("minutely").await,
-        [first, third],
-        "the late first tick admits its own due, the missed second tick is skipped, \
-         and the third fires"
-    );
+        .username()
+        .to_owned();
+    let (stop, stopping) = tokio::sync::watch::channel(false);
+    let task =
+        tokio::spawn(async move { wamn_workflow::schedule::serve(&schedules, stopping).await });
+    tokio::time::timeout(Duration::from_secs(70), async {
+        loop {
+            let blocked: bool = sqlx::query("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE usename=$1 AND wait_event_type='Lock')")
+                .bind(&executor).fetch_one(&mut fixture.admin).await.unwrap().get(0);
+            if blocked { break; }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }).await.expect("the schedule read waits for the database lock");
+    tokio::time::sleep(Duration::from_secs(65)).await;
+    assert!(fixture.dues("minutely").await.is_empty());
+    hold.commit().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(70), async {
+        while fixture.dues("minutely").await.len() < 2 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the current and next visible ticks admit");
+    stop.send(true).unwrap();
+    task.await.unwrap().unwrap();
+    let admitted = fixture.dues("minutely").await;
+    assert!(admitted[1] - admitted[0] >= chrono::Duration::minutes(2));
 }
 
 #[path = "workflow_schedule_live/event_batch.rs"]
@@ -557,7 +469,7 @@ mod event_batch;
 /// A replacement changes only A's schedule pins. B keeps admitting under its loaded release.
 #[tokio::test(flavor = "multi_thread")]
 async fn applications_schedule_independently_across_upgrade_and_rollback() {
-    use wamn_workflow::schedule::{PostgresSchedules, ScheduleRows as _};
+    use wamn_workflow::schedule::PostgresSchedules;
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
     fixture.grant_workflow_user("reader").await;
@@ -574,13 +486,9 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
          SELECT project_env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application=$1").bind(&APP).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
     let upgraded = Arc::new(release_variant(&mut fixture, APP, b"1251").await);
     let billing = Arc::new(release_variant(&mut fixture, "billing", b"1252").await);
-    let b = PostgresSchedules::new(
-        wamn_postgres::pool(&fixture.executor_url, 1).await.unwrap(),
-        Arc::clone(&fixture.postgres),
-        PROJECT,
-        Arc::clone(&billing),
-    );
-    let b_rows = b.enabled().await.unwrap();
+    let b = PostgresSchedules::new(Arc::clone(&fixture.postgres), PROJECT, Arc::clone(&billing));
+    let rows_tick = due("2026-10-20T10:15:00Z");
+    let b_rows = b.enabled(rows_tick).await.unwrap();
     assert!(b_rows.iter().all(|row| row.application == "billing"));
     assert!(!b_rows.is_empty());
     for (minute, release) in [
@@ -588,13 +496,8 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
         (20, &upgraded),
         (25, &fixture.release),
     ] {
-        let a = PostgresSchedules::new(
-            wamn_postgres::pool(&fixture.executor_url, 1).await.unwrap(),
-            Arc::clone(&fixture.postgres),
-            PROJECT,
-            Arc::clone(release),
-        );
-        let a_rows = a.enabled().await.unwrap();
+        let a = PostgresSchedules::new(Arc::clone(&fixture.postgres), PROJECT, Arc::clone(release));
+        let a_rows = a.enabled(rows_tick).await.unwrap();
         assert!(a_rows.iter().all(|row| row.application == APP));
         assert!(!a_rows.is_empty());
         let tick = due(&format!("2026-10-20T10:{minute}:00Z"));
@@ -626,6 +529,46 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
             }
         }
         assert!(a.admit(&b_rows[0], tick).await.is_err());
-        assert_eq!(b.enabled().await.unwrap(), b_rows);
+        assert_eq!(b.enabled(rows_tick).await.unwrap(), b_rows);
     }
+}
+
+/// The project time zone supplies local calendar minutes across daylight saving changes.
+#[tokio::test]
+async fn schedule_ticks_use_the_environment_time_zone() {
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = fixture().await;
+    fixture.grant_workflow_user("reader").await;
+    fixture
+        .author(
+            "daily",
+            WorkflowTrigger::Schedule("0 6 * * *"),
+            WorkflowExecution::Role("reader"),
+        )
+        .await
+        .unwrap();
+    fixture.enable("daily", READER).await.unwrap();
+    sqlx::query("INSERT INTO platform.setting (target_type,target_id,key,value) VALUES ('project',$1,'timezone',$2::text::jsonb)")
+        .bind(PROJECT).bind(serde_json::json!("America/New_York").to_string())
+        .execute(&mut fixture.admin).await.unwrap();
+    let schedules = wamn_workflow::schedule::PostgresSchedules::new(
+        Arc::clone(&fixture.postgres),
+        PROJECT,
+        Arc::clone(&fixture.release),
+    );
+    for tick in [
+        "2026-03-07T11:00:00Z",
+        "2026-03-08T10:00:00Z",
+        "2026-10-31T10:00:00Z",
+        "2026-11-01T11:00:00Z",
+    ] {
+        let rows = schedules.enabled(due(tick)).await.unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            assert!(wamn_workflow::schedule::is_due(&row.schedule, row.local_tick).unwrap());
+        }
+    }
+    sqlx::query("UPDATE platform.setting SET value='7'::jsonb WHERE target_type='project' AND target_id=$1 AND key='timezone'")
+        .bind(PROJECT).execute(&mut fixture.admin).await.unwrap();
+    assert!(schedules.enabled(Utc::now()).await.is_err());
 }

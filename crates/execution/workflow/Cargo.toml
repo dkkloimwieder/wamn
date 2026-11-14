@@ -12,6 +12,7 @@ wamn-broker = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 wamn-catalog = { workspace = true }
 wamn-event-wire = { workspace = true }
+wamn-materializer.workspace = true
 # The route path, the operation host, and the delivery bridge. This crate sits
 # above it, and it never depends on this crate.
 wamn-execution-host = { workspace = true }

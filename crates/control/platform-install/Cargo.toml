@@ -37,6 +37,7 @@ wamn-identity-protocol.workspace = true
 wamn-package-artifact.workspace = true
 wamn-release-control.workspace = true
 wamn-compiler.workspace = true
+wamn-catalog.workspace = true
 postgres-protocol.workspace = true
 
 [dev-dependencies]

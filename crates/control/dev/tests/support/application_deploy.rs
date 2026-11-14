@@ -1,8 +1,8 @@
 //! Application deployment uses product commands; Kubernetes and SQL are observers.
 
 use sqlx::{Connection as _, Row as _};
-#[path = "../../../../../services/ctl/src/route_request.rs"]
-mod route_request;
+#[path = "../../../../../services/ctl/src/read_query.rs"]
+mod read_query;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -45,6 +45,8 @@ struct Journey<'a> {
     isolated_host: &'a str,
     variables: &'a BTreeMap<String, String>,
     token: &'a str,
+    control_url: &'a str,
+    control_token: &'a str,
     client: &'a reqwest::Client,
     edge: &'a str,
 }
@@ -69,6 +71,8 @@ impl Journey<'_> {
             .env("WAMN_DATABASE_NAMESPACE", "platform")
             .env("WAMN_RELEASE_NAMESPACE", "hosts")
             .envs(self.variables)
+            .env("WAMN_CONTROL_URL", self.control_url)
+            .env("WAMN_TOKEN", self.control_token)
             .env("KUBECONFIG", &self.run.target.kubeconfig)
             .env("WAMN_KCL", &self.run.kcl)
             .env("WAMN_RELEASE_CHART", &self.run.chart)
@@ -152,8 +156,7 @@ impl Journey<'_> {
         let request = if route.ends_with("/create") {
             self.client.post(endpoint).json(body)
         } else {
-            let query =
-                route_request::encode_read_query(body[0].as_object().context("read request")?);
+            let query = read_query::encode_read_query(body[0].as_object().context("read request")?);
             self.client.get(format!("{endpoint}?{query}"))
         };
         let response = request.bearer_auth(self.token).send().await?;
@@ -197,9 +200,9 @@ impl Journey<'_> {
     async fn delete_environment(&self) -> anyhow::Result<()> {
         let coordinate = format!(
             "{}/{}/{}",
-            self.run.document.org, self.project, self.environment
+            self.run.document.org, self.environment, self.project
         );
-        let binary = self.run.binary.with_file_name("wamn-ctl");
+        let binary = self.run.binary.clone();
         let binary = binary.to_str().context("CLI path is not UTF-8")?;
         let deletion = format!(
             "exec '{}' env delete '{}' --data",
@@ -424,6 +427,14 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         .json(&json!({"principal_id":principal,"label":"deployment journey","lifetime_seconds":14400}))
         .send().await?.error_for_status()?.json().await?;
     let token = issued["token"].as_str().context("owner PAT")?.to_owned();
+    let control_url = match run.document.provider {
+        Provider::Kind => format!(
+            "http://127.0.0.1:{}",
+            control.as_ref().context("type control forward")?.port
+        ),
+        // The public edge serves control routes under /api.
+        Provider::Gcp => format!("https://{}/api", run.document.route_hosts.control),
+    };
     let journey = Journey {
         run,
         file,
@@ -432,16 +443,10 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         isolated_host: &isolated_host,
         variables: &variables,
         token: &token,
+        control_url: &control_url,
+        control_token: access,
         client: &client,
         edge: &edge_url,
-    };
-    let control_url = match run.document.provider {
-        Provider::Kind => format!(
-            "http://127.0.0.1:{}",
-            control.as_ref().context("type control forward")?.port
-        ),
-        // The public edge serves control routes under /api.
-        Provider::Gcp => format!("https://{}/api", run.document.route_hosts.control),
     };
     let operations = async {
         let create = identity_client.post(format!("{control_url}/wamn_control/project/create"));
@@ -510,10 +515,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     let revoked = journey
         .apply(
             "revoke-journey-pat",
-            &mut journey.cli(
-                &run.binary.with_file_name("wamn-ctl"),
-                &["provision-project-env", "--revoke-pat-prefix", prefix],
-            ),
+            &mut journey.cli(&run.binary, &["revoke-pat", "--prefix", prefix]),
         )
         .await;
     if let Err(error) = &revoked {
@@ -676,10 +678,7 @@ async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> any
         .apply(
             "provision-reset-environment",
             journey
-                .cli(
-                    &journey.run.binary.with_file_name("wamn-ctl"),
-                    &["env", "apply"],
-                )
+                .cli(&journey.run.binary, &["env", "apply"])
                 .arg(&journey.file)
                 .args(["--application", "beta"]),
         )
@@ -688,31 +687,9 @@ async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> any
         .apply(
             "designate-disposable",
             journey
-                .cli(
-                    &journey.run.binary.with_file_name("wamn-ctl"),
-                    &[
-                        "provision-project-env",
-                        "--org",
-                        &journey.run.document.org,
-                        "--project",
-                        journey.project,
-                        "--env",
-                        journey.environment,
-                        "--target",
-                        "cloud",
-                        "--disposable",
-                        "--cluster-namespace",
-                        "platform",
-                        "--namespace",
-                        "hosts",
-                        "--secret-namespace",
-                        "hosts",
-                        "--emit-database",
-                        "-",
-                        "--emit-secret",
-                    ],
-                )
-                .arg(journey.run.directory.join("disposable-credential.json")),
+                .command(&["env", "apply"])
+                .arg(&journey.file)
+                .arg("--disposable"),
         )
         .await?;
     for (application, key) in [("beta", "b0"), ("alpha", "a0")] {
@@ -933,10 +910,7 @@ async fn first_install(
                 .apply(
                     "retry-provisioning",
                     journey
-                        .cli(
-                            &journey.run.binary.with_file_name("wamn-ctl"),
-                            &["env", "apply"],
-                        )
+                        .cli(&journey.run.binary, &["env", "apply"])
                         .arg(&journey.file)
                         .args(["--application", "beta"]),
                 )
@@ -953,10 +927,7 @@ async fn first_install(
         let mut command = if after_sql {
             journey.deploy("beta", digest)
         } else {
-            let mut command = journey.cli(
-                &journey.run.binary.with_file_name("wamn-ctl"),
-                &["env", "apply"],
-            );
+            let mut command = journey.cli(&journey.run.binary, &["env", "apply"]);
             command.arg(&journey.file).args(["--application", "beta"]);
             command
         };

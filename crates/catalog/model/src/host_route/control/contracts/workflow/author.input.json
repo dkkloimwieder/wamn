@@ -1,0 +1,76 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.env",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.application",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.document",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.execution_type",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.execution_role",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.schedule",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.source_package",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.entity",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.ops",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.condition",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    }
+  ]
+}

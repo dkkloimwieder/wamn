@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tracing::Instrument as _;
 
 use wamn_event_wire::Causation;
-use wamn_run_state::AuthorityClass;
+use wamn_identity_protocol::AuthorityClass;
 
 use super::super::pool::ProjectPool;
 use super::super::resources::{

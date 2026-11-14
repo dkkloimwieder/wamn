@@ -4,14 +4,16 @@ kind: Database
 metadata:
   name: {{ .name }}
   namespace: {{ $.Release.Namespace }}
+  {{- if ne (default "present" .ensure) "absent" }}
   annotations:
     helm.sh/resource-policy: keep
+  {{- end }}
 spec:
   name: {{ .name }}
   owner: wamn_db_owner
   cluster: {name: {{ .cluster }}}
-  ensure: present
-  databaseReclaimPolicy: retain
+  ensure: {{ default "present" .ensure }}
+  databaseReclaimPolicy: {{ default "retain" .reclaimPolicy }}
   {{- if ne .connectionLimit nil }}
   connectionLimit: {{ .connectionLimit }}
   {{- end }}

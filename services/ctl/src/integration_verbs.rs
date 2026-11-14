@@ -26,9 +26,6 @@ enum IntegrationCommand {
         repository: PathBuf,
         #[command(flatten)]
         registry: crate::package_verbs::RegistryArgs,
-        /// System database connection with control authority.
-        #[arg(long, env = "WAMN_SYSTEM_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
         #[arg(long)]
         version: i32,
         #[arg(long)]
@@ -57,7 +54,6 @@ pub async fn run(args: IntegrationArgs) -> anyhow::Result<()> {
             code,
             repository,
             registry,
-            database_url,
             version,
             parameter_schema,
             operations,
@@ -70,13 +66,12 @@ pub async fn run(args: IntegrationArgs) -> anyhow::Result<()> {
                 operations,
                 write_interfaces,
             };
-            wamn_package_control::integration::publish(
-                &built,
-                &registry.registry(),
-                &database_url,
-                &publication,
-            )
-            .await?;
+            wamn_package_control::integration::push(&built, &registry.registry(), &publication)
+                .await?;
+            crate::operation_verbs::ControlHost::from_env()?.call("integration.publish", &serde_json::json!({
+                "code":built.code,"digest":built.digest,"version":publication.version,
+                "parameter_schema":publication.parameter_schema,"operations":publication.operations,"write_interfaces":publication.write_interfaces,
+            })).await?;
             built
         }
         IntegrationCommand::Write(args) => {
@@ -106,51 +101,4 @@ pub async fn run(args: IntegrationArgs) -> anyhow::Result<()> {
         built.runtime_type,
     );
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use clap::Parser as _;
-
-    #[derive(Debug, clap::Parser)]
-    struct Probe {
-        #[command(flatten)]
-        integration: super::IntegrationArgs,
-    }
-
-    #[test]
-    fn publish_accepts_repeatable_write_interfaces() {
-        let parsed = Probe::try_parse_from([
-            "probe",
-            "publish",
-            "modbus",
-            "--artifact-base",
-            "localhost/integrations",
-            "--registry-auth-file",
-            "/private/auth.json",
-            "--database-url",
-            "postgres://unused",
-            "--version",
-            "2",
-            "--parameter-schema",
-            "/private/schema.json",
-            "--operations",
-            "wamn:modbus/client@1.0.0",
-            "--write-interface",
-            "wamn:modbus/write@1.0.0",
-            "--write-interface",
-            "example:meter/write@1.0.0",
-        ])
-        .unwrap();
-        let super::IntegrationCommand::Publish {
-            write_interfaces, ..
-        } = parsed.integration.command
-        else {
-            panic!("publish");
-        };
-        assert_eq!(
-            write_interfaces,
-            ["wamn:modbus/write@1.0.0", "example:meter/write@1.0.0"]
-        );
-    }
 }

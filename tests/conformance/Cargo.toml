@@ -41,7 +41,6 @@ sqlx = { workspace = true, features = ["chrono", "json", "macros", "postgres", "
 wamn-execution-host = { workspace = true }
 wamn-fixture-package = { workspace = true }
 wamn-compiler = { workspace = true }
-wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 wasmparser = { workspace = true }
 wat = "=1.254.2"

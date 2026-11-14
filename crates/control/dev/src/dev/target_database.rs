@@ -419,6 +419,7 @@ impl TargetLease {
             wamn_environment::environment::sql::reset::reset_database(
                 config.system_database_url(),
                 config.target_database_url(),
+                config.migration_database_url(),
                 &triple,
             )
             .await?;

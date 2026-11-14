@@ -70,7 +70,7 @@
 //! rule is one instance *per process*: construct once, hand it out by reference,
 //! and never hold two.
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use anyhow::Context as _;
 use wamn_catalog::{
@@ -175,6 +175,7 @@ pub struct LoadedRelease {
     release: CarriedRelease,
     manifest: ServingManifest,
     target: ReleaseTarget,
+    components: Arc<[AdmittedComponent]>,
 }
 
 impl LoadedRelease {
@@ -246,10 +247,21 @@ impl LoadedRelease {
                 format!("release carries a package outside application {application}"),
             ));
         }
+        let components = manifest
+            .admitted_components(&target.project_env_key)
+            .map_err(|error| {
+                ReleaseLoadError::new(ReleaseLoadErrorType::ManifestRejected, error.to_string())
+            })?;
+        for component in &components {
+            wamn_catalog::verify_stored_effect_projection(component).map_err(|error| {
+                ReleaseLoadError::new(ReleaseLoadErrorType::ManifestRejected, error.to_string())
+            })?;
+        }
         Ok(Self {
             release: CarriedRelease { manifest_digest },
             manifest,
             target,
+            components: components.into(),
         })
     }
 
@@ -277,6 +289,7 @@ impl LoadedRelease {
             },
             manifest,
             target: ReleaseTarget::new(wamn_catalog::host_route_package(), "control"),
+            components: Vec::new().into(),
         }
     }
 
@@ -288,6 +301,11 @@ impl LoadedRelease {
     /// The verified manifest. Every reader takes it from here.
     pub fn manifest(&self) -> &ServingManifest {
         &self.manifest
+    }
+
+    /// Admitted facts validated once when this release loads.
+    pub fn components(&self) -> &Arc<[AdmittedComponent]> {
+        &self.components
     }
 
     /// The project and environment this host serves, from its configuration.
@@ -428,6 +446,35 @@ mod tests {
                 .error_type(),
             ReleaseLoadErrorType::ManifestRejected
         );
+    }
+
+    #[test]
+    fn loading_refuses_an_effect_projection_its_imports_do_not_derive() {
+        let mut manifest = fixture();
+        let mut component = manifest.components.pop_first().unwrap();
+        component.descriptor.imports = vec!["wamn:postgres/client@0.1.0".to_owned()];
+        manifest.components.insert(component);
+        let error = LoadedRelease::load_canonical_bytes(
+            &manifest.canonical_bytes(),
+            "effect projection",
+            target(),
+        )
+        .unwrap_err();
+        assert_eq!(error.error_type(), ReleaseLoadErrorType::ManifestRejected);
+    }
+
+    #[test]
+    fn loading_admits_an_effect_projection_its_imports_derive() {
+        let mut manifest = fixture();
+        let mut component = manifest.components.pop_first().unwrap();
+        component.descriptor.imports = vec!["wasi:clocks/monotonic-clock@0.2.3".to_owned()];
+        manifest.components.insert(component);
+        LoadedRelease::load_canonical_bytes(
+            &manifest.canonical_bytes(),
+            "effect projection",
+            target(),
+        )
+        .unwrap();
     }
 
     fn target() -> ReleaseTarget {

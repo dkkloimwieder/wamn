@@ -1,0 +1,10 @@
+{
+  "fields": [
+    {
+      "path": "revoked",
+      "type": "bool",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

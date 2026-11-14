@@ -4,7 +4,7 @@ use crate::error::ProvisionError;
 use crate::workload_role::WorkloadRoleFamily;
 
 /// The shared role of generated application statements.
-pub const APP_ROLE: &str = "wamn_app";
+pub use wamn_identity_protocol::authority_class::APP_ROLE;
 /// The owner of project databases and platform tables.
 pub const DB_OWNER_ROLE: &str = "wamn_db_owner";
 pub use wamn_registry::identifiers::MAX_PROJECT_ID_LEN;

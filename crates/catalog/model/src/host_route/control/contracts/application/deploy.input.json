@@ -23,6 +23,12 @@
       "type": "text",
       "nullable": false,
       "values": []
+    },
+    {
+      "path": "value.application",
+      "type": "text",
+      "nullable": false,
+      "values": []
     }
   ]
 }
