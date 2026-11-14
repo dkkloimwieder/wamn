@@ -20,7 +20,7 @@ pub async fn prune(platform: &Platform, triple: &Triple) -> anyhow::Result<Vec<S
         let document = EnvironmentDocument::read_serving(platform, triple).await?;
         let residency = super::drain::observe(platform,triple).await?;
         let live = super::drain::loaded(&residency);
-        let mut retained: BTreeSet<String> = live.into_keys().collect();
+        let mut retained: BTreeSet<String> = live.into_keys().map(|(_, digest)| digest).collect();
         for selection in document.applications.values() {
             if let super::document::DeclaredRelease::Digest(digest) = &selection.current {
                 retained.insert(digest.clone());

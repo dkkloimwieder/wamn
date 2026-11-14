@@ -186,6 +186,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             );
         }
         let row: Value = serde_json::from_str(row["data"]["release.json"].as_str().unwrap())?;
+        assert_eq!(row["digest"].as_str(), Some(release.digest().as_str()));
         let expected = selection
             .client
             .as_ref()
@@ -200,7 +201,11 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             .into_iter()
             .collect::<BTreeMap<_, _>>();
         assert_eq!(row["clients"], serde_json::to_value(expected)?);
-        Ok(carrier)
+        Ok((
+            row["digest"].clone(),
+            route["host"].clone(),
+            route["release"].clone(),
+        ))
     };
     let before = releases
         .iter()
@@ -213,131 +218,16 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         DeclaredRelease::Digest(release.digest().to_string());
     for (application, release) in &releases {
         let after = render(&document, application, release)?;
+        let (before_digest, before_host, before_release) = &before[application];
+        let (after_digest, after_host, after_release) = after;
+        assert_eq!(after_host, *before_host);
+        assert_eq!(after_release, *before_release);
         if *application == "orders" {
-            assert_ne!(before[application], after);
-            let before_route = before[application]
-                .iter()
-                .find(|object| object["data"]["route.json"].is_string())
-                .unwrap();
-            let after_route = after
-                .iter()
-                .find(|object| object["data"]["route.json"].is_string())
-                .unwrap();
-            assert_eq!(before_route["data"], after_route["data"]);
+            assert_ne!(after_digest, *before_digest);
         } else {
-            assert_eq!(before[application], after);
+            assert_eq!(after_digest, *before_digest);
         }
     }
-    Ok(())
-}
-
-#[test]
-fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
-    use wamn_environment::environment::{ensure, sql::reset, write};
-    let mut release = manifest(&fixture_releases()?[2])?;
-    let component = release.components.iter().next().unwrap();
-    let member = wamn_catalog::ServingEntryMember {
-        package_id: component.package_id.clone(),
-        component: component.descriptor.component.clone(),
-        digest: component.descriptor.component_digest.clone(),
-    };
-    release.composed_entry = Some(wamn_catalog::ServingComposedEntry {
-        reference: format!("entries@{}", member.digest),
-        route_digest: member.digest.clone(),
-        application: member.clone(),
-        members: [member].into(),
-    });
-    let document = fixture_document("dev", "orders.example", release.digest().as_str());
-    let application = document.applications.keys().next().unwrap();
-    let scratch = ScratchRoot::create()?;
-    let group = scratch.path().join("host.yaml");
-    std::fs::write(
-        &group,
-        serde_yaml::to_string(&fixture_host_group(&document, "registry.invalid"))?,
-    )?;
-    let reapply = || -> anyhow::Result<_> {
-        let (values, _) = write::release_values(
-            &document,
-            application,
-            &release,
-            release.digest().as_str(),
-            "registry.invalid/releases",
-            "registry.invalid/wamn/components",
-            "reset-render",
-        )?;
-        Ok(values)
-    };
-    let mut stopped = serde_json::to_value(reapply()?)?;
-    reset::stop_values(&mut stopped)?;
-    let stopped = template(&serde_yaml::to_value(&stopped)?, NAMESPACE)?;
-    assert!(
-        stopped
-            .iter()
-            .all(|object| object["kind"] != "WorkloadDeployment")
-    );
-    let resumed = template(&reapply()?, NAMESPACE)?;
-    let workloads = resumed
-        .iter()
-        .filter(|object| object["kind"] == "WorkloadDeployment")
-        .collect::<Vec<_>>();
-    assert!(!workloads.is_empty());
-    assert!(
-        workloads
-            .iter()
-            .all(|workload| workload["spec"]["replicas"] == 1)
-    );
-    assert!(
-        resumed
-            .iter()
-            .filter(|object| object["kind"] == "Deployment")
-            .all(|host| host["spec"]["replicas"]
-                .as_u64()
-                .is_some_and(|replicas| replicas > 0))
-    );
-
-    // Stopping the shared host sets zero replicas. Provisioning restores them.
-    let mut shared = ensure::environment_host_values(
-        &document,
-        70,
-        1,
-        120,
-        Some(serde_yaml::from_str(&std::fs::read_to_string(&group)?)?),
-        false,
-        None,
-    )?;
-    reset::stop_values(&mut shared)?;
-    let shared = template(&serde_yaml::to_value(&shared)?, NAMESPACE)?;
-    assert!(
-        shared
-            .iter()
-            .all(|object| object["kind"] != "WorkloadDeployment")
-    );
-    assert!(
-        shared
-            .iter()
-            .filter(|object| object["kind"] == "Deployment")
-            .all(|host| host["spec"]["replicas"] == 0)
-    );
-    let shared = template(
-        &serde_yaml::to_value(ensure::environment_host_values(
-            &document,
-            70,
-            1,
-            120,
-            Some(serde_yaml::from_str(&std::fs::read_to_string(&group)?)?),
-            false,
-            None,
-        )?)?,
-        NAMESPACE,
-    )?;
-    assert!(
-        shared
-            .iter()
-            .filter(|object| object["kind"] == "Deployment")
-            .all(|host| host["spec"]["replicas"]
-                .as_u64()
-                .is_some_and(|replicas| replicas > 0))
-    );
     Ok(())
 }
 

@@ -62,7 +62,7 @@ runtime-operator:
       defaultHeapMemory: 256MiB
       coreInstances: 512
       maxConcurrentStarts: 4
-      guestMemoryMode: count
+      guestMemoryMode: enforce
       requests:
         memory: "64Mi"
       limits:

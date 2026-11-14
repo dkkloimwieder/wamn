@@ -178,6 +178,8 @@ SQL steps run inside the authorized operation Job with their owning role credent
 The control image runs workers and reads the installed chart reference.
 The installed control configuration names the pinned worker image and its configuration.
 Environment provisioning creates separate code and SQL ServiceAccounts and namespace Roles.
+Reset uses the existing lifecycle worker account to stop and resume the shared environment host.
+Each project's CDC account reads only its replication credential and database CA.
 
 
 Set `WAMN_CONTROL_URL` to the deployed control host and `WAMN_TOKEN` to your password session token.

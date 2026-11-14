@@ -317,20 +317,6 @@ async fn resume_users(
     Ok(())
 }
 
-/// Remove chart-owned workloads and stop their hosts using existing chart values.
-/// Ordinary reapply derives the roles and host replicas from the selected release again.
-pub fn stop_values(values: &mut Value) -> anyhow::Result<()> {
-    values["roles"] = serde_json::json!([]);
-    for group in values["runtime-operator"]["runtime"]["hostGroups"]
-        .as_array_mut()
-        .into_iter()
-        .flatten()
-    {
-        group["replicas"] = 0.into();
-    }
-    Ok(())
-}
-
 async fn discard_backlog(
     system_url: &str,
     admin_url: &str,

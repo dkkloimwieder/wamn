@@ -232,7 +232,7 @@ pub async fn status(
 async fn stranded_runs(
     platform: &Platform,
     triple: &Triple,
-    live: &BTreeMap<String, usize>,
+    live: &BTreeMap<(String, String), usize>,
     admin_url: &str,
 ) -> anyhow::Result<Vec<Stranded>> {
     // A lifecycle verb: the provisioning credential, as the install Jobs use.

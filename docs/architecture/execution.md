@@ -403,11 +403,11 @@ Pool capacity does not limit request admission or total memory.
 A chart host derives its guest memory budget from its cgroup: three quarters of the 768Mi limit, which is 576 MiB.
 A process memory guard at 90 percent of the limit refuses guest growth and new workloads in every mode.
 The guard samples resident memory once per second, so it is not a hard allocation cap.
-The host runs guest memory in count mode and raw-socket egress in enforce mode ([native alignment](native-alignment.md#retained-wamn-implementations)).
-Guest memory count mode records growth past the budget and allows it. Socket enforce mode blocks traffic refused by policy.
+The host enforces the guest memory budget and raw-socket egress policy ([native alignment](native-alignment.md#retained-wamn-implementations)).
+The pinned wash runtime refuses growth beyond the shared guest budget.
 The host flags `--guest-memory-mode` and `--socket-egress` each accept count or enforce.
-Each linear memory keeps its 256 MiB ceiling.
-A combined per-instance store limit awaits the owner’s enforcement decision. The native runtime keeps the store hook private.
+Both default to enforce. Each linear memory has a 256 MiB ceiling.
+The shared guest memory budget remains derived from the container limit.
 Existing route and queue admission limits and deployment memory limits remain independent.
 Wasmtime's pooling allocator remains enabled under its separate resource limits.
 The release chart sets how many bytes each allocator slot keeps resident after use.
@@ -550,7 +550,9 @@ An absent setting uses UTC. A setting with an invalid type or zone refuses that 
 
 The environment document declares its applications: each name with the packages of the release that belong to it.
 `environment::apply` refuses a release package that belongs to no application or to two, and a declared package that the release does not carry.
-The release chart passes the map to the host as canonical JSON in `--applications`, beside `--environment`, and keeps it in the Helm revision's values, where `env show` and `wamn workflow author` read it.
+The release chart projects each application selection into a ConfigMap.
+The host reads these release projections for each project in its environment.
+Helm keeps each application's selection in its own deployment history.
 The host uses the declared application membership for each loaded release. A restored run retains its application and manifest digest.
 A workflow belongs to one declared application, by name: `workflow author` and `workflow.start` refuse a name that the environment does not declare.
 An application is a name, never a package. The workflow condition resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue leases the declared application names, and the executor resolves the run's nodes within that application's packages.
@@ -859,8 +861,9 @@ Connection memory supplies current binding and credential state.
 The host does not rebuild release or workflow authority from SQL on an effect call.
 
 An exclusive connection acquires a resource lease, a lock held by its host, before its first call.
-The host shares one dedicated system database session across its cloud leases.
-The session uses `WAMN_CONNECTION_STORE_URL` and opens on the first exclusive cloud call.
+Each project has a dedicated system database session for its cloud leases.
+The host reads connection configuration from that project's mounted directory under `/etc/wamn/environment`.
+The session opens on the first exclusive cloud call.
 Its key is `hashtextextended('resource:' || target_id || ':' || resource_key, 0)`.
 Local targets use an in-process map with the same resource string.
 

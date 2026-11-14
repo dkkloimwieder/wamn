@@ -7,14 +7,14 @@ import { ControlHome } from "../src/control-home";
 import { CONTROL } from "./fixtures";
 
 const status: environment.EnvironmentStatusResult = {
-  digest: "sha256:123456789abcdef",
+  digest: null,
   rollout: { replicas: 2, updatedReplicas: 2, readyReplicas: 2, availableReplicas: 2 },
   usersWithRole: 3,
   roles: 4,
   memberships: 5,
   workloads: [{ name: "http", conditions: [{ type: "Ready", status: "True" }] }],
   live: [],
-                  residency: [],
+  residency: [{ application: "orders", manifestDigest: "sha256:release", loaded: true, runs: [] }],
 };
 
 function tile(label: string, value: string, state: string, view: Pick<typeof screen, "getByRole"> = screen) {
@@ -27,7 +27,7 @@ function tile(label: string, value: string, state: string, view: Pick<typeof scr
 describe("Environment tiles", () => {
   it("shows a complete rollout, counts and ready workloads from one snapshot", () => {
     render(() => <EnvironmentTiles status={status} />);
-    tile("Release", "12345678", "ok");
+    tile("Resident releases", "1 loaded / 0 not loaded", "ok");
     tile("Users with a role", "3", "ok");
     tile("Roles", "4", "ok");
     tile("Memberships", "5", "ok");
@@ -39,16 +39,18 @@ describe("Environment tiles", () => {
     "warns when %s is behind the rollout",
     (field) => {
       render(() => <EnvironmentTiles status={{ ...status, rollout: { ...status.rollout, [field]: 1 } }} />);
-      tile("Release", "12345678", "warning");
+      tile("Resident releases", "1 loaded / 0 not loaded", "warning");
     },
   );
 
-  it("keeps missing release and counts unknown", () => {
+  it("keeps missing counters unknown without hiding measured workloads and residency", () => {
     render(() => (
-      <EnvironmentTiles status={{ ...status, digest: null, usersWithRole: null, roles: null, memberships: null }} />
+      <EnvironmentTiles status={{ ...status, usersWithRole: null, roles: null, memberships: null }} />
     ));
-    for (const label of ["Release", "Users with a role", "Roles", "Memberships", "Workloads"])
+    for (const label of ["Users with a role", "Roles", "Memberships"])
       tile(label, "Unknown", "unknown");
+    tile("Workloads", "1 ready / 0 not ready", "ok");
+    tile("Resident releases", "1 loaded / 0 not loaded", "ok");
   });
 
   it("preserves measured zeros", () => {
@@ -161,7 +163,7 @@ describe("Control splash", () => {
       tile("Users with a role", "3", "ok", within(widgets.getByRole("region", { name: "dev" })));
       const failed = within(widgets.getByRole("region", { name: "prod" }));
       await failed.findAllByText(/status unavailable/);
-      for (const label of ["Release", "Users with a role", "Roles", "Memberships", "Workloads"]) {
+      for (const label of ["Resident releases", "Users with a role", "Roles", "Memberships", "Workloads"]) {
         tile(label, "Unknown", "unknown", failed);
         expect(failed.getByRole("group", { name: label }).textContent).toContain("status unavailable");
       }

@@ -124,8 +124,8 @@ pub struct Authorities {
     pub project: Option<ProjectState>,
     pub release: Option<ReleaseFacts>,
     pub revision: Option<Revision>,
-    /// Release digest to the count of host pods that are not terminated.
-    pub live: BTreeMap<String, usize>,
+    /// Loaded application and digest pairs observed from the environment hosts.
+    pub live: BTreeMap<(String, String), usize>,
 }
 
 /// The result of analysis: the authorities and the differences to apply.

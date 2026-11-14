@@ -223,6 +223,17 @@ export function Environment(
   const [state, setState] = createSignal<"active" | "inactive">();
   const [status, setStatus] = createSignal<environment.EnvironmentStatusResult>();
   const [profile, setProfile] = createSignal<release.ReleaseProfileResult>();
+  const [selection, setSelection] = createSignal<string>();
+  type ResidentRelease = environment.EnvironmentStatusResult["residency"][number];
+  const selectionKey = (entry: ResidentRelease) => `${entry.application}@${entry.manifestDigest}`;
+  const selectRelease = async (entry: ResidentRelease | undefined) => {
+    const key = entry && selectionKey(entry);
+    if (selection() !== key || !entry) setProfile(undefined);
+    setSelection(key);
+    if (!entry) return;
+    const nextProfile = value(await release.profile(props.transport, [{ ...config, digest: entry.manifestDigest }]));
+    if (active && selection() === key) setProfile(nextProfile);
+  };
   const [trouble, setTrouble] = createSignal<string>();
   const [missing, setMissing] = createSignal(false);
   const [pending, setPending] = createSignal(false);
@@ -244,14 +255,10 @@ export function Environment(
     if (!entry) return;
     if (active) setState(entry.state);
     const next = value(observed);
-    if (active) {
-      setStatus(next);
-      if (!next.digest) setProfile(undefined);
-    }
-    if (next.digest) {
-      const nextProfile = value(await release.profile(props.transport, [{ ...config, digest: next.digest }]));
-      if (active) setProfile(nextProfile);
-    }
+    if (!active) return;
+    setStatus(next);
+    const selected = next.residency.find((entry) => selectionKey(entry) === selection()) ?? next.residency[0];
+    await selectRelease(selected);
   };
   void untrack(refresh).catch((error: unknown) => {
     if (active) setTrouble(String(error));
@@ -276,6 +283,24 @@ export function Environment(
   return (
     <Show when={!missing()} fallback={<MissingPage />}>
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
+      <Show when={(!props.table || props.table === "operations" || props.table === "roles") && status()?.residency.length}>
+        <label>
+          Application release
+          <select
+            value={selection() ?? ""}
+            onChange={(event) => {
+              const selected = status()?.residency.find((entry) => selectionKey(entry) === event.currentTarget.value);
+              void selectRelease(selected).catch((error: unknown) => {
+                if (active) setTrouble(String(error));
+              });
+            }}
+          >
+            <For each={status()?.residency}>
+              {(entry) => <option value={selectionKey(entry)}>{entry.application}: {entry.manifestDigest}</option>}
+            </For>
+          </select>
+        </label>
+      </Show>
       <Show when={!props.table}>
         <Page
           title={`${config.project}/${config.env}`}
@@ -362,7 +387,7 @@ export function Environment(
           />
         </div>
       </Show>
-      <Show when={props.table === "operations" && (profile() || (status() && !status()?.digest))}>
+      <Show when={props.table === "operations" && (profile() || (status() && !status()?.residency.length))}>
         <div class="platform-table-screen">
           <Records
             refresh={refresh}
@@ -458,7 +483,7 @@ export function Environment(
           />
         </div>
       </Show>
-      <Show when={props.table === "roles" && (profile() || (status() && !status()?.digest))}>
+      <Show when={props.table === "roles" && (profile() || (status() && !status()?.residency.length))}>
         <div class="platform-table-screen">
           <Records
             refresh={refresh}

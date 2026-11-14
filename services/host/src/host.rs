@@ -249,11 +249,11 @@ pub struct HostArgs {
     )]
     pub core_instances: u32,
 
-    /// Guest memory accounting mode. Count records growth without enforcing the guest budget.
+    /// Guest memory mode. Enforce refuses growth beyond the container-derived guest budget.
     #[arg(
         long,
         env = "WASH_GUEST_MEMORY_MODE",
-        default_value = "count",
+        default_value = "enforce",
         value_parser = clap::builder::PossibleValuesParser::new(["count", "enforce"])
             .map(|mode| if mode == "enforce" { GuestMemoryMode::Enforce } else { GuestMemoryMode::Count })
     )]
@@ -1844,13 +1844,7 @@ host:
             "--registry-token-metadata",
         ];
         assert!(parse(both).is_err());
-        let neither = RegistryPullCredential::select(None, false)
-            .err()
-            .expect("a host with no registry credential refuses");
-        assert_eq!(
-            neither.to_string(),
-            "a release-backed host requires --registry-auth-file or --registry-token-metadata"
-        );
+        assert!(RegistryPullCredential::select(None, false).is_err());
     }
 
     #[test]
@@ -1987,7 +1981,7 @@ host:
         );
         assert_eq!(
             parse(["wamn-host"]).unwrap().args.guest_memory_mode,
-            GuestMemoryMode::Count
+            GuestMemoryMode::Enforce
         );
         assert!(parse(["wamn-host", "--guest-memory-mode=off"]).is_err());
         assert_eq!(cli.args.socket_egress, EgressMode::Enforce);

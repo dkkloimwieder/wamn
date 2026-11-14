@@ -10,7 +10,12 @@ pub fn values(triple: &Triple, cluster: &str, database: &str) -> anyhow::Result<
         &triple.project,
         triple.env.as_str(),
     )?;
-    Ok(json!({"operations":{"name":name,"cluster":cluster,"database":database}}))
+    let capture = wamn_control_provision::project_env_cdc_secret_name(
+        &triple.org,
+        &triple.project,
+        triple.env.as_str(),
+    );
+    Ok(json!({"operations":{"name":name,"cluster":cluster,"database":database,"capture":capture}}))
 }
 
 pub async fn provision(

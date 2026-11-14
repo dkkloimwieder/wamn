@@ -225,6 +225,10 @@ pub fn delete_environment_connections_sql() -> &'static str {
 pub const ENVIRONMENT_LOCK_SQL: &str =
     "SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
 
+/// Transaction-scoped exclusion for integration mutations. Params: org, environment.
+pub const ENVIRONMENT_TRANSACTION_LOCK_SQL: &str =
+    "SELECT pg_try_advisory_xact_lock(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
+
 /// Independent applications and SQL Jobs exclude shared database replacement.
 pub const ENVIRONMENT_SHARED_LOCK_SQL: &str =
     "SELECT pg_try_advisory_lock_shared(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";

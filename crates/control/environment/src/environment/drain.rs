@@ -62,11 +62,13 @@ pub async fn drain(
     Ok(residency)
 }
 
-/// Loaded digest membership for the database's unfinished-run boundary.
-pub fn loaded(residency: &[ReleaseResidency]) -> BTreeMap<String, usize> {
+/// Loaded application and digest membership for the database's unfinished-run boundary.
+pub fn loaded(residency: &[ReleaseResidency]) -> BTreeMap<(String, String), usize> {
     let mut live = BTreeMap::new();
     for release in residency.iter().filter(|release| release.loaded) {
-        *live.entry(release.manifest_digest.clone()).or_default() += 1;
+        *live
+            .entry((release.application.clone(), release.manifest_digest.clone()))
+            .or_default() += 1;
     }
     live
 }
@@ -113,7 +115,9 @@ SELECT run_id, manifest_digest FROM wamn_run.runs \
    AND status NOT IN ('completed', 'failed', 'infrastructure-failure') \
    AND manifest_digest IS NOT NULL \
    AND ($4::text[] IS NULL OR package_id = ANY($4)) \
-   AND NOT (manifest_digest = ANY($3)) \
+   AND NOT EXISTS (SELECT FROM unnest($3::text[], $5::text[]) \
+       AS loaded(application, digest) WHERE loaded.application = runs.package_id \
+       AND loaded.digest = runs.manifest_digest) \
  ORDER BY manifest_digest, run_id";
 
 /// One run pinned to a release with no loaded release.
@@ -133,9 +137,12 @@ pub async fn stranded(
     project_env_key: &str,
     environment: &str,
     applications: Option<&[String]>,
-    live: &BTreeMap<String, usize>,
+    live: &BTreeMap<(String, String), usize>,
 ) -> anyhow::Result<Vec<Stranded>> {
-    let live: Vec<String> = live.keys().cloned().collect();
+    let (loaded_applications, loaded_digests): (Vec<&str>, Vec<&str>) = live
+        .keys()
+        .map(|(application, digest)| (application.as_str(), digest.as_str()))
+        .unzip();
     let mut client = super::analyse::connect_project(project_url).await?;
     let mut transaction = client
         .begin()
@@ -149,8 +156,9 @@ pub async fn stranded(
     let stranded = sqlx::query(STRANDED_SQL)
         .bind(project_env_key)
         .bind(environment)
-        .bind(&live)
+        .bind(&loaded_applications)
         .bind(applications)
+        .bind(&loaded_digests)
         .fetch_all(&mut *transaction)
         .await
         .context("read the runs pinned to a release with no loaded release")?

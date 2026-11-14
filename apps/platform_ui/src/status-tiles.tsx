@@ -14,20 +14,24 @@ export function EnvironmentTiles(props: { status?: environment.EnvironmentStatus
   };
   const workloads = createMemo(() => {
     const entries = props.status?.workloads;
-    // Without a release there are no workloads to judge, so the tile is unknown.
-    if (!entries || !props.status?.digest) return undefined;
+    if (!entries) return undefined;
     const ready = entries.filter((entry) =>
       entry.conditions.some((condition) => condition.type === "Ready" && condition.status === "True"),
     ).length;
     return { ready, notReady: entries.length - ready };
   });
+  const residency = createMemo(() => {
+    const entries = props.status?.residency;
+    if (!entries) return undefined;
+    const loaded = entries.filter((entry) => entry.loaded).length;
+    return { loaded, notLoaded: entries.length - loaded };
+  });
   return (
     <TileRow role="region" aria-label="Environment status">
       <StatusTile
-        label="Release"
-        value={props.status?.digest?.replace(/^sha256:/, "") ?? "Unknown"}
-        format="short-hash"
-        state={!props.status?.digest ? "unknown" : complete() ? "ok" : "warning"}
+        label="Resident releases"
+        value={residency() ? `${residency()!.loaded} loaded / ${residency()!.notLoaded} not loaded` : "Unknown"}
+        state={!residency() ? "unknown" : residency()!.notLoaded || !complete() ? "warning" : "ok"}
         detail={props.error}
       />
       <StatusTile

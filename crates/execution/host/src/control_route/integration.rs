@@ -158,7 +158,12 @@ impl ControlRoutes<'_> {
             .collect();
         if group == "connection" {
             for (_, env) in &environments {
-                let held: bool=sqlx::query("SELECT pg_try_advisory_xact_lock(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3,0))").bind(self.org).bind(&project).bind(env).fetch_one(&mut *transaction).await?.get(0);
+                let held: bool = sqlx::query(wamn_registry::sql::ENVIRONMENT_TRANSACTION_LOCK_SQL)
+                    .bind(self.org)
+                    .bind(env)
+                    .fetch_one(&mut *transaction)
+                    .await?
+                    .get(0);
                 if !held {
                     return Err(Refusal::Declared {
                         code: "deployment_in_progress",
@@ -170,7 +175,12 @@ impl ControlRoutes<'_> {
         let identity = if deleting {
             let id = deletion_identity(&mut transaction, self.org, group, &request).await?;
             for (_, env) in &environments {
-                let held: bool = sqlx::query("SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3,0))").bind(self.org).bind(&project).bind(env).fetch_one(&mut *transaction).await?.get(0);
+                let held: bool = sqlx::query(wamn_registry::sql::ENVIRONMENT_LOCK_SQL)
+                    .bind(self.org)
+                    .bind(env)
+                    .fetch_one(&mut *transaction)
+                    .await?
+                    .get(0);
                 if !held {
                     return Err(Refusal::Declared {
                         code: "deployment_in_progress",
