@@ -420,7 +420,13 @@ fn operation_row_columns(wamn_api: &WamnApi, row: &str) -> Vec<StatementValueCon
         .expect("operation accessor row was emitted from the same operation")
         .fields
         .iter()
-        .map(|field| statement_value_contract(&field.name, field.statement_type, field.nullable))
+        .map(|field| {
+            statement_value_contract(
+                authored_name(&field.name),
+                field.statement_type,
+                field.nullable,
+            )
+        })
         .collect()
 }
 

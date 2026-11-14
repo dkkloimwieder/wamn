@@ -117,8 +117,9 @@ For the `build.json` that `push-package` needs, see [Pushing a package](#pushing
 The dev loop watches the package roots, `apps/platform`, and the shared platform WIT sources, so an edit of any of them rebuilds the components.
 
 WIT bindings read canonical package directories through ordered `path` lists. Put dependencies before the consumer world.
-The router owns `wamn:node`. The runtime owns PostgreSQL, connection, JetStream, flow routing, and blobstore contracts.
-The execution host owns router delivery. Workflow owns native event matching.
+Shared WIT packages define the node, PostgreSQL, connection, JetStream, HTTP authentication, and blobstore interfaces.
+The HTTP guest calls typed application operations through `wamn:operation`. Native ingress handlers serve platform routes.
+Workflow owns native event matching.
 Shared WASI definitions live under `wit/wasi-cli` and `wit/wasi-clocks`.
 Application contracts lie under `wit/` in each package's build output, `apps/target/wamn/<package>/wit`, which `wamn build` writes. Do not copy platform WIT into application directories.
 
@@ -126,7 +127,7 @@ Application contracts lie under `wit/` in each package's build output, `apps/tar
 
 `cargo xtask build-platform` builds, pushes, and stamps the platform artifacts.
 It builds `host`, `ctl`, `identity`, and `edge-web` through Docker BuildKit.
-The two role components use the package component builder.
+The HTTP role and the palette use the package component builder.
 Each guest gets its own Cargo invocation.
 The HTTP role publishes the raw route component after the component builder checks its pin.
 The ctl image receives the same checked HTTP component through a named BuildKit context.

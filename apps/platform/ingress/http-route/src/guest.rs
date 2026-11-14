@@ -9,9 +9,8 @@ use wit_bindgen::rt::async_support::{
 };
 
 use super::{
-    AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, DeliveryReport,
-    DeliveryRequest, Header, HttpResponse, ProviderError, RequestHead, RouteDefinition,
-    SchemaInvalid, handle_request,
+    AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Header, HttpResponse,
+    OperationRequest, ProviderError, RequestHead, RouteDefinition, SchemaInvalid, handle_request,
 };
 
 #[path = "entry.rs"]
@@ -76,12 +75,12 @@ impl Backend for GuestBackend {
     ) -> Result<(), SchemaInvalid> {
         entry::validate_read_limits(route, payload)
     }
-    async fn deliver(
+    async fn invoke(
         &mut self,
         route: &RouteDefinition,
-        request: DeliveryRequest<Self::AuthenticatedCaller>,
-    ) -> DeliveryReport {
-        entry::deliver(route, request).await
+        request: OperationRequest<Self::AuthenticatedCaller>,
+    ) -> HttpResponse {
+        entry::invoke(route, request).await
     }
 }
 

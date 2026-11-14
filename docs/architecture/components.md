@@ -36,7 +36,7 @@ Synchronous palette nodes export `wamn:node/handler`.
 Asynchronous palette nodes export `wamn:node/async-handler@0.1.0`.
 Application operations use their package interfaces and can await asynchronous capabilities.
 The P3 HTTP shell separately exports `wasi:http/handler@0.3.0`.
-Production component I/O uses native async calls for HTTP, PostgreSQL, router delivery, and event settlement.
+Production component I/O uses native async calls for HTTP, PostgreSQL, typed operation invocation, and event settlement.
 HTTP authentication and durable queue polling also use native async calls.
 
 Pure transformations and reads of local metadata remain synchronous.

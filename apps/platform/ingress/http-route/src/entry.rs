@@ -4,26 +4,23 @@ use std::collections::HashSet;
 
 use serde_json::{Value, json};
 
-use crate::entry_response::{refusal, with_request_id};
+use crate::entry_response::with_request_id;
 
 use super::bindings::wamn::flow_http_routing::routing::AuthenticatedCaller;
 use super::bindings::wamn::node::types::{NodeContext, NodeError};
 use super::bindings::wamn::operation::operation;
-use super::{
-    DeliveryError, DeliveryFailure, DeliveryFailureType, DeliveryOutcome, DeliveryReport,
-    DeliveryRequest,
-};
 use crate::route_data::{EtagType, RouteDefinition};
+use crate::{HttpResponse, OperationRequest, ReadCache, detailed_error_response, error_response};
 
 pub(super) fn validate_read_limits(
     route: &RouteDefinition,
     payload: &str,
-) -> Result<(), super::SchemaInvalid> {
+) -> Result<(), crate::SchemaInvalid> {
     let Some(limits) = &route.read_limits else {
         return Ok(());
     };
     let input: Value = serde_json::from_str(payload)
-        .map_err(|_| super::SchemaInvalid::from_refusal(String::new()))?;
+        .map_err(|_| crate::SchemaInvalid::from_refusal(String::new()))?;
     for (index, request_element) in input.as_array().into_iter().flatten().enumerate() {
         if let Some(limit) = request_element.get("limit")
             && !limit.as_u64().is_some_and(|limit| {
@@ -35,7 +32,7 @@ pub(super) fn validate_read_limits(
                         .is_none_or(|maximum| limit <= u64::from(maximum))
             })
         {
-            return Err(super::SchemaInvalid::from_refusal(format!(
+            return Err(crate::SchemaInvalid::from_refusal(format!(
                 "/{index}/limit"
             )));
         }
@@ -47,7 +44,7 @@ pub(super) fn validate_read_limits(
                 && value.and_then(|value| value.get("min")).is_none()
             {
                 let field = band.field.replace('~', "~0").replace('/', "~1");
-                return Err(super::SchemaInvalid::from_refusal(format!(
+                return Err(crate::SchemaInvalid::from_refusal(format!(
                     "/{index}/filter/{field}"
                 )));
             }
@@ -56,13 +53,21 @@ pub(super) fn validate_read_limits(
     Ok(())
 }
 
-pub(super) async fn deliver(
+pub(super) async fn invoke(
     route: &RouteDefinition,
-    request: DeliveryRequest<AuthenticatedCaller>,
-) -> DeliveryReport {
+    request: OperationRequest<AuthenticatedCaller>,
+) -> HttpResponse {
     let mut etag = None;
-    let outcome = execute(route, &request, &mut etag).await;
-    DeliveryReport { outcome, etag }
+    let mut response = execute(route, &request, &mut etag)
+        .await
+        .unwrap_or_else(|response| response);
+    if matches!(response.status, 200 | 304) {
+        response.read = Some(Box::new(ReadCache {
+            cache_control: None,
+            etag,
+        }));
+    }
+    response
 }
 
 fn list_etag(route: &RouteDefinition, position: Option<String>) -> Option<String> {
@@ -83,15 +88,15 @@ fn list_etag(route: &RouteDefinition, position: Option<String>) -> Option<String
 
 async fn execute(
     route: &RouteDefinition,
-    request: &DeliveryRequest<AuthenticatedCaller>,
+    request: &OperationRequest<AuthenticatedCaller>,
     etag: &mut Option<String>,
-) -> Result<DeliveryOutcome, DeliveryError> {
+) -> Result<HttpResponse, HttpResponse> {
     let deadline = super::bindings::wasi::clocks::monotonic_clock::now()
         .saturating_add(route.operation_deadline_ms.saturating_mul(1_000_000));
     let operation_id = &route.sealed_operation_id;
     let caller = request.caller.as_ref();
     let mut input: Value =
-        serde_json::from_str(&request.payload).map_err(|_| DeliveryError::InvalidPayload)?;
+        serde_json::from_str(&request.payload).map_err(|_| error_response(400, "invalid-input"))?;
     let Some(key_field) = route.idempotency_rule.as_deref() else {
         operation::authorize(caller, operation_id.clone())
             .await
@@ -131,12 +136,13 @@ async fn execute(
                     ));
                 }
                 if matches_tag(request, etag.as_deref()) {
-                    return Ok(DeliveryOutcome::NotModified);
+                    return Ok(response(304, String::new()));
                 }
-                return Ok(DeliveryOutcome::Respond(
+                return Ok(response(
+                    200,
                     operation::sign_result(result.to_string())
                         .await
-                        .map_err(|_| DeliveryError::ExecutionFailed)?,
+                        .map_err(|_| error_response(503, "execution-failed"))?,
                 ));
             }
             Err(error) => {
@@ -204,7 +210,7 @@ async fn execute(
                 &json!({"field": key_field, "intent": intent}),
             ),
             Err(error @ (operation::Refusal::InProgress | operation::Refusal::OutcomeUnknown)) => {
-                commit_failure(error, &intent)
+                commit_failure(error)
             }
             Err(error) => return Err(boundary(&error, operation_id)),
             Ok(operation::Begun::New(delivery_id)) => {
@@ -221,7 +227,7 @@ async fn execute(
                         let mut result = results.remove(0);
                         result
                             .as_object_mut()
-                            .ok_or(DeliveryError::ExecutionFailed)?
+                            .ok_or_else(|| error_response(503, "execution-failed"))?
                             .remove("request_id");
                         result
                     }
@@ -248,7 +254,9 @@ async fn execute(
                             | NodeError::Retryable(detail)
                             | NodeError::InvalidInput(detail) => detail,
                             NodeError::RateLimited(limited) => limited.detail,
-                            NodeError::Cancelled => return Ok(DeliveryOutcome::Cancelled),
+                            NodeError::Cancelled => {
+                                return Ok(error_response(503, "execution-cancelled"));
+                            }
                         };
                         answers.push(json!({"request_id": request_id, "error": {"code": detail.code, "message": detail.message}}).to_string());
                         continue;
@@ -256,7 +264,7 @@ async fn execute(
                 };
                 if result.get("value").is_some() {
                     if let Err(error) = operation::commit(result.to_string()).await {
-                        commit_failure(error, &intent)
+                        commit_failure(error)
                     } else {
                         result
                     }
@@ -270,27 +278,28 @@ async fn execute(
         };
         answers.push(signed_answer(body.to_string(), request_id).await?);
     }
-    Ok(DeliveryOutcome::Respond(format!("[{}]", answers.join(","))))
+    Ok(response(200, format!("[{}]", answers.join(","))))
 }
 
-async fn signed_answer(body: String, request_id: &str) -> Result<String, DeliveryError> {
+async fn signed_answer(body: String, request_id: &str) -> Result<String, HttpResponse> {
     let body = with_request_id(body, request_id)?;
-    let value: Value = serde_json::from_str(&body).map_err(|_| DeliveryError::ExecutionFailed)?;
+    let value: Value =
+        serde_json::from_str(&body).map_err(|_| error_response(503, "execution-failed"))?;
     if value.get("value").is_none() {
         return Ok(body);
     }
     let signed = operation::sign_result(format!("[{body}]"))
         .await
-        .map_err(|_| DeliveryError::ExecutionFailed)?;
+        .map_err(|_| error_response(503, "execution-failed"))?;
     let mut values: Vec<Value> =
-        serde_json::from_str(&signed).map_err(|_| DeliveryError::ExecutionFailed)?;
+        serde_json::from_str(&signed).map_err(|_| error_response(503, "execution-failed"))?;
     if values.len() != 1 {
-        return Err(DeliveryError::ExecutionFailed);
+        return Err(error_response(503, "execution-failed"));
     }
     Ok(values.remove(0).to_string())
 }
 
-fn commit_failure(error: operation::Refusal, _intent: &str) -> Value {
+fn commit_failure(error: operation::Refusal) -> Value {
     use super::bindings::wamn::postgres::types::PgError;
     match error {
         operation::Refusal::InProgress => refusal(
@@ -322,7 +331,7 @@ fn remaining_ms(deadline: u64) -> u64 {
 }
 
 fn context(
-    request: &DeliveryRequest<AuthenticatedCaller>,
+    request: &OperationRequest<AuthenticatedCaller>,
     delivery_id: String,
     deadline_ms: u64,
 ) -> NodeContext {
@@ -396,46 +405,50 @@ async fn read_call(
     decode(&emission.payload).map(|value| (value, position))
 }
 
-fn boundary(error: &operation::Refusal, id: &str) -> DeliveryError {
+fn boundary(error: &operation::Refusal, id: &str) -> HttpResponse {
     match error {
         operation::Refusal::GrantDenied | operation::Refusal::InvalidCaller => {
-            DeliveryError::PermissionDenied {
-                operation: id.to_owned(),
-            }
+            operation_refusal_response("permission-denied", id)
         }
-        operation::Refusal::UnknownOperation => DeliveryError::SourceNotFound,
-        _ => DeliveryError::ExecutionFailed,
+        operation::Refusal::UnknownOperation => error_response(404, "operation-not-found"),
+        _ => error_response(503, "execution-failed"),
     }
 }
 
-fn invalid(message: &str) -> DeliveryOutcome {
-    DeliveryOutcome::Failed(DeliveryFailure {
-        type_: DeliveryFailureType::InvalidInput,
-        code: Some("invalid_input".into()),
-        message: message.into(),
-    })
+fn invalid(message: &str) -> HttpResponse {
+    detailed_error_response(400, "invalid_input", Some(message), None)
 }
 
-fn node_failure(error: NodeError) -> DeliveryOutcome {
-    let (type_, detail) = match error {
-        NodeError::InvalidInput(detail) => (DeliveryFailureType::InvalidInput, detail),
-        NodeError::Terminal(detail) => (DeliveryFailureType::Terminal, detail),
-        NodeError::Retryable(detail) => (DeliveryFailureType::RetryExhausted, detail),
-        NodeError::RateLimited(limited) => (DeliveryFailureType::RetryExhausted, limited.detail),
-        NodeError::Cancelled => return DeliveryOutcome::Cancelled,
+fn node_failure(error: NodeError) -> HttpResponse {
+    let (status, code, detail) = match error {
+        NodeError::InvalidInput(detail) => (400, "invalid-input", detail),
+        NodeError::Terminal(detail) => (500, "terminal", detail),
+        NodeError::Retryable(detail) => (500, "retry-exhausted", detail),
+        NodeError::RateLimited(limited) => (500, "retry-exhausted", limited.detail),
+        NodeError::Cancelled => return error_response(503, "execution-cancelled"),
     };
-    DeliveryOutcome::Failed(DeliveryFailure {
-        type_,
-        code: detail.code,
-        message: detail.message,
-    })
+    detailed_error_response(
+        status,
+        detail.code.as_deref().unwrap_or(code),
+        Some(&detail.message),
+        None,
+    )
+}
+
+fn response(status: u16, body: String) -> HttpResponse {
+    HttpResponse {
+        status,
+        content_type: "application/json",
+        body: body.into_bytes(),
+        read: None,
+    }
 }
 
 fn tag_digest(value: &Value) -> String {
     wamn_digest::canonical_json_sha256(value)[7..39].to_owned()
 }
 
-fn matches_tag(request: &DeliveryRequest<AuthenticatedCaller>, tag: Option<&str>) -> bool {
+fn matches_tag(request: &OperationRequest<AuthenticatedCaller>, tag: Option<&str>) -> bool {
     let (Some(value), Some(tag)) = (&request.if_none_match, tag) else {
         return false;
     };
@@ -467,5 +480,21 @@ fn remove(value: &mut Value, path: &[&str]) {
                 remove(value, rest);
             }
         }
+    }
+}
+
+fn refusal(code: &str, message: &str, detail: &Value) -> Value {
+    json!({"error": {"code": code, "message": message, "detail": detail}})
+}
+
+fn operation_refusal_response(code: &str, operation: &str) -> HttpResponse {
+    HttpResponse {
+        read: None,
+        status: 403,
+        content_type: "application/json",
+        body: serde_json::to_vec(&json!({
+            "error": { "code": code, "operation": operation }
+        }))
+        .unwrap_or_default(),
     }
 }
