@@ -366,7 +366,7 @@ mod tests {
             "package": {"id": "base", "version": "1.0.0"},
             "required_platform_policy_contract": {"id": "policy", "state": "satisfied"},
             "models": {}, "connections": {},
-            "components": {"base": {"connections": []}}
+            "components": {"base": {}}
         });
         fs::write(
             output.join(COMPILED_MANIFEST_NAME),
@@ -403,7 +403,7 @@ mod tests {
         )
         .unwrap();
         manifest["package"]["id"] = "overlay".into();
-        manifest["components"] = serde_json::json!({"overlay": {"connections": []}});
+        manifest["components"] = serde_json::json!({"overlay": {}});
         manifest["base_dependencies"] = serde_json::json!({"base": {
             "package": "base", "version": "1.0.0", "digest": bytes_sha256(b"old base"),
             "operations": []

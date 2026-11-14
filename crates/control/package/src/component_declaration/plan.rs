@@ -39,10 +39,15 @@ pub(super) fn render_palette_declaration(
         }
         *slot = Value::String(value.clone());
     }
-    for connection in document
-        .get_mut("connections")
-        .and_then(Value::as_array_mut)
+    for connection in document["operations"]
+        .as_object_mut()
         .into_iter()
+        .flat_map(|operations| operations.values_mut())
+        .filter_map(|operation| {
+            operation
+                .get_mut("connections")
+                .and_then(Value::as_array_mut)
+        })
         .flatten()
     {
         let Some(alias) = connection.get_mut("store-alias") else {

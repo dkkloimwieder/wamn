@@ -8,6 +8,12 @@
   "interface-version": "0.1.0",
   "operations": {
     "wamn:node/async-handler@0.1.0": {
+      "connections": [
+        {
+          "store-alias": { "parameter": "requirement" },
+          "requirement-type": "http", "mode": "write"
+        }
+      ],
       "input-ports": [
         {
           "name": "input",
@@ -146,11 +152,5 @@
         }
       ]
     }
-  },
-  "connections": [
-    {
-      "store-alias": { "parameter": "requirement" },
-      "requirement-type": "http", "mode": "write"
-    }
-  ]
+  }
 }

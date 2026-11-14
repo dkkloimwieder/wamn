@@ -1467,7 +1467,7 @@ mod tests {
                     "schema": "inventory", "table": "private_item", "owner": "view_fixture",
                     "operations": {}, "audit_log": {"columns": [], "retention": "none"}
                 }},
-                "components": {"inventory": {"connections": ["postgres"]}},
+                "components": {"inventory": {}},
                 "connections": {},
                 "custom_operations": {"inventory.report": {
                     "type": "projection", "visibility": "public", "permission": "inventory.report",

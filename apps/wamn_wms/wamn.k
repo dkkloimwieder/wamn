@@ -352,7 +352,7 @@ manifest.Package {
         }
     }
     connections = {labels = {interface = "wasmcloud:blobstore/blobstore@0.1.0", mode = "write"}}
-    components = {wms = {connections = ["postgres"]}}
+    components = {wms = {}}
     routes = {
         operations = {
             "inventory.move" = {id = "inventory-move-http", path = "/inventory/move"}

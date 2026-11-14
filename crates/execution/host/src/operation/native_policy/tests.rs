@@ -631,6 +631,7 @@ fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
         operations: BTreeMap::from([(
             operation.into(),
             AdmittedComponentOperation {
+                connections: Vec::new(),
                 registered_operation: registered.then(|| operation.into()),
                 committed_result_schema: None,
                 host_transaction: false,

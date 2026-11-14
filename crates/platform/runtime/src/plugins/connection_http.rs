@@ -106,6 +106,40 @@ pub struct ConnectionInvocation {
 }
 
 impl ConnectionInvocation {
+    /// Resolve an external connection only from this operation's declarations.
+    pub(crate) fn connection<'a>(
+        &self,
+        manifest: &'a ServingManifest,
+        alias: &str,
+    ) -> Option<&'a wamn_catalog::OperationConnection> {
+        let component = manifest.components.iter().find(|component| {
+            component.package_id == self.package_id
+                && component.descriptor.component_digest == self.component_digest
+                && component.descriptor.component == self.component
+        })?;
+        component
+            .descriptor
+            .operations
+            .get(&self.operation)?
+            .connections
+            .iter()
+            .find(|connection| {
+                let configuration = self
+                    .entry
+                    .wiring()
+                    .map(|position| position.configuration.as_ref());
+                match connection {
+                    wamn_catalog::OperationConnection::Import(name) => name == alias,
+                    wamn_catalog::OperationConnection::Host(connection) => {
+                        connection.store_alias.name() == Some(alias)
+                            || configuration.and_then(|configuration| {
+                                connection.store_alias.resolve(configuration)
+                            }) == Some(alias)
+                    }
+                }
+            })
+    }
+
     /// The span coordinates of this invocation. A route has no wiring
     /// position, so it records the wiring keys empty.
     pub(crate) fn effect_wiring(&self) -> EffectWiring<'_> {
@@ -1474,6 +1508,116 @@ mod tests {
         .expect("an offline postgres plugin does not open a connection")
     }
 
+    #[test]
+    fn invocation_connections_are_scoped_to_the_executing_operation() {
+        let postgres = Arc::new(offline_postgres());
+        let mut manifest = manifest();
+        let mut component = manifest.components.pop_first().unwrap();
+        for operation in component.descriptor.operations.values_mut() {
+            operation.registered_operation = None;
+            operation.host_transaction = true;
+        }
+        let mut external = component
+            .descriptor
+            .operations
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+        external.host_transaction = false;
+        external.connections = vec![
+            wamn_catalog::ComponentConnection {
+                store_alias: "manager".into(),
+                requirement_type: wamn_catalog::ComponentConnectionType::Http,
+                mode: wamn_catalog::ConnectionMode::Write,
+            }
+            .into(),
+        ];
+        component.descriptor.connections = external
+            .connections
+            .iter()
+            .filter_map(wamn_catalog::OperationConnection::host)
+            .cloned()
+            .collect();
+        component
+            .descriptor
+            .operations
+            .insert("external".into(), external.clone());
+        external.connections[0].host_mut().unwrap().store_alias =
+            wamn_catalog::ComponentConnectionAlias::Configuration {
+                parameter: "requirement".into(),
+            };
+        component
+            .descriptor
+            .operations
+            .insert("configured".into(), external.clone());
+        let mut imported = external.clone();
+        imported.connections = vec![wamn_catalog::OperationConnection::Import("manager".into())];
+        component
+            .descriptor
+            .operations
+            .insert("imported".into(), imported);
+        manifest.components.insert(component);
+        let release = Arc::new(
+            LoadedRelease::load_canonical_bytes(
+                &manifest.canonical_bytes(),
+                "connection authority test",
+                wamn_engine::release_manifest::ReleaseTarget::new("org-a", "dev")
+                    .with_applications(
+                        serde_json::from_value(
+                            serde_json::json!({"app": {"packages": ["package_a"]}}),
+                        )
+                        .unwrap(),
+                    ),
+            )
+            .unwrap(),
+        );
+        let facts = Arc::new(ConnectionFacts::new(
+            Arc::new(ConnectionMemory::default()),
+            Publisher::default(),
+            Arc::new(ConnectionCredentials::empty()),
+            &postgres,
+            "org-a",
+            "project-a",
+            "dev",
+        ));
+        let scope = "connection-operation";
+        crate::invocation::bind_test_context(&postgres, scope, facts, release);
+        let mut invocation = invocation();
+        let no_external = invocation.operation.clone();
+        for (operation, allowed) in [
+            ("external", true),
+            (no_external.as_str(), false),
+            ("configured", true),
+            ("imported", true),
+        ] {
+            invocation.operation = operation.into();
+            if let InvocationEntry::Wiring(position) = &mut invocation.entry {
+                position.configuration = Arc::new(BTreeMap::from([(
+                    "requirement".into(),
+                    serde_json::json!("manager"),
+                )]));
+            }
+            postgres.revoke_invocation(scope);
+            postgres.bind_invocation(scope, invocation.clone()).unwrap();
+            let context = crate::invocation::context(&postgres.scopes, scope).unwrap();
+            let admitted = postgres.invocation(scope).unwrap();
+            assert_eq!(
+                admitted
+                    .connection(context.release.manifest(), "manager")
+                    .is_some(),
+                allowed
+            );
+            assert!(
+                admitted
+                    .connection(context.release.manifest(), "undeclared")
+                    .is_none()
+            );
+        }
+        postgres.revoke_invocation(scope);
+        assert!(postgres.invocation(scope).is_none());
+    }
+
     #[tokio::test]
     async fn revoked_invocation_refuses_send_and_can_be_rebound() {
         let plugin = offline_plugin();
@@ -1631,6 +1775,7 @@ mod tests {
                     descriptor.operations = BTreeMap::from([(
                         snapshot.operation.expect("operation"),
                         AdmittedComponentOperation {
+                            connections: Vec::new(),
                             host_transaction: false,
                             input_ports: Vec::new(),
                             output_ports: Vec::new(),

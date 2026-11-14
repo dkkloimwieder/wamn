@@ -1240,7 +1240,7 @@ mod tests {
                 "fields": {"created_by": {"role": "actor"}},
                 "operations": {"get": {"permission": "record.get", "result": "one"}}
             }},
-            "connections": {}, "components": {"data": {"connections": ["postgres"]}}
+            "connections": {}, "components": {"data": {}}
         }))
         .unwrap();
         let authored = serde_json::to_vec(&serde_json::json!({
@@ -1254,7 +1254,7 @@ mod tests {
                 "schema": "records", "table": "record", "owner": "base",
                 "operations": {"get": {"permission": "record.get", "result": "one"}}
             }},
-            "connections": {}, "components": {"data": {"connections": ["postgres"]}}
+            "connections": {}, "components": {"data": {}}
         })).unwrap();
         let catalog = super::CatalogIr::new(vec![Table::new(
             "records",

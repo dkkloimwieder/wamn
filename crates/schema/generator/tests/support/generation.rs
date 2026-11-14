@@ -230,9 +230,7 @@ pub(super) fn manifest() -> Value {
         },
         "connections": {},
         "components": {
-            "inventory": {
-                "connections": ["postgres"]
-            }
+            "inventory": {}
         }
     })
 }

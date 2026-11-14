@@ -34,12 +34,7 @@
     }
   },
   "components": {
-    "signed_read": {
-      "connections": [
-        "files",
-        "postgres"
-      ]
-    }
+    "signed_read": {}
   },
   "custom_operations": {
     "document.signed_read": {

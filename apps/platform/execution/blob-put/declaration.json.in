@@ -8,6 +8,12 @@
   "interface-version": "0.1.0",
   "operations": {
     "wamn:node/async-handler@0.1.0": {
+      "connections": [
+        {
+          "store-alias": { "parameter": "store_alias" },
+          "requirement-type": "blobstore", "mode": "write"
+        }
+      ],
       "input-ports": [
         {
           "name": "input",
@@ -51,11 +57,5 @@
         }
       ]
     }
-  },
-  "connections": [
-    {
-      "store-alias": { "parameter": "store_alias" },
-      "requirement-type": "blobstore", "mode": "write"
-    }
-  ]
+  }
 }

@@ -277,6 +277,7 @@ pub(crate) mod test_util {
 
     pub(crate) async fn release() -> EdgeRelease {
         let operation = AdmittedComponentOperation {
+            connections: Vec::new(),
             host_transaction: false,
             input_ports: Vec::new(),
             output_ports: Vec::new(),
@@ -297,6 +298,7 @@ pub(crate) mod test_util {
             operations: BTreeMap::from([(
                 OPERATION.into(),
                 AdmittedComponentOperation {
+                    connections: Vec::new(),
                     registered_operation: Some(OPERATION.into()),
                     committed_result_schema: None,
                     host_transaction: false,

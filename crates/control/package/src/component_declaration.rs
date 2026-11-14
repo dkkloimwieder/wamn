@@ -174,7 +174,6 @@ pub fn render_package_declaration(
         component: declaration.component,
         interface_version: declaration.interface_version,
         operations: declaration.operations,
-        connections: declaration.connections,
     };
     serde_json::to_value(document)
         .map_err(|source| ComponentDeclarationError::parse(package_root, source))
@@ -213,7 +212,12 @@ pub fn declared_platform_packages(
         })?;
         packages.insert(package.to_owned());
     }
-    for connection in &declaration.connections {
+    for connection in declaration
+        .operations
+        .values()
+        .flat_map(|operation| &operation.connections)
+        .filter_map(wamn_catalog::OperationConnection::host)
+    {
         packages.insert(connection.requirement_type.import_package().to_owned());
     }
     Ok(packages.into_iter().collect())
@@ -238,16 +242,19 @@ mod tests {
         let document = render_palette_declaration(&template, &target, Some("labels"))
             .expect("the template renders");
         assert_eq!(document["target"]["package-id"], "wamn_wms");
-        assert_eq!(document["connections"][0]["store-alias"], "labels");
+        assert_eq!(
+            document["operations"]["wamn:node/async-handler@0.1.0"]["connections"][0]["store-alias"],
+            "labels"
+        );
         assert_eq!(
             declared_platform_packages(&template, &document).expect("the declaration parses"),
             ["wamn:node", "wasmcloud:blobstore"]
         );
         let refusal = render_palette_declaration(&template, &target, None)
             .expect_err("an unnamed store alias is refused");
-        assert!(
-            refusal.to_string().contains("no binding selection"),
-            "the refusal names the missing selection: {refusal}"
+        assert_eq!(
+            refusal.error_type(),
+            ComponentDeclarationErrorType::TemplateInvalid
         );
     }
 }

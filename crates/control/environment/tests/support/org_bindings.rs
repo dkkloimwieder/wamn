@@ -186,7 +186,7 @@ manifest.Package {{
     package = {{id = "{name}", version = "1.0.0"}}
     required_platform_policy_contract = {{id = "fixture_data_access", state = "satisfied"}}
     models = {{}}
-    components = {{fixture = {{connections = []}}}}
+    components = {{fixture = {{}}}}
     connections = {connections}
     custom_operations = {{
         "fixture.run" = manifest.Command("fixture.run") {{

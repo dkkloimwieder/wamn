@@ -111,7 +111,8 @@ The generator compares those choices with the schema and SQL. It does not replac
 | `statements.*.path`, `.fetch`, `.parameters`, `.row` | Static SQL selection and accessor contract. PostgreSQL tests types, privileges, and transaction requirements. Retain names and declared shape. |
 | Parameter/row `name`, `type`, `nullable` | Accessor names and representation. SQL planning does not determine all application names or nullability contracts. Retain. |
 | `connections` | Map each application alias to an integration code and a `read` or `write` mode. PostgreSQL stays outside this map. |
-| `components` keys and `.connections` | Component grouping and declared capability selection before compilation. Retain. Cargo artifact names do not determine operation grouping. |
+| `components` keys | Component grouping. Cargo artifact names do not determine operation grouping. |
+| `custom_operations.*.connections` | External connection aliases called by this operation. Generated operations call none. The singular `connection` names the SQL connection. |
 | `targets` | The target types a package runs on: `cloud` or `local`. The default is `cloud`. Generation refuses a package with models that lists `local`. Retain. |
 | `sequences.*.pattern`, `.callable` | Application numbering choices: the default pattern of a number sequence, and whether the package's commands call it. Generation parses each pattern with the one pattern parser. Retain. |
 | `models.*.fields.*.number`, `.role` | Application choice of what fills a column. `number` names the sequence that numbers the field on insert. `role = "actor"` fills the field from the operation caller. Generated SQL fills both, so a write that supplies the field refuses. Retain. |
@@ -333,7 +334,8 @@ The component reaches that transaction with `wamn_postgres_statements::operation
 A `begin` inside such an operation refuses.
 An operation without SQL claims in two steps on a host connection of its own: begin before the call, and finish after it.
 An external-only claim command omits `transaction: explicit_per_input`.
-The compiler refuses an operation whose capabilities combine SQL work with an external effect. Split that work into separate operations.
+The compiler refuses an operation that declares an external connection and also does SQL work or begins a host transaction. Split that work into separate operations. SQL operations and external connection operations can share a component.
+Each call resolves only the external connections declared by its executing operation. This uses the invocation authority; it does not inspect transaction state at run time.
 A begun claim has a null `result` until it finishes.
 An unfinished claim answers `in-progress` until its age exceeds `MAX_HOST_CALL_DURATION`, which is 30 seconds.
 After that boundary it answers `outcome-unknown`. A late completion can still record its result.

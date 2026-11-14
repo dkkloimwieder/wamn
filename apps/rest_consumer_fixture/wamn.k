@@ -29,5 +29,5 @@ manifest.Package {
         }
     }
     connections = {}
-    components = {rest_consumer_fixture = {connections = ["postgres"]}}
+    components = {rest_consumer_fixture = {}}
 }

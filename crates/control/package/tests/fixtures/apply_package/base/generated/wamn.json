@@ -136,10 +136,6 @@
   "custom_operations": {},
   "connections": {},
   "components": {
-    "inventory": {
-      "connections": [
-        "postgres"
-      ]
-    }
+    "inventory": {}
   }
 }

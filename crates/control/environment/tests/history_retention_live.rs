@@ -118,7 +118,7 @@ fn write_package(root: &Path) {
         },
         "models": models,
         "connections": {},
-        "components": {"data": {"connections": ["postgres"]}}
+        "components": {"data": {}}
     });
     let migration = RELATIONS
         .iter()

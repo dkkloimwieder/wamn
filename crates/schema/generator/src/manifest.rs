@@ -113,6 +113,9 @@ pub struct CustomOperationDeclaration {
     pub component: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<String>,
+    /// External connections this operation calls. SQL uses `connection`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<String>,
     pub input: CustomOperationInputDeclaration,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<CustomOperationResultDeclaration>,
@@ -764,16 +767,49 @@ impl PackageManifest {
             .collect()
     }
 
+    /// Derive the external connection declarations of a manifest operation.
+    /// Generated operations have no external connections.
+    pub fn operation_connections(
+        &self,
+        operation: &str,
+    ) -> Result<Vec<wamn_catalog::OperationConnection>, ManifestError> {
+        self.custom_operations
+            .get(operation)
+            .into_iter()
+            .flat_map(|operation| &operation.connections)
+            .map(|name| {
+                let declaration = self.connections.get(name).ok_or_else(|| {
+                    ManifestError::new(
+                        ManifestErrorType::InvalidConnection,
+                        format!("operation {operation} declares unknown connection {name}"),
+                    )
+                })?;
+                let requirement_type = match declaration.interface.as_str() {
+                    "wamn:connection/http@0.1.0" => wamn_catalog::ComponentConnectionType::Http,
+                    interface if interface.starts_with("wasmcloud:blobstore/") => {
+                        wamn_catalog::ComponentConnectionType::Blobstore
+                    }
+                    _ => return Ok(wamn_catalog::OperationConnection::Import(name.clone())),
+                };
+                Ok(wamn_catalog::ComponentConnection {
+                    store_alias: name.clone().into(),
+                    requirement_type,
+                    mode: match declaration.mode {
+                        ConnectionMode::Read => wamn_catalog::ConnectionMode::Read,
+                        ConnectionMode::Write => wamn_catalog::ConnectionMode::Write,
+                    },
+                }
+                .into())
+            })
+            .collect()
+    }
+
     /// Whether the package declares no SQL, owned relations or base dependencies.
     /// Commands can be stateless or use external claims. The package needs no
     /// application schema, and an edge box can run its component.
     pub fn declares_no_sql(&self) -> bool {
         self.models.is_empty()
             && self.internal_relations.is_empty()
-            && !self
-                .components
-                .values()
-                .any(|component| component.connections.iter().any(|name| name == "postgres"))
             && self.base_dependencies.is_empty()
             && self.custom_operations.values().all(|operation| {
                 matches!(
@@ -1130,8 +1166,7 @@ fn validate_component_groups(
         ));
     }
 
-    let mut requirement_sets = BTreeMap::<BTreeSet<&str>, &str>::new();
-    for (name, component) in &manifest.components {
+    for name in manifest.components.keys() {
         if name.is_empty() {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidComponent,
@@ -1139,37 +1174,6 @@ fn validate_component_groups(
             ));
         }
         validate_identifier(name, "component")?;
-        if component.connections.is_empty() && !manifest.declares_no_sql() {
-            return Err(ManifestError::new(
-                ManifestErrorType::InvalidComponent,
-                format!("{name} must declare connections"),
-            ));
-        }
-        let requirements = component
-            .connections
-            .iter()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>();
-        if requirements.len() != component.connections.len() {
-            return Err(ManifestError::new(
-                ManifestErrorType::InvalidComponent,
-                format!("{name} repeats a connection requirement"),
-            ));
-        }
-        for connection in &requirements {
-            if *connection != "postgres" && !manifest.connections.contains_key(*connection) {
-                return Err(ManifestError::new(
-                    ManifestErrorType::InvalidComponent,
-                    format!("{name} references unknown connection {connection}"),
-                ));
-            }
-        }
-        if let Some(existing) = requirement_sets.insert(requirements, name) {
-            return Err(ManifestError::new(
-                ManifestErrorType::InvalidComponent,
-                format!("components {existing} and {name} have identical requirement sets"),
-            ));
-        }
     }
 
     let implicit = (manifest.components.len() == 1)
@@ -1206,22 +1210,29 @@ fn validate_component_groups(
                 format!("operation {operation} references unknown component {component}"),
             ));
         };
-        let custom = manifest.custom_operations.get(operation);
-        let sql_work = custom.is_none_or(|declaration| {
-            custom_operation_uses_sql(manifest, operation, declaration)
-                || declaration.begins_host_transaction()
-        });
-        let external_effect = manifest.components[component]
-            .connections
-            .iter()
-            .any(|name| manifest.connections.contains_key(name));
-        if sql_work && external_effect {
-            return Err(ManifestError::new(
-                ManifestErrorType::InvalidOperation,
-                format!(
-                    "operation {operation} combines SQL work with an external effect; split the work into separate operations"
-                ),
-            ));
+        if let Some(declaration) = manifest.custom_operations.get(operation) {
+            let mut seen = BTreeSet::new();
+            for connection in &declaration.connections {
+                if !manifest.connections.contains_key(connection) || !seen.insert(connection) {
+                    return Err(ManifestError::new(
+                        ManifestErrorType::InvalidConnection,
+                        format!(
+                            "operation {operation} declares an unknown or repeated external connection {connection}"
+                        ),
+                    ));
+                }
+            }
+            if !declaration.connections.is_empty()
+                && (custom_operation_uses_sql(manifest, operation, declaration)
+                    || declaration.begins_host_transaction())
+            {
+                return Err(ManifestError::new(
+                    ManifestErrorType::InvalidOperation,
+                    format!(
+                        "operation {operation} combines SQL work with an external connection; split the work into separate operations"
+                    ),
+                ));
+            }
         }
         *count += 1;
     }
@@ -2405,7 +2416,7 @@ mod tests {
         let mut document = serde_json::json!({
             "package": {"id": "files", "version": "1.0.0"},
             "required_platform_policy_contract": {"id": "files_access", "state": "satisfied"},
-            "models": {}, "connections": {}, "components": {"files": {"connections": []}},
+            "models": {}, "connections": {}, "components": {"files": {}},
             "custom_operations": {"file.read": {
                 "type": "command", "visibility": "public", "permission": "file.read",
                 "idempotent_by": "stateless", "input": {"fields": []},
@@ -2426,74 +2437,79 @@ mod tests {
     }
 
     #[test]
-    fn claim_commands_separate_sql_work_from_external_effects() {
+    fn operation_connections_refuse_sql_and_host_transactions() {
         let document = serde_json::json!({
             "package": {"id": "notify", "version": "1.0.0"},
             "required_platform_policy_contract": {"id": "notify_access", "state": "satisfied"},
             "models": {},
             "connections": {"api": {"interface": "wamn:connection/http@0.1.0", "mode": "write"}},
-            "components": {"notify": {"connections": ["api"]}},
+            "components": {"notify": {}},
             "custom_operations": {"notify.send": {
                 "type": "command", "visibility": "public", "permission": "notify.send",
-                "idempotent_by": "claim", "input": {"fields": [
+                "connections": ["api"], "idempotent_by": "claim", "input": {"fields": [
                     {"path": "idempotency_key", "type": "text", "nullable": false}
                 ]},
                 "result": {"class": "one", "fields": [{"path": "id", "type": "uuid", "nullable": false}]},
                 "errors": ["invalid_input", "idempotency_conflict", "retry", "timeout", "permission_denied", "internal_error"]
             }}
         });
-        let mut manifest =
-            super::PackageManifest::from_authored_slice(&serde_json::to_vec(&document).unwrap())
-                .unwrap();
+        let parse = |document: &serde_json::Value| {
+            super::PackageManifest::from_authored_slice(&serde_json::to_vec(document).unwrap())
+        };
+        let manifest = parse(&document).unwrap();
         assert!(manifest.declares_no_sql());
         assert!(!manifest.custom_operations["notify.send"].begins_host_transaction());
-        let operation = manifest.custom_operations.get_mut("notify.send").unwrap();
-        operation.automatic_retry = Some(false);
-        super::validate_operation_vocabulary(&manifest).unwrap();
-        let operation = manifest.custom_operations.get_mut("notify.send").unwrap();
-        operation.transaction = Some(super::CommandTransaction::ExplicitPerInput);
-        assert_eq!(
-            super::validate_operation_vocabulary(&manifest)
-                .unwrap_err()
-                .error_type(),
-            super::ManifestErrorType::InvalidOperation
-        );
-        let operation = manifest.custom_operations.get_mut("notify.send").unwrap();
-        operation.connection = Some("postgres".to_owned());
-        operation.statements = serde_json::from_value(serde_json::json!({
+        assert!(matches!(
+            manifest
+                .operation_connections("notify.send")
+                .unwrap()
+                .as_slice(),
+            [wamn_catalog::OperationConnection::Host(_)]
+        ));
+        let mut imported = document.clone();
+        imported["connections"]["api"]["interface"] = serde_json::json!("wamn:modbus/read@1.0.0");
+        assert!(matches!(
+            parse(&imported)
+                .unwrap()
+                .operation_connections("notify.send")
+                .unwrap()
+                .as_slice(),
+            [wamn_catalog::OperationConnection::Import(_)]
+        ));
+        let mut mixed = document.clone();
+        mixed["models"] = serde_json::json!({"record": {
+            "schema": "notify", "table": "record", "owner": "notify",
+            "audit_log": {"columns": [], "retention": "none"}, "operations": {}
+        }});
+        mixed["custom_operations"]["notify.send"]["transaction"] =
+            serde_json::json!("explicit_per_input");
+        mixed["custom_operations"]["notify.send"]["automatic_retry"] = serde_json::json!(false);
+        assert!(parse(&mixed).is_err());
+        mixed["custom_operations"]["notify.send"]["connection"] = serde_json::json!("postgres");
+        mixed["custom_operations"]["notify.send"]["statements"] = serde_json::json!({
             "send": {"path": "command/notify/send.sql", "fetch": "one", "parameters": [],
                 "row": [{"name": "id", "type": "uuid", "nullable": false}]}
-        }))
-        .unwrap();
-        manifest
-            .components
-            .get_mut("notify")
+        });
+        assert!(parse(&mixed).is_err());
+        // SQL and external operations can share a component.
+        mixed["custom_operations"]["notify.sql"] = mixed["custom_operations"]["notify.send"].take();
+        mixed["custom_operations"]
+            .as_object_mut()
             .unwrap()
-            .connections
-            .push("postgres".to_owned());
-        assert_eq!(
-            super::validate_operation_vocabulary(&manifest)
-                .unwrap_err()
-                .error_type(),
-            super::ManifestErrorType::InvalidOperation
-        );
-        manifest
-            .components
-            .get_mut("notify")
-            .unwrap()
-            .connections
-            .retain(|name| name == "postgres");
-        super::validate_operation_vocabulary(&manifest).unwrap();
-        assert!(manifest.custom_operations["notify.send"].begins_host_transaction());
-        let operation = manifest.custom_operations.get_mut("notify.send").unwrap();
-        operation.transaction = None;
-        operation.automatic_retry = None;
-        assert_eq!(
-            super::validate_operation_vocabulary(&manifest)
-                .unwrap_err()
-                .error_type(),
-            super::ManifestErrorType::InvalidOperation
-        );
+            .remove("notify.send");
+        mixed["custom_operations"]["notify.sql"]["connections"] = serde_json::json!([]);
+        mixed["custom_operations"]["notify.sql"]["permission"] = serde_json::json!("notify.sql");
+        mixed["custom_operations"]["notify.send"] =
+            document["custom_operations"]["notify.send"].clone();
+        parse(&mixed).unwrap();
+        for connections in [
+            serde_json::json!(["missing"]),
+            serde_json::json!(["api", "api"]),
+        ] {
+            let mut invalid = document.clone();
+            invalid["custom_operations"]["notify.send"]["connections"] = connections;
+            assert!(parse(&invalid).is_err());
+        }
     }
 
     #[test]
@@ -3027,7 +3043,6 @@ impl RoutesDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ComponentDeclaration {
-    pub connections: Vec<String>,
     /// Private component exports outside the generated operation interfaces.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub exports: BTreeMap<String, wamn_catalog::ComponentOperationDeclaration>,
