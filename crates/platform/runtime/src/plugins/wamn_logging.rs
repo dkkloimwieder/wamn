@@ -243,8 +243,7 @@ impl Capture {
 
 #[derive(Debug)]
 pub struct WamnLogging {
-    /// component id → host-trusted {project, project}.
-    identity: std::sync::RwLock<HashMap<String, Identity>>,
+    scopes: std::sync::OnceLock<Arc<wamn_engine::invocation_scope::InvocationScopes>>,
     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
     tx: mpsc::Sender<Rec>,
     counters: Arc<Counters>,
@@ -254,6 +253,28 @@ pub struct WamnLogging {
 }
 
 impl WamnLogging {
+    /// Attach the process's authority registry before any workload binds.
+    pub fn set_scope_registry(
+        &self,
+        scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
+    ) -> anyhow::Result<()> {
+        if let Some(existing) = self.scopes.get() {
+            anyhow::ensure!(
+                Arc::ptr_eq(existing, &scopes),
+                "logging already uses another invocation registry"
+            );
+        } else {
+            self.scopes
+                .set(scopes)
+                .map_err(|_| anyhow::anyhow!("logging registry already attached"))?;
+        }
+        Ok(())
+    }
+
+    fn scopes(&self) -> &Arc<wamn_engine::invocation_scope::InvocationScopes> {
+        self.scopes.get_or_init(Arc::default)
+    }
+
     pub fn new(cfg: &WamnLoggingConfig) -> anyhow::Result<Self> {
         Self::build(cfg, None)
     }
@@ -314,7 +335,7 @@ impl WamnLogging {
         });
 
         Ok(Self {
-            identity: std::sync::RwLock::new(HashMap::new()),
+            scopes: std::sync::OnceLock::new(),
             tx,
             counters,
             provider,
@@ -329,16 +350,11 @@ impl WamnLogging {
     /// Register the host-trusted identity for a component id. The bench calls this
     /// directly; the host path feeds it from workload bind.
     pub fn set_identity(&self, component_id: &str, project_env_key: &str, project: &str) {
-        self.identity
-            .write()
-            .expect("identity lock poisoned")
-            .insert(
-                component_id.to_string(),
-                Identity {
-                    project_env_key: project_env_key.to_string(),
-                    project: project.to_string(),
-                },
-            );
+        self.scopes()
+            .update::<crate::invocation::Authority, _>(component_id, |record| {
+                project_env_key.clone_into(&mut record.identity.project_env_key);
+                record.identity.project = Some(project.to_owned());
+            });
     }
 
     /// Remove the registered identity for a component id (wamn-0h0g.17.10).
@@ -351,10 +367,7 @@ impl WamnLogging {
     /// unregistered scope enriches with the `identity_for` sentinel instead of a
     /// stale project.
     pub fn clear_identity(&self, component_id: &str) {
-        self.identity
-            .write()
-            .expect("identity lock poisoned")
-            .remove(component_id);
+        self.scopes().revoke(component_id);
     }
 
     /// The per-REQUEST half of the workload bind: the identity keyed by `scope`.
@@ -421,26 +434,25 @@ impl WamnLogging {
     /// `None` when nothing was registered (the `identity_for` sentinel path). The
     /// run-worker wiring test asserts the host-injected identity landed here.
     pub fn identity_snapshot(&self, component_id: &str) -> Option<(String, String)> {
-        self.identity
-            .read()
-            .expect("identity lock poisoned")
-            .get(component_id)
-            .map(|c| (c.project_env_key.clone(), c.project.clone()))
+        crate::invocation::identity(self.scopes(), component_id).map(|identity| {
+            (
+                identity.project_env_key,
+                identity.project.unwrap_or_default(),
+            )
+        })
     }
 
     fn identity_for(&self, component_id: &str) -> Identity {
-        self.identity
-            .read()
-            .expect("identity lock poisoned")
-            .get(component_id)
-            .cloned()
-            .unwrap_or_else(|| Identity {
-                // A guest that imports wasi:logging without a registered identity
-                // still logs, but with a visible sentinel so the enrichment condition
-                // catches the misconfiguration rather than hiding it.
-                project_env_key: "unregistered".to_string(),
-                project: "unregistered".to_string(),
-            })
+        self.identity_snapshot(component_id).map_or_else(
+            || Identity {
+                project_env_key: "unregistered".to_owned(),
+                project: "unregistered".to_owned(),
+            },
+            |(project_env_key, project)| Identity {
+                project_env_key,
+                project,
+            },
+        )
     }
 
     /// Enrich + enqueue. Non-blocking: `try_send`, counting drops on overflow.
@@ -723,6 +735,14 @@ impl HostPlugin for WamnLogging {
         // The wash host path: one workload, one bind, both halves in order.
         self.register_workload_scope(item.id(), &item.local_resources().config, &interfaces);
         self.add_linker_entries(item.linker()?, &interfaces)
+    }
+    async fn on_workload_unbind(
+        &self,
+        workload: &str,
+        _interfaces: WitInterfaces<'_>,
+    ) -> anyhow::Result<()> {
+        self.scopes().revoke_workload(workload);
+        Ok(())
     }
 }
 

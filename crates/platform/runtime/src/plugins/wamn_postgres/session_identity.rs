@@ -1,8 +1,4 @@
-//! The identity boundary as ONE reviewable security unit (SR4, wamn-cjv.18): the
-//! `WamnPostgres` plugin state (the correlated identity maps), the identity-format
-//! validators it imports, the in-band identity/causation-mutation guard, and the
-//! `set_config()`-bound identity injection (`begin_with_identity`). This is the exact
-//! surface the injection review (R2/R16/R16b/cjv.2/l5i9.12.2) reasons about.
+//! PostgreSQL identity validation and injection from the shared invocation record.
 
 use sqlx::{Row as _, Statement as _};
 use std::collections::{BTreeSet, HashMap};
@@ -25,8 +21,9 @@ use super::pool::{
     ClassCredentials, CredentialProvider, PoolKey, ProjectConfig, ProjectPool,
     StaticCredentialProvider, WamnPostgresConfig,
 };
-use super::statements::{StatementScopes, VerifiedStatement};
+use super::statements::VerifiedStatement;
 use super::{DEFAULT_PROJECT, PgError, RowSet};
+use crate::invocation::Authority;
 
 mod pools;
 pub(super) mod transactions;
@@ -260,90 +257,8 @@ pub struct WamnPostgres {
     /// Host-owned identity, authorization, and plan-supply project pools. Keeping a
     /// distinct cache makes cross-lifecycle session reuse unrepresentable.
     platform_pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
-    /// component id → project_env_key identity.
-    project_env_keys: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → project id (which database). Absent ⇒ the default project.
-    projects: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → `search_path` schema. Empty (the default) leaves the
-    /// server's search_path alone — so S2/pgbench behaviour is unchanged. When
-    /// set, the plugin injects `SET LOCAL search_path` alongside the project_env_key
-    /// identity, so unqualified table names resolve to a host-chosen schema (S6:
-    /// prod = the shared fixture schema, test = a per-run ephemeral schema).
-    schemas: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → durable-queue lease owner (fqg.4). Absent (the default)
-    /// leaves `app.runner` unset — so every non-binding path (S2..S6, the
-    /// gateway) is byte-unchanged. When set, the plugin injects
-    /// `SET LOCAL app.runner` so a runner replica reads its owner identity to
-    /// identity/renew queue rows under.
-    runners: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the one host-owned workload authority admitted on the
-    /// guest-visible WIT surface. Absence preserves ordinary `GuestSql`.
-    /// Values enter only from the workload binding config; the guest cannot
-    /// select or mutate this discriminator.
-    workload_authorities: std::sync::RwLock<HashMap<String, AuthorityClass>>,
-    /// component id → the caller's `app.role` identity (a `roles.name`). Absent
-    /// (the default) binds the empty role, which is the base denial policy every
-    /// compiled role condition coalesces to. When set, a per-role RLS policy using
-    /// the identity contract documented by `deploy/sql/app-schema.sql` conditions on
-    /// the caller's role instead of denying.
-    roles: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the executing principal's `app.user_id` identity (a
-    /// `users.id` uuid): the caller principal, or the platform principal of a
-    /// callerless delivery. The record-history triggers stamp it on every
-    /// write. Absent (the default) binds the empty string, which the triggers
-    /// refuse with actor-required. Until `wamn-0h0g.22` replaces
-    /// caller-settable authority, modified application SQL can forge this
-    /// attribution.
-    users: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the `app.operation` identity: the token of the operation
-    /// that executes, or `wamn:<component>` for a platform component outside a
-    /// registered operation. The record-history log records it as the source
-    /// of a write. Absent (the default) binds the empty string. Modified
-    /// application SQL can forge it, as it can forge `app.user_id`.
-    operations: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the `app.application` identity: the application name from
-    /// the environment map for the operation's package. Numbering keys its
-    /// sequences on this host state, which the operation transaction keeps,
-    /// never on the identity (docs/architecture/data-access.md#rendering). Absent
-    /// (the default) binds the empty string.
-    applications: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the release digest this pod carries.
-    /// Absent (the default) ⇒ the production identity verifies nothing, so every
-    /// path that never mounted a release identity is byte-unchanged. When set,
-    /// the identity leases only a run admitted under that digest.
-    release_identities: std::sync::RwLock<HashMap<String, ReleaseIdentity>>,
-    /// component id → the causation context {run, root, depth} of the run the
-    /// caller is currently driving (l5i9.12.2). Declared through
-    /// [`set_current_run`](WamnPostgres::set_current_run), cleared (removed)
-    /// between runs. Absent (the default) ⇒ no causation is stamped — so every
-    /// non-run path (S2..S6, the gateway, benches without a declaration) is
-    /// byte-unchanged. When set, [`begin_with_identity`] appends a
-    /// TRANSACTIONAL `wamn.causation` logical message to each write transaction the
-    /// plugin opens for that component, which the CDC reader (l5i9.12.1)
-    /// stitches onto the txn's row events.
-    current_run: std::sync::RwLock<HashMap<String, Causation>>,
-    /// component id → the host-attested invocation the pooled instance serves:
-    /// the wiring, node position, occurrence and component tuple this checkout
-    /// runs under (`wamn-0h0g.7.9`). The driver binds it before `handler.run`
-    /// and revokes it before returning the instance to the pool, exactly as the
-    /// HTTP and blobstore surfaces do. Absent (the default) ⇒ this plugin holds
-    /// no wiring position, which is what every non-router path (S2..S6, the
-    /// gateway, benches) carries.
-    ///
-    /// Its OWN registry rather than a read of the HTTP plugin's, for the reason
-    /// `wamn_blobstore::plugin` records in its module doc: a second reader on
-    /// one plugin's registry couples siblings over something neither owns.
-    /// Nothing authorizes against it — it is the host-attested half of the
-    /// coordinates an effect span names, and the run half is
-    /// [`current_run_for`](Self::current_run_for).
-    invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
-    /// The host transaction of each scope whose operation request element has one.
-    pub(super) operation_transactions:
-        std::sync::Mutex<super::operation_transaction::OperationTransactions>,
-    /// Verified SQL facts bound by operation plus the one invocation-active
-    /// scope. The active scope is host-selected; a guest can only name a digest
-    /// inside it.
-    pub(super) statement_scopes: std::sync::RwLock<StatementScopes>,
+    /// The single invocation and workload authority registry.
+    pub scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
     /// Connections destroyed instead of repooled (chaos-acceptance-test observability).
     pub(super) destroyed: Arc<AtomicU64>,
     /// How many times each half of the un-fused workload bind has run.
@@ -976,22 +891,9 @@ impl WamnPostgres {
             provider,
             guest_pools: std::sync::RwLock::new(HashMap::new()),
             platform_pools: std::sync::RwLock::new(HashMap::new()),
-            project_env_keys: std::sync::RwLock::new(HashMap::new()),
-            projects: std::sync::RwLock::new(HashMap::new()),
-            schemas: std::sync::RwLock::new(HashMap::new()),
-            runners: std::sync::RwLock::new(HashMap::new()),
-            workload_authorities: std::sync::RwLock::new(HashMap::new()),
-            roles: std::sync::RwLock::new(HashMap::new()),
-            users: std::sync::RwLock::new(HashMap::new()),
-            operations: std::sync::RwLock::new(HashMap::new()),
-            applications: std::sync::RwLock::new(HashMap::new()),
-            release_identities: std::sync::RwLock::new(HashMap::new()),
-            current_run: std::sync::RwLock::new(HashMap::new()),
-            invocations: std::sync::RwLock::new(HashMap::new()),
-            statement_scopes: std::sync::RwLock::new(StatementScopes::default()),
+            scopes: Arc::default(),
             operation_workloads: std::sync::RwLock::default(),
             operation_metrics: super::operation::OperationMetrics::default(),
-            operation_transactions: std::sync::Mutex::default(),
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
             auth: crate::auth_cache::AuthCache::default(),
@@ -1162,19 +1064,18 @@ impl WamnPostgres {
             valid_project_env_key(project_env_key),
             "invalid project_env_key {project_env_key:?}: canonical org--environment--project coordinates required"
         );
-        self.project_env_keys
-            .write()
-            .expect("project_env_keys lock poisoned")
-            .insert(component_id.to_string(), project_env_key.to_string());
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            project_env_key.clone_into(&mut record.identity.project_env_key);
+        });
         Ok(())
     }
 
     pub(super) fn project_env_key_for(&self, component_id: &str) -> Option<String> {
-        self.project_env_keys
-            .read()
-            .expect("project_env_keys lock poisoned")
-            .get(component_id)
-            .cloned()
+        self.scopes
+            .read::<Authority, _>(component_id, |record| {
+                record.identity.project_env_key.clone()
+            })
+            .filter(|key| !key.is_empty())
     }
 
     /// Register which project's database a component uses. The bench harness
@@ -1187,19 +1088,16 @@ impl WamnPostgres {
              starting and ending alphanumeric, with no consecutive hyphens and not under the \
              reserved `wamn` prefix, is required"
         );
-        self.projects
-            .write()
-            .expect("projects lock poisoned")
-            .insert(component_id.to_string(), project.to_string());
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.project = Some(project.to_string());
+        });
         Ok(())
     }
 
     pub(super) fn project_for(&self, component_id: &str) -> String {
-        self.projects
-            .read()
-            .expect("projects lock poisoned")
-            .get(component_id)
-            .cloned()
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.project.clone())
+            .flatten()
             .unwrap_or_else(|| DEFAULT_PROJECT.to_string())
     }
 
@@ -1213,19 +1111,16 @@ impl WamnPostgres {
             valid_schema(schema),
             "invalid schema {schema:?}: 1-63 chars of [A-Za-z0-9_] starting with a letter/underscore required"
         );
-        self.schemas
-            .write()
-            .expect("schemas lock poisoned")
-            .insert(component_id.to_string(), schema.to_string());
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.schema = Some(schema.to_string());
+        });
         Ok(())
     }
 
     pub(super) fn schema_for(&self, component_id: &str) -> Option<String> {
-        self.schemas
-            .read()
-            .expect("schemas lock poisoned")
-            .get(component_id)
-            .cloned()
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.schema.clone())
+            .flatten()
     }
 
     /// Register the durable-queue lease owner for a component id (fqg.4). When
@@ -1239,19 +1134,16 @@ impl WamnPostgres {
             valid_runner(runner),
             "invalid runner owner {runner:?}: 1-128 chars of [A-Za-z0-9_-] required"
         );
-        self.runners
-            .write()
-            .expect("runners lock poisoned")
-            .insert(component_id.to_string(), runner.to_string());
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.runner = Some(runner.to_string());
+        });
         Ok(())
     }
 
     pub(super) fn runner_for(&self, component_id: &str) -> Option<String> {
-        self.runners
-            .read()
-            .expect("runners lock poisoned")
-            .get(component_id)
-            .cloned()
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.runner.clone())
+            .flatten()
     }
 
     /// Bind the sole elevated authority admitted by the closed workload-config
@@ -1263,23 +1155,18 @@ impl WamnPostgres {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             value == super::EVENT_MATERIALIZER_AUTHORITY_CONFIG_VALUE,
-            "invalid {} value {value:?}: the sole admitted explicit value is {:?}",
-            super::AUTHORITY_CONFIG_KEY,
-            super::EVENT_MATERIALIZER_AUTHORITY_CONFIG_VALUE,
+            "invalid workload authority"
         );
-        self.workload_authorities
-            .write()
-            .expect("workload authorities lock poisoned")
-            .insert(component_id.to_string(), AuthorityClass::EventMaterializer);
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.class = Some(AuthorityClass::EventMaterializer);
+        });
         Ok(())
     }
 
     pub(super) fn workload_authority_for(&self, component_id: &str) -> AuthorityClass {
-        self.workload_authorities
-            .read()
-            .expect("workload authorities lock poisoned")
-            .get(component_id)
-            .copied()
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.class)
+            .flatten()
             .unwrap_or(AuthorityClass::GuestSql)
     }
 
@@ -1295,19 +1182,16 @@ impl WamnPostgres {
                 .is_ok_and(|parsed| parsed.as_str() == role),
             "invalid caller role {role:?}: a non-empty roles.name is required"
         );
-        self.roles
-            .write()
-            .expect("roles lock poisoned")
-            .insert(component_id.to_string(), role.to_string());
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.role = Some(role.to_string());
+        });
         Ok(())
     }
 
     pub(super) fn role_for(&self, component_id: &str) -> Option<String> {
-        self.roles
-            .read()
-            .expect("roles lock poisoned")
-            .get(component_id)
-            .cloned()
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.role.clone())
+            .flatten()
     }
 
     /// Register the executing principal's `app.user_id` identity for a component
@@ -1319,19 +1203,16 @@ impl WamnPostgres {
             valid_user_id(user_id),
             "invalid caller user id {user_id:?}: a canonical 8-4-4-4-12 uuid is required"
         );
-        self.users
-            .write()
-            .expect("users lock poisoned")
-            .insert(component_id.to_string(), user_id.to_string());
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.user_id = Some(user_id.to_string());
+        });
         Ok(())
     }
 
     pub(super) fn user_id_for(&self, component_id: &str) -> Option<String> {
-        self.users
-            .read()
-            .expect("users lock poisoned")
-            .get(component_id)
-            .cloned()
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.user_id.clone())
+            .flatten()
     }
 
     /// Register the `app.operation` identity for a component id. When set, every
@@ -1343,19 +1224,16 @@ impl WamnPostgres {
             valid_operation(operation),
             "invalid executing operation {operation:?}: a non-empty operation is required"
         );
-        self.operations
-            .write()
-            .expect("operations lock poisoned")
-            .insert(component_id.to_string(), operation.to_string());
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.operation = Some(operation.to_string());
+        });
         Ok(())
     }
 
     pub(super) fn operation_for(&self, component_id: &str) -> Option<String> {
-        self.operations
-            .read()
-            .expect("operations lock poisoned")
-            .get(component_id)
-            .cloned()
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.operation.clone())
+            .flatten()
     }
 
     /// Register the `app.application` identity for a component id. When set,
@@ -1367,19 +1245,16 @@ impl WamnPostgres {
             valid_application(application),
             "invalid executing application {application:?}: a non-empty application name is required"
         );
-        self.applications
-            .write()
-            .expect("applications lock poisoned")
-            .insert(component_id.to_string(), application.to_string());
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.application = Some(application.to_string());
+        });
         Ok(())
     }
 
     pub(super) fn application_for(&self, component_id: &str) -> Option<String> {
-        self.applications
-            .read()
-            .expect("applications lock poisoned")
-            .get(component_id)
-            .cloned()
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.application.clone())
+            .flatten()
     }
 
     /// Register the release this pod carries for a component id. The production
@@ -1403,19 +1278,16 @@ impl WamnPostgres {
         component_id: &str,
         identity: ReleaseIdentity,
     ) -> anyhow::Result<()> {
-        self.release_identities
-            .write()
-            .expect("release identities lock poisoned")
-            .insert(component_id.to_string(), identity);
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity.release = Some(identity);
+        });
         Ok(())
     }
 
     pub(super) fn release_identity_for(&self, component_id: &str) -> Option<ReleaseIdentity> {
-        self.release_identities
-            .read()
-            .expect("release identities lock poisoned")
-            .get(component_id)
-            .cloned()
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.identity.release.clone())
+            .flatten()
     }
 
     /// Declare (`Some`) or clear (`None`) the causation context of the run a
@@ -1424,128 +1296,56 @@ impl WamnPostgres {
     /// like the other identity registries — callers set it directly, exactly like
     /// [`set_project_env_key`](Self::set_project_env_key) / [`set_runner`](Self::set_runner).
     pub fn set_current_run(&self, component_id: &str, ctx: Option<Causation>) {
-        let mut w = self.current_run.write().expect("current_run lock poisoned");
-        match ctx {
-            Some(c) => {
-                w.insert(component_id.to_string(), c);
-            }
-            None => {
-                w.remove(component_id);
-            }
-        }
+        self.scopes
+            .update::<Authority, _>(component_id, |record| record.causation = ctx);
     }
 
     pub(super) fn current_run_for(&self, component_id: &str) -> Option<Causation> {
-        // Read-only calls produce no row events. Emitting a logical message would
-        // write WAL and invalidate the weak ETag of the read itself.
         if self.active_read(component_id) {
             return None;
         }
-        self.current_run
-            .read()
-            .expect("current_run lock poisoned")
-            .get(component_id)
-            .cloned()
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.causation.clone())
+            .flatten()
     }
 
     /// Bind the exact invocation facts before entering one pooled component
     /// (`wamn-0h0g.7.9`), so a postgres effect can name the wiring and node
     /// position it was raised under.
     ///
-    /// A still-bound owner refuses rather than silently replacing leaked
-    /// state — the rule the HTTP and blobstore registries hold, for the same
-    /// reason: a stale invocation would label the next guest's effects with the
-    /// previous one's wiring position.
+    /// Test fixtures populate the same authority record that execution readers use.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn bind_invocation(
         &self,
         component_id: &str,
         invocation: ConnectionInvocation,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(!component_id.is_empty(), "component id must be present");
-        let mut invocations = self
-            .invocations
-            .write()
-            .map_err(|_| anyhow::anyhow!("postgres invocation registry is poisoned"))?;
-        anyhow::ensure!(
-            !invocations.contains_key(component_id),
-            "component {component_id} still holds a bound postgres invocation"
-        );
-        invocations.insert(component_id.to_owned(), invocation);
-        Ok(())
+        crate::invocation::validate_invocation(&invocation)?;
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            anyhow::ensure!(record.invocation.is_none(), "invocation is already bound");
+            record.invocation = Some(invocation);
+            Ok(())
+        })
     }
 
     /// Release the invocation when the instance returns to the pool.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn revoke_invocation(&self, component_id: &str) {
-        if let Ok(mut invocations) = self.invocations.write() {
-            invocations.remove(component_id);
-        }
+        self.scopes
+            .update_existing::<Authority, _>(component_id, |record| record.invocation = None);
     }
 
     /// The invocation currently bound to one pooled instance.
     #[must_use]
     pub fn invocation(&self, component_id: &str) -> Option<ConnectionInvocation> {
-        self.invocations
-            .read()
-            .ok()
-            .and_then(|invocations| invocations.get(component_id).cloned())
+        self.scopes
+            .read::<Authority, _>(component_id, |record| record.invocation.clone())
+            .flatten()
     }
 
-    /// Inspect active invocation scopes for cross-crate lifecycle tests.
-    #[cfg(feature = "test-util")]
-    pub fn invocation_scopes_for_test(&self) -> Vec<String> {
-        self.invocations
-            .read()
-            .expect("invocation registry lock")
-            .keys()
-            .cloned()
-            .collect()
-    }
-
-    /// Bind EVERY per-component-id identity registry this plugin keeps to one
-    /// identity, for the length of one execution checkout (wamn-0h0g.17.7).
-    ///
-    /// The registries are process-resident and keyed by component id, so a
-    /// component id is a *invocation scope*, not a fact about which project_env_key a store
-    /// was built for. This is the write half of that scope: a pooled instance is
-    /// fungible compute, and the identity it serves arrives here at acquisition
-    /// rather than at construction. Every registry
-    /// [`revoke_session_identity`](Self::revoke_session_identity) clears is written
-    /// here, so the two are exhaustive over the same set — an identity added to one
-    /// and not the other is a leak channel.
-    ///
-    /// Absent optional identity REMOVE any prior registration rather than leaving
-    /// it standing: an acquisition that declares no schema must not inherit the
-    /// previous acquisition's `search_path`.
-    ///
-    /// Validation is the same as the individual `set_*` setters, so an invalid
-    /// identity is refused here and the caller destroys the instance rather than
-    /// serving it under a half-written identity.
-    ///
-    /// # The executing principal must own a user row (`wamn-0h0g.9.19`)
-    ///
-    /// A bind that names an `app.user_id` refuses when the principal owns no
-    /// `platform."user"` row in the project_env_key's project database. The credential
-    /// of such a principal is a provisioning defect, and every write it makes
-    /// records an actor that names no row. The host's
-    /// [auth memory](crate::auth_cache) answers first: the route authenticator
-    /// read the same row a moment before. On a miss the bind reads the row and
-    /// keeps the answer. A request element that begins its own transaction
-    /// binds twice, and its second bind is
-    /// [`bind_request_element_session_identity`](Self::bind_request_element_session_identity),
-    /// which does not test again.
-    ///
-    /// On a host that watches the auth bucket, a user row deleted after the
-    /// test stays accepted until a change message clears the memory, or
-    /// until the memory's TTL ends if the message is lost. A host without
-    /// the bucket keeps no answer and reads the row on every bind.
-    ///
-    /// The read runs LAST, after every identity is written and validated, so a
-    /// bind that is going to be refused for a malformed identity never opens a
-    /// connection. A refused bind leaves the identity maps half-written, which is
-    /// the contract above: the caller destroys the instance.
-    ///
-    /// A platform principal carries its own `wamn:<component>` row, which
-    /// provisioning writes, so it binds like any other principal.
+    /// Bind workload identity and verify that its executing principal is provisioned.
+    /// An absent optional member clears that member's previous authority.
     pub async fn bind_session_identity(
         &self,
         component_id: &str,
@@ -1583,90 +1383,27 @@ impl WamnPostgres {
         component_id: &str,
         identity: &SessionIdentity,
     ) -> anyhow::Result<()> {
-        // An acquisition starts with no statement authority. The router
-        // activates the selected operation only after identity bind.
-        self.revoke_statement_operation(component_id);
-        self.set_project_env_key(component_id, &identity.project_env_key)?;
-        match identity.project.as_deref() {
-            Some(project) => self.set_project(component_id, project)?,
-            None => drop(
-                self.projects
-                    .write()
-                    .expect("projects lock poisoned")
-                    .remove(component_id),
-            ),
+        validate_identity(identity)?;
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            record.identity = identity.clone();
+            record.causation = None;
+            record.statements.active = None;
+        });
+        Ok(())
+    }
+
+    pub(crate) async fn verify_scope_principal(&self, scope: &str) -> anyhow::Result<()> {
+        let identity = self
+            .session_identity(scope)
+            .ok_or_else(|| anyhow::anyhow!("invocation scope was revoked"))?;
+        if let Some(user) = identity.user_id.as_deref() {
+            self.require_provisioned_principal(
+                &identity.project_env_key,
+                identity.project.as_deref().unwrap_or(DEFAULT_PROJECT),
+                user,
+            )
+            .await?;
         }
-        match identity.schema.as_deref() {
-            Some(schema) => self.set_schema(component_id, schema)?,
-            None => drop(
-                self.schemas
-                    .write()
-                    .expect("schemas lock poisoned")
-                    .remove(component_id),
-            ),
-        }
-        match identity.runner.as_deref() {
-            Some(runner) => self.set_runner(component_id, runner)?,
-            None => drop(
-                self.runners
-                    .write()
-                    .expect("runners lock poisoned")
-                    .remove(component_id),
-            ),
-        }
-        match identity.role.as_deref() {
-            Some(role) => self.set_role(component_id, role)?,
-            None => drop(
-                self.roles
-                    .write()
-                    .expect("roles lock poisoned")
-                    .remove(component_id),
-            ),
-        }
-        match identity.user_id.as_deref() {
-            Some(user_id) => self.set_user_id(component_id, user_id)?,
-            None => drop(
-                self.users
-                    .write()
-                    .expect("users lock poisoned")
-                    .remove(component_id),
-            ),
-        }
-        match identity.operation.as_deref() {
-            Some(operation) => self.set_operation(component_id, operation)?,
-            None => drop(
-                self.operations
-                    .write()
-                    .expect("operations lock poisoned")
-                    .remove(component_id),
-            ),
-        }
-        match identity.application.as_deref() {
-            Some(application) => self.set_application(component_id, application)?,
-            None => drop(
-                self.applications
-                    .write()
-                    .expect("applications lock poisoned")
-                    .remove(component_id),
-            ),
-        }
-        match identity.release.as_ref() {
-            Some(release) => self.set_release_identity(component_id, release.clone())?,
-            None => drop(
-                self.release_identities
-                    .write()
-                    .expect("release identities lock poisoned")
-                    .remove(component_id),
-            ),
-        }
-        // Causation is RUN-owned, declared through `set_current_run` once the
-        // run is in hand. A binding acquisition has no run yet, so it starts
-        // undeclared — carrying the previous acquisition's run context forward
-        // would misattribute its CDC stitch.
-        self.current_run
-            .write()
-            .expect("current_run lock poisoned")
-            .remove(component_id);
         Ok(())
     }
 
@@ -1755,145 +1492,26 @@ impl WamnPostgres {
     /// lets a test assert that two concurrent acquisitions never share one
     /// identity.
     pub fn session_identity(&self, component_id: &str) -> Option<SessionIdentity> {
-        Some(SessionIdentity {
-            project_env_key: self.project_env_key_for(component_id)?,
-            project: self
-                .projects
-                .read()
-                .expect("projects lock poisoned")
-                .get(component_id)
-                .cloned(),
-            schema: self.schema_for(component_id),
-            runner: self.runner_for(component_id),
-            role: self.role_for(component_id),
-            user_id: self.user_id_for(component_id),
-            operation: self.operation_for(component_id),
-            application: self.application_for(component_id),
-            release: self.release_identity_for(component_id),
-        })
+        crate::invocation::identity(&self.scopes, component_id)
     }
 
-    /// Clear every registration [`bind_session_identity`](Self::bind_session_identity)
-    /// installed under one component id.
-    ///
-    /// Called when a checkout ends, on every path — repooled, retired, or
-    /// dropped. An idle instance that still resolved an project_env_key would be a warm
-    /// store carrying identity, which is the whole defect this seam closes; and
-    /// a `require_project_env_key` failure is how an unbound instance fails closed
-    /// instead of serving someone else's rows.
+    /// End SQL authority while retaining the invocation's result-signing authority.
     pub fn revoke_session_identity(&self, component_id: &str) {
-        self.revoke_statement_operation(component_id);
-        self.project_env_keys
-            .write()
-            .expect("project_env_keys lock poisoned")
-            .remove(component_id);
-        self.projects
-            .write()
-            .expect("projects lock poisoned")
-            .remove(component_id);
-        self.schemas
-            .write()
-            .expect("schemas lock poisoned")
-            .remove(component_id);
-        self.runners
-            .write()
-            .expect("runners lock poisoned")
-            .remove(component_id);
-        self.roles
-            .write()
-            .expect("roles lock poisoned")
-            .remove(component_id);
-        self.users
-            .write()
-            .expect("users lock poisoned")
-            .remove(component_id);
-        self.operations
-            .write()
-            .expect("operations lock poisoned")
-            .remove(component_id);
-        self.applications
-            .write()
-            .expect("applications lock poisoned")
-            .remove(component_id);
-        self.release_identities
-            .write()
-            .expect("release identities lock poisoned")
-            .remove(component_id);
-        self.current_run
-            .write()
-            .expect("current_run lock poisoned")
-            .remove(component_id);
+        self.scopes
+            .update_existing::<Authority, _>(component_id, |record| {
+                record.identity = SessionIdentity::default();
+                record.causation = None;
+                record.statements.active = None;
+            });
     }
 
-    /// Reap EVERY per-component-id identity, workload-authority, and verified
-    /// statement registry this plugin keeps for a workload
-    /// on teardown (R31): project_env_key, project, search_path schema, runner lease-owner,
-    /// the caller's role / user id, the executing operation and application, the carried
-    /// release identity, the causation run context, and the bound invocation —
-    /// all set at workload bind (or via the runner or driver channel) and keyed
-    /// by component id.
-    /// Without this a stale identity
-    /// survives unbind, the maps grow across workload churn, and a rebound
-    /// component id inherits the prior identity. The lifecycle pool maps are
-    /// deliberately NOT touched: they are keyed by PROJECT (shared and memoized
-    /// within each lifecycle for the plugin's lifetime), not by component id.
-    /// Keyed like the runtime's builtin postgres plugin — a workload's component ids
-    /// are prefixed by the workload id — so everything NOT under it is retained;
-    /// an unknown workload id is a no-op.
+    /// Release every scope owned by a stopped workload.
     pub(super) fn clear_component_identity(&self, workload_id: &str) {
-        let retain = |c: &String| !c.starts_with(workload_id);
-        self.project_env_keys
-            .write()
-            .expect("project_env_keys lock poisoned")
-            .retain(|c, _| retain(c));
-        self.projects
-            .write()
-            .expect("projects lock poisoned")
-            .retain(|c, _| retain(c));
-        self.schemas
-            .write()
-            .expect("schemas lock poisoned")
-            .retain(|c, _| retain(c));
-        self.runners
-            .write()
-            .expect("runners lock poisoned")
-            .retain(|c, _| retain(c));
-        self.workload_authorities
-            .write()
-            .expect("workload authorities lock poisoned")
-            .retain(|c, _| retain(c));
-        self.roles
-            .write()
-            .expect("roles lock poisoned")
-            .retain(|c, _| retain(c));
-        self.users
-            .write()
-            .expect("users lock poisoned")
-            .retain(|c, _| retain(c));
-        self.operations
-            .write()
-            .expect("operations lock poisoned")
-            .retain(|c, _| retain(c));
-        self.applications
-            .write()
-            .expect("applications lock poisoned")
-            .retain(|c, _| retain(c));
-        self.release_identities
-            .write()
-            .expect("release identities lock poisoned")
-            .retain(|c, _| retain(c));
-        self.current_run
-            .write()
-            .expect("current_run lock poisoned")
-            .retain(|c, _| retain(c));
-        if let Ok(mut invocations) = self.invocations.write() {
-            invocations.retain(|c, _| retain(c));
-        }
+        self.scopes.revoke_workload(workload_id);
         self.operation_workloads
             .write()
             .expect("operation workloads lock poisoned")
-            .retain(|c, _| retain(c));
-        self.clear_statement_bindings(workload_id);
+            .retain(|scope, _| !scope.starts_with(workload_id));
     }
 
     /// Share the host reader with local binding readiness and dispatch.
@@ -2571,4 +2189,45 @@ pub fn valid_schema(schema: &str) -> bool {
         && schema
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+pub(crate) fn validate_identity(identity: &SessionIdentity) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        valid_project_env_key(&identity.project_env_key),
+        "invalid project environment key"
+    );
+    anyhow::ensure!(
+        identity.project.as_deref().is_none_or(valid_project),
+        "invalid project"
+    );
+    anyhow::ensure!(
+        identity.schema.as_deref().is_none_or(valid_schema),
+        "invalid schema"
+    );
+    anyhow::ensure!(
+        identity.runner.as_deref().is_none_or(valid_runner),
+        "invalid runner"
+    );
+    anyhow::ensure!(
+        identity.role.as_deref().is_none_or(|role| role
+            .parse::<wamn_identity_protocol::RoleName>()
+            .is_ok_and(|parsed| parsed.as_str() == role)),
+        "invalid role"
+    );
+    anyhow::ensure!(
+        identity.user_id.as_deref().is_none_or(valid_user_id),
+        "invalid principal"
+    );
+    anyhow::ensure!(
+        identity.operation.as_deref().is_none_or(valid_operation),
+        "invalid operation"
+    );
+    anyhow::ensure!(
+        identity
+            .application
+            .as_deref()
+            .is_none_or(valid_application),
+        "invalid application"
+    );
+    Ok(())
 }

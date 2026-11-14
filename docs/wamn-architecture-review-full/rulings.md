@@ -73,3 +73,7 @@ W13. S6 runs as two serial lanes after S4 merges: S6-A (migration execution) and
 W14. Palette descriptor ownership (S5-D question): S7 defines the platform ownership of palette guests and connects `palette.json` to release and dev resolution. The old delivery path stays deleted.
 
 W15. S7 runs as four serial lanes after S4 merges: S7-A (invocation authority), S7-B (typed HTTP invocation), S7-C (workflow and palette invocation) and S7-D (edge switch and the final deletion). C30 is corrected: `native_policy.rs::finish_result` creates signing authority after commit, so the invocation record of S7-A keeps that authority. Validation moves into the typed exports before the codecs go. S7-A changes `audit_retention.rs::WRITE_LOG_RETENTION_SQL` so that unfinished claims expire after 30 days (R-06 C).
+
+W16. Claim commands (S7-A question). Ruling 1 applies: an operation with an external effect commits its claim before the effect. The compiler stops requiring `explicit_per_input` for a claim command that has no SQL. An operation that mixes SQL work with an external effect is split into separate operations, and the compiler refuses the mixed form.
+
+W17. Platform migration logins (S6-A question). Ruling 6 applies to platform scopes as well. Each platform migration role gets its own CNPG managed login with one basic-auth Secret, like the S4 roles. The owner roles stay `NOLOGIN`, and the migration login holds their privileges through membership.

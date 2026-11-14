@@ -224,10 +224,6 @@ pub struct ConnectionHttp {
     /// own fixtures). Such a process cannot attest a wiring/component closure,
     /// so it cannot authorize a connection.
     release: Option<Arc<LoadedRelease>>,
-    /// Component-store owner id to the invocation currently using that pooled
-    /// instance. The production driver binds before `handler.run` and revokes
-    /// before returning the instance to the pool.
-    invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
 }
 
 impl ConnectionHttp {
@@ -252,87 +248,11 @@ impl ConnectionHttp {
             project,
             allowed_hosts,
             release,
-            invocations: std::sync::RwLock::new(HashMap::new()),
-        }
-    }
-
-    /// Bind the exact invocation facts before entering one pooled component.
-    /// A still-bound owner refuses rather than silently replacing leaked state.
-    pub fn bind_invocation(
-        &self,
-        component_id: &str,
-        invocation: ConnectionInvocation,
-    ) -> anyhow::Result<()> {
-        let digest = invocation
-            .component_digest
-            .strip_prefix("sha256:")
-            .unwrap_or_default();
-        let entry_valid = match &invocation.entry {
-            InvocationEntry::Route => !matches!(
-                invocation.closure,
-                ConnectionExecutionClosure::Candidate { .. }
-            ),
-            InvocationEntry::Wiring(position) => {
-                !position.package_id.is_empty()
-                    && !position.wiring_id.is_empty()
-                    && position.wiring_version > 0
-                    && wamn_catalog::DefinitionHash::parse(&position.wiring_hash).is_ok()
-                    && !position.node_id.is_empty()
-            }
-        };
-        anyhow::ensure!(
-            !component_id.is_empty()
-                && !invocation.package_id.is_empty()
-                && entry_valid
-                && digest.len() == 64
-                && digest
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-            "connection-http-invocation-invalid"
-        );
-        if let ConnectionExecutionClosure::Candidate {
-            manifest_digest,
-            environment,
-            wiring_hash,
-            component,
-            interface_version,
-            ..
-        } = &invocation.closure
-        {
-            let graph = wiring_hash.strip_prefix("sha256:").unwrap_or_default();
-            anyhow::ensure!(
-                !manifest_digest.is_empty()
-                    && !environment.is_empty()
-                    && !component.is_empty()
-                    && !interface_version.is_empty()
-                    && graph.len() == 64
-                    && graph
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-                "connection-http-candidate-closure-invalid"
-            );
-        }
-        let mut bound = self
-            .invocations
-            .write()
-            .map_err(|_| anyhow::anyhow!("connection-http-invocation-lock-poisoned"))?;
-        anyhow::ensure!(
-            !bound.contains_key(component_id),
-            "connection-http-invocation-already-bound"
-        );
-        bound.insert(component_id.to_owned(), invocation);
-        Ok(())
-    }
-
-    /// Clear the invocation before returning an instance to the pool.
-    pub fn revoke_invocation(&self, component_id: &str) {
-        if let Ok(mut bound) = self.invocations.write() {
-            bound.remove(component_id);
         }
     }
 
     fn invocation(&self, component_id: &str) -> Option<ConnectionInvocation> {
-        self.invocations.read().ok()?.get(component_id).cloned()
+        self.postgres.invocation(component_id)
     }
 
     /// Exercise the host dispatch path without constructing a component store.
@@ -1741,10 +1661,11 @@ mod tests {
         let component_id = "component-store-7";
         let invocation = invocation();
         plugin
+            .postgres
             .bind_invocation(component_id, invocation.clone())
             .expect("the fresh store accepts its invocation");
 
-        plugin.revoke_invocation(component_id);
+        plugin.postgres.revoke_invocation(component_id);
 
         let request = Request {
             requirement: "manager".to_string(),
@@ -1759,6 +1680,7 @@ mod tests {
             Err(ConnectionError::AttestationInvalid)
         ));
         plugin
+            .postgres
             .bind_invocation(component_id, invocation.clone())
             .expect("revocation makes the store safe to bind again");
         assert_eq!(plugin.invocation(component_id), Some(invocation));
@@ -1929,6 +1851,7 @@ mod tests {
         assert_eq!(lookup.package_id, route.origin.package_id);
         assert!(lookup.wiring.is_none());
         plugin
+            .postgres
             .bind_invocation("released-route", route.clone())
             .expect("a released route binds");
 
@@ -1943,6 +1866,7 @@ mod tests {
             ),
         };
         plugin
+            .postgres
             .bind_invocation("candidate-route", route)
             .expect_err("a candidate closure is a wiring admission, never a route");
     }
@@ -2212,6 +2136,7 @@ mod tests {
         let plugin = offline_plugin();
         let component_id = "component-store-7";
         plugin
+            .postgres
             .bind_invocation(component_id, invocation())
             .expect("the fresh store accepts its invocation");
         let component_digest = digest('a');
@@ -2278,11 +2203,13 @@ mod tests {
 
         let harness = SpanHarness::install("connection-http-two-wirings-test");
         plugin
+            .postgres
             .bind_invocation(component_id, invocation())
             .expect("the fresh store accepts its first invocation");
         drop(http_span(&plugin, component_id));
-        plugin.revoke_invocation(component_id);
+        plugin.postgres.revoke_invocation(component_id);
         plugin
+            .postgres
             .bind_invocation(component_id, second_package_invocation())
             .expect("revocation makes the store safe to bind again");
         drop(http_span(&plugin, component_id));
@@ -2339,7 +2266,10 @@ mod tests {
         let evidence = EffectEvidence::new();
         let mut bound = invocation();
         bound.effects = Some(evidence.clone());
-        plugin.bind_invocation(component_id, bound).unwrap();
+        plugin
+            .postgres
+            .bind_invocation(component_id, bound)
+            .unwrap();
         observed_http_span(&plugin, component_id, &Err(ConnectionError::Timeout));
         assert_eq!(evidence.outcome(), Some(EffectOutcome::Timeout));
         observed_http_span(
@@ -2348,11 +2278,14 @@ mod tests {
             &Err(ConnectionError::Transport(RESPONSE_BODY_LOST.to_owned())),
         );
         assert_eq!(evidence.outcome(), None);
-        plugin.revoke_invocation(component_id);
+        plugin.postgres.revoke_invocation(component_id);
         let replacement = EffectEvidence::new();
         let mut bound = invocation();
         bound.effects = Some(replacement.clone());
-        plugin.bind_invocation(component_id, bound).unwrap();
+        plugin
+            .postgres
+            .bind_invocation(component_id, bound)
+            .unwrap();
         observed_http_span(
             &plugin,
             component_id,
@@ -2470,6 +2403,7 @@ mod tests {
         let plugin = offline_plugin();
         let component_id = "component-store-7";
         plugin
+            .postgres
             .bind_invocation(component_id, invocation())
             .expect("the fresh store accepts its invocation");
         let component_digest = digest('a');
@@ -2508,6 +2442,7 @@ mod tests {
         let plugin = offline_plugin();
         let component_id = "component-store-7";
         plugin
+            .postgres
             .bind_invocation(component_id, invocation())
             .expect("the fresh store accepts its invocation");
         let component_digest = digest('a');
@@ -2591,11 +2526,13 @@ mod tests {
 
         let harness = SpanHarness::install("connection-http-two-operations-test");
         plugin
+            .postgres
             .bind_invocation(component_id, invocation())
             .expect("the fresh store accepts its first invocation");
         drop(http_span(&plugin, component_id));
-        plugin.revoke_invocation(component_id);
+        plugin.postgres.revoke_invocation(component_id);
         plugin
+            .postgres
             .bind_invocation(component_id, second_operation_invocation())
             .expect("revocation makes the store safe to bind again");
         drop(http_span(&plugin, component_id));

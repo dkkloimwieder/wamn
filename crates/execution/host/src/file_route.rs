@@ -1678,7 +1678,7 @@ mod tests {
         let files = files();
         let digest = format!("sha256:{}", "a".repeat(64));
         files
-            .blobstore
+            .postgres
             .bind_invocation(
                 "palette",
                 ConnectionInvocation {

@@ -6,8 +6,7 @@
 //! prune. apply-package reads it to grant [`AUDIT_RETENTION_ROLE`] exactly the
 //! privileges that the verb needs, and the provisioning verifier reads it to
 //! test those grants.
-//! The same job prunes successful write-log claims after 30 days and keeps
-//! uncertain claims. The write log provides idempotency protection.
+//! The same job prunes all write-log claims after 30 days. The write log provides idempotency protection.
 
 use postgres_protocol::escape::{escape_identifier, escape_literal};
 
@@ -29,9 +28,9 @@ pub const AUDIT_RETENTION_READ_COLUMNS: [&str; 4] =
 /// Read only the age and completion state when pruning idempotency records.
 pub const WRITE_LOG_RETENTION_READ_COLUMNS: [&str; 2] = ["created_at", "result"];
 
-/// Expire successful claims after 30 days. Uncertain claims never expire.
+/// Expire every claim after 30 days, far beyond the 30-second call boundary.
 pub const WRITE_LOG_RETENTION_SQL: &str = "DELETE FROM platform.write_log \
-    WHERE created_at < transaction_timestamp() - interval '30 days' AND result IS NOT NULL";
+    WHERE created_at < transaction_timestamp() - interval '30 days'";
 
 /// The optional write log target in databases that install the application schema.
 pub const WRITE_LOG_RETENTION_TARGET_SQL: &str = "SELECT 'platform'::text AS schema_name, \
@@ -85,7 +84,7 @@ SELECT log.schema_name, log.relation_name, log.history_name, log.days
 /// The block revokes
 /// every privilege that the role holds on a schema or a relation, and then
 /// grants the exact set. The write log also grants schema `USAGE`, `DELETE`,
-/// and `SELECT (created_at, result)` for its fixed 30-day success retention.
+/// and `SELECT (created_at, result)` for its fixed 30-day retention.
 /// A database without the role gets no change, like the
 /// run plane repair of the `wamn_run_retention` grants. The caller runs the block in the transaction that
 /// reconciles the log triggers, after it takes [`AUDIT_RETENTION_LOCK_SQL`].

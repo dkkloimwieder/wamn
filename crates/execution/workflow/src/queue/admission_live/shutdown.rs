@@ -103,7 +103,13 @@ pub(super) async fn run(
             }
         }
     }).await.expect("actual guest entry before signal");
-    let targets = execution.postgres.invocation_scopes_for_test();
+    let targets: Vec<_> = execution
+        .postgres
+        .scopes
+        .scopes()
+        .into_iter()
+        .filter(|scope| execution.postgres.invocation(scope).is_some())
+        .collect();
     assert_eq!(
         targets.len(),
         1,

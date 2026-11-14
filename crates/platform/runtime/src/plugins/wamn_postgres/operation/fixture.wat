@@ -55,7 +55,7 @@
     (export "sealed-operation-id" (type $id (eq $id')))
     (type $refusal' (variant (case "uncertain") (case "resolved" string) (case "conflict")
       (case "unknown-operation") (case "grant-denied") (case "invalid-caller")
-      (case "not-begun") (case "already-begun") (case "postgres" $pg-error) (case "reads-claim-nothing")))
+      (case "not-begun") (case "already-begun") (case "postgres" $pg-error) (case "reads-claim-nothing") (case "in-progress") (case "outcome-unknown")))
     (export "refusal" (type $refusal (eq $refusal')))
     (type $begun' (variant (case "new" string) (case "finished" string)))
     (export "begun" (type $begun (eq $begun')))

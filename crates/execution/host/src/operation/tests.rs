@@ -1,39 +1,7 @@
 use wamn_runtime::plugins::connection_http::WiringPosition;
-use wamn_scalar::SqlValueType;
 
 use super::*;
 use wamn_engine::router_delivery::{OperationRefusalType, authorize_registered_operation};
-
-#[test]
-fn admitted_statement_types_lower_exhaustively_to_the_runtime_vocabulary() {
-    let cases = [
-        (SqlValueType::Boolean, SqlValueType::Boolean),
-        (SqlValueType::Int32, SqlValueType::Int32),
-        (SqlValueType::Int64, SqlValueType::Int64),
-        (SqlValueType::Float64, SqlValueType::Float64),
-        (SqlValueType::Text, SqlValueType::Text),
-        (SqlValueType::Bytes, SqlValueType::Bytes),
-        (SqlValueType::Numeric, SqlValueType::Numeric),
-        (SqlValueType::Timestamptz, SqlValueType::Timestamptz),
-        (SqlValueType::Json, SqlValueType::Json),
-        (SqlValueType::Uuid, SqlValueType::Uuid),
-    ];
-
-    for (index, (admitted, runtime)) in cases.into_iter().enumerate() {
-        let field = ComponentSqlField {
-            name: format!("field-{index}"),
-            value_type: admitted,
-            nullable: index % 2 == 0,
-        };
-        assert_eq!(
-            lower_statement_field(&field),
-            StatementField {
-                value_type: runtime,
-                nullable: field.nullable,
-            }
-        );
-    }
-}
 
 #[test]
 fn a_custom_read_refuses_a_caller_without_its_grant() {

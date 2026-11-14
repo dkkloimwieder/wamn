@@ -1,5 +1,6 @@
 //! Host-owned resolution and contract tests for verified SQL statements.
 
+use crate::invocation::Authority;
 use sqlx::{Column as _, Statement as _, TypeInfo as _};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -58,7 +59,7 @@ pub struct PreparedStatementMembers(Arc<BTreeMap<Box<str>, Arc<BoundStatementSet
 
 /// The statements a scope may run while its operation is active.
 #[derive(Debug)]
-struct ActiveStatements {
+pub(crate) struct ActiveStatements {
     /// The set of the unnamed import: the active operation's own set.
     operation: Arc<BoundStatementSet>,
     /// The set of each named import.
@@ -66,10 +67,25 @@ struct ActiveStatements {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct StatementScopes {
-    bindings: HashMap<String, HashMap<String, Arc<BoundStatementSet>>>,
-    members: HashMap<String, PreparedStatementMembers>,
-    active: HashMap<String, ActiveStatements>,
+pub(crate) struct StatementScope {
+    bindings: HashMap<String, Arc<BoundStatementSet>>,
+    members: Option<PreparedStatementMembers>,
+    pub active: Option<ActiveStatements>,
+}
+
+impl StatementScope {
+    pub(crate) fn active(
+        operation: PreparedStatementSet,
+        members: PreparedStatementMembers,
+    ) -> Self {
+        Self {
+            active: Some(ActiveStatements {
+                operation: operation.0,
+                members,
+            }),
+            ..Self::default()
+        }
+    }
 }
 
 impl PreparedStatementSet {
@@ -117,21 +133,17 @@ impl WamnPostgres {
         members: &PreparedStatementMembers,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(!component_id.is_empty(), "statement-component-id-empty");
-        let mut scopes = self
-            .statement_scopes
-            .write()
-            .expect("statement scopes lock poisoned");
-        if let Some(existing) = scopes.members.get(component_id) {
-            anyhow::ensure!(
-                existing == members,
-                "statement-members-rebind-conflict: {component_id}"
-            );
-            return Ok(());
-        }
-        scopes
-            .members
-            .insert(component_id.to_owned(), members.clone());
-        Ok(())
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            if let Some(existing) = &record.statements.members {
+                anyhow::ensure!(
+                    existing == members,
+                    "statement-members-rebind-conflict: {component_id}"
+                );
+            } else {
+                record.statements.members = Some(members.clone());
+            }
+            Ok(())
+        })
     }
 
     /// Bind a prepared set under a scope. Once per request.
@@ -146,20 +158,18 @@ impl WamnPostgres {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(!component_id.is_empty(), "statement-component-id-empty");
         anyhow::ensure!(!operation.is_empty(), "statement-operation-empty");
-        let mut scopes = self
-            .statement_scopes
-            .write()
-            .expect("statement scopes lock poisoned");
-        let operations = scopes.bindings.entry(component_id.to_owned()).or_default();
-        if let Some(existing) = operations.get(operation) {
-            anyhow::ensure!(
-                existing == &statements.0,
-                "statement-operation-rebind-conflict: {operation}"
-            );
-            return Ok(());
-        }
-        operations.insert(operation.to_owned(), Arc::clone(&statements.0));
-        Ok(())
+        self.scopes.update::<Authority, _>(component_id, |record| {
+            let operations = &mut record.statements.bindings;
+            if let Some(existing) = operations.get(operation) {
+                anyhow::ensure!(
+                    existing == &statements.0,
+                    "statement-operation-rebind-conflict: {operation}"
+                );
+            } else {
+                operations.insert(operation.to_owned(), Arc::clone(&statements.0));
+            }
+            Ok(())
+        })
     }
 
     /// Both halves in order, for a caller with one workload and one scope.
@@ -178,41 +188,32 @@ impl WamnPostgres {
         component_id: &str,
         operation: &str,
     ) -> anyhow::Result<()> {
-        let mut scopes = self
-            .statement_scopes
-            .write()
-            .expect("statement scopes lock poisoned");
-        let statements = scopes
-            .bindings
-            .get(component_id)
-            .and_then(|operations| operations.get(operation))
-            .cloned();
-        scopes.active.remove(component_id);
-        let statements = statements.ok_or_else(|| {
-            anyhow::anyhow!("statement-operation-unbound: {component_id}::{operation}")
-        })?;
-        let members = scopes
-            .members
-            .get(component_id)
-            .cloned()
-            .unwrap_or_default();
-        scopes.active.insert(
-            component_id.to_owned(),
-            ActiveStatements {
-                operation: statements,
-                members,
-            },
-        );
-        Ok(())
+        self.scopes
+            .update_existing::<Authority, _>(component_id, |record| {
+                let statements = &mut record.statements;
+                statements.active = None;
+                let operation = statements.bindings.get(operation).cloned().ok_or_else(|| {
+                    anyhow::anyhow!("statement-operation-unbound: {component_id}::{operation}")
+                })?;
+                statements.active = Some(ActiveStatements {
+                    operation,
+                    members: statements.members.clone().unwrap_or_default(),
+                });
+                Ok(())
+            })
+            .unwrap_or_else(|| {
+                Err(anyhow::anyhow!(
+                    "statement-operation-unbound: {component_id}::{operation}"
+                ))
+            })
     }
 
     /// Revoke the invocation's active statement authority.
     pub fn revoke_statement_operation(&self, component_id: &str) {
-        self.statement_scopes
-            .write()
-            .expect("statement scopes lock poisoned")
-            .active
-            .remove(component_id);
+        self.scopes
+            .update_existing::<Authority, _>(component_id, |record| {
+                record.statements.active = None;
+            });
     }
 
     /// Remove every verified-statement binding for one exact component scope.
@@ -222,13 +223,10 @@ impl WamnPostgres {
     /// both the immutable operation facts and any invocation-active view without
     /// treating the component id as a prefix.
     pub fn clear_statement_scope(&self, component_id: &str) {
-        let mut scopes = self
-            .statement_scopes
-            .write()
-            .expect("statement scopes lock poisoned");
-        scopes.bindings.remove(component_id);
-        scopes.members.remove(component_id);
-        scopes.active.remove(component_id);
+        self.scopes
+            .update_existing::<Authority, _>(component_id, |record| {
+                record.statements = StatementScope::default();
+            });
     }
 
     /// The statements that the `statements` import named `instance` may run
@@ -239,41 +237,28 @@ impl WamnPostgres {
         component_id: &str,
         instance: Option<&str>,
     ) -> Option<Arc<BoundStatementSet>> {
-        let scopes = self
-            .statement_scopes
-            .read()
-            .expect("statement scopes lock poisoned");
-        let active = scopes.active.get(component_id)?;
-        match instance {
-            None => Some(Arc::clone(&active.operation)),
-            Some(instance) => active.members.0.get(instance).cloned(),
-        }
+        self.scopes
+            .read::<Authority, _>(component_id, |record| {
+                let active = record.statements.active.as_ref()?;
+                match instance {
+                    None => Some(Arc::clone(&active.operation)),
+                    Some(instance) => active.members.0.get(instance).cloned(),
+                }
+            })
+            .flatten()
     }
 
     /// Whether the operation active in `component_id` is a read.
     pub(super) fn active_read(&self, component_id: &str) -> bool {
-        self.statement_scopes
-            .read()
-            .expect("statement scopes lock poisoned")
-            .active
-            .get(component_id)
-            .is_some_and(|active| active.operation.read)
-    }
-
-    pub(super) fn clear_statement_bindings(&self, workload_id: &str) {
-        let mut scopes = self
-            .statement_scopes
-            .write()
-            .expect("statement scopes lock poisoned");
-        scopes
-            .bindings
-            .retain(|component_id, _| !component_id.starts_with(workload_id));
-        scopes
-            .members
-            .retain(|component_id, _| !component_id.starts_with(workload_id));
-        scopes
-            .active
-            .retain(|component_id, _| !component_id.starts_with(workload_id));
+        self.scopes
+            .read::<Authority, _>(component_id, |record| {
+                record
+                    .statements
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.operation.read)
+            })
+            .unwrap_or(false)
     }
 }
 

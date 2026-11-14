@@ -1402,8 +1402,14 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
                     .map(|header| (header.name.clone(), header.value.clone()))
                     .collect::<Vec<_>>(),
             );
-            ctx.table
-                .push(crate::invocation_trace::RequestTrace(trace.clone()))?;
+            if let Ok(scopes) = ctx.try_get_plugin::<crate::invocation_scope::InvocationScopes>(
+                crate::invocation_scope::INVOCATION_SCOPES_ID,
+            ) {
+                let lifetime = scopes
+                    .enter(ctx.id.to_string(), (), trace.clone())
+                    .map_err(|error| wash_runtime::wasmtime::Error::msg(error.to_string()))?;
+                ctx.table.push(lifetime)?;
+            }
             Ok::<_, wash_runtime::wasmtime::Error>((plugin_of(&ctx)?, trace))
         })?;
         trace

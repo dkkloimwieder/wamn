@@ -332,17 +332,22 @@ A refusal still rolls back the work and the claim.
 The component reaches that transaction with `wamn_postgres_statements::operation_transaction()` of `wamn:postgres` 0.4.0, and its data access takes the `Transaction`.
 A `begin` inside such an operation refuses.
 An operation without SQL claims in two steps on a host connection of its own: begin before the call, and finish after it.
+An external-only claim command omits `transaction: explicit_per_input`.
+The compiler refuses an operation whose capabilities combine SQL work with an external effect. Split that work into separate operations.
 A begun claim has a null `result` until it finishes.
-A claim that never finishes answers `intent-uncertain`, and so does a commit that the host sent without reading its answer.
+An unfinished claim answers `in-progress` until its age exceeds `MAX_HOST_CALL_DURATION`, which is 30 seconds.
+After that boundary it answers `outcome-unknown`. A late completion can still record its result.
+A commit whose answer is lost also leaves its outcome unknown.
 
 A refused item leaves no row, so its key is free again, and a later different request under that key does its work.
 A retry that answers a stored result commits nothing, so no event publishes a second time.
 A new id comes from its insert's `RETURNING`, and nothing mints an id before the work.
 No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `transaction_ids` of a WMS command.
 The result row stays stored, so each retry returns the original success answer in full.
-The existing `prune-record-history` job deletes successful claims older than 30 days, using `created_at`.
+The existing `prune-record-history` job deletes all claims older than 30 days, using `created_at`.
 Its expiry statement lives in `crates/control/provision/src/audit_retention.rs` and runs from `crates/control/environment/src/prune_record_history.rs`.
-Claims with a null result stay until they are resolved, regardless of age.
+This retention period exceeds the longest call by a wide margin.
+A result can finish late within that period without a separate claim identifier.
 The write log provides idempotency protection, which prevents repeated work for the same key.
 Record history carries the actor and provides the audit.
 
@@ -468,7 +473,7 @@ A second caller waits at step 2 for the whole of the first caller's work. A lock
 
 8. Resolved 2026-10-20: under A5 the component handles a batched request. The entry loops over the items and calls `begin-operation` and `commit` per item; the host sees single operations and never knows a batch exists. Per-item claims and transactions stay as today (an item failing does not roll back the others; a retry replays only unfinished keys). Whole-batch atomicity, if an operation wants it, is one begin with one key, declared by that operation's contract. Owner: batch semantics and error handling belong to the application, not the host; the response shapes (per-item errors in a 200, partial completion on a run failure) stay as the entry builds them today, and validate-all-before-run is kept.
 
-The cloud write log has no resolution state and no operator verb. A two-step claim that never finished answers `intent-uncertain` for its key for good. The caller decides with a new key, because only the caller knows whether the SQL-free work may run again (owner ruling on `wamn-bn35`, 2026-09-29).
+The [write log](#the-write-log) section defines unfinished claim responses, late completion and retention.
 
 ## Numbering
 
