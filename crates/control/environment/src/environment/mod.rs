@@ -337,6 +337,13 @@ pub async fn apply(
         &platform.system_database_url,
         &document.triple(),
         async |lock| {
+            wamn_registry::configuration::require_placement(
+                &mut *lock.client().await,
+                &document.org,
+                &document.env,
+                &document.policy,
+            )
+            .await?;
             if ensure::resources_in_place(&platform, &document).await? {
                 let cluster = sql::reset::recorded_cluster(&platform, &document).await?;
                 let triple = document.triple();

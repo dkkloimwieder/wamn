@@ -532,6 +532,25 @@ mod tests {
                 .as_ref(),
             Some(&expected)
         );
+        database.execute(&[
+            &wamn_control_provision::test_database::seed_org_project_env_sql("acme", "wms", "dev"),
+        ])?;
+        let mut redirected = expected.clone();
+        redirected.policy = "dev".into();
+        redirected.revocation_seconds = 0;
+        let mut transaction =
+            crate::provision_project_env::provisioning_transaction(&mut connection).await?;
+        let refusal = configuration::write(&mut transaction, &redirected)
+            .await
+            .expect_err("configuration must not redirect an existing project database");
+        assert!(matches!(refusal, sqlx::Error::InvalidArgument(_)));
+        transaction.commit().await?;
+        assert_eq!(
+            configuration::read(&mut connection, &triple)
+                .await?
+                .as_ref(),
+            Some(&expected)
+        );
         let missing = Triple::new("acme", "prod", "missing");
         assert!(
             configuration::read(&mut connection, &missing)

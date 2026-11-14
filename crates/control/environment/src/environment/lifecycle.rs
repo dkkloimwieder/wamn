@@ -21,6 +21,13 @@ pub async fn configure(
     let installed = super::runtime::resolve_platform(&mut platform, &document.org).await?;
     let triple = document.triple();
     LifecycleLock::hold(system_owner, &triple, async |lock| {
+        wamn_registry::configuration::require_placement(
+            &mut *lock.client().await,
+            &document.org,
+            &document.env,
+            &document.policy,
+        )
+        .await?;
         let outcome = provision_project_env::provision_project_env(&ProvisionProjectEnvRequest {
             changes: platform.auth_changes().await?,
             org: triple.org.clone(),

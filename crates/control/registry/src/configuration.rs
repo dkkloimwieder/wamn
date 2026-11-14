@@ -170,17 +170,52 @@ fn seconds(row: &sqlx::postgres::PgRow, column: &str) -> Result<u64, sqlx::Error
         })
 }
 
+/// Refuse a policy that would move an established environment to another cluster.
+/// Call before provisioning effects while holding the environment lifecycle lock.
+///
+/// # Errors
+/// Returns database errors or an invalid argument when the policy changes placement.
+pub async fn require_placement(
+    connection: &mut sqlx::PgConnection,
+    org: &str,
+    env: &str,
+    policy: &str,
+) -> Result<(), sqlx::Error> {
+    let preserved: Option<bool> = sqlx::query_scalar(
+        "SELECT requested.name IS NOT NULL AND (o.placement_type='pooled' OR \
+         COALESCE(established.recovery_domain->>'shared-with',established.name) = \
+         COALESCE(requested.recovery_domain->>'shared-with',requested.name)) \
+         FROM registry.environments e JOIN registry.orgs o ON o.id=e.org \
+         JOIN registry.env_policies established ON established.org=e.org AND established.name=e.policy_name \
+         LEFT JOIN registry.env_policies requested ON requested.org=e.org AND requested.name=$3 \
+         WHERE e.org=$1 AND e.env=$2 FOR UPDATE OF e",
+    )
+    .bind(org)
+    .bind(env)
+    .bind(policy)
+    .fetch_optional(connection)
+    .await?;
+    if preserved == Some(false) {
+        return Err(sqlx::Error::InvalidArgument(format!(
+            "policy {policy:?} must exist and preserve the database cluster of {org}/{env}"
+        )));
+    }
+    Ok(())
+}
+
 /// Replace applied settings atomically, preserving each surviving application's release.
 /// The caller owns the environment lifecycle lock and binds the provisioning actor.
 ///
 /// # Errors
-/// Returns database errors. A missing deployment returns false.
+/// Returns database errors or refuses a policy that changes established placement.
+/// A missing deployment returns false.
 pub async fn write(
     connection: &mut sqlx::PgConnection,
     configuration: &EnvironmentConfiguration,
 ) -> Result<bool, sqlx::Error> {
     let mut transaction = connection.begin().await?;
     let c = configuration;
+    require_placement(&mut transaction, &c.org, &c.env, &c.policy).await?;
     let mode = c.schema.mode.map(|mode| match mode {
         SchemaMode::Reset => "reset",
         SchemaMode::Migrate => "migrate",
