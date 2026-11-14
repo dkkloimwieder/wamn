@@ -1,15 +1,7 @@
-//! Which upstream transport failures mean the registry contradicted the name.
+//! Classify upstream OCI transport failures for every artifact reader.
 //!
-//! Both OCI sources in this crate pull by digest, so both must tell the same
-//! two things apart: a registry that could not answer, and a registry that
-//! answered with something the digest does not address. The second is the
-//! signal that makes pull-by-digest operationally worth anything, and it is a
-//! different page for whoever is holding it.
-//!
-//! One definition, above both sources rather than owned by either, because two
-//! copies of this match are two appliers of one rule: they drift, and the drift
-//! is silent — a variant added to one list and not the other reclassifies a
-//! lying registry as a missing one on exactly one of the two paths.
+//! A mismatch means that the registry contradicted the named artifact.
+//! Unavailable transport remains a separate outcome.
 
 use oci_client::errors::OciDistributionError;
 
@@ -21,7 +13,7 @@ use oci_client::errors::OciDistributionError;
 /// descriptor and refuses a body that does not finalize to it — so a lying
 /// registry never reaches a caller's own comparison, it arrives as
 /// [`OciDistributionError::DigestError`] or not at all.
-pub(crate) fn transport_is_mismatched(error: &OciDistributionError) -> bool {
+pub fn transport_is_mismatched(error: &OciDistributionError) -> bool {
     matches!(
         error,
         OciDistributionError::ConfigConversionError(_)
@@ -38,4 +30,23 @@ pub(crate) fn transport_is_mismatched(error: &OciDistributionError) -> bool {
             | OciDistributionError::UnsupportedSchemaVersionError(_)
             | OciDistributionError::VersionedParsingError(_)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oci_client::errors::DigestError;
+    use wamn_digest::bytes_sha256;
+
+    #[test]
+    fn transport_integrity_errors_are_not_classified_as_unavailable() {
+        let digest_error = OciDistributionError::DigestError(DigestError::VerificationError {
+            expected: bytes_sha256(b"expected"),
+            actual: bytes_sha256(b"actual"),
+        });
+        assert!(transport_is_mismatched(&digest_error));
+        assert!(!transport_is_mismatched(
+            &OciDistributionError::ImageManifestNotFoundError("missing".to_owned())
+        ));
+    }
 }

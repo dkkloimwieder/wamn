@@ -176,3 +176,69 @@ impl TraceCapture {
         println!("authenticated-native-trace result=pass invocations=1 host_observations=1");
     }
 }
+
+/// The replacement logger exports under the host span without parsing guest context.
+pub(super) async fn guest_log_trace() {
+    use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+    use opentelemetry_sdk::logs::{InMemoryLogExporter, SdkLoggerProvider};
+    use tracing::{Instrument as _, instrument::WithSubscriber as _};
+    let logs = InMemoryLogExporter::default();
+    let logger = SdkLoggerProvider::builder()
+        .with_simple_exporter(logs.clone())
+        .build();
+    let spans = InMemorySpanExporter::default();
+    let tracer = SdkTracerProvider::builder()
+        .with_simple_exporter(spans.clone())
+        .build();
+    let subscriber = tracing_subscriber::registry()
+        .with(OpenTelemetryTracingBridge::new(&logger))
+        .with(tracing_opentelemetry::layer().with_tracer(tracer.tracer("guest-logging-test")));
+    let dispatcher = tracing::Dispatch::new(subscriber);
+    tracing::dispatcher::set_global_default(dispatcher.clone()).expect("isolated host subscriber");
+    let fixture = Fixture::new(super::Case::Success).await;
+    let target = fixture.target().await;
+    let span =
+        tracing::dispatcher::with_default(&dispatcher, || tracing::info_span!("test.invocation"));
+    let incoming = SpanContext::new(
+        TraceId::from_bytes([0x51; 16]),
+        SpanId::from_bytes([0x19; 8]),
+        TraceFlags::SAMPLED,
+        true,
+        TraceState::default(),
+    );
+    span.set_parent(opentelemetry::Context::new().with_remote_span_context(incoming.clone()))
+        .unwrap();
+    super::invoke_native(
+        &target,
+        fixture.request(tokio::time::Instant::now() + std::time::Duration::from_secs(30)),
+    )
+    .instrument(span.clone())
+    .with_subscriber(dispatcher.clone())
+    .await
+    .unwrap()
+    .unwrap();
+    fixture.assert_clean().await;
+    drop(span);
+    drop(dispatcher);
+    tracer.force_flush().unwrap();
+    logger.force_flush().unwrap();
+    let finished = spans.get_finished_spans().unwrap();
+    let logging = finished
+        .iter()
+        .find(|span| span.name == "wasi.logging.log")
+        .expect("native logger span");
+    let call = finished
+        .iter()
+        .find(|span| span.name == "wamn.operation.call")
+        .expect("host call span");
+    assert_eq!(logging.span_context.trace_id(), incoming.trace_id());
+    assert_eq!(logging.parent_span_id, call.span_context.span_id());
+    let records = logs.get_emitted_logs().unwrap();
+    let guest = records
+        .iter()
+        .filter_map(|record| record.record.trace_context())
+        .find(|context| context.span_id == logging.span_context.span_id())
+        .expect("guest log trace context");
+    assert_eq!(guest.trace_id, incoming.trace_id());
+    assert_eq!(guest.span_id, logging.span_context.span_id());
+}

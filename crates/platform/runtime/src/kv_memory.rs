@@ -101,15 +101,6 @@ where
             .map_or(Ticket(0), |entry| Ticket(entry.revision))
     }
 
-    /// The answer that a put with `ticket` replaces, when the replica holds
-    /// the answer of that revision.
-    pub(crate) fn replaced(&self, key: &str, ticket: Ticket) -> Option<A> {
-        self.entries()
-            .get(key)
-            .filter(|entry| entry.revision == ticket.0 && entry.seen.elapsed() < self.ttl)
-            .and_then(|entry| entry.answer.clone())
-    }
-
     fn keep_entry(&self, key: String, revision: u64, answer: Option<A>, age: Duration) {
         // The caller holds the entries during the test, so a fact kept here
         // falls to the clear that follows a broken watch.
@@ -164,19 +155,6 @@ where
         }
     }
 
-    /// Hold `answer` at `key` with `revision`, with or without the bucket.
-    #[cfg(test)]
-    pub(crate) fn insert(&self, key: &str, revision: u64, answer: A) {
-        self.entries().insert(
-            key.to_owned(),
-            Entry {
-                revision,
-                seen: Instant::now(),
-                answer: Some(answer),
-            },
-        );
-    }
-
     /// Keep what the watch of the bucket delivered.
     pub(crate) fn apply(&self, entry: KvEntry) {
         let answer = match entry.operation {
@@ -211,21 +189,18 @@ pub(crate) trait Watched: Send + Sync {
     fn apply(&self, entry: KvEntry);
 }
 
-/// Watch `bucket` through `filters` into the memory that `view` finds in
-/// `holder`. The watch runs until the client closes, and opens the bucket
+/// Watch `bucket` through `filters` into `memory`. The watch runs until the client closes, and opens the bucket
 /// again after it breaks.
-pub(crate) fn spawn_watch<H: Send + Sync + 'static>(
+pub(crate) fn spawn_watch(
     client: &async_nats::Client,
     bucket: &'static str,
     filters: Vec<String>,
-    holder: Arc<H>,
-    view: fn(&H) -> &dyn Watched,
+    memory: Arc<dyn Watched>,
 ) {
     let client = client.clone();
     tokio::spawn(async move {
         loop {
-            let memory = view(&holder);
-            if let Err(error) = watch(&client, bucket, &filters, memory).await {
+            if let Err(error) = watch(&client, bucket, &filters, memory.as_ref()).await {
                 tracing::warn!(
                     error = format!("{error:#}"),
                     bucket,

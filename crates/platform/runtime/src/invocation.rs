@@ -1,4 +1,4 @@
-//! Invocation authority shared by PostgreSQL, HTTP, storage, logging and tracing.
+//! Invocation authority shared by PostgreSQL, HTTP, storage and tracing.
 
 use std::sync::Arc;
 

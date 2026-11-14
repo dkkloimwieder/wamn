@@ -15,12 +15,12 @@ use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, Connectio
 use wamn_runtime::plugins::wamn_blobstore::plugin::{
     self as blobstore, WAMN_BLOBSTORE_ID, WamnBlobstore,
 };
-use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
     PreparedStatementMembers, PreparedStatementSet, UnprovisionedPrincipal, WAMN_POSTGRES_ID,
     WamnPostgres,
 };
 use wash_runtime::engine::workload::WorkloadItem;
+use wash_runtime::plugin::wasi_logging::TracingLogger;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
@@ -31,12 +31,12 @@ use super::{NodeAcquisition, prepare_statement_members, prepare_statement_sets};
 
 pub(super) const NATIVE_POLICY_ID: &str = "wamn:native-operation-policy";
 
-/// Process-owned capabilities that read the shared invocation registry.
+/// Capabilities bound by the host invocation policy.
 pub(super) struct NativePolicyResources {
     pub(super) files: Option<Arc<crate::file_route::FileRoutes>>,
     pub(super) integrations: Option<Arc<wamn_runtime::integrations::Integrations>>,
     pub(super) postgres: Arc<WamnPostgres>,
-    pub(super) logging: Arc<WamnLogging>,
+    pub(super) logging: Arc<TracingLogger>,
     pub(super) connection_http: Arc<ConnectionHttp>,
     pub(super) blobstore: Arc<WamnBlobstore>,
     pub(super) release: Arc<LoadedRelease>,
@@ -139,9 +139,6 @@ pub(super) fn new_native_policy(
     components: &[NativeComponent],
     resources: NativePolicyResources,
 ) -> anyhow::Result<Arc<NativePolicy>> {
-    resources
-        .logging
-        .set_scope_registry(Arc::clone(&resources.postgres.scopes))?;
     let manifest = resources.release.manifest();
     let served_of = |fact: &AdmittedComponent| {
         manifest
@@ -535,9 +532,6 @@ impl NativePolicy {
         if interfaces.contains("wamn", "flow-http-routing", &["routing"]) {
             wamn_engine::flow_http_routing::add_to_linker(linker)?;
         }
-        self.resources
-            .logging
-            .add_linker_entries(linker, &interfaces)?;
         if interfaces.contains("wamn", "connection", &["http"]) {
             connection_http::add_to_linker(linker)?;
         }
@@ -565,7 +559,16 @@ impl NativePolicy {
             Arc::clone(&self.resources.postgres.scopes) as _,
         );
         item.add_plugin(WAMN_POSTGRES_ID, Arc::clone(&self.resources.postgres) as _);
-        item.add_plugin(WAMN_LOGGING_ID, Arc::clone(&self.resources.logging) as _);
+        if interfaces.contains("wasi", "logging", &[]) {
+            self.resources
+                .logging
+                .on_workload_item_bind(item, interfaces)
+                .await?;
+            item.add_plugin(
+                self.resources.logging.id(),
+                Arc::clone(&self.resources.logging) as _,
+            );
+        }
         item.add_plugin(
             CONNECTION_HTTP_ID,
             Arc::clone(&self.resources.connection_http) as _,
@@ -627,11 +630,14 @@ impl HostPlugin for NativePolicy {
 
     async fn on_workload_unbind(
         &self,
-        _workload_id: &str,
-        _interfaces: WitInterfaces<'_>,
+        workload_id: &str,
+        interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
         self.shutdown();
-        Ok(())
+        self.resources
+            .logging
+            .on_workload_unbind(workload_id, interfaces)
+            .await
     }
 }
 

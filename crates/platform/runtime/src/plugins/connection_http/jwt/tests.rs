@@ -67,8 +67,8 @@ pub(in crate::plugins::connection_http) fn assert_assertion(
     claims["jti"].as_str().unwrap().into()
 }
 
-#[test]
-fn fixed_clock_headers_claims_and_scope_separators() {
+#[tokio::test]
+async fn fixed_clock_headers_claims_and_scope_separators() {
     let url = "https://example.invalid/token";
     let now = 1_800_000_000;
     for (separator, scope) in [
@@ -85,14 +85,18 @@ fn fixed_clock_headers_claims_and_scope_separators() {
             parameters["scopes"] = json!([]);
         }
         let request = request(&parameters, Some(&material("RS256")), now).unwrap();
-        assert_assertion(
-            request.body.as_bytes(),
-            "RS256",
-            "client",
-            url,
-            scope,
-            Some(now),
-        );
+        request
+            .exchange(&|request: hyper::Request<Vec<u8>>| {
+                assert_assertion(request.body(), "RS256", "client", url, scope, Some(now));
+                Box::pin(std::future::ready(Ok::<_, std::convert::Infallible>(
+                    hyper::Response::builder()
+                        .header("content-type", "application/json")
+                        .body(br#"{"access_token":"token","token_type":"Bearer"}"#.to_vec())
+                        .unwrap(),
+                )))
+            })
+            .await
+            .unwrap();
     }
 }
 

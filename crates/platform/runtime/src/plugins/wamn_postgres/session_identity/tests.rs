@@ -2471,7 +2471,8 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
         .expect("the plugin builds from the guest generation's url"),
     );
     let (_nats, client) = crate::auth_cache::tests::nats().await;
-    crate::auth_cache::tests::watched(&client, Some(PROJECT_ENV_KEY), Arc::clone(&pg)).await;
+    crate::auth_cache::tests::watched(&client, Some(PROJECT_ENV_KEY), Arc::clone(pg.auth_cache()))
+        .await;
     let scope = "removed-instance-0";
     let identity = SessionIdentity {
         project_env_key: PROJECT_ENV_KEY.to_string(),
@@ -2542,11 +2543,15 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
     })
     .expect("the plugin builds from the guest generation's url");
     let ttl = std::time::Duration::from_secs(3600);
-    pg.auth = crate::auth_cache::AuthCache::with_ttl(ttl);
+    pg.auth = Arc::new(crate::auth_cache::AuthCache::with_ttl(ttl));
     let pg = Arc::new(pg);
     let (_nats, client) = crate::auth_cache::tests::nats().await;
-    let writer =
-        crate::auth_cache::tests::watched(&client, Some(PROJECT_ENV_KEY), Arc::clone(&pg)).await;
+    let writer = crate::auth_cache::tests::watched(
+        &client,
+        Some(PROJECT_ENV_KEY),
+        Arc::clone(pg.auth_cache()),
+    )
+    .await;
     let scope = "dropped-instance-0";
     let identity = SessionIdentity {
         project_env_key: PROJECT_ENV_KEY.to_string(),
@@ -2558,8 +2563,11 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
         .await
         .expect("the provisioned principal binds");
     assert_eq!(
-        pg.auth_cache().provisioned(PROJECT_ENV_KEY, LIVE_PRINCIPAL),
-        Ok(()),
+        pg.auth_cache()
+            .grants(PROJECT_ENV_KEY, LIVE_PRINCIPAL)
+            .unwrap()
+            .present,
+        true,
         "the memory keeps the read"
     );
 
@@ -2575,7 +2583,7 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
     writer.publish(drops).await;
     crate::auth_cache::tests::until("the drop reaches the memory", || {
         pg.auth_cache()
-            .provisioned(PROJECT_ENV_KEY, LIVE_PRINCIPAL)
+            .grants(PROJECT_ENV_KEY, LIVE_PRINCIPAL)
             .is_err()
     })
     .await;
@@ -3463,7 +3471,7 @@ fn session_and_pat_callers_act_with_their_single_role() {
     let grants = |roles: &[&str]| crate::auth_cache::PrincipalGrants {
         present: true,
         active: true,
-        user: Some(true),
+        user: true,
         roles: roles
             .iter()
             .map(|role| {
@@ -3480,12 +3488,6 @@ fn session_and_pat_callers_act_with_their_single_role() {
             .map(|role| role.parse::<wamn_identity_protocol::RoleName>().unwrap())
             .collect::<Vec<_>>()
     };
-
-    let mut unknown_type = grants(&["admin"]);
-    unknown_type.user = None;
-    assert!(!held_grants(&unknown_type, None).admin);
-    assert!(held_grants(&unknown_type, None).references.is_empty());
-    assert!(session_grants(&unknown_type, &signed(&["admin"])).is_err());
 
     // A PAT: every held role.
     assert_eq!(
@@ -3642,7 +3644,7 @@ async fn live_an_unverified_declared_statement_is_refused_when_it_runs() {
 #[tokio::test]
 #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
-    use crate::plugins::route_authentication::{PlatformRouteAuthenticator, RouteAuthentication};
+    use crate::plugins::route_authentication::PlatformRouteAuthenticator;
     use wamn_platform_identity::{assign_project_role, create_service, issue_pat, revoke_pat};
 
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
@@ -3753,7 +3755,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     let mut pg =
         WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(projects, None)));
     let ttl = std::time::Duration::from_secs(3600);
-    pg.auth = crate::auth_cache::AuthCache::with_ttl(ttl);
+    pg.auth = Arc::new(crate::auth_cache::AuthCache::with_ttl(ttl));
     let pg = Arc::new(pg);
     system
         .execute(&[&wamn_control_provision::sql::grant_identity_reader_surface_sql()])
@@ -3769,14 +3771,21 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
             })
         })
         .connect_lazy_with(wamn_postgres::connect_options(system.url()).await.unwrap());
-    let authentication = RouteAuthentication::new(identity_reader, Arc::clone(&pg), "project");
+    let authentication = PlatformRouteAuthenticator::for_test(
+        Arc::clone(&pg),
+        "project",
+        Some(identity_reader),
+        None,
+    );
     let route = crate::plugins::route_authentication::tests::routing(&serde_json::json!(["pat"]))
-        .with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_authentication(Arc::new(authentication)),
-        ));
+        .with_authenticator(Arc::new(authentication));
     let (_nats, client) = crate::auth_cache::tests::nats().await;
-    let writer =
-        crate::auth_cache::tests::watched(&client, Some("org--dev--a"), Arc::clone(&pg)).await;
+    let writer = crate::auth_cache::tests::watched(
+        &client,
+        Some("org--dev--a"),
+        Arc::clone(pg.auth_cache()),
+    )
+    .await;
     let authorization = format!("Bearer {}", issued.token());
     let request = || route.authenticate_authorization_for_test("orders", Some(&authorization));
     let cached_at = std::time::Instant::now();

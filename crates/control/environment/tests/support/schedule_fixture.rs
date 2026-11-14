@@ -33,12 +33,12 @@ pub use wamn_registry::Triple;
 pub use wamn_runtime::connection_credentials::ConnectionCredentials;
 pub use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 pub use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
-pub use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 pub use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ScheduleRunAdmission, ScheduleRunAdmitted, WamnPostgres,
     WamnPostgresConfig,
 };
 pub use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
+pub use wash_runtime::plugin::wasi_logging::TracingLogger;
 
 pub const PROJECT_ENV_KEY: &str = "schedule-live--dev--default";
 pub const PROJECT: &str = "default";
@@ -168,7 +168,7 @@ pub struct Fixture {
     pub postgres: Arc<WamnPostgres>,
     /// The executor login, which the host's schedule task connects with.
     pub executor_url: String,
-    pub logging: Arc<WamnLogging>,
+    pub logging: Arc<TracingLogger>,
     pub scratch: wamn_test_infrastructure::scratch::ScratchRoot,
     pub read: wamn_catalog::AdmittedComponent,
     pub release: Arc<LoadedRelease>,
@@ -272,7 +272,7 @@ pub async fn fixture() -> Fixture {
     .expect("install the serving release");
 
     let (postgres, executor_url) = targeted_postgres(&mut admin, &url).await;
-    let (logging, _capture) = WamnLogging::new_with_capture(&WamnLoggingConfig::default()).unwrap();
+    let logging = TracingLogger::default();
     Fixture {
         admin,
         url,

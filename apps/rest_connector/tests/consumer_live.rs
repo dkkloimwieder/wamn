@@ -490,7 +490,7 @@ pub async fn invoke(
     use wamn_runtime::plugins::connection_http::{
         ConnectionExecutionClosure, InvocationEntry, WiringPosition,
     };
-    use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
+    use wash_runtime::plugin::wasi_logging::TracingLogger;
 
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
@@ -529,7 +529,7 @@ pub async fn invoke(
             "test",
             "test",
         )),
-        Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
+        Arc::new(TracingLogger::default()),
         Arc::from([]),
         release,
         Arc::new(LocalComponentSource::new(PathBuf::new())),

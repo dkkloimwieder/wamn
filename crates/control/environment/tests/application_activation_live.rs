@@ -259,7 +259,7 @@ fn release(
     };
     let bytes = manifest.canonical_bytes();
     let (layer, config, image) =
-        wamn_runtime::release_manifest_artifact::release_manifest_artifact_layout(&bytes);
+        wamn_package_artifact::release_manifest_artifact::release_manifest_artifact_layout(&bytes);
     artifact(
         objects,
         "releases",

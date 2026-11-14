@@ -65,6 +65,7 @@ wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }
 
 [dev-dependencies]
+wash-runtime = { workspace = true, features = ["wasi-logging"] }
 wamn-platform-install = { workspace = true, features = ["test-util"] }
 wamn-build.workspace = true
 object_store.workspace = true

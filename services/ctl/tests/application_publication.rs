@@ -192,8 +192,9 @@ async fn applications_publish_independently_before_destination_creation() -> any
             .arg("--insecure-registry"))
     };
     push(&package(scratch.path(), "appb", "1.0.0")?)?;
-    let source =
-        wamn_runtime::release_manifest_source::ReleaseManifestSource::new(&releases, true, &auth)?;
+    let source = wamn_package_artifact::release_manifest_source::ReleaseManifestSource::new(
+        &releases, true, &auth,
+    )?;
     // A's declared coordinate does not exist yet. B reads only its own closure.
     let b = publish("b", "1.0.0")?;
     let b_bytes = source.pull_verified(&b).await?;

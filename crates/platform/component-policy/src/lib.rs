@@ -194,7 +194,7 @@ pub struct CapabilityRow {
 /// non-platform-authored pushed workload.
 ///
 /// Rows record what the host **offers**, not what a guest currently imports.
-/// `wasi:logging` is host-implemented (`plugins/wamn_logging.rs`) with zero
+/// `wasi:logging` is host-implemented by wash-runtime with zero
 /// importers today: a registry keyed on imports would drop a live capability
 /// the moment its last importer churned, then refuse the next guest to want it.
 ///

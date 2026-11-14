@@ -19,9 +19,7 @@ use wamn_platform_identity::{
     PrincipalType, assign_project_role, create_service, create_user, disable_principal, issue_pat,
     operator_subject, resolve_subject, revoke_pat,
 };
-use wamn_runtime::plugins::route_authentication::{
-    PlatformRouteAuthenticator, RouteAuthentication, SessionRouteAuthentication,
-};
+use wamn_runtime::plugins::route_authentication::PlatformRouteAuthenticator;
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
@@ -357,9 +355,7 @@ async fn routing(
 ) -> anyhow::Result<FlowHttpRouting> {
     Ok(
         FlowHttpRouting::new(Some(loaded_release)).with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_authentication(Arc::new(
-                RouteAuthentication::new(identity_reader, postgres, PROJECT),
-            )),
+            PlatformRouteAuthenticator::for_test(postgres, PROJECT, Some(identity_reader), None),
         )),
     )
 }
@@ -530,11 +526,12 @@ async fn assert_user_environment_membership(
     let verifier =
         wamn_identity_protocol::verifier::SessionVerifier::new(server.cache().0, ORG, &audience)?;
     let session_routing = FlowHttpRouting::new(Some(Arc::clone(&loaded_release)))
-        .with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
-                SessionRouteAuthentication::new(verifier, identity_reader, postgres, PROJECT),
-            )),
-        ));
+        .with_authenticator(Arc::new(PlatformRouteAuthenticator::for_test(
+            postgres,
+            PROJECT,
+            Some(identity_reader),
+            Some(verifier),
+        )));
     let route_auth = &session_routing;
     let loaded_release = loaded_release.as_ref();
     let authorization = format!(

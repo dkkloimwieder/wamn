@@ -368,10 +368,15 @@ With `--registry-auth-file`, server pulls read one explicitly configured project
 The lookup requires an exact registry authority and a plaintext username and password entry.
 It does not consult `DOCKER_CONFIG`, invoke helpers, normalize Docker Hub names, or accept identity tokens and base64-only entries.
 With `--registry-token-metadata`, the host reads no credential file.
-Each pull asks the GKE metadata server of the pod's Workload Identity for a token, and sends it as the password of `oauth2accesstoken`.
-The host keeps no token and no expiry, and each pull builds its own registry client.
+Each pull gets its credential from the shared pod metadata service and sends it as the password of `oauth2accesstoken`.
+Registry, GCS and KMS share that service's token and account email.
+The service serializes token refreshes and stops reusing a token thirty seconds before expiry.
+Each pull builds a new upstream registry client because that client remembers its first credential.
 The server's host is `GCE_METADATA_HOST` when it is set, as Google's client libraries read it, and `metadata.google.internal` otherwise.
 The [reader](../../crates/catalog/package-artifact/src/registry_credentials.rs) owns both accepted forms.
+The artifact crate also owns the shared registry client configuration, trust roots and release artifact transfer.
+Platform endpoint calls share its Hyper client. They use explicit trust, bounded bodies and request deadlines, without proxies or redirects.
+The upstream transports inside `oci-client` and `object_store` stay with those libraries.
 
 The host image also carries [`docker-credential-wamn`](../../crates/platform/runtime/src/bin/docker-credential-wamn.rs), a Docker credential helper for wash-runtime's own pulls.
 It answers `get` with the same token function, and supports no other command.
@@ -386,7 +391,7 @@ The [native alignment page](native-alignment.md) names the conditions for replac
 
 - A host that is set up for the metadata server and cannot get a token refuses the pull with a named outcome. It never falls back to an anonymous pull.
 
-The host gets its registry token from the GKE metadata server: `GET http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token` with `Metadata-Flavor: Google`. The token is the `access_token` field. The registry credential is `oauth2accesstoken` and that token, the form Artifact Registry accepts and the CronJob writes today. The token is read for each pull and is never written to a file or a log.
+The host gets its registry token from the GKE metadata server: `GET http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token` with `Metadata-Flavor: Google`. The token is the `access_token` field. The registry credential is `oauth2accesstoken` and that token, the form Artifact Registry accepts and the CronJob writes today. The shared metadata service supplies the token. It never writes tokens to a file or a log.
 
 A ConfigMap mounted at `DOCKER_CONFIG` holds `{"credHelpers":{"us-central1-docker.pkg.dev":"wamn"}}`. The ConfigMap holds no credential. wash-runtime runs the helper at each pull.
 

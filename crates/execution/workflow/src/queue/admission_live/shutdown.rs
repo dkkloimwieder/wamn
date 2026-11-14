@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use tokio::time::timeout;
 use wamn_run_state::RunStore as _;
-use wamn_runtime::plugins::wamn_logging::{Capture, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 use wash_runtime::engine::Engine;
 use wash_runtime::host::probes::Liveness;
@@ -17,27 +16,19 @@ use super::{
 pub(super) fn component_bytes() -> Vec<u8> {
     wat::parse_str(format!(r#"(component
       {NODE_TYPES}
-      (import "wasi:logging/logging@0.1.0-draft" (instance $logging
-        (type $level' (enum "trace" "debug" "info" "warn" "error" "critical"))
-        (export "level" (type $level (eq $level')))
-        (export "log" (func (param "level" $level) (param "context" string) (param "message" string)))))
       (core module $memory
         (memory (export "memory") 16)
-        (data (i32.const 32) "guest-entered")
         (global $next (mut i32) (i32.const 1024))
         (func (export "realloc") (param i32 i32 i32) (param $size i32) (result i32)
           (local $old i32) global.get $next local.tee $old
           local.get $size i32.add global.set $next local.get $old))
       (core instance $memory (instantiate $memory))
-      (core func $log (canon lower (func $logging "log") (memory $memory "memory") (realloc (func $memory "realloc"))))
       (core module $main
         (import "memory" "memory" (memory 16))
-        (import "host" "log" (func $log (param i32 i32 i32 i32 i32)))
         (func (export "run") (param i32) (result i32)
-          i32.const 2 i32.const 0 i32.const 0 i32.const 32 i32.const 13 call $log
           (loop br 0)
           unreachable))
-      (core instance $main (instantiate $main (with "memory" (instance $memory)) (with "host" (instance (export "log" (func $log))))))
+      (core instance $main (instantiate $main (with "memory" (instance $memory))))
       (func $run (param "ctx" $context) (param "input" $json)
         (result (result $emission (error $error)))
         (canon lift (core func $main "run") (memory $memory "memory") (realloc (func $memory "realloc"))))
@@ -45,15 +36,13 @@ pub(super) fn component_bytes() -> Vec<u8> {
         (export "json" (type $json)) (export "node-context" (type $context))
         (export "node-error" (type $error)) (export "emission" (type $emission))
         (export "run" (func $run)))
-      (export "{OPERATION}" (instance $handler)))"#)).expect("logging guest that stays active until shutdown")
+      (export "{OPERATION}" (instance $handler)))"#)).expect("native guest that stays active until shutdown")
 }
 
 pub(super) struct Execution<'a> {
     pub(super) driver: &'a RouterDriver,
     pub(super) postgres: &'a WamnPostgres,
     pub(super) engine: &'a Engine,
-    pub(super) logging: &'a WamnLogging,
-    pub(super) capture: &'a Capture,
     pub(super) target: &'a QueueTarget,
     pub(super) jetstream: &'a WamnJetstream,
 }
@@ -98,7 +87,7 @@ pub(super) async fn run(
             tokio::select! {
                 result = &mut queue => panic!("queue stopped before guest entry: {result:?}"),
                 () = tokio::time::sleep(Duration::from_millis(10)) => {
-                    if execution.capture.snapshot().iter().any(|record| record.message == "guest-entered") { break; }
+                    if execution.engine.guest_memory().in_use() != 0 && execution.postgres.scopes.scopes().iter().any(|scope| execution.postgres.invocation(scope).is_some()) { break; }
                 }
             }
         }
@@ -125,7 +114,7 @@ pub(super) async fn run(
             .as_deref(),
         Some(super::SERVICE)
     );
-    assert!(execution.logging.identity_snapshot(target).is_some());
+    assert!(execution.postgres.scopes.trace(target).is_some());
     let before = sqlx::query("SELECT r.status,q.lease_generation FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE run_id=$1").bind(&run).fetch_one(&mut *admin)
         .await?;
     assert_eq!(before.get::<String, _>(0), "running");
@@ -159,7 +148,7 @@ pub(super) async fn run(
         .map(drop)?;
     assert!(execution.postgres.invocation(target).is_none());
     assert!(execution.postgres.session_identity(target).is_none());
-    assert!(execution.logging.identity_snapshot(target).is_none());
+    assert!(execution.postgres.scopes.trace(target).is_none());
     let after = sqlx::query("SELECT r.status,q.lease_generation,r.result_json::text FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE run_id=$1").bind(&run).fetch_one(&mut *admin)
         .await?;
     assert_eq!(

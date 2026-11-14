@@ -12,30 +12,27 @@
 //! A projected ConfigMap carries no usable binding between the bytes and the
 //! name the template asked for — the name inside the container is placed by the
 //! same template that mounts the bytes, so comparing them tests the template
-//! against itself (see [`wamn_engine::release_manifest`]). A registry is a third
+//! against itself (see the loaded release owner). A registry is a third
 //! party: the digest travels in the pod template, the bytes come from the
 //! registry, and this module refuses unless they agree. Nothing about the
 //! release's identity is derived here. This module only tests it.
 //!
 //! This module owns artifact transfer alone. Document admission — canonicality,
 //! format version, the release pair — stays with
-//! [`LoadedRelease`](wamn_engine::release_manifest::LoadedRelease).
+//! the loaded release.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
-use oci_client::secrets::RegistryAuth;
-use oci_client::{Client as OciClient, Reference};
+use crate::registry_credentials::{RegistryCredentialSource, read_registry_credentials};
+use crate::registry_source::RegistrySource;
+use crate::{read_ca_bundles, registry_pull};
+use oci_client::Reference;
 use wamn_catalog::{
     ComponentArtifactBase, MAX_SERVING_MANIFEST_BYTES, parse_component_artifact_base,
 };
 use wamn_digest::bytes_sha256;
-use wamn_package_artifact::registry_credentials::{
-    RegistryCredentialSource, read_registry_credentials,
-};
-use wamn_package_artifact::registry_pull;
 
 use crate::registry_transport::transport_is_mismatched;
 use crate::release_manifest_artifact::verify_release_manifest_artifact_layout;
@@ -183,10 +180,7 @@ impl std::error::Error for ReleaseManifestFetchError {}
 /// Each pull builds its own `oci-client`, because a client keeps the first
 /// credential it is given for a registry.
 pub struct ReleaseManifestSource {
-    base: ComponentArtifactBase,
-    credentials: RegistryCredentialSource,
-    insecure_registry: bool,
-    ca_bundles: Vec<Vec<u8>>,
+    source: RegistrySource,
 }
 
 impl ReleaseManifestSource {
@@ -231,13 +225,12 @@ impl ReleaseManifestSource {
         insecure_registry: bool,
         credentials: RegistryCredentialSource,
     ) -> Result<Self, ReleaseManifestFetchError> {
-        registry_client(base.registry(), insecure_registry, &[])?;
-        Ok(Self {
-            base,
-            credentials,
-            insecure_registry,
-            ca_bundles: Vec::new(),
-        })
+        let source = RegistrySource::new(base, insecure_registry, REGISTRY_IO_TIMEOUT)
+            .with_credentials(credentials);
+        source
+            .client()
+            .map_err(|_| ReleaseManifestFetchError::registry_client())?;
+        Ok(Self { source })
     }
 
     /// Trust the PEM CA bundles at `paths` for pulls from this release repository.
@@ -245,7 +238,7 @@ impl ReleaseManifestSource {
     /// This source builds its own `oci-client`, so the process-wide trust roots
     /// a host installs through `wash_runtime::oci::set_extra_ca_certificates` do
     /// not reach it — the same gap
-    /// [`ComponentArtifactSourceConfig::with_ca_paths`](crate::component_artifact_source::ComponentArtifactSourceConfig::with_ca_paths)
+    /// the component source
     /// documents, and the reason a release pull from a registry behind a private
     /// CA fails TLS without this.
     ///
@@ -264,13 +257,12 @@ impl ReleaseManifestSource {
         if paths.is_empty() {
             return Ok(self);
         }
-        let mut bundles = Vec::with_capacity(paths.len());
-        for path in paths {
-            bundles
-                .push(std::fs::read(path).map_err(|_| ReleaseManifestFetchError::trust_anchor())?);
-        }
-        registry_client(self.base.registry(), self.insecure_registry, &bundles)?;
-        self.ca_bundles = bundles;
+        let bundles =
+            read_ca_bundles(paths).map_err(|_| ReleaseManifestFetchError::trust_anchor())?;
+        self.source = self.source.with_ca_bundles(bundles);
+        self.source
+            .client()
+            .map_err(|_| ReleaseManifestFetchError::registry_client())?;
         Ok(self)
     }
 
@@ -279,9 +271,10 @@ impl ReleaseManifestSource {
         &self,
         manifest_digest: &str,
     ) -> Result<Vec<u8>, ReleaseManifestFetchError> {
-        let deadline = tokio::time::Instant::now() + REGISTRY_IO_TIMEOUT;
+        let deadline = tokio::time::Instant::now() + self.source.timeout();
         let artifact = self
-            .base
+            .source
+            .base()
             .reference(manifest_digest)
             .map_err(|_| ReleaseManifestFetchError::invalid_reference())?;
         let reference = Reference::with_tag(
@@ -290,20 +283,15 @@ impl ReleaseManifestSource {
             artifact.tag().to_owned(),
         );
         let named = artifact.to_string();
-        let credentials = self
-            .credentials
-            .credentials(artifact.registry())
+        let auth = self
+            .source
+            .auth()
             .await
             .map_err(|error| ReleaseManifestFetchError::credential(error.refusal()))?;
-        let auth = RegistryAuth::Basic(
-            credentials.username().to_owned(),
-            credentials.password().to_owned(),
-        );
-        let client = registry_client(
-            self.base.registry(),
-            self.insecure_registry,
-            &self.ca_bundles,
-        )?;
+        let client = self
+            .source
+            .client()
+            .map_err(|_| ReleaseManifestFetchError::registry_client())?;
 
         let (manifest, _) = registry_pull::retry(
             &reference,
@@ -362,42 +350,10 @@ impl fmt::Debug for ReleaseManifestSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ReleaseManifestSource")
-            .field("registry", &self.base.registry())
-            .field("repository", &self.base.repository())
+            .field("registry", &self.source.base().registry())
+            .field("repository", &self.source.base().repository())
             .finish_non_exhaustive()
     }
-}
-
-/// One registry client for this release repository, over these trust roots.
-///
-/// Built through `TryFrom`, not `Client::new`: that constructor answers a
-/// rejected configuration with a warning and a wholly default client, which
-/// drops the trust roots, the protocol and the timeouts and turns an unusable
-/// CA bundle into a confusing TLS failure on the first pull.
-fn registry_client(
-    registry: &str,
-    insecure_registry: bool,
-    ca_bundles: &[Vec<u8>],
-) -> Result<OciClient, ReleaseManifestFetchError> {
-    let protocol = if insecure_registry {
-        ClientProtocol::HttpsExcept(vec![registry.to_owned()])
-    } else {
-        ClientProtocol::Https
-    };
-    OciClient::try_from(ClientConfig {
-        protocol,
-        read_timeout: Some(REGISTRY_IO_TIMEOUT),
-        connect_timeout: Some(REGISTRY_IO_TIMEOUT),
-        extra_root_certificates: ca_bundles
-            .iter()
-            .map(|data| Certificate {
-                encoding: CertificateEncoding::Pem,
-                data: data.clone(),
-            })
-            .collect(),
-        ..ClientConfig::default()
-    })
-    .map_err(|_| ReleaseManifestFetchError::registry_client())
 }
 
 /// The publish and the mount reader share this ceiling; the puller enforces it too.
@@ -408,7 +364,7 @@ fn manifest_byte_ceiling() -> i64 {
 /// Refuse a transferred body the layer descriptor or the named digest contradicts.
 ///
 /// The same shape as
-/// [`verify_component_body`](wamn_engine::artifact_source::verify_component_body), and
+/// the component body verification, and
 /// for the same reason: these are the arms that catch a registry or proxy which
 /// lies about what it served, so they must be provable without one.
 ///

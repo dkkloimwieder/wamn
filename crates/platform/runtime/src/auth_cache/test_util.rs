@@ -1,6 +1,7 @@
 //! A private NATS server and cache-watch readiness for live tests.
 
 use super::*;
+use std::time::Instant;
 
 /// A `nats-server -js` on a free port, stopped with the guard.
 #[derive(Debug)]
@@ -73,16 +74,13 @@ pub async fn nats() -> (Server, async_nats::Client) {
 
 /// Replicate the memory of `holder` from the bucket on `client`, and
 /// wait until the watch runs.
-pub async fn watched<H: AsRef<AuthCache> + Send + Sync + 'static>(
+pub async fn watched(
     client: &async_nats::Client,
     project_env_key: Option<&str>,
-    holder: Arc<H>,
+    holder: Arc<AuthCache>,
 ) -> Publisher {
     let writer = replicate(client, project_env_key, Arc::clone(&holder));
-    until("the watch runs", || {
-        (*holder).as_ref().memory.bucket().is_some()
-    })
-    .await;
+    until("the watch runs", || holder.memory.bucket().is_some()).await;
     writer
 }
 

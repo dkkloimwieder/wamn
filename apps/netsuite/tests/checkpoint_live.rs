@@ -16,10 +16,10 @@ use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, InvocationEntry, WiringPosition,
 };
-use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
+use wash_runtime::plugin::wasi_logging::TracingLogger;
 
 const PROJECT_ENV_KEY: &str = "rest--test--publication";
 
@@ -70,7 +70,7 @@ pub async fn invoke(
             "test",
             "test",
         )),
-        Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
+        Arc::new(TracingLogger::default()),
         Arc::from([]),
         release,
         Arc::new(LocalComponentSource::new(PathBuf::new())),

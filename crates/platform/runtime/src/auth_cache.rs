@@ -23,9 +23,9 @@
 //!
 //! [`BUCKET`]: wamn_broker::auth_changes::BUCKET
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 use wamn_broker::Publisher;
 
 use async_nats::jetstream::kv::Store;
@@ -36,7 +36,7 @@ use wamn_broker::auth_changes::{
 use wamn_platform_identity::AuthenticatedPrincipal;
 
 pub use crate::kv_memory::Ticket;
-use crate::kv_memory::{KvMemory, SWEEP_AT, Watched};
+use crate::kv_memory::{KvMemory, Watched};
 
 /// The roles a principal holds in one project, with the permissions of each.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -46,7 +46,7 @@ pub struct PrincipalGrants {
     /// Whether that row is `active`. An inactive principal holds no role.
     pub active: bool,
     /// Only a user can select an active role for a session.
-    pub user: Option<bool>,
+    pub user: bool,
     /// Each held role, with each permission of that role.
     pub roles: BTreeMap<String, BTreeSet<String>>,
 }
@@ -57,10 +57,7 @@ pub struct PrincipalGrants {
 enum Answer {
     /// The grants of a principal, when the host read them, and whether the
     /// project has its user row.
-    Principal {
-        grants: Option<PrincipalGrants>,
-        provisioned: bool,
-    },
+    Principal { grants: PrincipalGrants },
     /// Whether the environment is inactive.
     Environment { inactive: bool },
 }
@@ -70,16 +67,31 @@ enum Answer {
 pub struct IdentityTicket(u64);
 
 struct Token {
-    seen: Instant,
     deadline: SystemTime,
     principal: String,
     /// The principal a PAT admitted, or `None` for an active session.
     pat: Option<AuthenticatedPrincipal>,
 }
 
-#[derive(Default)]
+struct CredentialDeadline;
+impl moka::Expiry<[u8; 32], Arc<Token>> for CredentialDeadline {
+    fn expire_after_create(
+        &self,
+        _: &[u8; 32],
+        token: &Arc<Token>,
+        _: std::time::Instant,
+    ) -> Option<Duration> {
+        Some(
+            token
+                .deadline
+                .duration_since(SystemTime::now())
+                .unwrap_or_default(),
+        )
+    }
+}
+
 struct Tokens {
-    tokens: HashMap<[u8; 32], Token>,
+    tokens: moka::sync::Cache<[u8; 32], Arc<Token>>,
     /// The local generation, advanced by identity invalidations and watch resets.
     identity_revision: u64,
 }
@@ -116,7 +128,14 @@ impl AuthCache {
     pub fn with_ttl(ttl: Duration) -> Self {
         Self {
             memory: KvMemory::new(BUCKET, ttl),
-            tokens: Mutex::new(Tokens::default()),
+            tokens: Mutex::new(Tokens {
+                tokens: moka::sync::Cache::builder()
+                    .time_to_live(ttl)
+                    .expire_after(CredentialDeadline)
+                    .support_invalidation_closures()
+                    .build(),
+                identity_revision: 0,
+            }),
         }
     }
 
@@ -131,30 +150,24 @@ impl AuthCache {
         self.memory.clear();
         let mut tokens = self.tokens();
         tokens.identity_revision = tokens.identity_revision.wrapping_add(1);
-        tokens.tokens.clear();
+        tokens.tokens.invalidate_all();
     }
 
     /// The principal of an admitted PAT.
     pub fn pat(&self, token: &str) -> Option<AuthenticatedPrincipal> {
-        let ttl = self.memory.ttl();
         self.tokens()
             .tokens
             .get(&digest(token))
-            .filter(|token| token.seen.elapsed() < ttl && SystemTime::now() < token.deadline)
+            .filter(|token| SystemTime::now() < token.deadline)
             .and_then(|token| token.pat.clone())
     }
 
     /// Whether the login or PAT behind a session token is active.
     pub fn session_active(&self, token: &str) -> bool {
-        let ttl = self.memory.ttl();
         self.tokens()
             .tokens
             .get(&digest(token))
-            .is_some_and(|token| {
-                token.seen.elapsed() < ttl
-                    && SystemTime::now() < token.deadline
-                    && token.pat.is_none()
-            })
+            .is_some_and(|token| SystemTime::now() < token.deadline && token.pat.is_none())
     }
 
     /// The ticket of a PAT or session read, taken before the read.
@@ -172,7 +185,7 @@ impl AuthCache {
     ) {
         // The lock is held during the test, so a token kept here falls to
         // the clear that follows a broken watch.
-        let mut tokens = self.tokens();
+        let tokens = self.tokens();
         if self.memory.bucket().is_none()
             || self.memory.ttl().is_zero()
             || SystemTime::now() >= deadline
@@ -183,20 +196,13 @@ impl AuthCache {
         if tokens.identity_revision != ticket.0 {
             return;
         }
-        if tokens.tokens.len() >= SWEEP_AT {
-            let ttl = self.memory.ttl();
-            tokens.tokens.retain(|_, token| {
-                token.seen.elapsed() < ttl && SystemTime::now() < token.deadline
-            });
-        }
         tokens.tokens.insert(
             digest(token),
-            Token {
-                seen: Instant::now(),
+            Arc::new(Token {
                 deadline,
                 principal: principal.to_owned(),
                 pat: pat.cloned(),
-            },
+            }),
         );
     }
 
@@ -231,10 +237,7 @@ impl AuthCache {
     ) -> Result<PrincipalGrants, Ticket> {
         let key = principal_key(project_env_key, principal);
         match self.memory.answer(&key) {
-            Ok(Answer::Principal {
-                grants: Some(grants),
-                ..
-            }) if grants.user.is_some() => Ok(grants),
+            Ok(Answer::Principal { grants }) => Ok(grants),
             Ok(_) => Err(self.memory.ticket(&key)),
             Err(ticket) => Err(ticket),
         }
@@ -250,45 +253,9 @@ impl AuthCache {
         grants: PrincipalGrants,
     ) {
         let key = principal_key(project_env_key, principal);
-        let provisioned = grants.present
-            || matches!(
-                self.memory.replaced(&key, ticket),
-                Some(Answer::Principal {
-                    provisioned: true,
-                    ..
-                })
-            );
-        let answer = Answer::Principal {
-            grants: Some(grants),
-            provisioned,
-        };
-        self.memory.put(key, ticket, answer).await;
-    }
-
-    /// Whether the project has the user row of a principal, or the ticket of
-    /// a read of it.
-    pub fn provisioned(&self, project_env_key: &str, principal: &str) -> Result<(), Ticket> {
-        let key = principal_key(project_env_key, principal);
-        match self.memory.answer(&key) {
-            Ok(Answer::Principal {
-                provisioned: true, ..
-            }) => Ok(()),
-            Ok(_) => Err(self.memory.ticket(&key)),
-            Err(ticket) => Err(ticket),
-        }
-    }
-
-    pub async fn keep_provisioned(&self, project_env_key: &str, principal: &str, ticket: Ticket) {
-        let key = principal_key(project_env_key, principal);
-        let grants = match self.memory.replaced(&key, ticket) {
-            Some(Answer::Principal { grants, .. }) => grants,
-            _ => None,
-        };
-        let answer = Answer::Principal {
-            grants,
-            provisioned: true,
-        };
-        self.memory.put(key, ticket, answer).await;
+        self.memory
+            .put(key, ticket, Answer::Principal { grants })
+            .await;
     }
 
     /// Whether the environment is inactive, or the ticket of a read of it.
@@ -334,18 +301,14 @@ impl Watched for AuthCache {
         {
             let mut tokens = self.tokens();
             tokens.identity_revision = tokens.identity_revision.wrapping_add(1);
+            let principal = principal.to_owned();
             tokens
                 .tokens
-                .retain(|_, token| token.principal != principal);
+                .invalidate_entries_if(move |_, token| token.principal == principal)
+                .expect("token cache supports invalidation closures");
             return;
         }
         self.memory.apply(entry);
-    }
-}
-
-impl AsRef<AuthCache> for AuthCache {
-    fn as_ref(&self) -> &AuthCache {
-        self
     }
 }
 
@@ -353,10 +316,10 @@ impl AsRef<AuthCache> for AuthCache {
 /// holds, and return the writer of the host's own changes. A host with
 /// `project_env_key` watches the keys of that `project_env_key` and the identity keys. The
 /// control host serves every project, so it watches every key.
-pub fn replicate<H: AsRef<AuthCache> + Send + Sync + 'static>(
+pub fn replicate(
     client: &async_nats::Client,
     project_env_key: Option<&str>,
-    holder: Arc<H>,
+    holder: Arc<AuthCache>,
 ) -> Publisher {
     let filters = match project_env_key {
         Some(project_env_key) => vec![
@@ -365,9 +328,7 @@ pub fn replicate<H: AsRef<AuthCache> + Send + Sync + 'static>(
         ],
         None => vec![">".to_owned()],
     };
-    crate::kv_memory::spawn_watch(client, BUCKET, filters, holder, |holder| {
-        (*holder).as_ref() as &dyn Watched
-    });
+    crate::kv_memory::spawn_watch(client, BUCKET, filters, holder);
     Publisher::new(client.clone())
 }
 
@@ -381,41 +342,6 @@ pub(crate) mod tests {
 
     pub(crate) use super::test_util::{nats, until, watched};
 
-    #[test]
-    fn grants_without_principal_type_are_a_cache_miss() {
-        let cache = AuthCache::with_ttl(Duration::from_secs(60));
-        let missing: PrincipalGrants = serde_json::from_value(
-            serde_json::json!({"present":true,"active":true,"roles":{"admin":[]}}),
-        )
-        .unwrap();
-        assert_eq!(missing.user, None);
-        let key = principal_key("t", "p");
-        cache.memory.insert(
-            &key,
-            7,
-            Answer::Principal {
-                grants: Some(missing.clone()),
-                provisioned: true,
-            },
-        );
-        assert_eq!(cache.grants("t", "p"), Err(Ticket(7)));
-        for user in [true, false] {
-            let grants = PrincipalGrants {
-                user: Some(user),
-                ..missing.clone()
-            };
-            cache.memory.insert(
-                &key,
-                7,
-                Answer::Principal {
-                    grants: Some(grants.clone()),
-                    provisioned: true,
-                },
-            );
-            assert_eq!(cache.grants("t", "p"), Ok(grants));
-        }
-    }
-
     #[tokio::test]
     async fn a_host_without_the_bucket_keeps_no_fact() {
         let cache = AuthCache::with_ttl(Duration::from_secs(60));
@@ -424,7 +350,7 @@ pub(crate) mod tests {
         let ticket = cache.grants("t", "p").unwrap_err();
         let present = PrincipalGrants {
             present: true,
-            user: Some(false),
+            user: false,
             ..PrincipalGrants::default()
         };
         cache.keep_grants("t", "p", ticket, present).await;
@@ -436,7 +362,6 @@ pub(crate) mod tests {
         );
         assert!(cache.environment_inactive("t").is_err());
         assert!(cache.grants("t", "p").is_err());
-        assert!(cache.provisioned("t", "p").is_err());
         assert!(!cache.session_active("token"));
     }
 
@@ -509,7 +434,7 @@ pub(crate) mod tests {
         }
         let present = PrincipalGrants {
             present: true,
-            user: Some(false),
+            user: false,
             ..PrincipalGrants::default()
         };
 
@@ -518,7 +443,7 @@ pub(crate) mod tests {
         a.keep_grants("t", "p", ticket, present.clone()).await;
         assert_eq!(a.grants("t", "p"), Ok(present.clone()));
         until("host b sees the grants", || b.grants("t", "p").is_ok()).await;
-        assert_eq!(b.provisioned("t", "p"), Ok(()));
+        assert!(b.grants("t", "p").unwrap().present);
         assert!(other.grants("t", "p").is_err());
 
         let ticket = other.grants("u", "p").unwrap_err();
@@ -601,28 +526,5 @@ pub(crate) mod tests {
             SystemTime::now() + Duration::from_secs(3600),
         );
         assert!(!b.session_active("token-p"));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
-    async fn present_grants_establish_provisioned_authority() {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
-        let (_server, client) = nats().await;
-        let cache = Arc::new(AuthCache::with_ttl(Duration::from_secs(60)));
-        watched(&client, None, Arc::clone(&cache)).await;
-        let ticket = cache.grants("t", "a").unwrap_err();
-        cache
-            .keep_grants("t", "a", ticket, PrincipalGrants::default())
-            .await;
-        assert!(cache.provisioned("t", "a").is_err());
-        let ticket = cache.grants("t", "b").unwrap_err();
-        let present = PrincipalGrants {
-            present: true,
-            user: Some(false),
-            ..PrincipalGrants::default()
-        };
-        cache.keep_grants("t", "b", ticket, present).await;
-        assert_eq!(cache.provisioned("t", "b"), Ok(()));
-        assert!(cache.provisioned("u", "b").is_err());
     }
 }

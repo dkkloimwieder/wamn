@@ -24,7 +24,7 @@ wamn-identity-client = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-engine = { workspace = true }
-wash-runtime = { workspace = true, features = ["washlet"] }
+wash-runtime = { workspace = true, features = ["washlet", "wasi-logging"] }
 futures-util = { workspace = true }
 anyhow = { workspace = true }
 async-nats = { workspace = true }
@@ -46,6 +46,7 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
+opentelemetry-appender-tracing.workspace = true
 hyper-rustls = { workspace = true, features = ["http1"] }
 wamn-compiler = { workspace = true }
 wamn-package-artifact = { workspace = true }
@@ -72,7 +73,7 @@ rcgen = { workspace = true }
 rustls = { workspace = true, features = ["aws_lc_rs"] }
 tokio-rustls = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "net"] }
-opentelemetry_sdk = { workspace = true, features = ["testing"] }
+opentelemetry_sdk = { workspace = true, features = ["logs", "trace", "testing"] }
 tracing-subscriber = { workspace = true }
 wat = "=1.254.2"
 wamn-test-postgres = { workspace = true }

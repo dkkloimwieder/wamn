@@ -15,11 +15,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use wamn_digest::bytes_sha256;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_runtime::release_manifest_artifact::{
+use wamn_package_artifact::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_MEDIA_TYPE, release_manifest_artifact_layout,
     verify_release_manifest_artifact_layout,
 };
-use wamn_runtime::release_manifest_source::{ReleaseManifestFetchErrorType, ReleaseManifestSource};
+use wamn_package_artifact::release_manifest_source::{
+    ReleaseManifestFetchErrorType, ReleaseManifestSource,
+};
 
 const REGISTRY: &str = "registry.example:5000";
 const ARTIFACT_BASE: &str = "registry.example:5000/wamn/releases";

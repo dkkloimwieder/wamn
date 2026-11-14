@@ -560,9 +560,10 @@ async fn one_shot_token_and_head_use_fresh_tls_without_retained_state() {
             None,
         ).unwrap();
         for _ in 0..2 {
-            let token = super::super::fetch_health_token(&transport, &decision, &credential)
-                .await
-                .expect("one-shot token");
+            let token =
+                super::super::fetch_health_token(&transport, server.decision(), &credential)
+                    .await
+                    .expect("one-shot token");
             assert_eq!(token.access_token, "health-token");
             let outbound = Request::builder()
                 .method("HEAD")

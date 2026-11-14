@@ -11,8 +11,9 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use reqwest::header::{ACCEPT, AGE};
+use hyper::header::{ACCEPT, AGE};
 use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks, decode_public_key};
+use wamn_package_artifact::http_client::HttpClient;
 
 // Owner-approved policy: wamn-ctc8.24–28 and JWT proposal §3–4.
 const MAX_AGE: Duration = Duration::from_secs(300);
@@ -30,7 +31,7 @@ const MAX_BODY_BYTES: usize = 65_536;
 pub struct IssuerKeysConfig {
     issuer: String,
     endpoint: url::Url,
-    roots: Vec<reqwest::Certificate>,
+    client: HttpClient,
 }
 
 impl IssuerKeysConfig {
@@ -48,15 +49,13 @@ impl IssuerKeysConfig {
             return Err(SessionKeyError::new("issuer must not contain a query"));
         }
         let endpoint = https_url(endpoint)?;
-        let roots = reqwest::Certificate::from_pem_bundle(trusted_ca_pem)
-            .map_err(|source| SessionKeyError::caused("invalid issuer CA bundle", source))?;
-        if roots.is_empty() {
-            return Err(SessionKeyError::new("issuer CA bundle is empty"));
-        }
+        let client = HttpClient::with_roots(trusted_ca_pem).map_err(|source| {
+            SessionKeyError::caused("invalid issuer CA bundle", source.into_boxed_dyn_error())
+        })?;
         Ok(Self {
             issuer: issuer.to_owned(),
             endpoint,
-            roots,
+            client,
         })
     }
 }
@@ -88,7 +87,7 @@ pub struct IssuerKeys {
 struct Inner {
     issuer: String,
     endpoint: url::Url,
-    client: reqwest::Client,
+    client: HttpClient,
     clock: Clock,
     state: Mutex<State>,
     refresh: tokio::sync::Mutex<()>,
@@ -108,31 +107,21 @@ struct KeySet {
 
 impl IssuerKeys {
     /// Construct one cache; clones share its set and refresh budget.
-    pub fn new(config: IssuerKeysConfig) -> Result<Self, SessionKeyError> {
+    pub fn new(config: IssuerKeysConfig) -> Self {
         Self::with_clock(config, Clock::System)
     }
 
-    fn with_clock(config: IssuerKeysConfig, clock: Clock) -> Result<Self, SessionKeyError> {
-        let client = reqwest::Client::builder()
-            .https_only(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .retry(reqwest::retry::never())
-            .tls_backend_rustls()
-            .tls_certs_only(config.roots)
-            .timeout(FETCH_TIMEOUT)
-            .build()
-            .map_err(|source| SessionKeyError::caused("construct issuer HTTPS client", source))?;
-        Ok(Self {
+    fn with_clock(config: IssuerKeysConfig, clock: Clock) -> Self {
+        Self {
             inner: Arc::new(Inner {
                 issuer: config.issuer,
                 endpoint: config.endpoint,
-                client,
+                client: config.client,
                 clock,
                 state: Mutex::new(State::default()),
                 refresh: tokio::sync::Mutex::new(()),
             }),
-        })
+        }
     }
 
     /// The exact configured issuer, never a value supplied by a token.
@@ -235,7 +224,6 @@ impl IssuerKeys {
             return None;
         }
         Some(KeyEvidence {
-            issuer: self.inner.issuer.clone(),
             key: set.keys.get(kid)?.clone(),
             deadline: set.deadline,
             clock: self.inner.clock.clone(),
@@ -243,15 +231,22 @@ impl IssuerKeys {
     }
 
     async fn fetch(&self, started: Instant) -> Result<KeySet, SessionKeyError> {
-        let mut response = self
+        let request = hyper::Request::get(self.inner.endpoint.as_str())
+            .header(ACCEPT, "application/json")
+            .body(bytes::Bytes::new())
+            .map_err(|source| SessionKeyError::caused("invalid issuer request", source))?;
+        let response = self
             .inner
             .client
-            .get(self.inner.endpoint.clone())
-            .header(ACCEPT, "application/json")
-            .send()
+            .send(request, FETCH_TIMEOUT, MAX_BODY_BYTES)
             .await
-            .map_err(|source| SessionKeyError::caused("issuer HTTPS request failed", source))?;
-        if response.status() != reqwest::StatusCode::OK {
+            .map_err(|source| {
+                SessionKeyError::caused(
+                    "issuer HTTPS request failed",
+                    source.into_boxed_dyn_error(),
+                )
+            })?;
+        if response.status() != hyper::StatusCode::OK {
             return Err(SessionKeyError::new("issuer JWKS response is not HTTP 200"));
         }
         let mut age_values = response.headers().get_all(AGE).iter();
@@ -279,18 +274,7 @@ impl IssuerKeys {
         if self.inner.clock.now() >= deadline {
             return Err(SessionKeyError::new("issuer key response arrived expired"));
         }
-        let mut body = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|source| SessionKeyError::caused("read issuer JWKS response", source))?
-        {
-            if chunk.len() > MAX_BODY_BYTES - body.len() {
-                return Err(SessionKeyError::new("issuer JWKS exceeds 65536 bytes"));
-            }
-            body.extend_from_slice(&chunk);
-        }
-        let jwks: SessionJwks = serde_json::from_slice(&body)
+        let jwks: SessionJwks = serde_json::from_slice(response.body())
             .map_err(|source| SessionKeyError::caused("invalid public JWKS document", source))?;
         let mut keys = BTreeMap::new();
         for key in jwks.keys {
@@ -308,14 +292,11 @@ impl IssuerKeys {
 
     /// Construct a real HTTPS cache whose evidence clock advances only explicitly.
     #[cfg(feature = "test-util")]
-    pub fn with_test_clock(config: IssuerKeysConfig) -> Result<(Self, TestClock), SessionKeyError> {
+    pub fn with_test_clock(config: IssuerKeysConfig) -> (Self, TestClock) {
         let clock = TestClock {
             now: Arc::new(Mutex::new(Instant::now())),
         };
-        Ok((
-            Self::with_clock(config, Clock::Fixed(clock.clone()))?,
-            clock,
-        ))
+        (Self::with_clock(config, Clock::Fixed(clock.clone())), clock)
     }
 }
 
@@ -337,24 +318,19 @@ impl wamn_identity_protocol::verifier::KeySource for IssuerKeys {
 /// Public key and its original evidence deadline, bound to the configured issuer.
 #[derive(Clone, Debug)]
 pub struct KeyEvidence {
-    issuer: String,
     key: PublicSessionKey,
     deadline: Instant,
     clock: Clock,
 }
 
 impl KeyEvidence {
-    /// Exact issuer under which this key was fetched.
-    pub fn issuer(&self) -> &str {
-        &self.issuer
-    }
-
     /// Public-only JWK. Possession does not by itself authorize token admission.
     pub fn public_key(&self) -> &PublicSessionKey {
         &self.key
     }
 
     /// Monotonic expiry anchored at request start, shortened by HTTP Age.
+    #[cfg(feature = "test-util")]
     pub fn deadline(&self) -> Instant {
         self.deadline
     }
@@ -432,11 +408,11 @@ impl SessionKeyError {
 
     fn caused(
         context: &'static str,
-        source: impl std::error::Error + Send + Sync + 'static,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
         Self {
             context,
-            source: Some(Box::new(source)),
+            source: Some(source.into()),
             backtrace: Backtrace::capture(),
         }
     }

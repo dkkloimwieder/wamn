@@ -17,9 +17,15 @@
 //! the host's included. It depends on neither `wamn-runtime` nor `wamn-engine`,
 //! so it stays small; the artifact reference rule is in `wamn-catalog`.
 
+pub mod http_client;
 pub mod integration;
+pub mod metadata;
 pub mod registry_credentials;
 pub mod registry_pull;
+pub mod registry_source;
+pub mod registry_transport;
+pub mod release_manifest_artifact;
+pub mod release_manifest_source;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -27,7 +33,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
-use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
 use oci_client::errors::{OciDistributionError, OciErrorCode};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
@@ -39,6 +44,7 @@ use wamn_catalog::{
 use wamn_digest::bytes_sha256;
 
 use crate::registry_credentials::{RegistryCredentials, read_registry_credentials};
+use crate::registry_source::RegistrySource;
 
 /// Artifact type of a package artifact.
 pub const PACKAGE_ARTIFACT_TYPE: &str = "application/vnd.wamn.package.v2";
@@ -285,43 +291,27 @@ impl Repository {
             .context("read the package artifact base")?;
         let ca_bundles = read_ca_bundles(&registry.oci_ca_paths)
             .with_context(|| format!("read CA bundles for registry {}", base.registry()))?;
-        let protocol = if registry.insecure_registry {
-            ClientProtocol::HttpsExcept(vec![base.registry().to_owned()])
+        let reference = if by_digest {
+            Reference::with_digest(
+                base.registry().to_owned(),
+                base.repository().to_owned(),
+                reference.to_owned(),
+            )
         } else {
-            ClientProtocol::Https
+            Reference::with_tag(
+                base.registry().to_owned(),
+                base.repository().to_owned(),
+                reference.to_owned(),
+            )
         };
-        // `TryFrom`, not `Client::new`: that constructor answers a rejected
-        // configuration with a default client that drops the trust roots.
-        let client = OciClient::try_from(ClientConfig {
-            protocol,
-            read_timeout: Some(REGISTRY_IO_TIMEOUT),
-            connect_timeout: Some(REGISTRY_IO_TIMEOUT),
-            extra_root_certificates: ca_bundles
-                .into_iter()
-                .map(|data| Certificate {
-                    encoding: CertificateEncoding::Pem,
-                    data,
-                })
-                .collect(),
-            ..ClientConfig::default()
-        })
-        .with_context(|| format!("build the client for registry {}", base.registry()))?;
+        let client = RegistrySource::new(base, registry.insecure_registry, REGISTRY_IO_TIMEOUT)
+            .with_ca_bundles(ca_bundles)
+            .client()
+            .context("build the registry client")?;
         Ok(Self {
             client,
             auth,
-            reference: if by_digest {
-                Reference::with_digest(
-                    base.registry().to_owned(),
-                    base.repository().to_owned(),
-                    reference.to_owned(),
-                )
-            } else {
-                Reference::with_tag(
-                    base.registry().to_owned(),
-                    base.repository().to_owned(),
-                    reference.to_owned(),
-                )
-            },
+            reference,
         })
     }
 
@@ -527,6 +517,28 @@ pub async fn load_component_facts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ca_bundles_read_in_order_and_an_unreadable_path_refuses_by_name() {
+        let root = std::env::temp_dir().join(format!("wamn-oci-ca-bundles-{}", std::process::id()));
+        std::fs::create_dir(&root).expect("create owned CA bundle fixture");
+        let first = root.join("first.pem");
+        let second = root.join("second.pem");
+        std::fs::write(&first, b"first bundle").unwrap();
+        std::fs::write(&second, b"second bundle").unwrap();
+
+        read_ca_bundles(&[second.clone(), first.clone()]).unwrap();
+        assert!(read_ca_bundles(&[]).unwrap().is_empty());
+
+        let missing = root.join("missing.pem");
+        let error = read_ca_bundles(&[first.clone(), missing.clone()])
+            .expect_err("an unreadable bundle refuses");
+        assert!(std::error::Error::source(&error).is_some());
+
+        std::fs::remove_file(first).unwrap();
+        std::fs::remove_file(second).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
 
     #[test]
     fn a_digest_is_given_in_full() {

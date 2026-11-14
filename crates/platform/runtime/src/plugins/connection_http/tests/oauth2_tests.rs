@@ -449,7 +449,7 @@ impl Fixture {
             .await
             .map(|result| result.rows_affected())
             .unwrap();
-        plugin.oauth2.entries.lock().unwrap().clear();
+        plugin.oauth2.clear();
     }
 
     async fn stored(&self, connection: uuid::Uuid) -> crate::oauth_token::Token {
@@ -715,9 +715,7 @@ async fn clock_seam_expires_cached_token_at_the_sixty_second_margin() {
     .await
     .map(|result| result.rows_affected())
     .unwrap();
-    for (_, expires) in plugin.oauth2.entries.lock().unwrap().values_mut() {
-        *expires = tokio::time::Instant::now();
-    }
+    plugin.oauth2.clear();
     fixture.send(&plugin, "handle").await.unwrap();
     assert_eq!(fixture.counts(), (2, 2));
     assert_eq!(
@@ -746,15 +744,33 @@ async fn cache_separates_project_connection_and_active_generation() {
     assert!(second.active_generation > first.active_generation);
     fixture.send(&plugin, "other-handle").await.unwrap();
     {
-        let entries = plugin.oauth2.entries.lock().unwrap();
-        assert!(!entries.contains_key(&(connection, first.active_generation)));
-        assert!(entries.contains_key(&(connection, second.active_generation)));
+        assert!(
+            plugin
+                .oauth2
+                .get(&(connection, first.active_generation))
+                .is_none()
+        );
+        assert!(
+            plugin
+                .oauth2
+                .get(&(connection, second.active_generation))
+                .is_some()
+        );
     }
     fixture.use_project(&mut plugin, "project-b").await;
     fixture.send(&plugin, "handle").await.unwrap();
-    let entries = plugin.oauth2.entries.lock().unwrap();
-    assert!(!entries.contains_key(&(connection, first.active_generation)));
-    assert!(!entries.contains_key(&(connection, second.active_generation)));
+    assert!(
+        plugin
+            .oauth2
+            .get(&(connection, first.active_generation))
+            .is_none()
+    );
+    assert!(
+        plugin
+            .oauth2
+            .get(&(connection, second.active_generation))
+            .is_none()
+    );
     assert_eq!(fixture.counts(), (4, 4));
 }
 
@@ -802,7 +818,7 @@ async fn api_401_fetches_once_more_and_returns_the_second_response() {
         );
         assert_eq!(observed[1].body, observed[3].body);
         if second == 401 {
-            assert!(plugin.oauth2.entries.lock().unwrap().is_empty());
+            assert!(plugin.oauth2.is_empty());
         }
     }
 }
@@ -816,7 +832,7 @@ async fn api_403_with_an_unchanged_fact_does_not_retry_oauth2() {
     assert_eq!(response.status, 403);
     assert_eq!(response.body, b"api-403");
     assert_eq!(fixture.counts(), (1, 1));
-    assert!(plugin.oauth2.entries.lock().unwrap().is_empty());
+    assert!(plugin.oauth2.is_empty());
 }
 
 #[tokio::test]
@@ -836,7 +852,7 @@ async fn failed_refresh_returns_credential_unavailable_without_another_api_reque
         Err(ConnectionError::CredentialUnavailable)
     ));
     assert_eq!(fixture.counts(), (2, 1));
-    assert!(plugin.oauth2.entries.lock().unwrap().is_empty());
+    assert!(plugin.oauth2.is_empty());
 }
 
 #[tokio::test]
@@ -876,7 +892,7 @@ fn malformed_credentials_and_parameters_refuse() {
         Some(r#"{"client_secret":1}"#),
         Some(r#"{"client_secret":"private","extra":true}"#),
     ] {
-        assert!(oauth2_credential_for("oauth2_client_credentials", &valid, material).is_err());
+        assert!(oauth2_request("oauth2_client_credentials", &valid, material, None).is_err());
     }
     let secret = serde_json::json!({"client_secret":CLIENT_SECRET}).to_string();
     let mut invalid = vec![serde_json::json!(null)];
@@ -895,7 +911,13 @@ fn malformed_credentials_and_parameters_refuse() {
     ]);
     for parameters in invalid {
         assert!(
-            oauth2_credential_for("oauth2_client_credentials", &parameters, Some(&secret)).is_err()
+            oauth2_request(
+                "oauth2_client_credentials",
+                &parameters,
+                Some(&secret),
+                None
+            )
+            .is_err()
         );
     }
 }

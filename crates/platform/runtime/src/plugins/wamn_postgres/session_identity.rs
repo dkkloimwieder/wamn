@@ -43,13 +43,6 @@ const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.p
     ON p.role_name = r.role_name \
     WHERE u.id = $1::text::uuid";
 
-/// One row of the bound principal, read under the project_env_key's own guest login.
-///
-/// Row existence is the whole question, so the projection is a constant. The
-/// database is the org boundary, so the table has no org column.
-const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM platform.\"user\" \
-    WHERE id = $1::text::uuid";
-
 const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_role.role_name, permission.permission \
     FROM platform.\"user\" AS \"user\" \
     JOIN platform.user_role AS user_role \
@@ -121,7 +114,7 @@ fn principal_grants_from_rows(
     };
     for row in rows {
         grants.active = row.try_get(0)?;
-        grants.user = Some(row.try_get(3)?);
+        grants.user = row.try_get(3)?;
         if let Some(role) = row.try_get::<Option<String>, _>(1)? {
             let permissions = grants.roles.entry(role).or_default();
             permissions.extend(row.try_get::<Option<String>, _>(2)?);
@@ -192,7 +185,7 @@ fn session_grants(
     grants: &crate::auth_cache::PrincipalGrants,
     roles: &[wamn_identity_protocol::RoleName],
 ) -> anyhow::Result<HeldOperationGrants> {
-    if !grants.active || grants.user != Some(true) {
+    if !grants.active || !grants.user {
         return Err(SessionGrantRefusal {
             type_: "session principal is not an active user",
         }
@@ -215,10 +208,10 @@ fn held_grants(
     signed: Option<&[wamn_identity_protocol::RoleName]>,
 ) -> HeldOperationGrants {
     let mut held = HeldOperationGrants {
-        user: grants.user == Some(true),
+        user: grants.user,
         ..HeldOperationGrants::default()
     };
-    if !grants.active || grants.user.is_none() {
+    if !grants.active || !grants.present {
         return held;
     }
     for (role, permissions) in &grants.roles {
@@ -263,7 +256,7 @@ pub struct WamnPostgres {
     pub(super) bind_counters: super::BindCounters,
     /// The auth facts this host keeps
     /// (docs/architecture/execution.md#auth-memory).
-    auth: crate::auth_cache::AuthCache,
+    auth: Arc<crate::auth_cache::AuthCache>,
     hierarchy_reader: std::sync::RwLock<Option<sqlx::PgPool>>,
 }
 
@@ -727,7 +720,7 @@ impl WamnPostgres {
             operation_metrics: super::operation::OperationMetrics::default(),
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
-            auth: crate::auth_cache::AuthCache::default(),
+            auth: Arc::default(),
             hierarchy_reader: std::sync::RwLock::default(),
         }
     }
@@ -760,7 +753,7 @@ impl WamnPostgres {
             bound = bound.min(std::time::Duration::from_secs(seconds));
         }
         drop(connection);
-        self.auth = crate::auth_cache::AuthCache::with_ttl(bound);
+        self.auth = Arc::new(crate::auth_cache::AuthCache::with_ttl(bound));
         Ok(())
     }
 
@@ -781,7 +774,7 @@ impl WamnPostgres {
         if self.inherits_administration(key, principal).await? {
             grants.present = true;
             grants.active = true;
-            grants.user = Some(true);
+            grants.user = true;
             grants
                 .roles
                 .entry(wamn_identity_protocol::ADMIN_ROLE.to_owned())
@@ -819,7 +812,7 @@ impl WamnPostgres {
     /// The auth facts this host keeps. A message on
     /// [`replicate`](crate::auth_cache::replicate) keeps them in step with
     /// the other hosts.
-    pub fn auth_cache(&self) -> &crate::auth_cache::AuthCache {
+    pub fn auth_cache(&self) -> &Arc<crate::auth_cache::AuthCache> {
         &self.auth
     }
 
@@ -1257,43 +1250,18 @@ impl WamnPostgres {
         project: &str,
         principal_id: &str,
     ) -> anyhow::Result<()> {
-        let Err(ticket) = self.auth.provisioned(project_env_key, principal_id) else {
-            return Ok(());
-        };
-        let (mut connection, _policy) = self
-            .checkout_guest(project, project_env_key)
-            .await
-            .map_err(|source| SessionIdentityError {
-                type_: SessionIdentityErrorType::Infrastructure,
-                context: "acquire the project_env_key connection that reads platform.\"user\"",
-                source: source.into(),
-            })?;
-        let statement = match sqlx::Executor::prepare(
-            &mut *connection,
-            sqlx::SqlSafeStr::into_sql_str(PROVISIONED_PRINCIPAL_SQL),
-        )
-        .await
-        {
-            Ok(statement) => statement,
-            Err(error) => {
-                self.destroy(connection);
-                return Err(
-                    principal_read_error("prepare the provisioned-principal read", error).into(),
-                );
-            }
-        };
-        let rows = sqlx::query(statement.sql().clone())
-            .bind(principal_id)
-            .fetch_all(&mut *connection)
-            .instrument(tracing::info_span!("wamn.identity.principal.query"))
-            .await
-            .map_err(|source| {
-                principal_read_error(
-                    "read the executing principal's platform.\"user\" row",
-                    source,
-                )
-            })?;
-        if rows.is_empty() {
+        let principal = principal_id
+            .parse()
+            .context("invalid executing principal id")?;
+        let grants = self
+            .read_principal_grants(
+                project,
+                project_env_key,
+                &principal,
+                AuthorityClass::GuestSql,
+            )
+            .await?;
+        if !grants.present {
             tracing::warn!(
                 project_env_key,
                 project,
@@ -1307,9 +1275,6 @@ impl WamnPostgres {
             }
             .into());
         }
-        self.auth
-            .keep_provisioned(project_env_key, principal_id, ticket)
-            .await;
         Ok(())
     }
 
@@ -1648,6 +1613,25 @@ impl WamnPostgres {
         project_env_key: &str,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<crate::auth_cache::PrincipalGrants> {
+        let grants = self
+            .read_principal_grants(
+                project,
+                project_env_key,
+                principal,
+                AuthorityClass::CallableHttp,
+            )
+            .await?;
+        self.inherited_grants(project_env_key, principal, grants)
+            .await
+    }
+
+    async fn read_principal_grants(
+        &self,
+        project: &str,
+        project_env_key: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
+        class: AuthorityClass,
+    ) -> anyhow::Result<crate::auth_cache::PrincipalGrants> {
         anyhow::ensure!(
             valid_project(project),
             "invalid operation-permission project"
@@ -1660,16 +1644,13 @@ impl WamnPostgres {
             .auth
             .grants(project_env_key, principal.to_string().as_str())
         {
-            Ok(grants) => {
-                return self
-                    .inherited_grants(project_env_key, principal, grants)
-                    .await;
-            }
+            Ok(grants) => return Ok(grants),
             Err(ticket) => ticket,
         };
-        let (mut connection, _policy) = self
-            .checkout_platform(project, AuthorityClass::CallableHttp)
-            .await?;
+        let (mut connection, _policy) = match class {
+            AuthorityClass::GuestSql => self.checkout_guest(project, project_env_key).await?,
+            _ => self.checkout_platform(project, class).await?,
+        };
         let statement = match sqlx::Executor::prepare(
             &mut *connection,
             sqlx::SqlSafeStr::into_sql_str(PRINCIPAL_GRANTS_SQL),
@@ -1679,7 +1660,7 @@ impl WamnPostgres {
             Ok(statement) => statement,
             Err(error) => {
                 self.destroy(connection);
-                return Err(error).context("prepare the principal grants");
+                return Err(principal_read_error("prepare the principal grants", error).into());
             }
         };
         let rows = sqlx::query(statement.sql().clone())
@@ -1687,7 +1668,7 @@ impl WamnPostgres {
             .fetch_all(&mut *connection)
             .instrument(tracing::info_span!("wamn.auth.perm.query"))
             .await
-            .context("read the principal grants")?;
+            .map_err(|error| principal_read_error("read the principal grants", error))?;
         let grants = principal_grants_from_rows(&rows).context("decode the principal grants")?;
         self.auth
             .keep_grants(
@@ -1697,8 +1678,7 @@ impl WamnPostgres {
                 grants.clone(),
             )
             .await;
-        self.inherited_grants(project_env_key, principal, grants)
-            .await
+        Ok(grants)
     }
 
     /// The application roles and stored permissions a caller holds, read by a
@@ -1855,7 +1835,12 @@ impl WamnPostgres {
             .parse()
             .context("the run's principal is not a principal id")?;
         let grants = self
-            .principal_grants(project, project_env_key, &principal)
+            .read_principal_grants(
+                project,
+                project_env_key,
+                &principal,
+                AuthorityClass::GuestSql,
+            )
             .await?;
         Ok(grants
             .active
@@ -1886,12 +1871,6 @@ impl WamnPostgres {
 pub(super) enum OneShotResult {
     Rows(RowSet),
     Count(u64),
-}
-
-impl AsRef<crate::auth_cache::AuthCache> for WamnPostgres {
-    fn as_ref(&self) -> &crate::auth_cache::AuthCache {
-        &self.auth
-    }
 }
 
 #[cfg(test)]

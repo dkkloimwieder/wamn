@@ -52,40 +52,6 @@ pub fn role_caller(
     ))
 }
 
-/// Trusted dependencies and target for PAT-backed route authentication.
-pub struct RouteAuthentication {
-    identity_reader: sqlx::PgPool,
-    postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-    project: Box<str>,
-}
-
-impl std::fmt::Debug for RouteAuthentication {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("RouteAuthentication")
-            .field("project", &self.project)
-            .finish_non_exhaustive()
-    }
-}
-
-impl RouteAuthentication {
-    /// Bind the identity reader and the trusted project permission reader.
-    ///
-    /// Environment and project remain single-sourced from the loaded release.
-    pub fn new(
-        identity_reader: sqlx::PgPool,
-        postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-        project: impl Into<Box<str>>,
-    ) -> Self {
-        postgres.set_hierarchy_reader(identity_reader.clone());
-        Self {
-            identity_reader,
-            postgres,
-            project: project.into(),
-        }
-    }
-}
-
 /// The application host's read of the status of its environment
 /// (docs/architecture/execution.md#routing-and-availability): its row of
 /// `platform.environment`, as `wamn_app`, kept in the host's [auth
@@ -122,63 +88,63 @@ impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusRead
     }
 }
 
-/// Session authentication with current identity and project permission reads.
-pub struct SessionRouteAuthentication {
-    identity_reader: sqlx::PgPool,
-    verifier: SessionVerifier<IssuerKeys>,
-    postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-    project: Box<str>,
-}
-
-impl std::fmt::Debug for SessionRouteAuthentication {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("SessionRouteAuthentication")
-            .field("project", &self.project)
-            .finish_non_exhaustive()
-    }
-}
-
-impl SessionRouteAuthentication {
-    /// Bind the configured verifier to the host's existing permission authority.
-    pub fn new(
-        verifier: SessionVerifier<IssuerKeys>,
-        identity_reader: sqlx::PgPool,
-        postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-        project: impl Into<Box<str>>,
-    ) -> Self {
-        postgres.set_hierarchy_reader(identity_reader.clone());
-        Self {
-            identity_reader,
-            verifier,
-            postgres,
-            project: project.into(),
-        }
-    }
-}
-
-/// The platform's route authenticator: PAT, session and signature, present when
-/// the host configured it.
-///
-/// A cloud host always installs one. An empty authenticator refuses a session
-/// route as unauthorized and a PAT route as authentication-unavailable.
-#[derive(Debug, Default)]
+/// The host's authentication authority for PAT, session and signed requests.
+#[derive(Debug)]
 pub struct PlatformRouteAuthenticator {
-    authentication: Option<Arc<RouteAuthentication>>,
-    session_authentication: Option<Arc<SessionRouteAuthentication>>,
-    signature_authentication: Option<(Arc<ConnectionFacts>, Box<str>)>,
+    postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
+    facts: Arc<ConnectionFacts>,
+    project: Box<str>,
+    identity_reader: Option<sqlx::PgPool>,
+    verifier: Option<SessionVerifier<IssuerKeys>>,
 }
 
 impl PlatformRouteAuthenticator {
-    /// Resolve signature credentials under the host's own project.
-    #[must_use]
-    pub fn with_signature_authentication(
-        mut self,
+    /// Bind the host's project and optional identity reader and session verifier.
+    pub fn new(
+        postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
         facts: Arc<ConnectionFacts>,
         project: impl Into<Box<str>>,
+        identity: Option<(sqlx::PgPool, Option<SessionVerifier<IssuerKeys>>)>,
     ) -> Self {
-        self.signature_authentication = Some((facts, project.into()));
-        self
+        let (identity_reader, verifier) = match identity {
+            Some((reader, verifier)) => {
+                postgres.set_hierarchy_reader(reader.clone());
+                (Some(reader), verifier)
+            }
+            None => (None, None),
+        };
+        Self {
+            postgres,
+            facts,
+            project: project.into(),
+            identity_reader,
+            verifier,
+        }
+    }
+
+    /// Construct route authority without connection credentials for interface tests.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn for_test(
+        postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
+        project: &str,
+        identity_reader: Option<sqlx::PgPool>,
+        verifier: Option<SessionVerifier<IssuerKeys>>,
+    ) -> Self {
+        let facts = Arc::new(ConnectionFacts::new(
+            Arc::new(crate::connection_memory::ConnectionMemory::default()),
+            wamn_broker::Publisher::default(),
+            Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
+            Arc::clone(&postgres),
+            "test",
+            project,
+            "dev",
+        ));
+        Self::new(
+            postgres,
+            facts,
+            project,
+            identity_reader.map(|reader| (reader, verifier)),
+        )
     }
 
     async fn authenticate_signature(
@@ -207,10 +173,7 @@ impl PlatformRouteAuthenticator {
             return Err(signature_unauthorized());
         }
         let signature = hex::decode(signature).map_err(|_| signature_unauthorized())?;
-        let (facts, _) = self
-            .signature_authentication
-            .as_ref()
-            .ok_or_else(signature_unauthorized)?;
+        let facts = &self.facts;
         let name = facts
             .reader()
             .connection_name(credential)
@@ -247,23 +210,6 @@ impl PlatformRouteAuthenticator {
         Ok(fact.service_principal_id)
     }
 
-    /// Enable PAT authentication with host-selected database authorities.
-    #[must_use]
-    pub fn with_authentication(mut self, authentication: Arc<RouteAuthentication>) -> Self {
-        self.authentication = Some(authentication);
-        self
-    }
-
-    /// Supply public verification keys and the authorized project permission reader.
-    #[must_use]
-    pub fn with_session_authentication(
-        mut self,
-        authentication: Arc<SessionRouteAuthentication>,
-    ) -> Self {
-        self.session_authentication = Some(authentication);
-        self
-    }
-
     /// `cookie_headers` is `Some` only when `token` arrived by the session
     /// cookie; those requests then pass the CSRF test. Its flag is whether
     /// the route requires the CSRF header, which a read route does not.
@@ -275,23 +221,17 @@ impl PlatformRouteAuthenticator {
         project_env_key: &str,
         environment: &str,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
-        let authentication = self
-            .session_authentication
-            .as_ref()
-            .ok_or_else(unauthorized)?;
-        let session = authentication
-            .verifier
-            .verify(token)
-            .await
-            .map_err(|_| unauthorized())?;
+        let verifier = self.verifier.as_ref().ok_or_else(unauthorized)?;
+        let identity_reader = self.identity_reader.as_ref().ok_or_else(unauthorized)?;
+        let session = verifier.verify(token).await.map_err(|_| unauthorized())?;
         if let Some((headers, requires_csrf)) = cookie_headers {
             require_csrf(requires_csrf, session.claims().csrf.as_deref(), headers)?;
         }
         let principal = session.claims().sub;
-        let permissions = authentication
+        let permissions = self
             .postgres
             .session_operation_permissions(
-                &authentication.project,
+                &self.project,
                 project_env_key,
                 &session.claims().roles,
                 &principal,
@@ -309,19 +249,18 @@ impl PlatformRouteAuthenticator {
                     authentication_unavailable()
                 }
             })?;
-        let cache = authentication.postgres.auth_cache();
+        let cache = self.postgres.auth_cache();
         if !cache.session_active(token) {
             let ticket = cache.identity_ticket();
             let active = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 wamn_platform_identity::session_token::session_is_active(
-                    &mut *authentication
-                        .identity_reader
+                    &mut *identity_reader
                         .acquire()
                         .await
                         .map_err(|_| authentication_unavailable())?,
                     session.claims(),
-                    &authentication.project,
+                    &self.project,
                     environment,
                 ),
             )
@@ -350,11 +289,7 @@ impl PlatformRouteAuthenticator {
         // verified once more on fresh keys, and a token past its own age still
         // refuses (wamn-co0p).
         if session.require_admission().is_err() {
-            authentication
-                .verifier
-                .verify(token)
-                .await
-                .map_err(|_| unauthorized())?;
+            verifier.verify(token).await.map_err(|_| unauthorized())?;
         }
         let active_role = permissions.active_role();
         Ok(AuthenticatedCaller::new(
@@ -391,27 +326,20 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             let principal = self
                 .authenticate_signature(header, credential, request.headers, request.body)
                 .await?;
-            let (_, project) = self
-                .signature_authentication
-                .as_ref()
-                .ok_or_else(signature_unauthorized)?;
+            let project = &self.project;
             let id = principal.to_string();
             let principal = id
                 .parse::<wamn_identity_protocol::PrincipalId>()
                 .map_err(|_| signature_unauthorized())?;
-            let authentication = self
-                .authentication
-                .as_ref()
-                .ok_or_else(authentication_unavailable)?;
-            let grants = authentication
+            let grants = self
                 .postgres
                 .principal_grants(project, &request.target.project_env_key, &principal)
                 .await
                 .map_err(|_| authentication_unavailable())?;
-            if !grants.active || grants.user != Some(false) {
+            if !grants.active || grants.user {
                 return Err(signature_unauthorized());
             }
-            let permissions = authentication
+            let permissions = self
                 .postgres
                 .user_operation_permissions(project, &request.target.project_env_key, &principal)
                 .await
@@ -449,19 +377,18 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             wamn.attachment_id = %attachment_id,
         );
         async {
-            let authentication = self
-                .authentication
+            let identity_reader = self
+                .identity_reader
                 .as_ref()
                 .ok_or_else(authentication_unavailable)?;
             let token = required_bearer_token(headers)?;
-            let cache = authentication.postgres.auth_cache();
+            let cache = self.postgres.auth_cache();
             let principal = if let Some(principal) = cache.pat(token) {
                 principal
             } else {
                 let ticket = cache.identity_ticket();
                 let principal = wamn_platform_identity::authenticate_route_pat(
-                    &mut *authentication
-                        .identity_reader
+                    &mut *identity_reader
                         .acquire()
                         .await
                         .map_err(|_| authentication_unavailable())?,
@@ -487,10 +414,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         .strip_prefix("connection-")
                         .and_then(|id| id.parse::<uuid::Uuid>().ok())
                         .ok_or_else(unauthorized)?;
-                    let (facts, _) = self
-                        .signature_authentication
-                        .as_ref()
-                        .ok_or_else(unauthorized)?;
+                    let facts = &self.facts;
                     let active = facts
                         .connection(&connection)
                         .await
@@ -506,13 +430,9 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 PrincipalType::Service => {}
             }
             // A service receives its roles through `wamn-ctl grant-role`.
-            let permissions = authentication
+            let permissions = self
                 .postgres
-                .user_operation_permissions(
-                    &authentication.project,
-                    &target.project_env_key,
-                    principal.id(),
-                )
+                .user_operation_permissions(&self.project, &target.project_env_key, principal.id())
                 .instrument(tracing::info_span!("wamn.auth.permissions"))
                 .await
                 .map_err(|error| {
@@ -723,8 +643,21 @@ pub(crate) mod tests {
             ),
         )
         .expect("fixture manifest loads");
-        FlowHttpRouting::new(Some(Arc::new(release)))
-            .with_authenticator(Arc::new(PlatformRouteAuthenticator::default()))
+        FlowHttpRouting::new(Some(Arc::new(release))).with_authenticator(Arc::new(
+            PlatformRouteAuthenticator::for_test(
+                Arc::new(crate::plugins::wamn_postgres::WamnPostgres::with_provider(
+                    Arc::new(
+                        crate::plugins::wamn_postgres::StaticCredentialProvider::new(
+                            std::collections::HashMap::new(),
+                            None,
+                        ),
+                    ),
+                )),
+                "host-project",
+                None,
+                None,
+            ),
+        ))
     }
 
     mod connection_live;

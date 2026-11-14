@@ -422,7 +422,10 @@ The converter derives deletion markers from absent change data. It omits that da
 A refusal without details returns an empty object. Absent optional refusal details stay omitted.
 Private modules in `wamn-workflow` own deterministic graph decisions.
 Before execution, the host admits one invocation record with caller, SQL, identity, causation, effect authority and trace context.
-PostgreSQL, HTTP, storage and logging read that record from one registry.
+PostgreSQL, HTTP and storage read that record from one registry.
+Guest logs use wash-runtime's `TracingLogger` and the host tracing exporter.
+Guest context stays a plain attribute.
+The pinned runtime's concurrent logging callbacks do not restore the host invocation trace.
 The record retains signing authority through commit and replay.
 Cancellation or shutdown revokes the record. Normal completion releases it after result signing.
 The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` owns durable queue leases and settlement through the `RunStore` trait of `wamn-run-state`.
@@ -703,7 +706,9 @@ The host answers the auth facts of a repeated caller from its memory, so they co
 The [memory](../../crates/platform/runtime/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the one NATS.
 The key `<project_env_key>.<principal>` holds the grants of a principal and whether the project has its user row.
 The key `<project_env_key>.environment` holds the environment status.
-One read of `platform."user"`, `platform.user_role` and `platform.permission` answers the permission test and the user-row test of the invocation bind.
+One read of `platform."user"`, `platform.user_role` and `platform.permission` answers permission and user-row requests.
+Invocation binds and workflow callers use the guest login. Route authentication uses the callable-HTTP login.
+Both use the same grants reader and memory value.
 A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
 Each host watches the keys of its project and keeps each value it sees, so a fact one host reads serves every host of the project.
 The control host serves every project, so it watches every key.
@@ -721,7 +726,7 @@ The auth bucket has no platform-wide expiry. It holds at most 1 MiB of facts.
 A full bucket refuses a cache write, and the host keeps reading Postgres.
 The replica measures each value from its original publication time.
 
-An admitted PAT and an active session stay in the host that read them, because a token answer never leaves the host.
+Moka keeps admitted PATs and active sessions in the host that read them, with the configured expiry.
 The host keeps only a positive identity answer, so a new PAT or a new login works on its first request.
 A delete of the key `=identity.<principal>` drops the PATs and sessions of the principal on every host.
 An `project_env_key` holds only `[A-Za-z0-9_-]`, so that key never meets an environment cache key.
@@ -867,6 +872,10 @@ Every refusal rolls back, including provider errors, expired states, and stale g
 Expired or stale states remain until a generation write or connection deletion removes them.
 A generation write deletes pending states, so a later callback reports an unknown state.
 The callback escapes all page values and returns no credential material.
+
+One OAuth module uses `oauth2` with its default HTTP client disabled.
+It builds all grants and PKCE requests and validates bearer token characters.
+The pinned transport sends each request once and follows no redirect.
 
 Every OAuth type accepts an optional `parameters.auth.token_authority` as an exact `host:port` for HTTPS token requests.
 Without it, token requests use the connection authority and its base path.
