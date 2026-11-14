@@ -124,7 +124,7 @@ impl InvocationTrace {
     }
 }
 
-/// Read the trace from the invocation record or the current HTTP Store.
+/// Read the Store request trace before the component invocation trace.
 #[must_use]
 pub fn invocation_trace(active: &mut ActiveCtx<'_>) -> InvocationTrace {
     use crate::invocation_scope::{INVOCATION_SCOPES_ID, InvocationScopes};
@@ -134,8 +134,82 @@ pub fn invocation_trace(active: &mut ActiveCtx<'_>) -> InvocationTrace {
         .ok()
         .and_then(|scopes| {
             scopes
-                .trace(&active.ctx.component_id)
-                .or_else(|| scopes.trace(&active.ctx.id))
+                .trace(&active.ctx.id)
+                .or_else(|| scopes.trace(&active.ctx.component_id))
         })
         .unwrap_or_else(InvocationTrace::capture)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use wash_runtime::engine::ctx::Ctx;
+    use wash_runtime::plugin::HostPlugin;
+    use wash_runtime::wasmtime::component::ResourceTable;
+
+    use super::*;
+    use crate::invocation_scope::{INVOCATION_SCOPES_ID, InvocationScopes};
+    use crate::release_manifest::LoadedRelease;
+
+    #[test]
+    fn overlapping_stores_keep_their_request_trace_and_release_it_on_drop() {
+        tracing::subscriber::with_default(tracing_subscriber::registry(), || {
+            let scopes = Arc::new(InvocationScopes::default());
+            let release = Arc::new(LoadedRelease::control_root());
+            let component = tracing::info_span!("component");
+            component.in_scope(|| scopes.bind_release("component", Arc::clone(&release)));
+            let store_context = || {
+                Ctx::builder("workload", "component")
+                    .with_plugins(HashMap::from([(
+                        INVOCATION_SCOPES_ID,
+                        Arc::clone(&scopes) as Arc<dyn HostPlugin + Send + Sync>,
+                    )]))
+                    .build()
+            };
+            let mut first = store_context();
+            let mut second = store_context();
+            let first_span = tracing::info_span!("first_request");
+            let second_span = tracing::info_span!("second_request");
+            let mut first_table = ResourceTable::new();
+            let mut second_table = ResourceTable::new();
+            first_table
+                .push(
+                    scopes
+                        .enter_trace(
+                            first.id.to_string(),
+                            first_span.in_scope(InvocationTrace::capture),
+                        )
+                        .unwrap(),
+                )
+                .unwrap();
+            second_table
+                .push(
+                    scopes
+                        .enter_trace(
+                            second.id.to_string(),
+                            second_span.in_scope(InvocationTrace::capture),
+                        )
+                        .unwrap(),
+                )
+                .unwrap();
+            let current = |ctx: &mut Ctx, table: &mut ResourceTable| {
+                invocation_trace(&mut ActiveCtx { ctx, table })
+                    .in_scope(|| tracing::Span::current().id())
+            };
+            assert_eq!(current(&mut first, &mut first_table), first_span.id());
+            assert_eq!(current(&mut second, &mut second_table), second_span.id());
+            drop(first_table);
+            assert!(scopes.trace(&first.id).is_none());
+            assert_eq!(current(&mut second, &mut second_table), second_span.id());
+            assert_eq!(
+                current(&mut first, &mut ResourceTable::new()),
+                component.id()
+            );
+            drop(second_table);
+            assert!(scopes.trace(&second.id).is_none());
+            assert!(Arc::ptr_eq(&scopes.release("component").unwrap(), &release));
+        });
+    }
 }

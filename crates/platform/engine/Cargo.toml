@@ -48,6 +48,7 @@ wit-component = { workspace = true, features = ["dummy-module"] }
 wit-parser.workspace = true
 
 [dev-dependencies]
+tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }
 # The engine tests encode their guests from WAT in-process. Same exact pins as
 # wamn-runtime.

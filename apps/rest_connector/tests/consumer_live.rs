@@ -525,7 +525,7 @@ pub async fn invoke(
             Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
-            postgres,
+            &postgres,
             PROJECT_ENV_KEY,
             "test",
             "test",

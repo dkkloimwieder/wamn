@@ -117,6 +117,15 @@ impl InvocationScopes {
         })
     }
 
+    /// Retain a request's trace until its Store releases the returned owner.
+    pub fn enter_trace(
+        self: &Arc<Self>,
+        scope: String,
+        trace: InvocationTrace,
+    ) -> anyhow::Result<ScopeLifetime> {
+        self.enter(scope, ReleaseScope::default(), trace)
+    }
+
     /// Bind a release for a workload that supplies no other capability authority.
     pub fn bind_release(&self, scope: &str, release: Arc<LoadedRelease>) {
         self.update::<ReleaseScope, _>(scope, |record| record.0 = Some(release));

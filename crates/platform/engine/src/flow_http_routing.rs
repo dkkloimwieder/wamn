@@ -697,7 +697,11 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
             let plugin = plugin_of(&ctx)?;
             let release = plugin.scopes.release(&ctx.component_id);
             if release.is_some() {
-                let _ = plugin.scopes.set_trace(&ctx.component_id, trace.clone());
+                let lifetime = plugin
+                    .scopes
+                    .enter_trace(ctx.id.to_string(), trace.clone())
+                    .map_err(|error| wash_runtime::wasmtime::Error::msg(error.to_string()))?;
+                ctx.table.push(lifetime)?;
             }
             Ok::<_, wash_runtime::wasmtime::Error>((plugin, release, trace))
         })?;
