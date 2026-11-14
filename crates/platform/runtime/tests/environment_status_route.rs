@@ -157,7 +157,12 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         StaticCredentialProvider::new(projects, None),
     )));
     let route = FlowHttpRouting::new(Some(release()?))
-        .with_authenticator(Arc::new(PlatformRouteAuthenticator::default()))
+        .with_authenticator(Arc::new(PlatformRouteAuthenticator::for_test(
+            Arc::clone(&reader),
+            "host-project",
+            None,
+            None,
+        )))
         .with_environment_status(Arc::new(EnvironmentStatusReader::new(
             Arc::clone(&reader),
             PROJECT.to_owned(),

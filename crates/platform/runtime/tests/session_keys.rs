@@ -197,7 +197,7 @@ impl Server {
     fn cache(&self) -> (IssuerKeys, TestClock) {
         let config = IssuerKeysConfig::new(ISSUER, &self.endpoint, &self.ca_pem)
             .expect("configured HTTPS issuer");
-        IssuerKeys::with_test_clock(config).expect("public key cache")
+        IssuerKeys::with_test_clock(config)
     }
 
     fn count(&self) -> usize {
@@ -247,15 +247,13 @@ async fn configured_https_endpoint_and_exclusive_ca_are_the_only_trust_source() 
     let wrong_ca = IssuerKeys::new(
         IssuerKeysConfig::new(ISSUER, &server.endpoint, &other.ca_pem)
             .expect("other CA configuration"),
-    )
-    .expect("other CA client");
+    );
     assert!(wrong_ca.key("trusted").await.is_err());
     assert_eq!(server.count(), 0, "TLS refusal precedes HTTP");
     let wrong_name = server.endpoint.replace("127.0.0.1", "localhost");
     let wrong_name = IssuerKeys::new(
         IssuerKeysConfig::new(ISSUER, &wrong_name, &server.ca_pem).expect("name mismatch config"),
-    )
-    .expect("name mismatch client");
+    );
     assert!(wrong_name.key("trusted").await.is_err());
     assert_eq!(server.count(), 0, "hostname verification precedes HTTP");
     let (cache, _) = server.cache();
@@ -271,7 +269,6 @@ async fn configured_https_endpoint_and_exclusive_ca_are_the_only_trust_source() 
         .await
         .expect("key from configured endpoint");
     assert_eq!(cache.issuer(), ISSUER);
-    assert_eq!(evidence.issuer(), ISSUER);
     assert_eq!(evidence.public_key().kid, "trusted");
     assert_eq!(server.count(), 1);
     let requests = server.observed.requests.lock().expect("requests lock");

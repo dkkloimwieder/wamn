@@ -4,7 +4,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -21,7 +20,7 @@ pub enum RegistryCredentialsErrorType {
 enum RegistryCredentialsErrorSource {
     Io(std::io::Error),
     Json(serde_json::Error),
-    Http(reqwest::Error),
+    Http(anyhow::Error),
 }
 
 impl fmt::Display for RegistryCredentialsErrorSource {
@@ -256,81 +255,36 @@ fn complete_credentials(
 /// The variable Google's client libraries read for the metadata server's host.
 pub const METADATA_HOST_ENV: &str = "GCE_METADATA_HOST";
 
-/// The metadata server's host when [`METADATA_HOST_ENV`] is unset or empty.
-const METADATA_DEFAULT_HOST: &str = "metadata.google.internal";
-
-/// The token path for the pod's Workload Identity.
-const METADATA_TOKEN_PATH: &str = "/computeMetadata/v1/instance/service-accounts/default/token";
-
-/// The username Artifact Registry takes with an OAuth access token.
-const METADATA_TOKEN_USERNAME: &str = "oauth2accesstoken";
-
-/// Bound the one request to the metadata server, which is on the node.
-const METADATA_TOKEN_TIMEOUT: Duration = Duration::from_secs(5);
-
-#[derive(Deserialize)]
-struct MetadataToken {
-    access_token: String,
-}
-
-/// Ask the GKE metadata server for a token, as the credential of `registry`.
-///
-/// This is the one token source of the host's readers and of
-/// `docker-credential-wamn`. The server's host is [`METADATA_HOST_ENV`] when it
-/// is set, as Google's client libraries read it, and `http://` and the token
-/// path are fixed. Each call makes one request and keeps nothing: the metadata
-/// server caches the token itself. `registry` only names the refusal.
+/// Ask the shared metadata service for this registry's access token.
 pub async fn read_metadata_registry_credentials(
     registry: &str,
 ) -> Result<RegistryCredentials, RegistryCredentialsError> {
-    let host = std::env::var(METADATA_HOST_ENV)
-        .ok()
-        .filter(|host| !host.is_empty())
-        .unwrap_or_else(|| METADATA_DEFAULT_HOST.to_owned());
-    let token_url = format!("http://{host}{METADATA_TOKEN_PATH}");
-    let unavailable = |source| {
+    let unavailable = |source: anyhow::Error| {
+        let token = source.downcast_ref::<crate::metadata::InvalidToken>();
+        let malformed = token.is_some_and(|error| !error.incomplete);
+        let incomplete = token.is_some_and(|error| error.incomplete);
         RegistryCredentialsError::metadata(
             registry,
-            RegistryCredentialsErrorType::Unreadable,
-            "registry-token-metadata-unavailable",
+            if malformed || incomplete {
+                RegistryCredentialsErrorType::Rejected
+            } else {
+                RegistryCredentialsErrorType::Unreadable
+            },
+            if malformed {
+                "registry-token-metadata-malformed"
+            } else if incomplete {
+                "registry-token-metadata-incomplete"
+            } else {
+                "registry-token-metadata-unavailable"
+            },
             Some(RegistryCredentialsErrorSource::Http(source)),
         )
     };
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(METADATA_TOKEN_TIMEOUT)
-        .build()
-        .map_err(unavailable)?;
-    let body = client
-        .get(&token_url)
-        .header("Metadata-Flavor", "Google")
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(unavailable)?
-        .bytes()
-        .await
-        .map_err(unavailable)?;
-    let token: MetadataToken = serde_json::from_slice(&body).map_err(|source| {
-        RegistryCredentialsError::metadata(
-            registry,
-            RegistryCredentialsErrorType::Rejected,
-            "registry-token-metadata-malformed",
-            Some(RegistryCredentialsErrorSource::Json(source)),
-        )
-    })?;
-    if token.access_token.is_empty() {
-        return Err(RegistryCredentialsError::metadata(
-            registry,
-            RegistryCredentialsErrorType::Rejected,
-            "registry-token-metadata-incomplete",
-            None,
-        ));
-    }
+    let metadata = crate::metadata::Metadata::shared().map_err(unavailable)?;
+    let token = metadata.token().await.map_err(unavailable)?;
     Ok(RegistryCredentials {
-        username: METADATA_TOKEN_USERNAME.into(),
-        password: token.access_token.into(),
+        username: "oauth2accesstoken".into(),
+        password: token.as_ref().into(),
     })
 }
 
@@ -339,7 +293,7 @@ pub async fn read_metadata_registry_credentials(
 pub enum RegistryCredentialSource {
     /// One credential, read once from a projected Docker config file.
     Fixed(RegistryCredentials),
-    /// A token from the metadata server, asked for at each pull.
+    /// An access token from the shared metadata service.
     MetadataServer,
 }
 

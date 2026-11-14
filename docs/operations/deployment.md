@@ -389,6 +389,8 @@ An HTTP candidate needs an HTTPS authority and `tls-verification` set to `verify
 Responses 401, 403 and 5xx fail with their status as the error. Other HTTP responses are healthy.
 The control host needs its existing component registry configuration for wasm and native candidates.
 It reads `WAMN_COMPONENT_ARTIFACT_BASE` with `WAMN_REGISTRY_AUTH_FILE` or registry token metadata.
+Registry, GCS and KMS share the pod metadata token service.
+The service refreshes tokens thirty seconds before expiry. It reads no local Google credential file.
 
 Write the connection with its first credential:
 

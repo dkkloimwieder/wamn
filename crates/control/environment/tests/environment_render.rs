@@ -313,8 +313,7 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
                 .is_some_and(|replicas| replicas > 0))
     );
 
-    // The separate materializer is deleted before its host is stopped, then
-    // ordinary provisioning renders it again with its running replica count.
+    // Stopping the shared host sets zero replicas. Provisioning restores them.
     let mut shared = ensure::environment_host_values(
         &document,
         70,
@@ -357,9 +356,6 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
                 .as_u64()
                 .is_some_and(|replicas| replicas > 0))
     );
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let prepared =
-        wamn_environment::platform::artifact_plan::test_util::prepared_chart(&repository)?;
     Ok(())
 }
 
@@ -577,14 +573,6 @@ fn prekind_receiving_pat_renders() -> anyhow::Result<()> {
 #[test]
 fn prekind_wms_pat_renders() -> anyhow::Result<()> {
     pat_release("wms")
-}
-
-mod shared_resources {
-    use super::*;
-    use wamn_environment::{
-        environment::ensure,
-        platform::{artifact_plan, resources},
-    };
 }
 
 #[tokio::test]

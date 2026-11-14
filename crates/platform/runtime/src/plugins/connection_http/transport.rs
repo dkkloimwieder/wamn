@@ -133,15 +133,7 @@ impl HttpTransport {
     /// # Errors
     /// Returns an error if the platform TLS verifier cannot initialize.
     pub fn new() -> anyhow::Result<Self> {
-        let provider = rustls::crypto::CryptoProvider::get_default()
-            .cloned()
-            .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
-        let verifier = rustls_platform_verifier::Verifier::new(Arc::clone(&provider))?;
-        let tls = rustls::ClientConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()?
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(verifier))
-            .with_no_client_auth();
+        let tls = wamn_package_artifact::http_client::platform_tls()?;
         Ok(Self::from_tls(tls))
     }
 

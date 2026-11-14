@@ -23,16 +23,13 @@ use wamn_platform_identity::{assign_project_role, create_service, issue_pat, ope
 use wamn_identity_protocol::AuthorityClass;
 use wamn_release_control::publish_release::package_route;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
-use wamn_runtime::plugins::WamnLogging;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::route_authentication::{
-    PlatformRouteAuthenticator, RouteAuthentication,
-};
-use wamn_runtime::plugins::wamn_logging::WamnLoggingConfig;
+use wamn_runtime::plugins::route_authentication::PlatformRouteAuthenticator;
 use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 use wamn_workflow::RouterDriver;
+use wash_runtime::plugin::wasi_logging::TracingLogger;
 use wash_runtime::wasmtime::component::Component;
 
 use super::{
@@ -324,7 +321,7 @@ pub(super) async fn assemble(
     wamn_runtime::auth_cache::replicate(
         &auth_nats.client,
         Some(input.project_env_key),
-        Arc::clone(&postgres),
+        Arc::clone(postgres.auth_cache()),
     );
     let operations = Arc::new(OperationHost::new(
         Arc::clone(&engine),
@@ -339,7 +336,7 @@ pub(super) async fn assemble(
             input.project,
             &release.target().environment,
         )),
-        Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
+        Arc::new(TracingLogger::default()),
         Arc::from([]),
         Arc::clone(&release),
         Arc::new(LocalComponentSource::new(input.scratch.to_owned())),
@@ -412,9 +409,12 @@ pub(super) async fn assemble(
     };
     let routing = Arc::new(
         FlowHttpRouting::new(Some(release)).with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_authentication(Arc::new(
-                RouteAuthentication::new(reader, Arc::clone(&postgres), input.project),
-            )),
+            PlatformRouteAuthenticator::for_test(
+                Arc::clone(&postgres),
+                input.project,
+                Some(reader),
+                None,
+            ),
         )),
     );
     let flow_http = Component::new(engine.inner(), entry.bytes())?;

@@ -59,21 +59,33 @@ pub fn application_consumer(
     application: &str,
     package: &str,
     entity: &str,
-) -> pull::Config {
-    let durable = format!(
-        "application_{}_{}_entity_{}_{}_{}",
-        application.len(),
-        wamn_event_wire::subject_token(application),
-        package.len(),
-        wamn_event_wire::subject_token(package),
-        wamn_event_wire::subject_token(entity)
+) -> anyhow::Result<pull::Config> {
+    anyhow::ensure!(!application.is_empty(), "application name must be nonempty");
+    anyhow::ensure!(
+        [
+            target.org.as_str(),
+            target.project.as_str(),
+            target.env.as_str(),
+            package,
+            entity
+        ]
+        .into_iter()
+        .all(wamn_event_wire::valid_subject_token),
+        "event coordinates and source must be nonempty broker tokens"
     );
+    let durable = wamn_registry::name::application_event_consumer(application, package, entity);
     let filter =
         wamn_event_wire::entity_filter(&target.org, &target.project, target.env.as_str(), entity);
-    let mut config = event_consumer_config(&durable, &filter, Duration::from_secs(30), 5);
-    config.max_deliver = -1;
-    config.max_waiting = 64;
-    config
+    Ok(application_consumer_config(&durable, &filter))
+}
+
+/// The native application's delivery policy, used for declaration and validation.
+pub(crate) fn application_consumer_config(durable: &str, filter: &str) -> pull::Config {
+    pull::Config {
+        max_deliver: -1,
+        max_waiting: 64,
+        ..event_consumer_config(durable, filter, Duration::from_secs(30), 5)
+    }
 }
 
 /// Declare the existing bounded event delivery policy.
@@ -242,6 +254,56 @@ mod tests {
     use async_nats::jetstream::stream::{
         DiscardPolicy, PersistenceMode, Placement, Republish, Source, SubjectTransform,
     };
+
+    #[test]
+    fn application_consumers_accept_application_names_and_refuse_invalid_source_tokens() {
+        let target = Triple::new("acme", "dev", "widgets");
+        let config = application_consumer(&target, "sales.eu", "orders", "order").unwrap();
+        let durable = config.durable_name.as_deref().unwrap();
+        assert!(wamn_event_wire::valid_subject_token(durable));
+        crate::streams::validate_inputs(
+            &target,
+            1,
+            Duration::from_secs(120),
+            std::slice::from_ref(&config),
+        )
+        .unwrap();
+        assert_ne!(
+            config.durable_name,
+            application_consumer(&target, "sales_eu", "orders", "order")
+                .unwrap()
+                .durable_name
+        );
+        for invalid in ["", "orders.eu", "*", "bad name"] {
+            assert!(application_consumer(&target, "sales.eu", invalid, "order").is_err());
+            assert!(application_consumer(&target, "sales.eu", "orders", invalid).is_err());
+            assert!(
+                application_consumer(
+                    &Triple::new(invalid, "dev", "widgets"),
+                    "sales.eu",
+                    "orders",
+                    "order"
+                )
+                .is_err()
+            );
+        }
+        assert!(application_consumer(&target, "", "orders", "order").is_err());
+        for changed in [
+            pull::Config {
+                ack_wait: Duration::ZERO,
+                ..config.clone()
+            },
+            pull::Config {
+                max_waiting: 1,
+                ..config
+            },
+        ] {
+            assert!(
+                crate::streams::validate_inputs(&target, 1, Duration::from_secs(120), &[changed])
+                    .is_err()
+            );
+        }
+    }
 
     #[test]
     fn source_comparison_refuses_foreign_inputs_and_changed_delivery_policy() {

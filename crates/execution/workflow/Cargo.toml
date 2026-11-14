@@ -36,6 +36,7 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 uuid.workspace = true
+wash-runtime = { workspace = true, features = ["wasi-logging"] }
 wamn-digest.workspace = true
 wamn-compiler.workspace = true
 wamn-platform-identity = { workspace = true }

@@ -21,7 +21,6 @@ members = [
     "wamn_receiving/component",
     "wamn_wms/component",
     "platform/ingress/http-route",
-    "platform/events/registration",
     "platform/events/wire",
     "platform/execution/blob-put",
     "platform/execution/jsonata",

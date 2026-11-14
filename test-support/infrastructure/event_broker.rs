@@ -23,7 +23,6 @@ pub struct EventBroker {
     pub provisioning: Credentials,
     pub runtime: Credentials,
     pub publisher: Credentials,
-    pub materializer: Credentials,
     pub observer: Credentials,
     /// The full-permission development certificate of `wamn dev` and the
     /// processes a test starts.
@@ -138,7 +137,6 @@ fn prepare_with(
     let mut provisioning = Vec::new();
     let mut runtime = vec![subject.clone()];
     let mut publisher = vec![subject];
-    let mut materializer = vec![format!("$JS.API.STREAM.INFO.{}", source.name)];
     let mut observer = Vec::new();
     for name in [&source.name, &advisory.name] {
         for operation in ["INFO", "CREATE", "UPDATE", "DELETE"] {
@@ -154,15 +152,12 @@ fn prepare_with(
         let name = consumer
             .durable_name
             .as_deref()
-            .context("materializer declaration lacks a durable name")?;
+            .context("event consumer declaration lacks a durable name")?;
         ensure!(
             subject_token(name),
-            "materializer durable must use subject-safe tokens"
+            "event durable must use subject-safe tokens"
         );
-        ensure!(
-            names.insert(name),
-            "event registrations repeat a durable name"
-        );
+        ensure!(names.insert(name), "event consumers repeat a durable name");
         let suffix = format!("{}.{name}", source.name);
         let info = format!("$JS.API.CONSUMER.INFO.{suffix}");
         provisioning.extend([
@@ -171,11 +166,6 @@ fn prepare_with(
             format!("$JS.API.CONSUMER.CREATE.{suffix}.>"),
             format!("$JS.API.CONSUMER.DURABLE.CREATE.{suffix}"),
             format!("$JS.API.CONSUMER.DELETE.{suffix}"),
-        ]);
-        materializer.extend([
-            info.clone(),
-            format!("$JS.API.CONSUMER.MSG.NEXT.{suffix}"),
-            format!("$JS.ACK.{suffix}.>"),
         ]);
         runtime.extend([
             info.clone(),
@@ -221,14 +211,6 @@ fn prepare_with(
         publisher,
         &mut users,
     )?;
-    let materializer = credentials(
-        authority,
-        &directory,
-        "materializer",
-        &source.name,
-        materializer,
-        &mut users,
-    )?;
     let observer = credentials(
         authority,
         &directory,
@@ -256,7 +238,6 @@ fn prepare_with(
         provisioning,
         runtime,
         publisher,
-        materializer,
         observer,
         development,
     })
@@ -288,7 +269,6 @@ pub fn load(work: &Path) -> anyhow::Result<EventBroker> {
         provisioning: role("provisioning")?,
         runtime: role("runtime")?,
         publisher: role("publisher")?,
-        materializer: role("materializer")?,
         observer: role("observer")?,
         development: user(DEVELOPMENT_USER.into())?,
     })
@@ -462,7 +442,6 @@ mod tests {
             );
             assert_eq!(subscriptions.len(), 1);
         }
-        assert_eq!(names.len(), 6);
     }
 
     #[test]

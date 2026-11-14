@@ -13,14 +13,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
+use oci_client::Reference;
 use oci_client::errors::OciDistributionError;
 use oci_client::manifest::{OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
-use oci_client::{Client as OciClient, Reference};
 use wamn_catalog::{
-    AdmittedComponent, COMPOSED_ENTRY_REPOSITORY, ComponentArtifactBase,
-    ComponentArtifactReferenceError, parse_component_artifact_base, validate_composed_entry_path,
+    AdmittedComponent, COMPOSED_ENTRY_REPOSITORY, ComponentArtifactReferenceError,
+    parse_component_artifact_base, validate_composed_entry_path,
 };
 use wamn_engine::artifact_source::{
     ArtifactSource, ComponentArtifactFetchError, VerifiedEntry, verify_component_body,
@@ -33,19 +32,13 @@ use wamn_package_artifact::registry_credentials::{
 };
 use wamn_package_artifact::{ComponentArtifactCaError, read_ca_bundles, registry_pull};
 
-use crate::registry_transport::transport_is_mismatched;
+use wamn_package_artifact::registry_source::RegistrySource;
+use wamn_package_artifact::registry_transport::transport_is_mismatched;
 
 /// Explicit, validated configuration for one component artifact repository.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ComponentArtifactSourceConfig {
-    base: ComponentArtifactBase,
-    insecure_registry: bool,
-    fetch_timeout: Duration,
-    credentials: Option<RegistryCredentialSource>,
-    /// PEM CA bundles this source trusts on top of the compiled-in roots, kept
-    /// as read bytes rather than `oci_client::client::Certificate` so the
-    /// configuration stays comparable.
-    ca_bundles: Vec<Vec<u8>>,
+    source: RegistrySource,
 }
 
 impl ComponentArtifactSourceConfig {
@@ -55,13 +48,9 @@ impl ComponentArtifactSourceConfig {
         insecure_registry: bool,
         fetch_timeout: Duration,
     ) -> Result<Self, ComponentArtifactReferenceError> {
-        Ok(Self {
-            base: parse_component_artifact_base(artifact_base)?,
-            insecure_registry,
-            fetch_timeout,
-            credentials: None,
-            ca_bundles: Vec::new(),
-        })
+        let base = parse_component_artifact_base(artifact_base)?;
+        let source = RegistrySource::new(base, insecure_registry, fetch_timeout);
+        Ok(Self { source })
     }
 
     /// Trust the PEM CA bundles at `paths` for pulls from this source.
@@ -97,20 +86,24 @@ impl ComponentArtifactSourceConfig {
     ///
     /// Empty `paths` leave this source on the compiled-in roots.
     pub fn with_ca_paths(mut self, paths: &[PathBuf]) -> Result<Self, ComponentArtifactCaError> {
-        self.ca_bundles.extend(read_ca_bundles(paths)?);
+        self.source = self.source.with_ca_bundles(read_ca_bundles(paths)?);
         Ok(self)
     }
 
     /// Authenticate pulls with one complete credential for this exact registry.
     pub fn with_credentials(mut self, credentials: RegistryCredentials) -> Self {
-        self.credentials = Some(RegistryCredentialSource::Fixed(credentials));
+        self.source = self
+            .source
+            .with_credentials(RegistryCredentialSource::Fixed(credentials));
         self
     }
 
     /// Authenticate each pull with a token from the metadata server, asked
     /// for at that pull.
     pub fn with_registry_token_metadata(mut self) -> Self {
-        self.credentials = Some(RegistryCredentialSource::MetadataServer);
+        self.source = self
+            .source
+            .with_credentials(RegistryCredentialSource::MetadataServer);
         self
     }
 
@@ -119,7 +112,7 @@ impl ComponentArtifactSourceConfig {
         self,
         path: &std::path::Path,
     ) -> Result<Self, RegistryCredentialsError> {
-        let credentials = read_registry_credentials(path, self.base.registry())?;
+        let credentials = read_registry_credentials(path, self.source.base().registry())?;
         Ok(self.with_credentials(credentials))
     }
 }
@@ -128,12 +121,10 @@ impl fmt::Debug for ComponentArtifactSourceConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ComponentArtifactSourceConfig")
-            .field("registry", &self.base.registry())
-            .field("repository", &self.base.repository())
-            .field("insecure_registry", &self.insecure_registry)
-            .field("fetch_timeout", &self.fetch_timeout)
-            .field("authenticated", &self.credentials.is_some())
-            .field("extra_ca_bundles", &self.ca_bundles.len())
+            .field("registry", &self.source.base().registry())
+            .field("repository", &self.source.base().repository())
+            .field("fetch_timeout", &self.source.timeout())
+            .field("source", &self.source)
             .finish()
     }
 }
@@ -173,40 +164,12 @@ impl ComponentArtifactSource {
     /// The client is built once here, so an unusable configuration refuses
     /// before the first pull.
     pub fn new(config: ComponentArtifactSourceConfig) -> Result<Self, ComponentArtifactFetchError> {
-        registry_client(&config)?;
+        config
+            .source
+            .client()
+            .map_err(|_| ComponentArtifactFetchError::registry_client())?;
         Ok(Self { config })
     }
-}
-
-/// One registry client for this source's configuration.
-///
-/// Built through `TryFrom`, not `Client::new`: that constructor answers a
-/// rejected configuration with a warning and a wholly default client, which
-/// drops the trust roots, the protocol and the timeouts and turns an unusable
-/// CA bundle into a confusing TLS failure on the first pull.
-fn registry_client(
-    config: &ComponentArtifactSourceConfig,
-) -> Result<OciClient, ComponentArtifactFetchError> {
-    let protocol = if config.insecure_registry {
-        ClientProtocol::HttpsExcept(vec![config.base.registry().to_owned()])
-    } else {
-        ClientProtocol::Https
-    };
-    OciClient::try_from(ClientConfig {
-        protocol,
-        read_timeout: Some(config.fetch_timeout),
-        connect_timeout: Some(config.fetch_timeout),
-        extra_root_certificates: config
-            .ca_bundles
-            .iter()
-            .map(|data| Certificate {
-                encoding: CertificateEncoding::Pem,
-                data: data.clone(),
-            })
-            .collect(),
-        ..ClientConfig::default()
-    })
-    .map_err(|_| ComponentArtifactFetchError::registry_client())
 }
 
 #[async_trait]
@@ -215,10 +178,11 @@ impl ArtifactSource for ComponentArtifactSource {
         &self,
         component: &AdmittedComponent,
     ) -> Result<Vec<u8>, ComponentArtifactFetchError> {
-        let deadline = tokio::time::Instant::now() + self.config.fetch_timeout;
+        let deadline = tokio::time::Instant::now() + self.config.source.timeout();
         let artifact = self
             .config
-            .base
+            .source
+            .base()
             .reference(&component.component_digest)
             .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
         let reference = Reference::with_tag(
@@ -229,8 +193,12 @@ impl ArtifactSource for ComponentArtifactSource {
         let named = artifact.to_string();
         let expected_config = component_artifact_config_bytes(component);
 
-        let auth = self.auth(artifact.registry(), &named).await?;
-        let client = registry_client(&self.config)?;
+        let auth = self.auth(&named).await?;
+        let client = self
+            .config
+            .source
+            .client()
+            .map_err(|_| ComponentArtifactFetchError::registry_client())?;
 
         let (manifest, _) = registry_pull::retry(
             &reference,
@@ -298,25 +266,29 @@ impl ArtifactSource for ComponentArtifactSource {
         &self,
         reference: &str,
     ) -> Result<VerifiedEntry, ComponentArtifactFetchError> {
-        let deadline = tokio::time::Instant::now() + self.config.fetch_timeout;
+        let deadline = tokio::time::Instant::now() + self.config.source.timeout();
         validate_composed_entry_path(reference)
             .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
         let digest = reference
             .strip_prefix(COMPOSED_ENTRY_REPOSITORY)
             .and_then(|rest| rest.strip_prefix('@'))
             .expect("a valid entry path names its manifest digest");
-        let registry = self.config.base.registry();
+        let registry = self.config.source.base().registry();
         let entry = Reference::with_digest(
             registry.to_owned(),
             format!(
                 "{}/{COMPOSED_ENTRY_REPOSITORY}",
-                self.config.base.repository()
+                self.config.source.base().repository()
             ),
             digest.to_owned(),
         );
         let named = entry.whole();
-        let auth = self.auth(registry, &named).await?;
-        let client = registry_client(&self.config)?;
+        let auth = self.auth(&named).await?;
+        let client = self
+            .config
+            .source
+            .client()
+            .map_err(|_| ComponentArtifactFetchError::registry_client())?;
         // The client tests the manifest against the digest in the reference.
         let (manifest, _) = registry_pull::retry(
             &entry,
@@ -368,22 +340,12 @@ const COMPOSED_ENTRY_LAYER_MEDIA_TYPE: &str = "application/wasm";
 
 impl ComponentArtifactSource {
     /// The pull credential of `registry`, read fresh for each pull.
-    async fn auth(
-        &self,
-        registry: &str,
-        named: &str,
-    ) -> Result<RegistryAuth, ComponentArtifactFetchError> {
-        let Some(source) = &self.config.credentials else {
-            return Ok(RegistryAuth::Anonymous);
-        };
-        let credentials = source
-            .credentials(registry)
+    async fn auth(&self, named: &str) -> Result<RegistryAuth, ComponentArtifactFetchError> {
+        self.config
+            .source
+            .auth()
             .await
-            .map_err(|error| ComponentArtifactFetchError::unavailable(named, error.refusal()))?;
-        Ok(RegistryAuth::Basic(
-            credentials.username().to_owned(),
-            credentials.password().to_owned(),
-        ))
+            .map_err(|error| ComponentArtifactFetchError::unavailable(named, error.refusal()))
     }
 }
 
@@ -391,8 +353,8 @@ impl fmt::Debug for ComponentArtifactSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ComponentArtifactSource")
-            .field("registry", &self.config.base.registry())
-            .field("repository", &self.config.base.repository())
+            .field("registry", &self.config.source.base().registry())
+            .field("repository", &self.config.source.base().repository())
             .finish_non_exhaustive()
     }
 }
@@ -444,7 +406,6 @@ mod tests {
 
     use wamn_digest::bytes_sha256;
 
-    use oci_client::errors::DigestError;
     use serde_json::json;
     use wamn_catalog::{
         ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageCoordinate,
@@ -515,60 +476,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn registry_pull_retries_transient_answers_only() {
-        let body = b"component-bytes";
-        let component = admitted(body);
-        let config = component_artifact_config_bytes(&component);
-        let manifest =
-            serde_json::to_vec(&manifest(&component, body.len().try_into().unwrap())).unwrap();
-        for (status, attempts) in [(503, 2), (404, 1), (504, 4), (401, 1), (403, 1), (429, 2)] {
-            let mut responses = vec![(status, Vec::new())];
-            if attempts == 2 {
-                responses.extend([
-                    (200, manifest.clone()),
-                    (200, body.to_vec()),
-                    (200, config.clone()),
-                ]);
-            }
-            let server = registry_pull::test_server::Server::start(responses).await;
-            let source = ComponentArtifactSource::new(
-                ComponentArtifactSourceConfig::new(
-                    &format!("{}/components", server.reference.registry()),
-                    true,
-                    Duration::from_secs(30),
-                )
-                .unwrap(),
-            )
-            .unwrap();
-            let result = source.pull_verified(&component).await;
-            if attempts == 2 {
-                assert_eq!(result.unwrap(), body);
-                assert_eq!(server.requests(), 4);
-            } else {
-                assert!(result.is_err());
-                assert_eq!(server.requests(), attempts);
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn registry_pull_does_not_retry_manifest_decode_errors() {
-        let server =
-            registry_pull::test_server::Server::start(vec![(200, b"not json".to_vec())]).await;
-        let source = ComponentArtifactSource::new(
-            ComponentArtifactSourceConfig::new(
-                &format!("{}/components", server.reference.registry()),
-                true,
-                Duration::from_secs(3),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        assert!(source.pull_verified(&admitted(b"component")).await.is_err());
-        assert_eq!(server.requests(), 1);
-    }
-
     #[test]
     fn source_configuration_is_explicit_and_redacts_rejected_credentials() {
         let config = ComponentArtifactSourceConfig::new(
@@ -577,9 +484,7 @@ mod tests {
             Duration::from_secs(9),
         )
         .expect("explicit source validates");
-        let rendered = format!("{config:?}");
-        assert!(rendered.contains("registry.example"));
-        assert!(rendered.contains("9s"));
+        ComponentArtifactSource::new(config).expect("explicit source builds");
 
         let error = ComponentArtifactSourceConfig::new(
             "user:super-secret@registry.example/wamn/components",
@@ -588,32 +493,6 @@ mod tests {
         )
         .expect_err("embedded credentials refuse");
         assert!(!format!("{error:?} {error}").contains("super-secret"));
-    }
-
-    #[test]
-    fn ca_bundles_read_in_order_and_an_unreadable_path_refuses_by_name() {
-        let root = std::env::temp_dir().join(format!("wamn-oci-ca-bundles-{}", std::process::id()));
-        std::fs::create_dir(&root).expect("create owned CA bundle fixture");
-        let first = root.join("first.pem");
-        let second = root.join("second.pem");
-        std::fs::write(&first, b"first bundle").unwrap();
-        std::fs::write(&second, b"second bundle").unwrap();
-
-        assert_eq!(
-            read_ca_bundles(&[second.clone(), first.clone()]).unwrap(),
-            vec![b"second bundle".to_vec(), b"first bundle".to_vec()]
-        );
-        assert!(read_ca_bundles(&[]).unwrap().is_empty());
-
-        let missing = root.join("missing.pem");
-        let error = read_ca_bundles(&[first.clone(), missing.clone()])
-            .expect_err("an unreadable bundle refuses");
-        assert!(error.to_string().contains(&missing.display().to_string()));
-        assert!(std::error::Error::source(&error).is_some());
-
-        std::fs::remove_file(first).unwrap();
-        std::fs::remove_file(second).unwrap();
-        std::fs::remove_dir(root).unwrap();
     }
 
     #[test]
@@ -678,16 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn transport_integrity_errors_are_not_classified_as_unavailable() {
-        let digest_error = OciDistributionError::DigestError(DigestError::VerificationError {
-            expected: bytes_sha256(b"expected"),
-            actual: bytes_sha256(b"actual"),
-        });
-        assert!(transport_is_mismatched(&digest_error));
-        assert!(!transport_is_mismatched(
-            &OciDistributionError::ImageManifestNotFoundError("missing".to_owned())
-        ));
-
+    fn registry_transport_errors_never_expose_upstream_context() {
         let error = transport_error(
             "registry.example/wamn/components:tag",
             "component-artifact-manifest-unavailable",

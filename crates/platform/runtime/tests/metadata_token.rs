@@ -20,11 +20,13 @@ use wamn_engine::artifact_source::{ArtifactSource as _, ComponentArtifactFetchEr
 use wamn_package_artifact::registry_credentials::{
     METADATA_HOST_ENV, RegistryCredentialsErrorType, read_metadata_registry_credentials,
 };
+use wamn_package_artifact::release_manifest_artifact::release_manifest_artifact_layout;
+use wamn_package_artifact::release_manifest_source::{
+    ReleaseManifestFetchErrorType, ReleaseManifestSource,
+};
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_runtime::release_manifest_artifact::release_manifest_artifact_layout;
-use wamn_runtime::release_manifest_source::{ReleaseManifestFetchErrorType, ReleaseManifestSource};
 
 const REGISTRY: &str = "registry.example:5000";
 const TOKEN_PATH: &str = "/computeMetadata/v1/instance/service-accounts/default/token";
@@ -237,7 +239,7 @@ fn every_token_reader_asks_the_one_metadata_server() {
 async fn the_token_is_the_password_of_oauth2accesstoken(script: &Script) {
     script.answer(vec![(
         200,
-        r#"{"access_token":"token-1","expires_in":3599,"token_type":"Bearer"}"#,
+        r#"{"access_token":"token-1","expires_in":0,"token_type":"Bearer"}"#,
     )]);
     let credentials = read_metadata_registry_credentials(REGISTRY)
         .await
@@ -273,7 +275,7 @@ async fn an_unusable_answer_refuses_by_name_without_the_token(script: &Script) {
         ),
         (
             200,
-            r#"{"access_token":""}"#,
+            r#"{"access_token":"","expires_in":0}"#,
             RegistryCredentialsErrorType::Rejected,
             "registry-token-metadata-incomplete",
         ),
@@ -298,8 +300,8 @@ async fn each_release_pull_asks_again_and_sends_its_token(script: &Script) {
     )
     .await;
     script.answer(vec![
-        (200, r#"{"access_token":"token-1"}"#),
-        (200, r#"{"access_token":"token-2"}"#),
+        (200, r#"{"access_token":"token-1","expires_in":0}"#),
+        (200, r#"{"access_token":"token-2","expires_in":0}"#),
     ]);
     let source = ReleaseManifestSource::with_registry_token_metadata(
         &format!("{authority}/wamn/releases"),
@@ -347,7 +349,7 @@ async fn a_failed_token_request_refuses_before_any_registry_request(script: &Scr
 }
 
 async fn each_component_pull_asks_again(script: &Script) {
-    script.answer(vec![(200, r#"{"access_token":"token"}"#)]);
+    script.answer(vec![(200, r#"{"access_token":"token","expires_in":0}"#)]);
     // Port 9 refuses, so each pull stops at the registry after its token.
     let config = ComponentArtifactSourceConfig::new(
         "127.0.0.1:9/wamn/components",
@@ -385,7 +387,7 @@ async fn the_helper_answers_with_the_same_token_function(script: &Script) {
     // off the runtime's workers, which keep serving the metadata server.
     let lookup = || tokio::task::spawn_blocking(|| get_credential_from_reader(CONFIG, REGISTRY));
 
-    script.answer(vec![(200, r#"{"access_token":"token-3"}"#)]);
+    script.answer(vec![(200, r#"{"access_token":"token-3","expires_in":0}"#)]);
     let credential = lookup().await.expect("the lookup finishes");
     assert_eq!(
         credential.expect("the helper answers"),

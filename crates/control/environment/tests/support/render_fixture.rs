@@ -170,6 +170,21 @@ pub fn host_group(overlay: &str) -> anyhow::Result<serde_yaml::Mapping> {
     for key in DERIVED_KEYS {
         group.remove(key);
     }
+    group
+        .get_mut("env")
+        .and_then(serde_yaml::Value::as_sequence_mut)
+        .context("the host group has env")?
+        .retain(|entry| {
+            entry["name"]
+                .as_str()
+                .is_none_or(|name| !DERIVED_VARIABLES.contains(&name))
+        });
+    if let Some(ports) = group
+        .get_mut("ports")
+        .and_then(serde_yaml::Value::as_sequence_mut)
+    {
+        ports.retain(|port| port["name"] != "files");
+    }
     Ok(group)
 }
 

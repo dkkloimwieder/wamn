@@ -281,7 +281,7 @@ async fn main() -> anyhow::Result<()> {
         .map(|(package, entity)| {
             wamn_broker::events::application_consumer(&coordinate, application, package, entity)
         })
-        .collect::<Vec<_>>();
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let broker = event_broker::prepare(
         &directory,
         &coordinate,

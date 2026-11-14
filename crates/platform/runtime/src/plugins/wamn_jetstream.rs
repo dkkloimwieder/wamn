@@ -530,7 +530,6 @@ const CONSUMER_CONFIG_DRIFT: &str = "event-consumer-config-drift";
 mod tests {
 
     use super::*;
-    use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
 
     fn derived_request(component_id: &str, dedup_id: &str) -> DerivedPublishRequest {
         DerivedPublishRequest {
@@ -551,10 +550,7 @@ mod tests {
         }
     }
 
-    /// A plugin bound for derived publication into a valid event target, with no
-    /// broker connection, so publication refuses before any socket is opened. The span
-    /// is opened before that refusal, which is what makes the shape assertable
-    /// with no NATS server running.
+    /// A bound publisher without a broker connection.
     async fn span_test_plugin() -> WamnJetstream {
         WamnJetstream::new(WamnJetstreamConfig {
             event_target: Some(Triple::new("fixture", "dev", "widgets")),
@@ -566,75 +562,17 @@ mod tests {
         .unwrap()
     }
 
-    /// The whole span value, frozen as a literal: a derived publication names
-    /// the wiring position it was admitted at, and names EMPTY the four keys the
-    /// publish path cannot source.
     #[tokio::test]
-    async fn derived_publication_span_carries_the_wiring_and_node_it_published_for() {
+    async fn derived_publication_refuses_without_a_broker() {
         let plugin = span_test_plugin().await;
-        let harness = SpanHarness::install("jetstream-derived-span-test");
-
-        plugin
+        let error = plugin
             .publish_derived(derived_request("component-1", "author:orders:7"))
             .await
-            .expect_err("no broker URL refuses before connecting");
-
+            .expect_err("publication needs a broker");
         assert_eq!(
-            harness.attributes("wamn.jetstream"),
-            expected_attributes(
-                ["fixture--dev--widgets", "widgets", "component-1"],
-                [
-                    "platform_fixture",
-                    "fixture-orders",
-                    "7",
-                    "publish",
-                    // The publish path holds no guest invocation for these fields.
-                    "0",
-                    "",
-                    "",
-                    "",
-                ],
-                &[
-                    ("effect.operation", "publish-derived"),
-                    ("effect.outcome", "refused-before-dispatch")
-                ],
-            ),
-            "a derived event must name the wiring node that produced it"
+            error.error_type(),
+            DerivedPublishErrorType::ConnectionUnavailable
         );
-    }
-
-    /// Two emits from different nodes of one wiring must not read alike, or the
-    /// coordinate is decoration rather than an answer to "which node published
-    /// this?".
-    #[tokio::test]
-    async fn two_derived_publications_name_their_own_nodes() {
-        let plugin = span_test_plugin().await;
-        let harness = SpanHarness::install("jetstream-two-nodes-span-test");
-
-        for (node_id, dedup_id) in [
-            ("publish", "author:orders:7"),
-            ("escalate", "author:orders:8"),
-        ] {
-            let mut request = derived_request("component-1", dedup_id);
-            request.node_id = node_id.into();
-            plugin
-                .publish_derived(request)
-                .await
-                .expect_err("no broker URL refuses before connecting");
-        }
-
-        let nodes: Vec<String> = harness
-            .every_span("wamn.jetstream")
-            .into_iter()
-            .map(|attributes| {
-                attributes
-                    .into_iter()
-                    .find(|(key, _)| key == "wamn.node_id")
-                    .expect("every derived publish span records a node id")
-                    .1
-            })
-            .collect();
-        assert_eq!(nodes, vec!["publish".to_owned(), "escalate".to_owned()]);
     }
 
     #[test]

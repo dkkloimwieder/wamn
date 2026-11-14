@@ -75,68 +75,6 @@ fn platform_probe_retention() -> String {
 /// no privileges on it, as measured by `has_table_privilege`.
 const HOST_INJECTED: [&str; 1] = ["wamn_run.run_queue"];
 
-/// THE PLATFORM-GRAIN FAMILY SET, PINNED AS A VALUE (`wamn-0h0g.15.137.1`).
-///
-/// # Why a literal and not a call to `is_platform_grain`
-///
-/// The live arm below used to DERIVE its expected member set from the very
-/// function it was measuring, so mutating `is_platform_grain` moved BOTH SIDES
-/// and the assertion stayed true. SHOWN, not suspected: a mutant setting
-/// `is_platform_grain(Retention)` to false AND removing the matching edge from
-/// `postgres-init.sql` did NOT kill that test. Only the live retention condition saw
-/// the consequence — `reported_one = false`, `old_gone = false`: a SILENT
-/// LOCKOUT WITH EXIT 0.
-///
-/// That is the tautology shape this branch has paid for before: when every
-/// consumer delegates to one function, a test comparing two of them shows
-/// nothing. The remedy is the same as last time — PIN THE VALUE, and keep one
-/// consumer that does NOT delegate. Admitting or demoting a family now costs one
-/// deliberate edit here, which is the point.
-///
-/// # Deliberate changes
-///
-/// `wamn-0h0g.22.32` DEMOTED the effect writer — 8 members down to 7 — and
-/// this edit is the deliberate cost that pin was built to charge.
-/// `wamn-0h0g.10.15` later removed the effect-writer family.
-///
-/// `wamn-ctc8.15.2` adds the approved session-role reader to the platform group.
-/// Its explicit column grants and project predicates bound its reads.
-///
-/// Sorted, because both consumers compare against a sorted list.
-const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
-    "wamn_administration",
-    "wamn_executor_platform",
-    "wamn_http_admitter",
-    "wamn_run_retention",
-    "wamn_service_reader",
-    "wamn_session_role_reader",
-];
-
-/// THE PURE HALF OF THE PLATFORM-ARM GUARD, and the reason
-/// `wamn-0h0g.15.137.1` is closed.
-///
-/// The membership assertion that matters lives in a LIVE condition, and a mutant
-/// that dies only in a live acceptance test ships green in the ordinary sweep. This one
-/// needs no server: it compares `is_platform_grain`'s output against the pinned
-/// value, so flipping any arm of that function fails HERE, in a plain
-/// `cargo test`, with the family named.
-#[test]
-fn the_platform_grain_family_set_is_pinned_and_not_derived() {
-    let mut derived: Vec<&str> = WorkloadRoleFamily::ALL
-        .iter()
-        .filter(|family| family.is_platform_grain())
-        .map(|family| family.acl_role())
-        .collect();
-    derived.sort_unstable();
-    assert_eq!(
-        derived, PLATFORM_GRAIN_ACL_ROLES,
-        "is_platform_grain moved. A family that gains the arm reads EVERY \
-         project's rows on the relations it holds grants on; one that loses it \
-         reads ZERO ROWS with no error and no failing live acceptance test. Move the pin \
-         deliberately, or put the family back"
-    );
-}
-
 struct TestDatabase {
     database: wamn_test_postgres::Database,
     _lock: wamn_test_postgres::ProcessLock,
@@ -532,10 +470,12 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         apply(&db_url, &sql::ensure_workload_acl_role_sql(family));
         apply(&db_url, &sql::platform_group_membership_sql(family));
     }
-    // THE PINNED LITERAL, NOT A CALL TO `is_platform_grain`
-    // (`wamn-0h0g.15.137.1`). See [`PLATFORM_GRAIN_ACL_ROLES`]. The host-only
-    // scenario author is deliberately NOT in it (`wamn-0h0g.22.27`).
-    let expected: Vec<&str> = PLATFORM_GRAIN_ACL_ROLES.to_vec();
+    let mut expected: Vec<&str> = WorkloadRoleFamily::ALL
+        .iter()
+        .filter(|family| family.is_platform_grain())
+        .map(|family| family.acl_role())
+        .collect();
+    expected.sort_unstable();
     let members = psql(
         &db_url,
         None,

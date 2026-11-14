@@ -411,7 +411,14 @@ async fn enable_in(
             workflow.application,
             &source_package,
             &entity,
-        );
+        )
+        .map_err(|error| {
+            WorkflowLifecycleError::with_source(
+                WorkflowLifecycleErrorType::Broker,
+                "declare application event consumer",
+                error,
+            )
+        })?;
         wamn_broker::streams::prepare_application_consumers(&events.nats, triple, &[consumer])
             .await
             .map_err(|error| {

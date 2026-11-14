@@ -159,7 +159,7 @@ async fn kms_rest_wraps_and_unwraps_with_pod_identity_and_preserves_the_version(
     });
     let envelope = Envelope {
         backend: Backend::Kms(Kms {
-            client: reqwest::Client::builder().no_proxy().build().unwrap(),
+            client: HttpClient::shared().unwrap(),
             tokens: Arc::new(FixtureToken),
             endpoint: format!("http://{address}/v1"),
             name: name.into(),
@@ -254,7 +254,7 @@ async fn slow_kms_unwrap_allows_cached_decrypt_and_keeps_cache_bounded() {
         .collect();
     let envelope = Arc::new(Envelope {
         backend: Backend::Kms(Kms {
-            client: reqwest::Client::builder().no_proxy().build().unwrap(),
+            client: HttpClient::shared().unwrap(),
             tokens: Arc::new(FixtureToken),
             endpoint: format!("http://{address}/v1"),
             name: name.into(),

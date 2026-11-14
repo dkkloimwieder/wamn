@@ -47,7 +47,6 @@ use wamn_registry::Triple;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
-use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
     WamnPostgresConfig,
@@ -58,6 +57,7 @@ use wamn_workflow::author_workflow::{
 };
 use wamn_workflow::workflow_lifecycle::{WorkflowVersion, enable_workflow};
 use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
+use wash_runtime::plugin::wasi_logging::TracingLogger;
 
 const PROJECT_ENV_KEY: &str = "manual-live--dev--default";
 const PROJECT: &str = "default";
@@ -274,7 +274,7 @@ struct Fixture {
     url: String,
     engine: Arc<wash_runtime::engine::Engine>,
     postgres: Arc<WamnPostgres>,
-    logging: Arc<WamnLogging>,
+    logging: Arc<TracingLogger>,
     scratch: wamn_test_infrastructure::scratch::ScratchRoot,
     read: wamn_catalog::AdmittedComponent,
     jsonata: wamn_catalog::AdmittedComponent,
@@ -374,7 +374,7 @@ async fn fixture() -> Fixture {
     .expect("install the serving release");
 
     let postgres = targeted_postgres(&mut admin, &url).await;
-    let (logging, _capture) = WamnLogging::new_with_capture(&WamnLoggingConfig::default()).unwrap();
+    let logging = TracingLogger::default();
     let delivery = host(&postgres, &release);
 
     let observer = wamn_postgres::pool(&url, 4).await.unwrap();

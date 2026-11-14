@@ -289,6 +289,18 @@ pub fn stream_name(org: &str, project: &str, env: &str) -> String {
         project.len()
     )
 }
+/// The durable consumer shared by an application's hosts for one source.
+/// Hash the framed identity so application punctuation cannot enter a broker name.
+pub fn application_event_consumer(application: &str, package: &str, entity: &str) -> String {
+    let identity = format!(
+        "{}:{application}{}:{package}{}:{entity}",
+        application.len(),
+        package.len(),
+        entity.len(),
+    );
+    format!("application_{}", hex::encode(sha256(identity.as_bytes())))
+}
+
 /// The coordinate label in a host status response.
 pub fn host_status(org: &str, project: &str, env: &str) -> String {
     format!("{org}/{env}/{project}")

@@ -257,39 +257,28 @@ impl Watched for ConnectionMemory {
     }
 
     fn clear(&self) {
-        let mut tokens = self
-            .oauth_tokens
-            .entries
-            .lock()
-            .expect("OAuth token cache lock");
         self.memory.clear();
-        tokens.clear();
+        self.oauth_tokens.clear();
         self.resource_leases.clear();
     }
 
     fn apply(&self, entry: async_nats::jetstream::kv::Entry) {
-        let mut tokens = self
-            .oauth_tokens
-            .entries
-            .lock()
-            .expect("OAuth token cache lock");
-        if matches!(
+        let removed = if matches!(
             entry.operation,
             async_nats::jetstream::kv::Operation::Delete
                 | async_nats::jetstream::kv::Operation::Purge
         ) && let Some((_, id)) = entry.key.rsplit_once(".connection.")
             && let Ok(id) = uuid::Uuid::parse_str(id)
         {
-            tokens.retain(|(connection, _), _| *connection != id);
+            Some(id)
+        } else {
+            None
+        };
+        self.memory.apply(entry);
+        if let Some(id) = removed {
+            self.oauth_tokens.retain_generation(id, None);
             self.resource_leases.invalidate(id);
         }
-        self.memory.apply(entry);
-    }
-}
-
-impl AsRef<ConnectionMemory> for ConnectionMemory {
-    fn as_ref(&self) -> &ConnectionMemory {
-        self
     }
 }
 
@@ -297,18 +286,16 @@ impl AsRef<ConnectionMemory> for ConnectionMemory {
 /// writer of the host's own changes. A host with `project_env_key` watches the keys
 /// of that `project_env_key`. The control host serves every project, so it watches
 /// every key.
-pub fn replicate<H: AsRef<ConnectionMemory> + Send + Sync + 'static>(
+pub fn replicate(
     client: &async_nats::Client,
     project_env_key: Option<&str>,
-    holder: Arc<H>,
+    holder: Arc<ConnectionMemory>,
 ) -> Publisher {
     let filters = match project_env_key {
         Some(project_env_key) => vec![wamn_registry::name::nats_subject(&[project_env_key, ">"])],
         None => vec![">".to_owned()],
     };
-    crate::kv_memory::spawn_watch(client, BUCKET, filters, holder, |holder| {
-        (*holder).as_ref() as &dyn Watched
-    });
+    crate::kv_memory::spawn_watch(client, BUCKET, filters, holder);
     Publisher::new(client.clone())
 }
 
@@ -439,12 +426,12 @@ mod tests {
         );
 
         for host in [&a, &b] {
-            host.oauth_tokens.entries.lock().unwrap().insert(
+            host.oauth_tokens.put(
+                host.oauth_tokens.ticket(),
                 (id, 1),
-                (
-                    "private-access".into(),
-                    tokio::time::Instant::now() + Duration::from_hours(1),
-                ),
+                "private-access".into(),
+                tokio::time::Instant::now() + Duration::from_hours(1),
+                || true,
             );
         }
         // A connection delete leaves the release map.
@@ -454,8 +441,8 @@ mod tests {
         until("hosts a and b drop the connection", || {
             a.connection("t", &id).is_err()
                 && b.connection("t", &id).is_err()
-                && a.oauth_tokens.entries.lock().unwrap().is_empty()
-                && b.oauth_tokens.entries.lock().unwrap().is_empty()
+                && a.oauth_tokens.is_empty()
+                && b.oauth_tokens.is_empty()
         })
         .await;
         assert!(b.release("t", &digest).is_ok());

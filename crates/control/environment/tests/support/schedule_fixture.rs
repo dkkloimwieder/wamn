@@ -25,7 +25,6 @@ pub use wamn_registry::Triple;
 pub use wamn_runtime::connection_credentials::ConnectionCredentials;
 pub use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 pub use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
-pub use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 pub use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
 };
@@ -38,6 +37,7 @@ pub use wamn_workflow::workflow_lifecycle::{
     enable_workflow,
 };
 pub use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
+pub use wash_runtime::plugin::wasi_logging::TracingLogger;
 
 pub const PROJECT_ENV_KEY: &str = "schedule-live--dev--default";
 pub const PROJECT: &str = "default";
@@ -159,7 +159,6 @@ pub async fn connect(url: &str) -> Client {
     client
 }
 
-#[derive(Debug)]
 pub struct Fixture {
     pub admin: Client,
     pub url: String,
@@ -167,12 +166,21 @@ pub struct Fixture {
     pub postgres: Arc<WamnPostgres>,
     /// The executor login, which the host's schedule task connects with.
     pub executor_url: String,
-    pub logging: Arc<WamnLogging>,
+    pub logging: Arc<TracingLogger>,
     pub scratch: wamn_test_infrastructure::scratch::ScratchRoot,
     pub read: wamn_catalog::AdmittedComponent,
     pub release: Arc<LoadedRelease>,
     pub digest: String,
     _database: wamn_test_postgres::Database,
+}
+
+impl std::fmt::Debug for Fixture {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Fixture")
+            .field("digest", &self.digest)
+            .finish_non_exhaustive()
+    }
 }
 
 pub async fn fixture() -> Fixture {
@@ -271,7 +279,7 @@ pub async fn fixture() -> Fixture {
     .expect("install the serving release");
 
     let (postgres, executor_url) = targeted_postgres(&mut admin, &url).await;
-    let (logging, _capture) = WamnLogging::new_with_capture(&WamnLoggingConfig::default()).unwrap();
+    let logging = TracingLogger::default();
     Fixture {
         admin,
         url,

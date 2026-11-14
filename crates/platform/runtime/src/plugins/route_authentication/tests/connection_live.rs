@@ -129,19 +129,16 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     let authority = wamn_postgres::pool(fixture.database.url(), 4)
         .await
         .unwrap();
-    let authentication = Arc::new(RouteAuthentication::new(
-        authority,
+    let authentication = Arc::new(PlatformRouteAuthenticator::new(
         Arc::clone(&postgres),
+        facts,
         "host-project",
+        Some((authority, None)),
     ));
     let routing = routing_policy(
         json!({"modes":["signature"],"header":"X-Signature","credential":"org:acme:webhook@2"}),
     )
-    .with_authenticator(Arc::new(
-        PlatformRouteAuthenticator::default()
-            .with_authentication(Arc::clone(&authentication))
-            .with_signature_authentication(facts, "host-project"),
-    ));
+    .with_authenticator(Arc::clone(&authentication) as _);
     let signature = super::signature::signed(super::signature::BODY);
     let headers = [("X-Signature", signature.as_str())];
     let caller = routing
@@ -210,9 +207,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     sqlx::query("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','api@example.test')").bind(service.id().to_string()).execute(&mut project).await.unwrap();
     sqlx::query(sqlx::AssertSqlSafe(("INSERT INTO platform.user_role(user_id,role_name) VALUES ($1::text::uuid,'source-reader')").to_string())).bind(&service.id().to_string()).execute(&mut project).await.unwrap();
     let bearer = format!("Bearer {}", pat.token());
-    let pat_routing = super::routing(&json!(["pat"])).with_authenticator(Arc::new(
-        PlatformRouteAuthenticator::default().with_authentication(authentication),
-    ));
+    let pat_routing = super::routing(&json!(["pat"])).with_authenticator(authentication);
     let api = pat_routing
         .authenticate_headers_for_test("orders", &[("Authorization", &bearer)])
         .await

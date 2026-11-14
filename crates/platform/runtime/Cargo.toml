@@ -11,7 +11,7 @@ path = "src/bin/docker-credential-wamn.rs"
 test = false
 
 [features]
-test-util = ["wamn-engine/test-util", "wamn-identity-protocol/test-util"]
+test-util = ["wamn-catalog/test-util", "wamn-engine/test-util", "wamn-identity-protocol/test-util"]
 wasm_component_model_implements = [
     "wash-runtime/wasm_component_model_implements",
     "wamn-engine/wasm_component_model_implements",
@@ -65,19 +65,16 @@ uuid = { workspace = true, features = ["serde", "v4"] }
 # wamn-0h0g.12.6: `trace` carries `opentelemetry::propagation` and
 # `global::get_text_map_propagator`, both `cfg(feature = "trace")`, which the
 # trusted HTTP effect needs to write its span onto the outbound wire.
-opentelemetry = { workspace = true, features = ["logs", "metrics", "trace"] }
+opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 # The runtime's `initialize_observability` installs a `tracing-opentelemetry` layer
 # but never a global tracer provider, so `global::tracer()` is a silent no-op
 # here. `OpenTelemetrySpanExt::context()` is the only way to read the live span.
 tracing-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true, features = ["logs"] }
-opentelemetry-otlp = { workspace = true, features = ["grpc-tonic", "logs"] }
 oci-client = { workspace = true }
-reqwest = { workspace = true, features = ["rustls"] }
+oauth2.workspace = true
 ring = { workspace = true }
 zeroize = { workspace = true }
 rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
-rustls-platform-verifier = { workspace = true }
 serde = { workspace = true }
 sha2 = { workspace = true }
 serde_json = { workspace = true }
@@ -118,7 +115,7 @@ wamn-control-provision = { workspace = true, features = ["test-util"] }
 wat = "=1.254.2"
 # wamn-0h0g.12.6: the outbound-injection test needs a real span context, which
 # only a `tracing-opentelemetry` layer over an SDK tracer provider produces.
-opentelemetry_sdk = { workspace = true, features = ["logs", "testing"] }
+opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 tracing-subscriber = { workspace = true }
 wamn-test-postgres = { workspace = true }
 # The route authentication tests call the route plugin's test entry point.

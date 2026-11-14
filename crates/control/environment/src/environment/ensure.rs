@@ -717,7 +717,7 @@ pub(super) async fn ensure_streams(
                 application,
                 package,
                 entity,
-            ));
+            )?);
         }
     }
     let broker = async_nats::jetstream::new(

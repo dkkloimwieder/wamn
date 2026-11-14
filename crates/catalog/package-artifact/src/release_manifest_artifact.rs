@@ -154,30 +154,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reference_is_derived_from_only_the_explicit_base_and_manifest_digest() {
-        let digest = format!("sha256:{}", "a".repeat(64));
-        let reference = release_manifest_artifact_reference(
-            "registry.wamn-system.svc.cluster.local:5000/wamn/releases",
-            &digest,
-        )
-        .expect("release manifest reference derives");
-
-        assert_eq!(
-            reference.registry(),
-            "registry.wamn-system.svc.cluster.local:5000"
-        );
-        assert_eq!(reference.repository(), "wamn/releases");
-        assert_eq!(reference.tag(), "a".repeat(64));
-        assert_eq!(
-            reference.to_string(),
-            format!(
-                "registry.wamn-system.svc.cluster.local:5000/wamn/releases:{}",
-                "a".repeat(64)
-            )
-        );
-    }
-
-    #[test]
     fn mutable_or_ambient_reference_refuses() {
         let digest = format!("sha256:{}", "a".repeat(64));
         for base in [

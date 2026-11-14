@@ -73,13 +73,12 @@ pub(super) fn headers(
             }
             match parameters["in"].as_str() {
                 Some("header") => {
-                    let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                    let name = hyper::header::HeaderName::from_bytes(name.as_bytes())
                         .map_err(|_| unavailable())?;
                     if reserved_header(&name) {
                         return Err(unavailable());
                     }
-                    reqwest::header::HeaderValue::from_str(&value.key)
-                        .map_err(|_| unavailable())?;
+                    hyper::header::HeaderValue::from_str(&value.key).map_err(|_| unavailable())?;
                     Ok(HashMap::from([(name.as_str().into(), value.key)]))
                 }
                 Some("query") => {
@@ -107,7 +106,7 @@ pub(super) fn headers(
                 serde_json::from_str(material).map_err(|_| unavailable())?;
             let parameters: HmacParameters =
                 serde_json::from_value(parameters.clone()).map_err(|_| unavailable())?;
-            let header = reqwest::header::HeaderName::from_bytes(parameters.header.as_bytes())
+            let header = hyper::header::HeaderName::from_bytes(parameters.header.as_bytes())
                 .map_err(|_| unavailable())?;
             if parameters.algorithm != "sha256"
                 || credential.secret.is_empty()

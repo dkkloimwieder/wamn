@@ -18,9 +18,7 @@ use wamn_engine::flow_http_routing::{AuthenticatedCaller, FlowHttpRouting};
 use wamn_engine::native_routes::{DeliveryError, DeliveryOutcome, DeliveryRequest, Source};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
-use wamn_runtime::plugins::route_authentication::{
-    PlatformRouteAuthenticator, SessionRouteAuthentication,
-};
+use wamn_runtime::plugins::route_authentication::PlatformRouteAuthenticator;
 
 #[path = "../../../platform/runtime/tests/support/session_fixture.rs"]
 #[expect(
@@ -189,14 +187,12 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         None,
     )?;
     let routing = FlowHttpRouting::new(Some(Arc::clone(&release))).with_authenticator(Arc::new(
-        PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
-            SessionRouteAuthentication::new(
-                verifier,
-                identity_reader,
-                Arc::clone(&postgres_credentials),
-                PROJECT,
-            ),
-        )),
+        PlatformRouteAuthenticator::for_test(
+            Arc::clone(&postgres_credentials),
+            PROJECT,
+            Some(identity_reader),
+            Some(verifier),
+        ),
     ));
     let delivery = HostRouteDelivery::new(
         Arc::clone(&release),

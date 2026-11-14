@@ -74,7 +74,6 @@ fn declared_consumers(target: &Triple, manifests: &[String]) -> anyhow::Result<V
     let manifests = manifests
         .iter()
         .map(|path| {
-            if let Some(root) = wamn_compiler::manifest_package_root(Path::new(path)) {}
             Ok(wamn_compiler::manifest::PackageManifest::from_slice(
                 &fs::read(path).with_context(|| format!("read {path}"))?,
             )?)
@@ -85,7 +84,7 @@ fn declared_consumers(target: &Triple, manifests: &[String]) -> anyhow::Result<V
         .map(|(package, entity)| {
             wamn_broker::events::application_consumer(target, &target.project, package, entity)
         })
-        .collect();
+        .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(consumers)
 }
 

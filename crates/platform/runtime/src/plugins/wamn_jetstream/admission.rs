@@ -33,7 +33,7 @@ impl WamnJetstream {
         );
         for &(application, package, entity) in sources {
             let config =
-                wamn_broker::events::application_consumer(&target, application, package, entity);
+                wamn_broker::events::application_consumer(&target, application, package, entity)?;
             let consumer = stream
                 .get_consumer::<PullConfig>(
                     config.durable_name.as_deref().expect("declared durable"),

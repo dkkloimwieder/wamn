@@ -3,7 +3,7 @@
 pub mod support;
 use support::*;
 
-use sqlx::{Connection as _, Row as _};
+use sqlx::Row as _;
 mod event_batch {
     use super::*;
     use futures_util::StreamExt as _;
@@ -52,6 +52,7 @@ mod event_batch {
                 APPLICATION,
                 "order",
             )
+            .unwrap()
         });
         wamn_broker::streams::prepare_application_consumers(
             &wamn_broker::nats::PlatformNats::from_env().unwrap(),

@@ -20,8 +20,8 @@ use anyhow::{Context as _, bail, ensure};
 use serde_json::Value;
 use sqlx::PgConnection as Client;
 use wamn_catalog::ServingManifest;
+use wamn_package_artifact::release_manifest_source::ReleaseManifestSource;
 use wamn_postgres::connect;
-use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
 use super::Platform;
 use super::document::{DeclaredRelease, EnvironmentDocument};

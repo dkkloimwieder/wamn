@@ -164,7 +164,6 @@ impl Server {
             IssuerKeysConfig::new(ISSUER, &self.endpoint, &self.ca_pem)
                 .expect("trusted issuer configuration"),
         )
-        .expect("issuer cache")
     }
 
     pub(super) fn verifier(&self) -> (SessionVerifier<IssuerKeys>, SessionTestClock, TestClock) {

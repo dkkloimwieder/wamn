@@ -391,45 +391,6 @@ pub async fn cross_environment_refused(
     )
 }
 
-/// Make sure of the retained refusal signals after an idle materializer becomes ready.
-pub async fn materializer_idle(
-    cluster: &str,
-    work: &Path,
-    namespace: &str,
-    hosts: &HostObservation,
-    evidence: &Path,
-) -> anyhow::Result<()> {
-    let mut bytes = Vec::new();
-    for pod in items(&hosts.pods)? {
-        let name = text_at(pod, "/metadata/name")?;
-        bytes.extend(
-            require_success(
-                kubectl(cluster, work).args(["-n", namespace, "logs", name, "-c", "host"]),
-            )
-            .await?,
-        );
-    }
-    fs::write(evidence.join("materializer-host.log"), &bytes)?;
-    let output = String::from_utf8(bytes).context("host logs are UTF-8")?;
-    ensure!(
-        !output.lines().any(|line| {
-            line.contains("router delivery did not settle")
-                || line
-                    .match_indices("wamn::materializer ")
-                    .any(|(index, marker)| {
-                        let tail = &line[index + marker.len()..];
-                        tail.starts_with("REFUSED") || tail.contains("failed")
-                    })
-        }),
-        "the idle materializer reported a refusal, failure, or unsettled delivery"
-    );
-    save(
-        evidence,
-        "materializer-idle.json",
-        &json!({"host_logs_tested":items(&hosts.pods)?.len(),"failure_lines":0}),
-    )
-}
-
 /// Make sure of the service through in-cluster DNS and compare the exact refusal body.
 pub async fn unknown_route(
     cluster: &str,

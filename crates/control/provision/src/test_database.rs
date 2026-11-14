@@ -157,7 +157,7 @@ pub fn login_sql(
         escape_identifier(role),
         escape_literal(password),
         format!(
-            "{} {}",
+            "{}; {}",
             membership_sql(family, role, true),
             sql::platform_group_membership_sql(family)
         ),

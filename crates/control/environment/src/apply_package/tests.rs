@@ -106,7 +106,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
             "principal",
             ticket,
             PrincipalGrants {
-                user: Some(false),
+                user: false,
                 ..PrincipalGrants::default()
             },
         )

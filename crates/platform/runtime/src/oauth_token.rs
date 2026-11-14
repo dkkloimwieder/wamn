@@ -16,7 +16,80 @@ pub(crate) type CacheKey = (uuid::Uuid, i64);
 
 #[derive(Default)]
 pub(crate) struct Cache {
-    pub entries: Mutex<HashMap<CacheKey, (String, Instant)>>,
+    entries: Mutex<Entries>,
+}
+
+#[derive(Default)]
+struct Entries {
+    tokens: HashMap<CacheKey, (String, Instant)>,
+    revision: u64,
+}
+
+impl Cache {
+    pub(crate) fn ticket(&self) -> u64 {
+        self.entries
+            .lock()
+            .expect("OAuth token cache lock")
+            .revision
+    }
+
+    pub(crate) fn get(&self, key: &CacheKey) -> Option<String> {
+        self.entries
+            .lock()
+            .expect("OAuth token cache lock")
+            .tokens
+            .get(key)
+            .filter(|(_, deadline)| Instant::now() < *deadline)
+            .map(|(token, _)| token.clone())
+    }
+
+    pub(crate) fn put(
+        &self,
+        ticket: u64,
+        key: CacheKey,
+        token: String,
+        expires: Instant,
+        current: impl FnOnce() -> bool,
+    ) {
+        let mut entries = self.entries.lock().expect("OAuth token cache lock");
+        if entries.revision == ticket && Instant::now() < expires && current() {
+            entries
+                .tokens
+                .retain(|_, (_, deadline)| Instant::now() < *deadline);
+            entries.tokens.insert(key, (token, expires));
+        }
+    }
+
+    pub(crate) fn remove(&self, key: &CacheKey) {
+        self.entries
+            .lock()
+            .expect("OAuth token cache lock")
+            .tokens
+            .remove(key);
+    }
+
+    pub(crate) fn retain_generation(&self, id: uuid::Uuid, generation: Option<i64>) {
+        let mut entries = self.entries.lock().expect("OAuth token cache lock");
+        entries.revision = entries.revision.wrapping_add(1);
+        entries
+            .tokens
+            .retain(|(connection, active), _| *connection != id || generation == Some(*active));
+    }
+
+    pub(crate) fn clear(&self) {
+        let mut entries = self.entries.lock().expect("OAuth token cache lock");
+        entries.revision = entries.revision.wrapping_add(1);
+        entries.tokens.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entries
+            .lock()
+            .expect("OAuth token cache lock")
+            .tokens
+            .is_empty()
+    }
 }
 
 /// JSON encrypted in oauth_token.ciphertext, also used by authorization callbacks.

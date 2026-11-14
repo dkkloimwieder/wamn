@@ -50,14 +50,9 @@ pub fn validate_inputs(
                 .is_some_and(|tail| !tail.is_empty()),
             "event filter must belong to its declared environment"
         );
-        if config.max_deliver == -1 && config.max_waiting == 64 {
+        if config.max_deliver == -1 {
             let expected =
-                event_consumer_config(durable, &config.filter_subject, Duration::from_secs(30), 5);
-            let expected = pull::Config {
-                max_deliver: -1,
-                max_waiting: 64,
-                ..expected
-            };
+                crate::events::application_consumer_config(durable, &config.filter_subject);
             ensure!(
                 config == &expected,
                 "application consumer differs from its declaration"

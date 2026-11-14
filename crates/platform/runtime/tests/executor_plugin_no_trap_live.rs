@@ -11,13 +11,8 @@
 //! declares no error channel — rather than as a wasm trap. This COMPLEMENTS the
 //! static audit; it replaces nothing.
 //!
-//! # The three
-//!
-//! The executor's runner store carries `WAMN_POSTGRES_ID`, `WAMN_LOGGING_ID`
-//! and `CONNECTION_HTTP_ID` — condition B's retained set, and the three tested here.
-//! `wamn_jetstream`, `flow_http_routing` and `connection_credentials` are deliberately
-//! outside this test: the first two are not on the executor store, and the third
-//! implements no `HostPlugin` and has no WIT surface at all.
+//! The tests cover PostgreSQL and connection HTTP imports.
+//! wash-runtime owns guest logging and its error behavior.
 //!
 //! # Why the guests are WAT, not built fixtures
 //!
@@ -46,9 +41,6 @@
 //!   was never reached and the test shows nothing. Asserted against
 //!   POSITIVELY, so this fails too.
 //!
-//! For the plugin whose WIT declares no error channel the trail shows
-//! survival and a plugin-owned public observation shows the host path actually
-//! ran.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -59,7 +51,6 @@ use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::connection_memory::ConnectionMemory;
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
-use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
     self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
 };
@@ -214,129 +205,6 @@ fn libc_module(data: &str) -> String {
   (core instance $libc (instantiate $libc))
 "#
     )
-}
-
-// ---------------------------------------------------------------------------
-// 1. wamn_logging — wasi:logging/logging@0.1.0-draft
-// ---------------------------------------------------------------------------
-
-/// `log` declares NO return value at all, so the only way it can trap is to
-/// panic on the guest's stack. `WamnLogging::ingest` parses the guest-supplied
-/// `context` JSON synchronously inside the call, and the drain task then parses
-/// the `traceparent` it found, so this guest hands both parsers garbage: one
-/// call with a context that is not JSON, one with valid JSON carrying a
-/// malformed `traceparent`.
-///
-/// Data segment: `{` at 256 (len 1, not JSON);
-/// `{"traceparent":"nope"}` at 257 (len 22, JSON with a garbage traceparent);
-/// `no-trap` at 279 (len 7, the message). Level `2` is `info`, the third case of
-/// the `wasi:logging` level enum.
-fn logging_guest() -> String {
-    format!(
-        r#"
-(component
-  ;; wamn-0h0g.15.53
-  (import "wasi:logging/logging@0.1.0-draft" (instance $logging
-    (type $level' (enum "trace" "debug" "info" "warn" "error" "critical"))
-    (export "level" (type $level (eq $level')))
-    (export "log" (func
-      (param "level" $level)
-      (param "context" string)
-      (param "message" string)))))
-  (import "verdict" (func $verdict (param "code" u32)))
-{libc}
-  (core func $log-lowered
-    (canon lower (func $logging "log")
-      (memory $libc "memory")
-      (realloc (func $libc "realloc"))))
-  (core func $verdict-lowered (canon lower (func $verdict)))
-
-  (core module $main
-    (import "libc" "memory" (memory 1))
-    (import "host" "log" (func $log (param i32 i32 i32 i32 i32)))
-    (import "host" "verdict" (func $verdict (param i32)))
-    (func (export "drive")
-      i32.const {enter}
-      call $verdict
-      ;; context that is not JSON at all
-      i32.const 2
-      i32.const 256
-      i32.const 1
-      i32.const 279
-      i32.const 7
-      call $log
-      ;; valid JSON, malformed W3C traceparent
-      i32.const 2
-      i32.const 257
-      i32.const 22
-      i32.const 279
-      i32.const 7
-      call $log
-      i32.const {resumed}
-      call $verdict))
-  (core instance $main (instantiate $main
-    (with "libc" (instance $libc))
-    (with "host" (instance
-      (export "log" (func $log-lowered))
-      (export "verdict" (func $verdict-lowered))))))
-  (func (export "drive") (canon lift (core func $main "drive")))
-)
-"#,
-        libc = libc_module(r#"{{\"traceparent\":\"nope\"}no-trap"#),
-        enter = MARK_ENTER,
-        resumed = MARK_RESUMED,
-    )
-}
-
-#[tokio::test]
-async fn wamn_logging_absorbs_a_garbage_guest_context_without_trapping_the_guest() {
-    let (logging, capture) = WamnLogging::new_with_capture(&WamnLoggingConfig::default())
-        .expect("logging plugin builds");
-    let logging = Arc::new(logging);
-    let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
-    plugins.insert(
-        WAMN_LOGGING_ID,
-        Arc::clone(&logging) as Arc<dyn HostPlugin + Send + Sync>,
-    );
-
-    let (outcome, trail) =
-        drive_guest(&logging_guest(), plugins, wamn_logging::add_to_linker).await;
-
-    outcome.expect("the guest survived two malformed log contexts");
-    assert_eq!(
-        trail,
-        vec![MARK_ENTER, MARK_RESUMED],
-        "the guest must resume after both malformed records"
-    );
-    // POSITIVE evidence both calls reached the plugin and neither parser
-    // panicked on the guest's stack: `ingest` counted both.
-    assert_eq!(
-        logging.accepted(),
-        2,
-        "both malformed records were enqueued, not refused"
-    );
-
-    // The drain task is where the traceparent is parsed. Wait for it, bounded,
-    // so a wiring regression fails this test instead of hanging it.
-    for _ in 0..200 {
-        if logging.emitted() == logging.accepted() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    let records = capture.snapshot();
-    assert_eq!(
-        records.len(),
-        2,
-        "the drain task emitted both records; a panic there would lose them"
-    );
-    for record in &records {
-        assert_eq!(
-            record.trace_id, None,
-            "a malformed traceparent resolves to no trace id, never a bogus one"
-        );
-        assert_eq!(record.message, "no-trap");
-    }
 }
 
 // ---------------------------------------------------------------------------

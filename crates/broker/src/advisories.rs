@@ -287,13 +287,7 @@ mod tests {
                         "INFO",
                         (source.name).as_ref(),
                     ]),
-                    vec![
-                        "provisioning",
-                        "runtime",
-                        "publisher",
-                        "materializer",
-                        "observer",
-                    ],
+                    vec!["provisioning", "runtime", "publisher", "observer"],
                 ),
                 (
                     wamn_registry::name::nats_subject(&[
@@ -315,7 +309,7 @@ mod tests {
                         (source.name).as_ref(),
                         "registered",
                     ]),
-                    vec!["provisioning", "runtime", "materializer", "observer"],
+                    vec!["provisioning", "runtime", "observer"],
                 ),
                 (
                     wamn_registry::name::nats_subject(&[
@@ -327,7 +321,7 @@ mod tests {
                         (source.name).as_ref(),
                         "registered",
                     ]),
-                    vec!["runtime", "materializer"],
+                    vec!["runtime"],
                 ),
                 (
                     wamn_registry::name::nats_subject(&[
@@ -341,7 +335,7 @@ mod tests {
                         "1",
                         "0",
                     ]),
-                    vec!["runtime", "materializer"],
+                    vec!["runtime"],
                 ),
             ] {
                 assert_eq!(
@@ -666,11 +660,11 @@ mod tests {
         first_client.drain().await?;
         tokio::time::timeout(Duration::from_secs(5), closure.recv())
             .await
-            .context("the interrupted materializer connection did not close")?
-            .context("the interrupted materializer omitted its native closure event")?;
+            .context("the interrupted runtime connection did not close")?
+            .context("the interrupted runtime omitted its native closure event")?;
         ensure!(
             first_client.flush().await.is_err(),
-            "the closed materializer client still accepts commands"
+            "the closed runtime client still accepts commands"
         );
         drop(first_consumer);
         drop(first_stream);
@@ -739,7 +733,7 @@ mod tests {
 
     async fn large_messages_obey_pull_and_ack_limits(
         publisher: &async_nats::jetstream::Context,
-        materializer: &async_nats::jetstream::Context,
+        runtime: &async_nats::jetstream::Context,
         source_name: &str,
         consumer: &PullConfig,
     ) -> anyhow::Result<()> {
@@ -751,7 +745,7 @@ mod tests {
             .durable_name
             .as_deref()
             .context("pressure consumer has a name")?;
-        let stream = materializer.get_stream(source_name).await?;
+        let stream = runtime.get_stream(source_name).await?;
         let attached = stream
             .get_consumer::<PullConfig>(name)
             .await
@@ -761,7 +755,7 @@ mod tests {
             declared.config.max_ack_pending == 64
                 && declared.config.max_batch == 64
                 && declared.config.max_bytes == EVENT_MAX_PULL_BYTES,
-            "the pressure consumer must retain the declared materializer bounds"
+            "the pressure consumer must retain the declared runtime bounds"
         );
         let mut sequences = Vec::new();
         for index in 0..MESSAGE_COUNT {
@@ -880,7 +874,7 @@ mod tests {
     async fn source_time_expiry_preserves_advisory(
         manager: &async_nats::jetstream::Context,
         publisher: &async_nats::jetstream::Context,
-        materializer: &async_nats::jetstream::Context,
+        runtime: &async_nats::jetstream::Context,
         observer: &async_nats::jetstream::Context,
         source: &async_nats::jetstream::stream::Config,
         advisory: &async_nats::jetstream::stream::Config,
@@ -900,7 +894,7 @@ mod tests {
             retained_source.config == declared,
             "the owned source expiry policy differs from its declaration"
         );
-        let attached = materializer
+        let attached = runtime
             .get_stream(&source.name)
             .await?
             .get_consumer::<PullConfig>(name)
@@ -991,7 +985,6 @@ mod tests {
             let broker = &fixture.brokers[0];
             let (source, advisory, consumer, consumers) = &fixture.declarations[0];
             let publisher = async_nats::jetstream::new(wamn_test_infrastructure::event_broker::connect(&broker.publisher, server).await?);
-            let materializer = async_nats::jetstream::new(wamn_test_infrastructure::event_broker::connect(&broker.materializer, server).await?);
             let (observer_client, _) = monitored_broker_client(&broker.observer, server).await?;
             let mut observer = async_nats::jetstream::new(observer_client);
             observer.set_timeout(Duration::from_millis(500));
@@ -999,17 +992,17 @@ mod tests {
             let runtime = async_nats::jetstream::new(wamn_test_infrastructure::event_broker::connect(&broker.runtime, server).await?);
             let attached = runtime.get_stream(&source.name).await?.get_consumer::<PullConfig>("registered").await.map_err(anyhow::Error::from_boxed)?;
             let sequence = runtime.publish(consumer.filter_subject.clone(), "runtime payload".into()).await?.await?.sequence;
-            let message = fetch_one(&attached).await?.context("materializer did not read runtime publication")?;
+            let message = fetch_one(&attached).await?.context("runtime did not read runtime publication")?;
             ensure!(message.payload.as_ref() == b"runtime payload", "runtime payload changed");
             message.ack_with(AckKind::Term).await.map_err(anyhow::Error::from_boxed)?;
             publisher.publish(consumer.filter_subject.clone(), "publisher payload".into()).await?.await?;
-            let message = fetch_one(&attached).await?.context("materializer did not read publisher publication")?;
+            let message = fetch_one(&attached).await?.context("runtime did not read publisher publication")?;
             ensure!(message.payload.as_ref() == b"publisher payload", "publisher payload changed");
             message.double_ack().await.map_err(anyhow::Error::from_boxed)?;
-            let other = materializer.get_stream(&source.name).await?
+            let other = runtime.get_stream(&source.name).await?
                 .get_consumer::<PullConfig>("interrupted").await.map_err(anyhow::Error::from_boxed)?;
             publisher.publish(consumers[1].filter_subject.clone(), "other consumer payload".into()).await?.await?;
-            fetch_one(&other).await?.context("materializer did not read the other consumer payload")?
+            fetch_one(&other).await?.context("runtime did not read the other consumer payload")?
                 .ack_with(AckKind::Term).await.map_err(anyhow::Error::from_boxed)?;
             let mut retained = observer.get_stream(&advisory.name).await?;
             let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -1033,7 +1026,7 @@ mod tests {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];
             let (source, _, consumer, _) = &fixture.declarations[0];
-            for credentials in [&broker.runtime, &broker.publisher, &broker.materializer] {
+            for credentials in [&broker.runtime, &broker.publisher] {
                 let (client, mut errors) = monitored_broker_client(credentials, server).await?;
                 let mut restricted = async_nats::jetstream::new(client);
                 restricted.set_timeout(Duration::from_millis(500));
@@ -1156,10 +1149,6 @@ mod tests {
                 monitored_broker_client(&broker.runtime, server).await?;
             let mut restricted_runtime = async_nats::jetstream::new(runtime_client.clone());
             restricted_runtime.set_timeout(Duration::from_millis(500));
-            let (materializer_client, mut materializer_errors) =
-                monitored_broker_client(&broker.materializer, server).await?;
-            let mut restricted_materializer = async_nats::jetstream::new(materializer_client);
-            restricted_materializer.set_timeout(Duration::from_millis(500));
             for (foreign_source, foreign_advisory, foreign_consumer, _) in &declarations[1..] {
                 let publication = restricted_runtime
                     .publish(
@@ -1192,28 +1181,6 @@ mod tests {
                 );
                 require_permission_denial(
                     &mut runtime_errors,
-                    &wamn_registry::name::nats_subject(&[
-                        "$JS",
-                        "API",
-                        "CONSUMER",
-                        "INFO",
-                        (foreign_source.name).as_ref(),
-                        "registered",
-                    ]),
-                )
-                .await?;
-                let foreign = restricted_materializer
-                    .get_stream_no_info(&foreign_source.name)
-                    .await?;
-                ensure!(
-                    foreign
-                        .get_consumer::<PullConfig>("registered")
-                        .await
-                        .is_err(),
-                    "materializer attached to a foreign consumer"
-                );
-                require_permission_denial(
-                    &mut materializer_errors,
                     &wamn_registry::name::nats_subject(&[
                         "$JS",
                         "API",
@@ -1354,7 +1321,7 @@ mod tests {
             );
             interrupted_delivery_redelivers(
                 server,
-                &broker.materializer,
+                &broker.runtime,
                 &publisher,
                 &source.name,
                 &consumers[1],
@@ -1376,13 +1343,12 @@ mod tests {
             let publisher = async_nats::jetstream::new(
                 wamn_test_infrastructure::event_broker::connect(&broker.publisher, server).await?,
             );
-            let materializer = async_nats::jetstream::new(
-                wamn_test_infrastructure::event_broker::connect(&broker.materializer, server)
-                    .await?,
+            let runtime = async_nats::jetstream::new(
+                wamn_test_infrastructure::event_broker::connect(&broker.runtime, server).await?,
             );
             large_messages_obey_pull_and_ack_limits(
                 &publisher,
-                &materializer,
+                &runtime,
                 &source.name,
                 &consumers[2],
             )
@@ -1403,9 +1369,8 @@ mod tests {
             let publisher = async_nats::jetstream::new(
                 wamn_test_infrastructure::event_broker::connect(&broker.publisher, server).await?,
             );
-            let materializer = async_nats::jetstream::new(
-                wamn_test_infrastructure::event_broker::connect(&broker.materializer, server)
-                    .await?,
+            let runtime = async_nats::jetstream::new(
+                wamn_test_infrastructure::event_broker::connect(&broker.runtime, server).await?,
             );
             let (observer_client, _) = monitored_broker_client(&broker.observer, server).await?;
             let mut observer = async_nats::jetstream::new(observer_client);
@@ -1414,7 +1379,7 @@ mod tests {
             source_time_expiry_preserves_advisory(
                 &managers[0],
                 &publisher,
-                &materializer,
+                &runtime,
                 &observer,
                 source,
                 advisory,

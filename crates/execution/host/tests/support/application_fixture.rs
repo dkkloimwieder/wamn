@@ -18,9 +18,7 @@ use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, work
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
-use wamn_runtime::plugins::route_authentication::{
-    PlatformRouteAuthenticator, RouteAuthentication, SessionRouteAuthentication,
-};
+use wamn_runtime::plugins::route_authentication::PlatformRouteAuthenticator;
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
@@ -333,18 +331,12 @@ pub(super) async fn application_host_with_release(
         Some(&login(admin_url, &guest)?),
     )?;
     let routing = FlowHttpRouting::new(Some(Arc::clone(&release))).with_authenticator(Arc::new(
-        PlatformRouteAuthenticator::default()
-            .with_authentication(Arc::new(RouteAuthentication::new(
-                reader().await?,
-                Arc::clone(&postgres_credentials),
-                PROJECT,
-            )))
-            .with_session_authentication(Arc::new(SessionRouteAuthentication::new(
-                verifier,
-                reader().await?,
-                Arc::clone(&postgres_credentials),
-                PROJECT,
-            ))),
+        PlatformRouteAuthenticator::for_test(
+            Arc::clone(&postgres_credentials),
+            PROJECT,
+            Some(reader().await?),
+            Some(verifier),
+        ),
     ));
     let delivery = HostRouteDelivery::new(
         Arc::clone(&release),

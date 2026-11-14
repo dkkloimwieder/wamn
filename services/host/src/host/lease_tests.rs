@@ -1,6 +1,7 @@
 //! Live lease handoff through the host's SIGTERM and queue drain owner.
 
 use super::*;
+use sqlx::Row as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wamn_runtime::auth_cache::test_util::{nats, until};
