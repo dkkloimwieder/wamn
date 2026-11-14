@@ -35,7 +35,7 @@ mod workflow_resolution;
 pub mod write_log;
 pub use file_collection::FileCollection;
 
-pub use wiring_resolution::{RELEASE_COMPONENTS_SQL, ResolvedActiveWiring};
+pub use wiring_resolution::{ResolvedActiveWiring, release_components};
 pub use workflow_resolution::{
     EnabledWorkflow, WorkflowResolutionError, WorkflowResolutionErrorType, WorkflowRunKey,
     resolve_workflow_in_release,

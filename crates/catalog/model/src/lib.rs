@@ -39,13 +39,15 @@ pub use component_facts::{
     ComponentEffectProvenance, ComponentFactError, ComponentFactErrorType,
     ComponentOperationDeclaration, ComponentPackageCoordinate, ComponentParameterDeclaration,
     ComponentPortDeclaration, ComponentSchema, ComponentSqlField, ComponentSqlStatement,
-    bind_component_statement_facts, normalize_component_fact, verify_stored_effect_projection,
+    ConnectionMode, bind_component_statement_facts, normalize_component_fact,
+    verify_stored_effect_projection,
 };
 pub use connection::{
-    CONNECTION_DESCRIPTOR_VERSION, ComponentConnectionRequirement, ConnectionAuthorityModel,
+    BlobstoreDefinition, BlobstoreProvider, CONNECTION_DESCRIPTOR_VERSION,
+    ComponentConnectionRequirement, ConnectionAuthorityModel, ConnectionDefinitionError,
     ConnectionField, ConnectionFieldOwner, ConnectionFieldOwnership, ConnectionTypeDescriptor,
-    CredentialInjection, RequirementType, RuntimeType, org_credential_handle,
-    parse_org_credential_handle,
+    CredentialInjection, HttpConnectionDefinition, HttpTlsVerification, RequirementType,
+    RuntimeType, org_credential_handle, parse_org_credential_handle,
 };
 pub use environment_application::{
     ApplicationDefinition, EnvironmentApplications, application_for_package,

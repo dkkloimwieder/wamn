@@ -58,7 +58,7 @@ pub const WIRING_ID: &str = "hot-route";
 pub const WIRING_VERSION: u32 = 1;
 pub const NODE_ID: &str = "call-upstream";
 /// The alias the guest names in `Request.requirement`, resolved at the
-/// component grain by `CONNECTION_EFFECT_SNAPSHOT_SQL`.
+/// component grain by the shared connection authority resolver.
 pub const STORE_ALIAS: &str = "upstream";
 pub const PROJECT: &str = "default";
 pub const COMPONENT: &str = "http-request";
@@ -448,6 +448,7 @@ fn release_manifest(
                 vec![ComponentConnection {
                     store_alias: STORE_ALIAS.to_owned().into(),
                     requirement_type: ComponentConnectionType::Http,
+            mode: wamn_catalog::ConnectionMode::Write,
                 }],
             ),
         }],

@@ -55,6 +55,6 @@
     }
   },
   "connections": [
-    { "store-alias": { "parameter": "requirement" }, "requirement-type": "http" }
+    { "store-alias": { "parameter": "requirement" }, "requirement-type": "http", "mode": "write" }
   ]
 }

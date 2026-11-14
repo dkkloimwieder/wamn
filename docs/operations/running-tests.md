@@ -532,7 +532,6 @@ Do not infer execution from the aggregate Cargo pass count.
 | Existing reference | Current owner and required setup |
 | --- | --- |
 | `[IDENTITY-LIVE]` | Runtime `plugins::wamn_postgres::session_identity::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
-| `[EFFECT-SNAPSHOT]` | `crates/platform/runtime/tests/effect_snapshot_live.rs`: ignored in live-nats, starts its own server with `pg_stat_statements`, and needs the NATS inputs below. It runs the production cluster snapshot as a provisioned HTTP admitter, holds the process lock, and makes sure that a repeated snapshot sends no statement. |
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::session_identity::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
 | `[CAPTURE-GAP]` | `crates/control/environment/tests/capture_gap_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs the platform NATS inputs below. It does not test the refusal of an active slot, because only a streaming reader holds a slot active |
@@ -542,7 +541,7 @@ The source owners declare additional credentials, artifact paths, and selected a
 Do not substitute shared services for missing test inputs.
 For deployed runs, use [cluster commands](cluster-tests.md).
 
-The broker cases in `auth_drops_live`, `connection_drops_live`, and `effect_snapshot_live` use the platform NATS client.
+The broker cases in `auth_drops_live` and `connection_drops_live` use the platform NATS client.
 Set `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT`, and `WAMN_NATS_TLS_KEY` for a private TLS broker.
 Each case creates its memory buckets through the production function and needs permission to create and delete keys.
 The [delivery fixture](#local-saved-edit-acceptance) supplies an owned broker and development certificates.
@@ -952,7 +951,7 @@ The native host tests start an owned MinIO container and disposable PostgreSQL s
 They require PostgreSQL 18 binaries at `/usr/lib/postgresql/18/bin` and a running Docker daemon.
 They also require the pinned MinIO and mc images in `support/files.rs`.
 The fixture removes its containers and servers after each test.
-The tests upload more than 64 MiB through a stream, compare hashes, and repair committed staging bytes.
+Native uploads accept at most 64 MiB. The tests stream uploads, compare hashes, and repair committed staging bytes.
 They enforce sessions, operation grants, file ownership, private exposure, and read binding refusals.
 Signed URL tests call `FileRoutes::signed_url`, then require 403 after expiry and a 900-second lifetime cap.
 The package fixture also declares a public projection with a three-second signed read result.

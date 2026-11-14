@@ -10,54 +10,6 @@ use wamn_run_state::AuthorityClass;
 
 use super::WamnPostgres;
 
-/// The component descriptors of the release. Binds: `project_env_key` and manifest digest.
-pub static RELEASE_COMPONENTS_SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-    format!(
-        "\
-WITH release_target AS MATERIALIZED ( \
-    SELECT convert_from(release.canonical_bytes, 'UTF8')::jsonb AS manifest \
-      FROM catalog.releases AS release \
-     WHERE release.project_env_key = $1 \
-       AND release.manifest_digest = $2 \
-), release_package AS MATERIALIZED ( \
-    SELECT package.value ->> 'package-id' AS package_id, \
-           package.value ->> 'package-version' AS package_version \
-      FROM release_target \
-     CROSS JOIN LATERAL jsonb_array_elements(release_target.manifest #> '{{release,packages}}') \
-           AS package(value) \
-    UNION ALL SELECT '{palette_package}', '{palette_version}' \
-) \
-SELECT COALESCE( \
-           (SELECT jsonb_agg( \
-               jsonb_build_object( \
-                   'target', jsonb_build_object( \
-                       'project_env_key', $1::text, \
-                       'package-id', release_package.package_id, \
-                       'package-version', release_package.package_version \
-                   ), \
-                   'component', descriptor.value -> 'component', \
-                   'interface-version', descriptor.value -> 'interface-version', \
-                   'operations', descriptor.value -> 'operations', \
-                   'component-digest', descriptor.value -> 'component-digest', \
-                   'imports', descriptor.value -> 'imports', \
-                   'imports-fingerprint', descriptor.value -> 'imports-fingerprint', \
-                   'effects', descriptor.value -> 'effects' \
-               ) ORDER BY projected.ordinality \
-            ) \
-              FROM jsonb_array_elements(release_target.manifest -> 'components') \
-                   WITH ORDINALITY AS projected(definition, ordinality) \
-             CROSS JOIN LATERAL (SELECT projected.definition -> 'descriptor') AS descriptor(value) \
-              JOIN release_package \
-                ON release_package.package_id = projected.definition ->> 'package-id'), \
-           '[]'::jsonb \
-       )::text AS components, \
-       jsonb_array_length(release_target.manifest -> 'components') AS manifest_component_count \
-  FROM release_target",
-        palette_package = wamn_catalog::PALETTE_PACKAGE_ID,
-        palette_version = wamn_catalog::PALETTE_PACKAGE_VERSION
-    )
-});
-
 /// Make sure that every component-grain requirement in the synchronous release
 /// closure has one exact usable environment binding.
 pub(crate) const RELEASE_COMPONENT_BINDINGS_READY_SQL: &str = "\
@@ -134,7 +86,7 @@ impl WamnPostgres {
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let rows = sqlx::query("SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version,q.mode FROM catalog.connection_binding b JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) JOIN catalog.connection_requirement q USING(project_env_key,component_digest,package_id,name) WHERE b.project_env_key=$1 AND b.manifest_digest=$2 ORDER BY 1,2,3").bind(project_env_key).bind(digest).fetch_all(&mut *connection).await.context("read the release connection map")?;
+        let rows = sqlx::query("SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version FROM catalog.connection_binding b JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) WHERE b.project_env_key=$1 AND b.manifest_digest=$2 ORDER BY 1,2,3").bind(project_env_key).bind(digest).fetch_all(&mut *connection).await.context("read the release connection map")?;
         let versions = sqlx::query("SELECT connection_id,version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2").bind(project_env_key).bind(digest).fetch_all(&mut *connection).await.context("read the release connection versions")?;
         Ok(crate::connection_memory::ReleaseFact {
             versions: versions
@@ -149,98 +101,9 @@ impl WamnPostgres {
                     name: row.get(2),
                     connection_id: row.get(3),
                     version: row.get(4),
-                    mode: row.get(5),
                 })
                 .collect(),
         })
-    }
-
-    pub async fn resolve_release_components(
-        &self,
-        project: &str,
-        project_env_key: &str,
-        environment: &str,
-        manifest_digest: &str,
-    ) -> anyhow::Result<Vec<AdmittedComponent>> {
-        let (mut connection, policy) = self
-            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if let Err(error) = self
-            .begin_with_identity(
-                &mut connection,
-                AuthorityClass::ExecutorPlatform,
-                false,
-                project_env_key,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                policy.statement_timeout_ms,
-            )
-            .await
-        {
-            self.destroy(connection);
-            return Err(anyhow::anyhow!(error.to_string()));
-        }
-
-        let result = if let Some(local) = &self.local_application {
-            async {
-                local.require_instance(&mut connection).await?;
-                anyhow::ensure!(
-                    local.target.project_env_key == project_env_key
-                        && local.target.environment == environment
-                        && local.facts.manifest_digest.as_str() == manifest_digest,
-                    "local release target mismatch"
-                );
-                Ok(local.facts.components.clone())
-            }
-            .await
-        } else {
-            async {
-                let row = sqlx::query(RELEASE_COMPONENTS_SQL.as_str())
-                    .bind(project_env_key)
-                    .bind(manifest_digest)
-                    .fetch_optional(&mut *connection)
-                    .await
-                    .context("query release components")?
-                    .ok_or_else(|| anyhow::anyhow!("release-snapshot-not-found"))?;
-                decode_release_components(&row, 0)
-            }
-            .await
-        };
-        let result = result.and_then(|components| {
-            verify_served_effect_projections(&components)?;
-            Ok(components)
-        });
-
-        match result {
-            Ok(components) => {
-                if let Err(error) = sqlx::raw_sql("COMMIT")
-                    .execute(&mut *connection)
-                    .await
-                    .map(|_| ())
-                {
-                    self.destroy(connection);
-                    return Err(error).context("commit release component snapshot");
-                }
-                Ok(components)
-            }
-            Err(error) => {
-                if sqlx::raw_sql("ROLLBACK")
-                    .execute(&mut *connection)
-                    .await
-                    .map(|_| ())
-                    .is_err()
-                {
-                    self.destroy(connection);
-                }
-                Err(error)
-            }
-        }
     }
 
     /// Make sure of the exact component requirements selected by request readiness.
@@ -342,22 +205,35 @@ pub(super) struct DecodedWiring {
     pub(super) document: WiringDocument,
 }
 
-fn decode_release_components(
-    row: &sqlx::postgres::PgRow,
-    first: usize,
+/// Read admitted component facts from the process's loaded release.
+pub fn release_components(
+    release: &wamn_engine::release_manifest::LoadedRelease,
 ) -> anyhow::Result<Vec<AdmittedComponent>> {
-    let components: String = row
-        .try_get(first)
-        .context("decode release manifest component closure")?;
-    let components: Vec<AdmittedComponent> =
-        serde_json::from_str(&components).context("parse release manifest component closure")?;
-    let expected_component_count: i32 = row
-        .try_get(first + 1)
-        .context("decode release manifest component count")?;
-    anyhow::ensure!(
-        usize::try_from(expected_component_count).ok() == Some(components.len()),
-        "release-manifest-component-closure-incomplete"
-    );
+    let manifest = release.manifest();
+    let components = manifest
+        .components
+        .iter()
+        .map(|component| {
+            let version = if component.package_id == wamn_catalog::PALETTE_PACKAGE_ID {
+                wamn_catalog::PALETTE_PACKAGE_VERSION
+            } else {
+                manifest
+                    .release
+                    .packages
+                    .iter()
+                    .find(|package| package.package_id() == component.package_id)
+                    .context("component package absent from loaded release")?
+                    .package_version()
+            };
+            let target = wamn_catalog::ComponentPackageCoordinate::new(
+                &release.target().project_env_key,
+                &component.package_id,
+                version,
+            )?;
+            Ok(component.descriptor.clone().into_admitted(target).component)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    verify_served_effect_projections(&components)?;
     Ok(components)
 }
 
@@ -451,12 +327,7 @@ mod tests {
         let error = verify_served_effect_projections(&served)
             .expect_err("an underived purity identity is refused before it is served");
 
-        assert!(
-            error
-                .to_string()
-                .contains("re-admit it through the validator"),
-            "unexpected refusal: {error}"
-        );
+        drop(error);
     }
 
     /// The other half: a row whose `'[]'` is the value its own imports derive

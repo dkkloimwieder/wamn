@@ -67,12 +67,6 @@ pub fn ensure_app_acl_role_sql() -> String {
 
 /// Catalog relations read by callable-HTTP connection authorization.
 ///
-/// `CONNECTION_EFFECT_SNAPSHOT_SQL` resolves one exact package membership and
-/// joins the requirement, binding, instance, and generation facts, and the
-/// components that the release manifest carries. It reads the workflow graph
-/// through [`HTTP_ADMITTER_WORKFLOW_COLUMNS`], not through this list. Unlike
-/// management admission, it never consults the environment's mutable
-/// effective-release head.
 pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 4] = [
     "releases",
     "connection_requirement",

@@ -1,375 +1,109 @@
-//! Turning an authorized connection snapshot into a confined binding.
-//!
-//! This is the decision half of binding resolution, kept apart from the
-//! database call so it can be tested against fabricated snapshots the way
-//! `connection_http`'s authorization tests are.
-//!
-//! Two properties matter more than the parsing:
-//!
-//! **The credential is never here.** The snapshot carries a
-//! `credential_handle`, not a secret. This module resolves coordinates —
-//! endpoint, container, prefix — and hands the handle onward; no
-//! credential-shaped value passes through it, which is what makes the
-//! descriptor's `HostSignedRequest` injection true rather than aspirational.
-//!
-//! **A missing wall is a refusal, never a default.** An absent prefix does not
-//! mean "the whole container". Defaulting an unspecified confinement to the
-//! widest possible scope is how a configuration gap becomes an authority grant,
-//! so every coordinate must be present and non-empty or the binding refuses.
-
-use wamn_catalog::ConnectionTypeDescriptor;
+//! Validate a storage binding before building a client.
 
 use crate::plugins::wamn_postgres::ConnectionEffectSnapshot;
+use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider, ConnectionTypeDescriptor};
 
-/// Why a snapshot did not yield a usable binding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BindingError {
-    /// The authority chain did not authorize this component for this
-    /// capability — unbound, inactive, stale generation, or the wrong
-    /// connection type.
-    Unauthorized,
-    /// The generation carried no definition object.
-    NoDefinition,
-    /// A required coordinate was absent or empty. Named, because "the binding
-    /// is malformed" is not actionable by whoever configured it.
-    MissingCoordinate {
-        /// The coordinate that was absent or empty.
-        field: &'static str,
-    },
-    /// The generation named no host-held credential.
-    NoCredential,
-    /// A `gcs` generation named a credential handle. Its token comes from the
-    /// pod's Google service account, so a handle has nothing to name.
-    UnexpectedCredential,
-    /// The generation named a provider that the plugin does not build.
-    UnknownProvider,
+/// A storage refusal before a client or container is exposed.
+#[derive(Debug)]
+pub struct BindingError {
+    type_: BindingErrorType,
+    detail: &'static str,
+    source: Option<wamn_catalog::ConnectionDefinitionError>,
 }
-
+#[derive(Debug)]
+enum BindingErrorType {
+    Authority,
+    Definition,
+    Credential,
+}
 impl BindingError {
-    /// Stable wire code.
-    #[must_use]
-    pub const fn code(&self) -> &'static str {
-        match self {
-            Self::Unauthorized => "binding_unauthorized",
-            Self::NoDefinition => "binding_no_definition",
-            Self::MissingCoordinate { .. } => "binding_missing_coordinate",
-            Self::NoCredential => "binding_no_credential",
-            Self::UnexpectedCredential => "binding_unexpected_credential",
-            Self::UnknownProvider => "binding_unknown_provider",
+    pub(super) fn unauthorized() -> Self {
+        Self {
+            type_: BindingErrorType::Authority,
+            detail: "connection is not authorized for this component",
+            source: None,
+        }
+    }
+    fn definition(source: wamn_catalog::ConnectionDefinitionError) -> Self {
+        Self {
+            type_: BindingErrorType::Definition,
+            detail: "storage definition is invalid",
+            source: Some(source),
+        }
+    }
+    fn refused(type_: BindingErrorType, detail: &'static str) -> Self {
+        Self {
+            type_,
+            detail,
+            source: None,
         }
     }
 }
-
 impl core::fmt::Display for BindingError {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Unauthorized => {
-                formatter.write_str("connection is not authorized for this component")
-            }
-            Self::NoDefinition => {
-                formatter.write_str("connection generation carries no definition")
-            }
-            Self::MissingCoordinate { field } => write!(
-                formatter,
-                "connection generation is missing the required {field}; an absent confinement \
-                 coordinate is refused rather than widened to a default"
-            ),
-            Self::NoCredential => {
-                formatter.write_str("connection generation names no host-held credential")
-            }
-            Self::UnexpectedCredential => formatter.write_str(
-                "a gcs connection generation names a credential handle; its token comes from \
-                 the pod's service account",
-            ),
-            Self::UnknownProvider => {
-                formatter.write_str("connection generation names an unknown provider")
-            }
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let category = match self.type_ {
+            BindingErrorType::Authority => "authority",
+            BindingErrorType::Definition => "definition",
+            BindingErrorType::Credential => "credential",
+        };
+        write!(f, "storage {category}: {}", self.detail)?;
+        if let Some(source) = &self.source {
+            write!(f, ": {source}")?;
         }
+        Ok(())
+    }
+}
+impl std::error::Error for BindingError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source
+            .as_ref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
     }
 }
 
-impl std::error::Error for BindingError {}
-
-/// The object store behind one binding, chosen by the definition's
-/// `provider`. A definition with no `provider` is `s3`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlobstoreProvider {
-    /// An S3 endpoint, signed with the host-held credential of the handle.
-    S3 {
-        /// Object-store endpoint.
-        endpoint: String,
-        /// Host-held credential reference. Resolved by the vault, not here.
-        credential_handle: String,
-    },
-    /// Google Cloud Storage. The token comes from the instance metadata
-    /// server, which under Workload Identity is the pod's service account.
-    Gcs,
-}
-
-/// The coordinates of one bound object-store connection.
-///
-/// Carries a credential HANDLE, never a credential.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlobstoreBinding {
-    /// Which store, and how it signs.
-    pub provider: BlobstoreProvider,
-    /// The one container this component may reach.
-    pub container: String,
-    /// The key prefix confining it within that container.
-    pub prefix: String,
-    /// Optional public origin. It belongs to this generation.
-    pub cdn_host: Option<String>,
-}
-
-/// Resolve an authorized snapshot into binding coordinates.
-///
-/// Authorization goes through the same `authorize_snapshot` the HTTP
-/// connection uses — one copy, one reader — parameterized with the blobstore
-/// descriptor.
-///
-/// # Errors
-///
-/// [`BindingError`] naming which layer refused.
-pub fn resolve(snapshot: &ConnectionEffectSnapshot) -> Result<BlobstoreBinding, BindingError> {
+pub fn resolve(
+    snapshot: &ConnectionEffectSnapshot,
+    provider: BlobstoreProvider,
+) -> Result<BlobstoreDefinition, BindingError> {
     crate::plugins::connection_http::authorize_snapshot(
         snapshot,
         &ConnectionTypeDescriptor::blobstore_v1(),
     )
-    .map_err(|_| BindingError::Unauthorized)?;
-
-    let definition = snapshot
-        .definition
-        .as_ref()
-        .ok_or(BindingError::NoDefinition)?;
-    resolve_coordinates(definition, snapshot.credential_handle.as_deref())
+    .map_err(|_| BindingError::unauthorized())?;
+    resolve_coordinates(
+        snapshot.definition.as_ref().ok_or(BindingError::refused(
+            BindingErrorType::Definition,
+            "connection generation carries no definition",
+        ))?,
+        snapshot.credential_handle.as_deref(),
+        provider,
+    )
 }
 
-/// Parse coordinates after the native caller authorizes a package binding.
-/// The definition must come from the selected connection generation.
 pub fn resolve_coordinates(
     definition: &serde_json::Value,
     credential_handle: Option<&str>,
-) -> Result<BlobstoreBinding, BindingError> {
-    let handle = credential_handle
-        .filter(|handle| !handle.is_empty())
-        .map(str::to_owned);
-    let provider = match definition.get("provider").map(serde_json::Value::as_str) {
-        None | Some(Some("s3")) => BlobstoreProvider::S3 {
-            endpoint: coordinate(definition, "endpoint")?,
-            credential_handle: handle.ok_or(BindingError::NoCredential)?,
-        },
-        Some(Some("gcs")) => {
-            if handle.is_some() {
-                return Err(BindingError::UnexpectedCredential);
-            }
-            BlobstoreProvider::Gcs
+    provider: BlobstoreProvider,
+) -> Result<BlobstoreDefinition, BindingError> {
+    let bound =
+        BlobstoreDefinition::parse_for(definition, provider).map_err(BindingError::definition)?;
+    match (
+        bound.provider,
+        credential_handle.filter(|handle| !handle.is_empty()),
+    ) {
+        (BlobstoreProvider::S3, None) => {
+            return Err(BindingError::refused(
+                BindingErrorType::Credential,
+                "connection names no credential",
+            ));
         }
-        Some(_) => return Err(BindingError::UnknownProvider),
-    };
-    Ok(BlobstoreBinding {
-        provider,
-        container: coordinate(definition, "container")?,
-        prefix: coordinate(definition, "prefix")?,
-        cdn_host: if definition.get("cdn_host").is_some() {
-            // Use the catalog validator so binding and declaration accept the same origins.
-            wamn_catalog::RequirementType::Blobstore
-                .require_definition(definition)
-                .map_err(|_| BindingError::MissingCoordinate { field: "cdn_host" })?;
-            Some(coordinate(definition, "cdn_host")?)
-        } else {
-            None
-        },
-    })
-}
-
-/// One required, non-empty coordinate from the generation definition.
-fn coordinate(definition: &serde_json::Value, field: &'static str) -> Result<String, BindingError> {
-    definition
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .ok_or(BindingError::MissingCoordinate { field })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn authorized_snapshot() -> ConnectionEffectSnapshot {
-        let descriptor = ConnectionTypeDescriptor::blobstore_v1();
-        ConnectionEffectSnapshot {
-            connection_name: None,
-            read_only: false,
-            wiring_hash: Some("hash".to_owned()),
-            component: Some("label-writer".to_owned()),
-            interface_version: Some("0.1.0".to_owned()),
-            operation: Some("wamn:node/handler@0.1.0".to_owned()),
-            registered_operation: None,
-            requirement_json: Some(serde_json::json!({
-                "requirement": {
-                    "requirement-type": descriptor.requirement_type,
-                    "contract": descriptor.contract,
-                }
-            })),
-            requirement_hash: Some("rh".to_owned()),
-            node_permitted: true,
-            binding_active: true,
-            binding_valid: true,
-            instance_id: Some("instance".to_owned()),
-            validation_hash: None,
-            requirement_type: Some(descriptor.requirement_type.clone()),
-            contract: Some(descriptor.contract),
-            instance_enabled: true,
-            active_generation: Some(7),
-            pinned_generation: None,
-            instance_revision: Some(1),
-            generation: Some(7),
-            definition: Some(serde_json::json!({
-                "endpoint": "http://minio.wamn-system.svc:9000",
-                "container": "wamn-labels",
-                "prefix": "acme/labels",
-            })),
-            definition_hash: Some("dh".to_owned()),
-            credential_handle: Some("vault://wamn-object-store".to_owned()),
+        (BlobstoreProvider::Gcs, Some(_)) => {
+            return Err(BindingError::refused(
+                BindingErrorType::Credential,
+                "gcs uses the pod identity and takes no credential handle",
+            ));
         }
+        _ => {}
     }
-
-    #[test]
-    fn an_authorized_snapshot_yields_its_coordinates() {
-        let binding = resolve(&authorized_snapshot()).expect("authorized snapshot binds");
-        assert_eq!(binding.container, "wamn-labels");
-        assert_eq!(binding.prefix, "acme/labels");
-        assert_eq!(
-            binding.provider,
-            BlobstoreProvider::S3 {
-                endpoint: "http://minio.wamn-system.svc:9000".to_owned(),
-                credential_handle: "vault://wamn-object-store".to_owned(),
-            }
-        );
-    }
-
-    /// A `gcs` generation needs no endpoint and takes its token from the pod,
-    /// so it binds without a handle and refuses one.
-    #[test]
-    fn a_gcs_binding_parses_and_refuses_a_credential_handle() {
-        let mut snapshot = authorized_snapshot();
-        snapshot.definition = Some(serde_json::json!({
-            "provider": "gcs",
-            "container": "wamn-dev-labels",
-            "prefix": "wms/",
-        }));
-        assert_eq!(resolve(&snapshot), Err(BindingError::UnexpectedCredential));
-        snapshot.credential_handle = None;
-        let binding = resolve(&snapshot).expect("a gcs snapshot binds");
-        assert_eq!(binding.provider, BlobstoreProvider::Gcs);
-        assert_eq!(binding.container, "wamn-dev-labels");
-        assert_eq!(binding.prefix, "wms/");
-    }
-
-    /// The whole point of the walls: an absent prefix must NOT mean the whole
-    /// container. A configuration gap widening into an authority grant is the
-    /// failure this refuses.
-    #[test]
-    fn an_absent_coordinate_refuses_rather_than_widening() {
-        for field in ["endpoint", "container", "prefix"] {
-            let mut snapshot = authorized_snapshot();
-            let definition = snapshot.definition.as_mut().expect("definition");
-            definition.as_object_mut().expect("object").remove(field);
-            assert_eq!(
-                resolve(&snapshot),
-                Err(BindingError::MissingCoordinate { field }),
-                "{field} must refuse when absent"
-            );
-        }
-    }
-
-    /// An empty string is an absent coordinate wearing a value. An empty
-    /// prefix would grant the entire container.
-    #[test]
-    fn an_empty_coordinate_is_treated_as_absent() {
-        let mut snapshot = authorized_snapshot();
-        snapshot.definition.as_mut().expect("definition")["prefix"] =
-            serde_json::Value::String(String::new());
-        assert_eq!(
-            resolve(&snapshot),
-            Err(BindingError::MissingCoordinate { field: "prefix" })
-        );
-    }
-
-    /// Every authority layer refuses on its own, through the shared reader.
-    #[test]
-    fn each_missing_authority_layer_refuses() {
-        for break_it in [
-            (|s: &mut ConnectionEffectSnapshot| s.node_permitted = false)
-                as fn(&mut ConnectionEffectSnapshot),
-            |s| s.binding_active = false,
-            |s| s.binding_valid = false,
-            |s| s.instance_enabled = false,
-            |s| s.instance_id = None,
-            |s| s.generation = Some(1),
-        ] {
-            let mut snapshot = authorized_snapshot();
-            break_it(&mut snapshot);
-            assert_eq!(resolve(&snapshot), Err(BindingError::Unauthorized));
-        }
-    }
-
-    /// The snapshot's type and contract must be blobstore's. An HTTP binding
-    /// must not resolve as a blobstore one — this is the same discrimination
-    /// the parameterized authorizer tests, exercised from the other side.
-    #[test]
-    fn an_http_binding_does_not_resolve_as_blobstore() {
-        let http = ConnectionTypeDescriptor::http_v1();
-        let mut snapshot = authorized_snapshot();
-        snapshot.requirement_type = Some(http.requirement_type.clone());
-        snapshot.contract = Some(http.contract.clone());
-        snapshot.requirement_json = Some(serde_json::json!({
-            "requirement": {
-                "requirement-type": http.requirement_type,
-                "contract": http.contract,
-            }
-        }));
-        assert_eq!(resolve(&snapshot), Err(BindingError::Unauthorized));
-    }
-
-    /// No credential-shaped value passes through this module — only a handle.
-    #[test]
-    fn a_binding_carries_a_handle_and_never_a_secret() {
-        let binding = resolve(&authorized_snapshot()).expect("binds");
-        let rendered = format!("{binding:?}");
-        assert!(
-            rendered.contains("vault://"),
-            "the handle is carried: {rendered}"
-        );
-        assert!(
-            !rendered.contains("ACCESS_KEY") && !rendered.contains("secret-value"),
-            "no credential material may appear: {rendered}"
-        );
-    }
-
-    #[test]
-    fn a_snapshot_without_a_credential_handle_refuses() {
-        let mut snapshot = authorized_snapshot();
-        snapshot.credential_handle = None;
-        assert_eq!(resolve(&snapshot), Err(BindingError::NoCredential));
-    }
-    #[test]
-    fn cdn_host_is_optional_and_malformed_values_refuse() {
-        let mut snapshot = authorized_snapshot();
-        assert_eq!(resolve(&snapshot).unwrap().cdn_host, None);
-        snapshot.definition.as_mut().unwrap()["cdn_host"] = "cdn.example.com".into();
-        assert_eq!(
-            resolve(&snapshot).unwrap().cdn_host.as_deref(),
-            Some("cdn.example.com")
-        );
-        for value in [
-            serde_json::json!(null),
-            serde_json::json!(42),
-            serde_json::json!("https://cdn.example.com/path"),
-        ] {
-            snapshot.definition.as_mut().unwrap()["cdn_host"] = value;
-            assert!(resolve(&snapshot).is_err());
-        }
-    }
+    Ok(bound)
 }

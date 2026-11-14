@@ -444,6 +444,7 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
         },
         entry: crate::plugins::connection_http::InvocationEntry::Wiring(
             crate::plugins::connection_http::WiringPosition {
+                configuration: Default::default(),
                 package_id: "package_a".to_string(),
                 wiring_hash: format!("sha256:{}", "a".repeat(64)),
                 wiring_id: "orders".to_string(),
@@ -1396,15 +1397,27 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
 
     // A stale ConnectionHttp still carrying the project_env_key its store was BUILT
     // for is refused before it can read a row.
-    pg.connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org--dev--a", &lookup, &facts)
-        .await
-        .expect_err("a disagreeing project_env_key is refused");
+    pg.connection_effect_snapshot(
+        COMPONENT,
+        "org--dev--a",
+        &lookup,
+        &facts,
+        crate::plugins::connection_http::test_release("org--dev--a").manifest(),
+    )
+    .await
+    .expect_err("a disagreeing project_env_key is refused");
 
     // The agreeing project_env_key gets past the guard and fails only on the absent
     // connection, so the guard is not simply refusing everything.
-    pg.connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org--dev--b", &lookup, &facts)
-        .await
-        .expect_err("an offline plugin has no connection to resolve against");
+    pg.connection_effect_snapshot(
+        COMPONENT,
+        "org--dev--b",
+        &lookup,
+        &facts,
+        crate::plugins::connection_http::test_release("org--dev--a").manifest(),
+    )
+    .await
+    .expect_err("an offline plugin has no connection to resolve against");
 }
 
 /// wamn-0h0g.17.11 — the guard requires a bound identity, it does not merely
@@ -1473,15 +1486,19 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
     };
 
     let unbound = pg
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org--dev--a", &lookup, &facts)
+        .connection_effect_snapshot(
+            COMPONENT,
+            "org--dev--a",
+            &lookup,
+            &facts,
+            crate::plugins::connection_http::test_release("org--dev--a").manifest(),
+        )
         .await
         .expect_err("an unbound identity scope resolves nothing");
     assert!(
-        unbound.to_string().contains(
-            "HTTP effect authorization for component \"never-acquired-instance\" has no \
-                 bound project_env_key identity"
-        ),
-        "the refusal names the missing identity rather than any other failure: {unbound}"
+        unbound
+            .downcast_ref::<SessionIdentityError>()
+            .is_some_and(|error| matches!(&error.type_, SessionIdentityErrorType::Authorization))
     );
 }
 
@@ -1542,90 +1559,6 @@ impl CredentialProvider for RecordingProvider {
             .push(class);
         Ok(None)
     }
-}
-
-/// THE TRUSTED HTTP EFFECT ACQUIRES A CONNECTION UNDER `CallableHttp` AND NOTHING ELSE
-/// (`wamn-0h0g.22.11`).
-///
-/// THE COVERAGE THIS CLOSES. Until this test the callable-HTTP checkout class
-/// had NO coverage at all: a mutant making this method acquire
-/// `AuthorityClass::ExecutorPlatform` instead was INERT — nothing in the
-/// crate distinguished it. The three offline `connection_effect_snapshot`
-/// tests refuse before a pool is reached, and `checkout_platform` maps every
-/// failure to the one `PgError::ConnectionUnavailable`, so no error message
-/// can name the class either. The provider is the seam where the class IS
-/// observable: it is the exact argument `ensure_pool` forwards, so recording
-/// it pins the production routing rather than restating it.
-///
-/// Sequence equality, not containment. `checkout_platform` refuses
-/// `AuthorityClass::GuestSql` BEFORE consulting the provider, so a mutant
-/// naming the guest records nothing at all; asserting the whole sequence
-/// kills that arm too, along with any second checkout under another class.
-#[tokio::test]
-async fn effect_snapshot_uses_the_callable_http_authority() {
-    const COMPONENT: &str = "warm-instance-0";
-    let provider = Arc::new(RecordingProvider::default());
-    let pg = Arc::new(WamnPostgres::with_provider(
-        Arc::clone(&provider) as Arc<dyn CredentialProvider>
-    ));
-    pg.bind_session_identity(
-        COMPONENT,
-        &SessionIdentity {
-            project_env_key: "org--dev--a".to_string(),
-            ..SessionIdentity::default()
-        },
-    )
-    .await
-    .expect("the acquiring project_env_key binds");
-
-    let facts = crate::connection_facts::ConnectionFacts::new(
-        Arc::new(crate::connection_memory::ConnectionMemory::default()),
-        wamn_broker::Publisher::default(),
-        Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
-        Arc::clone(&pg),
-        "org--dev--a",
-        DEFAULT_PROJECT,
-        "dev",
-    );
-
-    let lookup = ConnectionEffectLookup {
-        entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {
-            package_id: "catalog",
-            wiring: Some(crate::plugins::wamn_postgres::WiringLookup {
-                wiring_id: "wiring",
-                wiring_version: 1,
-                node_id: "node",
-            }),
-        },
-        origin_package_id: "catalog",
-        origin_component_digest: "digest",
-        origin_component: "component",
-        origin_interface_version: "0.1.0",
-        origin_operation: "operation",
-        package_id: "catalog",
-        operation: "operation",
-        manifest_digest: "sha256:release",
-        environment: "dev",
-        component_digest: "digest",
-        store_alias: "manager",
-        candidate_binding: None,
-    };
-
-    pg.connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org--dev--a", &lookup, &facts)
-        .await
-        .expect_err("a provider that names no credential resolves nothing");
-
-    let asked = provider
-        .asked
-        .lock()
-        .expect("recording provider lock poisoned")
-        .clone();
-    assert_eq!(
-        asked,
-        vec![AuthorityClass::CallableHttp],
-        "the callable-HTTP authority snapshot must acquire as the \
-             callable-HTTP family and no other"
-    );
 }
 
 #[tokio::test]

@@ -246,3 +246,41 @@ fn refuse_anonymous_reach(
     }
     Ok(())
 }
+
+/// Seal each palette alias mode while preserving its configuration declaration.
+pub(super) fn palette_connections(
+    connections: &[wamn_catalog::ComponentConnection],
+    manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
+) -> Vec<wamn_catalog::ComponentConnection> {
+    connections
+        .iter()
+        .map(|connection| {
+            let mut modes: BTreeMap<String, BTreeMap<String, wamn_catalog::ConnectionMode>> =
+                BTreeMap::new();
+            for ((package, alias), declaration) in
+                wamn_package_control::connection_requirement::palette_connections(
+                    connection,
+                    manifests.values(),
+                )
+            {
+                let mode = match declaration.mode {
+                    wamn_compiler::manifest::ConnectionMode::Read => {
+                        wamn_catalog::ConnectionMode::Read
+                    }
+                    wamn_compiler::manifest::ConnectionMode::Write => {
+                        wamn_catalog::ConnectionMode::Write
+                    }
+                };
+                modes
+                    .entry(package.into())
+                    .or_default()
+                    .insert(alias.into(), mode);
+            }
+            wamn_catalog::ComponentConnection {
+                mode: wamn_catalog::ConnectionMode::ByBinding(modes),
+                store_alias: connection.store_alias.clone(),
+                requirement_type: connection.requirement_type,
+            }
+        })
+        .collect()
+}

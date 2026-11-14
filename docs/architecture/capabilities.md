@@ -97,7 +97,14 @@ Each authority class uses one login and one basic-auth Secret. CloudNativePG man
 The public contract is [`wamn:connection/http@0.1.0`](../../wit/wamn-connection/package.wit).
 A request names a requirement, method, relative path and query, headers, optional body, and optional idempotency key.
 The guest does not supply an endpoint or credential.
-The host resolves the admitted requirement and confines the request to that connection.
+HTTP and object storage use one authority resolver.
+It reads component declarations and connection modes from the loaded release.
+A configured palette declaration keeps its parameter reference.
+Publication seals its modes by package and alias beside that declaration.
+It reads the workflow position and node configuration from the admitted invocation.
+Connection memory supplies the binding, status and current generation.
+A configured alias must match the node configuration.
+The host confines the request to that connection.
 
 The `http-request` palette node sends one request through this contract.
 Its `method` stays a fixed parameter.
@@ -205,7 +212,8 @@ A call makes at most one extra send, so an OAuth2 retry after a changed fact is 
 A token failure before any API request returns `credential-unavailable` without the token endpoint's response body.
 The guest receives no credential. The workflow queue owns other retries.
 
-The transport pins the approved peer and compares the connected peer.
+The transport refuses loopback and link-local addresses, including mapped IPv4 addresses.
+It pins the approved peer and compares the connected peer.
 Its client identity includes the connection target and credential generation.
 It does not follow redirects or retry a request automatically.
 Requests share bounded client, socket, and concurrent-request capacity.
@@ -240,6 +248,12 @@ Path confinement refuses a `..` segment without refusing a harmless substring.
 Key construction does not double a separator.
 
 A write commits only after bounded intake establishes a complete body.
+Guest writes and native file uploads accept at most 64 MiB.
+Native uploads stream through multipart storage and abort unfinished uploads on cancellation.
+A storage handle retains its connection generation.
+Each operation refuses a disabled connection or a changed generation before calling storage.
+The host shares storage clients by connection and generation in a bounded cache.
+Range reads fetch only the requested bytes.
 A partial stream, over-limit body, or cancellation cannot publish a partial object.
 The contract's own error variants carry backend failures.
 

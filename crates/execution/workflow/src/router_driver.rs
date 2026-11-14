@@ -131,6 +131,7 @@ impl RouterDriver {
                                 let entry = InvocationEntry::Wiring(WiringPosition {
                                     package_id: request.package_id.clone(), wiring_hash: graph_hash.to_string(),
                                     wiring_id: request.wiring_id.clone(), wiring_version: version, node_id: call.node.clone(), occurrence: call.occurrence,
+                                    configuration: Arc::new(call.definition.params.clone()),
                                 });
                                 let operation_call = OperationCall {
                                     closure: OperationClosure::Released(&components), component, operation: operation_name,

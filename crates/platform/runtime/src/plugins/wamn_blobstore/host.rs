@@ -129,20 +129,18 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         Result<wash_runtime::wasmtime::component::StreamReader<u8>, WitError>,
     > {
         let container = container_of(accessor, &handle)?;
-        let body = match Box::pin(instrumented(accessor, "get-data", container.get(&name))).await? {
+        let body = match Box::pin(instrumented(
+            accessor,
+            "get-data",
+            container.get_range(&name, start, end),
+        ))
+        .await?
+        {
             Ok(body) => body,
             Err(error) => return Ok(Err(to_wit(&error))),
         };
-        // Offsets are inclusive per the contract. A range outside the object is
-        // an empty read rather than an error, matching a byte-range read.
-        let from = usize::try_from(start).unwrap_or(usize::MAX).min(body.len());
-        let to = usize::try_from(end)
-            .unwrap_or(usize::MAX)
-            .saturating_add(1)
-            .min(body.len());
-        let slice = body.get(from..to).unwrap_or_default().to_vec();
         let reader = accessor.with(|mut access| {
-            wash_runtime::wasmtime::component::StreamReader::new(&mut access, slice)
+            wash_runtime::wasmtime::component::StreamReader::new(&mut access, body)
         })?;
         Ok(Ok(reader))
     }
@@ -471,7 +469,7 @@ where
         Ok(resolved) => resolved,
         Err(error) => {
             tracing::warn!(error = %error, "blobstore plugin is not registered on this host");
-            return Err(super::binding::BindingError::Unauthorized);
+            return Err(super::binding::BindingError::unauthorized());
         }
     };
     plugin.container_for(&component_id, store_alias).await

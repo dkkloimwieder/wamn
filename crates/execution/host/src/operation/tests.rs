@@ -53,6 +53,7 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
                 operation: "platform-fixture-overlay:widget/record-batch@2.1.0".to_owned(),
             },
             entry: InvocationEntry::Wiring(WiringPosition {
+                configuration: Default::default(),
                 package_id: "org_workflow".to_owned(),
                 wiring_hash: format!("sha256:{}", "a".repeat(64)),
                 wiring_id: "record-batch".to_owned(),

@@ -656,6 +656,7 @@ pub async fn invoke(
                         component,
                         operation,
                         InvocationEntry::Wiring(WiringPosition {
+                            configuration: Default::default(),
                             package_id: "rest_connector".into(),
                             wiring_hash: format!("sha256:{}", "a".repeat(64)),
                             wiring_id: "rest_item".into(),

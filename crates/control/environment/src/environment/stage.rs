@@ -579,6 +579,7 @@ mod tests {
             .map(|alias| ComponentConnection {
                 store_alias: (*alias).to_owned().into(),
                 requirement_type: ComponentConnectionType::Blobstore,
+                mode: wamn_catalog::ConnectionMode::Write,
             })
             .collect();
         ServingComponent {

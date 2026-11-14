@@ -28,7 +28,6 @@ struct LinkedRead {
 #[derive(Debug)]
 struct ReadState {
     linked: Cache<InstanceKey, LinkedRead>,
-    seen: HashMap<uuid::Uuid, ConnectionFact>,
     bytes: HashMap<String, Arc<Vec<u8>>>,
 }
 
@@ -192,9 +191,6 @@ impl ConnectionDispatch for ComponentReads {
 
 impl ReadState {
     fn observe(&mut self, id: uuid::Uuid, fact: Option<&ConnectionFact>) {
-        if self.seen.get(&id) == fact {
-            return;
-        }
         for (key, _) in &self.linked {
             if key.0 == id
                 && fact.is_none_or(|fact| {
@@ -203,14 +199,6 @@ impl ReadState {
                 })
             {
                 self.linked.invalidate(key.as_ref());
-            }
-        }
-        match fact {
-            Some(fact) => {
-                self.seen.insert(id, fact.clone());
-            }
-            None => {
-                self.seen.remove(&id);
             }
         }
     }
@@ -240,7 +228,6 @@ impl Integrations {
             registry_credentials,
             state: Mutex::new(ReadState {
                 linked: bounded(),
-                seen: HashMap::new(),
                 bytes: HashMap::new(),
             }),
         });

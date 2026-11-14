@@ -361,8 +361,8 @@ One absolute deadline covers initialization and execution.
 A guest cannot extend that deadline.
 
 Connection activation changes the generation selected for new work.
-Admitted runs that carry a generation pin continue to use that exact immutable generation.
-A disabled instance or an unavailable pinned credential refuses execution without selecting a newer generation.
+Admitted runs never substitute a newer connection generation for their pin.
+Connection effects refuse a changed generation, a disabled connection, or an unavailable pinned credential.
 Superseded generation records remain immutable. Retaining a record does not extend the lifetime of its credential.
 
 
@@ -808,7 +808,11 @@ The [engine](../../crates/platform/engine/src/integration.rs) compiles the compo
 The [dispatch](../../crates/platform/runtime/src/integrations.rs) links an instance per (connection id, generation, credential id) from that compiled component.
 Typed integration imports use labels, the connection names that code declares.
 The host resolves each label by its component digest, package, and name.
-HTTP and blobstore select a declared connection name at run time.
+HTTP and blobstore share one authority resolver.
+Their immutable component declarations, including connection modes, come from the loaded release.
+The admitted invocation supplies the workflow position and node configuration.
+Connection memory supplies current binding and credential state.
+The host does not rebuild release or workflow authority from SQL on an effect call.
 
 An exclusive connection acquires a resource lease, a lock held by its host, before its first call.
 The host shares one dedicated system database session across its cloud leases.

@@ -401,15 +401,8 @@ impl OperationHost {
         let loaded = self
             .native
             .get_or_try_init(|| async {
-                let components = self
-                    .postgres
-                    .resolve_release_components(
-                        &self.project,
-                        &self.release.target().project_env_key,
-                        &self.release.target().environment,
-                        self.release.release().manifest_digest.as_str(),
-                    )
-                    .await?;
+                let components =
+                    wamn_runtime::plugins::wamn_postgres::release_components(&self.release)?;
                 self.load_released_application(Arc::from(components)).await
             })
             .await?;
@@ -509,17 +502,15 @@ impl OperationHost {
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.http_transport),
                     Arc::clone(&self.facts),
-                    self.release.target().project_env_key.as_str(),
                     self.project.as_str(),
                     Arc::clone(&self.allowed_hosts),
-                    Some(Arc::clone(&self.release)),
+                    Arc::clone(&self.release),
                 )),
                 blobstore: Arc::new(WamnBlobstore::new(
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.facts),
-                    self.release.target().project_env_key.as_str(),
                     self.project.as_str(),
-                    Some(Arc::clone(&self.release)),
+                    Arc::clone(&self.release),
                 )),
                 release: Arc::clone(&self.release),
                 project: self.project.clone(),

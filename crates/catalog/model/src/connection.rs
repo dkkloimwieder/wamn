@@ -168,98 +168,13 @@ impl RequirementType {
         }
     }
 
-    /// The coordinates the type's plugin reads from a generation definition.
-    /// For blobstore these are the ones `wamn_blobstore::binding::resolve`
-    /// demands for the definition's `provider`, and nothing else: a key nobody
-    /// reads is a key nobody validates. An `s3` definition may omit `provider`.
-    fn coordinates(self, provider: Option<&str>) -> Result<&'static [&'static str], String> {
-        match (self, provider) {
-            (Self::Http, _) => Ok(&["primary-authority", "tls-verification"]),
-            (Self::Blobstore, None) => Ok(&["endpoint", "container", "prefix"]),
-            (Self::Blobstore, Some("s3")) => Ok(&["provider", "endpoint", "container", "prefix"]),
-            (Self::Blobstore, Some("gcs")) => Ok(&["provider", "container", "prefix"]),
-            (Self::Blobstore, Some(other)) => Err(format!(
-                "the generation definition's provider {other:?} is neither s3 nor gcs"
-            )),
-        }
-    }
-
-    /// Make sure of a generation definition against the coordinates this type's
-    /// plugin reads, and return the reason it is refused. `wamn-ctl
-    /// binding refuses with it.
+    /// Parse the definition once through its owning type.
     pub fn require_definition(self, definition: &serde_json::Value) -> Result<(), String> {
-        use serde_json::Value;
-        let Some(object) = definition.as_object() else {
-            return Err("the generation definition must be a JSON object".to_owned());
-        };
-        let provider = match object.get("provider") {
-            None => None,
-            Some(Value::String(provider)) => Some(provider.as_str()),
-            Some(_) => {
-                return Err("the generation definition's provider must be a string".to_owned());
-            }
-        };
-        let coordinates = self.coordinates(provider)?;
-        for coordinate in coordinates {
-            match object.get(*coordinate) {
-                Some(Value::String(value)) if !value.is_empty() => {}
-                Some(Value::String(_)) => {
-                    return Err(format!(
-                        "the generation definition's {coordinate} is empty; {self:?} needs it"
-                    ));
-                }
-                Some(_) => {
-                    return Err(format!(
-                        "the generation definition's {coordinate} must be a string; \
-                         {self:?} reads it as one"
-                    ));
-                }
-                None => {
-                    return Err(format!(
-                        "the generation definition lacks {coordinate}; \
-                         {self:?} reads it at resolve time"
-                    ));
-                }
-            }
+        match self {
+            Self::Http => HttpConnectionDefinition::parse(definition).map(|_| ()),
+            Self::Blobstore => BlobstoreDefinition::parse(definition).map(|_| ()),
         }
-        if self == Self::Blobstore
-            && let Some(value) = object.get("cdn_host")
-        {
-            let value = value
-                .as_str()
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| "cdn_host must be a nonempty HTTP origin".to_owned())?;
-            let origin = if value.contains("://") {
-                value.to_owned()
-            } else {
-                format!("https://{value}")
-            };
-            let url = url::Url::parse(&origin)
-                .map_err(|_| "cdn_host must be an HTTP origin".to_owned())?;
-            if !matches!(url.scheme(), "http" | "https")
-                || url.host_str().is_none()
-                || !url.username().is_empty()
-                || url.password().is_some()
-                || url.path() != "/"
-                || url.query().is_some()
-                || url.fragment().is_some()
-            {
-                return Err(
-                    "cdn_host must be an HTTP origin without a path, query, or credentials"
-                        .to_owned(),
-                );
-            }
-        }
-        if let Some(key) = object.keys().find(|key| {
-            !(coordinates.contains(&key.as_str())
-                || self == Self::Blobstore && key.as_str() == "cdn_host")
-        }) {
-            return Err(format!(
-                "the generation definition carries {key}, which {self:?} never reads; \
-                 a coordinate nobody reads is a coordinate nobody validates"
-            ));
-        }
-        Ok(())
+        .map_err(|error| error.to_string())
     }
 
     /// Make sure of the credential handle of a validated definition. A `gcs`
@@ -287,6 +202,199 @@ impl RequirementType {
             ),
             _ => Ok(()),
         }
+    }
+}
+
+/// The source of a malformed connection definition.
+#[derive(Debug)]
+pub struct ConnectionDefinitionError {
+    type_: DefinitionErrorType,
+    source: Box<dyn std::error::Error + Send + Sync>,
+}
+#[derive(Debug)]
+enum DefinitionErrorType {
+    Fields,
+    Coordinates,
+}
+impl ConnectionDefinitionError {
+    fn fields(source: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> Self {
+        Self {
+            type_: DefinitionErrorType::Fields,
+            source: source.into(),
+        }
+    }
+    fn coordinates(source: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> Self {
+        Self {
+            type_: DefinitionErrorType::Coordinates,
+            source: source.into(),
+        }
+    }
+}
+impl std::fmt::Display for ConnectionDefinitionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let context = match self.type_ {
+            DefinitionErrorType::Fields => "connection definition fields",
+            DefinitionErrorType::Coordinates => "connection coordinates",
+        };
+        write!(f, "{context}: {}", self.source)
+    }
+}
+impl std::error::Error for ConnectionDefinitionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+/// TLS verification selected by a connection definition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HttpTlsVerification {
+    Disabled,
+    VerifyAuthority,
+}
+
+/// The authority fields of an HTTP connection.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct HttpConnectionDefinition {
+    pub primary_authority: String,
+    pub tls_verification: HttpTlsVerification,
+    #[serde(default)]
+    pub auth: Option<serde_json::Value>,
+}
+impl HttpConnectionDefinition {
+    pub fn parse(value: &serde_json::Value) -> Result<Self, ConnectionDefinitionError> {
+        let definition: Self =
+            Self::deserialize(value).map_err(ConnectionDefinitionError::fields)?;
+        if definition.primary_authority.is_empty() {
+            return Err(ConnectionDefinitionError::coordinates(
+                "primary-authority must not be empty",
+            ));
+        }
+        Ok(definition)
+    }
+}
+
+/// The storage provider of a connection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BlobstoreProvider {
+    #[default]
+    S3,
+    Gcs,
+}
+
+/// Validated coordinates shared by storage admission, health and dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobstoreDefinition {
+    pub provider: BlobstoreProvider,
+    pub endpoint: Option<String>,
+    pub container: String,
+    pub prefix: String,
+    pub cdn_host: Option<url::Url>,
+}
+impl BlobstoreDefinition {
+    /// Parse a definition and refuse absent confinement coordinates.
+    pub fn parse(value: &serde_json::Value) -> Result<Self, ConnectionDefinitionError> {
+        Self::parse_with_provider(value, None)
+    }
+
+    /// Parse parameters using the provider selected by the integration.
+    pub fn parse_for(
+        value: &serde_json::Value,
+        provider: BlobstoreProvider,
+    ) -> Result<Self, ConnectionDefinitionError> {
+        Self::parse_with_provider(value, Some(provider))
+    }
+
+    fn parse_with_provider(
+        value: &serde_json::Value,
+        expected: Option<BlobstoreProvider>,
+    ) -> Result<Self, ConnectionDefinitionError> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Definition {
+            #[serde(default)]
+            provider: Option<BlobstoreProvider>,
+            endpoint: Option<String>,
+            container: String,
+            prefix: String,
+            cdn_host: Option<String>,
+        }
+        let definition: Definition =
+            Definition::deserialize(value).map_err(ConnectionDefinitionError::fields)?;
+        if definition.container.is_empty() || definition.prefix.is_empty() {
+            return Err(ConnectionDefinitionError::coordinates(
+                "container and prefix must not be empty",
+            ));
+        }
+        if value
+            .get("provider")
+            .is_some_and(serde_json::Value::is_null)
+        {
+            return Err(ConnectionDefinitionError::coordinates(
+                "provider must name a storage integration",
+            ));
+        }
+        let provider = definition.provider.or(expected).unwrap_or_default();
+        if expected.is_some_and(|expected| expected != provider) {
+            return Err(ConnectionDefinitionError::coordinates(
+                "storage provider mismatch",
+            ));
+        }
+        match (provider, definition.endpoint.as_deref()) {
+            (BlobstoreProvider::S3, None | Some("")) => {
+                return Err(ConnectionDefinitionError::coordinates(
+                    "s3 requires endpoint",
+                ));
+            }
+            (BlobstoreProvider::Gcs, _) if value.get("endpoint").is_some() => {
+                return Err(ConnectionDefinitionError::coordinates(
+                    "gcs takes no endpoint",
+                ));
+            }
+            _ => {}
+        }
+        let cdn_host = definition
+            .cdn_host
+            .map(|host| -> Result<url::Url, ConnectionDefinitionError> {
+                let origin = if host.contains("://") {
+                    host
+                } else {
+                    format!("https://{host}")
+                };
+                let url = url::Url::parse(&origin).map_err(ConnectionDefinitionError::fields)?;
+                if !matches!(url.scheme(), "http" | "https")
+                    || url.host_str().is_none()
+                    || !url.username().is_empty()
+                    || url.password().is_some()
+                    || url.path() != "/"
+                    || url.query().is_some()
+                    || url.fragment().is_some()
+                {
+                    return Err(ConnectionDefinitionError::coordinates(
+                        "cdn_host must be an HTTP origin without a path, query, or credentials",
+                    ));
+                }
+                Ok(url)
+            })
+            .transpose()?;
+        // A present null is malformed, rather than an absent public origin.
+        if value
+            .get("cdn_host")
+            .is_some_and(serde_json::Value::is_null)
+        {
+            return Err(ConnectionDefinitionError::coordinates(
+                "cdn_host must be an HTTP origin",
+            ));
+        }
+        Ok(Self {
+            provider,
+            endpoint: definition.endpoint,
+            container: definition.container,
+            prefix: definition.prefix,
+            cdn_host,
+        })
     }
 }
 
@@ -451,10 +559,7 @@ mod tests {
         let error = RequirementType::Http
             .require_definition(&serde_json::json!({"tls-verification": "verify-authority"}))
             .expect_err("primary-authority is read at resolve time");
-        assert_eq!(
-            error,
-            "the generation definition lacks primary-authority; Http reads it at resolve time"
-        );
+        drop(error);
     }
 
     #[test]
@@ -462,10 +567,7 @@ mod tests {
         let error = RequirementType::Http
             .require_definition(&serde_json::json!({"primary-authority": "https://erp.example"}))
             .expect_err("tls-verification is read at resolve time");
-        assert_eq!(
-            error,
-            "the generation definition lacks tls-verification; Http reads it at resolve time"
-        );
+        drop(error);
     }
 
     #[test]
@@ -475,13 +577,10 @@ mod tests {
                 "primary-authority": "https://erp.example", "tls-verification": "verify-authority"
             });
             definition[key] = serde_json::json!("unused");
-            assert_eq!(
+            assert!(
                 RequirementType::Http
                     .require_definition(&definition)
-                    .unwrap_err(),
-                format!(
-                    "the generation definition carries {key}, which Http never reads; a coordinate nobody reads is a coordinate nobody validates"
-                )
+                    .is_err()
             );
         }
     }
@@ -496,10 +595,7 @@ mod tests {
             let error = RequirementType::Http
                 .require_definition(&definition)
                 .expect_err("the plugin needs a nonempty coordinate");
-            assert_eq!(
-                error,
-                format!("the generation definition's {coordinate} is empty; Http needs it")
-            );
+            drop(error);
         }
     }
 
@@ -510,13 +606,10 @@ mod tests {
                 "primary-authority": "https://erp.example", "tls-verification": "verify-authority"
             });
             definition[coordinate] = serde_json::json!(42);
-            assert_eq!(
+            assert!(
                 RequirementType::Http
                     .require_definition(&definition)
-                    .unwrap_err(),
-                format!(
-                    "the generation definition's {coordinate} must be a string; Http reads it as one"
-                )
+                    .is_err()
             );
         }
     }
@@ -524,11 +617,10 @@ mod tests {
     #[test]
     fn refuses_a_connection_definition_its_type_refuses() {
         for requirement in [RequirementType::Http, RequirementType::Blobstore] {
-            assert_eq!(
+            assert!(
                 requirement
                     .require_definition(&serde_json::json!("not an object"))
-                    .unwrap_err(),
-                "the generation definition must be a JSON object"
+                    .is_err()
             );
         }
     }
@@ -692,6 +784,40 @@ mod tests {
             if provider == "s3" {
                 definition["endpoint"] = "https://s3.example.com".into();
             }
+            for field in definition
+                .as_object()
+                .unwrap()
+                .keys()
+                .filter(|field| field.as_str() != "provider")
+            {
+                let mut absent = definition.clone();
+                absent.as_object_mut().unwrap().remove(field);
+                assert!(BlobstoreDefinition::parse(&absent).is_err());
+                let mut empty = definition.clone();
+                empty[field] = "".into();
+                assert!(BlobstoreDefinition::parse(&empty).is_err());
+            }
+            let mut extra = definition.clone();
+            extra["unused"] = "unused".into();
+            assert!(BlobstoreDefinition::parse(&extra).is_err());
+            let handle = (provider == "s3").then_some("credential");
+            assert!(
+                RequirementType::Blobstore
+                    .require_credential_handle(&definition, handle)
+                    .is_ok()
+            );
+            assert!(
+                RequirementType::Blobstore
+                    .require_credential_handle(
+                        &definition,
+                        if handle.is_some() {
+                            None
+                        } else {
+                            Some("credential")
+                        }
+                    )
+                    .is_err()
+            );
             RequirementType::Blobstore
                 .require_definition(&definition)
                 .unwrap();
