@@ -751,7 +751,7 @@ CREATE TABLE registry.environments (
     updated_by uuid NOT NULL,
     PRIMARY KEY (org, env),
     FOREIGN KEY (org, policy_name) REFERENCES registry.env_policies(org, name)
-        DEFERRABLE INITIALLY DEFERRED
+        DEFERRABLE INITIALLY IMMEDIATE
 );
 CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON registry.environments
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
