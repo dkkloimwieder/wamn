@@ -1,7 +1,7 @@
 //! Package inputs and the physical relation declarations used by CDC.
 
-use wamn_catalog::PackageCoordinate;
-use wamn_catalog::manifest::PackageManifest;
+use crate::PackageCoordinate;
+use crate::manifest::PackageManifest;
 use wamn_record_history::history_table_name;
 
 /// An immutable authored or compiler-generated migration.
@@ -47,14 +47,14 @@ pub struct CdcExcludedRelation {
 
 /// Package relation declarations. SQLx owns migration planning.
 #[derive(Debug)]
-pub struct PackageMigrationPlan {
+pub struct PackageMetadata {
     pub coordinate: PackageCoordinate,
     pub models: Vec<ManagedModel>,
     pub cdc_excluded_relations: Vec<CdcExcludedRelation>,
 }
 
 /// Read package declarations. SQLx resolves migration files when execution is prepared.
-pub fn package_metadata(directory: &PackageDirectory) -> anyhow::Result<PackageMigrationPlan> {
+pub fn package_metadata(directory: &PackageDirectory) -> anyhow::Result<PackageMetadata> {
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
     let coordinate = PackageCoordinate::new(&manifest.package.id, &manifest.package.version)?;
     let mut models = Vec::new();
@@ -81,7 +81,7 @@ pub fn package_metadata(directory: &PackageDirectory) -> anyhow::Result<PackageM
             table: relation.table,
         },
     ));
-    Ok(PackageMigrationPlan {
+    Ok(PackageMetadata {
         coordinate,
         models,
         cdc_excluded_relations,

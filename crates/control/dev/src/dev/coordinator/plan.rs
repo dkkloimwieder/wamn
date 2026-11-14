@@ -1,21 +1,7 @@
 use super::{
-    CatalogIr, ComponentAdmission, ComponentDeclarationError, ComponentDeclarationErrorType,
-    PackageInput, PackageManifest, ProductionDevStageError, SelectedComponentArtifact,
+    ComponentAdmission, ComponentDeclarationError, ComponentDeclarationErrorType,
+    ProductionDevStageError, SelectedComponentArtifact,
 };
-
-pub(super) fn project_catalog_for_package(
-    catalog: &CatalogIr,
-    target: &PackageManifest,
-    installed: &[PackageInput],
-) -> Result<CatalogIr, ProductionDevStageError> {
-    let manifests = installed
-        .iter()
-        .map(|package| package.manifest.clone())
-        .collect::<Vec<_>>();
-    wamn_compiler::project_package_catalog(catalog, target, &manifests).map_err(|source| {
-        ProductionDevStageError::invalid("project package catalog", source.to_string())
-    })
-}
 
 /// Refuse an admission whose identity differs from the artifact selected for it.
 pub(super) fn require_admitted_identity(

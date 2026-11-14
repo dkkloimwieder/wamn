@@ -21,9 +21,6 @@ async fn stranded_run_refusal_preserves_the_environment_before_uninstall() -> an
         path::{Path, PathBuf},
     };
     use wamn_environment_control::environment::{Platform, delete::delete};
-    use wamn_environment_control::reconcile_run_plane::{
-        ReconcileRunPlaneRequest, reconcile_run_plane,
-    };
 
     // Isolate PATH in a child test process; never change the test harness environment.
     if !Path::new("delete-mutations").exists() {
@@ -119,24 +116,23 @@ esac
     .map(drop)?;
     let mut project_url = url::Url::parse(database.url())?;
     project_url.set_path(&project_name);
-    reconcile_run_plane(ReconcileRunPlaneRequest {
-        platform_migration_database_url: Some(
-            wamn_control_provision::test_database::platform_migration_input(
-                &project_url,
-                wamn_control_provision::migrations::MigrationDatabase::Project,
-            )
-            .await
-            .unwrap(),
-        ),
-        system_database_url: database.url().into(),
-        admin_database_url: project_url.to_string(),
-        org: triple.org.clone(),
-        project: triple.project.clone(),
-        env: triple.env.to_string(),
-        schema: "wamn_run".into(),
-        dry_run: false,
-        changes: Publisher::default(),
-    })
+    let mut project = wamn_postgres::connect(project_url.as_str()).await?;
+    wamn_environment_control::platform_migrations::install_project(&mut project).await?;
+    wamn_platform_identity::environment::fill(
+        database.url(),
+        project_url.as_str(),
+        wamn_platform_identity::application::ApplicationTarget {
+            org: &triple.org,
+            project: &triple.project,
+            env: triple.env.as_str(),
+            project_env_key: &wamn_registry::project_env_key(
+                &triple.org,
+                &triple.project,
+                triple.env.as_str(),
+            ),
+        },
+        &Publisher::default(),
+    )
     .await?;
     // The database-owner policy membership installed by environment::ensure.
     sqlx::raw_sql("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE")

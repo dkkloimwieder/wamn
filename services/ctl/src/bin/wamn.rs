@@ -264,7 +264,7 @@ mod tests {
             };
             let args = match command {
                 wamn_ctl::schema_verbs::SchemaCommand::Diff(args) => args,
-                wamn_ctl::schema_verbs::SchemaCommand::Apply(args) => args.schema,
+                wamn_ctl::schema_verbs::SchemaCommand::Apply(args) => args,
                 _ => panic!("schema input"),
             };
             assert_eq!(args.application, "orders");
@@ -276,44 +276,6 @@ mod tests {
                     .is_ok()
             );
         }
-        let Command::Schema(wamn_ctl::schema_verbs::SchemaCommand::Apply(args)) =
-            Cli::try_parse_from([
-                "wamn",
-                "schema",
-                "apply",
-                "orders",
-                "--env",
-                "environment.k",
-                "--resolve",
-                "inventory:migrations/0002_index.sql=retry",
-            ])
-            .unwrap()
-            .command
-        else {
-            panic!("schema apply")
-        };
-        let resolution = args.resolve.unwrap();
-        assert_eq!(resolution.package, "inventory");
-        assert_eq!(resolution.path, "migrations/0002_index.sql");
-        assert_eq!(
-            resolution.action,
-            wamn_package_control::apply_package::Resolution::Retry
-        );
-        let Command::Schema(wamn_ctl::schema_verbs::SchemaCommand::Publish(args)) =
-            Cli::try_parse_from([
-                "wamn",
-                "schema",
-                "publish",
-                "apps/orders",
-                "--env",
-                "environment.k",
-            ])
-            .unwrap()
-            .command
-        else {
-            panic!("schema publication")
-        };
-        assert_eq!(args.package, std::path::Path::new("apps/orders"));
     }
 
     #[test]
@@ -369,7 +331,7 @@ mod platform_tests {
     #[test]
     fn platform_schema_requires_explicit_system_target_and_chart() {
         use wamn_ctl::platform_verbs::{PlatformSchemaCommand, PlatformSchemaTarget};
-        use wamn_package_control::migrations::Resolution;
+        use wamn_environment_control::migrations::Resolution;
 
         for action in ["diff", "apply"] {
             let arguments = [
@@ -393,8 +355,7 @@ mod platform_tests {
                 }
                 PlatformSchemaCommand::Apply(args) => {
                     assert_eq!(action, "apply");
-                    assert!(args.resolve.is_none());
-                    args.selection
+                    args
                 }
             };
             assert!(matches!(args.target, PlatformSchemaTarget::System));
@@ -413,25 +374,6 @@ mod platform_tests {
             let mut project = arguments;
             project[5] = "project";
             assert!(Cli::try_parse_from(project).is_err());
-            let resolved = Cli::try_parse_from(
-                arguments
-                    .into_iter()
-                    .chain(["--resolve", "migrations/system/0001_probe.sql=retry"]),
-            );
-            if action == "diff" {
-                assert!(resolved.is_err());
-            } else {
-                let Command::Platform(ProductPlatformCommand::Schema(
-                    PlatformSchemaCommand::Apply(args),
-                )) = resolved.unwrap().command
-                else {
-                    panic!("expected schema apply");
-                };
-                let resolution = args.resolve.unwrap();
-                assert_eq!(resolution.package, "system");
-                assert_eq!(resolution.path, "migrations/system/0001_probe.sql");
-                assert_eq!(resolution.action, Resolution::Retry);
-            }
         }
     }
 
@@ -461,34 +403,13 @@ mod platform_tests {
             };
             let args = match command {
                 PlatformSchemaCommand::Diff(args) => args,
-                PlatformSchemaCommand::Apply(args) => args.selection,
+                PlatformSchemaCommand::Apply(args) => args,
             };
             assert!(matches!(args.target, PlatformSchemaTarget::Project));
             assert_eq!(
                 args.env.as_deref(),
                 Some(std::path::Path::new("environment.k"))
             );
-            let resolved = Cli::try_parse_from(
-                arguments
-                    .into_iter()
-                    .chain(["--resolve", "migrations/project/0001_probe.sql=retry"]),
-            );
-            if action == "diff" {
-                assert!(resolved.is_err());
-            } else {
-                let Command::Platform(ProductPlatformCommand::Schema(
-                    PlatformSchemaCommand::Apply(args),
-                )) = resolved.unwrap().command
-                else {
-                    panic!("expected project apply");
-                };
-                let resolution = args.resolve.unwrap();
-                assert_eq!(resolution.package, "project");
-                assert_eq!(
-                    resolution.action,
-                    wamn_package_control::migrations::Resolution::Retry
-                );
-            }
         }
     }
 

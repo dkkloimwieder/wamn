@@ -2,8 +2,8 @@
 
 use anyhow::Context as _;
 use sqlx::Row as _;
+use wamn_catalog::package_schema::PackageDirectory;
 use wamn_runtime::local_application::LocalTargetComment;
-use wamn_schema_control::PackageDirectory;
 
 /// The digest of the local manifest bytes, independent of installed SQL state.
 pub fn manifest_digest(directory: &PackageDirectory) -> String {

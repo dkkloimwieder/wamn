@@ -95,6 +95,9 @@
       "default": null,
       "description": "The CDC reader that `wamn dev up` enabled. Absent means no reader runs."
     },
+    "condition_bearer_token": {
+      "type": "string"
+    },
     "connection_database_url": {
       "default": null,
       "type": "string"
@@ -111,9 +114,6 @@
       "type": "string"
     },
     "executor_platform_database_url": {
-      "type": "string"
-    },
-    "condition_bearer_token": {
       "type": "string"
     },
     "guest_database_url": {
@@ -140,6 +140,9 @@
     },
     "local_artifacts": {
       "$ref": "#/definitions/LocalArtifacts"
+    },
+    "migration_database_url": {
+      "type": "string"
     },
     "nats_tls_ca": {
       "type": "string"
@@ -196,16 +199,7 @@
     "system_database_url": {
       "type": "string"
     },
-    "target_database_acl_file": {
-      "type": "string"
-    },
     "target_database_url": {
-      "type": "string"
-    },
-    "target_privileges_file": {
-      "type": "string"
-    },
-    "target_template_database": {
       "type": "string"
     },
     "wasmtime_cache_dir": {
@@ -215,11 +209,11 @@
   "required": [
     "administration_database_url",
     "catalog",
+    "condition_bearer_token",
     "dup_window_secs",
     "environment",
     "event_materializer_database_url",
     "executor_platform_database_url",
-    "condition_bearer_token",
     "guest_database_url",
     "host_binary",
     "host_config_file",
@@ -228,6 +222,7 @@
     "http_admitter_database_url",
     "identity_database_url",
     "local_artifacts",
+    "migration_database_url",
     "nats_tls_ca",
     "nats_tls_cert",
     "nats_tls_key",
@@ -241,10 +236,7 @@
     "scheduler_nats_url",
     "stream_replicas",
     "system_database_url",
-    "target_database_acl_file",
     "target_database_url",
-    "target_privileges_file",
-    "target_template_database",
     "wasmtime_cache_dir"
   ],
   "title": "DevConfigDocument",

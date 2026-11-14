@@ -78,7 +78,7 @@ pub fn grants_sql(login: &str) -> String {
     format!(
         "GRANT USAGE, CREATE ON SCHEMA wamn_history TO {role}; \
         GRANT USAGE ON SCHEMA platform TO {role}; \
-        GRANT REFERENCES ON platform.file, platform.external_system TO {role}; \
+        GRANT REFERENCES ON platform.file, platform.external_system, platform.\"user\" TO {role}; \
         GRANT EXECUTE ON FUNCTION wamn_history.stamp_row(), \
           wamn_history.create_history_table(text,text,boolean), \
           wamn_history.row_image(record), wamn_history.timestamptz_image(timestamptz), \

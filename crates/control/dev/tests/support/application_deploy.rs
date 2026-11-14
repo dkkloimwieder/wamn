@@ -1,6 +1,6 @@
 //! Application deployment uses product commands; Kubernetes and SQL are observers.
 
-use sqlx::Row as _;
+use sqlx::{Connection as _, Row as _};
 #[path = "../../../../../services/ctl/src/route_request.rs"]
 mod route_request;
 
@@ -21,9 +21,6 @@ use super::{POLL_LIMIT, ProcessGroup, Run, execute, get, kubectl, success};
 
 #[path = "control_operations.rs"]
 mod control_operations;
-
-#[path = "schema_reset.rs"]
-mod schema_reset;
 
 #[path = "platform_upgrade.rs"]
 mod platform_upgrade;
@@ -680,6 +677,37 @@ async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> any
                 .args(["--application", "beta"]),
         )
         .await?;
+    journey
+        .apply(
+            "designate-disposable",
+            journey
+                .cli(
+                    &journey.run.binary.with_file_name("wamn-ctl"),
+                    &[
+                        "provision-project-env",
+                        "--org",
+                        &journey.run.document.org,
+                        "--project",
+                        journey.project,
+                        "--env",
+                        journey.environment,
+                        "--target",
+                        "cloud",
+                        "--disposable",
+                        "--cluster-namespace",
+                        "platform",
+                        "--namespace",
+                        "hosts",
+                        "--secret-namespace",
+                        "hosts",
+                        "--emit-database",
+                        "-",
+                        "--emit-secret",
+                    ],
+                )
+                .arg(journey.run.directory.join("disposable-credential.json")),
+        )
+        .await?;
     for (application, key) in [("beta", "b0"), ("alpha", "a0")] {
         journey
             .apply(
@@ -703,16 +731,103 @@ async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> any
             )
             .await?;
     }
-    let mut rows = data(journey).await?;
-    schema_reset::designate(journey).await?;
-    schema_reset::published(journey, &artifacts["reset"], &mut rows).await?;
-    schema_reset::recovery(
-        journey,
-        &artifacts["isolation"],
-        &artifacts["isolation_capture"],
-        &mut rows,
-    )
-    .await
+    let rows = data(journey).await?;
+    let selections = journey.status().await?;
+    let mut previous = BTreeMap::new();
+    let mut writers = Vec::new();
+    for app in rows.keys() {
+        let running = runtime(journey, app).await?;
+        let name = selections["applications"][app]["observed"]["release_name"]
+            .as_str()
+            .context("application release")?;
+        writers.push(wamn_registry::name::resource_suffix("hostgroup", name));
+        previous.insert(app, running);
+    }
+    let document = EnvironmentDocument::compile(&journey.file)?;
+    let shared = wamn_control_provision::environment_names::environment_resource_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    )?;
+    writers.push(wamn_registry::name::resource_suffix("hostgroup", &shared));
+    writers.push(wamn_control_provision::project_env_cdc_secret_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    ));
+    let mut database = observer(journey).await?;
+    // Hold the application-DDL lock so the stopped state is observable before reset writes.
+    let mut blocked = database.begin().await?;
+    sqlx::raw_sql(wamn_environment_control::apply_package::LOCK_SQL)
+        .execute(&mut *blocked)
+        .await?;
+    let stopped = async {
+        tokio::time::timeout(POLL_LIMIT, async {
+            loop {
+                let mut all_stopped = true;
+                for name in &writers {
+                    let deployment = get(journey.run, "hosts", "deployment", name).await?;
+                    all_stopped &= deployment["spec"]["replicas"] == 0
+                        && deployment["status"]["readyReplicas"].as_u64().unwrap_or(0) == 0;
+                }
+                if all_stopped {
+                    break Ok::<_, anyhow::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .context("reset did not stop application hosts and the reader")??;
+        blocked.rollback().await?;
+        Ok::<_, anyhow::Error>(())
+    };
+    let mut command = schema_command(journey, "apply", Some(&artifacts["reset"]));
+    let (applied, observed) = tokio::join!(journey.apply("reset-schema", &mut command), stopped);
+    observed?;
+    applied?;
+    let status = journey.status().await?;
+    let indexed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM pg_index WHERE indexrelid=to_regclass('alpha_data.widget_note_idx') AND indisvalid)")
+        .fetch_one(&mut database).await?;
+    ensure!(indexed, "reset omitted the selected package's index");
+    for (app, (_, widget)) in &rows {
+        ensure!(
+            status["applications"][app]["current"] == selections["applications"][app]["current"]
+                && status["applications"][app]["previous"]
+                    == selections["applications"][app]["previous"],
+            "reset changed {app}'s code selections"
+        );
+        let removed: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT NOT EXISTS(SELECT FROM {}.widget WHERE id=$1::text::uuid)",
+            postgres_protocol::escape::escape_identifier(&format!("{app}_data")),
+        )))
+        .bind(widget["id"].as_str().context("seeded widget")?)
+        .fetch_one(&mut database)
+        .await?;
+        ensure!(removed, "reset retained {app}'s data");
+        let resumed = runtime(journey, app).await?;
+        ensure!(
+            resumed["pods"]
+                .as_array()
+                .context("resumed pods")?
+                .iter()
+                .all(|pod| !previous[app]["pods"]
+                    .as_array()
+                    .is_some_and(|pods| pods.contains(pod))),
+            "reset did not replace {app}'s stopped pods"
+        );
+        let listed = journey
+            .route(
+                app,
+                "widget/list",
+                &json!([{"selector":{},"maker_id":null}]),
+            )
+            .await?;
+        ensure!(
+            listed["rows"].as_array().is_some_and(Vec::is_empty),
+            "{app} did not resume with empty data"
+        );
+    }
+    Ok(())
 }
 
 async fn application_recovery(
@@ -763,13 +878,6 @@ fn schema_command(journey: &Journey<'_>, verb: &str, release: Option<&str>) -> C
         command.args(["--release", release]);
     }
     command
-}
-
-fn same_database(before: &Value, after: &Value) -> anyhow::Result<()> {
-    for key in ["cluster", "database", "initialization"] {
-        ensure!(before[key] == after[key], "schema operation replaced {key}");
-    }
-    Ok(())
 }
 
 async fn first_install(
@@ -1200,13 +1308,8 @@ async fn stored(journey: &Journey<'_>, client: &mut sqlx::PgConnection) -> anyho
     let identity = json!({
         "cluster": get(journey.run, "platform", "cluster.postgresql.cnpg.io", "wamn-pg").await?["metadata"]["uid"],
         "database": query(client, "SELECT jsonb_build_array(oid,datname) FROM pg_database WHERE datname=current_database()").await?,
-        "initialization": status["schema"]["initialization_identity"],
-        "fingerprint": status["schema"]["installed_environment"],
+        "packages": status["schema"]["installed"],
     });
-    ensure!(
-        identity["initialization"].is_string() && identity["fingerprint"].is_string(),
-        "installed schema identity is unknown"
-    );
     eprintln!("database identity: {identity}");
     Ok(identity)
 }

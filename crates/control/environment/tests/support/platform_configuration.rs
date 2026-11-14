@@ -2,7 +2,7 @@
 //! (docs/architecture/data-access.md#actors, wamn-aqd0m.3), and the read of
 //! those rows back.
 //!
-//! `run_plane_live` and `environment_apply_kind` [`write`] the rows of
+//! `environment_apply_kind` [`write`] the rows of
 //! [`configuration`] with the environment's `wamn_administration` login, as
 //! the control host writes the application rows of an environment, and
 //! compare [`read_back`], read as a generation of `wamn_app`, with

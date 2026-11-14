@@ -17,23 +17,21 @@ pub enum SchemaCommand {
     Diff(SchemaArgs),
     /// Apply SQL without selecting code. Publish deployed source before the SQL Job.
     #[command(
-        long_about = "Apply SQL without selecting application code. An application name uses its configured current release unless --release selects another published release. A source directory publishes first for deployed execution. With an adjacent dev.json, source SQL uses the local database directly. Migrate mode applies pending SQL. Reset mode replaces the whole shared database only when the target is recorded as disposable and its physical schema changes."
+        long_about = "Apply SQL without selecting application code. An application name uses its configured current release unless --release selects another published release. A source directory publishes first for deployed execution. With an adjacent dev.json, source SQL uses the local database directly. Migrate mode applies pending SQL. Reset mode clears application state and reapplies migrations on every schema apply in a disposable environment."
     )]
-    Apply(ApplyArgs),
+    Apply(SchemaArgs),
     /// Build and publish a candidate without installing it in the target database.
     Publish(PublishArgs),
     /// Discard all application data in the recorded disposable environment database.
     #[command(
-        long_about = "Replace the whole recorded disposable project-environment database under the same name, even when schema fingerprints match. This discards every application's data and database-local state. WAMN resolves retained sources before stopping writers. The SQL Job restores the inputs. Workloads resume with unchanged release selections. Repeat this command after interruption. The system database is outside this reset."
+        long_about = "Stop users, drop migration-owned objects, clear application catalog state, runs, queued events and authored workflows, then reapply migrations. Platform schemas, credentials and CDC objects remain. The environment must be disposable."
     )]
     Reset(EnvironmentArgs),
-    /// Assert configured schema sources without executing SQL or selecting code.
-    Adopt(EnvironmentArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct EnvironmentArgs {
-    /// The target environment file. An adjacent dev.json selects local adoption.
+    /// The target environment file. An adjacent dev.json selects local execution.
     #[arg(long)]
     pub env: PathBuf,
 }
@@ -51,16 +49,6 @@ pub struct SchemaArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ApplyArgs {
-    #[command(flatten)]
-    pub schema: SchemaArgs,
-    /// Resolve one uncertain file after inspection: <package>:<relative_path>=applied|retry.
-    /// Applied skips SQL. Retry runs identical bytes after manual repair. No automatic repair occurs.
-    #[arg(long)]
-    pub resolve: Option<wamn_package_control::apply_package::MigrationResolution>,
-}
-
-#[derive(Debug, Args)]
 pub struct PublishArgs {
     /// The source package to build and publish without installing SQL or selecting code.
     pub package: PathBuf,
@@ -69,30 +57,17 @@ pub struct PublishArgs {
 }
 
 pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
-    let (args, apply, resolution) = match command {
+    let (args, apply) = match command {
         SchemaCommand::Publish(args) => return publish(args).await,
-        SchemaCommand::Adopt(args) => {
+        SchemaCommand::Reset(args) => {
             let configuration = args.env.with_file_name("dev.json");
             if configuration.is_file() {
-                let result =
-                    wamn_dev_control::dev::target_database::adopt_schema(&configuration, &args.env)
-                        .await?;
-                println!(
-                    "{}",
-                    serde_json::json!({"adopted": result, "sql_executed": false, "live_verified": false})
-                );
-            } else if let Some(host) = ControlHost::from_env()? {
-                return host.run("schema.adopt", &args.env, json!({})).await;
-            } else {
-                let mut platform = Platform::apply_from_env()?;
-                let document =
-                    EnvironmentDocument::read_deployed(&platform, &args.env, None).await?;
-                environment::runtime::resolve_platform(&mut platform, &document.org).await?;
-                environment::sql::adopt_deployed(&platform, &document).await?;
+                let instance =
+                    wamn_dev_control::dev::target_database::reset(&configuration).await?;
+                println!("{}", json!({"database_instance":instance,"result":"reset"}));
+                return Ok(());
             }
-            return Ok(());
-        }
-        SchemaCommand::Reset(args) => {
+
             if let Some(host) = ControlHost::from_env()? {
                 return host.run("schema.reset", &args.env, json!({})).await;
             }
@@ -104,8 +79,8 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&result)?);
             return Ok(());
         }
-        SchemaCommand::Diff(args) => (args, false, None),
-        SchemaCommand::Apply(args) => (args.schema, true, args.resolve),
+        SchemaCommand::Diff(args) => (args, false),
+        SchemaCommand::Apply(args) => (args, true),
     };
     let local_config = args.env.with_file_name("dev.json");
     if local_config.is_file() && std::path::Path::new(&args.application).is_dir() {
@@ -118,7 +93,6 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
             &args.env,
             std::path::Path::new(&args.application),
             apply,
-            resolution.as_ref(),
         )
         .await?;
         println!("{}", serde_json::to_string_pretty(&diffs)?);
@@ -142,10 +116,7 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
         } else {
             (args.application, args.release)
         };
-        let mut value = json!({"application":application, "release":release});
-        if let Some(resolution) = resolution {
-            value["resolve"] = resolution.to_string().into();
-        }
+        let value = json!({"application":application, "release":release});
         return host
             .run(
                 if apply { "schema.apply" } else { "schema.diff" },
@@ -190,7 +161,6 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
             &application,
             release.as_deref(),
             apply,
-            resolution.as_ref(),
             None,
         )
         .await?;
@@ -210,19 +180,15 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
     let candidates = roots
         .into_iter()
         .map(|path| {
-            schema::Candidate::source(wamn_package_control::apply_package::PackageRoot {
+            schema::Candidate::source(wamn_environment_control::apply_package::PackageRoot {
                 path,
                 artifact_digest: None,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let state = schema::state(&platform, &document).await?;
-    let diff = schema::plan(&document, &application, None, &candidates, &state)?;
+    let diff = schema::plan(&document, &application, None, &candidates, &state).await?;
     println!("{}", serde_json::to_string_pretty(&diff)?);
-    if resolution.is_none() && diff.requires_reset() && diff.disposable == Some(true) {
-        // Resolve the complete retained set before reset can mutate the target.
-        schema::reset_candidates(&platform, &diff, candidates).await?;
-    }
     Ok(())
 }
 

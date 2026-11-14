@@ -9,8 +9,8 @@ use serde_json::json;
 use sqlx::PgConnection as Client;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
+use wamn_environment_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
 use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
-use wamn_package_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
 use wamn_package_control::component_admission::ComponentAdmission;
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
@@ -97,12 +97,7 @@ pub async fn workflow_host(
     database: &wamn_test_postgres::Database,
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<Arc<WamnPostgres>> {
-    wamn_environment_control::reconcile_run_plane::reconcile(
-        admin,
-        &wamn_schema_control::BareSchemaName::new("wamn_run")?,
-        true,
-    )
-    .await?;
+    wamn_environment_control::platform_migrations::install_project(admin).await?;
     sqlx::query("SELECT set_config('app.user_id', $1, false)")
         .bind(
             &wamn_identity_protocol::PlatformComponent::Provisioning
@@ -112,7 +107,7 @@ pub async fn workflow_host(
         .execute(&mut *admin)
         .await
         .map(|result| result.rows_affected())?;
-    sqlx::query("INSERT INTO wamn_run.environment_policies (project_env_key,expected_environment) VALUES ($1,'test')").bind(&PROJECT_ENV_KEY).execute(&mut *admin).await.map(|result| result.rows_affected())?;
+
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     wamn_environment_control::environment::stage::write_release(
@@ -357,8 +352,10 @@ pub async fn install(
         .collect::<anyhow::Result<Vec<_>>>()?;
     for package in &packages {
         apply_package(ApplyPackageRequest {
-            component_source: wamn_package_control::apply_package::component_source_from_env(None)
-                .unwrap(),
+            component_source: wamn_environment_control::apply_package::component_source_from_env(
+                None,
+            )
+            .unwrap(),
             changes: wamn_broker::Publisher::default(),
             package: package.clone(),
             database_url: database.url().into(),

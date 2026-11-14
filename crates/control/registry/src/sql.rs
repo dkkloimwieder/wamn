@@ -399,14 +399,6 @@ pub fn control_provision_src_sql_grant_connection_reader_surface_sql(role: &str)
 pub const CONTROL_ENVIRONMENT_SRC_ENABLE_CDC_PROJECT_ENV_PAUSE_EVENT_READER: &str =
     "UPDATE registry.event_readers SET enabled=false WHERE org=$1 AND project=$2 AND env=$3";
 
-/// crates/control/environment/src/provision_system.rs::system_state registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SYSTEM_STATE: &str =
-    "SELECT sha256 FROM registry.schema_baseline";
-
-/// crates/control/environment/src/provision_system.rs::system_state registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SYSTEM_STATE_2: &str =
-    "SELECT to_regclass('registry.schema_baseline') IS NOT NULL";
-
 /// crates/control/environment/src/provision_system.rs::set_platform_domain registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN: &str =
     "UPDATE registry.meta SET platform_domain = $1 WHERE platform_domain IS DISTINCT FROM $1";
@@ -414,23 +406,6 @@ pub const CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN: &str =
 /// crates/control/environment/src/invite.rs::invite registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_INVITE_INVITE: &str =
     "SELECT id FROM registry.orgs WHERE id = $1 FOR UPDATE";
-
-/// crates/control/environment/src/provision_project_env/registry.rs::require_no_reset registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_REQUIRE_NO_RESET: &str = "SELECT pending_database IS NULL FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3";
-
-/// crates/control/environment/src/provision_project_env/registry.rs::finish_database registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_FINISH_DATABASE: &str = "UPDATE registry.environment_projects SET pending_database=NULL WHERE org=$1 AND project=$2 AND env=$3 \
-         AND EXISTS (SELECT FROM registry.environments e WHERE e.org=$1 AND e.env=$3 AND e.disposable) AND pending_database=$4";
-
-/// crates/control/environment/src/provision_project_env/registry.rs::record_reset registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_RECORD_RESET: &str = "UPDATE registry.environment_projects SET pending_database=$4 WHERE org=$1 AND project=$2 AND env=$3";
-
-/// crates/control/environment/src/provision_project_env/registry.rs::record_reset registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_RECORD_RESET_2: &str = "SELECT instance_suffix, disposable, pending_database FROM registry.environment_projects JOIN registry.environments USING (org,env) \
-         WHERE org=$1 AND project=$2 AND env=$3 FOR UPDATE";
-
-/// crates/control/environment/src/provision_project_env/registry.rs::pending_database registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_PENDING_DATABASE: &str = "SELECT pending_database FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3";
 
 /// crates/control/environment/src/provision_project_env/registry.rs::do_record_project_env registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_DO_RECORD_PROJECT_ENV: &str =
@@ -465,7 +440,7 @@ pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_BINDINGS_ANALYSE: &str =
     "SELECT * FROM registry.resolve_environment_connection($1,$2,$3,$4,$5,$6)";
 
 /// crates/control/environment/src/environment/sql.rs::read registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_SQL_READ: &str = "SELECT instance_suffix, pending_database->>'initialization_identity' FROM registry.environment_projects \
+pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_SQL_READ: &str = "SELECT instance_suffix FROM registry.environment_projects \
              WHERE org=$1 AND project=$2 AND env=$3";
 
 /// crates/control/environment/src/environment/delete/rows.rs::delete_registry_rows registry statement.

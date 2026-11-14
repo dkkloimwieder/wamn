@@ -1,5 +1,7 @@
 # Receiving change walkthrough
 
+This record describes the earlier template reset. Current development resets application objects in the existing database and keeps its credentials. See the [development loop](../../../docs/operations/development-loop.md).
+
 This page records past runs. Use the current [development loop](../../../docs/operations/development-loop.md) commands for new sessions.
 
 This file holds two records of Receiving changes through `wamn dev`.

@@ -147,10 +147,7 @@ Initialize application SQL through the explicit schema operation before the firs
 `POST /wamn_control/schema/diff` and `POST /wamn_control/schema/apply` accept optional `application` and `release` members.
 Without `application`, they process the environment's selected applications.
 An explicit release requires an application.
-Apply also accepts the existing `resolve` migration choice.
 `POST /wamn_control/schema/reset` resets the whole disposable environment.
-`POST /wamn_control/schema/adopt` accepts an optional application.
-Without it, adoption covers the environment.
 These routes expose no system SQL operation.
 
 Each start response returns `job`, the Kubernetes Job name.
@@ -164,7 +161,7 @@ There is no operation history database.
 
 The server selects the image, command, namespace, actor, chart, and credential references.
 Deploy, rollback, and diff use the existing apply, registry, and NATS credentials.
-Apply, reset, and adopt also receive the existing CNPG administrator credential.
+Apply and reset also receive the existing CNPG administrator credential.
 Those SQL Jobs are privileged.
 The ctl image carries the chart templates and deployment resources.
 Platform deployment stores immutable chart values and the image selection in a ConfigMap.
@@ -173,7 +170,7 @@ Environment provisioning creates separate code and SQL ServiceAccounts and names
 
 Set `WAMN_CONTROL_URL` to the deployed control host and `WAMN_TOKEN` to your password session token.
 With that URL, `wamn deploy`, `wamn rollback`, and `wamn-ctl env rollback` use the control routes.
-The published `wamn schema diff`, deployed `schema apply`, `schema reset`, and deployed `schema adopt` commands also use those routes.
+The published `wamn schema diff`, deployed `schema apply`, and `schema reset` commands also use those routes.
 The CLI starts the Job and polls `operation.status`.
 It prints one line when the state changes and prints the log tail once when the Job ends.
 A refused route or failed Job exits nonzero.
@@ -193,7 +190,7 @@ Without `WAMN_CONTROL_URL`, application and schema commands use the trusted path
 Unset that variable explicitly before trusted administration.
 That path uses the selected kubeconfig, database credentials, chart, and broker inputs below.
 Provisioning, `env apply`, internal SQL workers, platform schema commands, and status retain direct access.
-An adjacent `dev.json` keeps local source schema execution and adoption direct.
+An adjacent `dev.json` keeps local source schema execution direct.
 Read-only source schema diff also stays direct.
 GCP coverage and upgrades of persistent system databases remain outside this rebuild.
 
@@ -253,8 +250,8 @@ If observation fails, WAMN retains those facts. Retry the same selection after r
 
 ### Select SQL independently
 
-A schema fingerprint identifies the complete physical SQL, including authored and generated definitions.
-It excludes code versions, release digests, ordinary queries, and web files.
+SQLx migration versions and checksums identify applied SQL.
+Schema diff reports pending files, missing applied files, and checksum mismatches.
 `schema.mode` accepts `reset` and `migrate`.
 If omitted, the mode is `reset` only when `registry.environments.disposable` is true. Otherwise, it is `migrate`.
 An environment name or explicit `reset` mode grants no authority to discard data.
@@ -294,31 +291,24 @@ Earlier committed files remain applied.
 
 ### Reset target and recovery
 
-If selected physical SQL changes in authorized `reset` mode, schema apply replaces the whole project-environment database.
-Every application in that database loses its data, including stopped applications with retained schemas.
-Manual workflow definitions, queued runs, and other database-local state also disappear.
-An explicit schema reset performs that replacement even when the fingerprints match.
-Neither operation resets `wamn_system` or changes another environment's database.
+Every schema apply in `reset` mode resets application state in the existing project database.
+An explicit schema reset does the same work.
+The registry must authorize data loss by recording the environment as disposable.
+Neither operation resets `wamn_system` or another environment.
 
-Before stopping writers, WAMN resolves every retained schema, permission, and required published artifact.
-Missing sources, omitted installed applications, or conflicting definitions stop preparation before destruction.
-The executing SQL image must contain every recorded project file with its original checksum.
-The environment lock excludes application deployment during reset.
-`registry.environment_projects.pending_database` pins the complete inputs and a new initialization identity outside the database being replaced.
-CNPG sets the existing Database to `ensure: absent`, waits, then sets `ensure: present` under the same name and waits again.
-The SQL Job runs initialization SQL, then the pinned applied project files in order through SQLx.
-Files pending for the image stay pending after reset. Retries retain the pinned initialization identity and applied file set.
-An unavailable or changed file refuses each reset attempt before database replacement.
-Existing owners restore grants, bindings, release caches, and CDC.
-The broker discards only that environment's obsolete events while writers remain stopped.
-WAMN clears the pending record before resuming unchanged application selections.
+Before stopping users, WAMN resolves all retained package artifacts and validates their migration files.
+The lifecycle lock excludes application deployment during reset.
+Reset stops application hosts and event users.
+It drops the objects owned by the migration login and restores that login's grants.
+It clears application catalog state, runs, queued events, and authored workflows.
+It then applies every selected package's migrations in dependency order.
 
-After an interruption, repeat the same reset or schema apply.
-Before the recreated database carries the pinned initialization identity, retry can repeat deletion and creation.
-After that identity exists, retry preserves the recreated database and resumes SQL restoration and cleanup.
-If workload resume fails after the pending record clears, reapply the affected application's release.
-Inspect SQL records and the named failed resource before retrying. Do not clear pending inputs or manually drop application tables.
-Stale-event admission remains untested under `wamn-alrvy.19`.
+Platform-owned schemas, database credentials, CDC publications, and replication slots remain.
+The platform owns application schemas. The migration login owns the objects inside them.
+Schema publications therefore include recreated tables without rebuilding CDC.
+The database keeps its identity.
+After migrations succeed, WAMN resumes the existing application selections.
+If a reset fails, users remain stopped. Repair the failure and repeat the same schema apply with its release.
 
 ### Nontransactional SQL
 

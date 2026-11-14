@@ -121,7 +121,7 @@ pub struct ModelIr {
 /// structurally absent from what we read.
 ///
 /// The template keeps its AUTHORED parameter names. This is deliberately NOT
-/// `canonical_http_route_template` (`crates/schema/control/src/exposure.rs:351`):
+/// [`wamn_catalog::exposure::canonical_http_route_template`]:
 /// that collapses `{id}` to `{}` to build a route-COLLISION key, and a client
 /// handed the collapsed form would have no name to substitute into.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

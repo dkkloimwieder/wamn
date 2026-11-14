@@ -49,14 +49,13 @@ pub struct EnvironmentRow {
 pub struct Installed {
     /// The installed package baseline.
     pub current: String,
-    pub physical_schema_fingerprint: String,
 }
 
 /// What the project database holds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectState {
     pub installed: BTreeMap<String, Installed>,
-    pub schema_report: Option<wamn_package_control::schema_baseline::SchemaReport>,
+    pub schema_report: Option<crate::migrations::SchemaReport>,
     /// `(manifest_digest, component_digest, store_alias, instance_id)`.
     pub bindings: BTreeSet<(String, String, String, String)>,
 }
@@ -126,7 +125,7 @@ pub struct Notice {
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Observation {
     PlatformSchema {
-        report: wamn_package_control::schema_baseline::SchemaReport,
+        report: crate::migrations::SchemaReport,
     },
     SchemaDifference {
         installed: Option<String>,
@@ -227,9 +226,9 @@ pub async fn analyse(
     .await?;
     let revision = read_revision(platform, &release_name).await?;
     let live = read_live_set(platform, &release_name).await?;
-    let (packages, fingerprints) = match &release {
+    let packages = match &release {
         Some(release) => read_release_packages(platform, &release.manifest).await?,
-        None => (Vec::new(), BTreeMap::new()),
+        None => Vec::new(),
     };
     let mut binding_system = connect(&platform.system_database_url).await?;
     let bindings = super::bindings::analyse(&mut binding_system, document, &packages).await?;
@@ -276,13 +275,13 @@ pub async fn analyse(
         bail!("refused:\n- {}", refusals.join("\n- "));
     }
     let plan = plan(document, &authorities);
-    let mut notices = notices(document, application, &authorities, &fingerprints);
-    let report = wamn_package_control::schema_baseline::observe_system(&mut system).await?;
+    let mut notices = notices(document, application, &authorities);
+    let report = crate::platform_migrations::observe_system(&mut system).await?;
     if !report.warnings.is_empty() {
         notices.push(Notice {
             application: application.clone(),
             identity: format!(
-                "{}/registry.schema_baseline",
+                "{}/registry._sqlx_migrations",
                 wamn_postgres::identity(&platform.system_database_url)?.1
             ),
             observed: Observation::PlatformSchema { report },
@@ -307,12 +306,8 @@ pub async fn analyse(
 pub(super) async fn read_release_packages(
     platform: &Platform,
     manifest: &ServingManifest,
-) -> anyhow::Result<(
-    Vec<wamn_compiler::manifest::PackageManifest>,
-    BTreeMap<String, String>,
-)> {
+) -> anyhow::Result<Vec<wamn_compiler::manifest::PackageManifest>> {
     let mut packages = Vec::new();
-    let mut fingerprints = BTreeMap::new();
     for package in &manifest.release.packages {
         let (id, version) = (package.package_id(), package.package_version());
         let opened = super::stage::open(platform, id, version).await?;
@@ -321,15 +316,9 @@ pub(super) async fn read_release_packages(
             &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
         )
         .with_context(|| format!("parse {}", path.display()))?;
-        fingerprints.insert(
-            id.to_owned(),
-            wamn_compiler::build_record::physical_schema_fingerprint(&wamn_compiler::output_root(
-                opened.root(),
-            ))?,
-        );
         packages.push(package_manifest);
     }
-    Ok((packages, fingerprints))
+    Ok(packages)
 }
 
 /// The actor: the identity principal the CLI authenticates as, or `$USER`
@@ -425,7 +414,7 @@ pub async fn read_project(
         .context("bind the project identity")?;
     let mut installed = BTreeMap::<String, Installed>::new();
     for row in sqlx::query(
-        "SELECT package_id, package_version, physical_schema_fingerprint FROM catalog.packages \
+        "SELECT package_id, package_version FROM catalog.packages \
               WHERE project_env_key = $1",
     )
     .bind(project_env_key)
@@ -437,7 +426,6 @@ pub async fn read_project(
             row.get(0),
             Installed {
                 current: row.get(1),
-                physical_schema_fingerprint: row.get(2),
             },
         );
     }
@@ -452,8 +440,7 @@ pub async fn read_project(
     .into_iter()
     .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
     .collect();
-    let schema_report =
-        Some(wamn_package_control::schema_baseline::observe_project(&mut transaction).await?);
+    let schema_report = Some(crate::platform_migrations::observe_project(&mut transaction).await?);
     transaction.commit().await.context("end the project read")?;
     Ok(Some(ProjectState {
         installed,
@@ -819,55 +806,6 @@ pub async fn replica_refusals(
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn project_schema_notices_require_a_warning() {
-        use wamn_package_control::schema_baseline::{InitializationIdentity, SchemaReport};
-        let document = EnvironmentDocument::from_json(
-            br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#,
-        ).unwrap();
-        let mut authorities = Authorities {
-            release_name: String::new(),
-            connections: BTreeMap::new(),
-            artifact_bindings: BTreeSet::new(),
-            policy: Policy {
-                name: "dev".into(),
-                readiness_budget_seconds: 30,
-                drain_bound_seconds: 30,
-            },
-            row: None,
-            project: Some(ProjectState {
-                schema_report: Some(SchemaReport {
-                    initialization: Some(InitializationIdentity {
-                        sha256: wamn_control_provision::schema_baseline::project_sha256(),
-                        installed_at: "identity".into(),
-                    }),
-                    installed: vec![],
-                    pending: vec![],
-                    uncertain: vec![],
-                    missing: vec![],
-                    warnings: vec![],
-                }),
-                ..ProjectState::default()
-            }),
-            release: None,
-            revision: None,
-            live: BTreeMap::new(),
-        };
-        assert!(notices(&document, "app", &authorities, &BTreeMap::new()).is_empty());
-        let report = authorities
-            .project
-            .as_mut()
-            .unwrap()
-            .schema_report
-            .as_mut()
-            .unwrap();
-        report.initialization = None;
-        report.warnings.push("initialization is absent".into());
-        assert!(notices(&document, "app", &authorities, &BTreeMap::new()).iter().any(|notice| {
-            matches!(&notice.observed, Observation::PlatformSchema { report } if !report.warnings.is_empty())
-        }));
-    }
 
     #[test]
     fn an_exclusive_cloud_connection_requires_one_explicit_replica() {

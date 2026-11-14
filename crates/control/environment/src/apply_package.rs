@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 
+use wamn_catalog::package_schema::{PackageDirectory, package_metadata};
 use wamn_compiler::manifest::PackageManifest;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_schema_control::{PackageDirectory, package_metadata};
 
 mod entity_maps;
 mod error;
@@ -24,8 +24,10 @@ pub use error::{
 };
 pub use local_target::{manifest_digest, record_manifest};
 pub use package_version::{
-    LOCK_PACKAGE_SQL, PackageRoot, load_applied_package, read_applied_package,
-    read_package_directory, read_package_migrations, read_package_root,
+    LOCK_PACKAGE_SQL, load_applied_package, read_applied_package, read_package_migrations,
+};
+pub use wamn_package_control::package_source::{
+    PackageRoot, read_package_directory, read_package_root,
 };
 
 pub const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
@@ -67,7 +69,7 @@ impl ApplyPackageRequest {
 
 /// Read the existing component repository variable with the package registry's transport.
 pub fn component_source_from_env(
-    registry: Option<&crate::package_artifact::PackageRegistry>,
+    registry: Option<&wamn_package_control::package_artifact::PackageRegistry>,
 ) -> anyhow::Result<Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>>
 {
     use wamn_runtime::component_artifact_source::{
@@ -140,8 +142,8 @@ pub(crate) async fn prepare_package(root: &PackageRoot) -> anyhow::Result<Prepar
     package_metadata(&directory).context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
-    let migration_root = package_version::migration_root(&root.path);
-    let migrations = wamn_schema_control::migrations::migrator(&migration_root).await?;
+    let migration_root = wamn_package_control::package_source::migration_root(&root.path);
+    let migrations = wamn_compiler::migrations::migrator(&migration_root).await?;
     Ok(PreparedPackage {
         component_source: None,
         root: root.path.clone(),
@@ -309,7 +311,7 @@ async fn apply(
     };
     let applied = load_applied_package(&mut tx, project_env_key, &package_id).await?;
     if !advance_schema && let Some(installed) = &applied {
-        wamn_schema_control::validate_package_schema_source(
+        wamn_catalog::package_schema::validate_package_schema_source(
             &plan.coordinate,
             artifact_digest,
             installed,
@@ -323,7 +325,7 @@ async fn apply(
         });
     }
     if let Some(installed) = &applied {
-        wamn_schema_control::validate_package_schema_source(
+        wamn_catalog::package_schema::validate_package_schema_source(
             &plan.coordinate,
             artifact_digest,
             installed,
@@ -333,7 +335,7 @@ async fn apply(
     let mut tx = migration::begin(client, project_env_key).await?;
     let mut changed = false;
     if applied.is_none() {
-        changed |= crate::connection_requirement::install(
+        changed |= wamn_package_control::connection_requirement::install(
             &mut tx,
             project_env_key,
             &package.root,
@@ -421,7 +423,7 @@ pub(crate) async fn bind_apply_package_principal(
 
 async fn ensure_model_schemas(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    plan: &wamn_schema_control::PackageMigrationPlan,
+    plan: &wamn_catalog::package_schema::PackageMetadata,
     login: &str,
 ) -> anyhow::Result<()> {
     let schemas = plan
@@ -436,8 +438,8 @@ async fn ensure_model_schemas(
         .collect::<BTreeSet<_>>();
     let role = postgres_protocol::escape::escape_identifier(login);
     for schema in schemas {
-        let schema = wamn_schema_control::BareSchemaName::new(schema)?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION {role}; GRANT USAGE, CREATE ON SCHEMA {} TO {role}", schema.quoted(), schema.quoted())))
+        let schema = wamn_postgres::schema::BareSchemaName::new(schema)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION wamn_db_owner; GRANT USAGE, CREATE ON SCHEMA {} TO {role}", schema.quoted(), schema.quoted())))
             .execute(&mut **tx).await?;
     }
     Ok(())

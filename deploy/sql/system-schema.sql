@@ -780,7 +780,6 @@ CREATE TABLE registry.environment_projects (
     secret_namespace text,
     instance_suffix  text NOT NULL,
     -- Reset inputs and fresh initialization identity, retained outside the recreated database.
-    pending_database jsonb,
     -- The route host the environment document declares (docs/architecture/overview.md#environment-lifecycle).
     route_host       text
         CONSTRAINT project_envs_route_host_check

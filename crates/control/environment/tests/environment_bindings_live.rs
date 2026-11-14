@@ -808,10 +808,7 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() 
         .unwrap()
         .unwrap();
     assert_eq!(observed.installed["fixture"].current, "1.0.0");
-    assert_eq!(
-        observed.installed["fixture"].physical_schema_fingerprint,
-        fingerprint
-    );
+
     sqlx::raw_sql("REVOKE SELECT ON catalog.packages FROM wamn_db_owner")
         .execute(&mut client)
         .await

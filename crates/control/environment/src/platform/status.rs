@@ -1015,8 +1015,7 @@ async fn database(target: &Target) -> anyhow::Result<Observation> {
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
         let state = crate::provision_system::system_state(&mut transaction).await?;
-        let report =
-            wamn_package_control::schema_baseline::observe_system(&mut transaction).await?;
+        let report = crate::platform_migrations::observe_system(&mut transaction).await?;
         let result = database_state(&state, &report);
         transaction.rollback().await?;
         Ok(result)
@@ -1026,18 +1025,12 @@ async fn database(target: &Target) -> anyhow::Result<Observation> {
 
 fn database_state(
     state: &crate::provision_system::SystemState,
-    report: &wamn_package_control::schema_baseline::SchemaReport,
+    report: &crate::migrations::SchemaReport,
 ) -> Observation {
     use crate::provision_system::SystemState;
-    // system_state compares with its executable. Status reports only recorded database facts.
     let category = match state {
-        SystemState::Complete | SystemState::BaselineMismatch { .. }
-            if report.initialization.is_some() =>
-        {
-            Category::Ready
-        }
+        SystemState::Complete => Category::Ready,
         SystemState::Absent | SystemState::Incomplete => Category::Incomplete,
-        _ => Category::Unknown,
     };
     let mut result = observation(
         "PostgreSQL/wamn_system",
@@ -1569,42 +1562,6 @@ mod tests {
         assert_eq!(
             endpoints("hosts/Service/control", None).category,
             Category::Unknown
-        );
-    }
-
-    #[test]
-    fn installed_baseline_is_not_judged_against_the_status_executable() {
-        use crate::provision_system::SystemState;
-        use wamn_package_control::schema_baseline::{InitializationIdentity, SchemaReport};
-        let state = SystemState::BaselineMismatch {
-            installed: "installed-hash".into(),
-            expected: "local-executable-hash".into(),
-        };
-        let mut report = SchemaReport {
-            initialization: Some(InitializationIdentity {
-                sha256: "installed-hash".into(),
-                installed_at: "original-identity".into(),
-            }),
-            installed: vec![],
-            pending: vec![],
-            uncertain: vec![],
-            missing: vec![],
-            warnings: vec![],
-        };
-        let observed = database_state(&state, &report);
-        assert_eq!(observed.category, Category::Ready);
-        let identity = report.initialization.as_ref().unwrap();
-        assert!(observed.facts.iter().any(|fact| {
-            fact.contains(&identity.sha256) && fact.contains(&identity.installed_at)
-        }));
-        report.initialization = None;
-        assert_eq!(
-            database_state(&SystemState::Absent, &report).category,
-            Category::Incomplete
-        );
-        assert_eq!(
-            database_state(&SystemState::Incomplete, &report).category,
-            Category::Incomplete
         );
     }
 

@@ -615,7 +615,6 @@ async fn database_state(run: &Run) -> anyhow::Result<Value> {
         .context("CNPG primary")?;
     // Read existing product data only. Password enrollment supplies the user mutation.
     let sql = "SELECT json_build_object(
-        'baseline', (SELECT row_to_json(b) FROM registry.schema_baseline b),
         'orgs', (SELECT json_agg(json_build_array(id, created_at) ORDER BY id) FROM registry.orgs),
         'passwords', (SELECT json_agg(json_build_array(principal_id, created_at) ORDER BY principal_id) FROM identity.password_credentials),
         'environments', (SELECT count(*) FROM registry.environment_projects))";

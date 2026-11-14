@@ -5,11 +5,10 @@ pub fn fixture_manifest() -> Vec<u8> {
 }
 
 /// Copy the compiled schema fixture as an unpacked package.
-#[cfg(test)]
-pub(crate) fn copy_schema_fixture(root: &std::path::Path) {
+pub fn copy_schema_fixture(root: &std::path::Path) {
     let source =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
-    let directory = crate::apply_package::read_package_directory(&source).unwrap();
+    let directory = crate::package_source::read_package_directory(&source).unwrap();
     std::fs::create_dir_all(root.join("generated")).unwrap();
     std::fs::create_dir_all(root.join("migrations")).unwrap();
     std::fs::write(root.join("generated/wamn.json"), directory.manifest_bytes).unwrap();

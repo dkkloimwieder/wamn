@@ -21,9 +21,6 @@ use crate::provision_project_env::{
 };
 use wamn_postgres::connect;
 
-/// The run-plane schema of every environment.
-pub(super) const RUN_SCHEMA: &str = "wamn_run";
-
 /// How long one CR may take to report `status.applied`.
 const APPLIED_TIMEOUT: &str = "--timeout=120s";
 
@@ -515,20 +512,28 @@ pub(crate) async fn ensure_project_database_with_migrations(
         postgres_protocol::escape::escape_identifier(&database),
     ))).execute(&mut *admin).await.map(drop)?;
     ensure_migration_role(admin).await?;
-    let request = crate::reconcile_run_plane::ReconcileRunPlaneRequest {
-        platform_migration_database_url: None,
-        system_database_url: platform.system_database_url.clone(),
-        admin_database_url: project_admin.clone(),
-        org: document.org.clone(),
-        project: document.project.clone(),
-        env: document.env.clone(),
-        schema: RUN_SCHEMA.to_owned(),
-        dry_run: false,
-        changes: platform.auth_changes().await?,
-    };
-    crate::reconcile_run_plane::reconcile_run_plane_with_migrations(request, sources)
-        .await
-        .context("reconcile the run plane")?;
+    let mut project = connect(&project_admin).await?;
+    if crate::platform_migrations::install_project(&mut project).await? {
+        let migration_input = crate::provision_project_env::workload::provision_platform_migration(
+            &project_admin,
+            wamn_control_provision::migrations::MigrationDatabase::Project,
+        )
+        .await?;
+        crate::platform_migrations::restore_project(&migration_input, sources).await?;
+    }
+    let key = wamn_registry::project_env_key(&document.org, &document.project, &document.env);
+    wamn_platform_identity::environment::fill(
+        &platform.system_database_url,
+        &project_admin,
+        wamn_platform_identity::application::ApplicationTarget {
+            org: &document.org,
+            project: &document.project,
+            env: &document.env,
+            project_env_key: &key,
+        },
+        &platform.auth_changes().await?,
+    )
+    .await?;
     Ok(project_admin)
 }
 
@@ -675,7 +680,7 @@ pub(crate) async fn ensure_cdc_inputs(
     let mut project =
         super::analyse::connect_project(&project_url(platform, &triple).await?).await?;
     let mut full = sqlx::query(sqlx::AssertSqlSafe(
-        (wamn_schema_control::select_replica_identity_sql()).to_string(),
+        (crate::replica_identity::select_replica_identity_sql()).to_string(),
     ))
     .bind(&schemas)
     .fetch_all(&mut project)
@@ -690,10 +695,10 @@ pub(crate) async fn ensure_cdc_inputs(
             if !full.insert((model.schema.clone(), model.table.clone())) {
                 continue;
             }
-            let sql = wamn_schema_control::alter_replica_identity_sql(
+            let sql = crate::replica_identity::alter_replica_identity_sql(
                 &model.schema,
                 &model.table,
-                wamn_schema_control::ReplicaIdentity::Full,
+                crate::replica_identity::ReplicaIdentity::Full,
             );
             sqlx::raw_sql(sqlx::AssertSqlSafe(sql.clone()))
                 .execute(&mut project)
@@ -750,24 +755,13 @@ pub(crate) async fn ensure_cdc_inputs(
     let image = wamn_release_control::release_chart::image_set(&platform.chart)
         .await?
         .host;
-    let mut deployment = crate::enable_cdc_project_env::reader_deployment(
+    let deployment = crate::enable_cdc_project_env::reader_deployment(
         &triple,
         namespace,
         &image,
         events.stream_replicas,
         events.dup_window_secs,
     );
-    if crate::provision_project_env::registry::pending_database(
-        &mut connect(&platform.system_database_url).await?,
-        &triple,
-    )
-    .await?
-    .is_some()
-    {
-        crate::enable_cdc_project_env::pause_event_reader(&platform.system_database_url, &triple)
-            .await?;
-        deployment["spec"]["replicas"] = 0.into();
-    }
     wamn_kubernetes::kubectl::apply(
         &platform.target.kubeconfig,
         &platform.target.context,

@@ -311,13 +311,6 @@ const ROUTES: &[HostRoute] = &[
     },
     HostRoute {
         set: HostRouteSet::Control,
-        operation: "schema.adopt",
-        type_: OperationType::Command,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::OperationJob,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
         operation: "operation.status",
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,

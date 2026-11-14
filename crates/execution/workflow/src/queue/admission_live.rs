@@ -13,6 +13,7 @@ use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_compo
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::CredentialType;
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_postgres::schema::BareSchemaName;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
@@ -21,7 +22,6 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, EventBatchAdmission, ProjectConfig, ReleaseIdentity,
     SessionIdentity, StaticCredentialProvider, WamnPostgres,
 };
-use wamn_schema_control::BareSchemaName;
 use wash_runtime::host::probes::Liveness;
 
 use crate::{PostgresWorkflows, RouterDriver, WorkflowErrorType, Workflows as _};
@@ -110,18 +110,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         .execute(&mut admin)
         .await
         .map(drop)?;
-    wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, true).await?;
-    let converged =
-        wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, false)
-            .await?;
-    assert!(
-        converged.actions.is_empty(),
-        "run schema did not converge: {converged:?}"
-    );
-    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
-        .execute(&mut admin)
-        .await
-        .map(drop)?;
+    wamn_environment_control::platform_migrations::install_project(&mut admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::platform_principals_sql("automation.invalid")?).to_string(),
     ))
@@ -133,7 +122,6 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
       INSERT INTO platform.role (name) VALUES ('automation');
       INSERT INTO platform.user_role (user_id,role_name) VALUES ('{SERVICE}','automation');
       INSERT INTO platform.permission (role_name,permission) VALUES ('automation','{REFERENCE}'), ('automation','wamn-control:workflow/start');
-      INSERT INTO wamn_run.environment_policies (project_env_key,expected_environment) VALUES ('{PROJECT_ENV_KEY}','test');
       INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( '{PROJECT_ENV_KEY}','automation','1.0.0','{HASH}');"))).execute(&mut admin).await.map(drop)?;
     let engine = Arc::new(build_engine(&[])?);
     let bytes = match mode {

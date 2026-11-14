@@ -9,7 +9,6 @@ targets = [
   { workspace="root", package="wamn-ctl", target="test:control_operations", tier="contract" },
   { workspace="root", package="wamn-ctl", target="test:application_publication", tier="contract" },
   { workspace="root", package="wamn-ctl", target="test:source_deploy_live", tier="live-postgres" },
-  { workspace="root", package="wamn-ctl", target="test:reset_lock_live", tier="live-postgres" },
   { workspace="root", package="wamn-ctl", target="test:platform_update", tier="live-postgres" },
   { workspace="root", package="wamn-integration-tests", target="bin:http-fixture", tier="contract" },
   { workspace="root", package="wamn-catalog", target="lib:wamn_catalog", tier="contract" },
@@ -39,7 +38,7 @@ targets = [
   { workspace="root", package="wamn-environment-control", target="test:application_activation_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:environment_delete_live", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:application_composition", tier="contract" },
-  { workspace="root", package="wamn-package-control", target="test:migrations_live", tier="live-postgres" },
+  { workspace="root", package="wamn-environment-control", target="test:migrations_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:capture_gap_live", tier="live-nats" },
   { workspace="root", package="wamn-environment-control", target="test:connection_binding_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:control_generation_live", tier="live-postgres" },
@@ -67,8 +66,6 @@ targets = [
   { workspace="root", package="wamn-release-control", target="test:release_permissions_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:replica_identity_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:rest_connector_publication", tier="live-postgres" },
-  { workspace="root", package="wamn-environment-control", target="test:run_plane_live", tier="live-postgres" },
-  { workspace="root", package="wamn-environment-control", target="test:run_record_history_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:system_record_history_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:workflow_event_nats", tier="live-nats" },
   { workspace="root", package="wamn-environment-control", target="test:workflow_lifecycle_live", tier="live-nats" },
@@ -139,6 +136,7 @@ targets = [
   { workspace="root", package="wamn-platform-identity", target="test:connection_drops_live", tier="live-nats" },
   { workspace="root", package="wamn-platform-identity", target="test:grant_authority_live", tier="live-postgres" },
   { workspace="root", package="wamn-platform-identity", target="test:identity_live", tier="live-postgres" },
+  { workspace="root", package="wamn-platform-identity", target="test:environment_fill", tier="live-postgres" },
   { workspace="root", package="wamn-platform-identity", target="test:integration_administration", tier="live-postgres" },
   { workspace="root", package="wamn-platform-identity", target="test:integration_references", tier="live-postgres" },
   { workspace="root", package="wamn-platform-identity", target="test:org_live", tier="live-postgres" },
@@ -179,7 +177,6 @@ targets = [
   { workspace="root", package="wamn-runtime", target="test:session_route_authentication", tier="live-postgres" },
   { workspace="root", package="wamn-runtime", target="test:session_verifier", tier="contract" },
   { workspace="root", package="wamn-runtime", target="test:sqlx_transaction_live", tier="live-postgres" },
-  { workspace="root", package="wamn-schema-control", target="lib:wamn_schema_control", tier="contract" },
   { workspace="root", package="wamn-compiler", target="lib:wamn_compiler", tier="live-postgres" },
   { workspace="root", package="wamn-compiler", target="test:build_live", tier="live-postgres" },
   { workspace="root", package="wamn-compiler", target="test:client_component", tier="contract" },
@@ -509,7 +506,7 @@ prerequisites = ["fixture-components"]
 
 [[preparation]]
 packages = ["wamn-environment-control"]
-target = ["lib:wamn_environment_control", "test:provision_system_live", "test:run_plane_live"]
+target = ["lib:wamn_environment_control", "test:provision_system_live"]
 prerequisites = ["fixture"]
 
 [[preparation]]
@@ -842,7 +839,7 @@ resource_lock = ""
 id = "package-executor"
 tier = "live-postgres"
 workspace = "root"
-package = "wamn-package-control"
+package = "wamn-environment-control"
 target = ["test:migrations_live"]
 tests = []
 features = []

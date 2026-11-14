@@ -181,30 +181,8 @@ pub(crate) fn notices(
     document: &EnvironmentDocument,
     application: &str,
     authorities: &Authorities,
-    fingerprints: &std::collections::BTreeMap<String, String>,
 ) -> Vec<Notice> {
     let mut notices = Vec::new();
-    for (package, selected) in fingerprints {
-        let installed = authorities
-            .project
-            .as_ref()
-            .and_then(|project| project.installed.get(package));
-        if installed.map(|installed| &installed.physical_schema_fingerprint) != Some(selected) {
-            notices.push(Notice {
-                application: application.to_owned(),
-                identity: format!(
-                    "{}/{}/{}/catalog.packages/{package}",
-                    document.org, document.project, document.env
-                ),
-                observed: Observation::SchemaDifference {
-                    installed: installed
-                        .map(|installed| installed.physical_schema_fingerprint.clone()),
-                    selected: selected.clone(),
-                },
-                next_action: format!("Inspect {application} with wamn schema diff and pass the environment.k file to --env"),
-            });
-        }
-    }
     if let Some(report) = authorities
         .project
         .as_ref()
@@ -214,7 +192,7 @@ pub(crate) fn notices(
         notices.push(Notice {
             application: application.to_owned(),
             identity: format!(
-                "{}/{}/{}/platform.schema_baseline",
+                "{}/{}/{}/platform._sqlx_migrations",
                 document.org, document.project, document.env
             ),
             observed: Observation::PlatformSchema { report: report.clone() },

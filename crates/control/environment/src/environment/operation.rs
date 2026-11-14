@@ -17,15 +17,16 @@ pub async fn schema(
     application: &str,
     release: Option<&str>,
     apply: bool,
-    resolution: Option<&wamn_package_control::apply_package::MigrationResolution>,
+
     administrator: Option<&str>,
 ) -> anyhow::Result<sql::schema::Diff> {
     let document = EnvironmentDocument::read_deployed(platform, file, Some(application)).await?;
     let (release, candidates) =
         sql::schema::release_candidates(platform, &document, application, release).await?;
     let state = sql::schema::state(platform, &document).await?;
-    let diff = sql::schema::plan(&document, application, Some(release), &candidates, &state)?;
-    if resolution.is_none() && diff.requires_reset() && diff.disposable == Some(true) {
+    let diff =
+        sql::schema::plan(&document, application, Some(release), &candidates, &state).await?;
+    if diff.mode == super::document::SchemaMode::Reset && diff.disposable == Some(true) {
         sql::schema::reset_candidates(platform, &diff, candidates).await?;
     }
     if apply {
@@ -33,13 +34,7 @@ pub async fn schema(
             .release
             .as_deref()
             .context("schema apply needs a published release")?;
-        wamn_package_control::apply_package::resolution_package(
-            resolution,
-            diff.packages
-                .keys()
-                .map(|id| (id.as_str(), state.migration_records(id))),
-        )?;
-        if resolution.is_none() && diff.requires_reset() {
+        if diff.mode == super::document::SchemaMode::Reset {
             if let Some(admin) = administrator {
                 Box::pin(sql::reset::reset_deployed_with_admin(
                     platform,
@@ -59,12 +54,11 @@ pub async fn schema(
         } else if let Some(admin) = administrator {
             let expected = sql::ExpectedDatabase::read(platform, &document).await?;
             let lock = expected.lock(platform, &document, false).await?;
-            sql::schema::apply(platform, &document, application, release, admin, resolution)
-                .await?;
+            sql::schema::apply(platform, &document, application, release, admin).await?;
             super::ensure::ensure_cdc_inputs(platform, &document, Some(admin)).await?;
             lock.release().await;
         } else {
-            sql::apply_deployed(platform, &document, application, release, resolution).await?;
+            sql::apply_deployed(platform, &document, application, release).await?;
         }
     }
     Ok(diff)
@@ -80,7 +74,6 @@ pub struct Request<'a> {
     pub env: &'a str,
     pub application: Option<&'a str>,
     pub release: Option<&'a str>,
-    pub resolution: Option<&'a wamn_package_control::apply_package::MigrationResolution>,
 }
 
 /// Prepare in-cluster inputs, then invoke the existing operation owner.
@@ -95,7 +88,7 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
     ensure!(
         matches!(
             request.operation,
-            "deploy" | "rollback" | "diff" | "apply" | "reset" | "adopt"
+            "deploy" | "rollback" | "diff" | "apply" | "reset"
         ),
         "unknown application operation"
     );
@@ -153,7 +146,7 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
     let file = Path::new("/work/environment.json");
     std::fs::write(file, serde_json::to_vec(&document)?)?;
     super::runtime::resolve_platform(&mut platform, request.org).await?;
-    let administrator = if matches!(request.operation, "apply" | "reset" | "adopt") {
+    let administrator = if matches!(request.operation, "apply" | "reset") {
         let cluster = sql::reset::recorded_cluster(&platform, &document).await?;
         Some(crate::platform::operations::administrator(&cluster)?)
     } else {
@@ -192,7 +185,6 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
                     .context("schema operation requires an application")?,
                 request.release,
                 request.operation == "apply",
-                request.resolution,
                 administrator.as_deref(),
             )
             .await?;
@@ -206,23 +198,6 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
                 administrator.as_deref().context("reset administrator")?,
             ))
             .await
-        }
-        "adopt" => {
-            let expected = sql::ExpectedDatabase::read(&platform, &document).await?;
-            let lock = expected.lock(&platform, &document, false).await?;
-            let identity = sql::schema::state(&platform, &document)
-                .await?
-                .initialization_identity
-                .context("adoption requires an initialization identity")?;
-            let adopted = sql::schema::adopt_application(
-                &platform,
-                &document,
-                &identity,
-                request.application,
-            )
-            .await?;
-            lock.release().await;
-            Ok(json!({"adopted":adopted,"sql_executed":false,"live_verified":false}))
         }
         _ => unreachable!("operation was validated before execution"),
     }

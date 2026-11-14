@@ -244,3 +244,5 @@ pub fn require_identity(input: &str, username: &str, database: &str) -> anyhow::
     }
     Ok(())
 }
+
+pub mod schema;

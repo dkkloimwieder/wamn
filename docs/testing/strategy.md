@@ -43,9 +43,9 @@ For critical invariants, test success, refusal or failure, and [detection of a d
 
 | WAMN behavior | Smallest useful boundary | What deployed verification adds |
 |---|---|---|
-| Mode parsing, selection changes, physical fingerprints | Product parser/planner | Correct configuration passed to execution |
+| Mode parsing and selection changes | Product parser/planner | Correct configuration passed to execution |
 | Supported migration SQL and package ownership | Actual validator and publication interface | Published bytes reach the selected SQL Job |
-| Migration effects, retries, adoption and checksums | Actual executor with real PostgreSQL | Image, credentials, network and Job invocation |
+| Initialization, migration effects, retries and SQLx checksums | Actual executor with real PostgreSQL | Image, credentials, network and Job invocation |
 | Permissions and runtime grants | Actual authorized operation with its database | Certificate and credential delivery through deployment |
 | Event admission and release pinning | Admission operation with PostgreSQL/NATS as required | Host selection and lifecycle wiring |
 | Component composition and WIT behavior | Real component composition and invocation | Registry access and wasmCloud placement |
@@ -65,7 +65,7 @@ For example, PostgreSQL establishes migration retry behavior, while one SQL-Job 
 A Helm-only test tests Helm reapply/recovery and makes no application-data assertion.
 
 Project meaningful state rather than comparing all database rows or Kubernetes metadata.
-For code-only deployment, test application data and scheman identity; permit the targeted control writes accepted in `docs/plan/deploy.md` under Deployment ownership.
+For code-only deployment, test application data and schema identity; permit the targeted control writes accepted in `docs/plan/deploy.md` under Deployment ownership.
 Release-cache additions, application bindings and targeted grants are not forbidden application-data mutations.
 Make sure of beta's effective permissions as well as its release where permission isolation is the requirement.
 
@@ -82,24 +82,24 @@ After apply, read 8 and the matching applied migration record; apply the same by
 The sequence 7 → 8 → 8 distinguishes zero, one and repeated effects.
 Use an execution-time PostgreSQL failure in an ordinary migration to make sure of rollback of both effects and its completion record; a validator refusal cannot establish transaction rollback.
 
-### Nontransactional outcomes remain explicit
+### SQLx owns migration history and retry
 
-`docs/plan/deploy.md`, SQL execution, specifies one standalone statement in a file beginning with `-- wamn:no-transaction`, with committed `started` then `applied` results.
-The resolution and completion owner is `crates/control/package/src/apply_package/migration.rs` (`MigrationResolution`, `resolution_package`, `complete`).
-Adoption is distinct from execution; do not treat an adopted record as evidence that SQL ran.
-
-Test at the PostgreSQL executor boundary:
+Environment lifecycle applies package migrations through SQLx `Migrator`.
+Initialization installs the platform schemas once. Later platform schema apply runs new migrations.
+Test effects and SQLx history through the PostgreSQL interface:
 
 | Case | Required observation |
 |---|---|
-| Success | Actual schema effect and matching applied package/path/checksum |
-| Uncertain completion | A remaining started record prevents silent replay |
-| Explicit applied resolution | Completion is accepted without executing the statement again |
-| Explicit retry | The recorded bytes run only after the user requests retry; changed bytes are refused |
-| Competing execution/resolution | Resolution cannot race the worker still executing the statement |
+| Reapply | Completed migrations do not repeat their effects |
+| Changed or missing migration | SQLx refuses the source without changing application data |
+| Transactional failure | Effects and the history record roll back together |
+| Nontransactional failure | A failure can leave committed effects without a history record. Inspect effects before retry. |
+| Reset | Both applications lose their data. Code selections stay. Workloads stop and resume. |
 
-Use `CREATE INDEX CONCURRENTLY` to reach the actual nontransactional path and inspect index validity.
-An error alone does not establish absence of effects; the test must not automatically repair the index before observing the outcome.
+Use SQLx's `-- no-transaction` directive for a nontransactional migration.
+Use `CREATE INDEX CONCURRENTLY` and inspect index validity through PostgreSQL.
+Reset keeps platform schemas, credentials and CDC objects. It clears application write claims,
+runs, authored workflows and queued events before restoring selected releases.
 
 ### Published execution must not depend on source
 

@@ -1,6 +1,7 @@
 //! Environment provisioning, reconciliation, and platform operations for the CLI and test support.
 
 pub mod api_service;
+pub mod apply_package;
 pub mod author_workflow;
 pub mod capture_gap;
 #[cfg(feature = "ops")]
@@ -11,6 +12,7 @@ pub mod environment;
 pub mod ident;
 pub mod identity_issuer;
 pub mod invite;
+pub mod migrations;
 pub mod org_connection;
 pub mod platform;
 pub mod platform_migrations;
@@ -22,8 +24,7 @@ pub mod prune_record_history;
 #[cfg(feature = "ops")]
 pub mod prune_run_history;
 pub mod reconcile_replica_identity;
-pub mod reconcile_run_plane;
-pub mod verification_policy;
+pub mod replica_identity;
 pub mod workflow_lifecycle;
 
 #[cfg(test)]

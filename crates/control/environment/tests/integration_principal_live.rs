@@ -10,8 +10,8 @@ use wamn_engine::router_delivery::authorize_registered_operation;
 use wamn_environment_control::environment::stage::{
     materialize_application_principals, write_release,
 };
+use wamn_postgres::schema::BareSchemaName;
 use wamn_runtime::plugins::route_authentication::queued_run_caller;
-use wamn_schema_control::BareSchemaName;
 
 const PROJECT_ENV_KEY: &str = "acme--dev--erp";
 const OPERATION: &str = "consumer:item/import@1.0.0";
@@ -31,37 +31,13 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     let project = wamn_test_postgres::database();
     let mut admin = connect(project.url()).await?;
     let schema = BareSchemaName::new("wamn_run")?;
-    wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, true).await?;
-    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
-        .execute(&mut admin)
-        .await
-        .map(drop)?;
+    wamn_environment_control::platform_migrations::install_project(&mut admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::platform_principals_sql("example.invalid")?).to_string(),
     ))
     .execute(&mut admin)
     .await
     .map(drop)?;
-    // Simulate the old service CHECK constraint and exercise the actual schema transition.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("ALTER TABLE wamn_run.runs DROP CONSTRAINT runs_service_principal_check;
-        ALTER TABLE wamn_run.runs ADD CONSTRAINT runs_service_principal_check CHECK (
-          (trigger_source IS NOT DISTINCT FROM 'automation') = (service_principal_id IS NOT NULL));
-        ALTER TABLE wamn_run.runs DROP CONSTRAINT runs_execution_grain_check;
-        ALTER TABLE wamn_run.runs ADD CONSTRAINT runs_execution_grain_check CHECK (
-          trigger_source IS DISTINCT FROM 'schedule' OR service_principal_id IS NULL)")
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, true).await?;
-    assert!(
-        wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, false)
-            .await?
-            .actions
-            .is_empty()
-    );
     sqlx::query("SELECT set_config('app.user_id', $1, false)")
         .bind(
             &wamn_control_provision::PlatformComponent::Provisioning
@@ -71,7 +47,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         .execute(&mut admin)
         .await
         .map(|result| result.rows_affected())?;
-    sqlx::query("INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) VALUES ($1, 'dev')").bind(&PROJECT_ENV_KEY).execute(&mut admin).await.map(|result| result.rows_affected())?;
+
     for package in ["consumer", "integration"] {
         sqlx::query("INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( $1,$2,'1.0.0',$3)").bind(&PROJECT_ENV_KEY).bind(&package).bind(&format!("sha256:{}", "a".repeat(64))).execute(&mut admin).await.map(|result| result.rows_affected())?;
     }

@@ -602,10 +602,19 @@ async fn seed_with_client(
         "components": {},
     });
     let package_artifact_digest = wamn_digest::canonical_json_sha256(&package_manifest);
-    sqlx::query("INSERT INTO catalog.packages \
-                    (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
-             VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)").bind(PROJECT_ENV_KEY).bind(PACKAGE).bind(PACKAGE_VERSION).bind(&package_artifact_digest).execute(&mut *client).await.map(|result| result.rows_affected())
-        .context("seed the exact package coordinate")?;
+    sqlx::query(
+        "INSERT INTO catalog.packages \
+                    (project_env_key, package_id, package_version, artifact_digest) \
+             VALUES ($1, $2, $3, $4)",
+    )
+    .bind(PROJECT_ENV_KEY)
+    .bind(PACKAGE)
+    .bind(PACKAGE_VERSION)
+    .bind(&package_artifact_digest)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())
+    .context("seed the exact package coordinate")?;
     // The release is its manifest bytes under their digest; package and
     // component membership are read from them.
     let canonical_release = release.manifest().canonical_bytes();
@@ -739,8 +748,8 @@ async fn seed_additional_wirings(
     if package != PACKAGE {
         let manifest = serde_json::json!({"package": {"id": package, "version": package_version},
             "models": {}, "custom_operations": {}, "queries": {}, "connections": {}, "components": {}});
-        sqlx::query("INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
-             VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)").bind(PROJECT_ENV_KEY).bind(package).bind(package_version).bind(wamn_digest::canonical_json_sha256(&manifest)).execute(&mut *client).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest) \
+             VALUES ($1, $2, $3, $4)").bind(PROJECT_ENV_KEY).bind(package).bind(package_version).bind(wamn_digest::canonical_json_sha256(&manifest)).execute(&mut *client).await.map(|result| result.rows_affected())?;
     }
     for document in documents {
         let version = i32::try_from(document.version)?;

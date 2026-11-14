@@ -531,7 +531,6 @@ Do not infer execution from the aggregate Cargo pass count.
 
 | Existing reference | Current owner and required setup |
 | --- | --- |
-| `[RUN-PLANE-RECONCILE]` | `crates/control/environment/tests/run_plane_live.rs`: covers creation, current no-op, two-plane residency, platform configuration, and current security behavior under the process lock |
 | `[IDENTITY-LIVE]` | Runtime `plugins::wamn_postgres::session_identity::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
 | `[EFFECT-SNAPSHOT]` | `crates/platform/runtime/tests/effect_snapshot_live.rs`: ignored in live-nats, starts its own server with `pg_stat_statements`, and needs the NATS inputs below. It runs the production cluster snapshot as a provisioned HTTP admitter, holds the process lock, and makes sure that a repeated snapshot sends no statement. |
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::session_identity::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
@@ -587,12 +586,12 @@ It tests the removed and kept runs, the refusals, and the grants of the login.
 The development command case tests application rebuilds and owned process cleanup.
 The `identity` preparation step builds the test identity binary with `test-util`.
 The `test-util` feature permits only a loopback mail endpoint with a dummy API key. Production builds do not include this path.
-The focused identity case also covers application database recreation:
+The focused identity case also covers application schema reset:
 
 ```bash
 RESEND_API_KEY=unused-development-fixture RESEND_FROM='WAMN <fixture@example.invalid>' \
   cargo test --locked --offline -p wamn-ctl --test pat_bootstrap_live \
-  development_identity_survives_target_recreation_and_owned_teardown -- --ignored --exact
+  development_identity_survives_schema_reset_and_owned_teardown -- --ignored --exact
 ```
 
 
@@ -624,7 +623,7 @@ WAMN_LOCAL_DEV_EDIT_ROOT="$SOURCE" \
   "$CARGO_TARGET_DIR/debug/examples/delivery_timings" \
   "$SOURCE" "$CARGO_TARGET_DIR" "$WAMN_LOCAL_RESULTS" -- \
   "$WAMN_LOCAL_TEST_BINARY" \
-  route_authentication_live::dev::local_delivery::local_watch_preserves_data_refuses_bad_sql_and_recreates_schema \
+  route_authentication_live::dev::local_delivery::local_watch_preserves_data_and_refuses_bad_sql \
   --exact --ignored --nocapture --test-threads=1
 ```
 

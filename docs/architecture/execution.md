@@ -216,7 +216,7 @@ Data, membership and role rows do not change with the status, and CDC stays atta
 `user.invite` calls identity `POST /users` and `POST /invitations` with the operator certificate of `--pat-issuer`, `--pat-client-cert`, `--pat-client-key` and `--pat-server-ca`, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
 It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
 The host refuses an email or a display name that the identity rules refuse before it calls identity, and answers `user_refused` when identity refuses the user.
-The control set also serves `application.deploy`, `application.rollback`, `schema.diff`, `schema.apply`, `schema.reset`, `schema.adopt`, and `operation.status`.
+The control set also serves `application.deploy`, `application.rollback`, `schema.diff`, `schema.apply`, `schema.reset`, and `operation.status`.
 Each route requires `ProjectAdmin` authority for `project` in the host's organization.
 The request names `project` and `env`.
 The server builds the command and credential references after it repeats authorization and resolves the target.

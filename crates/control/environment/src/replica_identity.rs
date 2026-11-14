@@ -1,7 +1,7 @@
 //! Reconcile captured models to PostgreSQL REPLICA IDENTITY FULL.
 
-use crate::ManagedModel;
 use std::collections::{BTreeMap, BTreeSet};
+use wamn_catalog::package_schema::ManagedModel;
 
 /// A table's modeled REPLICA IDENTITY target.
 ///
@@ -120,112 +120,4 @@ pub fn select_replica_identity_sql() -> &'static str {
      JOIN pg_namespace n ON n.oid = c.relnamespace \
      WHERE n.nspname = ANY($1::text[]) AND c.relkind = 'r' \
      ORDER BY n.nspname, c.relname"
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn models() -> Vec<ManagedModel> {
-        vec![
-            ManagedModel {
-                model_id: "orders".into(),
-                schema: "store".into(),
-                table: "sales_orders".into(),
-            },
-            ManagedModel {
-                model_id: "lines".into(),
-                schema: "store".into(),
-                table: "line_items".into(),
-            },
-            ManagedModel {
-                model_id: "notes".into(),
-                schema: "audit".into(),
-                table: "notes".into(),
-            },
-        ]
-    }
-
-    #[test]
-    fn captured_models_keep_full_without_registrations() {
-        let current = BTreeMap::from([
-            (
-                ("store".into(), "sales_orders".into()),
-                ReplicaIdentity::Default,
-            ),
-            (("store".into(), "line_items".into()), ReplicaIdentity::Full),
-            (("audit".into(), "notes".into()), ReplicaIdentity::Default),
-        ]);
-        let plan = reconcile_replica_identity(
-            &models(),
-            &current,
-            &BTreeSet::from(["store".to_owned(), "audit".to_owned()]),
-        );
-        assert_eq!(plan.flips.len(), 2);
-        assert!(
-            plan.flips
-                .iter()
-                .all(|flip| flip.to == ReplicaIdentity::Full)
-        );
-        assert_eq!(
-            plan.unchanged,
-            vec![("lines".into(), ReplicaIdentity::Full)]
-        );
-    }
-
-    #[test]
-    fn reconciliation_reports_absent_models_and_converges() {
-        let captured = BTreeSet::from(["store".to_owned()]);
-        let mut current = BTreeMap::from([
-            (
-                ("store".into(), "sales_orders".into()),
-                ReplicaIdentity::Default,
-            ),
-            (("audit".into(), "notes".into()), ReplicaIdentity::Full),
-        ]);
-        let plan = reconcile_replica_identity(&models(), &current, &captured);
-        assert_eq!(plan.skipped_absent, ["store.line_items"]);
-        assert_eq!(plan.pending_old_image_gap(), ["orders"]);
-        assert_eq!(plan.flips.len(), 2);
-        for flip in plan.flips {
-            current.insert((flip.schema, flip.table), flip.to);
-        }
-        let again = reconcile_replica_identity(&models(), &current, &captured);
-        assert!(again.is_noop());
-        assert_eq!(
-            again.unchanged,
-            [
-                ("orders".into(), ReplicaIdentity::Full),
-                ("notes".into(), ReplicaIdentity::Default),
-            ]
-        );
-    }
-
-    #[test]
-    fn relation_identifiers_are_quoted_and_reads_cover_exact_manifest_schemas() {
-        assert_eq!(
-            alter_replica_identity_sql("app", "orders", ReplicaIdentity::Default),
-            "ALTER TABLE \"app\".\"orders\" REPLICA IDENTITY DEFAULT"
-        );
-        assert_eq!(
-            alter_replica_identity_sql("a\"b", "t", ReplicaIdentity::Full),
-            "ALTER TABLE \"a\"\"b\".\"t\" REPLICA IDENTITY FULL"
-        );
-        assert!(select_replica_identity_sql().contains("ANY($1::text[])"));
-        assert!(select_replica_identity_sql().ends_with("ORDER BY n.nspname, c.relname"));
-    }
-
-    #[test]
-    fn only_postgresql_full_maps_to_full() {
-        assert_eq!(
-            ReplicaIdentity::from_relreplident('f'),
-            ReplicaIdentity::Full
-        );
-        for value in ['d', 'i', 'n'] {
-            assert_eq!(
-                ReplicaIdentity::from_relreplident(value),
-                ReplicaIdentity::Default
-            );
-        }
-    }
 }

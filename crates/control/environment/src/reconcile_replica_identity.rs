@@ -3,11 +3,11 @@
 use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::Context as _;
-use wamn_schema_control::{
-    ManagedModel, ReplicaIdentity, ReplicaIdentityPlan, reconcile_replica_identity,
-    select_replica_identity_sql,
+use crate::replica_identity::{
+    ReplicaIdentity, ReplicaIdentityPlan, reconcile_replica_identity, select_replica_identity_sql,
 };
+use anyhow::Context as _;
+use wamn_catalog::package_schema::ManagedModel;
 
 pub async fn reconcile(
     client: &mut sqlx::PgConnection,

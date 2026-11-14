@@ -425,6 +425,37 @@ pub(crate) async fn stop_reader(
     wait_reader_stopped(platform, triple).await
 }
 
+/// Discard unread changes while the environment's reader and writers are stopped.
+pub(crate) async fn discard_backlog(
+    system_url: &str,
+    admin_url: &str,
+    triple: &Triple,
+) -> anyhow::Result<()> {
+    let instance =
+        crate::provision_project_env::read_project_env_instance(system_url, triple).await?;
+    let slot = cdc_object_name(&triple.org, &triple.project, &triple.env, &instance);
+    let mut admin = wamn_postgres::connect(admin_url).await?;
+    let boundary: String = sqlx::query_scalar(
+        "SELECT pg_logical_emit_message(false, 'wamn.schema.reset', '', true)::text",
+    )
+    .fetch_one(&mut admin)
+    .await?;
+    let discarded: bool = sqlx::query_scalar(
+        "SELECT end_lsn >= $2::pg_lsn FROM pg_replication_slot_advance($1::name, $2::pg_lsn)",
+    )
+    .bind(&slot)
+    .bind(&boundary)
+    .fetch_one(&mut admin)
+    .await?;
+    anyhow::ensure!(
+        discarded,
+        "CDC slot {slot} did not reach the reset boundary"
+    );
+    // Slot advancement becomes durable at the next checkpoint, before broker disposal.
+    sqlx::raw_sql("CHECKPOINT").execute(&mut admin).await?;
+    Ok(())
+}
+
 /// Wait for reader pods, including pods left by an interrupted Deployment delete.
 pub(crate) async fn wait_reader_stopped(
     platform: &crate::environment::Platform,

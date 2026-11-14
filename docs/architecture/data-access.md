@@ -920,7 +920,7 @@ Project initialization installs `record-history.sql` and then `record-history-ap
 `platform.write_log` is the one exception: it has no stamps and no trigger.
 It is the idempotency record, and the rows that the work writes carry the actor ([app-schema.sql](../../deploy/sql/app-schema.sql#L412)).
 
-The run plane stamps `environment_policies` and `run_queue`.
+The run plane stamps `run_queue`.
 The three effect tables still have no production append writer.
 Their stamps apply to administrative writes and future writers that bind an actor.
 
