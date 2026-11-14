@@ -7,9 +7,31 @@ use wamn_platform_identity::{application::ApplicationTarget, environment::fill};
 async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration()
 -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_control_provision::test_database::system();
-    system.execute(&[&wamn_control_provision::test_database::seed_org_project_env_sql("fill", "fixture", "dev"), "SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.meta SET platform_domain='example.invalid'"])?;
-    let mut authority = wamn_postgres::connect(system.url()).await?;
+    let mut case_server = wamn_test_postgres::start(&[]).unwrap();
+    let system = url::Url::parse(
+        case_server
+            .create_database("fixture_1")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    wamn_control_provision::test_database::system(system.as_str()).await;
+    {
+        let batches: &[&str] = &[
+            &wamn_control_provision::test_database::seed_org_project_env_sql(
+                "fill", "fixture", "dev",
+            ),
+            "SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.meta SET platform_domain='example.invalid'",
+        ];
+        let mut setup_connection = wamn_postgres::connect(system.as_str()).await.unwrap();
+        for batch in batches {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                .execute(&mut setup_connection)
+                .await?;
+        }
+    }
+    let mut authority = wamn_postgres::connect(system.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
@@ -45,7 +67,16 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
-    let project = wamn_platform_identity::test_database::project_platform();
+
+    let project = url::Url::parse(
+        case_server
+            .create_database("fixture_extra")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    wamn_platform_identity::test_database::project_platform(project.as_str()).await;
     let target = ApplicationTarget {
         org: "fill",
         project: "fixture",
@@ -53,13 +84,13 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         project_env_key: "fill--dev--fixture",
     };
     fill(
-        system.url(),
-        project.url(),
+        system.as_str(),
+        project.as_str(),
         target,
         &wamn_broker::Publisher::default(),
     )
     .await?;
-    let mut client = wamn_postgres::connect(project.url()).await?;
+    let mut client = wamn_postgres::connect(project.as_str()).await?;
     for component in wamn_identity_protocol::PlatformComponent::ALL {
         let row = sqlx::query("SELECT type='platform' AND email=$2 AND created_by=$3 FROM platform.\"user\" WHERE id=$1").bind(component.principal_id()).bind(format!("{}@example.invalid",component.as_str())).bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id()).fetch_one(&mut client).await?;
         assert!(row.get::<bool, _>(0));
@@ -78,8 +109,8 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         .fetch_one(&mut client)
         .await?;
     fill(
-        system.url(),
-        project.url(),
+        system.as_str(),
+        project.as_str(),
         target,
         &wamn_broker::Publisher::default(),
     )
@@ -102,8 +133,8 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     )
     .await?;
     fill(
-        system.url(),
-        project.url(),
+        system.as_str(),
+        project.as_str(),
         target,
         &wamn_broker::Publisher::default(),
     )

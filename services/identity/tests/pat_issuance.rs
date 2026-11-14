@@ -125,6 +125,7 @@ async fn operator_pat_issuance_over_https() {
         wamn_test_postgres::start(&[]).expect_redacted("start the test PostgreSQL server");
     let mut database = postgres
         .create_database("wamn_system")
+        .await
         .expect_redacted("create the wamn_system test database");
     let raw = database.url();
     let parsed = url::Url::parse(raw).expect_redacted("test database URL shape");

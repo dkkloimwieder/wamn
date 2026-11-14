@@ -85,11 +85,11 @@ fn refusal(url: &str, statement: &str) -> Option<String> {
     (!ok).then_some(stderr)
 }
 
-#[test]
-fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
+#[sqlx::test(migrations = false)]
+async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
     assert!(
         query(&url, "SHOW server_version_num")
             .parse::<u32>()

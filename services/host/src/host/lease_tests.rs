@@ -69,14 +69,16 @@ async fn ready(address: SocketAddr) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
-async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host() -> anyhow::Result<()> {
+async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
     );
-    let database = wamn_test_postgres::database();
-    let mut admin = wamn_postgres::connect(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
 
     let (_nats, client) = nats().await;
     let connection = "00000000-0000-4000-8000-000000000001".parse()?;
@@ -91,7 +93,7 @@ async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host() -> anyhow::
         resource_key: Some("tcp:device:502".into()),
         target_type: "cloud".into(),
     };
-    let (a, leases_a) = facts(&client, database.url(), &fact).await?;
+    let (a, leases_a) = facts(&client, database.as_str(), &fact).await?;
     let call_a = a
         .exclusive_call(connection)
         .await?
@@ -99,7 +101,7 @@ async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host() -> anyhow::
     let key = format!("resource:{target}:tcp:device:502");
     let pid: i32 = sqlx::query("SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1").bind(&key).fetch_one(&mut admin).await?.get(0);
 
-    let (b, leases_b) = facts(&client, database.url(), &fact).await?;
+    let (b, leases_b) = facts(&client, database.as_str(), &fact).await?;
     let probes_b = ProbeState::default();
     let listener = probes::bind("127.0.0.1:0".parse()?).await?;
     let address = listener.local_addr()?;

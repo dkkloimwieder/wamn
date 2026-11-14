@@ -52,6 +52,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 url = { workspace = true }
 
 [dev-dependencies]
+sqlx = { workspace = true, features = ["macros", "migrate"] }
 wamn-capability-authority = { workspace = true, features = ["test-util"] }
 wamn-connections = { workspace = true, features = ["test-util"] }
 wamn-postgres-capability = { workspace = true, features = ["test-util"] }

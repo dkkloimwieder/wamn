@@ -51,11 +51,12 @@ async fn new_user(client: &mut Client, name: &str) -> Principal {
     .unwrap()
 }
 
-#[tokio::test]
-async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
+#[sqlx::test(migrations = false)]
+async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = test_database::system();
-    let mut client = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     let user = new_user(&mut client, "alice").await;
     let other = new_user(&mut client, "bob").await;
     let work = password_work();
@@ -210,11 +211,12 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     );
 }
 
-#[tokio::test]
-async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse() {
+#[sqlx::test(migrations = false)]
+async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = test_database::system();
-    let mut client = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     let user = new_user(&mut client, "expired").await;
     let work = password_work();
     let invitation = issue_invitation(&mut client, &actor(), user.id())
@@ -313,12 +315,13 @@ async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse() {
     .unwrap();
 }
 
-#[tokio::test]
-async fn concurrent_enrollment_creates_exactly_one_password() {
+#[sqlx::test(migrations = false)]
+async fn concurrent_enrollment_creates_exactly_one_password(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = test_database::system();
-    let mut left = connect(database.url()).await;
-    let mut right = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    test_database::system(database.as_str()).await;
+    let mut left = connect(database.as_str()).await;
+    let mut right = connect(database.as_str()).await;
     let user = new_user(&mut left, "concurrent").await;
     let first = issue_invitation(&mut left, &actor(), user.id())
         .await
@@ -360,16 +363,19 @@ async fn concurrent_enrollment_creates_exactly_one_password() {
     );
 }
 
-#[tokio::test]
-async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat() {
+#[sqlx::test(migrations = false)]
+async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
+    pool: sqlx::PgPool,
+) {
     use wamn_platform_identity::{
         password::{issue_reset, reset_password},
         password_login,
     };
 
     let _lock = wamn_test_postgres::lock();
-    let database = test_database::system();
-    let mut client = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     let user = new_user(&mut client, "reset-user").await;
     let other = new_user(&mut client, "reset-other").await;
     let work = password_work();

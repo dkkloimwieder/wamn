@@ -41,11 +41,11 @@ fn success(url: &str, script: &str) -> String {
 
 const EXECUTOR_LOGIN: &str = "wamn_transitions_executor_login";
 
-#[tokio::test]
-async fn run_state_live() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
     let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
     let app_schema = wamn_control_provision::APP_SCHEMA_SQL;

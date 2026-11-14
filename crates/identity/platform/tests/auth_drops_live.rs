@@ -84,11 +84,12 @@ fn changes(drops: &AuthDrops) -> Vec<AuthChange> {
     drops.changes().cloned().collect()
 }
 
-#[tokio::test]
-async fn every_identity_writer_records_a_drop_of_its_principal() {
+#[sqlx::test(migrations = false)]
+async fn every_identity_writer_records_a_drop_of_its_principal(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = test_database::system();
-    let mut client = connect(database.url(), Some("wamn_system")).await;
+    let database = wamn_test_postgres::url(&pool);
+    test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str(), Some("wamn_system")).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&test_database::seed_org_project_env_sql("acme", "billing", "dev")).to_string(),
     ))
@@ -262,10 +263,13 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
     assert_eq!(changes(&drops), identity(&alice), "disable_principal");
 }
 
-#[tokio::test]
-async fn every_application_writer_records_a_drop_of_its_project_env_key_or_principal() {
-    let database = wamn_platform_identity::test_database::project_platform();
-    let mut client = connect(database.url(), None).await;
+#[sqlx::test(migrations = false)]
+async fn every_application_writer_records_a_drop_of_its_project_env_key_or_principal(
+    pool: sqlx::PgPool,
+) {
+    let database = wamn_test_postgres::url(&pool);
+    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    let mut client = connect(database.as_str(), None).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&platform_principals_sql("example.invalid").unwrap()).to_string(),
     ))
@@ -412,9 +416,9 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
 }
 
 /// The broker must be private to this test run.
-#[tokio::test]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
-async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
+async fn every_application_grant_write_deletes_exactly_its_auth_keys(pool: sqlx::PgPool) {
     use wamn_broker::auth_changes::auth_bucket;
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
@@ -429,8 +433,9 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
         .unwrap();
     let bucket = auth_bucket(&broker).await.unwrap();
     let publisher = Publisher::new(broker);
-    let database = wamn_platform_identity::test_database::project_platform();
-    let mut client = connect(database.url(), None).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    let mut client = connect(database.as_str(), None).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&platform_principals_sql("example.invalid").unwrap()).to_string(),
     ))

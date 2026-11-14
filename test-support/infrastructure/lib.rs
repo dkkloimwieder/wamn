@@ -6,7 +6,6 @@ pub mod collector;
 pub mod ctl_process;
 pub mod event_broker;
 pub mod fixture_digest;
-pub mod locked_database;
 pub mod nats_tls;
 pub mod operations;
 pub use wamn_test_postgres as postgres;

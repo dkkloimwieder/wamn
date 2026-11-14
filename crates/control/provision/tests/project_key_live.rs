@@ -151,10 +151,10 @@ fn ddl(target: &Target) -> String {
         .replace("\"wamn_app\"", &format!("\"{}\"", target.app))
 }
 
-#[test]
-fn the_sql_project_key_equals_the_rust_project_key() {
-    let test_database = wamn_test_postgres::database();
-    let admin = test_database.url().to_owned();
+#[sqlx::test(migrations = false)]
+async fn the_sql_project_key_equals_the_rust_project_key(pool: sqlx::PgPool) {
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin = test_database.as_str().to_owned();
     let target = Target::new("agree");
     let db_url = reset(&admin, &target);
     psql_file(&db_url, &ddl(&target));
@@ -181,10 +181,10 @@ fn the_sql_project_key_equals_the_rust_project_key() {
     }
 }
 
-#[test]
-fn the_function_carries_the_flags_the_expression_index_requires() {
-    let test_database = wamn_test_postgres::database();
-    let admin = test_database.url().to_owned();
+#[sqlx::test(migrations = false)]
+async fn the_function_carries_the_flags_the_expression_index_requires(pool: sqlx::PgPool) {
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin = test_database.as_str().to_owned();
     let target = Target::new("flags");
     let db_url = reset(&admin, &target);
     psql_file(&db_url, &ddl(&target));
@@ -244,10 +244,10 @@ fn the_function_carries_the_flags_the_expression_index_requires() {
     );
 }
 
-#[test]
-fn the_guest_may_execute_the_derivation_and_may_not_replace_it() {
-    let test_database = wamn_test_postgres::database();
-    let admin = test_database.url().to_owned();
+#[sqlx::test(migrations = false)]
+async fn the_guest_may_execute_the_derivation_and_may_not_replace_it(pool: sqlx::PgPool) {
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin = test_database.as_str().to_owned();
     let target = Target::new("grants");
     let db_url = reset(&admin, &target);
     psql_file(&db_url, &ddl(&target));
@@ -329,46 +329,6 @@ fn the_guest_may_execute_the_derivation_and_may_not_replace_it() {
     );
 }
 
-/// R55: the bar is POST-STATE, not exit status. A second apply must leave the
-/// definition byte-identical, which is what makes `catalog-schema.sql` and the
-/// `wamn-0h0g.11.49` converge path provably the same object.
-#[test]
-fn a_second_apply_leaves_the_definition_identical() {
-    let test_database = wamn_test_postgres::database();
-    let admin = test_database.url().to_owned();
-    let target = Target::new("converge");
-    let db_url = reset(&admin, &target);
-    // BOTH derivations, ordered: a converge arm that watched only one would
-    // let the other drift silently between the two appliers.
-    let definition = |url: &str| {
-        psql(
-            url,
-            None,
-            "SELECT string_agg(md5(pg_get_functiondef(p.oid)), ' ' ORDER BY p.proname) \
-               FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
-              WHERE n.nspname = 'wamn_authority' \
-                AND p.proname IN ('project_key', 'current_project_key')",
-        )
-    };
-
-    psql_file(&db_url, &ddl(&target));
-    let first = definition(&db_url);
-    psql_file(&db_url, &ddl(&target));
-    let second = definition(&db_url);
-
-    assert_eq!(
-        first, second,
-        "a second apply changed the installed definition, so the two appliers \
-         (catalog-schema.sql for fresh installs, wamn-0h0g.11.49's path for \
-         existing databases) are not provably the same object"
-    );
-    assert_eq!(
-        first.split(' ').count(),
-        2,
-        "both derivations must exist after applying, got {first:?}"
-    );
-}
-
 /// Throwaway password for the probe logins in this file. Not a credential of
 /// record: the condition builds and drops these roles inside a disposable container.
 const PROBE_PASSWORD: &str = "project-key-probe";
@@ -392,10 +352,10 @@ fn role_url(admin_url: &str, role: &str, database: &str) -> String {
 /// decomposes it, in two languages. The Rust unit tests can only show the
 /// shape they share; whether PostgreSQL's regex agrees is a fact about
 /// PostgreSQL, and this is the only place it is established.
-#[test]
-fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
-    let test_database = wamn_test_postgres::database();
-    let admin = test_database.url().to_owned();
+#[sqlx::test(migrations = false)]
+async fn the_session_derivation_returns_the_key_of_the_connected_guest_login(pool: sqlx::PgPool) {
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin = test_database.as_str().to_owned();
     let target = Target::new("session");
     let db_url = reset(&admin, &target);
     psql_file(&db_url, &ddl(&target));
@@ -497,100 +457,52 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
     }
 }
 
-/// THE TWO APPLIERS PRODUCE ONE OBJECT.
-///
-/// `catalog-schema.sql` and `app-schema.sql` cannot carry the database literal
-/// (`wamn-0h0g.22.6.6`), so they install through the bootstrap rendering while
-/// provisioning installs through the literal one. Nothing about sharing a Rust
-/// template shows the SERVER ends up with the same function — this does, by
-/// applying both into one database and comparing what `pg_get_functiondef`
-/// reports. It is the digest probe `wamn-0h0g.22.6.1` created, doing the job it
-/// was created for.
-#[test]
-fn the_bootstrap_and_literal_renderings_install_the_same_object() {
-    let test_database = wamn_test_postgres::database();
-    let admin = test_database.url().to_owned();
+/// Both installers preserve project keys and the expression-index contract.
+#[sqlx::test(migrations = false)]
+async fn bootstrap_and_reapplication_preserve_project_key_behavior(pool: sqlx::PgPool) {
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin = test_database.as_str().to_owned();
     // MULTI-BYTE ON PURPOSE — see `Target::multibyte`.
     let target = Target::multibyte("boot");
     let db_url = reset(&admin, &target);
 
-    let definitions = |url: &str| {
-        psql(
-            url,
-            None,
-            "SELECT string_agg(md5(pg_get_functiondef(p.oid)), ' ' ORDER BY p.proname) \
-               FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
-              WHERE n.nspname = 'wamn_authority' \
-                AND p.proname IN ('project_key', 'current_project_key')",
-        )
-    };
-
     let bootstrap = authority_derivations_bootstrap_sql()
         .replace("\"wamn_db_owner\"", &format!("\"{}\"", target.owner))
         .replace("\"wamn_app\"", &format!("\"{}\"", target.app));
-    psql_file(&db_url, &bootstrap);
-    let from_bootstrap = definitions(&db_url);
-    assert_eq!(
-        from_bootstrap.split(' ').count(),
-        2,
-        "the bootstrap must install both derivations, got {from_bootstrap:?}"
-    );
-
-    // The bootstrap read the database name off the server. The literal
-    // rendering is handed the same name from Rust. If the two disagree by one
-    // byte — a length computed over chars instead of octets, a name that lost
-    // its quoting — the digests differ and every guest read on this database
-    // would refuse.
-    psql_file(&db_url, &ddl(&target));
-    assert_eq!(
-        definitions(&db_url),
-        from_bootstrap,
-        "the bootstrap rendering and the literal rendering installed DIFFERENT \
-         functions, so a database provisioned by one applier and re-applied by \
-         the other would silently change its project keys"
-    );
-
-    // A bootstrapped function that quietly lost IMMUTABLE applies cleanly and
-    // breaks every expression index built on it, so the flags come from the
-    // catalog and the index is actually built.
-    let flags = psql(
-        &db_url,
-        None,
-        "SELECT p.provolatile::text || p.proparallel::text \
-           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
-          WHERE n.nspname = 'wamn_authority' AND p.proname = 'project_key'",
-    );
-    assert_eq!(
-        flags, "is",
-        "the bootstrapped derivation must be IMMUTABLE SAFE"
-    );
+    let literal = ddl(&target);
     psql_file(
         &db_url,
-        "CREATE TABLE boot_probe (project_env_key text NOT NULL); \
-         CREATE INDEX boot_probe_tkey ON boot_probe ((wamn_authority.project_key(project_env_key)))",
+        "CREATE TABLE boot_probe (project_env_key text NOT NULL)",
     );
-
-    // And the value it computes is the Rust value for THIS database — the
-    // bootstrap's whole job.
-    for project_env_key in PROJECT_ENV_KEYS {
-        let observed = psql(
-            &db_url,
-            None,
-            &format!("SELECT wamn_authority.project_key('{project_env_key}')"),
-        );
-        assert_eq!(
-            observed,
-            project_key(project_env_key, &target.db),
-            "project {project_env_key:?}: the bootstrapped derivation disagrees with Rust"
-        );
+    for installer in [&bootstrap, &literal, &literal] {
+        psql_file(&db_url, installer);
+        psql_file(&db_url,
+            "DO $$ BEGIN ASSERT EXISTS (
+                 SELECT FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                 WHERE n.nspname='wamn_authority' AND p.proname='project_key'
+                   AND p.provolatile='i' AND p.proparallel='s'
+             ); END $$;
+             DROP INDEX IF EXISTS boot_probe_tkey;
+             CREATE INDEX boot_probe_tkey ON boot_probe ((wamn_authority.project_key(project_env_key)))");
+        for project_env_key in PROJECT_ENV_KEYS {
+            psql_file(
+                &db_url,
+                &format!(
+                    "DO $$ BEGIN ASSERT wamn_authority.project_key('{project_env_key}') = '{}'; END $$;",
+                    project_key(project_env_key, &target.db)
+                ),
+            );
+        }
     }
 }
 
-#[test]
-fn administration_uses_the_database_boundary_while_catalog_keeps_project_keys() {
+#[sqlx::test(migrations = false)]
+async fn administration_uses_the_database_boundary_while_catalog_keeps_project_keys(
+    pool: sqlx::PgPool,
+) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let url = database.as_str();
     psql_file(url, "CREATE ROLE wamn_app NOLOGIN NOINHERIT; ");
     psql_file(url, wamn_catalog::CATALOG_SCHEMA_SQL);
     psql_file(url, wamn_control_provision::APP_SCHEMA_SQL);

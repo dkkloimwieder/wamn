@@ -192,11 +192,14 @@ async fn push(
 #[cfg(test)]
 mod tests {
     use sqlx::Connection as _;
-    #[tokio::test]
-    async fn copies_project_rows_and_only_environment_connections_with_effective_status() {
+    #[sqlx::test(migrations = false)]
+    async fn copies_project_rows_and_only_environment_connections_with_effective_status(
+        pool: sqlx::PgPool,
+    ) {
         let _lock = wamn_test_postgres::lock();
-        let database = wamn_control_provision::test_database::system();
-        let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+        let database = wamn_test_postgres::url(&pool);
+        wamn_control_provision::test_database::system(database.as_str()).await;
+        let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
         let mut source = client.begin().await.unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(

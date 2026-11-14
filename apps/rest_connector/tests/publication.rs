@@ -8,9 +8,10 @@ use std::collections::BTreeSet;
 use wamn_catalog::{ComponentPackageCoordinate, PackageCoordinate, WiringDocument};
 use wamn_publish::publish_release::{PublishReleaseRequest, assemble_release};
 
-#[tokio::test]
-async fn both_applications_publish_with_exact_dependencies_and_private_state() -> anyhow::Result<()>
-{
+#[sqlx::test(migrations = false)]
+async fn both_applications_publish_with_exact_dependencies_and_private_state(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     let repository = support::repository();
     let integration = repository.join("apps/platform/wamn_integration");
     let consumer = repository.join("apps/rest_consumer_fixture");
@@ -92,7 +93,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
             document,
         )?;
     }
-    composed_sql_uses_released_schemas(&roots, release, &admissions).await?;
+    composed_sql_uses_released_schemas(&pool, &roots, release, &admissions).await?;
     let mut wrong_port = documents.clone();
     wrong_port[0]
         .1
@@ -132,13 +133,14 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
 }
 
 async fn composed_sql_uses_released_schemas(
+    pool: &sqlx::PgPool,
     roots: &[std::path::PathBuf],
     release: &wamn_catalog::ServingManifest,
     admissions: &[wamn_publish::component_admission::ComponentAdmission],
 ) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let mut client = wamn_postgres::connect(database.url()).await?;
+    let database = wamn_test_postgres::url(pool);
+    let mut client = wamn_postgres::connect(database.as_str()).await?;
 
     let guest_url = consumer_live::install(&mut client, &database, roots, release).await?;
     let source = consumer_live::source(&mut client, "sql-proof").await?;

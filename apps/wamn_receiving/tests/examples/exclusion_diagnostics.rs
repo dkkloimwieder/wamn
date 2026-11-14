@@ -152,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
         &wamn_compiler::output_root(&scratch.path().join("apps/wamn_receiving")),
     )?;
     let mut server = postgres::start(&[])?;
-    let database = server.create_database("exclusion_diagnostics")?;
+    let database = server.create_database("exclusion_diagnostics").await?;
     let mut client = wamn_postgres::connect(database.url()).await?;
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(("CREATE SCHEMA receiving; CREATE EXTENSION btree_gist; CREATE ROLE wamn_app; GRANT USAGE ON SCHEMA receiving TO wamn_app;").to_string())).execute(&mut client).await.map(drop)?;

@@ -97,7 +97,10 @@ impl std::fmt::Debug for TrustedHttpRoute {
         formatter
             .debug_struct("TrustedHttpRoute")
             .field("component_digest", &self.component_digest)
-            .field("authority_database", &self.credential_database.name())
+            .field(
+                "authority_database",
+                &self.credential_database.path().trim_start_matches('/'),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -113,7 +116,7 @@ pub struct TrustedHttpRoute {
     pub component_digest: String,
     /// The immutable graph hash stored on the workflow row and frozen on each run.
     pub wiring_hash: String,
-    credential_database: wamn_test_infrastructure::postgres::Database,
+    credential_database: url::Url,
 }
 
 impl TrustedHttpRoute {
@@ -142,8 +145,12 @@ impl TrustedHttpRoute {
 }
 
 /// Seed the closure and build the production driver over it.
-pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
+pub async fn build(
+    pool: &sqlx::PgPool,
+    options: &RouteOptions,
+) -> anyhow::Result<TrustedHttpRoute> {
     let (credentials, database) = credential_fixture(
+        wamn_test_postgres::url(pool),
         &[(CREDENTIAL_HANDLE, credential_secret())],
         &options.upstream_base_url,
     )
@@ -152,14 +159,12 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
 }
 
 async fn credential_fixture(
+    database: url::Url,
     secrets: &[(&str, String)],
     upstream: &str,
-) -> anyhow::Result<(
-    ConnectionCredentials,
-    wamn_test_infrastructure::postgres::Database,
-)> {
-    let database = wamn_control_provision::test_database::system();
-    let mut admin = wamn_postgres::connect(database.url()).await?;
+) -> anyhow::Result<(ConnectionCredentials, url::Url)> {
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
 
     sqlx::raw_sql("SET ROLE wamn_system")
         .execute(&mut admin)
@@ -207,11 +212,11 @@ async fn credential_fixture(
         .execute(&mut admin)
         .await
         .map(drop)?;
-    let role = format!("trusted_http_{}", database.name());
+    let role = format!("trusted_http_{}", uuid::Uuid::new_v4().simple());
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::ConnectionReader,
-            database.name(),
+            database.path().trim_start_matches('/'),
             &role,
             GENERATION_PASSWORD,
         ),
@@ -234,11 +239,11 @@ async fn credential_fixture(
     .await
     .map(|result| result.rows_affected())?;
     transaction.commit().await?;
-    let _reader = wamn_postgres::connect(&generation_url(database.url(), &role)?).await?;
+    let _reader = wamn_postgres::connect(&generation_url(database.as_str(), &role)?).await?;
 
     Ok((
         ConnectionCredentials::from_database(
-            wamn_postgres::pool(&generation_url(database.url(), &role)?, 4).await?,
+            wamn_postgres::pool(&generation_url(database.as_str(), &role)?, 4).await?,
             "acme",
         )
         .with_store(credential_store),
@@ -249,7 +254,7 @@ async fn credential_fixture(
 async fn build_with_credentials(
     options: &RouteOptions,
     credentials: ConnectionCredentials,
-    credential_database: wamn_test_infrastructure::postgres::Database,
+    credential_database: url::Url,
 ) -> anyhow::Result<TrustedHttpRoute> {
     let component_bytes = std::fs::read(&options.component_wasm).with_context(|| {
         format!(
@@ -307,7 +312,7 @@ async fn build_with_credentials(
         &document,
         &release,
         None,
-        credential_database.url(),
+        credential_database.as_str(),
     )
     .await
     .context("seed the catalog closure")?;
@@ -1009,8 +1014,10 @@ mod tests {
     async fn test_connection_reuse() -> anyhow::Result<()> {
         // The route seed creates shared roles.
         let _lock = wamn_test_infrastructure::postgres::lock();
-        let database = wamn_test_infrastructure::postgres::database();
-        let database_url = database.url().to_owned();
+        let mut server = wamn_test_postgres::start(&[])?;
+        let project = server.create_database("project").await?;
+        let database_url = project.url().to_owned();
+        let control = server.create_database("control").await?;
         let artifact_base = std::env::var("WAMN_HTTP_REUSE_ARTIFACT_BASE")
             .context("set WAMN_HTTP_REUSE_ARTIFACT_BASE to a throwaway OCI repository")?;
         let component_wasm = std::env::var("WAMN_HTTP_REUSE_COMPONENT_WASM")
@@ -1027,6 +1034,7 @@ mod tests {
         );
         let mut origin = origin().await?;
         let (credentials, credential_database) = credential_fixture(
+            url::Url::parse(control.url())?,
             &[
                 (CREDENTIAL_HANDLE, credential_secret()),
                 (
@@ -1071,7 +1079,7 @@ mod tests {
             "fresh guest stores did not reuse the accepted connection"
         );
 
-        set_instance_status(route.credential_database.url(), "disabled").await?;
+        set_instance_status(route.credential_database.as_str(), "disabled").await?;
         let denied = route.execute(3).await?;
         let failure = denied
             .failure
@@ -1089,9 +1097,9 @@ mod tests {
             origin.requests.try_recv().is_err(),
             "denied effect reached the warm socket"
         );
-        set_instance_status(route.credential_database.url(), "enabled").await?;
+        set_instance_status(route.credential_database.as_str(), "enabled").await?;
 
-        rotate(route.credential_database.url(), 2, CREDENTIAL_HANDLE).await?;
+        rotate(route.credential_database.as_str(), 2, CREDENTIAL_HANDLE).await?;
         let generation_two = assert_observed_request(
             &mut origin,
             route.execute(7).await?,
@@ -1103,7 +1111,7 @@ mod tests {
             generation_two, first,
             "new generation reused the old generation socket"
         );
-        rotate(route.credential_database.url(), 3, ROTATED_HANDLE).await?;
+        rotate(route.credential_database.as_str(), 3, ROTATED_HANDLE).await?;
         let generation_three = assert_observed_request(
             &mut origin,
             route.execute(10).await?,

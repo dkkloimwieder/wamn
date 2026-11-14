@@ -12,16 +12,16 @@ const PROJECT_ROLES_SQL: &str = "DO $roles$ DECLARE role_name text; BEGIN \
        END LOOP; \
      END $roles$;";
 
-/// Create a test database with the project base grants: [`crate::CATALOG_SCHEMA_SQL`]
-/// installed, as a fresh project database has it.
-///
-/// # Panics
-///
-/// Panics when the test server cannot start or the catalog does not install.
-pub fn project() -> wamn_test_postgres::Database {
-    let database = wamn_test_postgres::database();
-    database
-        .execute(&[PROJECT_ROLES_SQL, crate::CATALOG_SCHEMA_SQL])
-        .expect("install the project catalog minimum");
-    database
+/// Install the project catalog on a supplied test database.
+pub async fn project(database: &str) {
+    let mut connection = wamn_postgres::connect(database).await.unwrap();
+    {
+        let batches: &[&str] = &[PROJECT_ROLES_SQL, crate::CATALOG_SCHEMA_SQL];
+        for batch in batches {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                .execute(&mut connection)
+                .await
+                .expect("install the project catalog minimum");
+        }
+    }
 }

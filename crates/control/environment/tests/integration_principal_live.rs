@@ -22,10 +22,27 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 async fn apply_creates_one_integration_principal_and_grants_declared_dependencies()
 -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_control_provision::test_database::system();
-    system.execute(&["SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.meta SET platform_domain = 'example.invalid'"])?;
-    let project = wamn_test_postgres::database();
-    let mut admin = connect(project.url()).await?;
+    let mut case_server = wamn_test_postgres::start(&[]).unwrap();
+    let system = url::Url::parse(
+        case_server
+            .create_database("fixture_1")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    wamn_control_provision::test_database::system(system.as_str()).await;
+    sqlx::raw_sql("SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.meta SET platform_domain = 'example.invalid'").execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap()).await?;
+
+    let project = url::Url::parse(
+        case_server
+            .create_database("fixture_extra")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    let mut admin = connect(project.as_str()).await?;
     let schema = BareSchemaName::new("wamn_run")?;
     wamn_environment::platform_migrations::install_project(&mut admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -124,8 +141,8 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     let packages = vec![package, declaration_only, consumer];
     // Composition alone materializes the principal, before the release is written.
     materialize_application_principals(
-        system.url(),
-        project.url(),
+        system.as_str(),
+        project.as_str(),
         PROJECT_ENV_KEY,
         &manifest,
         &packages,
@@ -135,7 +152,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     let (_, digest) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     for _ in 0..2 {
         write_release(
-            project.url(),
+            project.as_str(),
             PROJECT_ENV_KEY,
             digest.as_str(),
             &manifest,
@@ -145,8 +162,8 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         )
         .await?;
         materialize_application_principals(
-            system.url(),
-            project.url(),
+            system.as_str(),
+            project.as_str(),
             PROJECT_ENV_KEY,
             &manifest,
             &packages,
@@ -166,7 +183,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     .await?;
     assert_eq!(row.get::<i64, _>(0), 1);
     let principal: String = row.get(1);
-    let mut identity = connect(system.url()).await?;
+    let mut identity = connect(system.as_str()).await?;
     assert_eq!(
         sqlx::query("SELECT count(*) FROM identity.principals WHERE type='service'")
             .fetch_one(&mut identity)
@@ -192,8 +209,8 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     assert!(caller.contains(OPERATION.rsplit_once('@').unwrap().0));
     let before: Vec<String> = sqlx::query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1").fetch_all(&mut admin).await?.iter().map(|row| row.get(0)).collect();
     materialize_application_principals(
-        system.url(),
-        project.url(),
+        system.as_str(),
+        project.as_str(),
         PROJECT_ENV_KEY,
         &manifest,
         &packages,

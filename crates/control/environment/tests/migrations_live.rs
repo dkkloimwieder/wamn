@@ -18,11 +18,13 @@ fn migrator(sources: &[Migration]) -> Migrator {
     Migrator::with_migrations(sources.to_vec())
 }
 
-#[tokio::test]
-async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let mut admin = wamn_postgres::connect(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
     sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
         .execute(&mut admin)
         .await?;
@@ -144,12 +146,13 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> a
     Ok(())
 }
 
-#[tokio::test]
-async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic_sql()
--> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic_sql(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let mut admin = wamn_postgres::connect(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
     sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
         .execute(&mut admin)
         .await?;
@@ -161,12 +164,12 @@ async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic
     ))
     .execute(&mut admin)
     .await?;
-    let database_name = wamn_postgres::identity(database.url())?.1;
+    let database_name = wamn_postgres::identity(database.as_str())?.1;
     let login = migration::login("fixture--dev--one", &database_name)?;
     let role = postgres_protocol::escape::escape_identifier(&login);
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE ROLE {role} LOGIN PASSWORD 'migration-test' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; CREATE SCHEMA application AUTHORIZATION {role}; GRANT CONNECT ON DATABASE {} TO {role}", postgres_protocol::escape::escape_identifier(&database_name))))
         .execute(&mut admin).await?;
-    let options = wamn_postgres::connect_options(database.url())
+    let options = wamn_postgres::connect_options(database.as_str())
         .await?
         .username(&login)
         .password("migration-test");
@@ -204,13 +207,16 @@ async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic
     Ok(())
 }
 
-#[tokio::test]
-async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn package_apply_refuses_rebinding_an_existing_relation(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     use wamn_environment::apply_package::{self, ApplyPackageRequest, PackageRoot};
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::project_platform();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
     let migration_input = wamn_control_provision::test_database::package_migration_input(
-        database.url(),
+        database.as_str(),
         "mapping",
         "fixture",
         "dev",
@@ -247,7 +253,7 @@ async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Resul
         component_source: None,
         package,
         changes: wamn_broker::Publisher::default(),
-        database_url: database.url().to_owned(),
+        database_url: database.as_str().to_owned(),
         migration_database_url: migration_input.clone(),
         org: "mapping".into(),
         project: "fixture".into(),
@@ -256,7 +262,7 @@ async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Resul
     const INITIAL: &str = "CREATE TABLE fixture_app.item(id int PRIMARY KEY)";
     apply_package::apply_package_schema(request(write_package("first", "item", "1.0.0", INITIAL)?))
         .await?;
-    let mut admin = wamn_postgres::connect(database.url()).await?;
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
     let original: sqlx::postgres::types::Oid =
         sqlx::query_scalar("SELECT 'fixture_app.item'::regclass::oid")
             .fetch_one(&mut admin)
@@ -279,19 +285,23 @@ async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Resul
     Ok(())
 }
 
-#[tokio::test]
-async fn platform_migrations_refuse_administrators_and_use_scope_credentials() -> anyhow::Result<()>
-{
+#[sqlx::test(migrations = false)]
+async fn platform_migrations_refuse_administrators_and_use_scope_credentials(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     use wamn_control_provision::migrations::MigrationDatabase;
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut administrator = wamn_postgres::connect(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut administrator = wamn_postgres::connect(database.as_str()).await?;
 
     for scope in [MigrationDatabase::System, MigrationDatabase::Project] {
         assert!(scope.require_login(&mut administrator).await.is_err());
-        let input =
-            wamn_control_provision::test_database::platform_migration_input(database.url(), scope)
-                .await?;
+        let input = wamn_control_provision::test_database::platform_migration_input(
+            database.as_str(),
+            scope,
+        )
+        .await?;
         // An explicit input retains its password and native CA configuration and authenticates directly.
         let input = scope.configuration(&input)?;
         let mut connection = wamn_postgres::connect(&input).await?;
@@ -302,7 +312,7 @@ async fn platform_migrations_refuse_administrators_and_use_scope_credentials() -
                 .fetch_one(&mut administrator)
                 .await?;
         assert!(owner_stays_closed);
-        let declaration = scope.managed_role(database.name());
+        let declaration = scope.managed_role(database.path().trim_start_matches('/'));
         assert!(
             declaration.login
                 && !declaration.superuser
@@ -319,36 +329,59 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
 {
     use wamn_environment::{apply_package, environment::sql::reset::reset_database};
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_control_provision::test_database::system();
-    system.execute(&[
-        &wamn_control_provision::test_database::seed_org_project_env_sql("reset", "fixture", "dev"),
-    ])?;
+    let mut case_server = wamn_test_postgres::start(&[]).unwrap();
+    let system = url::Url::parse(
+        case_server
+            .create_database("fixture_1")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    wamn_control_provision::test_database::system(system.as_str()).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::test_database::seed_org_project_env_sql("reset", "fixture", "dev"),
+    ))
+    .execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap())
+    .await?;
     let triple = wamn_registry::Triple::new("reset", "dev", "fixture");
-    let database = wamn_test_postgres::database();
-    database.execute(&[&wamn_control_provision::sql::set_database_owner_sql(
-        database.name(),
-    )])?;
-    wamn_platform_install::environment::initialize_database(database.url()).await?;
+
+    let database = url::Url::parse(
+        case_server
+            .create_database("fixture_extra")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::set_database_owner_sql(
+            database.path().trim_start_matches('/'),
+        ),
+    ))
+    .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+    .await?;
+    wamn_platform_install::environment::initialize_database(database.as_str()).await?;
     assert!(
-        wamn_platform_install::environment::initialize_database(database.url())
+        wamn_platform_install::environment::initialize_database(database.as_str())
             .await
             .is_err()
     );
-    let mut administrator = wamn_postgres::connect(database.url()).await?;
+    let mut administrator = wamn_postgres::connect(database.as_str()).await?;
     let baseline: bool = sqlx::query_scalar("SELECT to_regclass('platform.\"user\"') IS NOT NULL")
         .fetch_one(&mut administrator)
         .await?;
     assert!(baseline);
 
     let migration_input = wamn_control_provision::test_database::package_migration_input(
-        database.url(),
+        database.as_str(),
         "reset",
         "fixture",
         "dev",
     )
     .await?;
     let owner_input = wamn_control_provision::test_database::platform_migration_input(
-        database.url(),
+        database.as_str(),
         wamn_control_provision::migrations::MigrationDatabase::Project,
     )
     .await?;
@@ -361,14 +394,14 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
         package: wamn_publish::package_artifact::fixture_package_root(&root).unwrap(),
         component_source: None,
         changes: wamn_broker::Publisher::default(),
-        database_url: database.url().to_owned(),
+        database_url: database.as_str().to_owned(),
         migration_database_url: migration_input.clone(),
         org: "reset".into(),
         project: "fixture".into(),
         environment: "dev".into(),
     };
     apply_package::apply_package_schema(apply()).await?;
-    let mut admin = wamn_postgres::connect(database.url()).await?;
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
     let before: sqlx::postgres::types::Oid =
         sqlx::query_scalar("SELECT oid FROM pg_database WHERE datname=current_database()")
             .fetch_one(&mut admin)
@@ -388,14 +421,14 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
     .await?;
     sqlx::query("INSERT INTO platform.write_log(operation,idempotency_key,request,result) VALUES ('fixture.create','before-reset',$1,'committed')")
         .bind(&b"request"[..]).execute(&mut admin).await?;
-    system.execute(&["SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.environments SET disposable=false WHERE org='reset' AND env='dev'"])?;
+    sqlx::raw_sql("SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.environments SET disposable=false WHERE org='reset' AND env='dev'").execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap()).await?;
     assert!(
-        reset_database(system.url(), &owner_input, &migration_input, &triple)
+        reset_database(system.as_str(), &owner_input, &migration_input, &triple)
             .await
             .is_err()
     );
-    system.execute(&["SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.environments SET disposable=true WHERE org='reset' AND env='dev'"])?;
-    reset_database(system.url(), &owner_input, &migration_input, &triple).await?;
+    sqlx::raw_sql("SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.environments SET disposable=true WHERE org='reset' AND env='dev'").execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap()).await?;
+    reset_database(system.as_str(), &owner_input, &migration_input, &triple).await?;
     let after: sqlx::postgres::types::Oid =
         sqlx::query_scalar("SELECT oid FROM pg_database WHERE datname=current_database()")
             .fetch_one(&mut admin)

@@ -58,11 +58,11 @@ fn run_ok(url: &str, script: &str) {
     );
 }
 
-#[test]
-fn project_env_database_ownership_and_connect_are_targeted() {
+#[sqlx::test(migrations = false)]
+async fn project_env_database_ownership_and_connect_are_targeted(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
 
     // TWO project-env databases: a single one makes every cross-database sweep
     // below vacuous (a loop over one row shows nothing about the cluster).

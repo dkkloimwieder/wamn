@@ -41,6 +41,7 @@ wamn-catalog.workspace = true
 postgres-protocol.workspace = true
 
 [dev-dependencies]
+sqlx = { workspace = true, features = ["macros"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-fixture-package = { workspace = true }
 wamn-environment = { workspace = true }

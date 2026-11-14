@@ -71,11 +71,12 @@ async fn execute(
     result
 }
 
-#[tokio::test]
-async fn write_and_copy_keep_environment_generations_and_credentials_separate() {
+#[sqlx::test(migrations = false)]
+async fn write_and_copy_keep_environment_generations_and_credentials_separate(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
         .execute(&mut client)
@@ -178,11 +179,12 @@ async fn write_and_copy_keep_environment_generations_and_credentials_separate() 
     assert!(!metadata.contains("private-prod"));
 }
 
-#[tokio::test]
-async fn oauth_writers_invalidate_rows_in_the_generation_transaction() {
+#[sqlx::test(migrations = false)]
+async fn oauth_writers_invalidate_rows_in_the_generation_transaction(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
         .execute(&mut client)
@@ -252,11 +254,12 @@ async fn oauth_writers_invalidate_rows_in_the_generation_transaction() {
     }
 }
 
-#[tokio::test]
-async fn jwt_connection_write_enforces_credential_and_auth_schemas() {
+#[sqlx::test(migrations = false)]
+async fn jwt_connection_write_enforces_credential_and_auth_schemas(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
         .execute(&mut client)

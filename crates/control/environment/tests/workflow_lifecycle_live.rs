@@ -54,7 +54,7 @@ struct Fixture {
     project: Client,
     project_url: String,
     digest: String,
-    _database: wamn_test_postgres::Database,
+    _database: url::Url,
 }
 
 async fn connect(url: &str) -> Client {
@@ -126,9 +126,10 @@ fn workflow(id: &str, version: u32, node: &str, component: &str) -> WiringDocume
     .expect("the fixture workflow is structurally valid")
 }
 
-async fn fixture() -> Fixture {
-    let project_database = wamn_platform_identity::test_database::project_platform();
-    let project_url = project_database.url().to_owned();
+async fn fixture(pool: &sqlx::PgPool) -> Fixture {
+    let project_database = wamn_test_postgres::url(pool);
+    wamn_platform_identity::test_database::project_platform(project_database.as_str()).await;
+    let project_url = project_database.as_str().to_owned();
     let mut project = connect(&project_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-workflow-fixture', false)", PlatformComponent::Provisioning.principal_id()))).execute(&mut project).await.map(drop).unwrap();
     let manifest = release();
@@ -285,10 +286,10 @@ fn key(id: &str, version: u32) -> WorkflowVersion<'_> {
     }
 }
 
-#[tokio::test]
-async fn authorship_converges_and_refuses_graphs_outside_the_release() {
+#[sqlx::test(migrations = false)]
+async fn authorship_converges_and_refuses_graphs_outside_the_release(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
 
     // No green report under the graph's hash.
     let unconditioned = workflow("nightly", 1, "read", "orders_data");
@@ -331,10 +332,10 @@ async fn authorship_converges_and_refuses_graphs_outside_the_release() {
     assert_eq!(refusal.error_type(), AuthorWorkflowErrorType::Condition);
 }
 
-#[tokio::test]
-async fn one_version_is_enabled_and_the_lock_refuses_while_held() {
+#[sqlx::test(migrations = false)]
+async fn one_version_is_enabled_and_the_lock_refuses_while_held(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     let first = workflow("nightly", 1, "read", "orders_data");
     let second = workflow("nightly", 2, "again", "orders_data");
     for document in [&first, &second] {
@@ -425,10 +426,10 @@ async fn one_version_is_enabled_and_the_lock_refuses_while_held() {
     assert_eq!(refusal.error_type(), WorkflowLifecycleErrorType::NotFound);
 }
 
-#[tokio::test]
-async fn enable_requires_the_role_of_the_enabler_and_of_the_workflow_user() {
+#[sqlx::test(migrations = false)]
+async fn enable_requires_the_role_of_the_enabler_and_of_the_workflow_user(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
 
     // The workflow user row is written once, as a service, with no role.
     let row = sqlx::query(
@@ -521,11 +522,11 @@ async fn capture_orders(fixture: &mut Fixture) {
     .unwrap();
 }
 
-#[tokio::test]
-async fn event_authorship_requires_a_captured_application_model() {
+#[sqlx::test(migrations = false)]
+async fn event_authorship_requires_a_captured_application_model(pool: sqlx::PgPool) {
     use wamn_event_wire::Op;
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     capture_orders(&mut fixture).await;
     let graph = workflow("changed", 1, "get", "orders_data");
 
@@ -593,9 +594,9 @@ async fn event_authorship_requires_a_captured_application_model() {
 }
 
 /// The supplied broker credential needs stream management and event publication.
-#[tokio::test]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
-async fn event_enable_records_stream_tail_and_requires_admin() {
+async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool) {
     use std::time::Duration;
     use wamn_broker::EventBroker;
     use wamn_broker::events::{event_consumer_config, source_stream_config};
@@ -603,7 +604,7 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
         "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
     );
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     capture_orders(&mut fixture).await;
     let graph = workflow("changed", 1, "get", "orders_data");
 

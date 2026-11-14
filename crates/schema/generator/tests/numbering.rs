@@ -482,8 +482,8 @@ fn an_overlay_command_cannot_write_inherited_number_or_actor_fields() {
 
 /// Run the emitted statements under their emitted column grants, including
 /// an overlay that omits the owner's field declarations.
-#[test]
-fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
+#[tokio::test]
+async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
     let _lock = wamn_test_postgres::lock();
     let base = stamped_numbered();
     for manifest in [
@@ -498,70 +498,87 @@ fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
             std::slice::from_ref(&base),
         )
         .unwrap();
-        let database = wamn_catalog::test_database::project();
-        database.execute(&["CREATE SCHEMA inventory; CREATE TABLE inventory.gadget (
+        let mut database_server_database = wamn_test_postgres::start(&[]).unwrap();
+        let database = url::Url::parse(
+            database_server_database
+                .create_database("fixture")
+                .await
+                .unwrap()
+                .url(),
+        )
+        .unwrap();
+        wamn_catalog::test_database::project(database.as_str()).await;
+        sqlx::raw_sql("CREATE SCHEMA inventory; CREATE TABLE inventory.gadget (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(), part_code text UNIQUE NOT NULL,
             stock_id uuid NOT NULL, status text NOT NULL DEFAULT 'open',
             row_version bigint NOT NULL DEFAULT 1, created_at timestamptz NOT NULL DEFAULT now(),
             created_by uuid NOT NULL, updated_by uuid NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
             GRANT USAGE ON SCHEMA inventory TO wamn_app;
-            GRANT SELECT ON inventory.gadget TO wamn_app;"]).unwrap();
-        database
-            .execute(&["GRANT INSERT, UPDATE ON inventory.gadget TO wamn_app"])
+            GRANT SELECT ON inventory.gadget TO wamn_app;").execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
+        sqlx::raw_sql("GRANT INSERT, UPDATE ON inventory.gadget TO wamn_app")
+            .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+            .await
             .unwrap();
         let first = "00000000-0000-4000-8000-000000000001";
         let second = "00000000-0000-4000-8000-000000000002";
         let stock = "00000000-0000-4000-8000-000000000003";
         let id = "00000000-0000-4000-8000-000000000004";
         let create = text(&package, "generated/sql/gadget/create.sql");
-        database
-            .execute(&[&format!(
-                "SET ROLE wamn_app; SET search_path TO inventory, pg_catalog;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "SET ROLE wamn_app; SET search_path TO inventory, pg_catalog;
             SET app.user_id = '{first}'; PREPARE create_gadget AS {create}
             EXECUTE create_gadget('{id}', '{stock}', 'G-1');"
-            )])
+        )))
+        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await
+        .unwrap();
+        let mut observer = wamn_postgres::connect(database.as_str()).await.unwrap();
+        let row: uuid::Uuid = sqlx::query_scalar("SELECT id FROM inventory.gadget")
+            .fetch_one(&mut observer)
+            .await
             .unwrap();
-        let row = database
-            .execute(&["SELECT id::text FROM inventory.gadget"])
-            .unwrap();
-        assert_eq!(row.trim(), id);
+        assert_eq!(row, uuid::Uuid::parse_str(id).unwrap());
         let update = text(&package, "generated/sql/gadget/update.sql");
-        let actors = || {
-            database
-                .execute(&[
-                    "SELECT created_by::text || ',' || updated_by::text FROM inventory.gadget",
-                ])
+        let actors = async || -> (uuid::Uuid, uuid::Uuid) {
+            sqlx::query_as("SELECT created_by, updated_by FROM inventory.gadget")
+                .fetch_one(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+                .await
                 .unwrap()
-                .trim()
-                .to_owned()
         };
-        assert_eq!(actors(), format!("{first},{first}"));
+        let first_actor = uuid::Uuid::parse_str(first).unwrap();
+        assert_eq!(actors().await, (first_actor, first_actor));
         // Both an omitted field and the same supplied value leave the actor alone.
         for (present, value) in [(false, stock), (true, stock), (true, second)] {
-            let revision = database
-                .execute(&["SELECT row_version FROM inventory.gadget"])
+            let revision: i64 = sqlx::query_scalar("SELECT row_version FROM inventory.gadget")
+                .fetch_one(&mut observer)
+                .await
                 .unwrap();
-            database
-                .execute(&[&format!(
-                    "SET ROLE wamn_app; SET search_path TO inventory, pg_catalog;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "SET ROLE wamn_app; SET search_path TO inventory, pg_catalog;
                 SET app.user_id = '{second}'; PREPARE update_gadget AS {update}
                 EXECUTE update_gadget('{id}', {}, {present}, '{value}');",
-                    revision.trim()
-                )])
-                .unwrap();
+                revision
+            )))
+            .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+            .await
+            .unwrap();
             assert_eq!(
-                actors(),
-                format!("{first},{}", if value == stock { first } else { second })
+                actors().await,
+                (
+                    first_actor,
+                    uuid::Uuid::parse_str(if value == stock { first } else { second }).unwrap()
+                )
             );
         }
     }
 }
 
 /// PostgreSQL accepts the generated cast of a rendered number into an integer field.
-#[test]
-fn live_a_numbered_integer_field_inserts_the_rendered_number() {
+#[sqlx::test(migrations = false)]
+async fn live_a_numbered_integer_field_inserts_the_rendered_number(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::project();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_catalog::test_database::project(database.as_str()).await;
     let mut manifest = numbered();
     manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
     manifest["models"]["gadget"]["fields"] = json!({"line_no": {"number": "gadget_number"}});
@@ -577,25 +594,23 @@ fn live_a_numbered_integer_field_inserts_the_rendered_number() {
         &[],
     )
     .unwrap();
-    database
-        .execute(&[
-            "CREATE TABLE public.gadget (id uuid PRIMARY KEY, line_no int NOT NULL, part_code text DEFAULT 'fixture',
+    sqlx::raw_sql("CREATE TABLE public.gadget (id uuid PRIMARY KEY, line_no int NOT NULL, part_code text DEFAULT 'fixture',
         stock_id uuid NOT NULL, status text DEFAULT 'open', row_version bigint DEFAULT 1,
-        created_at timestamptz DEFAULT now()); GRANT SELECT, INSERT ON public.gadget TO wamn_app;",
-        ])
+        created_at timestamptz DEFAULT now()); GRANT SELECT, INSERT ON public.gadget TO wamn_app;").execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await
         .unwrap();
-    database
-        .execute(&[&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "SET ROLE wamn_app; PREPARE create_gadget AS {}
         EXECUTE create_gadget('00000000-0000-4000-8000-000000000004', '00000000-0000-4000-8000-000000000003', '42');",
             text(&package, "generated/sql/gadget/create.sql")
-        )])
+        ))).execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await
+        .unwrap();
+    let (id, number): (uuid::Uuid, i32) = sqlx::query_as("SELECT id, line_no FROM public.gadget")
+        .fetch_one(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await
         .unwrap();
     assert_eq!(
-        database
-            .execute(&["SELECT id::text || ',' || line_no::text FROM public.gadget"])
-            .unwrap()
-            .trim(),
-        "00000000-0000-4000-8000-000000000004,42"
+        id,
+        uuid::Uuid::parse_str("00000000-0000-4000-8000-000000000004").unwrap()
     );
+    assert_eq!(number, 42);
 }

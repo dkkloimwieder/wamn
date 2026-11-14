@@ -3,16 +3,18 @@ use sqlx::Connection as _;
 use wamn_control_provision::migrations::MigrationDatabase;
 use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
 
-#[tokio::test]
-async fn identity_update_requires_active_signing_state_and_bounds_database_reads()
--> anyhow::Result<()> {
-    let database = wamn_control_provision::test_database::system();
+#[sqlx::test(migrations = false)]
+async fn identity_update_requires_active_signing_state_and_bounds_database_reads(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
     let input = wamn_control_provision::test_database::platform_migration_input(
-        database.url(),
+        database.as_str(),
         MigrationDatabase::System,
     )
     .await?;
-    let mut owner = wamn_postgres::connect(database.url()).await?;
+    let mut owner = wamn_postgres::connect(database.as_str()).await?;
     let limit = std::time::Duration::from_millis(100);
     assert!(
         wamn_platform_install::platform::identity::require_keys(&input, "acme", limit)

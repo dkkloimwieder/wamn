@@ -75,32 +75,12 @@ fn platform_probe_retention() -> String {
 /// no privileges on it, as measured by `has_table_privilege`.
 const HOST_INJECTED: [&str; 1] = ["wamn_run.run_queue"];
 
-struct TestDatabase {
-    database: wamn_test_postgres::Database,
-    _lock: wamn_test_postgres::ProcessLock,
-}
-
-impl Drop for TestDatabase {
-    fn drop(&mut self) {
-        self.database
-            .execute(&["DROP DATABASE IF EXISTS wamn WITH (FORCE)"])
-            .expect("drop the case's project database");
-    }
-}
-
-/// Give one case a fresh database on the shared server under its process lock.
-fn shared_server() -> (TestDatabase, String) {
-    let lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let mut admin = url::Url::parse(database.url()).expect("parse the test database URL");
-    admin.set_path("/postgres");
-    (
-        TestDatabase {
-            database,
-            _lock: lock,
-        },
-        admin.to_string(),
-    )
+/// Give the case its own server for its independent control and project databases.
+fn shared_server() -> (wamn_test_postgres::OwnedPostgres, String) {
+    let server = wamn_test_postgres::start(&[]).expect("start the case server");
+    let admin = server.database("postgres").expect("server coordinate");
+    let url = admin.url().to_owned();
+    (server, url)
 }
 
 fn psql(url: &str, database: Option<&str>, script: &str) -> String {

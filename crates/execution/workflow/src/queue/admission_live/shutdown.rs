@@ -219,7 +219,9 @@ pub(super) async fn run(
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn active_drain_preserves_recovery_and_revokes_authority() -> anyhow::Result<()> {
-    super::run_current(super::Mode::Shutdown).await
+#[sqlx::test(migrations = false)]
+async fn active_drain_preserves_recovery_and_revokes_authority(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
+    super::run_current(&pool, super::Mode::Shutdown).await
 }

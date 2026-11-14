@@ -303,47 +303,54 @@ Use the same cluster document and prepared artifacts as the other focused platfo
 ## Test-database isolation
 
 Tests never connect to or change an interactive development database.
-A database test takes its PostgreSQL from the `wamn-test-postgres` crate in `test-support/postgres`, and it reads no database variable.
-The crate requires the PostgreSQL 18 binaries under `/usr/lib/postgresql/18/bin`.
+Run database tests through the `wamn-test-postgres` binary in `test-support/postgres`.
+For Cargo commands, each test binary gets its own PostgreSQL 18 server with TLS and `DATABASE_URL`.
+For other commands, the runner owns one private server. It removes each server when its command exits.
+The crate requires PostgreSQL 18 binaries under `/usr/lib/postgresql/18/bin`.
+`WAMN_POSTGRES_BIN_DIR` can select another directory.
 
-`wamn_test_postgres::database()` creates a database with a unique name that the calling test owns.
-The first call starts one private server for the test process.
-That server stops, and its directory is removed, when the test process exits, also after a panic.
-Dropping the returned value drops the database.
-A cleanup error fails the test. During an existing panic, cleanup reports the error without starting a second panic.
-`url()` returns its superuser URL, and `execute` runs SQL batches in it.
+```bash
+cargo build -p wamn-test-postgres --bin wamn-test-postgres
+"$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database tests --url-env DATABASE_URL -- \
+  cargo test -p wamn-catalog --lib
+```
+
+Tests with one database use `#[sqlx::test(migrations = false)]` and accept a `sqlx::PgPool`.
+SQLx creates its database and removes it after success. It retains failed test databases until the private server stops.
+Use the pool directly. If code needs a URL, use `wamn_test_postgres::url(&pool)`.
+This adapter preserves certificate paths when SQLx serializes connection options.
+The runner supplies the private server URL. Do not set it to an interactive database.
+Run the database test commands below through this runner. Their examples show the child command.
 
 Roles and server settings belong to the whole server.
-A test that changes roles, or depends on roles that another test of the same binary changes, holds `wamn_test_postgres::lock()` for its whole duration.
-Take the lock before you create the database.
+A test that changes roles, or depends on roles that another test changes, holds `wamn_test_postgres::lock()` for its whole duration.
+The runner runs tests within each binary one at a time because schema setup creates shared roles.
+Test binaries never share a server or its roles.
 
 `wamn_test_postgres::start(settings)` starts a separate server, for example with `("wal_level", "logical")` or `("standard_conforming_strings", "off")`.
-A test that changes the whole server, such as a control store that revokes PUBLIC CONNECT on every database, holds the lock or starts its own server.
+Use the server owner for tests that need several independent databases or change server-wide state.
+Call `server.create_database(name).await` to create each database.
 Dropping the server stops it and removes its directory.
 
-Minimum setup functions create a database with the schema that a test starts from.
+Schema setup functions install SQL on a supplied database URL.
 Each lives beside the crate that owns its SQL, behind that crate's `test-util` feature.
-Enable the feature on a dev-dependency.
-The minimums do not take the lock.
+Enable the feature on a dev-dependency. These functions do not take the process lock or allocate databases.
 
-| Minimum | Function | Installs |
+| Setup | Function | Installs |
 | --- | --- | --- |
-| system | `wamn_control_provision::test_database::system()` | the control store, applied as `wamn_system`, which owns the database |
-| project | `wamn_catalog::test_database::project()` | `CATALOG_SCHEMA_SQL` and the `wamn_app` role |
-| project+platform | `wamn_platform_identity::test_database::project_platform()` | the project base grants and `deploy/sql/app-schema.sql` |
+| system | `wamn_control_provision::test_database::system(url).await` | the control store, applied as its database owner `wamn_system` |
+| project | `wamn_catalog::test_database::project(url).await` | `CATALOG_SCHEMA_SQL` and the `wamn_app` role |
+| project+platform | `wamn_platform_identity::test_database::project_platform(url).await` | the project base grants and `deploy/sql/app-schema.sql` |
 
-A test of provisioning, migrations, or grants executes that operation and does not start from a minimum that already performed it.
+A test of provisioning, migrations, or grants executes that operation and starts without a setup function that already performed it.
 Exercise the intended role because a superuser bypasses row security.
+Ignored tests use the same SQLx interface.
 
-An [ignored test](#ignored-tests) takes its database from the same functions.
-
-For Docker fixtures, choose a new container name and an unused loopback port.
-Make sure that a real query succeeds through the same connection path that the command uses.
-
-The `wamn-test-postgres` runner binary in `wamn-test-infrastructure` serves delivery tooling and the manual generation commands below.
-It starts a server, creates the named database, and optionally applies migrations and history tables.
-It removes inherited PostgreSQL variables, sets each `--url-env` variable to the database URL, and runs the command.
-It stops the command's process group and removes its server on completion, failure, or handled interruption.
+The runner also serves delivery tooling and manual generation commands.
+It can create a named database, create a schema, and apply SQL from migration directories before the child starts.
+It removes inherited PostgreSQL variables and sets each `--url-env` variable to its private database URL.
+It stops the command's process group on completion, failure, or handled interruption.
+Application builds own generated history migrations.
 
 ## Execution tiers
 
@@ -931,7 +938,7 @@ Its output lies in `apps/target/wamn/<package>`, and Git holds none of it.
 Build every package before you compile the apps workspace, the application test crates, or an application web:
 
 ```bash
-DATABASE_URL=postgres://postgres:<password>@127.0.0.1:<port>/postgres \
+"$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database generation --url-env DATABASE_URL -- \
   cargo run --locked --offline -p wamn-ctl --bin wamn -- build \
   apps/platform_fixture apps/platform_fixture_overlay apps/wamn_receiving \
   apps/client_acme_receiving apps/wamn_wms apps/edge_samples apps/edge_device
@@ -948,7 +955,7 @@ The compiler emits no native verifier rows, bind fixtures, or source maps.
 
 ### wamn build
 
-The live build tests use the PostgreSQL 18 binaries and start their own server, as the other generator database tests do:
+The live build tests use PostgreSQL 18. Pass these child commands to the private-server runner:
 
 ```bash
 cargo test --locked --offline -p wamn-compiler --test build_live

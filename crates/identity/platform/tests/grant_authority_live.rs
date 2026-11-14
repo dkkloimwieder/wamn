@@ -38,12 +38,15 @@ async fn blocked(observer: &mut Client, waiting: i32, holder: i32) -> anyhow::Re
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inactive_membership_serializes_grants_and_refuses_sessions() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn inactive_membership_serializes_grants_and_refuses_sessions(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = test_database::system();
-    let mut first = connect(database.url()).await?;
-    let mut observer = connect(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    test_database::system(database.as_str()).await;
+    let mut first = connect(database.as_str()).await?;
+    let mut observer = connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&test_database::seed_org_project_env_sql("acme", "billing", "dev")).to_string(),
     ))
@@ -58,7 +61,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions() -> anyhow:
         .fetch_one(&mut first)
         .await?
         .get(0);
-    let mut second = connect(database.url()).await?;
+    let mut second = connect(database.as_str()).await?;
     let waiting: i32 = sqlx::query("SELECT pg_backend_pid()")
         .fetch_one(&mut second)
         .await?
@@ -150,10 +153,28 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions() -> anyhow:
 async fn service_admin_projects_without_user_membership_and_stale_admin_is_removed()
 -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let system_database = test_database::system();
-    let target_database = wamn_platform_identity::test_database::project_platform();
-    let mut system = connect(system_database.url()).await?;
-    let mut target = connect(target_database.url()).await?;
+    let mut case_server = wamn_test_postgres::start(&[]).unwrap();
+    let system_database = url::Url::parse(
+        case_server
+            .create_database("fixture_1")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    test_database::system(system_database.as_str()).await;
+
+    let target_database = url::Url::parse(
+        case_server
+            .create_database("fixture_extra")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    wamn_platform_identity::test_database::project_platform(target_database.as_str()).await;
+    let mut system = connect(system_database.as_str()).await?;
+    let mut target = connect(target_database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&test_database::seed_org_project_env_sql("acme", "billing", "dev")).to_string(),
     ))
@@ -237,14 +258,17 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
     Ok(())
 }
 
-#[tokio::test]
-async fn authored_mutations_refuse_direct_admin_and_escalation() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn authored_mutations_refuse_direct_admin_and_escalation(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     use wamn_platform_identity::application::{
         ApplicationUser, GrantAuthority, GrantChange, create_role, mutate_grant, write_user,
     };
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::project_platform();
-    let mut client = connect(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    let mut client = connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&platform_principals_sql("example.test")?).to_string(),
     ))

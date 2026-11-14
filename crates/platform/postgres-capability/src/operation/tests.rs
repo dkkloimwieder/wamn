@@ -216,14 +216,10 @@ impl GuestCall for Run {
     }
 }
 
-async fn fixture() -> (
-    wamn_test_postgres::Database,
-    Arc<WamnPostgres>,
-    Arc<LoadedRelease>,
-) {
-    let database = wamn_test_postgres::database();
-    let url = live_guest_url(database.url(), PROJECT_ENV_KEY).await;
-    ensure_live_user_rows(database.url(), &[LIVE_PRINCIPAL]).await;
+async fn fixture(pool: &sqlx::PgPool) -> (url::Url, Arc<WamnPostgres>, Arc<LoadedRelease>) {
+    let database = wamn_test_postgres::url(pool);
+    let url = live_guest_url(database.as_str(), PROJECT_ENV_KEY).await;
+    ensure_live_user_rows(database.as_str(), &[LIVE_PRINCIPAL]).await;
     let schema = include_str!("../../../../../deploy/sql/app-schema.sql");
     let start = schema
         .find("CREATE TABLE IF NOT EXISTS platform.write_log")
@@ -232,12 +228,13 @@ async fn fixture() -> (
         .find("GRANT DELETE ON platform.write_log TO wamn_app;")
         .unwrap()
         + "GRANT DELETE ON platform.write_log TO wamn_app;".len();
-    database.execute(&[
-        &schema[start..end],
-        "DO $$ BEGIN CREATE ROLE wamn_db_owner; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
-        include_str!("../../../../../deploy/sql/record-history.sql"),
-        include_str!("../../../../../deploy/sql/record-history-app-grants.sql"),
-        "CREATE TABLE widget(id int PRIMARY KEY, value int NOT NULL, \
+    {
+        let batches: &[&str] = &[
+            &schema[start..end],
+            "DO $$ BEGIN CREATE ROLE wamn_db_owner; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
+            include_str!("../../../../../deploy/sql/record-history.sql"),
+            include_str!("../../../../../deploy/sql/record-history-app-grants.sql"),
+            "CREATE TABLE widget(id int PRIMARY KEY, value int NOT NULL, \
            CONSTRAINT application_identity CHECK (value = 1 OR current_setting('app.application', true) IS NOT DISTINCT FROM 'receiving')); \
          INSERT INTO widget VALUES (1, 1); \
          SELECT wamn_history.create_history_table('public', 'widget', false); \
@@ -246,7 +243,15 @@ async fn fixture() -> (
          GRANT SELECT, UPDATE ON widget TO wamn_app; \
          GRANT INSERT ON widget_history TO wamn_app; \
          GRANT USAGE ON SEQUENCE widget_history_position_seq TO wamn_app;",
-    ]).unwrap();
+        ];
+        let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
+        for batch in batches {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                .execute(&mut setup_connection)
+                .await
+                .unwrap();
+        }
+    }
     let release = release();
     let postgres = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(url)),
@@ -342,13 +347,13 @@ async fn run_guest(postgres: Arc<WamnPostgres>, release: Arc<LoadedRelease>, mod
         .unwrap();
 }
 
-async fn connect(database: &wamn_test_postgres::Database) -> sqlx::PgConnection {
-    let client = wamn_postgres::connect(database.url()).await.unwrap();
+async fn connect(database: &url::Url) -> sqlx::PgConnection {
+    let client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     client
 }
 
-async fn value(database: &wamn_test_postgres::Database) -> i32 {
+async fn value(database: &url::Url) -> i32 {
     sqlx::query("SELECT value FROM widget")
         .fetch_one(&mut connect(database).await)
         .await
@@ -386,8 +391,8 @@ fn offline_fixture() -> (Arc<WamnPostgres>, Arc<LoadedRelease>) {
     (postgres, release)
 }
 
-#[tokio::test]
-async fn unavailable_principal_database_returns_connection_unavailable() {
+#[sqlx::test(migrations = false)]
+async fn unavailable_principal_database_returns_connection_unavailable(pool: sqlx::PgPool) {
     let (postgres, release) = offline_fixture();
     let error = postgres
         .bind_session_identity(
@@ -412,17 +417,21 @@ async fn unavailable_principal_database_returns_connection_unavailable() {
     run_guest(postgres, release, 23).await;
 
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
-    database.execute(&["DROP TABLE platform.\"user\""]).unwrap();
+    let (database, postgres, release) = fixture(&pool).await;
+    sqlx::raw_sql("DROP TABLE platform.\"user\"")
+        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await
+        .unwrap();
     run_guest(postgres, release, 23).await;
 }
 
-#[tokio::test]
-async fn missing_principal_returns_permission_denied() {
+#[sqlx::test(migrations = false)]
+async fn missing_principal_returns_permission_denied(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
-    database
-        .execute(&["DELETE FROM platform.\"user\""])
+    let (database, postgres, release) = fixture(&pool).await;
+    sqlx::raw_sql("DELETE FROM platform.\"user\"")
+        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await
         .unwrap();
     run_guest(postgres, release, 24).await;
 }
@@ -440,10 +449,10 @@ async fn anonymous_read_authorization_needs_no_database_credentials() {
     assert!(postgres.scopes.is_empty());
 }
 
-#[tokio::test]
-async fn reads_authorize_without_a_transaction_and_refuse_begin() {
+#[sqlx::test(migrations = false)]
+async fn reads_authorize_without_a_transaction_and_refuse_begin(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     for _ in 0..2 {
         run_guest(Arc::clone(&postgres), Arc::clone(&release), 18).await;
     }
@@ -479,34 +488,34 @@ async fn unbound_control_entry_links_but_refuses_every_operation_call() {
     assert!(postgres.scopes.is_empty());
 }
 
-#[tokio::test]
-async fn wal_position_without_begin_refuses() {
+#[sqlx::test(migrations = false)]
+async fn wal_position_without_begin_refuses(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(postgres, release, 16).await;
     assert_eq!(value(&database).await, 1);
 }
 
-#[tokio::test]
-async fn wal_position_inside_an_open_operation_preserves_its_transaction() {
+#[sqlx::test(migrations = false)]
+async fn wal_position_inside_an_open_operation_preserves_its_transaction(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(postgres, release, 17).await;
     assert_eq!(value(&database).await, 2);
 }
 
-#[tokio::test]
-async fn rollback_without_begin_refuses() {
+#[sqlx::test(migrations = false)]
+async fn rollback_without_begin_refuses(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(postgres, release, 13).await;
     assert_eq!(value(&database).await, 1);
 }
 
-#[tokio::test]
-async fn rollback_removes_the_claim_and_statement_effects() {
+#[sqlx::test(migrations = false)]
+async fn rollback_removes_the_claim_and_statement_effects(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(Arc::clone(&postgres), release, 14).await;
     assert_eq!(value(&database).await, 1);
     assert!(postgres.scopes.is_empty());
@@ -518,10 +527,10 @@ async fn rollback_removes_the_claim_and_statement_effects() {
     assert_eq!(count, 0);
 }
 
-#[tokio::test]
-async fn rollback_then_begin_on_the_same_store_runs_the_unclaimed_key() {
+#[sqlx::test(migrations = false)]
+async fn rollback_then_begin_on_the_same_store_runs_the_unclaimed_key(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(postgres, release, 15).await;
     assert_eq!(value(&database).await, 2);
     let result: String = sqlx::query("SELECT result FROM platform.write_log")
@@ -532,26 +541,28 @@ async fn rollback_then_begin_on_the_same_store_runs_the_unclaimed_key() {
     assert_eq!(result, RESULT);
 }
 
-#[tokio::test]
-async fn commit_without_begin_refuses() {
+#[sqlx::test(migrations = false)]
+async fn commit_without_begin_refuses(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(postgres, release, 0).await;
     assert_eq!(value(&database).await, 1);
 }
 
-#[tokio::test]
-async fn begin_while_open_refuses_and_leaves_the_open_operation() {
+#[sqlx::test(migrations = false)]
+async fn begin_while_open_refuses_and_leaves_the_open_operation(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(postgres, release, 1).await;
     assert_eq!(value(&database).await, 4);
 }
 
-#[tokio::test]
-async fn begin_commit_begin_on_the_same_store_uses_new_transaction_and_delivery() {
+#[sqlx::test(migrations = false)]
+async fn begin_commit_begin_on_the_same_store_uses_new_transaction_and_delivery(
+    pool: sqlx::PgPool,
+) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(postgres, release, 8).await;
     assert_eq!(value(&database).await, 3);
     let mut client = connect(&database).await;
@@ -573,32 +584,33 @@ async fn begin_commit_begin_on_the_same_store_uses_new_transaction_and_delivery(
     assert_eq!(keys, ["key", "ney"]);
 }
 
-#[tokio::test]
-async fn refused_begin_then_begin_on_the_same_store_is_accepted() {
+#[sqlx::test(migrations = false)]
+async fn refused_begin_then_begin_on_the_same_store_is_accepted(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(postgres, release, 11).await;
     assert_eq!(value(&database).await, 2);
 }
 
-#[tokio::test]
-async fn refused_commit_then_begin_on_the_same_store_is_accepted() {
+#[sqlx::test(migrations = false)]
+async fn refused_commit_then_begin_on_the_same_store_is_accepted(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
-    database
-        .execute(&[
-            "ALTER TABLE platform.write_log ADD CONSTRAINT refuse_first_finish \
+    let (database, postgres, release) = fixture(&pool).await;
+    sqlx::raw_sql(
+        "ALTER TABLE platform.write_log ADD CONSTRAINT refuse_first_finish \
          CHECK (result IS NULL OR idempotency_key <> 'key')",
-        ])
-        .unwrap();
+    )
+    .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+    .await
+    .unwrap();
     run_guest(postgres, release, 12).await;
     assert_eq!(value(&database).await, 2);
 }
 
-#[tokio::test]
-async fn store_drop_rolls_back_the_statement_and_claim() {
+#[sqlx::test(migrations = false)]
+async fn store_drop_rolls_back_the_statement_and_claim(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(Arc::clone(&postgres), release, 2).await;
     assert_eq!(value(&database).await, 1);
     assert!(postgres.scopes.is_empty());
@@ -610,20 +622,20 @@ async fn store_drop_rolls_back_the_statement_and_claim() {
     assert_eq!(count, 0);
 }
 
-#[tokio::test]
-async fn a_caller_without_the_operation_grant_refuses() {
+#[sqlx::test(migrations = false)]
+async fn a_caller_without_the_operation_grant_refuses(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(postgres, release, 3).await;
     assert_eq!(value(&database).await, 1);
 }
 
-#[tokio::test]
-async fn guest_begin_statement_commit_writes_the_log_and_history() {
+#[sqlx::test(migrations = false)]
+async fn guest_begin_statement_commit_writes_the_log_and_history(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(Arc::clone(&postgres), Arc::clone(&release), 4).await;
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     let row =
         sqlx::query("SELECT operation, idempotency_key, request, result FROM platform.write_log")
@@ -660,17 +672,17 @@ async fn guest_begin_statement_commit_writes_the_log_and_history() {
     assert_eq!(value(&database).await, 2);
 }
 
-#[tokio::test]
-async fn anonymous_caller_begins_an_operation_without_a_grant() {
+#[sqlx::test(migrations = false)]
+async fn anonymous_caller_begins_an_operation_without_a_grant(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (_database, postgres, release) = fixture().await;
+    let (_database, postgres, release) = fixture(&pool).await;
     run_guest(postgres, release, 19).await;
 }
 
-#[tokio::test]
-async fn anonymous_caller_on_a_granted_operation_refuses() {
+#[sqlx::test(migrations = false)]
+async fn anonymous_caller_on_a_granted_operation_refuses(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres, release) = fixture().await;
+    let (database, postgres, release) = fixture(&pool).await;
     run_guest(postgres, release, 20).await;
     assert_eq!(value(&database).await, 1);
 }

@@ -294,7 +294,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         ("shared_preload_libraries", "pg_stat_statements"),
         ("pg_stat_statements.track", "all"),
     ])?;
-    let test_database = postgres.create_database("session_route")?;
+    let test_database = postgres.create_database("session_route").await?;
     let admin_url = test_database.url();
     let mut admin = connect(admin_url).await?;
     let database: String = sqlx::query("SELECT current_database()::text")
@@ -312,7 +312,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     )?;
     install(&mut admin, &database, &generation).await?;
     seed(&mut admin).await?;
-    let other_database = postgres.create_database("session_route_other")?;
+    let other_database = postgres.create_database("session_route_other").await?;
     let mut other_admin = connect(other_database.url()).await?;
     sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
         .execute(&mut other_admin)

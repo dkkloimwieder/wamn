@@ -27,12 +27,12 @@ const SEED_SQL: &str = "\
       ('acme', 'dev', 'billing', 's1', 'aaaaaaa1'), ('acme', 'prod', 'billing', 's2', 'aaaaaaa2'), \
       ('acme', 'dev', 'shop', 's3', 'aaaaaaa3'), ('other', 'dev', 'billing', 's4', 'aaaaaaa4');";
 
-#[tokio::test]
-async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
+#[sqlx::test(migrations = false)]
+async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPool) {
     // The system schema creates the cluster-wide wamn_system and wamn_db_owner roles.
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let mut client = wamn_postgres::connect(test_database.url())
+    let test_database = wamn_test_postgres::url(&pool);
+    let mut client = wamn_postgres::connect(test_database.as_str())
         .await
         .expect("connect the org grant test database");
 

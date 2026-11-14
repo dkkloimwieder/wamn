@@ -2,13 +2,14 @@ use super::operation_grants::ensure_admin_role;
 use super::*;
 use sqlx::Connection as _;
 
-#[tokio::test]
-async fn auth_drops_ensure_admin_role_records_only_changed_grants() {
+#[sqlx::test(migrations = false)]
+async fn auth_drops_ensure_admin_role_records_only_changed_grants(pool: sqlx::PgPool) {
     use wamn_broker::auth_changes::AuthDrops;
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::project_platform();
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::platform_principals_sql("example.invalid").unwrap()).to_string(),
@@ -58,9 +59,9 @@ async fn auth_drops_ensure_admin_role_records_only_changed_grants() {
     tx.commit().await.unwrap();
 }
 
-#[tokio::test]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
-async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
+async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: sqlx::PgPool) {
     use std::sync::Arc;
     use std::time::Duration;
     use wamn_capability_authority::auth_cache::{
@@ -70,28 +71,50 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::project_platform();
-    database.execute(&[
-        &wamn_control_provision::sql::install_platform_extensions_sql(),
-        wamn_control_provision::sql::ensure_db_owner_role_sql(),
-        "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
-    ]).unwrap();
-    database.execute(&[
-        "CREATE ROLE authdrops_apply LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS PASSWORD 'authdrops'; GRANT wamn_db_owner TO authdrops_apply;",
-        "GRANT USAGE, CREATE ON SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT ALL ON ALL TABLES IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT ALL ON ALL SEQUENCES IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply;",
-    ]).unwrap();
-    database
-        .execute(&[wamn_control_provision::MIGRATION_PRIVILEGES_SQL])
-        .unwrap();
-    let database_name = wamn_postgres::identity(database.url()).unwrap().1;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    {
+        let batches: &[&str] = &[
+            &wamn_control_provision::sql::install_platform_extensions_sql(),
+            wamn_control_provision::sql::ensure_db_owner_role_sql(),
+            "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
+        ];
+        let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
+        for batch in batches {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                .execute(&mut setup_connection)
+                .await
+                .unwrap();
+        }
+    }
+    {
+        let batches: &[&str] = &[
+            "CREATE ROLE authdrops_apply LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS PASSWORD 'authdrops'; GRANT wamn_db_owner TO authdrops_apply;",
+            "GRANT USAGE, CREATE ON SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT ALL ON ALL TABLES IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT ALL ON ALL SEQUENCES IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply;",
+        ];
+        let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
+        for batch in batches {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                .execute(&mut setup_connection)
+                .await
+                .unwrap();
+        }
+    }
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::MIGRATION_PRIVILEGES_SQL,
+    ))
+    .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+    .await
+    .unwrap();
+    let database_name = wamn_postgres::identity(database.as_str()).unwrap().1;
     let login =
         wamn_control_provision::migration::login("apply-drops--dev--fixture", &database_name)
             .unwrap();
-    database.execute(&[&format!("CREATE ROLE {login} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD 'migration-test'; GRANT {login} TO authdrops_apply WITH INHERIT TRUE, SET TRUE")]).unwrap();
-    let mut migration_url = url::Url::parse(database.url()).unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE ROLE {login} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD 'migration-test'; GRANT {login} TO authdrops_apply WITH INHERIT TRUE, SET TRUE"))).execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
+    let mut migration_url = url::Url::parse(database.as_str()).unwrap();
     migration_url.set_username(&login).unwrap();
     migration_url.set_password(Some("migration-test")).unwrap();
-    let mut owner_url = url::Url::parse(database.url()).unwrap();
+    let mut owner_url = url::Url::parse(database.as_str()).unwrap();
     owner_url.set_username("authdrops_apply").unwrap();
     owner_url.set_password(Some("authdrops")).unwrap();
     let (_server, nats) = nats().await;
@@ -136,7 +159,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
             .is_err()
     })
     .await;
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
     let admin_role: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT FROM platform.role WHERE name='admin')")
             .fetch_one(&mut client)

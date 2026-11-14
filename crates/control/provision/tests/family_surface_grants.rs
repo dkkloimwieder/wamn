@@ -244,11 +244,11 @@ fn load_role_grants(admin_url: &str, role: &str) -> Vec<String> {
 }
 
 /// THE EXECUTOR-PLATFORM SURFACE, AS THE SERVER SEES IT.
-#[test]
-fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
+#[sqlx::test(migrations = false)]
+async fn the_executor_platform_role_holds_exactly_its_measured_lease_surface(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let admin = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin = test_database.as_str().to_owned();
     let database = query(&admin, "SELECT current_database()");
     reset(&admin, &database);
 
@@ -491,11 +491,11 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
 /// Catalog reads, projected connection reads, permission reads, and no run plane
 /// are asserted by EQUALITY over the complete grant set, so acquiring adjacent
 /// authority fails here rather than at the next incident.
-#[test]
-fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
+#[sqlx::test(migrations = false)]
+async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let admin = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin = test_database.as_str().to_owned();
     let database = query(&admin, "SELECT current_database()");
     reset(&admin, &database);
 
@@ -749,11 +749,11 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     );
 }
 
-#[test]
-fn control_routes_cannot_write_release_connections_or_bindings() {
+#[sqlx::test(migrations = false)]
+async fn control_routes_cannot_write_release_connections_or_bindings(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    run_admin(database.url(),"release connection grants",&format!(
+    let database = wamn_test_postgres::url(&pool);
+    run_admin(database.as_str(),"release connection grants",&format!(
         "{} DO $roles$ BEGIN IF to_regrole('wamn_app') IS NULL THEN CREATE ROLE wamn_app NOLOGIN NOINHERIT; END IF; IF to_regrole('wamn_control') IS NULL THEN CREATE ROLE wamn_control NOLOGIN NOINHERIT; END IF;  END $roles$; CREATE SCHEMA wamn_run; {} {} {} DO $$ DECLARE role_name text; relation text; privilege text; BEGIN
           FOREACH role_name IN ARRAY ARRAY['wamn_control','wamn_administration'] LOOP
             FOREACH relation IN ARRAY ARRAY['release_connection','connection_binding'] LOOP

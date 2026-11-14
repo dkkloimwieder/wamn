@@ -466,11 +466,14 @@ async fn assert_authenticated(admin_url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test]
-fn native_authenticated_call_graph_grant() {
+#[sqlx::test(migrations = false)]
+async fn native_authenticated_call_graph_grant(pool: sqlx::PgPool) {
     let full_name = format!("operation::native_policy::tests::authenticated::{TEST_NAME}");
     if std::env::var(CHILD_MARKER).as_deref() != Ok(TEST_NAME) {
+        let server = wamn_test_postgres::start(&[]).expect("isolated authentication server");
+        let coordinate = server.database("postgres").expect("server coordinate");
         let output = Command::new(std::env::current_exe().expect("test executable"))
+            .env("DATABASE_URL", coordinate.url())
             .args(["--exact", &full_name, "--nocapture"])
             .env(CHILD_MARKER, TEST_NAME)
             .envs(
@@ -487,32 +490,10 @@ fn native_authenticated_call_graph_grant() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            stdout.contains("1 passed"),
-            "subprocess executed the named test"
-        );
-        assert_eq!(stdout.matches("authenticated-native-case=").count(), 1);
-        assert!(
-            stdout.contains("authenticated-native-case=Success result=pass"),
-            "subprocess executed the case"
-        );
-        assert_eq!(
-            stdout
-                .matches("authenticated-native-trace result=pass")
-                .count(),
-            1
-        );
-        for result_line in stdout
-            .lines()
-            .filter(|line| line.starts_with("authenticated-native-"))
-        {
-            println!("{result_line}");
-        }
         return;
     }
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
+    let database = wamn_test_postgres::url(&pool);
     let (done, finished) = mpsc::channel();
     let watchdog = std::thread::spawn(move || {
         if finished.recv_timeout(Duration::from_secs(60)) == Err(mpsc::RecvTimeoutError::Timeout) {
@@ -520,15 +501,21 @@ fn native_authenticated_call_graph_grant() {
             std::process::exit(124);
         }
     });
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .event_interval(1)
-        .enable_all()
-        .build()
-        .expect("isolated native runtime");
-    runtime
-        .block_on(assert_authenticated(database.url()))
-        .expect("real authenticated native test");
-    drop(runtime);
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .event_interval(1)
+                    .enable_all()
+                    .build()
+                    .expect("isolated native runtime");
+                runtime
+                    .block_on(assert_authenticated(database.as_str()))
+                    .expect("real authenticated native test");
+            })
+            .join()
+            .unwrap();
+    });
     done.send(()).expect("finish watchdog");
     watchdog.join().expect("join watchdog");
 }
@@ -600,155 +587,159 @@ fn swap_statement_bindings(composed: &[u8]) -> Vec<u8> {
     swapped
 }
 
-#[test]
-fn native_member_statement_instances() {
-    super::run_isolated_test("authenticated::native_member_statement_instances", async {
-        let (composed, child) = super::member_instances_component();
-        let child_digest = wamn_digest::bytes_sha256(&child);
-        let engine = wamn_engine::build_engine(&[]).expect("validation engine");
-        let admitted = validate_component_admission(
-            &engine,
-            &composed,
-            member_admission_request(&child_digest),
-        )
-        .expect("publish admits each member's statements import by its instance type");
-        assert_eq!(
-            admitted
-                .component
-                .imports
-                .iter()
-                .filter(|import| import.as_str() == super::STATEMENTS)
-                .count(),
-            1,
-            "the two named instances are one capability: {:?}",
-            admitted.component.imports
-        );
-        assert_eq!(
-            admitted.statement_instances,
-            BTreeMap::from([
-                ("sql-0".to_owned(), child_digest.clone()),
-                (
-                    "sql-1".to_owned(),
-                    wamn_digest::bytes_sha256(&super::member_root_component())
-                ),
-            ]),
-            "admission carries the record it verified into the admitted facts"
-        );
-        let refused = validate_component_admission(
-            &engine,
-            &swap_statement_bindings(&composed),
-            member_admission_request(&child_digest),
-        )
-        .expect_err("publish refuses a member wired to another member's instance");
-        assert_eq!(
-            refused.error_type(),
-            ComponentAdmissionErrorType::StatementInstanceMismatch,
-            "{refused}"
-        );
+#[sqlx::test(migrations = false)]
+async fn native_member_statement_instances(pool: sqlx::PgPool) {
+    super::run_isolated_test(
+        "authenticated::native_member_statement_instances",
+        Some(&pool),
+        || async {
+            let (composed, child) = super::member_instances_component();
+            let child_digest = wamn_digest::bytes_sha256(&child);
+            let engine = wamn_engine::build_engine(&[]).expect("validation engine");
+            let admitted = validate_component_admission(
+                &engine,
+                &composed,
+                member_admission_request(&child_digest),
+            )
+            .expect("publish admits each member's statements import by its instance type");
+            assert_eq!(
+                admitted
+                    .component
+                    .imports
+                    .iter()
+                    .filter(|import| import.as_str() == super::STATEMENTS)
+                    .count(),
+                1,
+                "the two named instances are one capability: {:?}",
+                admitted.component.imports
+            );
+            assert_eq!(
+                admitted.statement_instances,
+                BTreeMap::from([
+                    ("sql-0".to_owned(), child_digest.clone()),
+                    (
+                        "sql-1".to_owned(),
+                        wamn_digest::bytes_sha256(&super::member_root_component())
+                    ),
+                ]),
+                "admission carries the record it verified into the admitted facts"
+            );
+            let refused = validate_component_admission(
+                &engine,
+                &swap_statement_bindings(&composed),
+                member_admission_request(&child_digest),
+            )
+            .expect_err("publish refuses a member wired to another member's instance");
+            assert_eq!(
+                refused.error_type(),
+                ComponentAdmissionErrorType::StatementInstanceMismatch,
+                "{refused}"
+            );
 
-        let _lock = wamn_test_postgres::lock();
-        let database = wamn_test_postgres::database();
-        let (mut server, route) = authentication_fixture(database.url())
-            .await
-            .expect("authenticated member fixture");
-        let caller = authenticated(&route, true).await;
-        let (postgres, _) = warm_postgres_with_pool(database.url(), &[], 2)
-            .await
-            .expect("member SQL credentials");
-        let mut admin = connect(database.url()).await.expect("admin connection");
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            ("CREATE SCHEMA native_member; GRANT USAGE ON SCHEMA native_member TO wamn_app; \
+            let _lock = wamn_test_postgres::lock();
+            let database = wamn_test_postgres::url(&pool);
+            let (mut server, route) = authentication_fixture(database.as_str())
+                .await
+                .expect("authenticated member fixture");
+            let caller = authenticated(&route, true).await;
+            let (postgres, _) = warm_postgres_with_pool(database.as_str(), &[], 2)
+                .await
+                .expect("member SQL credentials");
+            let mut admin = connect(database.as_str()).await.expect("admin connection");
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                ("CREATE SCHEMA native_member; GRANT USAGE ON SCHEMA native_member TO wamn_app; \
                      CREATE TABLE native_member.native_policy_members(value text NOT NULL); \
                      GRANT SELECT, INSERT ON native_member.native_policy_members TO wamn_app")
-                .to_string(),
-        ))
-        .execute(&mut admin)
-        .await
-        .map(drop)
-        .expect("member table");
-        let fixture = Fixture::build_with_reuse(
-            Case::MemberInstances,
-            false,
-            true,
-            None,
-            None,
-            Some(postgres),
-        )
-        .await;
-        let mut rows = async || {
-            sqlx::query("SELECT value FROM native_member.native_policy_members ORDER BY value")
-                .fetch_all(&mut admin)
-                .await
-                .expect("read member rows")
+                    .to_string(),
+            ))
+            .execute(&mut admin)
+            .await
+            .map(drop)
+            .expect("member table");
+            let fixture = Fixture::build_with_reuse(
+                Case::MemberInstances,
+                false,
+                true,
+                None,
+                None,
+                Some(postgres),
+            )
+            .await;
+            let mut rows = async || {
+                sqlx::query("SELECT value FROM native_member.native_policy_members ORDER BY value")
+                    .fetch_all(&mut admin)
+                    .await
+                    .expect("read member rows")
+                    .iter()
+                    .map(|row| row.get::<String, _>(0))
+                    .collect::<Vec<_>>()
+            };
+            let component_id = fixture
+                .workload
+                .facts_by_component_id
                 .iter()
-                .map(|row| row.get::<String, _>(0))
-                .collect::<Vec<_>>()
-        };
-        let component_id = fixture
-            .workload
-            .facts_by_component_id
-            .iter()
-            .find_map(|(id, fact)| (fact == &fixture.root).then_some(id.clone()))
-            .expect("root native identity");
+                .find_map(|(id, fact)| (fact == &fixture.root).then_some(id.clone()))
+                .expect("root native identity");
 
-        for (input, commits) in [(r#"[{"value":37}]"#, true), ("[]", false)] {
-            let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
-            request.input = input.into();
-            request.facts.caller = Some(caller.clone());
-            request.facts = fixture
-                .policy
-                .prepare(&component_id, ROOT, &request.facts)
-                .await
-                .expect("admit the invocation");
-            let scope = fixture.policy.scope_id(&request.facts).unwrap();
-            let transaction = fixture
-                .policy
-                .resources
-                .postgres
-                .begin_operation_transaction(scope)
-                .await
-                .unwrap();
-            fixture
-                .policy
-                .resources
-                .postgres
-                .bind_operation_transaction(scope, &transaction)
-                .unwrap();
-            let result = invoke_native(&fixture.target().await, request)
-                .await
-                .expect("the composed root dispatches");
-            if commits {
-                let emission = result.expect("the root answers its codes");
-                assert_eq!(
-                    emission.payload, "ukukrr",
-                    "root and child each refuse the other's statement and run their own, \
+            for (input, commits) in [(r#"[{"value":37}]"#, true), ("[]", false)] {
+                let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
+                request.input = input.into();
+                request.facts.caller = Some(caller.clone());
+                request.facts = fixture
+                    .policy
+                    .prepare(&component_id, ROOT, &request.facts)
+                    .await
+                    .expect("admit the invocation");
+                let scope = fixture.policy.scope_id(&request.facts).unwrap();
+                let transaction = fixture
+                    .policy
+                    .resources
+                    .postgres
+                    .begin_operation_transaction(scope)
+                    .await
+                    .unwrap();
+                fixture
+                    .policy
+                    .resources
+                    .postgres
+                    .bind_operation_transaction(scope, &transaction)
+                    .unwrap();
+                let result = invoke_native(&fixture.target().await, request)
+                    .await
+                    .expect("the composed root dispatches");
+                if commits {
+                    let emission = result.expect("the root answers its codes");
+                    assert_eq!(
+                        emission.payload, "ukukrr",
+                        "root and child each refuse the other's statement and run their own, \
                      and the child, nested in the command, is refused begin and plain run"
-                );
-                transaction
-                    .commit()
-                    .await
-                    .expect("commit the request element");
-                assert_eq!(
-                    rows().await,
-                    ["a", "b1"],
-                    "the child's statement saw the root's row in the one host transaction"
-                );
-            } else {
-                result.expect_err("the root fails after both members wrote");
-                transaction
-                    .rollback()
-                    .await
-                    .expect("roll back the request element");
-                assert_eq!(
-                    rows().await,
-                    ["a", "b1"],
-                    "a rolled-back request element leaves no write of either member"
-                );
+                    );
+                    transaction
+                        .commit()
+                        .await
+                        .expect("commit the request element");
+                    assert_eq!(
+                        rows().await,
+                        ["a", "b1"],
+                        "the child's statement saw the root's row in the one host transaction"
+                    );
+                } else {
+                    result.expect_err("the root fails after both members wrote");
+                    transaction
+                        .rollback()
+                        .await
+                        .expect("roll back the request element");
+                    assert_eq!(
+                        rows().await,
+                        ["a", "b1"],
+                        "a rolled-back request element leaves no write of either member"
+                    );
+                }
             }
-        }
-        fixture.assert_clean().await;
-        server.stop().await;
-    });
+            fixture.assert_clean().await;
+            server.stop().await;
+        },
+    );
 }
 
 /// `wamn-azko6`: a command without SQL whose manifest declares `transaction =
@@ -756,11 +747,12 @@ fn native_member_statement_instances() {
 /// no statement, and the host still begins the request element transaction from the
 /// declared field; the member works in it through its own instance, and the
 /// request element commits or rolls back whole.
-#[test]
-fn native_sql_free_command_begins_from_its_transaction_field() {
+#[sqlx::test(migrations = false)]
+async fn native_sql_free_command_begins_from_its_transaction_field(pool: sqlx::PgPool) {
     super::run_isolated_test(
         "authenticated::native_sql_free_command_begins_from_its_transaction_field",
-        async {
+        Some(&pool),
+        || async {
             let (composed, child) = super::sql_free_instances_component();
             let child_digest = wamn_digest::bytes_sha256(&child);
             let engine = wamn_engine::build_engine(&[]).expect("validation engine");
@@ -777,15 +769,15 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
             );
 
             let _lock = wamn_test_postgres::lock();
-            let database = wamn_test_postgres::database();
-            let (mut server, route) = authentication_fixture(database.url())
+            let database = wamn_test_postgres::url(&pool);
+            let (mut server, route) = authentication_fixture(database.as_str())
                 .await
                 .expect("authenticated member fixture");
             let caller = authenticated(&route, true).await;
-            let (postgres, _) = warm_postgres_with_pool(database.url(), &[], 2)
+            let (postgres, _) = warm_postgres_with_pool(database.as_str(), &[], 2)
                 .await
                 .expect("member SQL credentials");
-            let mut admin = connect(database.url()).await.expect("admin connection");
+            let mut admin = connect(database.as_str()).await.expect("admin connection");
             sqlx::raw_sql(sqlx::AssertSqlSafe(
                 ("CREATE SCHEMA native_member; GRANT USAGE ON SCHEMA native_member TO wamn_app; \
                      CREATE TABLE native_member.native_policy_members(value text NOT NULL); \
@@ -863,21 +855,22 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
     );
 }
 
-#[test]
-fn native_warm_alternating_callers_and_credentials() {
+#[sqlx::test(migrations = false)]
+async fn native_warm_alternating_callers_and_credentials(pool: sqlx::PgPool) {
     super::run_isolated_test(
         "authenticated::native_warm_alternating_callers_and_credentials",
-        async {
+        Some(&pool),
+        || async {
             let _lock = wamn_test_postgres::lock();
-            let database = wamn_test_postgres::database();
-            let (mut server, route) = authentication_fixture(database.url())
+            let database = wamn_test_postgres::url(&pool);
+            let (mut server, route) = authentication_fixture(database.as_str())
                 .await
                 .expect("authorized authentication fixture");
             let alice = authenticated(&route, true).await;
             let bob =
                 authenticated_as(&route, true, Some("00000000-0000-4000-8000-0000000000b2")).await;
             assert_ne!(alice.principal_id(), bob.principal_id());
-            let (postgres, credentials) = warm_postgres(database.url(), &[])
+            let (postgres, credentials) = warm_postgres(database.as_str(), &[])
                 .await
                 .expect("guest-generation fixture");
             let fixture = Fixture::build_with_reuse(
@@ -964,7 +957,7 @@ fn native_warm_alternating_callers_and_credentials() {
                 .expect("session admits the callee")
                 .expect("emission");
             let pat = pat_caller(
-                database.url(),
+                database.as_str(),
                 Arc::clone(&postgres),
                 &fixture.policy.resources.release,
             )
@@ -1155,11 +1148,12 @@ async fn warm_postgres_with_pool(
     ))
 }
 
-#[test]
-fn native_warm_retirement_aborts_retained_postgres_transaction() {
+#[sqlx::test(migrations = false)]
+async fn native_warm_retirement_aborts_retained_postgres_transaction(pool: sqlx::PgPool) {
     super::run_isolated_test(
         "authenticated::native_warm_retirement_aborts_retained_postgres_transaction",
-        async {
+        Some(&pool),
+        || async {
             use wamn_capability_authority::identity::SessionIdentity;
             use wamn_postgres_capability::{PgTransaction, retained_transaction_for_test};
             use wash_runtime::engine::ctx::SharedCtx;
@@ -1184,15 +1178,15 @@ fn native_warm_retirement_aborts_retained_postgres_transaction() {
             }
 
             let _lock = wamn_test_postgres::lock();
-            let database = wamn_test_postgres::database();
-            let (mut server, route) = authentication_fixture(database.url())
+            let database = wamn_test_postgres::url(&pool);
+            let (mut server, route) = authentication_fixture(database.as_str())
                 .await
                 .expect("database and signed caller");
             let caller = authenticated(&route, true).await;
-            let (postgres, _) = warm_postgres(database.url(), &[])
+            let (postgres, _) = warm_postgres(database.as_str(), &[])
                 .await
                 .expect("project guest generation");
-            let mut admin = connect(database.url()).await.expect("admin");
+            let mut admin = connect(database.as_str()).await.expect("admin");
             sqlx::raw_sql("CREATE TABLE public.warm_retirement (value text); GRANT INSERT ON public.warm_retirement TO wamn_app").execute(&mut admin).await.map(drop).expect("owned rollback marker");
             postgres
                 .bind_session_identity(
@@ -1273,8 +1267,11 @@ async fn pat_caller(
 ) -> anyhow::Result<AuthenticatedCaller> {
     use wamn_platform_identity::{assign_project_role, create_service, issue_pat};
 
-    let system_database = wamn_control_provision::test_database::system();
-    let mut system = connect(system_database.url()).await?;
+    let mut system_server = wamn_test_postgres::start(&[])?;
+    let coordinate = system_server.create_database("control").await?;
+    let system_database = url::Url::parse(coordinate.url())?;
+    wamn_control_provision::test_database::system(system_database.as_str()).await;
+    let mut system = connect(system_database.as_str()).await?;
     sqlx::query("SELECT set_config('app.user_id', $1, false)")
         .bind(
             &wamn_control_provision::PlatformComponent::Provisioning
@@ -1332,13 +1329,13 @@ async fn pat_caller(
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
-            database: system_database.name(),
+            database: system_database.path().trim_start_matches('/'),
         },
     )?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::IdentityReader,
-            system_database.name(),
+            system_database.path().trim_start_matches('/'),
             &reader_role,
             PASSWORD,
         ))
@@ -1347,7 +1344,7 @@ async fn pat_caller(
     .execute(&mut system)
     .await
     .map(drop)?;
-    let mut reader_url = url::Url::parse(system_database.url())?;
+    let mut reader_url = url::Url::parse(system_database.as_str())?;
     reader_url
         .set_username(&reader_role)
         .map_err(|()| anyhow::anyhow!("identity reader username"))?;

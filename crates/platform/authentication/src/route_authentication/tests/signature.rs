@@ -16,25 +16,35 @@ pub(super) fn signed(body: &[u8]) -> String {
 
 struct Fixture {
     credentials: wamn_connections::connection_credentials::test_util::Fixture,
-    database: wamn_test_postgres::Database,
+    database: url::Url,
+    _server: wamn_test_postgres::OwnedPostgres,
     memory: Arc<wamn_connections::connection_memory::ConnectionMemory>,
     changes: wamn_broker::Publisher,
 }
 
 impl Fixture {
     async fn new() -> Self {
-        let credentials = wamn_connections::connection_credentials::test_util::Fixture::new().await;
-        let database = wamn_platform_identity::test_database::project_platform();
-        database
-            .execute(
-                &[&wamn_control_provision::sql::ensure_workload_acl_role_sql(
-                    wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
-                )],
-            )
-            .unwrap();
+        let mut project_server = wamn_test_postgres::start(&[]).unwrap();
+        let control = project_server.create_database("control").await.unwrap();
+        let credentials = wamn_connections::connection_credentials::test_util::Fixture::new(
+            url::Url::parse(control.url()).unwrap(),
+        )
+        .await;
+        let coordinate = project_server.create_database("project").await.unwrap();
+        let database = url::Url::parse(coordinate.url()).unwrap();
+        wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::sql::ensure_workload_acl_role_sql(
+                wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
+            ),
+        ))
+        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await
+        .unwrap();
         Self {
             credentials,
             database,
+            _server: project_server,
             memory: Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
             changes: wamn_broker::Publisher::default(),
         }
@@ -59,7 +69,9 @@ impl Fixture {
             .await
             .map(drop)
             .unwrap();
-        let mut client = wamn_postgres::connect(self.database.url()).await.unwrap();
+        let mut client = wamn_postgres::connect(self.database.as_str())
+            .await
+            .unwrap();
 
         sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:connection-principal',false)").bind(&principal).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
         sqlx::query("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','webhook@example.test') ON CONFLICT DO NOTHING").bind(&principal).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
@@ -72,7 +84,8 @@ impl Fixture {
             row_limit: 100,
         };
         let projects = wamn_postgres_capability::StaticCredentialProvider::projects_from_json(
-            &json!({(project):{"credentials":{"callable-http":self.database.url()}}}).to_string(),
+            &json!({(project):{"credentials":{"callable-http":self.database.as_str()}}})
+                .to_string(),
             &base,
         )
         .unwrap();

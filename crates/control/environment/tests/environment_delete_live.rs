@@ -14,8 +14,10 @@ use wamn_platform_identity::connections::administration;
 use wamn_registry::Triple;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-#[tokio::test]
-async fn stranded_run_refusal_preserves_the_environment_before_uninstall() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn stranded_run_refusal_preserves_the_environment_before_uninstall(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     use std::{
         os::unix::fs::PermissionsExt as _,
         path::{Path, PathBuf},
@@ -72,8 +74,9 @@ esac
     }
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut system = connect(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut system = connect(database.as_str()).await?;
     sqlx::raw_sql("SET ROLE wamn_system")
         .execute(&mut system)
         .await
@@ -113,12 +116,12 @@ esac
     .execute(&mut system)
     .await
     .map(drop)?;
-    let mut project_url = url::Url::parse(database.url())?;
+    let mut project_url = url::Url::parse(database.as_str())?;
     project_url.set_path(&project_name);
     let mut project = wamn_postgres::connect(project_url.as_str()).await?;
     wamn_environment::platform_migrations::install_project(&mut project).await?;
     wamn_platform_identity::environment::fill(
-        database.url(),
+        database.as_str(),
         project_url.as_str(),
         wamn_platform_identity::application::ApplicationTarget {
             org: &triple.org,
@@ -178,7 +181,7 @@ esac
         }))?,
     )?;
     let platform = Platform {
-        system_database_url: database.url().into(),
+        system_database_url: database.as_str().into(),
         target: wamn_release_control::release_chart::Target {
             kubeconfig: "unused".into(),
             context: "stub".into(),
@@ -210,7 +213,7 @@ esac
             .fetch_one(&mut system)
             .await?
             .get(0);
-    let error = delete(&platform, &triple, false, database.url())
+    let error = delete(&platform, &triple, false, database.as_str())
         .await
         .unwrap_err();
     for field in ["run_id", "manifest_digest"] {
@@ -245,11 +248,14 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-#[tokio::test]
-async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn cancellation_retains_registry_inputs_until_cleanup_commits(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut system = connect(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut system = connect(database.as_str()).await?;
     sqlx::raw_sql("SET ROLE wamn_system")
         .execute(&mut system)
         .await
@@ -310,7 +316,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
     let reference: String = credential.get(1);
     let version: String = credential.get(2);
 
-    let mut blocker = connect(database.url()).await?;
+    let mut blocker = connect(database.as_str()).await?;
     let blocker_pid: i32 = sqlx::query("SELECT pg_backend_pid()")
         .fetch_one(&mut blocker)
         .await?
@@ -320,7 +326,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         .execute(&mut *held)
         .await
         .map(drop)?;
-    let mut deleting = connect(database.url()).await?;
+    let mut deleting = connect(database.as_str()).await?;
     sqlx::raw_sql("SET ROLE wamn_system")
         .execute(&mut deleting)
         .await
@@ -329,7 +335,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         .fetch_one(&mut deleting)
         .await?
         .get(0);
-    let url = database.url().to_owned();
+    let url = database.as_str().to_owned();
     let deleting_triple = triple.clone();
     let task = tokio::spawn(async move {
         LifecycleLock::hold(&url, &deleting_triple, async |_| {
@@ -379,7 +385,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
     assert_eq!(retained.get::<String, _>(0), reference);
     assert_eq!(retained.get::<String, _>(1), version);
     for _ in 0..2 {
-        LifecycleLock::hold(database.url(), &triple, async |_| {
+        LifecycleLock::hold(database.as_str(), &triple, async |_| {
             delete_registry_rows(&mut system, &triple, "aaaaaaa1").await
         })
         .await?;

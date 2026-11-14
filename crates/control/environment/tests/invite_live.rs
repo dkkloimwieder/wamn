@@ -7,11 +7,12 @@ use wamn_environment::invite::{InviteRequest, invite};
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::org::{MemberGrants, invite_member};
 
-#[tokio::test]
-async fn invite_refuses_an_org_with_an_active_admin_before_contacting_identity() {
+#[sqlx::test(migrations = false)]
+async fn invite_refuses_an_org_with_an_active_admin_before_contacting_identity(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql("SET ROLE wamn_system")
         .execute(&mut client)
@@ -59,7 +60,7 @@ async fn invite_refuses_an_org_with_an_active_admin_before_contacting_identity()
             org_admin: true,
             ..MemberGrants::default()
         },
-        system_database_url: database.url().into(),
+        system_database_url: database.as_str().into(),
         // Identity is deliberately unconfigured. The org guard must refuse first.
         identity: PatIssuerConfig::default(),
     };

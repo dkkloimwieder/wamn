@@ -77,7 +77,7 @@ wash-runtime = { workspace = true, features = ["wasi-logging"] }
 wamn-platform-install = { workspace = true, features = ["test-util"] }
 wamn-build.workspace = true
 object_store.workspace = true
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio"] }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "macros", "migrate"] }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-capability-authority = { workspace = true, features = ["test-util"] }
 wamn-connections = { workspace = true, features = ["test-util"] }

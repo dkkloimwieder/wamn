@@ -13,12 +13,12 @@ use wamn_platform_identity::{
     revoke_project_env_membership,
 };
 
-#[tokio::test]
-async fn platform_identity_round_trip_on_postgres() {
+#[sqlx::test(migrations = false)]
+async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
     // The system schema creates the cluster-wide wamn_system and wamn_db_owner roles.
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
 
     let mut client = wamn_postgres::connect(&url)
         .await

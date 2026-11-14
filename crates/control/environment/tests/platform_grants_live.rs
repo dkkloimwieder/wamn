@@ -3,8 +3,6 @@
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 
-use wamn_test_infrastructure::locked_database;
-
 /// The tables of `platform` that `wamn_app` reads, as `regclass` prints them. `environment` is the status
 /// that the host reads as `wamn_app` on each request
 /// (`crates/platform/postgres-capability/src/session_identity.rs`).
@@ -123,9 +121,10 @@ async fn install(url: &str, schema: &str) -> Client {
     client
 }
 
-#[tokio::test]
-async fn a_fresh_install_grants_the_application_role_invariant_one() {
-    let url = locked_database::database(wamn_test_postgres::database);
+#[sqlx::test(migrations = false)]
+async fn a_fresh_install_grants_the_application_role_invariant_one(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool).to_string();
     let mut client = install(&url, wamn_control_provision::APP_SCHEMA_SQL).await;
     assert_eq!(surface(&mut client).await, invariant_one());
     assert_eq!(control_plane_tables(&mut client).await, 0);
@@ -134,7 +133,7 @@ async fn a_fresh_install_grants_the_application_role_invariant_one() {
 #[tokio::test]
 async fn integration_and_target_seeds_live_only_in_the_system_database() {
     let mut server = wamn_test_postgres::start(&[]).unwrap();
-    let database = server.create_database("wamn_system").unwrap();
+    let database = server.create_database("wamn_system").await.unwrap();
     let mut admin = connect(database.url()).await;
     sqlx::raw_sql("CREATE ROLE wamn_db_owner NOLOGIN NOINHERIT; CREATE ROLE wamn_system LOGIN PASSWORD 'c31-system-fixture';
         ALTER DATABASE wamn_system OWNER TO wamn_system; SET ROLE wamn_system").execute(&mut admin).await.map(drop)
@@ -156,17 +155,18 @@ async fn integration_and_target_seeds_live_only_in_the_system_database() {
     assert_eq!(seeds().await, expected);
     let target: String=sqlx::query("SELECT name || ':' || type || ':' || status FROM registry.target WHERE last_seen_at IS NULL").fetch_one(&mut admin).await.unwrap().get(0);
     assert_eq!(target, "cloud:cloud:active");
-    let app = server.create_database("c31_application").unwrap();
+    let app = server.create_database("c31_application").await.unwrap();
     let mut application = install(app.url(), wamn_control_provision::APP_SCHEMA_SQL).await;
     assert_eq!(control_plane_tables(&mut application).await, 0);
 }
 
 /// Effective PostgreSQL privilege tests include inherited roles and PUBLIC.
-#[tokio::test]
-async fn credentials_are_inaccessible_to_application_roles() {
+#[sqlx::test(migrations = false)]
+async fn credentials_are_inaccessible_to_application_roles(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN NOINHERIT; END IF; END $$").execute(&mut client).await.map(drop).unwrap();
     let exposed: Vec<String> = sqlx::query("SELECT c.oid::regclass::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND (c.relname LIKE '%credential%' OR c.relname IN ('pats','password_tokens','password_logins','oauth_token','oauth_authorization')) AND c.relkind IN ('r','p','v','m','f') AND (has_table_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')) ORDER BY 1").fetch_all(&mut client).await.unwrap().iter().map(|row| row.get(0)).collect();
     assert!(

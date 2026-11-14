@@ -159,11 +159,12 @@ async fn a_pat_only_run_refuses_the_registry_values_of_a_provisioning_run() {
 
 /// `env apply` passes no marker, so a row `wamn dev up` marked disposable
 /// stays disposable in the environment (wamn-p9xix).
-#[tokio::test]
-async fn a_record_without_a_marker_keeps_the_disposable_row() {
+#[sqlx::test(migrations = false)]
+async fn a_record_without_a_marker_keeps_the_disposable_row(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql("SET ROLE wamn_system")
         .execute(&mut client)

@@ -145,14 +145,18 @@ async fn provision_project(project: &mut Client, project_url: &str) {
 }
 
 struct Authority {
-    database: wamn_test_postgres::Database,
+    database: url::Url,
     system: Client,
     _store: Arc<wamn_test_infrastructure::credentials::MemoryStore>,
+    _server: wamn_test_postgres::OwnedPostgres,
 }
 impl Authority {
     async fn new(http_origin: &str) -> Self {
-        let database = wamn_control_provision::test_database::system();
-        let mut system = connect(database.url()).await;
+        let mut server = wamn_test_postgres::start(&[]).unwrap();
+        let coordinate = server.create_database("control").await.unwrap();
+        let database = url::Url::parse(coordinate.url()).unwrap();
+        wamn_control_provision::test_database::system(database.as_str()).await;
+        let mut system = connect(database.as_str()).await;
         sqlx::raw_sql("SET ROLE wamn_system")
             .execute(&mut system)
             .await
@@ -206,6 +210,7 @@ impl Authority {
             database,
             system,
             _store: store,
+            _server: server,
         }
     }
     fn document(digest: &str) -> EnvironmentDocument {
@@ -235,7 +240,7 @@ impl Authority {
         let selected = bindings::analyse(&mut self.system, document, packages)
             .await
             .unwrap();
-        let _ = bindings::project_authority(self.database.url(), url, document)
+        let _ = bindings::project_authority(self.database.as_str(), url, document)
             .await
             .unwrap();
         let digest = match document.legacy_release() {
@@ -270,7 +275,7 @@ impl Authority {
         }
     }
     async fn reader(&mut self) -> ConnectionCredentials {
-        let role = format!("reader_{}", self.database.name());
+        let role = format!("reader_{}", uuid::Uuid::new_v4().simple());
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&format!(
                 "RESET ROLE; BEGIN; {} {}",
@@ -279,7 +284,7 @@ impl Authority {
                 ),
                 wamn_control_provision::test_database::login_sql(
                     wamn_control_provision::WorkloadRoleFamily::ConnectionReader,
-                    self.database.name(),
+                    self.database.path().trim_start_matches('/'),
                     &role,
                     "fixture-password"
                 )
@@ -308,7 +313,7 @@ impl Authority {
             .await
             .map(drop)
             .unwrap();
-        let mut url = url::Url::parse(self.database.url()).unwrap();
+        let mut url = url::Url::parse(self.database.as_str()).unwrap();
         url.set_username(&role).unwrap();
         url.set_password(Some("fixture-password")).unwrap();
         ConnectionCredentials::from_database(
@@ -386,17 +391,18 @@ fn provision_project_components_for_http_manifest()
     .into()
 }
 
-#[tokio::test]
-async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
+#[sqlx::test(migrations = false)]
+async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(pool: sqlx::PgPool) {
     use wamn_capability_authority::connection::{
         ConnectionError, ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
         InvocationEntry, WiringPosition,
     };
     use wamn_http_capability::{ConnectionHttp, transport::HttpTransport};
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::project_platform();
-    let mut project = connect(database.url()).await;
-    provision_project(&mut project, database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    let mut project = connect(database.as_str()).await;
+    provision_project(&mut project, database.as_str()).await;
     let document = WiringDocument::new(
         "http_read",
         1,
@@ -445,14 +451,14 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     authority
         .apply(
             &mut project,
-            database.url(),
+            database.as_str(),
             &declaration,
             &[declarations("http", "read")],
         )
         .await;
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(database.url().to_owned())),
+            credentials: Some(ClassCredentials::every_class(database.as_str().to_owned())),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 2000,
@@ -631,8 +637,8 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     drop(project);
 }
 
-#[tokio::test]
-async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
+#[sqlx::test(migrations = false)]
+async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sqlx::PgPool) {
     use wamn_catalog::{
         BlobstoreProvider, ComponentConnection, ComponentConnectionAlias, ComponentConnectionType,
         ComponentDescriptor, ConnectionMode, PALETTE_PACKAGE_ID,
@@ -648,9 +654,10 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     const DIGEST: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
     const OPERATION: &str = "wamn:node/handler@0.1.0";
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::project_platform();
-    let mut project = connect(database.url()).await;
-    provision_project(&mut project, database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    let mut project = connect(database.as_str()).await;
+    provision_project(&mut project, database.as_str()).await;
     let mut descriptor = ComponentDescriptor::named("blob-put", "0.1.0", DIGEST);
     descriptor.operations.insert(
         OPERATION.into(),
@@ -727,7 +734,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         })
         .collect();
     authority
-        .apply(&mut project, database.url(), &document, &packages)
+        .apply(&mut project, database.as_str(), &document, &packages)
         .await;
     let release = wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
@@ -738,7 +745,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     .unwrap();
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(database.url().to_owned())),
+            credentials: Some(ClassCredentials::every_class(database.as_str().to_owned())),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 2000,

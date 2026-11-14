@@ -265,9 +265,9 @@ async fn acceptance(admin: &mut Client, admin_url: &str, component: &Path) -> an
     Ok(())
 }
 
-#[tokio::test]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: env:WAMN_SQLX_TRANSACTION_COMPONENT"]
-async fn sqlx_command_commits_rolls_back_and_obeys_current_user_rls() {
+async fn sqlx_command_commits_rolls_back_and_obeys_current_user_rls(pool: sqlx::PgPool) {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_SQLX_TRANSACTION_COMPONENT",
     );
@@ -276,8 +276,8 @@ async fn sqlx_command_commits_rolls_back_and_obeys_current_user_rls() {
         PathBuf::from,
     );
     let _lock = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let admin_url = test_database.url();
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin_url = test_database.as_str();
     let mut admin = connect(admin_url)
         .await
         .expect("connect SQLx transaction admin");

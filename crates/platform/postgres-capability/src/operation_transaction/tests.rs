@@ -265,12 +265,12 @@ fn operation_owner_component(statement: &str) -> String {
 /// The operation transaction of `docs/history/host-transaction.md` 4.1: the host
 /// begins it, the guest works in it, and only the host finishes it. A commit
 /// makes the guest's update visible, and a rollback undoes it.
-#[tokio::test]
-async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it() {
+#[sqlx::test(migrations = false)]
+async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let guest_url = live_guest_url(database.url(), PROJECT_ENV_KEY).await;
-    ensure_live_user_rows(database.url(), &[LIVE_PRINCIPAL]).await;
+    let database = wamn_test_postgres::url(&pool);
+    let guest_url = live_guest_url(database.as_str(), PROJECT_ENV_KEY).await;
+    ensure_live_user_rows(database.as_str(), &[LIVE_PRINCIPAL]).await;
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
             credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -328,7 +328,7 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it() {
     postgres
         .activate_statement_operation(OPERATION_OWNER, OWNER_OPERATION)
         .expect("owner statement activates");
-    let mut admin = wamn_postgres::connect(database.url()).await.unwrap();
+    let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("CREATE TABLE operation_transaction_roundtrip(value int NOT NULL); \

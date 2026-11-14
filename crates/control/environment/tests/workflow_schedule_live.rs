@@ -19,10 +19,10 @@ use support::*;
 
 /// An invalid cron refuses at author with the stable schedule refusal, and no
 /// row is written.
-#[tokio::test(flavor = "multi_thread")]
-async fn an_invalid_cron_refuses_at_author() {
+#[sqlx::test(migrations = false)]
+async fn an_invalid_cron_refuses_at_author(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     for cron in ["* * * *", "* * * * * *", "61 * * * *", "every minute"] {
         let refusal = fixture
             .author(
@@ -85,10 +85,10 @@ async fn an_invalid_cron_refuses_at_author() {
 
 /// An application the environment does not declare refuses at author with
 /// the stable application refusal, and no row is written.
-#[tokio::test(flavor = "multi_thread")]
-async fn an_undeclared_application_refuses_at_author() {
+#[sqlx::test(migrations = false)]
+async fn an_undeclared_application_refuses_at_author(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     let other: wamn_catalog::EnvironmentApplications = [(
         "billing".to_owned(),
         wamn_catalog::ApplicationDefinition {
@@ -127,10 +127,12 @@ async fn an_undeclared_application_refuses_at_author() {
 /// run of the schedule workflow grain, and the queue executes it as the
 /// `workflow` user with the one role. A workflow whose role lacks the read
 /// fails at its node, although the `workflow` user holds a role that has it.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_role_schedule_run_is_admitted_once_per_due_and_runs_as_the_workflow_user() {
+#[sqlx::test(migrations = false)]
+async fn a_role_schedule_run_is_admitted_once_per_due_and_runs_as_the_workflow_user(
+    pool: sqlx::PgPool,
+) {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     fixture.grant_workflow_user("reader").await;
     fixture.grant_workflow_user("clerk").await;
     for (id, role) in [("nightly", "reader"), ("clerkly", "clerk")] {
@@ -217,10 +219,10 @@ async fn a_role_schedule_run_is_admitted_once_per_due_and_runs_as_the_workflow_u
 /// refuses, an admin refuses while the `workflow` user lacks `admin`, and is
 /// allowed once it holds it. The run executes as the `workflow` user with
 /// `admin` active.
-#[tokio::test(flavor = "multi_thread")]
-async fn an_invoker_schedule_needs_admin_to_enable() {
+#[sqlx::test(migrations = false)]
+async fn an_invoker_schedule_needs_admin_to_enable(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     fixture
         .author(
             "nightly",
@@ -280,10 +282,10 @@ async fn an_invoker_schedule_needs_admin_to_enable() {
 
 /// No enabled schedule version refuses with no row: a workflow never
 /// enabled, a manual workflow, and a schedule workflow after its disable.
-#[tokio::test(flavor = "multi_thread")]
-async fn no_enabled_schedule_version_refuses_with_no_row() {
+#[sqlx::test(migrations = false)]
+async fn no_enabled_schedule_version_refuses_with_no_row(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     fixture.grant_workflow_user("reader").await;
     assert_eq!(
         fixture.admit("nightly", "2026-10-20T10:15:00Z").await,
@@ -347,10 +349,12 @@ async fn no_enabled_schedule_version_refuses_with_no_row() {
 }
 
 /// The running schedule service observes enable and disable through the runtime pool.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disable() {
+#[sqlx::test(migrations = false)]
+async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disable(
+    pool: sqlx::PgPool,
+) {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     fixture.grant_workflow_user("reader").await;
     fixture
         .author(
@@ -397,10 +401,10 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
 }
 
 /// A slow database read admits its own due moment and skips missed minutes.
-#[tokio::test(flavor = "multi_thread")]
-async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
+#[sqlx::test(migrations = false)]
+async fn schedules_run_from_rows_and_a_missed_tick_is_skipped(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     fixture.grant_workflow_user("reader").await;
     fixture
         .author(
@@ -469,11 +473,11 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
 mod event_batch;
 
 /// A replacement changes only A's schedule pins. B keeps admitting under its loaded release.
-#[tokio::test(flavor = "multi_thread")]
-async fn applications_schedule_independently_across_upgrade_and_rollback() {
+#[sqlx::test(migrations = false)]
+async fn applications_schedule_independently_across_upgrade_and_rollback(pool: sqlx::PgPool) {
     use wamn_workflow::schedule::PostgresSchedules;
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     fixture.grant_workflow_user("reader").await;
     fixture
         .author(
@@ -546,10 +550,10 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
 }
 
 /// The project time zone supplies local calendar minutes across daylight saving changes.
-#[tokio::test]
-async fn schedule_ticks_use_the_environment_time_zone() {
+#[sqlx::test(migrations = false)]
+async fn schedule_ticks_use_the_environment_time_zone(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     fixture.grant_workflow_user("reader").await;
     fixture
         .author(

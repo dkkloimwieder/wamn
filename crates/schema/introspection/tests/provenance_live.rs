@@ -2,13 +2,13 @@
 use wamn_schema_introspection::postgres::read_catalog;
 
 use sqlx::Row as _;
-#[tokio::test]
-async fn provenance_foreign_key_and_namespace_uniqueness_are_live_constraints() {
+#[sqlx::test(migrations = false)]
+async fn provenance_foreign_key_and_namespace_uniqueness_are_live_constraints(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let database = wamn_test_postgres::url(&pool);
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
-    let reader = wamn_postgres::pool(database.url(), 1).await.unwrap();
+    let reader = wamn_postgres::pool(database.as_str(), 1).await.unwrap();
     sqlx::raw_sql("CREATE SCHEMA platform; CREATE TABLE platform.external_system(id uuid PRIMARY KEY); DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='provenance_owner') THEN CREATE ROLE provenance_owner NOLOGIN; END IF; END $$; CREATE SCHEMA rest_consumer_fixture AUTHORIZATION provenance_owner; GRANT USAGE ON SCHEMA platform TO provenance_owner; GRANT REFERENCES ON platform.external_system TO provenance_owner; INSERT INTO platform.external_system VALUES ('00000000-0000-4000-8000-000000000001'),('00000000-0000-4000-8000-000000000002'); SET ROLE provenance_owner;").execute(&mut client).await.map(drop).unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (include_str!("../../../../apps/rest_consumer_fixture/migrations/0001_initial.sql"))

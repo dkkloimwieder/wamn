@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["dep:wamn-test-postgres", "wamn-catalog/test-util"]
+test-util = ["wamn-catalog/test-util"]
 
 [dependencies]
 wamn-control-provision.workspace = true
@@ -15,7 +15,6 @@ sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"
 wamn-registry = { workspace = true }
 wamn-broker = { workspace = true }
 wamn-kubernetes = { workspace = true }
-wamn-test-postgres = { workspace = true, optional = true }
 jsonwebtoken = { workspace = true }
 wamn-digest.workspace = true
 uuid = { workspace = true }
@@ -34,6 +33,8 @@ wamn-identity-protocol = { workspace = true }
 wamn-catalog = { workspace = true }
 
 [dev-dependencies]
+sqlx = { workspace = true, features = ["macros", "migrate"] }
+url = { workspace = true }
 sha2 = { workspace = true }
 jsonwebtoken = { workspace = true }
 chrono = { workspace = true }

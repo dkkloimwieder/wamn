@@ -101,10 +101,10 @@ enum Mode {
     Event,
 }
 
-async fn run_current(mode: Mode) -> anyhow::Result<()> {
+async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let mut admin = wamn_postgres::connect(database.url()).await?;
+    let database = wamn_test_postgres::url(pool);
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
 
     let schema = BareSchemaName::new("wamn_run")?;
     sqlx::raw_sql("CREATE SCHEMA application_data")
@@ -238,7 +238,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         .execute(&mut admin)
         .await
         .map(drop)?;
-        let mut url = url::Url::parse(database.url())?;
+        let mut url = url::Url::parse(database.as_str())?;
         url.set_username(&role).unwrap();
         url.set_password(Some("automation-test-only")).unwrap();
         credentials = credentials.with_class(class, url.to_string());
@@ -323,7 +323,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
     };
     let jetstream =
         Arc::new(WamnJetstream::new(wamn_events_capability::WamnJetstreamConfig::default()).await?);
-    let client = wamn_postgres::connect(database.url()).await?;
+    let client = wamn_postgres::connect(database.as_str()).await?;
 
     let workflows = WorkflowsFixture {
         runs: PostgresWorkflows::new(client, schema.as_str(), PROJECT_ENV_KEY, "test"),
@@ -553,7 +553,9 @@ async fn event_run(
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn event_admission_is_idempotent_and_respects_park_and_release() -> anyhow::Result<()> {
-    run_current(Mode::Event).await
+#[sqlx::test(migrations = false)]
+async fn event_admission_is_idempotent_and_respects_park_and_release(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
+    run_current(&pool, Mode::Event).await
 }

@@ -10,11 +10,11 @@ use wamn_environment::provision_system::{
     ProvisionSystemRequest, SystemState, initialize_system, install_control_store,
     provision_system, system_state,
 };
-use wamn_test_infrastructure::locked_database;
 
-#[tokio::test]
-async fn provision_system_repeats_without_changing_the_platform_domain() {
-    let url = locked_database::database(wamn_test_postgres::database);
+#[sqlx::test(migrations = false)]
+async fn provision_system_repeats_without_changing_the_platform_domain(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool).to_string();
     let mut client = connect(&url).await;
     // CloudNativePG creates the owner role at bootstrap. The test does it here.
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -264,13 +264,14 @@ async fn connect(url: &str) -> sqlx::PgConnection {
     wamn_postgres::connect(url).await.unwrap()
 }
 
-#[tokio::test]
-async fn platform_initialization_runs_sqlx_once_and_explicit_apply_advances_it() {
+#[sqlx::test(migrations = false)]
+async fn platform_initialization_runs_sqlx_once_and_explicit_apply_advances_it(pool: sqlx::PgPool) {
     use sqlx::SqlSafeStr as _;
     use sqlx::migrate::{Migration, MigrationType};
     use wamn_control_provision::migrations::MigrationDatabase;
     use wamn_environment::platform_migrations;
-    let url = locked_database::database(wamn_test_postgres::database);
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool).to_string();
     let mut client = connect(&url).await;
     sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system NOLOGIN NOINHERIT; END IF; END $$;")
         .execute(&mut client).await.unwrap();
@@ -408,7 +409,17 @@ async fn snapshot(client: &mut sqlx::PgConnection) -> serde_json::Value {
 
 #[tokio::test]
 async fn bootstrap_is_atomic_and_uses_database_facts() {
-    let url = locked_database::database(wamn_test_postgres::database);
+    let _lock = wamn_test_postgres::lock();
+    let mut case_server = wamn_test_postgres::start(&[]).unwrap();
+    let url = url::Url::parse(
+        case_server
+            .create_database("fixture_1")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap()
+    .to_string();
     let mut client = connect(&url).await;
     sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN CREATE ROLE wamn_system NOLOGIN NOINHERIT; END IF; END $$;").execute(&mut client).await.map(drop).unwrap();
     assert_eq!(
@@ -476,9 +487,16 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
         system_state(&mut client).await.unwrap(),
         SystemState::Complete
     );
-    let concurrent_database = wamn_test_postgres::database();
-    let mut first = connect(concurrent_database.url()).await;
-    let mut second = connect(concurrent_database.url()).await;
+    let concurrent_database = url::Url::parse(
+        case_server
+            .create_database("fixture_2")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    let mut first = connect(concurrent_database.as_str()).await;
+    let mut second = connect(concurrent_database.as_str()).await;
     let (left, right) = tokio::join!(
         install_control_store(&mut first),
         install_control_store(&mut second)
@@ -494,8 +512,15 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
     drop(first);
     drop(second);
 
-    let partial_database = wamn_test_postgres::database();
-    let mut partial = connect(partial_database.url()).await;
+    let partial_database = url::Url::parse(
+        case_server
+            .create_database("fixture_extra")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    let mut partial = connect(partial_database.as_str()).await;
     sqlx::raw_sql("CREATE SCHEMA registry")
         .execute(&mut partial)
         .await

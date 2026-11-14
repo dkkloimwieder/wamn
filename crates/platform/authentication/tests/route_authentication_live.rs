@@ -475,6 +475,7 @@ async fn password_session(
 }
 
 async fn assert_user_environment_membership(
+    pool: &sqlx::PgPool,
     admin: &mut Client,
     admin_url: &str,
     identity_url: &str,
@@ -575,8 +576,8 @@ async fn assert_user_environment_membership(
     .await
     .map(|result| result.rows_affected())?;
     // The same principal and role in another environment hold a different grant.
-    let other_database = wamn_test_postgres::database();
-    let mut other_project = connect(other_database.url()).await?;
+    let other_database = wamn_test_postgres::url(pool);
+    let mut other_project = connect(other_database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::sql::ensure_app_acl_role_sql()).to_string(),
     ))
@@ -824,8 +825,8 @@ async fn assert_user_environment_membership(
     Ok(())
 }
 
-#[tokio::test]
-async fn production_operator_authentication_and_operation_authorization() {
+#[sqlx::test(migrations = false)]
+async fn production_operator_authentication_and_operation_authorization(pool: sqlx::PgPool) {
     panic!("wamn-eulfr.12.10: no product issuer fault setup");
     use futures_util::FutureExt as _;
     use std::os::unix::fs::DirBuilderExt as _;
@@ -857,9 +858,10 @@ async fn production_operator_authentication_and_operation_authorization() {
         identity_log.display()
     );
     tracing::info!("production operator authentication test started");
-    let result = std::panic::AssertUnwindSafe(production_operator_authentication(scratch.path()))
-        .catch_unwind()
-        .await;
+    let result =
+        std::panic::AssertUnwindSafe(production_operator_authentication(&pool, scratch.path()))
+            .catch_unwind()
+            .await;
     if let Err(panic) = result {
         let message = panic
             .downcast_ref::<String>()
@@ -879,7 +881,7 @@ async fn production_operator_authentication_and_operation_authorization() {
     tracing::info!("production operator authentication test passed");
 }
 
-async fn production_operator_authentication(root: &Path) {
+async fn production_operator_authentication(pool: &sqlx::PgPool, root: &Path) {
     let admin_url: String = panic!("wamn-eulfr.12.10: no product issuer fault setup");
     let mut admin = connect(&admin_url).await.expect("connect admin");
     let version: i32 = sqlx::query("SHOW server_version_num")
@@ -945,6 +947,7 @@ async fn production_operator_authentication(root: &Path) {
     .expect("build route authentication");
 
     assert_user_environment_membership(
+        pool,
         &mut admin,
         &admin_url,
         &identity_url,

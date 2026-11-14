@@ -579,6 +579,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("fresh password fixture");
     let db = postgres
         .create_database("wamn_system")
+        .await
         .expect_redacted("password system database");
     let mut fixture = setup(db.url()).await;
     let alice = create_user(
@@ -771,6 +772,7 @@ async fn password_environment_discovery_requires_current_authority() {
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("fresh discovery fixture");
     let db = postgres
         .create_database("wamn_system")
+        .await
         .expect_redacted("discovery database");
     let mut fixture = setup(db.url()).await;
     let alice = create_user(

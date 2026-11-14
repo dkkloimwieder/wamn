@@ -37,7 +37,6 @@ use wamn_control_provision::{
     WorkloadRoleFamily, WorkloadRoleIdentity, project_env_database_name, workload_login,
 };
 use wamn_environment::provision_project_env::{privilege_sql, role_posture_sql};
-use wamn_test_infrastructure::locked_database;
 
 const ORG: &str = "dkzrisolation";
 const PROJECT: &str = "inventory";
@@ -87,9 +86,12 @@ async fn run_alone(superuser: &mut Client, statement: &str) {
         .unwrap_or_else(|error| panic!("{statement}: {error}"));
 }
 
-#[tokio::test]
-async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_database() {
-    let url = locked_database::database(wamn_test_postgres::database);
+#[sqlx::test(migrations = false)]
+async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_database(
+    pool: sqlx::PgPool,
+) {
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool).to_string();
     let mut superuser = connect(&url).await;
 
     let home = project_env_database_name(ORG, PROJECT, HOME_ENVIRONMENT, INSTANCE);

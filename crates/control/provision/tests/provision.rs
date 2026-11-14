@@ -21,10 +21,10 @@ const OVERLAP_PROBE_TABLE: &str = "CREATE TABLE overlap_probe.appointment (\
      CONSTRAINT appointment_no_overlap \
      EXCLUDE USING gist (dock_id WITH =, during WITH &&));";
 
-#[test]
-fn the_platform_extensions_make_an_exclusion_constraint_reachable() {
-    let database = wamn_test_postgres::database();
-    let url = database.url().to_owned();
+#[sqlx::test(migrations = false)]
+async fn the_platform_extensions_make_an_exclusion_constraint_reachable(pool: sqlx::PgPool) {
+    let database = wamn_test_postgres::url(&pool);
+    let url = database.as_str().to_owned();
 
     // 1. WITHOUT the extension: the constraint refuses for want of an operator
     //    class. Run alone, because ON_ERROR_STOP would abandon the script.

@@ -53,7 +53,7 @@ pub(super) struct Fixture {
     observed: Arc<Mutex<Vec<Observed>>>,
     task: JoinHandle<()>,
     credentials: wamn_connections::connection_credentials::test_util::Fixture,
-    applications: Vec<wamn_test_postgres::Database>,
+    server: wamn_test_postgres::OwnedPostgres,
     pause: Arc<Mutex<Option<ResponsePause>>>,
     key: tempfile::NamedTempFile,
     token_pause: Arc<Mutex<Option<ResponsePause>>>,
@@ -70,6 +70,9 @@ impl Fixture {
         api: Vec<u16>,
         assertion_verifier: Option<AssertionVerifier>,
     ) -> Self {
+        let mut server = wamn_test_postgres::start(&[]).unwrap();
+        let control = server.create_database("control").await.unwrap();
+        let control = url::Url::parse(control.url()).unwrap();
         let listener = TcpListener::bind((super::interface_address(), 0))
             .await
             .unwrap();
@@ -186,11 +189,12 @@ impl Fixture {
             key,
             pkce,
             token_pause,
-            credentials: wamn_connections::connection_credentials::test_util::Fixture::new().await,
+            credentials: wamn_connections::connection_credentials::test_util::Fixture::new(control)
+                .await,
             base,
             observed,
             task,
-            applications: Vec::new(),
+            server,
             pause,
         }
     }
@@ -340,13 +344,21 @@ impl Fixture {
         let manifest_digest = release.release().manifest_digest.as_str();
         let mut projects = HashMap::new();
         for project in ["project-a", "project-b"] {
-            let database = wamn_platform_identity::test_database::project_platform();
-            let mut admin = wamn_postgres::connect(database.url()).await.unwrap();
+            let database = url::Url::parse(
+                self.server
+                    .create_database(&format!("project_{}", uuid::Uuid::new_v4().simple()))
+                    .await
+                    .unwrap()
+                    .url(),
+            )
+            .unwrap();
+            wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+            let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();
 
             sqlx::raw_sql("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:seed-oauth2',true)").execute(&mut admin).await.map(drop).unwrap();
             let project_env_key = wamn_registry::project_env_key("acme", project, "dev");
             sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&project_env_key).bind(&manifest_digest).bind(&bytes).execute(&mut admin).await.map(|result| result.rows_affected()).unwrap();
-            let rows = sqlx::query("SELECT c.id,i.id,i.name FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project=$1 AND c.env='dev'").bind(&project).fetch_all(&mut wamn_postgres::connect(self.credentials.database.url()).await.unwrap()).await.unwrap();
+            let rows = sqlx::query("SELECT c.id,i.id,i.name FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project=$1 AND c.env='dev'").bind(&project).fetch_all(&mut wamn_postgres::connect(self.credentials.database.as_str()).await.unwrap()).await.unwrap();
             for row in rows {
                 let connection: uuid::Uuid = row.get(0);
                 let integration: uuid::Uuid = row.get(1);
@@ -367,11 +379,15 @@ impl Fixture {
                 .await
                 .map(drop)
                 .unwrap();
-            let role = format!("oauth2_{}_{}", database.name(), project.replace('-', "_"));
+            let role = format!(
+                "oauth2_{}_{}",
+                database.path().trim_start_matches('/'),
+                project.replace('-', "_")
+            );
             sqlx::raw_sql(sqlx::AssertSqlSafe(
                 (&wamn_control_provision::test_database::login_sql(
                     wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
-                    database.name(),
+                    database.path().trim_start_matches('/'),
                     &role,
                     "oauth2-test-password",
                 ))
@@ -381,7 +397,7 @@ impl Fixture {
             .await
             .map(drop)
             .unwrap();
-            let mut authority = url::Url::parse(database.url()).unwrap();
+            let mut authority = url::Url::parse(database.as_str()).unwrap();
             authority.set_username(&role).unwrap();
             authority
                 .set_password(Some("oauth2-test-password"))
@@ -398,7 +414,6 @@ impl Fixture {
                     row_limit: 10_000,
                 },
             );
-            self.applications.push(database);
         }
         let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
             StaticCredentialProvider::new(projects, None),
@@ -487,7 +502,7 @@ impl Fixture {
     async fn due(&self, plugin: &TestHttp) {
         sqlx::query("UPDATE identity.oauth_token SET expires_at='-infinity'")
             .execute(
-                &mut wamn_postgres::connect(self.credentials.database.url())
+                &mut wamn_postgres::connect(self.credentials.database.as_str())
                     .await
                     .unwrap(),
             )
@@ -498,7 +513,7 @@ impl Fixture {
     }
 
     async fn stored(&self, connection: uuid::Uuid) -> wamn_connections::oauth_token::Token {
-        let row = sqlx::query("SELECT ciphertext,nonce,wrapped_key,key_id FROM identity.oauth_token WHERE connection_id=$1").bind(&connection).fetch_one(&mut wamn_postgres::connect(self.credentials.database.url()).await.unwrap()).await.unwrap();
+        let row = sqlx::query("SELECT ciphertext,nonce,wrapped_key,key_id FROM identity.oauth_token WHERE connection_id=$1").bind(&connection).fetch_one(&mut wamn_postgres::connect(self.credentials.database.as_str()).await.unwrap()).await.unwrap();
         let envelope =
             wamn_connections::oauth_encryption::Envelope::from_file(self.key.path()).unwrap();
         let plaintext = envelope
@@ -1002,7 +1017,7 @@ async fn two_hosts_refresh_one_due_row_once() {
         &second.facts.oauth_encryption().unwrap()
     ));
     let before = fixture.counts().0;
-    let mut monitor = wamn_postgres::connect(fixture.credentials.database.url())
+    let mut monitor = wamn_postgres::connect(fixture.credentials.database.as_str())
         .await
         .unwrap();
     let (resume, arrived) = fixture.pause_token();
@@ -1134,7 +1149,7 @@ async fn credential_rotation_waits_for_refresh_and_removes_the_old_token() {
         .await
         .unwrap()
         .unwrap();
-    let mut rotating = wamn_postgres::connect(fixture.credentials.database.url())
+    let mut rotating = wamn_postgres::connect(fixture.credentials.database.as_str())
         .await
         .unwrap();
 

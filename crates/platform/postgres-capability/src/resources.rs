@@ -1839,11 +1839,13 @@ mod tests {
         plugin
     }
 
-    #[tokio::test]
-    async fn cancelled_client_transaction_destroys_its_connection_and_completion_repools() {
+    #[sqlx::test(migrations = false)]
+    async fn cancelled_client_transaction_destroys_its_connection_and_completion_repools(
+        pool: sqlx::PgPool,
+    ) {
         let _lock = wamn_test_postgres::lock();
-        let database = wamn_test_postgres::database();
-        let pool = wamn_postgres::pool(database.url(), 1)
+        let database = wamn_test_postgres::url(&pool);
+        let pool = wamn_postgres::pool(database.as_str(), 1)
             .await
             .expect("test pool");
         let mut connection = pool.acquire().await.expect("initial pooled connection");

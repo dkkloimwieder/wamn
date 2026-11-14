@@ -182,7 +182,8 @@ mod tests {
         );
         let mut server = wamn_test_infrastructure::postgres::start(&[])?;
         let url = server
-            .create_database("receiving_feed_measurement")?
+            .create_database("receiving_feed_measurement")
+            .await?
             .url()
             .to_owned();
         let mut client = connect(&url).await?;
@@ -363,7 +364,7 @@ mod tests {
 
         // The fixture creates the shared role wamn_app, so the test starts its own server.
         let mut server = wamn_test_infrastructure::postgres::start(&[])?;
-        let url = server.create_database("receiving")?.url().to_owned();
+        let url = server.create_database("receiving").await?.url().to_owned();
         let mut client = connect(&url).await?;
         assert_postgres_18(&mut client).await?;
         assert_fresh_receiving_schema(&mut client).await?;
@@ -586,7 +587,7 @@ mod tests {
     async fn enum_and_optimistic_update_outcomes_hold_on_postgres_18() -> Result<()> {
         // The fixture creates the shared role wamn_app, so the test starts its own server.
         let mut server = wamn_test_infrastructure::postgres::start(&[])?;
-        let url = server.create_database("receiving")?.url().to_owned();
+        let url = server.create_database("receiving").await?.url().to_owned();
         let mut client = connect(&url).await?;
         assert_postgres_18(&mut client).await?;
         assert_fresh_receiving_schema(&mut client).await?;

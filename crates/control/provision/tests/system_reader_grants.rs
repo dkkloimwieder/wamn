@@ -220,11 +220,13 @@ fn reader_sqlstate(reader_url: &str, statement: &str) -> Option<String> {
     Some(state.unwrap_or_else(|| panic!("no SQLSTATE in psql stderr:\n{err}")))
 }
 
-#[test]
-fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_other() {
+#[sqlx::test(migrations = false)]
+async fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_other(
+    pool: sqlx::PgPool,
+) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let admin_url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin_url = test_database.as_str().to_owned();
     let database = {
         let (ok, out, err) = psql_tuples(&admin_url, "SELECT current_database()");
         assert!(ok, "read the target database name:\n{err}");
@@ -477,25 +479,30 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
     }
 }
 
-#[test]
-fn the_connection_reader_cannot_read_or_change_credential_metadata_directly() {
+#[sqlx::test(migrations = false)]
+async fn the_connection_reader_cannot_read_or_change_credential_metadata_directly(
+    pool: sqlx::PgPool,
+) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let admin = test_database.url();
-    reset_roles(admin, test_database.name());
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin = test_database.as_str();
+    reset_roles(admin, test_database.path().trim_start_matches('/'));
     apply_system_schema(admin);
     run_admin(
         admin,
         "grant the connection reader surface",
         &wamn_control_provision::sql::grant_connection_reader_surface_sql(),
     );
-    let role = generation_role(SystemReader::Connection, test_database.name());
+    let role = generation_role(
+        SystemReader::Connection,
+        test_database.path().trim_start_matches('/'),
+    );
     run_admin(
         admin,
         "create an authenticated reader",
         &wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::ConnectionReader,
-            test_database.name(),
+            test_database.path().trim_start_matches('/'),
             &role,
             READER_PW,
         ),

@@ -6,15 +6,15 @@ use std::sync::Arc;
 use wamn_kubernetes::{Store as _, test_util::MemoryStore};
 
 pub struct Fixture {
-    pub database: wamn_test_postgres::Database,
+    pub database: url::Url,
     pub admin: sqlx::PgConnection,
     pub store: Arc<MemoryStore>,
 }
 
 impl Fixture {
-    pub async fn new() -> Self {
-        let database = wamn_control_provision::test_database::system();
-        let mut admin = wamn_postgres::connect(database.url()).await.unwrap();
+    pub async fn new(database: url::Url) -> Self {
+        wamn_control_provision::test_database::system(database.as_str()).await;
+        let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();
 
         sqlx::raw_sql("SET ROLE wamn_system")
             .execute(&mut admin)
@@ -131,8 +131,10 @@ impl Fixture {
     }
 
     pub async fn reader(&self, project: &str) -> ConnectionCredentials {
-        let mut admin = wamn_postgres::connect(self.database.url()).await.unwrap();
-        let role = format!("c35_{}_{}", self.database.name(), project.replace('-', "_"));
+        let mut admin = wamn_postgres::connect(self.database.as_str())
+            .await
+            .unwrap();
+        let role = format!("c35_{}", uuid::Uuid::new_v4().simple());
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&format!(
                 "BEGIN; {} {}",
@@ -141,7 +143,7 @@ impl Fixture {
                 ),
                 wamn_control_provision::test_database::login_sql(
                     wamn_control_provision::WorkloadRoleFamily::ConnectionReader,
-                    self.database.name(),
+                    self.database.path().trim_start_matches('/'),
                     &role,
                     "fixture-password"
                 )
@@ -170,7 +172,7 @@ impl Fixture {
             .await
             .map(drop)
             .unwrap();
-        let mut url = url::Url::parse(self.database.url()).unwrap();
+        let mut url = url::Url::parse(self.database.as_str()).unwrap();
         url.set_username(&role).unwrap();
         url.set_password(Some("fixture-password")).unwrap();
         ConnectionCredentials::from_database(

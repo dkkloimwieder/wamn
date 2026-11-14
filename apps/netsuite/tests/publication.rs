@@ -108,8 +108,10 @@ fn fixture() -> Fixture {
     }
 }
 
-#[tokio::test]
-async fn pull_checkpoint_commits_through_the_application_role() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn pull_checkpoint_commits_through_the_application_role(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     let Fixture {
         args,
         roots,
@@ -118,7 +120,7 @@ async fn pull_checkpoint_commits_through_the_application_role() -> anyhow::Resul
     } = fixture();
     let assembled = assemble_release(&args, &roots, &admissions, &[])?;
     condition_documents(&args, &assembled.published.manifest, &documents)?;
-    checkpoint_live::invoke(&roots, &assembled.published.manifest, &admissions).await
+    checkpoint_live::invoke(&pool, &roots, &assembled.published.manifest, &admissions).await
 }
 
 #[test]

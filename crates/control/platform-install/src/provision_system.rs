@@ -327,10 +327,12 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::task::JoinSet;
 
-    #[tokio::test]
-    async fn initial_connect_retries_only_connection_refusal() -> anyhow::Result<()> {
-        let database = wamn_test_postgres::database();
-        let mut url = url::Url::parse(database.url())?;
+    #[sqlx::test(migrations = false)]
+    async fn initial_connect_retries_only_connection_refusal(
+        pool: sqlx::PgPool,
+    ) -> anyhow::Result<()> {
+        let database = wamn_test_postgres::url(&pool);
+        let mut url = url::Url::parse(database.as_str())?;
         let upstream = (url.host_str().unwrap().to_owned(), url.port().unwrap());
         let reserved = TcpListener::bind("127.0.0.1:0").await?;
         let address = reserved.local_addr()?;
@@ -370,11 +372,17 @@ mod tests {
         let row = sqlx::query("SELECT current_database()")
             .fetch_one(&mut client)
             .await?;
-        assert_eq!(row.get::<String, _>(0), database.name());
+        assert_eq!(
+            row.get::<String, _>(0),
+            database.path().trim_start_matches('/')
+        );
         drop(client);
 
         // PostgreSQL accepts the TCP connection but refuses an absent database.
-        url.set_path(&format!("/{}_absent", database.name()));
+        url.set_path(&format!(
+            "/{}_absent",
+            database.path().trim_start_matches('/')
+        ));
         let Err(error) = connect_system_database(url.as_str()).await else {
             panic!("an absent database must refuse the connection");
         };

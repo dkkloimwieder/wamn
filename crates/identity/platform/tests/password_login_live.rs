@@ -58,14 +58,18 @@ async fn rotate(client: &mut Client, secret: &str) -> Option<Renewal> {
     result
 }
 
-#[tokio::test]
-async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
+#[sqlx::test(migrations = false)]
+async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let db = test_database::system();
-    let mut owner = connect(db.url(), "wamn_system").await;
+    let db = wamn_test_postgres::url(&pool);
+    test_database::system(db.as_str()).await;
+    let mut owner = connect(db.as_str(), "wamn_system").await;
     let user = user(&mut owner).await;
-    db.execute(&[&grant_identity_issuer_surface_sql()]).unwrap();
-    let mut issuer = connect(db.url(), "wamn_identity_issuer").await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(grant_identity_issuer_surface_sql()))
+        .execute(&mut wamn_postgres::connect(db.as_str()).await.unwrap())
+        .await
+        .unwrap();
+    let mut issuer = connect(db.as_str(), "wamn_identity_issuer").await;
     let first = create(&mut issuer, &user).await;
     assert_eq!(first.login.expires_at - first.login.authenticated_at, 28800);
     assert!(!format!("{first:?}").contains(first.secret()));
@@ -168,11 +172,12 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
     tx.commit().await.unwrap();
 }
 
-#[tokio::test]
-async fn inactivity_absolute_expiry_and_bounded_cleanup() {
+#[sqlx::test(migrations = false)]
+async fn inactivity_absolute_expiry_and_bounded_cleanup(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let db = test_database::system();
-    let mut owner = connect(db.url(), "wamn_system").await;
+    let db = wamn_test_postgres::url(&pool);
+    test_database::system(db.as_str()).await;
+    let mut owner = connect(db.as_str(), "wamn_system").await;
     let user = user(&mut owner).await;
     let idle = create(&mut owner, &user).await;
     sqlx::query("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '1 hour',expires_at=expires_at-interval '1 hour',renewal_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1::text::uuid").bind(&idle.login.id).execute(&mut owner).await.map(|result| result.rows_affected()).unwrap();
@@ -186,8 +191,11 @@ async fn inactivity_absolute_expiry_and_bounded_cleanup() {
     }
     sqlx::raw_sql("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '9 hours',expires_at=expires_at-interval '9 hours',renewal_expires_at=renewal_expires_at-interval '9 hours'").execute(&mut owner).await.map(drop).unwrap();
     assert!(rotate(&mut owner, last.secret()).await.is_none());
-    db.execute(&[&grant_identity_issuer_surface_sql()]).unwrap();
-    let mut issuer = connect(db.url(), "wamn_identity_issuer").await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(grant_identity_issuer_surface_sql()))
+        .execute(&mut wamn_postgres::connect(db.as_str()).await.unwrap())
+        .await
+        .unwrap();
+    let mut issuer = connect(db.as_str(), "wamn_identity_issuer").await;
     let mut tx = issuer.begin().await.unwrap();
     assert_eq!(
         login::prune_expired(&mut tx, "https://other.invalid")
@@ -226,13 +234,14 @@ async fn wait_blocked(observer: &mut Client, pid: i32) {
     .await
     .expect("the second writer waits for the principal lock");
 }
-#[tokio::test]
-async fn simultaneous_rotation_and_logout_cannot_leave_a_usable_successor() {
+#[sqlx::test(migrations = false)]
+async fn simultaneous_rotation_and_logout_cannot_leave_a_usable_successor(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let db = test_database::system();
-    let mut first = connect(db.url(), "wamn_system").await;
-    let mut second = connect(db.url(), "wamn_system").await;
-    let mut observer = connect(db.url(), "wamn_system").await;
+    let db = wamn_test_postgres::url(&pool);
+    test_database::system(db.as_str()).await;
+    let mut first = connect(db.as_str(), "wamn_system").await;
+    let mut second = connect(db.as_str(), "wamn_system").await;
+    let mut observer = connect(db.as_str(), "wamn_system").await;
     let user = user(&mut first).await;
     let issued = create(&mut first, &user).await;
     let mut tx = first.begin().await.unwrap();
@@ -258,7 +267,7 @@ async fn simultaneous_rotation_and_logout_cannot_leave_a_usable_successor() {
     assert!(rotate(&mut first, replacement.secret()).await.is_none());
 
     let issued = create(&mut first, &user).await;
-    let mut second = connect(db.url(), "wamn_system").await;
+    let mut second = connect(db.as_str(), "wamn_system").await;
     let pid: i32 = sqlx::query("SELECT pg_backend_pid()")
         .fetch_one(&mut second)
         .await
@@ -294,13 +303,14 @@ async fn simultaneous_rotation_and_logout_cannot_leave_a_usable_successor() {
     assert!(rotate(&mut first, replacement.secret()).await.is_none());
 }
 
-#[tokio::test]
-async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family() {
+#[sqlx::test(migrations = false)]
+async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let db = test_database::system();
-    let mut first = connect(db.url(), "wamn_system").await;
-    let mut second = connect(db.url(), "wamn_system").await;
-    let mut observer = connect(db.url(), "wamn_system").await;
+    let db = wamn_test_postgres::url(&pool);
+    test_database::system(db.as_str()).await;
+    let mut first = connect(db.as_str(), "wamn_system").await;
+    let mut second = connect(db.as_str(), "wamn_system").await;
+    let mut observer = connect(db.as_str(), "wamn_system").await;
     let user = user(&mut first).await;
     let pid: i32 = sqlx::query("SELECT pg_backend_pid()")
         .fetch_one(&mut second)

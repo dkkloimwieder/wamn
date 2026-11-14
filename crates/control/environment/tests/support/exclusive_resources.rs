@@ -16,8 +16,9 @@ struct Host {
 
 struct Fixture {
     admin: sqlx::PgConnection,
-    database: wamn_test_postgres::Database,
-    project_database: wamn_test_postgres::Database,
+    database: url::Url,
+    project_database: url::Url,
+    _server: wamn_test_postgres::OwnedPostgres,
     document: EnvironmentDocument,
     packages: Vec<wamn_compiler::manifest::PackageManifest>,
     release: wamn_engine::release_manifest::LoadedRelease,
@@ -35,9 +36,27 @@ impl Fixture {
     async fn new(authority: &str) -> anyhow::Result<Self> {
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
         fixture(scratch.path())?;
-        let database = wamn_control_provision::test_database::system();
-        let project_database = wamn_platform_identity::test_database::project_platform();
-        let mut admin = connect(database.url()).await?;
+        let mut case_server = wamn_test_postgres::start(&[]).unwrap();
+        let database = url::Url::parse(
+            case_server
+                .create_database("fixture_1")
+                .await
+                .unwrap()
+                .url(),
+        )
+        .unwrap();
+        wamn_control_provision::test_database::system(database.as_str()).await;
+
+        let project_database = url::Url::parse(
+            case_server
+                .create_database("fixture_extra")
+                .await
+                .unwrap()
+                .url(),
+        )
+        .unwrap();
+        wamn_platform_identity::test_database::project_platform(project_database.as_str()).await;
+        let mut admin = connect(database.as_str()).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET ROLE wamn_system; BEGIN; {} {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",
             bind_platform_principal_sql(PlatformComponent::Provisioning),
             wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev")))).execute(&mut admin).await.map(drop)?;
@@ -56,7 +75,7 @@ impl Fixture {
             oci_ca_paths: vec![],
         };
         let code = integration::build(scratch.path(), "modbus").await?;
-        integration::publish(&code, &configuration, database.url(), &integration::Publication {
+        integration::publish(&code, &configuration, database.as_str(), &integration::Publication {
             version: 2,
             parameter_schema: json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),
             operations: "wamn:modbus/client@1.0.0".into(),
@@ -126,12 +145,24 @@ impl Fixture {
                 mode: wamn_compiler::manifest::ConnectionMode::Write,
             },
         );
-        let login = format!("exclusive_{}", database.name());
-        database.execute(&[&sql::grant_connection_reader_surface_sql(), &format!(
-            "CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_projects(login_identity,project_env_key,org_id,project_id,environment) VALUES ('{login}','acme--dev--one','acme','one','dev'); COMMIT;",
-            database.name(), bind_platform_principal_sql(PlatformComponent::Provisioning)
-        )])?;
-        let mut reader_url = url::Url::parse(database.url())?;
+        let login = format!("exclusive_{}", uuid::Uuid::new_v4().simple());
+        {
+            let batches: &[&str] = &[
+                &sql::grant_connection_reader_surface_sql(),
+                &format!(
+                    "CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_projects(login_identity,project_env_key,org_id,project_id,environment) VALUES ('{login}','acme--dev--one','acme','one','dev'); COMMIT;",
+                    database.path().trim_start_matches('/'),
+                    bind_platform_principal_sql(PlatformComponent::Provisioning)
+                ),
+            ];
+            let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
+            for batch in batches {
+                sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                    .execute(&mut setup_connection)
+                    .await?;
+            }
+        }
+        let mut reader_url = url::Url::parse(database.as_str())?;
         reader_url.set_username(&login).unwrap();
         reader_url.set_password(Some("fixture")).unwrap();
         let credentials = Arc::new(ConnectionCredentials::from_database(
@@ -142,7 +173,7 @@ impl Fixture {
             wamn_postgres_capability::WamnPostgres::from_env_for_project(
                 "one",
                 Some(wamn_postgres_capability::ClassCredentials::every_class(
-                    project_database.url().to_owned(),
+                    project_database.as_str().to_owned(),
                 )),
             )?,
         );
@@ -150,6 +181,7 @@ impl Fixture {
             admin,
             database,
             project_database,
+            _server: case_server,
             document,
             packages: vec![package, writer],
             release,
@@ -222,8 +254,8 @@ impl Fixture {
         );
         apply(
             &mut self.admin,
-            self.database.url(),
-            self.project_database.url(),
+            self.database.as_str(),
+            self.project_database.as_str(),
             &self.document,
             &self.packages,
         )
@@ -305,7 +337,7 @@ async fn read(imports: &IntegrationImports, interface: &str) -> anyhow::Result<(
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test]
 #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:docker, bin:rustc"]
 async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(

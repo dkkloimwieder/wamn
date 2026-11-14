@@ -40,7 +40,7 @@ fn login(url: &str, role: &str) -> anyhow::Result<String> {
 /// Install schema as bootstrap, then use targeted logins for every fixture write.
 pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     let mut postgres = wamn_test_postgres::start(&[])?;
-    let database = postgres.create_database(name)?;
+    let database = postgres.create_database(name).await?;
     let mut observer = connect(database.url()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS; \
@@ -262,7 +262,7 @@ pub async fn registry(
     use std::sync::Arc;
     use wamn_control_provision::{SystemReader, system_reader_login};
     let mut postgres = wamn_test_postgres::start(&[])?;
-    let database = postgres.create_database("file_registry")?;
+    let database = postgres.create_database("file_registry").await?;
     let mut bootstrap = connect(database.url()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (sql::ensure_db_owner_role_sql()).to_string(),

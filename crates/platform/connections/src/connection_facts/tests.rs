@@ -62,10 +62,11 @@ async fn write(fixture: &mut Fixture, password: &str) -> ConnectionDrops {
 }
 
 async fn setup(
+    pool: &sqlx::PgPool,
     memory: Arc<ConnectionMemory>,
     changes: Publisher,
 ) -> (Fixture, ConnectionFacts, uuid::Uuid) {
-    let mut fixture = Fixture::new().await;
+    let mut fixture = Fixture::new(wamn_test_postgres::url(pool)).await;
     fixture
         .put_http(
             "erp",
@@ -106,9 +107,9 @@ async fn assert_postgres_read(fixture: &mut Fixture, facts: &ConnectionFacts, id
     sqlx::raw_sql("GRANT EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid) TO wamn_conn_reader").execute(&mut fixture.admin).await.map(drop).unwrap();
 }
 
-#[tokio::test]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
-async fn a_committed_write_serves_the_new_generation_after_the_delete() {
+async fn a_committed_write_serves_the_new_generation_after_the_delete(pool: sqlx::PgPool) {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
     );
@@ -117,7 +118,7 @@ async fn a_committed_write_serves_the_new_generation_after_the_delete() {
     let memory = Arc::new(ConnectionMemory::default());
     let changes = replicate(&mut client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));
     until("the connection watch runs", || memory.watched()).await;
-    let (mut fixture, facts, id) = setup(Arc::clone(&memory), changes.clone()).await;
+    let (mut fixture, facts, id) = setup(&pool, Arc::clone(&memory), changes.clone()).await;
     let old = facts.connection(&id).await.unwrap().unwrap();
     assert_eq!(memory.connection(PROJECT_ENV_KEY, &id), Ok(old.clone()));
     let old_secret = facts.secret(&old.credential_id.unwrap()).await.unwrap();
@@ -146,9 +147,9 @@ async fn a_committed_write_serves_the_new_generation_after_the_delete() {
     assert!(old_secret.expose().contains("old"));
 }
 
-#[tokio::test]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
-async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires() {
+async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires(pool: sqlx::PgPool) {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
     );
@@ -158,7 +159,7 @@ async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires() {
     let memory = Arc::new(ConnectionMemory::with_ttl(ttl));
     let changes = replicate(&mut client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));
     until("the connection watch runs", || memory.watched()).await;
-    let (mut fixture, facts, id) = setup(Arc::clone(&memory), changes).await;
+    let (mut fixture, facts, id) = setup(&pool, Arc::clone(&memory), changes).await;
     let old = facts.connection(&id).await.unwrap().unwrap();
     let drops = write(&mut fixture, "new").await;
     // The commit stands, but its caller deliberately omits the bucket delete.
@@ -174,9 +175,9 @@ async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires() {
     assert!(memory.watched());
 }
 
-#[tokio::test]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
-async fn a_stopped_broker_reads_each_generation_without_keeping_a_fact() {
+async fn a_stopped_broker_reads_each_generation_without_keeping_a_fact(pool: sqlx::PgPool) {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
     );
@@ -185,7 +186,7 @@ async fn a_stopped_broker_reads_each_generation_without_keeping_a_fact() {
     let memory = Arc::new(ConnectionMemory::default());
     let changes = replicate(&mut client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));
     until("the connection watch runs", || memory.watched()).await;
-    let (mut fixture, facts, id) = setup(Arc::clone(&memory), changes).await;
+    let (mut fixture, facts, id) = setup(&pool, Arc::clone(&memory), changes).await;
     let old = facts.connection(&id).await.unwrap().unwrap();
     assert_eq!(memory.connection(PROJECT_ENV_KEY, &id), Ok(old.clone()));
     drop(server);

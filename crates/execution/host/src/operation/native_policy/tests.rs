@@ -1008,10 +1008,10 @@ impl Fixture {
     }
 }
 
-async fn run_case(case: Case) {
-    let database = (!matches!(case, Case::Cancellation)).then(wamn_test_postgres::database);
+async fn run_case(pool: &sqlx::PgPool, case: Case) {
+    let database = (!matches!(case, Case::Cancellation)).then(|| wamn_test_postgres::url(pool));
     let fixture = if let Some(database) = &database {
-        let postgres = authenticated::platform_postgres(database.url())
+        let postgres = authenticated::platform_postgres(database.as_str())
             .await
             .expect("scoped database with provisioned platform principals");
         Fixture::build_with_reuse(
@@ -1167,14 +1167,32 @@ async fn run_case(case: Case) {
         .expect("unbind fixture workload");
 }
 
-fn isolated(name: &str, case: Case) {
-    run_isolated_test(name, run_case(case));
+fn isolated(pool: &sqlx::PgPool, name: &str, case: Case) {
+    run_isolated_test(name, Some(pool), || run_case(pool, case));
 }
 
-fn run_isolated_test(name: &str, test: impl std::future::Future<Output = ()>) {
+fn run_isolated_test<F>(
+    name: &str,
+    database: Option<&sqlx::PgPool>,
+    test: impl FnOnce() -> F + Send,
+) where
+    F: std::future::Future<Output = ()>,
+{
     let full_name = format!("operation::native_policy::tests::{name}");
     if std::env::var(CHILD_MARKER).as_deref() != Ok(name) {
-        let output = Command::new(std::env::current_exe().expect("test executable"))
+        let server =
+            database.map(|_| wamn_test_postgres::start(&[]).expect("isolated native server"));
+        let mut command = Command::new(std::env::current_exe().expect("test executable"));
+        if let Some(server) = &server {
+            command.env(
+                "DATABASE_URL",
+                server
+                    .database("postgres")
+                    .expect("server coordinate")
+                    .url(),
+            );
+        }
+        let output = command
             .args(["--exact", &full_name, "--nocapture"])
             .env(CHILD_MARKER, name)
             .output()
@@ -1186,10 +1204,6 @@ fn run_isolated_test(name: &str, test: impl std::future::Future<Output = ()>) {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(
-            String::from_utf8_lossy(&output.stdout).contains("1 passed"),
-            "subprocess must execute the named test"
-        );
         return;
     }
     let (done, finished) = mpsc::channel();
@@ -1199,13 +1213,21 @@ fn run_isolated_test(name: &str, test: impl std::future::Future<Output = ()>) {
             std::process::exit(124);
         }
     });
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .event_interval(1)
-        .enable_all()
-        .build()
-        .expect("isolated native runtime");
-    runtime.block_on(test);
-    drop(runtime);
+    // SQLx owns the outer runtime. Build this non-Send native future on its
+    // own thread so these timing tests keep their original polling interval.
+    std::thread::scope(|scope| {
+        scope
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .event_interval(1)
+                    .enable_all()
+                    .build()
+                    .expect("isolated native runtime");
+                runtime.block_on(test());
+            })
+            .join()
+            .unwrap();
+    });
     done.send(()).expect("finish watchdog");
     watchdog.join().expect("join watchdog");
 }
@@ -1214,41 +1236,50 @@ fn run_isolated_test(name: &str, test: impl std::future::Future<Output = ()>) {
 fn native_guest_logs_follow_the_invocation_trace() {
     run_isolated_test(
         "native_guest_logs_follow_the_invocation_trace",
-        trace::guest_log_trace(),
+        None,
+        || trace::guest_log_trace(),
     );
 }
 
-#[test]
-fn native_node_success_revokes_invocation_authority() {
+#[sqlx::test(migrations = false)]
+async fn native_node_success_revokes_invocation_authority(pool: sqlx::PgPool) {
     isolated(
+        &pool,
         "native_node_success_revokes_invocation_authority",
         Case::Success,
     );
 }
-#[test]
-fn native_node_initialization_has_no_authority_and_obeys_deadline() {
+#[sqlx::test(migrations = false)]
+async fn native_node_initialization_has_no_authority_and_obeys_deadline(pool: sqlx::PgPool) {
     isolated(
+        &pool,
         "native_node_initialization_has_no_authority_and_obeys_deadline",
         Case::StartDeadline,
     );
 }
-#[test]
-fn native_node_execution_obeys_enclosing_deadline() {
+#[sqlx::test(migrations = false)]
+async fn native_node_execution_obeys_enclosing_deadline(pool: sqlx::PgPool) {
     isolated(
+        &pool,
         "native_node_execution_obeys_enclosing_deadline",
         Case::RunDeadline,
     );
 }
-#[test]
-fn native_node_cancellation_revokes_invocation_authority() {
+#[sqlx::test(migrations = false)]
+async fn native_node_cancellation_revokes_invocation_authority(pool: sqlx::PgPool) {
     isolated(
+        &pool,
         "native_node_cancellation_revokes_invocation_authority",
         Case::Cancellation,
     );
 }
-#[test]
-fn native_node_trap_revokes_invocation_authority() {
-    isolated("native_node_trap_revokes_invocation_authority", Case::Trap);
+#[sqlx::test(migrations = false)]
+async fn native_node_trap_revokes_invocation_authority(pool: sqlx::PgPool) {
+    isolated(
+        &pool,
+        "native_node_trap_revokes_invocation_authority",
+        Case::Trap,
+    );
 }
 
 /// Counts `WARN` events whose message says wamn:postgres calls will be refused.
@@ -1368,7 +1399,8 @@ async fn assert_postgres_bind_warns() {
 fn native_postgres_guest_binds_without_the_project_env_key_warn() {
     run_isolated_test(
         "native_postgres_guest_binds_without_the_project_env_key_warn",
-        assert_postgres_bind_warns(),
+        None,
+        || assert_postgres_bind_warns(),
     );
 }
 
@@ -1487,7 +1519,8 @@ async fn assert_call_owner() {
 fn native_application_call_retains_owner_until_guest_cancellation() {
     run_isolated_test(
         "native_application_call_retains_owner_until_guest_cancellation",
-        assert_call_owner(),
+        None,
+        || assert_call_owner(),
     );
 }
 

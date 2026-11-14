@@ -247,7 +247,7 @@ async fn install_fresh(
     name: &str,
     packages: &[std::path::PathBuf],
 ) -> anyhow::Result<(String, sqlx::PgConnection)> {
-    let url = server.create_database(name)?.url().to_owned();
+    let url = server.create_database(name).await?.url().to_owned();
     let mut project = super::connect(&url).await?;
     let fresh = sqlx::query("SELECT current_setting('server_version_num')::integer, current_database()::text, to_regnamespace('receiving') IS NULL AND to_regnamespace('catalog') IS NULL").fetch_one(&mut project).await?;
     ensure!(

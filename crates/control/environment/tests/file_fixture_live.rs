@@ -16,7 +16,7 @@ mod native_files {
             "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_BLOB_PUT_COMPONENT",
         );
         let mut postgres = wamn_test_postgres::start(&[])?;
-        let database = postgres.create_database("file_http_role")?;
+        let database = postgres.create_database("file_http_role").await?;
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../..")
             .canonicalize()?;

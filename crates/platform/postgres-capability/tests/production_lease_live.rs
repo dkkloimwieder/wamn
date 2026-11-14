@@ -22,11 +22,12 @@ use common::{
     seed_exhausted_run, seed_run, teardown,
 };
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn production_lease_live() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::project();
-    let url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_catalog::test_database::project(database.as_str()).await;
+    let url = database.as_str();
     let mut fixture = install_fixture(url).await?;
     let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
@@ -298,11 +299,12 @@ async fn production_lease_live() -> anyhow::Result<()> {
     teardown(fixture).await
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn queue_writers_stamp_existing_executor_leases() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::project();
-    let mut fixture = install_fixture(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_catalog::test_database::project(database.as_str()).await;
+    let mut fixture = install_fixture(database.as_str()).await?;
     let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
     // Admission already binds the executor in its existing transaction.
@@ -367,11 +369,12 @@ async fn queue_writers_stamp_existing_executor_leases() -> anyhow::Result<()> {
     teardown(fixture).await
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn mixed_retries_end_with_the_last_cause(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::project();
-    let mut fixture = install_fixture(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_catalog::test_database::project(database.as_str()).await;
+    let mut fixture = install_fixture(database.as_str()).await?;
     let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
     let packages = [PACKAGE_ID.to_owned()];
@@ -488,11 +491,12 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
     teardown(fixture).await
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn lease_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn lease_release_fences_and_bounds_backoff(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::project();
-    let mut fixture = install_fixture(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_catalog::test_database::project(database.as_str()).await;
+    let mut fixture = install_fixture(database.as_str()).await?;
     let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
     let packages = [PACKAGE_ID.to_owned()];

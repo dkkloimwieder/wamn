@@ -43,7 +43,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:docker, bin:rustc",
     );
     let mut postgres = wamn_test_postgres::start(&[])?;
-    let database = postgres.create_database("candidate_health")?;
+    let database = postgres.create_database("candidate_health").await?;
     let mut admin = connect(database.url()).await?;
     let control_url = install(&mut admin, database.url()).await?;
     let (logins, mut billing, _shop) =

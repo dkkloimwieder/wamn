@@ -48,7 +48,7 @@ enum Finish {
 }
 
 struct Live {
-    database: wamn_test_postgres::Database,
+    database: url::Url,
     administration: sqlx::PgConnection,
     plugin: WamnPostgres,
     scopes: AtomicU32,
@@ -64,11 +64,12 @@ async fn connect(url: &str) -> sqlx::PgConnection {
 }
 
 impl Live {
-    async fn new() -> Self {
+    async fn new(database: url::Url) -> Self {
         let lock = wamn_test_postgres::lock();
-        let database = wamn_platform_identity::test_database::project_platform();
-        database
-            .execute(&["CREATE SCHEMA wamn_run;"])
+        wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+        sqlx::raw_sql("CREATE SCHEMA wamn_run;")
+            .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+            .await
             .expect("create the run-plane schema that administration revokes in");
         let generation = workload_login(
             WorkloadRoleFamily::Administration,
@@ -76,19 +77,22 @@ impl Live {
                 org: "org",
                 project: "project",
                 environment: "dev",
-                database: database.name(),
+                database: database.path().trim_start_matches('/'),
             },
         )
         .expect("the administration family takes a project-environment identity");
-        database
-            .execute(&[&wamn_control_provision::test_database::login_sql(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::test_database::login_sql(
                 WorkloadRoleFamily::Administration,
-                database.name(),
+                database.path().trim_start_matches('/'),
                 &generation,
                 ADMINISTRATION_PASSWORD,
-            )])
-            .expect("mint the administration generation");
-        let mut url = url::Url::parse(database.url()).expect("parse the test url");
+            ),
+        ))
+        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await
+        .expect("mint the administration generation");
+        let mut url = url::Url::parse(database.as_str()).expect("parse the test url");
         url.set_username(&generation).expect("set the username");
         url.set_password(Some(ADMINISTRATION_PASSWORD))
             .expect("set the password");
@@ -96,7 +100,7 @@ impl Live {
         let mut live = Self {
             plugin: WamnPostgres::new(WamnPostgresConfig {
                 credentials: Some(ClassCredentials::every_class(
-                    live_guest_url(database.url(), PROJECT_ENV_KEY).await,
+                    live_guest_url(database.as_str(), PROJECT_ENV_KEY).await,
                 )),
                 guest_pool_max_size: 8,
                 platform_pool_max_size: 1,
@@ -212,9 +216,9 @@ fn sqlstate(error: &StatementError) -> &str {
 
 /// N concurrent creates on one counter yield N consecutive values, none
 /// repeated, and peek reads the last one.
-#[tokio::test]
-async fn live_numbers_are_gapless_and_consecutive_under_concurrent_creates() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_numbers_are_gapless_and_consecutive_under_concurrent_creates(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po,width=4}")
         .await;
     assert_eq!(
@@ -234,9 +238,9 @@ async fn live_numbers_are_gapless_and_consecutive_under_concurrent_creates() {
 }
 
 /// A number fetched in a transaction that rolls back is never consumed.
-#[tokio::test]
-async fn live_a_rollback_gives_the_number_back() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_a_rollback_gives_the_number_back(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po,width=4}")
         .await;
     assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-0001");
@@ -260,9 +264,9 @@ async fn live_a_rollback_gives_the_number_back() {
 
 /// `reset=` starts at 1 for each distinct key, and two keys interleaved count
 /// on their own. A null key field is refused.
-#[tokio::test]
-async fn live_reset_starts_at_one_per_key() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_reset_starts_at_one_per_key(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(
         APPLICATION,
         "purchase_order",
@@ -295,9 +299,9 @@ async fn live_reset_starts_at_one_per_key() {
 /// `per=` assigns one value per key once, under concurrency: N concurrent
 /// first creates with one batch id all carry one batch number, and their
 /// `reset=` lines count 1 to N. A second batch takes the next number.
-#[tokio::test]
-async fn live_per_assigns_once_per_key_under_concurrency() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_per_assigns_once_per_key_under_concurrency(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(
         APPLICATION,
         "pick_label",
@@ -331,9 +335,9 @@ async fn live_per_assigns_once_per_key_under_concurrency() {
 /// number of a bare pattern with no keys, and a number of a keyed pattern
 /// with a key map of the values the pattern names. A key the pattern does not
 /// name is not read, and a key given twice is refused.
-#[tokio::test]
-async fn live_a_caller_numbers_with_no_record_and_with_a_key_map() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_a_caller_numbers_with_no_record_and_with_a_key_map(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(APPLICATION, "label", "L-{seq:n}").await;
     live.sequence(
         APPLICATION,
@@ -375,9 +379,9 @@ async fn live_a_caller_numbers_with_no_record_and_with_a_key_map() {
 
 /// A first `per=` sight that rolls back gives the value back: the next key
 /// takes it.
-#[tokio::test]
-async fn live_a_rolled_back_per_assignment_is_not_consumed() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_a_rolled_back_per_assignment_is_not_consumed(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(APPLICATION, "batch", "B{seq:batch,per=batch_id}")
         .await;
     let rolled_back = live
@@ -398,9 +402,9 @@ async fn live_a_rolled_back_per_assignment_is_not_consumed() {
 /// A sequence of another application is refused by the application in host
 /// state, never by the name: the same call under the owning application
 /// renders.
-#[tokio::test]
-async fn live_a_sequence_of_another_application_is_refused() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_a_sequence_of_another_application_is_refused(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(OTHER_APPLICATION, "shipment", "S-{seq:n}")
         .await;
     for call in [NumberCall::Next, NumberCall::Peek] {
@@ -427,9 +431,9 @@ async fn live_a_sequence_of_another_application_is_refused() {
 /// `app.application` identity: a transaction whose identity is rewritten to another
 /// application still renders its own sequences and reaches none of the other
 /// application's (wamn-9e4ks).
-#[tokio::test]
-async fn live_a_rewritten_application_identity_reaches_no_other_sequence() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_a_rewritten_application_identity_reaches_no_other_sequence(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
     live.sequence(OTHER_APPLICATION, "shipment", "S-{seq:n}")
@@ -489,9 +493,9 @@ async fn live_a_rewritten_application_identity_reaches_no_other_sequence() {
 
 /// An operation transaction whose host state names no application renders
 /// nothing: both calls are refused and no counter moves.
-#[tokio::test]
-async fn live_a_call_with_no_application_in_host_state_is_refused() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_a_call_with_no_application_in_host_state_is_refused(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
     let scope = "numbering-no-application";
@@ -539,9 +543,9 @@ async fn live_a_call_with_no_application_in_host_state_is_refused() {
 
 /// Outside an open operation transaction both calls are refused and no
 /// counter moves.
-#[tokio::test]
-async fn live_a_call_outside_an_operation_transaction_is_refused() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_a_call_outside_an_operation_transaction_is_refused(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
     for call in [NumberCall::Next, NumberCall::Peek] {
@@ -565,9 +569,9 @@ async fn live_a_call_outside_an_operation_transaction_is_refused() {
 
 /// `{date:FMT}` renders the transaction date in the `timezone` setting of the
 /// application, else in UTC, and `reset=date:` keys on it.
-#[tokio::test]
-async fn live_the_date_uses_the_application_timezone_else_utc() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_the_date_uses_the_application_timezone_else_utc(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     let pattern = "{date:YYYY}{date:MM}{date:DD}-{seq:n,reset=date:YYYY}";
     live.sequence(APPLICATION, "stamp", pattern).await;
     live.sequence(OTHER_APPLICATION, "stamp", pattern).await;
@@ -620,16 +624,16 @@ async fn counter_rows(client: &mut sqlx::PgConnection) -> Vec<(String, String, i
 /// `assign_counter`: counter `a` comes before the keyed counters in lock
 /// order, and a refused call that the guest commits leaves every counter
 /// row unchanged.
-#[tokio::test]
-async fn live_a_refused_key_moves_no_counter() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_a_refused_key_moves_no_counter(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(
         APPLICATION,
         "pick_label",
         "{seq:a}-{seq:b,per=batch_id}-{field:dock}{seq:c,reset=dock}",
     )
     .await;
-    let mut superuser = connect(live.database.url()).await;
+    let mut superuser = connect(live.database.as_str()).await;
     let good = &[("batch_id", Some("x")), ("dock", Some("D"))];
     assert_eq!(live.next("pick_label", good).await, "1-1-D1");
     let before = counter_rows(&mut superuser).await;
@@ -658,9 +662,9 @@ async fn live_a_refused_key_moves_no_counter() {
 /// A `timezone` setting that is not a time zone is a refusal with SQLSTATE
 /// `22023` for a pattern that reads the date. The refusal leaves the
 /// operation transaction usable, and a pattern with no date still renders.
-#[tokio::test]
-async fn live_an_invalid_timezone_setting_is_refused() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_an_invalid_timezone_setting_is_refused(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     for (application, value) in [(APPLICATION, "\"Mars/Olympus\""), (OTHER_APPLICATION, "5")] {
         live.sequence(application, "stamp", "{date:YY}-{seq:n,reset=date:YY}")
             .await;
@@ -722,10 +726,10 @@ async fn live_an_invalid_timezone_setting_is_refused() {
 /// When a pattern holds `WW`, `YYYY` and `YY` are the ISO year, the year
 /// that holds the ISO week: 2027-01-01 is in week 53 of 2026. A
 /// `reset=date:YY` key in such a pattern keys on the ISO year too.
-#[tokio::test]
-async fn live_a_week_pattern_renders_the_iso_year() {
-    let mut live = Live::new().await;
-    let mut superuser = connect(live.database.url()).await;
+#[sqlx::test(migrations = false)]
+async fn live_a_week_pattern_renders_the_iso_year(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
+    let mut superuser = connect(live.database.as_str()).await;
     let boundary = DATE_SQL.replace(
         "transaction_timestamp()",
         "timestamptz '2027-01-01 12:00:00+00'",
@@ -771,7 +775,7 @@ impl Live {
     /// A table of the application's records whose unique `number` holds
     /// rendered numbers, readable by `wamn_app`.
     async fn records(&self) -> sqlx::PgConnection {
-        let mut superuser = connect(self.database.url()).await;
+        let mut superuser = connect(self.database.as_str()).await;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             ("CREATE SCHEMA numbered; \
                  CREATE TABLE numbered.purchase_order (id serial PRIMARY KEY, number text UNIQUE); \
@@ -830,9 +834,11 @@ impl Live {
 /// An advance renders the set value next, and a set lower than the counter
 /// is allowed. The set reads no record: a set that gives a number a record
 /// already carries is caught by the model's `UQ` on the insert.
-#[tokio::test]
-async fn live_set_counter_advances_resets_and_the_model_uq_catches_a_live_number() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_set_counter_advances_resets_and_the_model_uq_catches_a_live_number(
+    pool: sqlx::PgPool,
+) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(APPLICATION, "purchase_order", "PO-{seq:po,width=6}")
         .await;
     let mut superuser = live.records().await;
@@ -893,9 +899,9 @@ async fn live_set_counter_advances_resets_and_the_model_uq_catches_a_live_number
 
 /// A `reset=` counter is set for one key, and a set of 1 on a new period key
 /// is allowed; a `per=` counter is refused, and no mapping row changes.
-#[tokio::test]
-async fn live_set_counter_takes_a_reset_key_and_refuses_a_per_counter() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_set_counter_takes_a_reset_key_and_refuses_a_per_counter(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(
         APPLICATION,
         "pick_label",
@@ -925,9 +931,9 @@ async fn live_set_counter_takes_a_reset_key_and_refuses_a_per_counter() {
     assert_eq!(live.set("period", "yearly", "n", "99", 1).await.unwrap(), 1);
 }
 
-#[tokio::test]
-async fn live_set_errors_keep_the_request_and_source() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_set_errors_keep_the_request_and_source(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(APPLICATION, "broken", "{seq:").await;
     let error = live
         .set("bad-pattern", "broken", "n", "", 23)
@@ -953,9 +959,16 @@ async fn live_set_errors_keep_the_request_and_source() {
 
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
-    live.database.execute(&[
+    sqlx::raw_sql(
         "ALTER TABLE platform.number_counter ADD CONSTRAINT error_source_probe CHECK (value <> 23)",
-    ]).unwrap();
+    )
+    .execute(
+        &mut wamn_postgres::connect(live.database.as_str())
+            .await
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let error = live
         .set("bad-write", "purchase_order", "po", "", 23)
         .await
@@ -972,9 +985,9 @@ async fn live_set_errors_keep_the_request_and_source() {
 
 /// A set waits for a concurrent next number that holds the counter row, and
 /// the next number after both renders the set value.
-#[tokio::test]
-async fn live_set_counter_serializes_with_a_concurrent_next_number() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_set_counter_serializes_with_a_concurrent_next_number(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
     assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-1");
@@ -1035,9 +1048,9 @@ async fn live_set_counter_serializes_with_a_concurrent_next_number() {
 /// id, with the set value as its result; a retry answers it and changes
 /// nothing, a different set under the same id is refused, and the counter
 /// row names the caller.
-#[tokio::test]
-async fn live_set_counter_is_logged_by_its_request_id() {
-    let mut live = Live::new().await;
+#[sqlx::test(migrations = false)]
+async fn live_set_counter_is_logged_by_its_request_id(pool: sqlx::PgPool) {
+    let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
     let mut superuser = live.records().await;
