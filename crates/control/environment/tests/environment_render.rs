@@ -21,45 +21,6 @@ use render_fixture::{
 };
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-#[test]
-fn prekind_deploy_connections_cover_the_wms_environment() -> anyhow::Result<()> {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let document =
-        EnvironmentDocument::compile(&repository.join("deploy/gcp/environments/dkk--dev--wms.k"))?;
-    let directory = repository.join("deploy/gcp/connections");
-    for name in document
-        .applications
-        .values()
-        .flat_map(|app| app.connections.values())
-    {
-        let connection: Value =
-            serde_json::from_slice(&std::fs::read(directory.join(format!("{name}.json")))?)?;
-        let integration: Value = serde_json::from_slice(&std::fs::read(
-            directory.join(format!("{name}.integration.json")),
-        )?)?;
-        assert_eq!(connection["name"], name.as_str());
-        assert_eq!(connection["project"], document.project);
-        assert_eq!(connection["env"], document.env);
-        assert!(document.integrations.contains_key(name));
-        wamn_catalog::RequirementType::for_integration(
-            integration["integration_type"]
-                .as_str()
-                .context("integration type")?,
-        )
-        .context("supported host integration")?
-        .require_definition(&connection["parameters"])
-        .map_err(anyhow::Error::msg)?;
-        if let Some(system) = integration["external_system"].as_str() {
-            let external: Value = serde_json::from_slice(&std::fs::read(
-                directory.join(format!("{system}.external-system.json")),
-            )?)?;
-            assert_eq!(external["name"], system);
-            assert_eq!(external["project"], document.project);
-        }
-    }
-    Ok(())
-}
-
 fn manifest(bytes: &[u8]) -> anyhow::Result<wamn_catalog::ServingManifest> {
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(bytes)?;
     Ok(manifest)

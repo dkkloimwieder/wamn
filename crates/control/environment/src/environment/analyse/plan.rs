@@ -88,8 +88,7 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                     )
                 ) {
                     refusals.push(format!(
-                        "connection {} has a different type from its release requirement",
-                        alias
+                        "connection {alias} has a different type from its release requirement"
                     ));
                 }
             }

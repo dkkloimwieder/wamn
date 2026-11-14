@@ -1,6 +1,5 @@
 //! Independent environment provisioning and absent-application initialization.
 
-use sqlx::Row as _;
 pub mod reset;
 pub mod schema;
 
@@ -18,17 +17,9 @@ pub struct ExpectedDatabase {
 impl ExpectedDatabase {
     pub async fn read(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<Self> {
         let mut client = wamn_postgres::connect(&platform.system_database_url).await?;
-        let row = sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_SQL_READ)
-            .bind(&document.org)
-            .bind(&document.project)
-            .bind(&document.env)
-            .fetch_optional(&mut client)
-            .await?;
-        Ok(match row {
-            Some(row) => Self {
-                active: Some(row.get(0)),
-            },
-            None => Self { active: None },
+        Ok(Self {
+            active: wamn_registry::deployment::instance_suffix(&mut client, &document.triple())
+                .await?,
         })
     }
 

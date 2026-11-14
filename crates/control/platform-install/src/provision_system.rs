@@ -40,19 +40,17 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
         .context("connect to the system database")?;
 
     let result = async {
-        let migration_input = match request.migration_database_url.as_deref() {
-            Some(input) => input.to_owned(),
-            None => {
-                let input = wamn_postgres::configuration(&request.system_database_url)?;
-                let config: wamn_postgres::ConnectionConfig = serde_json::from_str(&input)
-                    .context(
-                        "explicit platform initialization requires a separate migration connection",
-                    )?;
-                let role = MigrationDatabase::System.managed_role(&config.database);
-                // The bootstrap chart has already declared this fixed platform role and Secret.
-                crate::credentials::wait_role(&mut client, &role.name).await?;
-                MigrationDatabase::System.configuration(&config.to_json()?)?
-            }
+        let migration_input = if let Some(input) = request.migration_database_url.as_deref() {
+            input.to_owned()
+        } else {
+            let input = wamn_postgres::configuration(&request.system_database_url)?;
+            let config: wamn_postgres::ConnectionConfig = serde_json::from_str(&input).context(
+                "explicit platform initialization requires a separate migration connection",
+            )?;
+            let role = MigrationDatabase::System.managed_role(&config.database);
+            // The bootstrap chart has already declared this fixed platform role and Secret.
+            crate::credentials::wait_role(&mut client, &role.name).await?;
+            MigrationDatabase::System.configuration(&config.to_json()?)?
         };
         initialize_system(
             &mut client,
@@ -187,10 +185,7 @@ pub async fn system_state(client: &mut sqlx::PgConnection) -> anyhow::Result<Sys
     if !present {
         return Ok(SystemState::Absent);
     }
-    let complete: bool =
-        sqlx::query_scalar("SELECT to_regclass('registry._sqlx_migrations') IS NOT NULL")
-            .fetch_one(client)
-            .await?;
+    let complete = wamn_registry::migrations::history_exists(client).await?;
     Ok(if complete {
         SystemState::Complete
     } else {
@@ -273,7 +268,7 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
         }
         wamn_control_provision::migration::prepare_history(
             admin,
-            "registry._sqlx_migrations",
+            wamn_registry::migrations::HISTORY_TABLE,
             "wamn_system",
         )
         .await?;

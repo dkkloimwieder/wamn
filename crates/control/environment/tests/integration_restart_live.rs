@@ -332,7 +332,7 @@ fn loaded_release(
     let selection = &document.applications[application];
     let version = format!(
         "0.1.{}-{}",
-        document.integrations[&selection.connections["registers"]].version,
+        document.integrations[&selection.connections["registers"].name].version,
         selection.connections["registers"]
     );
     let members: Vec<_> = [("modbus_reader", "a"), ("observer_fixture", "b")]

@@ -199,7 +199,7 @@ pub fn select_application(
                 selection
                     .connections
                     .values()
-                    .any(|selected| selected == *name)
+                    .any(|selected| &selected.name == *name)
             })
             .map(|(name, integration)| (name.clone(), integration.clone()))
             .collect(),
@@ -856,7 +856,7 @@ pub async fn replica_refusals(
         .filter_map(|binding| {
             let connection =
                 &document.applications[&binding.application].connections[&binding.alias];
-            replica_refusal(connection, replicas)
+            replica_refusal(&connection.to_string(), replicas)
         })
         .collect())
 }

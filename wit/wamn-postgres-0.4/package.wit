@@ -25,8 +25,8 @@ package wamn:postgres@0.4.0;
 ///   S6, where a test host swapped in an ephemeral schema with zero guest
 ///   change).
 ///
-/// STATUS: every declaration of 0.1.0, unchanged, plus `statements.run-stream`
-/// and `statements.operation-transaction`. The separate `wamn:operation` package
+/// `client` exposes only dynamic read queries. `statements` owns admitted SQL
+/// and its transactions. The separate `wamn:operation` package
 /// provides entry-owned begin and commit.
 interface types {
   /// Typed SQL values. `numeric` and `timestamptz` travel as canonical
@@ -93,32 +93,11 @@ interface types {
 interface client {
   use types.{sql-value, row-set, pg-error};
 
-  /// Single statement in an implicit transaction (identity injected,
-  /// committed on success). Parameterized ONLY -- there is no string
-  /// interpolation path; $1..$n binding is the sole way to pass data.
+  /// Run one dynamic statement on the SELECT-only login in a read-only
+  /// transaction. The host binds identity and commits on success.
+  /// Use $1..$n parameters for data and keyset paging for multiple pages.
+  /// The host holds no query state between calls.
   query: async func(sql: string, params: list<sql-value>) -> result<row-set, pg-error>;
-
-  /// Like query, for statements where only the affected count matters.
-  execute: async func(sql: string, params: list<sql-value>) -> result<u64, pg-error>;
-
-  /// Explicit transaction. Dropping the resource without commit()
-  /// rolls back (host-side guarantee -- guest crash included).
-  resource transaction {
-    query: async func(sql: string, params: list<sql-value>) -> result<row-set, pg-error>;
-    execute: async func(sql: string, params: list<sql-value>) -> result<u64, pg-error>;
-    /// Open a server-side cursor for large result sets; rows stream in
-    /// bounded batches instead of one row-set allocation.
-    open-cursor: async func(sql: string, params: list<sql-value>) -> result<cursor, pg-error>;
-    commit: async func() -> result<_, pg-error>;
-    rollback: async func() -> result<_, pg-error>;
-  }
-
-  begin: async func() -> result<transaction, pg-error>;
-
-  /// Bounded fetch over a server-side cursor. Empty batch = exhausted.
-  resource cursor {
-    fetch: async func(max-rows: u32) -> result<row-set, pg-error>;
-  }
 }
 
 /// Execute only SQL statements admitted for the active operation.

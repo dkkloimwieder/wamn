@@ -23,6 +23,7 @@ pub mod session_target;
 pub mod sql;
 /// Test databases with the system control store minimum.
 #[cfg(any(test, feature = "test-util"))]
+#[path = "../tests/support/database.rs"]
 pub mod test_database;
 pub mod workload_role;
 

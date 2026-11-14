@@ -80,7 +80,7 @@ pub async fn analyse(
             definition
                 .connections
                 .values()
-                .any(|integration| integration == *name)
+                .any(|integration| &integration.name == *name)
         })
     }) {
         let row =
@@ -147,8 +147,15 @@ pub async fn analyse(
                 .get(&name)
                 .ok_or_else(|| refuse("connection_unbound", &at))?;
             let row = selected
-                .get(integration)
+                .get(&integration.name)
                 .ok_or_else(|| refuse("integration_version_missing", &at))?;
+            let version = document.integrations[&integration.name].version;
+            if integration
+                .version
+                .is_some_and(|requested| requested != version)
+            {
+                return Err(refuse("integration_version_missing", &at));
+            }
             let integration_type: String = row.get(1);
             let exports: Vec<String> = row.get(9);
             if !exports_satisfy(&exports, std::slice::from_ref(&declaration.interface)) {
@@ -168,7 +175,7 @@ pub async fn analyse(
                     definition: row.get(3),
                     credential_handle: (integration_type != "gcs")
                         .then(|| format!("org:{}:{integration}", document.org)),
-                    org_connection_name: Some(integration.clone()),
+                    org_connection_name: Some(integration.name.clone()),
                 })
             } else {
                 None
@@ -179,7 +186,7 @@ pub async fn analyse(
                 connection_id: row.get(0),
                 integration_type,
                 exclusive: row.get(8),
-                version: document.integrations[integration].version,
+                version,
                 generation: row.get(7),
                 mode: declaration.mode,
                 digest: row.get(5),

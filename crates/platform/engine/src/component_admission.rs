@@ -1117,10 +1117,9 @@ mod tests {
         );
     }
 
-    /// An application component may not import raw SQL, even with the
-    /// `wamn:postgres` grant: its SQL goes through its statements instance.
+    /// Applications may import dynamic queries with the Postgres grant.
     #[test]
-    fn an_application_component_importing_client_refuses() {
+    fn an_application_component_importing_client_is_admitted() {
         let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes(
             "import wamn:postgres/statements@0.4.0; import wamn:postgres/client@0.4.0;",
@@ -1128,17 +1127,8 @@ mod tests {
         let mut request = request();
         request.admitted_platform_packages = BTreeSet::from(["wamn:postgres".to_string()]);
 
-        let error = validate_component_admission(&engine, &bytes, request)
-            .expect_err("a client import must refuse");
-        assert_eq!(
-            error.error_type(),
-            ComponentAdmissionErrorType::ImportPolicyRefused
-        );
-        assert!(
-            error.to_string().contains("wamn:postgres/client@0.4.0")
-                && !error.to_string().contains("statements"),
-            "refusal must name client alone: {error}"
-        );
+        validate_component_admission(&engine, &bytes, request)
+            .expect("a dynamic query import is admitted");
     }
 
     #[test]
