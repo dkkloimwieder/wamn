@@ -100,3 +100,9 @@ W21. Blob store aliases on palette nodes (S7-C question). A blob node keeps any 
 W22. CNPG managed roles (C22, S10-A question). The registry facts own the role list. The installer derives the org and project roles from `wamn-registry` and the fixed platform roles from code, and it writes them into the Helm values on each install. Helm values hold no role list that another source does not derive. Bootstrap installs the platform roles alone, and partial provisioning derives what the registry holds at that time. No new table or column.
 
 W23. S10-D `kind` measurement (owner, 2026-11-13). S10-D runs one bounded `kind` measurement: it publishes one fixture change through the product commands, deploys it through control and times each phase. It runs only when no other build, test or cluster load runs on the machine. If the run fails more than once, the lane stops the measurement and does not diagnose it. Local development uses `kind` in either case, and the local host modes go.
+
+W24. S8 runs as three serial lanes after S7-D: S8-A (run persistence), S8-B (native events) and S8-C (CDC identity and lifecycle). Decisions on the plan questions:
+- P2: `wamn-run-state` owns run persistence as functions over a connection that the caller already authorized. `production_lease.rs::RunStore` goes, and the persistence does not move into workflow.
+- Workflow already depends on runtime. Workflow orchestrates matching over the plugin transport, and runtime never depends on workflow.
+- Reset keeps `reset.rs::stop_users` to stop the reader, and the per-commit lock goes after that.
+- The CDC event identity uses the timeline that contains the commit LSN. Transactions that replay after a promotion keep their identity.
