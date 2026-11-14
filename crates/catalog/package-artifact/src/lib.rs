@@ -256,8 +256,7 @@ pub struct Repository {
     pub auth: RegistryAuth,
     /// `<registry>/<repository>:<tag>` or `<registry>/<repository>@<digest>`.
     pub reference: Reference,
-    http: reqwest::Client,
-    scheme: &'static str,
+    source: RegistrySource,
 }
 
 /// Names the reference only: the credential must not reach a log.
@@ -312,16 +311,6 @@ impl Repository {
             .context("read the package artifact base")?;
         let ca_bundles = read_ca_bundles(&registry.oci_ca_paths)
             .with_context(|| format!("read CA bundles for registry {}", base.registry()))?;
-        let mut http = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(REGISTRY_IO_TIMEOUT)
-            .connect_timeout(REGISTRY_IO_TIMEOUT);
-        for bundle in &ca_bundles {
-            for certificate in reqwest::Certificate::from_pem_bundle(bundle)? {
-                http = http.add_root_certificate(certificate);
-            }
-        }
         let reference = if by_digest {
             Reference::with_digest(
                 base.registry().to_owned(),
@@ -335,20 +324,14 @@ impl Repository {
                 reference.to_owned(),
             )
         };
-        let client = RegistrySource::new(base, registry.insecure_registry, REGISTRY_IO_TIMEOUT)
-            .with_ca_bundles(ca_bundles)
-            .client()
-            .context("build the registry client")?;
+        let source = RegistrySource::new(base, registry.insecure_registry, REGISTRY_IO_TIMEOUT)
+            .with_ca_bundles(ca_bundles);
+        let client = source.client().context("build the registry client")?;
         Ok(Self {
             client,
             auth,
             reference,
-            http: http.build()?,
-            scheme: if registry.insecure_registry {
-                "http"
-            } else {
-                "https"
-            },
+            source,
         })
     }
 

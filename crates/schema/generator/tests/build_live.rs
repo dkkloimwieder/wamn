@@ -656,10 +656,18 @@ async fn history_changes_append_immutable_versions_and_execute_during_build() ->
         "SELECT 1;",
     )?;
     generate_package(&request).await?;
+    fs::remove_dir_all(&output)?;
     let inserted = package.join(format!("migrations/{:04}_insert.sql", previous + 1));
     fs::write(&inserted, "SELECT 1;")?;
     assert!(generate_package(&request).await.is_err());
     fs::remove_file(inserted)?;
+
+    let highest = wamn_compiler::migrations::migrator(&package)
+        .await?
+        .iter()
+        .map(|migration| migration.version)
+        .max()
+        .unwrap();
 
     let path = package.join("wamn.k");
     let source = fs::read_to_string(&path)?;
@@ -677,12 +685,6 @@ async fn history_changes_append_immutable_versions_and_execute_during_build() ->
                     && migration.checksum == released.checksum)
         );
     }
-    let authored = sqlx::migrate::Migrator::new(directory.join("migrations")).await?;
-    let highest_authored = authored
-        .iter()
-        .map(|migration| migration.version)
-        .max()
-        .unwrap();
-    assert_eq!(changed.iter().last().unwrap().version, highest_authored + 1);
+    assert_eq!(changed.iter().last().unwrap().version, highest + 1);
     Ok(())
 }

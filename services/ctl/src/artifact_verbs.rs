@@ -76,12 +76,13 @@ pub async fn diff(args: DiffArgs) -> anyhow::Result<()> {
 
 /// Layer 0 of the package artifact whose full digest or tag is `package`.
 async fn layer_zero(registry: &PackageRegistry, package: &str) -> anyhow::Result<Vec<u8>> {
-    let (_, layers) = Repository::open(registry, package)?
+    let artifact = Repository::open(registry, package)?
         .pull()
         .await?
         .with_context(|| format!("package artifact {package} does not exist in the registry"))?;
 
-    let first = layers
+    let first = artifact
+        .layers
         .into_iter()
         .next()
         .with_context(|| format!("package artifact {package} has no layers"))?;

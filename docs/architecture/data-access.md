@@ -789,6 +789,10 @@ Authored SQL analysis and the required schema contract use that column list.
 A custom operation cannot require or map a constraint of a history table.
 The compiler writes history DDL as immutable files under `history/`.
 Authored `migrations/` and generated `history/` share SQLx versions and checksums.
+Each generated migration records the authored versions it follows.
+An authored version change appends a history checkpoint even when its trigger definitions stay the same.
+The compiler uses these immutable source checkpoints and committed migrations to refuse insertions below an existing version.
+Publication also compares the sequence with earlier package artifacts.
 Platform initialization installs the shared helpers from `deploy/sql/record-history.sql`.
 Apply executes the emitted files through SQLx and records each successful version.
 The changes statement reads entries at or after the cursor transaction.

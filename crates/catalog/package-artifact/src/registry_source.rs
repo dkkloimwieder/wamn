@@ -19,6 +19,26 @@ pub struct RegistrySource {
 }
 
 impl RegistrySource {
+    /// Delete one manifest digest with this source's trust and authorization.
+    pub async fn delete_manifest(
+        &self,
+        reference: &oci_client::Reference,
+        auth: &RegistryAuth,
+        digest: &str,
+    ) -> anyhow::Result<()> {
+        crate::ensure_digest(digest)?;
+        let http = crate::http_client::HttpClient::with_extra_roots(&self.ca_bundles)?;
+        crate::registry_transport::delete_manifest(
+            &http,
+            self.insecure,
+            reference,
+            auth,
+            digest,
+            self.timeout,
+        )
+        .await
+    }
+
     /// Keep explicit transport inputs. Call `client` to validate its trust roots.
     pub fn new(
         base: wamn_catalog::ComponentArtifactBase,

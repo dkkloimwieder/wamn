@@ -10,6 +10,8 @@ The deployed release stays available after the command exits.
 Use the [deployment procedure](deployment.md) to install a disposable development platform.
 Apply its authored `environment.k` through `wamn env apply`.
 Make the registry and control endpoint reachable from the development machine.
+The installed local registry enables `REGISTRY_STORAGE_DELETE_ENABLED` for retention.
+Installation refuses to reuse a registry without that setting.
 Use the platform's own credential and identity services for connections and sign-in.
 
 Set `WAMN_CONTROL_URL` to the control service URL and `WAMN_TOKEN` to the caller's token.
@@ -52,7 +54,8 @@ The builder records the matching base versions and component digests in overlays
 It writes development SQL history to build output without changing authored history.
 Only dev package manifests carry the OCI publication timestamp `org.opencontainers.image.created`.
 Repeat publication reuses the existing timestamp and manifest digest.
-The retention operation deletes dev tags older than seven days unless a published release pins their package coordinate.
+The retention operation deletes expired dev manifests by digest.
+It keeps a digest when any pinned or non-dev tag references it. Dev tags expire after seven days.
 It reads pins from `ServingManifest.release.packages` across the release repository.
 It leaves older tags without publication timestamps untouched.
 

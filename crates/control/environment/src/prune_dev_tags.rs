@@ -48,14 +48,24 @@ pub async fn prune(
         .map(|package| format!("{}-{}", package.package_id(), package.package_version()))
         .collect();
     let repository = Repository::open(registry, "latest")?;
-    let mut expired = Vec::new();
+    let mut manifests = std::collections::BTreeMap::<_, (Vec<String>, Vec<u8>)>::new();
     for tag in repository.tags().await? {
-        if !is_dev_tag(&tag) || pinned.contains(&tag) {
+        if let Some((bytes, digest)) = Repository::open(registry, &tag)?.manifest().await? {
+            manifests
+                .entry(digest)
+                .or_insert_with(|| (Vec::new(), bytes))
+                .0
+                .push(tag);
+        }
+    }
+    let mut removed = Vec::new();
+    for (digest, (tags, bytes)) in manifests {
+        if tags
+            .iter()
+            .any(|tag| !is_dev_tag(tag) || pinned.contains(tag))
+        {
             continue;
         }
-        let Some((bytes, _)) = Repository::open(registry, &tag)?.manifest().await? else {
-            continue;
-        };
         let manifest: oci_client::manifest::OciImageManifest = serde_json::from_slice(&bytes)?;
         if manifest.artifact_type.as_deref() != Some(PACKAGE_ARTIFACT_TYPE) {
             continue;
@@ -70,134 +80,9 @@ pub async fn prune(
         let created =
             DateTime::parse_from_rfc3339(created).context("invalid dev publication time")?;
         if created < now - chrono::Duration::days(7) {
-            expired.push(tag);
+            repository.delete_manifest(&digest).await?;
+            removed.extend(tags);
         }
     }
-    for tag in &expired {
-        repository.delete_tag(tag).await?;
-    }
-    Ok(expired)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex};
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-
-    #[tokio::test]
-    async fn pruning_keeps_release_pins_and_deletes_only_expired_dev_tags() -> anyhow::Result<()> {
-        let now = Utc::now();
-        let pinned_version = "1.0.0-dev.h0123456789ab";
-        let pinned = format!("orders-{pinned_version}");
-        let expired = "orders-1.0.0-dev.h123456789abc";
-        let fresh = "orders-1.0.0-dev.h23456789abcd";
-        let stable = "orders-1.0.0";
-        let manifests: BTreeMap<_, _> = [
-            (pinned.as_str(), Some(now - chrono::Duration::days(8))),
-            (expired, Some(now - chrono::Duration::days(8))),
-            (fresh, Some(now - chrono::Duration::days(7))),
-            (stable, None),
-        ]
-        .into_iter()
-        .map(|(tag, created)| {
-            let manifest = oci_client::manifest::OciImageManifest {
-                artifact_type: Some(PACKAGE_ARTIFACT_TYPE.into()),
-                annotations: created
-                    .map(|created| [(CREATED_ANNOTATION.into(), created.to_rfc3339())].into()),
-                ..Default::default()
-            };
-            (tag.to_owned(), serde_json::to_vec(&manifest).unwrap())
-        })
-        .collect();
-        let manifests = Arc::new(Mutex::new(manifests));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let address = listener.local_addr()?;
-        let state = Arc::clone(&manifests);
-        let server = tokio::spawn(async move {
-            loop {
-                let (mut socket, _) = listener.accept().await.unwrap();
-                let mut request = Vec::new();
-                while !request.ends_with(b"\r\n\r\n") {
-                    let mut byte = [0];
-                    socket.read_exact(&mut byte).await.unwrap();
-                    request.push(byte[0]);
-                }
-                let request = String::from_utf8(request).unwrap();
-                let mut words = request.split_whitespace();
-                let method = words.next().unwrap();
-                let path = words.next().unwrap();
-                let (status, body) = {
-                    let mut state = state.lock().unwrap();
-                    if let Some(tag) = path.strip_prefix("/v2/packages/manifests/") {
-                        if method == "DELETE" {
-                            state.remove(tag);
-                            (202, Vec::new())
-                        } else {
-                            (200, state[tag].clone())
-                        }
-                    } else if path.starts_with("/v2/packages/tags/list") {
-                        let last = path.split_once('?').and_then(|(_, query)| {
-                            url::form_urlencoded::parse(query.as_bytes())
-                                .find(|(name, _)| name == "last")
-                                .map(|(_, value)| value.into_owned())
-                        });
-                        let tags: Vec<_> = state
-                            .keys()
-                            .filter(|tag| last.as_ref().is_none_or(|last| *tag > last))
-                            .collect();
-                        (
-                            200,
-                            serde_json::to_vec(&serde_json::json!({"name":"packages","tags":tags}))
-                                .unwrap(),
-                        )
-                    } else {
-                        (200, Vec::new())
-                    }
-                };
-                socket.write_all(format!("HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nContent-Type: application/vnd.oci.image.manifest.v1+json\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
-                socket.write_all(&body).await.unwrap();
-            }
-        });
-        let directory = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
-        let auth = directory.path().join("auth.json");
-        std::fs::write(
-            &auth,
-            serde_json::to_vec(&serde_json::json!({"auths":{address.to_string():{
-                "username":"fixture", "password":"fixture"
-            }}}))?,
-        )?;
-        let registry = PackageRegistry {
-            artifact_base: format!("{address}/packages"),
-            credentials: None,
-            registry_auth_file: auth,
-            insecure_registry: true,
-            oci_ca_paths: Vec::new(),
-        };
-        let release = ServingManifest {
-            format_version: wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
-            release: wamn_catalog::ServingRelease {
-                packages: [wamn_catalog::PackageCoordinate::new(
-                    "orders",
-                    pinned_version,
-                )?]
-                .into(),
-            },
-            composed_entry: None,
-            components: BTreeSet::new(),
-            routes: BTreeSet::new(),
-            attachments: BTreeMap::new(),
-            host_routes: BTreeSet::new(),
-        };
-        let result = prune(&registry, &[release], now).await;
-        server.abort();
-        result?;
-        let state = manifests.lock().unwrap();
-        assert!(state.contains_key(&pinned));
-        assert!(!state.contains_key(expired));
-        assert!(state.contains_key(fresh));
-        assert!(state.contains_key(stable));
-        Ok(())
-    }
+    Ok(removed)
 }

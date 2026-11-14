@@ -36,6 +36,31 @@ pub fn platform_tls() -> anyhow::Result<rustls::ClientConfig> {
 }
 
 impl HttpClient {
+    /// Add registry trust roots to the platform roots through the shared transport.
+    pub fn with_extra_roots(bundles: &[Vec<u8>]) -> anyhow::Result<Self> {
+        if bundles.is_empty() {
+            return Self::shared();
+        }
+        let certificates = bundles
+            .iter()
+            .flat_map(|pem| CertificateDer::pem_slice_iter(pem))
+            .collect::<Result<Vec<_>, _>>()
+            .context("read registry trust roots")?;
+        let provider = rustls::crypto::CryptoProvider::get_default()
+            .cloned()
+            .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+        let verifier = rustls_platform_verifier::Verifier::new_with_extra_roots(
+            certificates,
+            Arc::clone(&provider),
+        )?;
+        let tls = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()?
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(verifier))
+            .with_no_client_auth();
+        Ok(Self::from_tls(tls))
+    }
+
     /// Reuse the process client for platform endpoints and metadata requests.
     pub fn shared() -> anyhow::Result<Self> {
         static CLIENT: OnceLock<HttpClient> = OnceLock::new();

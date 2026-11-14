@@ -166,6 +166,22 @@ pub(crate) async fn migrations(
     root: &std::path::Path,
     sql: &str,
 ) -> anyhow::Result<BTreeMap<std::path::PathBuf, Vec<u8>>> {
+    let authored = root.join("migrations");
+    let authored = if authored.is_dir() {
+        sqlx::migrate::Migrator::new(authored)
+            .await?
+            .iter()
+            .map(|migration| migration.version)
+            .collect::<std::collections::BTreeSet<_>>()
+    } else {
+        std::collections::BTreeSet::new()
+    };
+    let recipe = sql;
+    let sql = format!(
+        "{}{}\n{recipe}",
+        crate::migrations::INPUT_VERSIONS_PREFIX,
+        serde_json::to_string(&authored)?
+    );
     let mut files = BTreeMap::new();
     let highest = crate::migrations::migrator(root)
         .await?
@@ -201,13 +217,15 @@ pub(crate) async fn migrations(
             }
         }
     }
-    if latest.as_deref() != Some(sql) && (!files.is_empty() || sql != ";\n") {
+    if latest.as_deref() != Some(sql.as_str())
+        && (!authored.is_empty() || !files.is_empty() || recipe != ";\n")
+    {
         let version = highest
             .checked_add(1)
             .context("migration version exhausted")?;
         files.insert(
             std::path::PathBuf::from(format!("history/{version:04}_record_history.sql")),
-            sql.as_bytes().to_vec(),
+            sql.into_bytes(),
         );
     }
     ensure!(

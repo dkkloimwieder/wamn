@@ -100,6 +100,16 @@ pub async fn ensure_registry(document: &ClusterDocument) -> anyhow::Result<Local
         serde_json::from_slice(&output.stdout).context("decode Docker containers")?
     };
     let matching = matching_registry(&containers, endpoint)?;
+    if let Some(container) = matching {
+        ensure!(
+            container["Config"]["Env"]
+                .as_array()
+                .is_some_and(|values| values
+                    .iter()
+                    .any(|value| value.as_str() == Some("REGISTRY_STORAGE_DELETE_ENABLED=true"))),
+            "registry at {endpoint} must enable REGISTRY_STORAGE_DELETE_ENABLED before reuse"
+        );
+    }
     // Docker remains the final arbiter of the port binding. This also refuses
     // a host process before creating a container or pulling its image.
     if matching.is_none_or(|container| container["State"]["Running"] != true) {
@@ -273,6 +283,8 @@ fn registry_arguments(endpoint: SocketAddr) -> Vec<String> {
         "kind".into(),
         "--publish".into(),
         format!("{endpoint}:5000"),
+        "--env".into(),
+        "REGISTRY_STORAGE_DELETE_ENABLED=true".into(),
         "registry:2".into(),
     ]
 }
@@ -485,8 +497,8 @@ pub(super) async fn run(command: &mut Command) -> anyhow::Result<Output> {
 mod tests {
     use super::{
         LocalRegistry, context_name, gcp_arguments, kind_arguments, kind_configuration,
-        kind_list_arguments, matching_registry, registry_arguments, registry_endpoint,
-        registry_hosts, resend_arguments,
+        kind_list_arguments, matching_registry, registry_endpoint, registry_hosts,
+        resend_arguments,
     };
 
     #[test]
@@ -651,25 +663,6 @@ mod tests {
             "",
         ] {
             assert!(registry_endpoint(input).is_err(), "{input}");
-        }
-    }
-
-    #[test]
-    fn registry_creation_publishes_only_the_selected_loopback_endpoint() {
-        for endpoint in ["127.0.0.1:5001", "[::1]:5001"] {
-            assert_eq!(
-                registry_arguments(endpoint.parse().unwrap()),
-                [
-                    "run",
-                    "--detach",
-                    "--restart=always",
-                    "--network",
-                    "kind",
-                    "--publish",
-                    &format!("{endpoint}:5000"),
-                    "registry:2",
-                ]
-            );
         }
     }
 

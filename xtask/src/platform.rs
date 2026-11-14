@@ -251,12 +251,6 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             )?;
             let reference: oci_client::Reference =
                 format!("{}/wamn/platform-ui:{}", args.registry, packed.tag).parse()?;
-            let (client, _) = wamn_package_control::component_admission::registry_client(
-                &reference,
-                loopback(&args.registry),
-                &[],
-                None,
-            )?;
             let auth = match docker_credential::get_credential(reference.resolve_registry()) {
                 Ok(DockerCredential::UsernamePassword(user, password)) => {
                     oci_client::secrets::RegistryAuth::Basic(user, password)
@@ -271,11 +265,17 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 ) => oci_client::secrets::RegistryAuth::Anonymous,
                 Err(error) => return Err(error).context("read registry credential"),
             };
-            let repository = wamn_package_artifact::Repository {
-                client,
-                reference,
+            let repository = wamn_package_artifact::Repository::with_auth(
+                &wamn_package_artifact::PackageRegistry {
+                    artifact_base: format!("{}/{}", reference.registry(), reference.repository()),
+                    credentials: None,
+                    registry_auth_file: Default::default(),
+                    insecure_registry: loopback(&args.registry),
+                    oci_ca_paths: Vec::new(),
+                },
+                reference.tag().context("platform UI tag is absent")?,
                 auth,
-            };
+            )?;
             Some(
                 wamn_package_control::web_artifact::push_archive(&packed, &repository)
                     .await?

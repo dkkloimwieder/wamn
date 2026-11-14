@@ -229,8 +229,13 @@ Keep these files in source control. Each file remains unchanged after release.
 Authored `migrations/` and generated `history/` share one version sequence.
 Choose each new authored version above every existing version in both directories.
 The build refuses duplicate versions, including collisions between the two directories.
-It compares new versions with the last completed build and refuses an insertion below its highest version.
-Keep that build output until the next build completes. A first build checks the combined sequence for duplicates.
+The build compares new versions with the committed migration sources and refuses an insertion below their highest version.
+Each generated history migration records the authored versions it follows.
+An authored version change also appends this durable checkpoint.
+The build refuses new versions below that checkpoint, including in an uncommitted source tree.
+History files without an input checkpoint are refused.
+Publication also compares the sequence with every earlier published package.
+Build output does not hold the migration baseline.
 A history declaration change appends a generated migration, even when authored SQL stays unchanged.
 The build executes the combined sequence in its verification database before it returns output.
 

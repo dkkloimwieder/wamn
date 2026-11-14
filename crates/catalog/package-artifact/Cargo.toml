@@ -10,6 +10,8 @@ test-util = ["tokio/io-util", "tokio/net", "tokio/rt"]
 
 [dependencies]
 http-auth = { version = "0.1.10", default-features = false }
+base64.workspace = true
+url.workspace = true
 wamn-digest.workspace = true
 anyhow = { workspace = true }
 oci-client = { workspace = true }

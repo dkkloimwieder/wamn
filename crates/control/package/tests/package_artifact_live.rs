@@ -11,6 +11,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use wamn_catalog::{ComponentDescriptor, ComponentPackageCoordinate};
+use wamn_digest::bytes_sha256;
 use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_package_artifact::registry_credentials::read_registry_credentials;
 use wamn_package_artifact::{NoPackageArtifact, Repository, pull_package};
@@ -174,9 +175,15 @@ async fn push_repeat_fetch_and_refusals() {
     let by_tag = pull_package(&fixture.registry, "wamn_receiving", tag_version(&first.tag))
         .await
         .expect("pull by the tag");
-    assert_eq!(by_digest.0, first.digest);
+    assert_eq!(by_digest.digest, first.digest);
     assert_eq!(by_tag.0, first.digest);
-    assert_eq!(by_digest.1.len(), by_tag.1.len());
+    assert!(
+        by_digest
+            .layers
+            .iter()
+            .map(|layer| bytes_sha256(&layer.bytes))
+            .eq(by_tag.1.iter().map(|layer| bytes_sha256(&layer.bytes)))
+    );
     let prefix = &first.digest[..first.digest.len() - 1];
     assert!(
         Repository::open(&fixture.registry, prefix).is_err(),
