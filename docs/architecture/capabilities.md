@@ -234,7 +234,14 @@ It bounds headers to 100 entries and 32 KiB.
 Each HTTP request ends at the earlier of its 30-second limit and the invocation deadline.
 OAuth token requests use the same deadline.
 Generic integration exports also share that deadline, including time spent waiting for an integration instance.
-Dropping the invocation cancels its HTTP requests, connection tasks and blob storage effects.
+Canceling an integration call retires its store and aborts its socket work before the connection lease ends.
+After a successful export, the host retains the store only if its resource table is empty.
+Otherwise, it drops the store and aborts its socket work before returning.
+A queued caller starts a fresh store after it acquires the instance mutex.
+Dropping the invocation cancels its HTTP requests and connection tasks.
+It also drops blob storage effect futures.
+The upstream storage connector can continue an upload after its effect future and client drop.
+Its client settings do not expose cancellation of connection and body tasks.
 HTTP clients pool connections within one invocation. Requests still share host and connection capacity limits.
 The host preserves the distinction between refusal before dispatch and a lost response after dispatch.
 An idempotency key alone creates no remote same-result guarantee.

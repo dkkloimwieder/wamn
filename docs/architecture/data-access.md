@@ -339,7 +339,8 @@ Each call resolves only the external connections declared by its executing opera
 A begun claim has a null `result` until it finishes.
 An unfinished claim answers `in-progress` until its age exceeds `MAX_HOST_CALL_DURATION` plus five seconds for clock skew, or 35 seconds in total.
 After that boundary it answers `outcome-unknown`. A late completion can still record its result.
-Connection requests end at the invocation deadline. Dropping the invocation cancels its host work.
+HTTP requests and integration exports end at the invocation deadline.
+Blob storage still has an [upstream transport lifetime gap](capabilities.md).
 A commit whose answer is lost also leaves its outcome unknown.
 
 A refused item leaves no row, so its key is free again, and a later different request under that key does its work.

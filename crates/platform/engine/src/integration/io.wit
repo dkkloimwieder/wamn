@@ -9,6 +9,8 @@ interface streams {
         blocking-read: func(len: u64) -> result<list<u8>, stream-error>;
     }
     resource output-stream {
+        check-write: func() -> result<u64, stream-error>;
+        write: func(contents: list<u8>) -> result<_, stream-error>;
         blocking-write-and-flush: func(contents: list<u8>) -> result<_, stream-error>;
     }
 }

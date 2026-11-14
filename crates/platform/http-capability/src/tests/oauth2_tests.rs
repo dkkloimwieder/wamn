@@ -35,6 +35,7 @@ pub(super) struct TestHttp {
     release: Arc<LoadedRelease>,
     oauth2: Arc<wamn_connections::oauth_token::Cache>,
     pub(super) scope: String,
+    database: url::Url,
 }
 impl std::ops::DerefMut for TestHttp {
     fn deref_mut(&mut self) -> &mut Self::Target {
@@ -252,7 +253,9 @@ impl Fixture {
                 &serde_json::json!({
                     "project": project, "env": "dev", "name": name,
                     "integration_type": "http", "auth_type": auth_type,
-                    "parameters": {"primary-authority": self.base, "tls-verification": "disabled", "auth": parameters},
+                    "parameters": {"primary-authority": self.base,
+                        "tls-verification": if self.base.starts_with("https:") { "verify-authority" } else { "disabled" },
+                        "auth": parameters},
                     "credential": secret,
                 }),
                 self.credentials.store.as_ref(),
@@ -275,6 +278,17 @@ impl Fixture {
         parameters: &serde_json::Value,
         auth_type: &str,
         secret: &str,
+    ) -> TestHttp {
+        self.plugin_with_component(parameters, auth_type, secret, None)
+            .await
+    }
+
+    async fn plugin_with_component(
+        &mut self,
+        parameters: &serde_json::Value,
+        auth_type: &str,
+        secret: &str,
+        component_bytes: Option<&[u8]>,
     ) -> TestHttp {
         use wamn_engine::release_manifest::ReleaseTarget;
         use wamn_identity_protocol::AuthorityClass;
@@ -321,6 +335,21 @@ impl Fixture {
             .cloned()
             .map(Into::into)
             .collect();
+        if let Some(bytes) = component_bytes {
+            let digest = wamn_digest::bytes_sha256(bytes);
+            component.descriptor.component_digest = digest.clone();
+            invocation.component_digest = digest.clone();
+            invocation.origin.component_digest = digest;
+            component.descriptor.imports = vec!["wamn:connection/http@0.1.0".into()];
+            component.descriptor.effects = vec![wamn_catalog::AdmittedComponentEffect {
+                package: "wamn:connection".into(),
+                provenance: wamn_catalog::ComponentEffectProvenance::Imported,
+                interfaces: component.descriptor.imports.clone(),
+            }];
+            component.descriptor.imports_fingerprint = wamn_digest::canonical_json_sha256(
+                &serde_json::to_value(&component.descriptor.imports).unwrap(),
+            );
+        }
         manifest.components.insert(component);
         manifest.routes.insert(ServingRoute {
             package_id: invocation.origin.package_id.clone(),
@@ -345,6 +374,7 @@ impl Fixture {
         );
         let manifest_digest = release.release().manifest_digest.as_str();
         let mut projects = HashMap::new();
+        let mut primary_database = None;
         for project in ["project-a", "project-b"] {
             let database = url::Url::parse(
                 self.server
@@ -354,6 +384,9 @@ impl Fixture {
                     .url(),
             )
             .unwrap();
+            if project == "project-a" {
+                primary_database = Some(database.clone());
+            }
             wamn_platform_identity::test_database::project_platform(database.as_str()).await;
             let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();
 
@@ -483,6 +516,7 @@ impl Fixture {
                 Arc::new(HttpTransport::new().unwrap()),
                 vec![self.base.strip_suffix("bound/").unwrap().parse().unwrap()].into(),
             ),
+            database: primary_database.unwrap(),
             oauth2: facts.oauth_tokens(),
             facts,
             release,
@@ -525,6 +559,7 @@ impl Fixture {
             oauth2: facts.oauth_tokens(),
             facts,
             release: Arc::clone(&first.release),
+            database: first.database.clone(),
             scope,
         }
     }
@@ -722,78 +757,203 @@ fn token(number: u8, expires_in: Option<u64>) -> (u16, String) {
     (200, value.to_string())
 }
 
+mod invocation;
+
 #[tokio::test]
 async fn claimed_requests_stop_at_the_invocation_deadline_or_cancellation() {
-    use wamn_engine::invocation_scope::InvocationExecution;
+    use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
+    use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation};
+    use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
     use wamn_postgres_capability::write_log::{Claim, WriteLogStore};
+    use wash_runtime::plugin::wasi_logging::TracingLogger;
 
     let _lock = wamn_test_postgres::lock();
     for cancel in [false, true] {
-        let mut fixture = Fixture::start(vec![token(1, Some(3600))], vec![200]).await;
-        let plugin = fixture.plugin(&fixture.parameters()).await;
-        wamn_postgres_capability::connection_binding::resolve(
-            &plugin.postgres,
-            &plugin.scope,
-            "handle",
-        )
+        let mut endpoint = invocation::Endpoint::start().await;
+        let mut fixture = Fixture::start(Vec::new(), vec![]).await;
+        fixture.base = endpoint.base.clone();
+        let operation = invocation().operation;
+        let bytes = invocation::guest(&operation);
+        let plugin = fixture
+            .plugin_with_component(
+                &serde_json::json!({}),
+                "http_basic",
+                r#"{"username":"fixture","password":"old"}"#,
+                Some(&bytes),
+            )
+            .await;
+        let mut observer = wamn_postgres::connect(plugin.database.as_str())
+            .await
+            .unwrap();
+        let mut transaction = observer.begin().await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::platform_principals_sql("platform.example.test").unwrap(),
+        ))
+        .execute(&mut *transaction)
         .await
-        .expect("admit the request before measuring its remaining time");
+        .unwrap();
+        transaction.commit().await.unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let component = plugin.release.components().first().unwrap();
+        std::fs::write(
+            local_component_path(directory.path(), &component.component_digest).unwrap(),
+            bytes,
+        )
+        .unwrap();
+        let host = Arc::new(
+            OperationHost::new(
+                Arc::new(wamn_engine::build_engine(&[]).unwrap()),
+                Arc::clone(&plugin.postgres),
+                Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+                    &plugin.postgres,
+                ))),
+                Arc::clone(&endpoint.native_transport),
+                Arc::clone(&plugin.facts),
+                Arc::new(TracingLogger::default()),
+                Arc::clone(&plugin.allowed_hosts),
+                Arc::clone(&plugin.release),
+                Arc::new(LocalComponentSource::new(directory.path().into())),
+                OperationHostConfig {
+                    project: "project-a".into(),
+                    schema: None,
+                    owner_prefix: "request-lifetime".into(),
+                    warm_reuse: Default::default(),
+                },
+            )
+            .unwrap(),
+        );
+        let components = Arc::clone(plugin.release.components());
+        host.prepare_released(&components).await.unwrap();
+        let mut connection = invocation();
+        if let InvocationEntry::Wiring(position) = &mut connection.entry {
+            position.package_id = "app".into();
+        }
+        connection.component_digest = component.component_digest.clone();
+        connection.origin.component_digest = component.component_digest.clone();
+        let facts = NativeFacts::entry(
+            NodeAcquisition {
+                identity: host.identity("acme--dev--project-a", Some(host.release_identity())),
+                invocation: connection,
+                causation: None,
+                platform: Some(wamn_control_provision::PlatformComponent::Executor),
+            },
+            None,
+        );
         let store = WriteLogStore::new(
             Arc::clone(&plugin.postgres),
             "project-a".into(),
             "acme--dev--project-a".into(),
         );
-        let operation = plugin.postgres.invocation(&plugin.scope).unwrap().operation;
-        assert!(matches!(
-            store.claim(&operation, "bounded", vec![1]).await.unwrap(),
-            Claim::New
-        ));
-        let execution = InvocationExecution::new(
-            tokio::time::Instant::now()
-                + std::time::Duration::from_secs(if cancel { 30 } else { 10 }),
-        );
-        plugin
-            .postgres
-            .scopes
-            .set_execution(&plugin.scope, execution)
-            .unwrap();
-        let (resume, arrived) = fixture.pause_token();
-        let request = Request {
-            requirement: "handle".into(),
-            path_and_query: "/api".into(),
-            ..effect_request(Vec::new())
-        };
-        let send = plugin.send(&plugin.scope, &request);
-        tokio::pin!(send);
-        tokio::select! {
-            result = &mut send => panic!("request ended before reaching the provider: {result:?}"),
-            result = arrived => result.unwrap(),
-        }
-        assert!(matches!(
-            store.claim(&operation, "bounded", vec![1]).await.unwrap(),
-            Claim::InProgress
-        ));
-        if cancel {
-            plugin.postgres.scopes.revoke(&plugin.scope);
-        }
-        let result = tokio::time::timeout(std::time::Duration::from_secs(12), &mut send)
+        let called = Arc::clone(&host);
+        let mut call = tokio::spawn(async move {
+            let component = components.first().unwrap();
+            invoke_operation(
+                called.as_ref(),
+                OperationCall {
+                    closure: OperationClosure::Released(&components),
+                    component,
+                    operation: &operation,
+                    context: wamn_engine::operation::node_types::NodeContext {
+                        wiring_id: "orders".into(),
+                        wiring_version: 3,
+                        node_id: "notify".into(),
+                        delivery_id: "bounded".into(),
+                        input_port: None,
+                        occurrence: 2,
+                        traceparent: None,
+                        tracestate: None,
+                        deadline_ms: None,
+                        config: "{}".into(),
+                    },
+                    input: &serde_json::json!([{"request_id":"bounded","value":{}}]),
+                    deadline_ms: if cancel { 30_000 } else { 5_000 },
+                    facts,
+                },
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::select! {
+                result = &mut call => panic!("operation ended before HTTP arrived: {result:?}"),
+                arrived = &mut endpoint.arrived => arrived.unwrap(),
+            }
+        })
+        .await
+        .unwrap();
+        let claimed = tokio::time::Instant::now();
+        let request: Vec<u8> = sqlx::query_scalar("SELECT request FROM platform.write_log")
+            .fetch_one(&mut observer)
             .await
             .unwrap();
-        if cancel {
-            assert!(matches!(result, Err(ConnectionError::Transport(_))));
-        } else {
-            assert!(matches!(result, Err(ConnectionError::Timeout)));
-        }
+        let operation = invocation().operation;
         assert!(matches!(
-            store.claim(&operation, "bounded", vec![1]).await.unwrap(),
+            store
+                .claim(&operation, "bounded", request.clone())
+                .await
+                .unwrap(),
             Claim::InProgress
         ));
+        if cancel {
+            call.abort();
+            assert!(call.await.unwrap_err().is_cancelled());
+        } else {
+            assert!(
+                tokio::time::timeout(Duration::from_secs(6), call)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .is_err()
+            );
+        }
+        // A stream reset does not close an HTTP/2 connection. Observe the driver ending.
+        tokio::time::timeout(Duration::from_secs(2), &mut endpoint.closed)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(matches!(
-            plugin.send(&plugin.scope, &request).await,
-            Err(ConnectionError::Timeout | ConnectionError::AttestationInvalid)
+            store
+                .claim(&operation, "bounded", request.clone())
+                .await
+                .unwrap(),
+            Claim::InProgress
         ));
-        let _ = resume.send(());
+        tokio::time::sleep_until(claimed + Duration::from_secs(36)).await;
+        assert!(matches!(
+            store.claim(&operation, "bounded", request).await.unwrap(),
+            Claim::OutcomeUnknown
+        ));
     }
+}
+
+#[tokio::test]
+async fn invocation_deadline_after_response_headers_keeps_response_lost() {
+    let _lock = wamn_test_postgres::lock();
+    let mut endpoint = invocation::Endpoint::start().await;
+    let mut fixture = Fixture::start(Vec::new(), vec![]).await;
+    fixture.base = endpoint.base.clone();
+    let mut plugin = fixture.basic_plugin().await;
+    plugin.http.transport = Arc::clone(&endpoint.transport);
+    plugin
+        .postgres
+        .scopes
+        .set_execution(
+            &plugin.scope,
+            wamn_engine::invocation_scope::InvocationExecution::new(
+                tokio::time::Instant::now() + Duration::from_secs(5),
+            ),
+        )
+        .unwrap();
+    let request = Request {
+        requirement: "handle".into(),
+        path_and_query: "/api".into(),
+        ..effect_request(Vec::new())
+    };
+    let result = plugin.send(&plugin.scope, &request).await;
+    assert!(matches!(http_outcome(&result), EffectOutcome::ResponseLost));
+    tokio::time::timeout(Duration::from_secs(2), &mut endpoint.closed)
+        .await
+        .unwrap()
+        .unwrap();
 }
 
 #[tokio::test]

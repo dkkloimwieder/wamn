@@ -236,15 +236,15 @@ impl HostPlugin for IntegrationBinding {
 struct IntegrationStore {
     store: Store<SharedCtx>,
     instance: Instance,
-    // Store host references are weak. Keep the workload and handler alive.
-    _workload: ResolvedWorkload,
-    _egress: Arc<dyn HostHandler>,
 }
 
 /// One integration instance and one store, shared by its application calls.
 pub struct Integration {
     inner: Mutex<Option<IntegrationStore>>,
     digest: String,
+    // Store host references are weak. Keep their owners across store retirement.
+    workload: ResolvedWorkload,
+    _egress: Arc<dyn HostHandler>,
 }
 
 impl std::fmt::Debug for Integration {
@@ -364,11 +364,6 @@ impl Integration {
             .to_string()
     }
 
-    /// A canceled call discards the store and all of its socket resources.
-    pub async fn retired(&self) -> bool {
-        self.inner.lock().await.is_none()
-    }
-
     /// Call one typed export with values that carry no store-owned resources.
     pub async fn call(
         &self,
@@ -379,7 +374,10 @@ impl Integration {
         let mut slot = self.inner.lock().await;
         // Own the store across the await. Cancellation drops its resource table
         // (and aborts pending socket writes) before the dispatch releases its lease.
-        let mut inner = slot.take().context("integration store was retired")?;
+        let mut inner = match slot.take() {
+            Some(store) => store,
+            None => integration_store(&self.workload).await?,
+        };
         inner.store.set_epoch_deadline(1);
         let instance = inner.instance;
         let export = instance
@@ -400,7 +398,9 @@ impl Integration {
         })
         .await
         .context("integration call timed out")?;
-        if result.is_ok() {
+        // A returned export can leave socket writes running in its resources.
+        // Retain only stores that have released every resource.
+        if result.is_ok() && inner.store.data().table.is_empty() {
             *slot = Some(inner);
         }
         result
@@ -442,35 +442,37 @@ impl PreparedIntegration {
             egress,
             digest,
         } = self;
-        let id = workload
-            .components()
-            .read()
-            .await
-            .keys()
-            .next()
-            .context("integration component missing")?
-            .to_string();
-        let mut store = workload.new_store(&id).await?;
-        // Epochs yield to the deadline future instead of imposing a ten millisecond call limit.
-        store.epoch_deadline_async_yield_and_update(1);
-        store.set_epoch_deadline(1);
-        let pre = workload.instantiate_pre(&id).await?;
-        let instance = tokio::time::timeout(
-            crate::engine::MAX_HOST_CALL_DURATION,
-            pre.instantiate_async(&mut store),
-        )
-        .await
-        .context("integration startup timed out")??;
+        let inner = integration_store(&workload).await?;
         Ok(Integration {
-            inner: Mutex::new(Some(IntegrationStore {
-                store,
-                instance,
-                _workload: workload,
-                _egress: egress,
-            })),
+            inner: Mutex::new(Some(inner)),
             digest,
+            workload,
+            _egress: egress,
         })
     }
+}
+
+async fn integration_store(workload: &ResolvedWorkload) -> anyhow::Result<IntegrationStore> {
+    let id = workload
+        .components()
+        .read()
+        .await
+        .keys()
+        .next()
+        .context("integration component missing")?
+        .to_string();
+    let mut store = workload.new_store(&id).await?;
+    // Epochs yield to the deadline future instead of imposing a ten millisecond call limit.
+    store.epoch_deadline_async_yield_and_update(1);
+    store.set_epoch_deadline(1);
+    let pre = workload.instantiate_pre(&id).await?;
+    let instance = tokio::time::timeout(
+        crate::engine::MAX_HOST_CALL_DURATION,
+        pre.instantiate_async(&mut store),
+    )
+    .await
+    .context("integration startup timed out")??;
+    Ok(IntegrationStore { store, instance })
 }
 
 /// Resolve the current immutable instance from the facts of one call.

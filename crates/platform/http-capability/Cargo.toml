@@ -53,6 +53,10 @@ wasmtime = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+wat = "=1.254.2"
+wamn-digest.workspace = true
+wamn-execution-host.workspace = true
+wamn-blobstore.workspace = true
 hyper = { workspace = true, features = ["server"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 rcgen = { workspace = true }
