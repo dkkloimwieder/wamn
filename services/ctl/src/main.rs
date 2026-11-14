@@ -1,7 +1,7 @@
 //! Internal bootstrap worker. User commands live in wamn.
 
 use clap::{Parser, Subcommand};
-use wamn_ctl::{identity_verbs, platform_verbs, provisioning_verbs};
+use wamn_ctl::{identity_verbs, provisioning_verbs};
 
 #[derive(Parser)]
 #[command(name = "wamn-ctl", hide = true)]
@@ -22,8 +22,6 @@ enum Command {
     ProvisionIdentityIssuer(identity_verbs::IdentityIssuerArgs),
     #[command(hide = true)]
     Invite(identity_verbs::InviteArgs),
-    #[command(subcommand, hide = true)]
-    SystemSchema(platform_verbs::SystemSchemaCommand),
 }
 
 #[tokio::main]
@@ -42,8 +40,5 @@ async fn main() -> anyhow::Result<()> {
         Command::ProvisionOrg(args) => provisioning_verbs::provision_org(args).await,
         Command::ProvisionIdentityIssuer(args) => identity_verbs::provision_issuer(args).await,
         Command::Invite(args) => identity_verbs::invite(args).await,
-        Command::SystemSchema(command) => {
-            platform_verbs::run_system_schema(command, std::io::stdout().lock()).await
-        }
     }
 }

@@ -1,12 +1,14 @@
+{{- if not .Values.controlService }}
 {{- include "release.requireImageSet" . }}
+{{- end }}
 {{- range .Values.roles }}
 {{- if eq .name "http" }}
 ---
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: WorkloadDeployment
 metadata:
-  name: {{ $.Release.Name }}-http
-  namespace: {{ $.Release.Namespace }}
+  name: {{ (default $.Release.Name $.Values.name) }}-http
+  namespace: {{ (default $.Release.Namespace $.Values.namespace) }}
   annotations:
     {{- include "release.annotations" $ | nindent 4 }}
 spec:
@@ -15,10 +17,10 @@ spec:
     spec:
       hostSelector:
         {{- include "release.hostSelector" $ | nindent 8 }}
-      environment: {{ $.Release.Namespace }}
+      environment: {{ (default $.Release.Namespace $.Values.namespace) }}
       kubernetes:
         service:
-          name: {{ $.Release.Name }}-http
+          name: {{ (default $.Release.Name $.Values.name) }}-http
       hostInterfaces:
         - namespace: wasi
           package: http

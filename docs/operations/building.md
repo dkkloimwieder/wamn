@@ -151,7 +151,12 @@ cargo xtask build-platform --stamp-only --registry localhost:5001 --out /var/tmp
 Stamping reads every selected digest from the registry and refuses a missing artifact.
 The chart holds the pinned images and role components in `values.yaml`.
 The output also carries the runtime operator archive, the identity and edge charts, and deployment resources under `platform/`.
-`palette.json` records platform palette artifact pins and declarations. Packages no longer bundle palette guests.
+`palette.json` records immutable platform artifact pins and descriptors sealed against the published guest bytes.
+The platform owns palette guests under `wamn_palette`, independently of application package membership.
+The platform distribution places the document and digest-named guest files beside `http_route.wasm`.
+Release publication and development use the same reader for that document and verify each guest digest.
+They keep palette ports and node configuration. Palette components receive no public HTTP routes.
+Packages no longer bundle palette guests.
 Transfer the whole output directory to another deployment machine.
 [Local deployment](deployment.md#local-platform) consumes it through `--chart`.
 

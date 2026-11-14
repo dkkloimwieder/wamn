@@ -24,7 +24,7 @@
 //!
 //! This crate refuses to depend on:
 //!
-//! - Upper layers: `wamn-runtime`, `wamn-workflow`, `wamn-router`,
+//! - Upper layers: `wamn-runtime`, `wamn-workflow`,
 //!   `wamn-execution-host`.
 //! - Postgres: `tokio-postgres`, `deadpool-postgres`, `postgres-types`, and
 //!   `wamn-platform-identity`, which links `tokio-postgres`.

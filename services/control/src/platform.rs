@@ -11,6 +11,16 @@ use crate::{Configuration, execution::Execution};
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum Request {
+    Environment {
+        operation: String,
+        project: String,
+        env: String,
+        document: Option<Value>,
+        application: Option<String>,
+        disposable: Option<bool>,
+        #[serde(default)]
+        data: bool,
+    },
     Update {
         document: Value,
         selection: String,
@@ -35,15 +45,33 @@ impl Execution {
             api.namespace == self.org,
             "platform worker must share the org namespace"
         );
-        let coordinate = format!("{}/platform", self.org);
-        if operation == "platform.operation_status" {
+        let environment = operation.starts_with("environment.");
+        let input: Value = serde_json::from_str(payload)?;
+        let coordinate = if environment {
+            wamn_control_provision::environment_names::environment_resource_name(
+                &self.org,
+                input["project"].as_str().context("project is absent")?,
+                input["env"].as_str().context("environment is absent")?,
+            )?
+        } else {
+            format!("{}/platform", self.org)
+        };
+        let worker_type = if environment {
+            "environment"
+        } else {
+            "platform"
+        };
+        if operation.ends_with("operation_status") {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
             struct Status {
                 job: String,
+                project: Option<String>,
+                env: Option<String>,
             }
             let request: Status = serde_json::from_str(payload)?;
-            return wamn_kubernetes::job::observe(&api, &request.job, &coordinate, &["platform"])
+            let _ = (request.project, request.env);
+            return wamn_kubernetes::job::observe(&api, &request.job, &coordinate, &[worker_type])
                 .await;
         }
         let request: Request = serde_json::from_str(payload)?;
@@ -61,7 +89,7 @@ impl Execution {
             ],
         );
         job["metadata"]["annotations"] =
-            json!({"wamn.dev/operation-target":coordinate,"wamn.dev/operation":"platform"});
+            json!({"wamn.dev/operation-target":coordinate,"wamn.dev/operation":worker_type});
         job["spec"]["suspend"] = false.into();
         job["spec"]["ttlSecondsAfterFinished"] = 3600.into();
         job["spec"]["template"]["spec"]["serviceAccountName"] =
@@ -114,6 +142,29 @@ impl Execution {
         ] {
             wamn_kubernetes::job::mount(&mut job, volume, secret, path, &["username", "password"]);
         }
+        wamn_kubernetes::job::mount(
+            &mut job,
+            "nats",
+            "wamn-ctl-nats",
+            "/credentials/nats",
+            &["ca.crt", "tls.crt", "tls.key"],
+        );
+        wamn_kubernetes::job::mount(
+            &mut job,
+            "identity-operator",
+            &wamn_registry::name::resource_suffix("operator", &self.org),
+            "/etc/identity-operator",
+            &["tls.crt", "tls.key"],
+        );
+        job["spec"]["template"]["spec"]["volumes"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":"identity-ca","configMap":{"name":"identity-ca"}}));
+        wamn_kubernetes::job::container(&mut job)["volumeMounts"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":"identity-ca","mountPath":"/etc/identity-ca","readOnly":true}));
+        wamn_kubernetes::job::registry(&mut job, self.platform.registry_token_metadata);
         let actor = actor.to_string();
         wamn_kubernetes::job::environment(&mut job, &[("WAMN_DEPLOY_ACTOR", &actor)]);
         wamn_kubernetes::job::submit(&api, &job).await
@@ -122,7 +173,7 @@ impl Execution {
 
 /// Run a server-authorized update or platform SQL task inside its Job.
 pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Value> {
-    let _: PrincipalId = std::env::var("WAMN_DEPLOY_ACTOR")
+    let actor: PrincipalId = std::env::var("WAMN_DEPLOY_ACTOR")
         .context("authenticated actor is absent")?
         .parse()?;
     let request: Request = serde_json::from_str(payload)?;
@@ -130,11 +181,52 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
     crate::write_kubeconfig(&platform.target.kubeconfig, &config.org)?;
     let mut output = Vec::new();
     match request {
+        Request::Environment {
+            operation,
+            project,
+            env,
+            document,
+            application,
+            disposable,
+            data,
+        } => {
+            let triple = wamn_registry::Triple::new(&config.org, env.as_str(), &project);
+            let system =
+                MigrationDatabase::System.configuration(&config.apply_database.to_json()?)?;
+            if operation == "environment.delete" {
+                let messages = wamn_environment::environment::delete::delete(
+                    &platform, &triple, data, &system,
+                )
+                .await?;
+                return Ok(json!({"messages":messages}));
+            }
+            ensure!(
+                operation == "environment.configure",
+                "unknown environment lifecycle operation"
+            );
+            let document = wamn_environment::environment::document::EnvironmentDocument::from_json(
+                &serde_json::to_vec(&document.context("environment document is absent")?)?,
+            )?;
+            ensure!(
+                document.triple() == triple,
+                "environment document differs from its authorized coordinate"
+            );
+            wamn_environment::environment::lifecycle::configure(
+                &platform,
+                &document,
+                application.as_deref(),
+                disposable,
+                &system,
+                &actor.to_string(),
+            )
+            .await?;
+            Ok(json!({"configured":true}))
+        }
         Request::Update {
             document,
             selection,
         } => {
-            let document = wamn_environment::platform::document::ClusterDocument::from_json(
+            let document = wamn_platform_install::platform::document::ClusterDocument::from_json(
                 &serde_json::to_vec(&document)?,
             )?;
             ensure!(
@@ -142,13 +234,14 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
                 "platform update belongs to another org"
             );
             let selection = selection.parse()?;
-            let chart = wamn_environment::platform::artifact_plan::select(&config.chart)?;
-            wamn_environment::platform::deploy::update(
+            let chart = wamn_platform_install::platform::artifact_plan::select(&config.chart)?;
+            wamn_platform_install::platform::deploy::update(
                 &document,
                 &chart,
                 &platform.target,
                 &selection,
                 std::path::Path::new("/work"),
+                &MigrationDatabase::System.configuration(&config.apply_database.to_json()?)?,
             )
             .await?;
             Ok(json!({"status":"updated"}))
@@ -225,5 +318,32 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
             }
             Ok(json!({"log":String::from_utf8(output)?}))
         }
+    }
+}
+
+impl Execution {
+    pub(crate) async fn environment(
+        &self,
+        operation: &str,
+        actor: &PrincipalId,
+        payload: &str,
+    ) -> anyhow::Result<Value> {
+        if operation.ends_with("operation_status") {
+            return self.platform(operation, actor, payload).await;
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {
+            project: String,
+            env: String,
+            document: Option<Value>,
+            application: Option<String>,
+            disposable: Option<bool>,
+            #[serde(default)]
+            data: bool,
+        }
+        let input: Input = serde_json::from_str(payload)?;
+        let payload = json!({"type":"environment","operation":operation,"project":input.project,"env":input.env,"document":input.document,"application":input.application,"disposable":input.disposable,"data":input.data});
+        self.platform(operation, actor, &payload.to_string()).await
     }
 }

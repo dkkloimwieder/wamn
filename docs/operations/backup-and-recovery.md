@@ -2,11 +2,11 @@
 
 This page covers the backup of an org Postgres cluster and its recovery.
 Backup and recovery run through CloudNativePG and its Barman Cloud plugin.
-The platform renders the manifests and the operator applies them.
+The org Helm chart owns the cluster and its backup resources.
 
 ## What the platform backs up
 
-`provision-org` renders one cluster for each recovery domain of an org.
+`provision-org` prepares chart values for one cluster for each recovery domain of an org.
 Each backed cluster carries the Barman Cloud plugin as its WAL archiver.
 The plugin ships every WAL segment to `s3://wamn-backups/wal/<cluster>` in the shared object store.
 A `ScheduledBackup` takes a base backup at the cadence of the env policy.
@@ -34,6 +34,8 @@ Select the recovery domain and restore time through that chart.
 Recovery creates a new cluster. Its name must differ from the source.
 Review its storage and replica count against the source before deployment.
 
+Helm owns the restored Cluster, ObjectStore, and ScheduledBackup together.
+
 The restored cluster archives WAL to its own store, under the prefix of its own name.
 It can never write into the stream it was restored from.
 Its `externalClusters` entry names the source store, and that entry is a read path only.
@@ -41,14 +43,14 @@ Its `externalClusters` entry names the source store, and that entry is a read pa
 To watch the restore, read the cluster status and the operator logs.
 
 ```bash
-kubectl -n wamn-system get cluster acme-prod-restore -o wide
-kubectl -n wamn-system logs -l cnpg.io/cluster=acme-prod-restore -c postgres --tail=50
+kubectl -n acme get cluster acme-prod-restore -o wide
+kubectl -n acme logs -l cnpg.io/cluster=acme-prod-restore -c postgres --tail=50
 ```
 
 ## Connect to the restored cluster
 
 The restored cluster carries the role names and passwords of the source.
-Its read-write service is `<target>-rw.wamn-system.svc:5432`.
+Its read-write service is `<target>-rw.<org>.svc:5432`.
 CloudNativePG creates the Secret `<target>-superuser` with a usable admin URI.
 
 Application workloads still address the source cluster.
@@ -66,7 +68,7 @@ To recover one database or one table, restore the cluster and then copy the rows
 5. When the copy is complete, delete the restored cluster.
 
 ```bash
-kubectl -n wamn-system get secret acme-prod-restore-superuser -o jsonpath='{.data.uri}' | base64 -d
+kubectl -n acme get secret acme-prod-restore-superuser -o jsonpath='{.data.uri}' | base64 -d
 pg_dump "<restored-superuser-uri>" --table=receiving.receipts --data-only --format=custom --file=/tmp/receipts.dump
 pg_restore --dbname="<live-superuser-uri>" --data-only /tmp/receipts.dump
 ```
@@ -88,9 +90,7 @@ Change the workload targets to the new cluster, then delete the source cluster.
 If the restore was only an inspection, delete it and its resources.
 
 ```bash
-kubectl -n wamn-system delete scheduledbackup acme-prod-restore-backup
-kubectl -n wamn-system delete cluster acme-prod-restore
-kubectl -n wamn-system delete objectstore acme-prod-restore-store
+helm uninstall recovery-acme-prod --namespace acme
 ```
 
 The objects under `s3://wamn-backups/wal/acme-prod-restore` remain after the delete.

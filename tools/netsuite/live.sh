@@ -16,7 +16,7 @@ credentials=$1 project=$2 env=$3 application=$4 host_url=$5 record_id=$6 query_f
 : "${WAMN_TOKEN:?Set the caller bearer token}"
 : "${WAMN_PG_ADMIN_URL:?Set the deployed project admin database URL}"
 export WAMN_TOKEN
-ctl=${WAMN_CTL:-wamn-ctl}
+ctl=${WAMN_CTL:-wamn}
 jq -e '
   ([.account_id,.client_id,.certificate_id,.private_key_file]
     | all(.[]; type == "string" and length > 0))

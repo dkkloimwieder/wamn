@@ -41,6 +41,18 @@ impl ControlHost {
             .await
     }
 
+    pub(crate) async fn environment(
+        &self,
+        operation: &str,
+        triple: &wamn_registry::Triple,
+        mut value: Value,
+    ) -> anyhow::Result<()> {
+        value["project"] = triple.project.as_str().into();
+        value["env"] = triple.env.as_str().into();
+        self.run_value(operation, value, "environment.operation_status")
+            .await
+    }
+
     async fn run_value(
         &self,
         operation: &str,

@@ -21,7 +21,7 @@ It also checks the org control login and the fixed apply login.
 | `worker.image` | Pinned `control` image for operation Jobs |
 | `worker.service_account` | Org worker account for existing platform updates and platform SQL |
 | `worker.configuration` | ConfigMap that mounts `config.json` at `/etc/wamn/control` in each Job |
-| `chart` | Prepared release chart path inside the image |
+| `chart` | Installed immutable chart reference |
 | `release_artifact_base`, `package_artifact_base`, `component_artifact_base`, `integration_artifact_base` | Installed artifact repositories |
 | `registry_auth_file` | Mounted registry credential file |
 | `registry_token_metadata` | Use the installed metadata credential source instead of the registry file |
@@ -40,7 +40,8 @@ The worker calls `environment::operation::execute` once. It runs SQL in the same
 Job status is visible only through the authorized target and operation annotations.
 
 The chart mounts the apply credential, `wamn-ctl-nats`, and the configured registry credential in operation Jobs.
-SQL operations also mount the project SQL owner credential and the package migration credential.
+SQL operations also mount the project platform-migration, package-migration, and capture credentials.
+Reset uses capture authority for replication and package-migration authority for package object deletion.
 Their names come from the registry coordinate, database identity, and the provisioning role definitions.
 No operation Job mounts a superuser credential.
 Jobs use the environment's existing `code` or `sql` ServiceAccount and a bounded lifetime.
@@ -66,3 +67,11 @@ Build, dev and eject stay local. Bootstrap stays local before control exists.
 After bootstrap, `wamn platform deploy --only <owner>` updates an existing Helm owner through a worker Job.
 Platform schema inspection and apply also use the worker. The service selects their chart and SQL image.
 Cloud node pool administration belongs to the platform infrastructure tooling.
+
+Environment creation and configuration use `environment.configure`. Deletion uses `environment.delete`.
+Their Jobs call installer-owned role and database interfaces and then the environment lifecycle owner.
+The installer runs a separate initial SQL bootstrap only when the baseline is absent and no configuration is recorded.
+Its private worker repeats the baseline refusal before DDL. It cannot update an existing baseline.
+The environment chart removes the initial bootstrap account's access after successful initialization.
+Normal lifecycle and platform updates use configured restricted connections.
+`pat.revoke` checks the authenticated org's authority before it calls the PAT owner.

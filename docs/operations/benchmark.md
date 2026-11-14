@@ -13,14 +13,14 @@ It builds the host in a separate Cargo call with the Dockerfile's packages and b
 
 It requires Docker, Helm, `psql`, `curl`, `taskset`, and the build prerequisites in [building](building.md).
 Prepare SQLx and web dependencies as described in [running tests](running-tests.md#application-generation-and-sqlx).
-The Docker images `postgres:18`, `nats:2.10-alpine`, the collector image pinned in `deploy/platform/otel-collector.yaml` must already exist locally.
+The Docker images `postgres:18`, `nats:2.10-alpine`, the collector image pinned in the platform chart must already exist locally.
 The command does not pull images.
 
 The command starts its own PostgreSQL, one NATS with TLS, and collector containers on free loopback ports.
 It runs `wamn build` for Receiving before it renders the broker permissions.
 
-At run time, it reads the NATS configuration and memory limit from `deploy/infra/nats-jetstream.yaml`.
-It reads `max_slot_wal_keep_size`, `pg_stat_statements.max`, and `pg_stat_statements.track` from `deploy/infra/cnpg-cluster.yaml`.
+At run time, it reads the NATS configuration and memory limit from the selected platform chart.
+It reads `max_slot_wal_keep_size`, `pg_stat_statements.max`, and `pg_stat_statements.track` from the org chart rendered with the installer’s system cluster values.
 
 The deployed `event_broker_files` generator supplies separate credentials and subject permissions for the development identity.
 

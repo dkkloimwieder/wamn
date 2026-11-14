@@ -17,3 +17,5 @@ pub mod schema_verbs;
 #[cfg(target_os = "linux")]
 pub mod web;
 pub mod workflow_verbs;
+
+pub mod environment_requests;

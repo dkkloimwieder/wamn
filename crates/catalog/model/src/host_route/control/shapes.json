@@ -115,7 +115,11 @@
     "platform/update.errors.json",
     "platform/operation_status.errors.json",
     "capture_gap/recover.errors.json",
-    "capture_gap/close.errors.json"
+    "capture_gap/close.errors.json",
+    "environment/configure.errors.json",
+    "environment/delete.errors.json",
+    "environment/operation_status.errors.json",
+    "pat/revoke.errors.json"
   ],
   "operation.started": [
     "application/deploy.result.json",
@@ -125,7 +129,9 @@
     "schema/reset.result.json",
     "application/stop.result.json",
     "release/retain.result.json",
-    "platform/update.result.json"
+    "platform/update.result.json",
+    "environment/configure.result.json",
+    "environment/delete.result.json"
   ],
   "org_admin.grant-revoke.result": [
     "org_admin/grant.result.json",
@@ -161,5 +167,10 @@
   "user.state.result": [
     "user/activate.result.json",
     "user/deactivate.result.json"
+  ],
+  "operation.status": [
+    "environment/operation_status.result.json",
+    "operation/status.result.json",
+    "platform/operation_status.result.json"
   ]
 }

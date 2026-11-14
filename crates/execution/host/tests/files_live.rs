@@ -1235,7 +1235,7 @@ fn package_signed_read_admits_the_real_node_abi_and_manifest_owned_authority() -
         .context("released file component")?;
     assert!(
         serving.descriptor.connections.iter().any(|connection| {
-            connection.store_alias == "files"
+            connection.store_alias.name() == Some("files")
                 && connection.requirement_type == wamn_catalog::ComponentConnectionType::Blobstore
         }),
         "the release carries the admitted file binding"

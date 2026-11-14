@@ -6,7 +6,7 @@ The other `workflow` commands call org control routes. The service checks curren
 The host's queue worker uses its existing database roles to lease and execute the run.
 
 Author and enable the workflow first with `wamn workflow author` and `wamn workflow enable`.
-Every `workflow` command except `start` needs `--environment` and control credentials.
+Author, enable and disable use `--coordinate <org>/<env>/<project>` and control credentials. List, park, release and runs use `--project` and `--environment`.
 `author`, `enable`, and `disable` take the organization and project from `--coordinate`.
 `list`, `park`, `release`, and `runs` require `--project`.
 Workflow administration uses `WAMN_CONTROL_URL` and `WAMN_TOKEN`.
@@ -65,7 +65,7 @@ The executing principal owns application writes, while the `wamn:executor` crede
 
 ## Park, release, and list runs
 
-Each command needs `--org`, `--project`, and `--environment`. `park` and `release` also need `--run-id`.
+Each command needs `--project` and `--environment`. `park` and `release` also need `--run-id`.
 `runs` takes an optional `--limit`, which defaults to 50.
 
 ```bash
@@ -80,18 +80,11 @@ A running or finished run refuses the park.
 A release returns a parked run to the queue, and a run that is not parked refuses it.
 `runs` prints one JSON object per run, newest first, with its status and its `queued` and `parked` flags.
 
-## Declared workflows
+## Authored workflows
 
-Pass the database URL as above, then select the installed release with the required `--release-digest`:
-
-```bash
-wamn workflow declared --project orders --environment dev --release-digest "$RELEASE_DIGEST"
-```
-
-The command prints each declared workflow with its event registration.
-`workflow runs` prints runs, and `workflow list` prints the workflow versions authored in the environment.
-A package declares no schedule.
-Author a schedule workflow in the environment with `wamn workflow author --schedule '<cron>'`, then enable it.
+`wamn workflow list --project orders --environment dev` lists authored workflow versions.
+`workflow runs` lists their runs. A package declares no schedule.
+Author a scheduled workflow with `wamn workflow author --coordinate <org>/<env>/<project> --schedule '<cron>'`, then enable it.
 
 Every application host runs one schedule task.
 At each minute it reads, in one query, the enabled schedule workflows of the applications its environment declares, and admits a run for each one whose cron names that minute.
@@ -131,7 +124,7 @@ Set the coordinate `<org>/<project>/<env>`, its composed environment key, and yo
 3. Build the NetSuite package with `wamn build` first. Copy the example in `apps/netsuite/tests/workflows/netsuite_pull.json` to `netsuite-pull.json` in the environment configuration. Edit its parameters, then author it as a schedule workflow of the application `netsuite`:
 
    ```bash
-   wamn workflow author --environment <env> --coordinate <org>/<env>/<project> \
+   wamn workflow author --coordinate <org>/<env>/<project> \
      --application netsuite \
      --document netsuite-pull.json \
      --execution-type role --execution-role netsuite-pull --schedule '* * * * *'
@@ -141,7 +134,7 @@ Set the coordinate `<org>/<project>/<env>`, its composed environment key, and yo
 4. Enable it:
 
    ```bash
-   wamn workflow enable --environment <env> --coordinate <org>/<env>/<project> \
+   wamn workflow enable --coordinate <org>/<env>/<project> \
      --application netsuite --workflow-id netsuite_pull --version 1
    ```
 

@@ -3,7 +3,6 @@
 use crate::process;
 use anyhow::{Context as _, ensure};
 use clap::{Args, ValueEnum};
-use serde::Deserialize as _;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -241,7 +240,7 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
         ),
     ] {
         let mut refused = network.to_vec();
-        refused.extend(["wamn-router", "wamn-runtime"]);
+        refused.push("wamn-runtime");
         if package == "wamn-edge" {
             refused.extend([
                 "wamn-workflow",
@@ -273,9 +272,7 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
     for package in ["wamn-runtime", "wamn-execution-host"] {
         let all = linked(root, package, &[]).await?;
         ensure!(
-            !["wamn-workflow", "wamn-router"]
-                .iter()
-                .any(|name| all.contains(*name)),
+            !["wamn-workflow"].iter().any(|name| all.contains(*name)),
             "{package} links the workflow layer"
         );
     }
@@ -430,13 +427,24 @@ pub async fn upstream(root: &Path, args: &UpstreamArgs) -> anyhow::Result<()> {
 pub fn collector(root: &Path, output: &Path) -> anyhow::Result<()> {
     let directory = output.join("local-artifacts/otel");
     std::fs::create_dir_all(&directory)?;
-    let source = std::fs::read_to_string(root.join("deploy/platform/otel-collector.yaml"))?;
-    let documents = serde_yaml::Deserializer::from_str(&source)
-        .map(Value::deserialize)
-        .collect::<Result<Vec<_>, _>>()?;
+    let document = wamn_platform_install::platform::document::ClusterDocument::compile(
+        &root.join("deploy/kind/cluster.k"),
+    )?;
+    let mut values: Value = serde_yaml::from_slice(&std::fs::read(
+        root.join("deploy/platform/installation/values-gcp.yaml"),
+    )?)?;
+    values["org"] = document.org.into();
+    values["registry"] = document.registry.into();
+    let entry = wamn_platform_install::environment::entry(
+        &root.join("deploy/platform/installation"),
+        "platform",
+        "wamn",
+        values,
+    )?;
+    let documents = wamn_kubernetes::helm::template(&entry)?;
     let config = documents
         .iter()
-        .find_map(|doc| doc.pointer("/data/config.yaml").and_then(Value::as_str))
+        .find_map(|doc| doc.pointer("/data/relay").and_then(Value::as_str))
         .context("collector configuration")?;
     let mut config: Value = serde_yaml::from_str(config)?;
     config["exporters"] = json!({"file/traces":{"path":"/var/lib/otelcol/traces.jsonl","format":"json"},"file/logs":{"path":"/var/lib/otelcol/logs.jsonl","format":"json"},"nop":{}});
@@ -454,11 +462,8 @@ pub fn collector(root: &Path, output: &Path) -> anyhow::Result<()> {
                 .and_then(Value::as_str)
         })
         .context("collector image")?;
-    let values: Value = serde_yaml::from_slice(&std::fs::read(
-        root.join("deploy/gcp/otel-collector-values.yaml"),
-    )?)?;
     let user = process_user()?;
-    let compose = json!({"services":{"receiving-dev-collector":{"image":image,"pull_policy":"never","user":user,"command":["--config=/var/lib/otelcol/config.yaml"],"environment":{"CLUSTER":values["data"]["CLUSTER"]},"volumes":[{"type":"bind","source":directory.canonicalize()?,"target":"/var/lib/otelcol"}],"ports":["127.0.0.1:${WAMN_RECEIVING_DEV_OTLP_PORT:-4319}:4317"]}}});
+    let compose = json!({"services":{"receiving-dev-collector":{"image":image,"pull_policy":"never","user":user,"command":["--config=/var/lib/otelcol/config.yaml"],"environment":{"CLUSTER":document.cluster_name},"volumes":[{"type":"bind","source":directory.canonicalize()?,"target":"/var/lib/otelcol"}],"ports":["127.0.0.1:${WAMN_RECEIVING_DEV_OTLP_PORT:-4319}:4317"]}}});
     std::fs::write(
         directory.join("compose.json"),
         serde_json::to_vec_pretty(&compose)?,

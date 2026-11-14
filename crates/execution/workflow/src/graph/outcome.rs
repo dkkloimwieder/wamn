@@ -1,0 +1,91 @@
+//! What a node invocation returned — the component→router event vocabulary.
+//!
+//! The router decides retry-vs-error-edge-vs-fail **mechanically from the
+//! retained variant**, never by string-matching a message. This taxonomy is the
+//! Rust mirror of the node-operation WIT package: it is a WIT-shaped enum
+//! because it *is* the shape crossing that seam, and it is the only enum-shaped
+//! error vocabulary in this crate (the router's own faults are contextual
+//! structs — see `ApplyError` and
+//! the catalog condition).
+
+use serde_json::Value;
+
+#[cfg(test)]
+use wamn_catalog::MAIN_PORT;
+
+/// What an invoked node returned. `Success` carries the output payload and the
+/// **port** it chose (a branching node selects a named port; most nodes emit on
+/// [`wamn_catalog::MAIN_PORT`]); `Error` carries the classified failure; `Cancelled` is the
+/// explicit non-failure disposition of WIT `node-error.cancelled`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NodeOutcome {
+    Success {
+        payload: Value,
+        port: String,
+    },
+    Error(NodeError),
+    /// The component stopped cooperatively without producing an emission.
+    Cancelled,
+}
+
+impl NodeOutcome {
+    /// A success on the default `main` port — the common case.
+    #[cfg(test)]
+    pub fn ok(payload: Value) -> NodeOutcome {
+        NodeOutcome::Success {
+            payload,
+            port: MAIN_PORT.to_string(),
+        }
+    }
+}
+
+/// How a node classified its own failure. The router reads only the variant.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NodeError {
+    Retryable(ErrorDetail),
+    RateLimited(RateLimitDetail),
+    Terminal(ErrorDetail),
+    InvalidInput(ErrorDetail),
+}
+
+/// Routing and display metadata carried by a node failure.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ErrorDetail {
+    pub message: String,
+    pub code: Option<String>,
+    pub data: Option<Value>,
+}
+
+impl ErrorDetail {
+    /// An error detail with a stable machine-readable code.
+    pub fn coded(code: impl Into<String>, message: impl Into<String>) -> ErrorDetail {
+        ErrorDetail {
+            message: message.into(),
+            code: Some(code.into()),
+            data: None,
+        }
+    }
+
+    /// The payload sent down an error edge.
+    pub fn to_error_payload(&self) -> Value {
+        let mut error = serde_json::Map::new();
+        error.insert("message".into(), Value::String(self.message.clone()));
+        if let Some(code) = &self.code {
+            error.insert("code".into(), Value::String(code.clone()));
+        }
+        if let Some(data) = &self.data {
+            error.insert("data".into(), data.clone());
+        }
+        Value::Object(serde_json::Map::from_iter([(
+            "error".to_string(),
+            Value::Object(error),
+        )]))
+    }
+}
+
+/// A rate-limit failure with an optional source-authoritative delay.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RateLimitDetail {
+    pub detail: ErrorDetail,
+    pub retry_after_ms: Option<u64>,
+}

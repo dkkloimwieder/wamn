@@ -69,7 +69,7 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
     let Some(row) = analyse::read_row(&mut system, document).await? else {
         return Ok(State::default());
     };
-    let url = analyse::project_url(platform, document, &row)?;
+    let url = analyse::project_url(platform, document, &row).await?;
     let mut state = database_state(
         &url,
         &wamn_registry::project_env_key(&document.org, &document.project, &document.env),
@@ -364,7 +364,7 @@ pub async fn apply(
     let row = analyse::read_row(&mut system, document)
         .await?
         .context("environment database is absent")?;
-    let url = analyse::project_url(platform, document, &row)?;
+    let url = analyse::project_url(platform, document, &row).await?;
     apply_candidates(platform, document, candidates, &url).await
 }
 

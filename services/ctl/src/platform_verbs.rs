@@ -5,10 +5,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use wamn_control_provision::migrations::MigrationDatabase;
-use wamn_environment::platform::document::{ClusterDocument, UpgradeTarget};
-use wamn_environment::platform::{deploy, provider, status};
-use wamn_environment::platform_migrations;
+use wamn_platform_install::platform::document::{ClusterDocument, UpgradeTarget};
+use wamn_platform_install::platform::{deploy, provider, status};
 use wamn_release_control::release_chart::Target;
 
 /// Management verbs also available through the low-level control tool.
@@ -91,54 +89,6 @@ impl Args for PlatformSchemaArgs {
     fn augment_args_for_update(command: clap::Command) -> clap::Command {
         PlatformSchemaInput::augment_args_for_update(command)
     }
-}
-
-/// In-image entry points. Both actions read the same embedded migration bytes.
-#[derive(Debug, Subcommand)]
-pub enum SystemSchemaCommand {
-    Diff(SystemSchemaArgs),
-    Apply(SystemSchemaArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct SystemSchemaArgs {
-    /// The restricted system migration connection supplied by the Job.
-    #[arg(long, hide_env_values = true)]
-    pub system_url: String,
-    /// The immutable ctl image selected by the prepared chart.
-    #[arg(long)]
-    pub image: String,
-}
-
-pub async fn run_system_schema(
-    command: SystemSchemaCommand,
-    mut output: impl Write,
-) -> anyhow::Result<()> {
-    let (args, apply) = match &command {
-        SystemSchemaCommand::Diff(args) => (args, false),
-        SystemSchemaCommand::Apply(args) => (args, true),
-    };
-    writeln!(output, "system SQL image: {}", args.image)?;
-    output.flush()?;
-    let mut client = wamn_postgres::connect(&args.system_url)
-        .await
-        .context("connect to the system SQL database")?;
-
-    let result = async {
-        let sources = platform_migrations::embedded_sources(MigrationDatabase::System);
-        platform_migrations::run(
-            &mut client,
-            platform_migrations::MigrationTarget::System,
-            &sources,
-            apply,
-            &mut output,
-        )
-        .await?;
-        anyhow::Ok(())
-    }
-    .await;
-    drop(client);
-    result
 }
 
 #[derive(Debug, Args)]
@@ -230,13 +180,11 @@ async fn deploy(
             context,
             namespace: document.org.clone(),
         };
-        Ok(wamn_environment::platform::resources::release_values(
-            &target,
-            &document.org,
-            &wamn_registry::name::control_resource(&document.org),
+        Ok(
+            wamn_platform_install::platform::installed::InstalledPlatform::read(&target)
+                .await?
+                .is_some_and(|installed| installed.control()["enabled"] == true),
         )
-        .await?
-        .is_some())
     }
     .await;
     std::fs::remove_dir_all(&discovery)?;

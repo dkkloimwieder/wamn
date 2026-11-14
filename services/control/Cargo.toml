@@ -24,6 +24,7 @@ wamn-catalog.workspace = true
 wamn-control-provision.workspace = true
 wamn-engine.workspace = true
 wamn-environment = { workspace = true, features = ["ops"] }
+wamn-platform-install.workspace = true
 wamn-event-reg.workspace = true
 wamn-workflow.workspace = true
 wamn-package-control.workspace = true

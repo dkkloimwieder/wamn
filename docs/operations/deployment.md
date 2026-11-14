@@ -1,6 +1,6 @@
 # Deployment
 
-`wamn platform deploy` installs the platform in a local kind cluster from a prepared chart.
+`wamn platform deploy` installs the platform in a local kind cluster from a published chart digest.
 A chart is a Helm package of Kubernetes resources.
 Deployment consumes pinned artifacts, whose digests identify exact bytes.
 It does not compile source, build JavaScript, publish packages, or select application releases.
@@ -19,18 +19,22 @@ Certificate subjects must match the endpoint names that their clients verify.
 
 From the source checkout, prepare the registry and artifacts as [building](building.md#local-platform-artifacts) describes.
 The example uses `localhost:5001`, as `deploy/kind/cluster.k` does.
-The prepared directory must include its `platform/` resources and operator chart archive.
-On kind, `wamn platform deploy` reads `WAMN_REGISTRY_AUTH_FILE` to create the `hosts/wamn-registry-pull` Secret.
+The published chart includes the pinned infrastructure, platform, org, and environment charts.
+On kind, `wamn platform deploy` reads `WAMN_REGISTRY_AUTH_FILE` to create the org namespace’s `wamn-registry-pull` Secret.
 Set this variable to the platform registry credential file before deployment.
-Deploy that directory explicitly:
+Deploy the chart reference that the build command prints:
 
 ```bash
-wamn platform deploy deploy/kind/cluster.k --chart /tmp/wamn-platform-chart
+wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/release@sha256:<digest>
 wamn platform status deploy/kind/cluster.k
 ```
 
 Deployment creates or reuses `wamn-local` and connects its registry to the kind network.
-It applies namespaces, certificates, NATS, the wasmCloud operator, and CloudNativePG PostgreSQL.
+Helm first installs cert-manager, CloudNativePG, and the TLS ingress controller.
+The platform chart then installs certificates, NATS, the wasmCloud operator, and the collector.
+The org chart creates PostgreSQL in the org namespace.
+Bootstrap Jobs initialize SQL and credentials before the service components start.
+Identity, control, and the edge belong to the platform Helm release.
 Without a recorded org control release, deployment initializes `wamn_system`, the organization, identity, and control.
 Once control exists, authenticated platform updates select an existing owner with `--only`.
 Reapply does not refresh credentials.
@@ -39,15 +43,18 @@ The command returns success only when every required component is ready.
 An error preserves a nonzero exit and prints the status that remains observable.
 
 Deployment also works outside the source checkout.
-Copy the cluster document and the entire prepared chart to the deployment host.
+Copy the cluster document to the deployment host.
+The host fetches the published chart by digest.
+The GCP collector exports traces and logs to the declared telemetry bucket with a persistent queue.
+Its chart uses the existing collector workload identity. Local clusters use debug export.
 If the checkout is absent, set the existing `WAMN_KCL` variable to the pinned compiler path.
 [Building](building.md#package-manifests) describes that compiler.
-Supply their paths to the same command, with the required tools available.
+Supply the document path and the chart reference, with the required tools available.
 The deployment host must reach the selected registry and its pinned artifacts.
 A loopback registry refers to that host, so its artifacts must exist there before deployment.
 
-Keep the prepared chart at its deployed path for later status queries.
-Status reads the selected chart path from Helm and reports selected artifacts separately from running images.
+Helm records the chart reference for later operations.
+Status reads that reference and reports selected artifacts separately from running images.
 It reads Helm, Kubernetes, certificate, service, and system database state.
 Its categories are `ready`, `incomplete`, `failed`, and `unknown`.
 A failed query reports `unknown`. Status never creates a missing cluster.
@@ -56,7 +63,7 @@ Unselected UI, external mail, or telemetry does not prevent platform readiness.
 If bootstrap stops before control exists, repeat it with the same document and chart:
 
 ```bash
-wamn platform deploy deploy/kind/cluster.k --chart /tmp/wamn-platform-chart
+wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/release@sha256:<digest>
 ```
 
 Kubernetes and its operators own running resources. Helm owns release revisions.
@@ -79,7 +86,7 @@ The local outbox is temporary pod storage. Keep invitation codes and passwords o
 Deployment also prints the port-forward command and required HTTP `Host` value.
 A port-forward connects a local port to a pod.
 The control Service has no selector, because the wasmCloud operator manages its endpoints.
-Forward `deployment/hostgroup-c-<org>` in namespace `hosts`.
+Forward `deployment/hostgroup-c-<org>` in the org namespace.
 Use `route_hosts.control` as the HTTP host.
 For the committed document, the Deployment is `hostgroup-c-local` and the host is `control.wamn.localhost`.
 Kind application hosts use `<application>.wamn.localhost`, covered by the edge certificate for `*.wamn.localhost`.
@@ -89,7 +96,7 @@ Export the cluster access file to a private directory:
 umask 077
 mkdir -p /tmp/wamn-local-access
 kind export kubeconfig --name wamn-local --kubeconfig /tmp/wamn-local-access/kubeconfig
-kubectl --kubeconfig /tmp/wamn-local-access/kubeconfig -n hosts \
+kubectl --kubeconfig /tmp/wamn-local-access/kubeconfig -n local \
   port-forward deployment/hostgroup-c-local 8080:80
 ```
 
@@ -103,7 +110,11 @@ curl -i -H 'Host: control.wamn.localhost' http://127.0.0.1:8080/wamn_control/con
 
 This request must return HTTP 401.
 A permitted control query requires a password-login session for the control audience.
-The local platform does not provide a public ingress or hosted UI.
+The local TLS ingress listens on host port 443.
+Port 80 reaches the same ingress controller.
+The edge certificate covers the application hostnames.
+Trust the local certificate explicitly when using these endpoints.
+Kind selects no hosted UI artifact.
 
 ### Cleanup
 
@@ -118,7 +129,7 @@ kind delete cluster --name wamn-local
 To rebuild a disposable local platform, delete `wamn-local` with the command above.
 This removes its system database, every project database, and all cluster-local application state.
 Keep the shared registry and prepare current artifacts through [building](building.md#local-platform-artifacts).
-Run `wamn platform deploy deploy/kind/cluster.k --chart /tmp/wamn-platform-chart` again.
+Run `wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/release@sha256:<digest>` again.
 The new platform starts with zero applications. Redeploy each required application through `wamn deploy`.
 This procedure does not upgrade a persistent system database.
 
@@ -129,7 +140,7 @@ Remove only the retained files and directory that this run created after they ar
 
 ## Application and schema operations
 
-The control host starts application operations as Kubernetes Jobs.
+The native control service starts application operations as Kubernetes Jobs.
 A Job runs one command to completion.
 These routes require a password session and administrator authority for the requested project.
 The host supplies the organization.
@@ -161,9 +172,10 @@ There is no operation history database.
 
 The server selects the image, command, namespace, actor, chart, and credential references.
 Deploy, rollback, and diff use the existing apply, registry, and NATS credentials.
-Apply and reset also receive the existing CNPG administrator credential.
+Apply and reset also receive the project platform-migration, package-migration, and capture credentials.
+Reset advances replication through the capture login and removes package objects through their migration login.
 SQL steps run inside the authorized operation Job with their owning role credentials.
-The ctl image carries the chart templates and deployment resources.
+The control image runs workers and reads the installed chart reference.
 The installed control configuration names the pinned worker image and its configuration.
 Environment provisioning creates separate code and SQL ServiceAccounts and namespace Roles.
 
@@ -198,7 +210,14 @@ It contains no release digest or package membership. Old document shapes are ref
 Set `revocation_seconds` for the project and each application.
 These nonnegative values bound credential revocation delay when an invalidation is lost.
 Zero disables auth caching. Restart hosts after changing a bound.
-The environment library reads `environment.k` and stores the configuration after provisioning succeeds. Its deployed provisioning route still needs the installer handoff; the public worker verb is removed.
+`wamn env apply environment.k` submits the configuration to authenticated control.
+The installer reconciles the database and role declarations. The environment library saves the configuration after provisioning succeeds.
+A new database receives its initial SQL through an installer bootstrap Job. That worker refuses an existing baseline.
+Later configuration updates use restricted connections and never read a superuser credential.
+Use `--disposable` only when first recording an environment that can be reset.
+Use `wamn env delete ORG/ENV/PROJECT` to remove an environment. Add `--data` and confirm the coordinate in a terminal to delete its database.
+These lifecycle requests return Jobs. The CLI polls `environment.operation_status`.
+Use `wamn revoke-pat --prefix PREFIX` to revoke a PAT within the authenticated org authority.
 Other lifecycle operations take the coordinate and read the registry.
 Helm history records the applied release. Each release manifest defines its packages.
 The configuration export contains no code selection.
@@ -213,7 +232,7 @@ wamn status --env environments/dev/environment.k
 ```
 
 Publication needs no destination database.
-Provision the environment through its owning lifecycle before applying application SQL and deploying code. The provisioning route is pending the installer handoff.
+Run `wamn env apply environments/dev/environment.k` before applying application SQL and deploying code.
 Each application owns its Helm release, host group, workloads, Services, and route ConfigMaps.
 The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
 Code-only deploy, reapply, and rollback preserve installed SQL and other applications' data, permissions, routes, and workloads.
@@ -582,7 +601,7 @@ Every other page reaches that prefix's `index.html`, including `/`, `/invite`, `
 
 On Google Cloud, the HTTPS ingress sends traffic through a network endpoint group to the Rust HTTP Service on port 80.
 TLS stays at ingress. A cluster ingress uses the serving certificate that cert-manager owns.
-A non-GCP cluster must supply a default ingress controller for the chart’s TLS Ingress.
+The infrastructure chart installs a default TLS ingress controller on non-GCP clusters.
 The Rust front owns response headers and proxies password requests to identity over HTTPS.
 The CDN caches only what the origin marks as cacheable.
 Set `neg: true` in the edge values. The edge Service then carries the annotation that makes GKE create the network endpoint group.

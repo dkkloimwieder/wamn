@@ -1,8 +1,7 @@
 //! Environment-targeted logins on the shared control database.
 
 use anyhow::Context as _;
-use postgres_protocol::escape::escape_identifier;
-use sqlx::{Connection as _, Row as _};
+use sqlx::Row as _;
 use wamn_control_provision::{
     WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, workload_login,
 };
@@ -36,7 +35,37 @@ pub(super) async fn delete_control_roles(
         .filter(|family| family.identity_type() == WorkloadRoleIdentityType::Control)
         .map(|family| workload_login(family, target))
         .collect::<Result<Vec<_>, _>>()?;
+    let base: wamn_postgres::ConnectionConfig = serde_json::from_str(admin_url)?;
+    for family in WorkloadRoleFamily::project_env_families()
+        .filter(|family| family.identity_type() == WorkloadRoleIdentityType::Control)
+    {
+        let username = workload_login(family, target)?;
+        let present: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1)")
+                .bind(&username)
+                .fetch_one(&mut admin)
+                .await?;
+        if !present {
+            continue;
+        }
+        let mut connection = base.clone();
+        connection.username = username.clone();
+        connection.credentials.name = wamn_control_provision::workload_secret_name(
+            family,
+            &triple.org,
+            &triple.project,
+            &triple.env,
+        );
+        let mut owner = connect(&connection.to_json()?).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP OWNED BY {}",
+            postgres_protocol::escape::escape_identifier(&username)
+        )))
+        .execute(&mut owner)
+        .await?;
+    }
     crate::provision_project_env::workload::remove_roles(
+        &platform.system_database_url,
         &platform.target.kubeconfig,
         &platform.target.context,
         &triple.org,
@@ -44,29 +73,5 @@ pub(super) async fn delete_control_roles(
         &names,
     )
     .await?;
-    let mut roles = Vec::new();
-    for family in WorkloadRoleFamily::project_env_families()
-        .filter(|family| family.identity_type() == WorkloadRoleIdentityType::Control)
-    {
-        let role = workload_login(family, target)?;
-        if sqlx::query("SELECT 1 FROM pg_roles WHERE rolname=$1")
-            .bind(&role)
-            .fetch_optional(&mut admin)
-            .await?
-            .is_some()
-        {
-            let mut transaction = admin.begin().await?;
-            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-                "DROP OWNED BY {role}; DROP ROLE {role}",
-                role = escape_identifier(&role)
-            )))
-            .execute(&mut *transaction)
-            .await
-            .map(drop)
-            .with_context(|| format!("drop environment control role {role}"))?;
-            transaction.commit().await?;
-        }
-        roles.push(role);
-    }
-    Ok(roles)
+    Ok(names)
 }

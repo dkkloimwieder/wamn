@@ -1,0 +1,25 @@
+database: null
+publication: null
+operations: null
+materializer: null
+credentialAccess: null
+
+brokerCertificates: []
+
+global:
+  certificates:
+    generate: false
+  nats:
+    schedulerUrl: nats://wamn-nats.platform.svc.cluster.local:4222
+    dataUrl: nats://wamn-nats.platform.svc.cluster.local:4222
+runtime-operator:
+  operator:
+    enabled: false
+  nats:
+    enabled: false
+  gateway:
+    enabled: false
+  runtime:
+    hostGroups: []
+    serviceAccount:
+      create: false

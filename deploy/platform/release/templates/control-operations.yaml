@@ -3,7 +3,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: c-{{ .Values.org }}-status
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -11,13 +11,13 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: wamn-control-{{ .Values.org }}
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: c-{{ .Values.org }}-operations
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
 rules:
 - apiGroups: [batch]
   resources: [jobs]
@@ -33,7 +33,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: c-{{ .Values.org }}-operations
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -41,5 +41,64 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: wamn-control-{{ .Values.org }}
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
+{{- end }}
+{{- if .Values.controlService }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wamn-operation-{{ .Values.org }}
+  namespace: {{ .Values.org }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wamn-operation-{{ .Values.org }}
+  namespace: {{ .Values.org }}
+rules:
+- apiGroups: [""]
+  resources: [secrets, configmaps, services, serviceaccounts]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [""]
+  resources: [pods, events, pods/log]
+  verbs: [get, list, watch]
+- apiGroups: [apps]
+  resources: [deployments, deployments/scale, replicasets, statefulsets]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [batch]
+  resources: [jobs]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [rbac.authorization.k8s.io]
+  resources: [roles, rolebindings]
+  verbs: [get, list, watch, create, update, patch, delete, bind, escalate]
+- apiGroups: [postgresql.cnpg.io]
+  resources: [clusters, databases]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [cert-manager.io]
+  resources: [certificates, issuers]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [networking.k8s.io]
+  resources: [networkpolicies, ingresses]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [runtime.wasmcloud.dev]
+  resources: [workloaddeployments]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [discovery.k8s.io]
+  resources: [endpointslices]
+  verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wamn-operation-{{ .Values.org }}
+  namespace: {{ .Values.org }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: wamn-operation-{{ .Values.org }}
+subjects:
+- kind: ServiceAccount
+  name: wamn-operation-{{ .Values.org }}
+  namespace: {{ .Values.org }}
 {{- end }}

@@ -64,17 +64,6 @@ pub(in crate::environment) fn host_group(
         group["volumeMounts"] = serde_json::json!([]);
     }
     group["volumeMounts"].as_array_mut().unwrap().push(serde_json::json!({"name":"postgres-configuration", "mountPath":"/etc/wamn/postgres", "readOnly":true}));
-    let encryption = group["env"]
-        .as_array()
-        .and_then(|env| {
-            env.iter()
-                .find(|entry| entry["name"] == "WAMN_OAUTH_ENCRYPTION")
-        })
-        .and_then(|entry| entry["value"].as_str())
-        .map(serde_json::from_str)
-        .transpose()?
-        .unwrap_or_else(|| serde_json::json!({"provider":"local"}));
-    crate::platform::oauth::host_group(&mut group, &encryption)?;
     Ok(serde_yaml::from_value(serde_yaml::to_value(group)?)?)
 }
 

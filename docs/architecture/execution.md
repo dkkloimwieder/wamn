@@ -421,7 +421,7 @@ The converter recognizes this record shape and carries any JSON value through it
 Text fields keep the WIT `string` type.
 The converter derives deletion markers from absent change data. It omits that data from a deleted row.
 A refusal without details returns an empty object. Absent optional refusal details stay omitted.
-The pure router, `wamn-router`, owns deterministic graph decisions.
+Private modules in `wamn-workflow` own deterministic graph decisions.
 Before execution, the host admits one invocation record with caller, SQL, identity, causation, effect authority and trace context.
 PostgreSQL, HTTP, storage and logging read that record from one registry.
 The record retains signing authority through commit and replay.
@@ -557,7 +557,7 @@ The WMS workflow `movement_label` is the first example.
 A `packaging` update starts it when the registration condition `old.location_id != new.location_id` holds, so only a move starts it.
 It stores one packaging label for each move, keyed by `{packaging_id}/{row_version}`, at the object path `wms/{key}`.
 
-- A wiring is data with edges. Versioned. Swapped by version with no rebuild. `wamn-router` walks it: frontier, ports, error edges, retry, hop budget, terminal verdict. Unchanged.
+- A wiring is data with edges. Versioned. Swapped by version with no rebuild. `wamn-workflow` walks the catalog graph directly: frontier, ports, error edges, retry, hop budget, terminal verdict. Unchanged.
 
 | Operation | Behavior |
 | --- | --- |
@@ -597,12 +597,10 @@ The idempotency key is bound to the caller and the workflow.
 A repeated start with the same key and input answers the first run, and another input refuses `idempotency_conflict`.
 The run and its queue row commit in one transaction.
 
-When the queue leases the run, `queued_run_caller` resolves its principal.
-The principal must be an active `service` or `user` that holds the run's role.
-The caller holds the permissions of that role only, and holds `admin` only when the role is `admin`.
-The host reads these grants again before each node, so a role revoked during a run refuses the next node.
-A run with no role is an automation or schedule run.
-Its principal must be an active `service`, and it holds the permissions of every role of the principal.
+Before each node, the host reads the execution principal's current grants through its authentication memory.
+The principal must be active and hold the run's selected role.
+Only that role supplies permissions. The `admin` role grants administration.
+A role revoked during a run refuses the next node. Leasing the run performs no caller read.
 
 Every workflow is a graph run by the router and the run queue under a run row. A single-operation workflow is a one-node graph. The in-process walk with no row (`RegistrationDelivery::Walk`) is removed.
 

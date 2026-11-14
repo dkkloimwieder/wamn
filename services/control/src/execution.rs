@@ -44,6 +44,31 @@ impl wamn_execution_host::ControlExecution for Execution {
         payload: &str,
     ) -> anyhow::Result<Value> {
         match operation {
+            "environment.configure" | "environment.delete" | "environment.operation_status" => {
+                self.environment(operation, caller, payload).await
+            }
+            "pat.revoke" => {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Request {
+                    token_prefix: String,
+                }
+                let request: Request = serde_json::from_str(payload)?;
+                let mut connection = wamn_postgres::connect(&self.system_database).await?;
+                let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT FROM identity.pats t JOIN identity.principals p ON p.id=t.principal_id WHERE t.token_prefix=$1 AND (p.id=$2::text::uuid OR EXISTS(SELECT FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$3) OR (p.type='service' AND starts_with(p.subject,'api.'||$3||'.'))))")
+                    .bind(&request.token_prefix).bind(caller.to_string()).bind(&self.org).fetch_one(&mut connection).await?;
+                anyhow::ensure!(
+                    allowed,
+                    "PAT does not belong to the authenticated org authority"
+                );
+                wamn_environment::provision_project_env::revoke_provisioning_pat(
+                    &self.system_database,
+                    &request.token_prefix,
+                    &self.changes,
+                )
+                .await?;
+                Ok(json!({"revoked":true}))
+            }
             "platform.update" | "platform.operation_status" => {
                 self.platform(operation, caller, payload).await
             }

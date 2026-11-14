@@ -116,6 +116,7 @@ FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build-native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 COPY --from=components /http.wasm /usr/local/share/wamn/http_route.wasm
+COPY --from=components /palette/ /usr/local/share/wamn/
 # Native workers apply manifests with kubectl, pinned by version and its
 # published sha256 (wamn-zua8.3). wamn-iggi moves the pin to the GKE minor.
 ADD --chmod=0755 --checksum=sha256:629d3f410e09bf49b64ae7079f7f0bda1191efed311f7d37fdbab0ad5b0ec2b7 https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl /usr/local/bin/kubectl

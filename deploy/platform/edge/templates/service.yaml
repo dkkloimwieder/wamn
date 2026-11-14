@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ (default .Release.Name .Values.name) }}
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
   labels:
     app.kubernetes.io/name: wamn-edge
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ (default .Release.Name .Values.name) }}
   {{- if .Values.neg }}
   annotations:
     cloud.google.com/neg: '{"exposed_ports":{"80":{"name":"wamn-edge"}}}'
@@ -14,7 +14,7 @@ spec:
   type: {{ .Values.service.type }}
   selector:
     app.kubernetes.io/name: wamn-edge
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ (default .Release.Name .Values.name) }}
   ports:
     - name: http
       port: 80

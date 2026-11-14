@@ -5,7 +5,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Release.Name }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ (default .Release.Name .Values.name) }}
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
 data:
   web.json: {{ dict "listen" "0.0.0.0:8080" "bucket" .Values.web.bucket "identity" $identity "identity_ca" "/etc/wamn-edge/identity-ca/ca.crt" "trusted_proxy_hops" .Values.trustedProxyHops | toJson | quote }}

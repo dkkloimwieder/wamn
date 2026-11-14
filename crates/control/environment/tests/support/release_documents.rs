@@ -1,6 +1,5 @@
 //! Canonical release documents shared by type and render-only cases.
 
-use sqlx::Row as _;
 use std::path::{Path, PathBuf};
 use wamn_environment::environment::{
     self,
@@ -105,7 +104,9 @@ pub const POLICY: &str = "dev";
 pub const PLATFORM_DOMAIN: &str = "example.invalid";
 
 pub fn fixture_host_group(document: &EnvironmentDocument, local: &str) -> Value {
-    let installed = wamn_environment::platform::control::host_values(&document.org);
+    let installed = json!({"hostConfiguration":
+        wamn_environment::platform::installation::host_configuration(
+            wamn_environment::platform::document::Provider::Kind)});
     let shared =
         environment::ensure::materializer_host_values(document, 70, 1, 120, None, false, None)
             .expect("shared environment host");

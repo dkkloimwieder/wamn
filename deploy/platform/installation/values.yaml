@@ -1,0 +1,161 @@
+org: ''
+registry: ''
+registryEndpoint: null
+runtime-operator:
+  global:
+    certificates:
+      generate: false
+    nats:
+      schedulerUrl: nats://wamn-nats.platform.svc.cluster.local:4222
+      dataUrl: nats://wamn-nats.platform.svc.cluster.local:4222
+  operator:
+    allowSharedHosts: false
+    watchNamespaces: []
+    hostNamespaces: []
+  nats:
+    enabled: false
+  gateway:
+    enabled: false
+  runtime:
+    hostGroups: []
+nats:
+  fullnameOverride: wamn-nats
+  namespaceOverride: platform
+  config:
+    jetstream:
+      enabled: true
+      fileStore:
+        pvc:
+          size: 1Gi
+          storageClassName: standard
+        maxSize: 3GB
+      memoryStore:
+        enabled: true
+        maxSize: 256MB
+    merge:
+      max_payload: 1048576
+      authorization$include: ../nats-authorization/authorization.conf
+    nats:
+      tls:
+        enabled: true
+        secretName: wasmcloud-nats-tls
+        merge:
+          verify_and_map: true
+    patch:
+    - op: remove
+      path: /http_port
+    - op: add
+      path: /http
+      value: 127.0.0.1:8222
+  podTemplate:
+    patch:
+    - op: add
+      path: /spec/volumes/-
+      value:
+        name: authorization
+        secret:
+          secretName: wamn-nats-authorization
+  container:
+    patch:
+    - op: add
+      path: /volumeMounts/-
+      value:
+        name: authorization
+        mountPath: /etc/nats-authorization
+        readOnly: true
+    startupProbe:
+      httpGet: null
+      exec:
+        command:
+        - wget
+        - -q
+        - -T
+        - '2'
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8222/healthz
+    readinessProbe:
+      httpGet: null
+      exec:
+        command:
+        - wget
+        - -q
+        - -T
+        - '2'
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8222/healthz
+    livenessProbe:
+      httpGet: null
+      exec:
+        command:
+        - wget
+        - -q
+        - -T
+        - '2'
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8222/healthz
+    image:
+      tag: 2.10-alpine
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        memory: 1Gi
+  natsBox:
+    enabled: false
+  tlsCA:
+    enabled: true
+    secretName: wasmcloud-nats-tls
+    key: ca.crt
+  reloader:
+    merge:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 64Mi
+plugin-barman-cloud:
+  fullnameOverride: barman-cloud
+opentelemetry-collector:
+  mode: deployment
+  fullnameOverride: otel-collector
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: 0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
+  command:
+    name: otelcol-contrib
+  config:
+    exporters:
+      debug: {}
+    service:
+      pipelines:
+        traces:
+          exporters:
+          - debug
+        metrics:
+          exporters:
+          - debug
+        logs:
+          exporters:
+          - debug
+identity:
+  enabled: false
+  name: identity
+edge:
+  enabled: false
+  name: wamn-edge
+  namespace: hosts
+control:
+  enabled: false
+configuration: {}
+platform:
+  chart: ''
+edgeDnsNames: []
+hostEnvironment: {}
+hostConfiguration: {}
+
+brokerCertificates: []

@@ -180,18 +180,7 @@ pub fn render_package_declaration(
         .map_err(|source| ComponentDeclarationError::parse(package_root, source))
 }
 
-/// Slot a palette declaration leaves for the store alias of its connection.
-pub const COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER: &str = "__STORE_ALIAS__";
-
-/// Renders one palette declaration (`apps/platform/*/*/declaration.json.in`)
-/// into the document admission reads, for the package `target` it is admitted
-/// into (wamn-hw3n).
-///
-/// A palette component belongs to no package, so its template leaves the whole
-/// target as placeholders. A connection whose alias is
-/// [`COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER`] takes `store_alias`, the
-/// name the binding selection gives the store, as the operator passes it to
-/// the environment document in the cluster.
+/// Resolve a palette declaration into concrete connection names for a package fixture.
 pub fn render_palette_declaration(
     template: &Path,
     target: &wamn_catalog::ComponentPackageCoordinate,

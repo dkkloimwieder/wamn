@@ -299,6 +299,7 @@ pub async fn publish_local(
     target: LocalReleaseTarget<'_>,
     package_roots: &[PathBuf],
     admissions: &[wamn_package_control::component_admission::ComponentAdmission],
+    palette: &[crate::palette::PaletteComponent],
 ) -> anyhow::Result<(
     PublishedRelease,
     wamn_runtime::local_application::LocalApplicationFacts,
@@ -320,7 +321,7 @@ pub async fn publish_local(
         .bind(args.project_env_key())
         .fetch_one(&mut client)
         .await?;
-    let assembled = assemble_local_release(&args, package_roots, admissions)?;
+    let assembled = assemble_local_release(&args, package_roots, admissions, palette)?;
     drop(client);
     Ok((assembled.published, assembled.facts))
 }
@@ -549,6 +550,7 @@ pub fn assemble_local_release(
     args: &PublishReleaseRequest,
     package_roots: &[PathBuf],
     admissions: &[wamn_package_control::component_admission::ComponentAdmission],
+    palette: &[crate::palette::PaletteComponent],
 ) -> anyhow::Result<AssembledLocalRelease> {
     use wamn_runtime::local_application::LocalApplicationFacts;
     let (attachment_paths, _) = package_files(package_roots);
@@ -601,6 +603,12 @@ pub fn assemble_local_release(
         &package_manifests,
         &mut components,
     )?;
+    for component in palette {
+        components.insert(ServingComponent::project(
+            &component.facts.component,
+            component.facts.connections.clone(),
+        )?);
+    }
     let route_attachments = ServingAttachment::routes(attachments.clone());
     let manifest = ServingManifest {
         composed_entry: None,
@@ -617,7 +625,7 @@ pub fn assemble_local_release(
     };
     let canonical_bytes = manifest.canonical_bytes();
     let (manifest, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
-    let components = admissions
+    let mut components: Vec<AdmittedComponent> = admissions
         .iter()
         .map(wamn_package_control::component_admission::ComponentAdmission::facts)
         .filter(|fact| {
@@ -627,6 +635,11 @@ pub fn assemble_local_release(
         })
         .cloned()
         .collect();
+    components.extend(
+        palette
+            .iter()
+            .map(|component| component.facts.component.clone()),
+    );
     let requirements = admissions
         .iter()
         .flat_map(|admission| admission.requirements().iter())
@@ -690,6 +703,49 @@ async fn publish_candidate(
         &package_manifests,
         &route_contracts,
     )?;
+    if let Some(inputs) = entry {
+        let palette = crate::palette::read(inputs.route_guest, &args.project_env_key())?;
+        let base = wamn_catalog::parse_component_artifact_base(inputs.component_artifact_base)?;
+        let credentials =
+            wamn_package_artifact::registry_credentials::read_registry_push_credentials(
+                &registry.registry_auth_file,
+                base.registry(),
+            )?;
+        for component in &palette {
+            let fact = &component.facts.component;
+            let reference: oci_client::Reference = format!(
+                "{}:{}",
+                inputs.component_artifact_base,
+                wamn_catalog::component_digest_tag(&fact.component_digest)?
+            )
+            .parse()?;
+            wamn_package_control::component_admission::publish_and_verify(
+                &reference,
+                inputs.component_artifact_base,
+                registry.insecure_registry,
+                &registry.oci_ca_paths,
+                &component.bytes,
+                &wamn_engine::component_artifact::component_artifact_config_bytes(fact),
+                fact,
+                credentials.as_ref(),
+            )
+            .await?;
+            published
+                .manifest
+                .components
+                .insert(ServingComponent::project(
+                    fact,
+                    component.facts.connections.clone(),
+                )?);
+        }
+        let bytes = published.manifest.canonical_bytes();
+        let (manifest, digest) = ServingManifest::from_canonical_bytes(&bytes)?;
+        published = PublishedRelease {
+            manifest,
+            digest,
+            canonical_bytes: bytes,
+        };
+    }
     entry_publication::publish(
         &mut published,
         &release_components,
@@ -1674,7 +1730,7 @@ mod tests {
         let descriptor = wamn_catalog::ComponentDescriptor::new(
             fact.clone(),
             vec![ComponentConnection {
-                store_alias: "labels".to_owned(),
+                store_alias: "labels".to_owned().into(),
                 requirement_type: wamn_catalog::ComponentConnectionType::Blobstore,
             }],
         );

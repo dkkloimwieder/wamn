@@ -40,3 +40,11 @@ mod tests {
         assert!(environment_resource_name("acme", "wms", "Bad Env").is_err());
     }
 }
+
+/// Event coordinates supplied by environment provisioning and its chart consumers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventIdentity {
+    pub org: String,
+    pub project: String,
+    pub environment: String,
+}

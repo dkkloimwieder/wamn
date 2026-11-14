@@ -7,17 +7,6 @@
 //! *data, not code* — versioned, conditioned against one environment effective
 //! release, and read from its environment workflow row in `catalog.workflows`.
 //!
-//! # The entry and the terminal are the router's authoring source (wamn-0h0g.18.5)
-//!
-//! The router landed a typed terminal and verdict (wamn-0h0g.16.3) that nothing
-//! could populate: a document that names neither where a delivery *enters* nor
-//! which node *ends* it leaves `wamn_router::WiringNode::terminal` permanently
-//! `None` and `wamn_router::Wiring::compile`'s entry with no value to take.
-//! [`WiringDocument::entry`] and [`WiringNode::terminal`] are that source, and
-//! they are wiring **data**: this document is what `catalog.workflows.graph_json`
-//! stores and `wiring_hash` covers, so re-terminalling a graph is a new conditioned
-//! definition rather than an edit to a live one.
-//!
 //! # Identity
 //!
 //! [`WiringDocument::wiring_hash`] is the SHA-256 of the document's RFC 8785
@@ -57,16 +46,8 @@ pub const WIRING_DOCUMENT_FORMAT_VERSION: &str = "0.1";
 
 /// How a node ends its delivery, when it is a terminal.
 ///
-/// This is the *authoring source* of the router's own terminal
-/// (`wamn_router::Terminal`, `crates/execution/workflow/router/src/terminal.rs`): the
-/// retired engine decided `respond` by comparing a node's reserved type name,
-/// and the node language retires with that engine, so the wiring **declares**
-/// it as data and the walk reads it.
-///
-/// There is no `discard` token. Discard is a *verdict*, not a declaration —
-/// `wamn_router::Verdict::Discard` is what the walk settles on when the frontier
-/// empties having reached no terminal at all, so a node declaring it would be
-/// declaring the absence of itself.
+/// The workflow walk reads this declaration directly. It records discard only
+/// when the frontier ends without a declared terminal or a waiting caller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WiringTerminal {
@@ -131,7 +112,7 @@ pub struct WiringNode {
     /// Several nodes may declare one. Exclusive branches each ending the
     /// delivery their own way is a legitimate graph; *two verdicts in one
     /// delivery* is a refusal the walk makes on the path actually taken
-    /// (`wamn_router::ApplyErrorType::SecondVerdict`), which a document cannot
+    /// (a second verdict), which a document cannot
     /// decide by shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<WiringTerminal>,
@@ -186,7 +167,7 @@ pub struct WiringDocument {
     /// Required, and validated against [`WiringDocument::nodes`] here, so a graph
     /// the router could not enter is refused at authoring rather than in the
     /// serving path — where the same refusal is
-    /// `wamn_router::WiringErrorType::UnresolvedEntry`, one activation and one
+    /// the workflow walk, one activation and one
     /// cache miss too late.
     pub entry: String,
     /// The graph's nodes, keyed by node id. The router resolves the active
@@ -680,8 +661,8 @@ mod tests {
 
     /// The gap wamn-0h0g.18.5 closes: before it, `WiringNode` carried only
     /// `component`/`interface-version`/`operation`/`params` and the document
-    /// carried no entry, so `wamn_router::WiringNode::terminal` had no authoring
-    /// source and `wamn_router::Wiring::compile` had no entry to be given. Both
+    /// carried no entry, so the terminal declaration had no authoring
+    /// source and the graph index had no entry to be given. Both
     /// now survive the store round trip a resolved wiring actually takes:
     /// document -> `graph_json` bytes -> `WiringDocument::parse`.
     #[test]
@@ -731,7 +712,7 @@ mod tests {
     }
 
     /// An entry that names nothing is refused here rather than at
-    /// `wamn_router::Wiring::compile`, which would be one activation and one
+    /// the graph index, which would be one activation and one
     /// cache miss too late.
     #[test]
     fn the_entry_must_name_a_declared_node() {

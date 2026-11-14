@@ -92,15 +92,16 @@ pub(super) fn bind_signed_file_results(
 /// This is the single place a declared alias becomes connection SEMANTICS. The
 /// descriptor is minted from the platform's own constructor, never authored, so
 /// field ownership and credential injection cannot be widened by a declaration.
-pub(crate) fn portable_requirement(
+pub fn portable_requirement(
     component_digest: &str,
     connection: &ComponentConnection,
+    store_alias: &str,
 ) -> ComponentConnectionRequirement {
     let descriptor = match connection.requirement_type {
         ComponentConnectionType::Http => ConnectionTypeDescriptor::http_v1(),
         ComponentConnectionType::Blobstore => ConnectionTypeDescriptor::blobstore_v1(),
     };
-    ComponentConnectionRequirement::new(component_digest, &connection.store_alias, descriptor)
+    ComponentConnectionRequirement::new(component_digest, store_alias, descriptor)
 }
 
 /// The exports among `selected` whose request element transaction the host begins, as

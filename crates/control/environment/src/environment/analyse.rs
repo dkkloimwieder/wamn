@@ -232,7 +232,7 @@ pub async fn analyse(
     let project = match &row {
         Some(row) => {
             read_project(
-                &project_url(platform, document, row)?,
+                &project_url(platform, document, row).await?,
                 &wamn_control_provision::project_env_key(
                     &document.org,
                     &document.project,
@@ -533,7 +533,7 @@ async fn read_release(platform: &Platform, digest: &str) -> anyhow::Result<Relea
         .components
         .iter()
         .flat_map(|component| &component.descriptor.connections)
-        .map(|connection| connection.store_alias.clone())
+        .filter_map(|connection| connection.store_alias.name().map(str::to_owned))
         .collect();
     Ok(ReleaseFacts {
         digest: digest.to_owned(),

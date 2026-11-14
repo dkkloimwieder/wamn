@@ -196,11 +196,10 @@ pub async fn enable_cdc_project_env(
     // Render the artifacts the runbook applies.
 
     let cdc_sql = cdc_sql_bundle(&args.schemas, &cdc_name, &db_name);
-    let publication = wamn_control_provision::database::render_project_env_publication(
+    let publication = wamn_platform_install::environment::publication_values(
         &triple,
         &instance,
         &cluster,
-        &args.cluster_namespace,
         &cdc_name,
         &args.schemas,
     );
@@ -241,6 +240,7 @@ pub async fn enable_cdc_project_env(
     })
     .await?;
     crate::provision_project_env::workload::reconcile(
+        system_url,
         &kubeconfig,
         "",
         &args.org,
@@ -276,6 +276,7 @@ pub async fn enable_cdc_project_env(
 /// Restore the CDC slot, maps and grants through the project database administrator.
 pub async fn apply_cdc_sql(
     admin_database_url: &str,
+    capture_database_url: &str,
     schemas: &[String],
     cdc_name: &str,
     database: &str,
@@ -289,13 +290,21 @@ pub async fn apply_cdc_sql(
         connected == database,
         "CDC SQL targets a different database"
     );
-    sqlx::raw_sql(sqlx::AssertSqlSafe(cdc_sql_bundle(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(plan::cdc_schema_sql_bundle(
         schemas, cdc_name, database,
     )))
     .execute(&mut client)
     .await
     .map(drop)
-    .context("restore CDC slot, maps and grants")
+    .context("restore CDC maps and grants")?;
+    let mut capture = wamn_postgres::connect(capture_database_url).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::create_failover_slot_sql(cdc_name),
+    ))
+    .execute(&mut capture)
+    .await
+    .map(drop)
+    .context("restore the capture slot")
 }
 
 /// Record the CDC reader registration of `triple` in the registry
@@ -452,7 +461,11 @@ pub(crate) async fn discard_backlog(
         "CDC slot {slot} did not reach the reset boundary"
     );
     // Slot advancement becomes durable at the next checkpoint, before broker disposal.
+    sqlx::raw_sql("SET ROLE pg_checkpoint")
+        .execute(&mut admin)
+        .await?;
     sqlx::raw_sql("CHECKPOINT").execute(&mut admin).await?;
+    sqlx::raw_sql("RESET ROLE").execute(&mut admin).await?;
     Ok(())
 }
 

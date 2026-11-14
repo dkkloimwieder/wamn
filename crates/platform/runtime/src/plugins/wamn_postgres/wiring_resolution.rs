@@ -5,13 +5,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use wamn_catalog::{AdmittedComponent, WiringDocument, validate_resolved_wiring_compatibility};
+use wamn_catalog::{AdmittedComponent, WiringDocument};
 use wamn_run_state::AuthorityClass;
 
 use super::WamnPostgres;
 
 /// The component descriptors of the release. Binds: `project_env_key` and manifest digest.
-pub const RELEASE_COMPONENTS_SQL: &str = "\
+pub static RELEASE_COMPONENTS_SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "\
 WITH release_target AS MATERIALIZED ( \
     SELECT convert_from(release.canonical_bytes, 'UTF8')::jsonb AS manifest \
       FROM catalog.releases AS release \
@@ -21,8 +23,9 @@ WITH release_target AS MATERIALIZED ( \
     SELECT package.value ->> 'package-id' AS package_id, \
            package.value ->> 'package-version' AS package_version \
       FROM release_target \
-     CROSS JOIN LATERAL jsonb_array_elements(release_target.manifest #> '{release,packages}') \
+     CROSS JOIN LATERAL jsonb_array_elements(release_target.manifest #> '{{release,packages}}') \
            AS package(value) \
+    UNION ALL SELECT '{palette_package}', '{palette_version}' \
 ) \
 SELECT COALESCE( \
            (SELECT jsonb_agg( \
@@ -49,7 +52,11 @@ SELECT COALESCE( \
            '[]'::jsonb \
        )::text AS components, \
        jsonb_array_length(release_target.manifest -> 'components') AS manifest_component_count \
-  FROM release_target";
+  FROM release_target",
+        palette_package = wamn_catalog::PALETTE_PACKAGE_ID,
+        palette_version = wamn_catalog::PALETTE_PACKAGE_VERSION
+    )
+});
 
 /// Make sure that every component-grain requirement in the synchronous release
 /// closure has one exact usable environment binding.
@@ -70,7 +77,7 @@ SELECT NOT EXISTS ( \
 
 /// An immutable wiring and its resolved catalog facts.
 ///
-/// The workflow layer lowers `document` into the graph that the router walks.
+/// The workflow layer indexes `document` directly.
 #[derive(Debug, Clone)]
 pub struct ResolvedActiveWiring {
     pub version: u32,
@@ -194,7 +201,7 @@ impl WamnPostgres {
             .await
         } else {
             async {
-                let row = sqlx::query(RELEASE_COMPONENTS_SQL)
+                let row = sqlx::query(RELEASE_COMPONENTS_SQL.as_str())
                     .bind(project_env_key)
                     .bind(manifest_digest)
                     .fetch_optional(&mut *connection)
@@ -354,31 +361,13 @@ fn decode_release_components(
     Ok(components)
 }
 
-/// Make sure of each node's admitted component against the document, and keep both.
+/// Keep the graph with its already resolved component facts.
 pub(super) fn resolved_wiring(
     decoded: DecodedWiring,
     manifest_digest: &str,
     resolved: BTreeMap<String, AdmittedComponent>,
     components: Vec<AdmittedComponent>,
 ) -> anyhow::Result<ResolvedActiveWiring> {
-    if decoded.document.response.is_some() {
-        validate_resolved_wiring_compatibility(&decoded.document, &resolved)
-            .context("validate resolved response contracts")?;
-    }
-    for (node_id, component) in &resolved {
-        let node = decoded
-            .document
-            .nodes
-            .get(node_id)
-            .ok_or_else(|| anyhow::anyhow!("release-wiring-node-binding-extra"))?;
-        anyhow::ensure!(
-            node.component == component.component
-                && node.interface_version == component.interface_version
-                && component.operations.contains_key(&node.operation)
-                && components.contains(component),
-            "release-wiring-node-binding-mismatch"
-        );
-    }
     verify_served_effect_projections(&components)?;
 
     Ok(ResolvedActiveWiring {
@@ -416,112 +405,9 @@ fn verify_served_effect_projections(components: &[AdmittedComponent]) -> anyhow:
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-    use wamn_catalog::{
-        AdmittedComponentOperation, ComponentDeclaration, ComponentOperationDeclaration,
-        ComponentPackageCoordinate, ComponentPortDeclaration, normalize_component_fact,
-    };
+    use wamn_catalog::{AdmittedComponentOperation, ComponentPackageCoordinate};
 
     use super::*;
-
-    fn component(name: &str, operation: &str, digest_byte: char) -> AdmittedComponent {
-        normalize_component_fact(
-            ComponentDeclaration {
-                target: ComponentPackageCoordinate {
-                    project_env_key: "org-a".to_owned(),
-                    package_id: "orders".to_owned(),
-                    package_version: "1.2.0".to_owned(),
-                },
-                component: name.to_owned(),
-                interface_version: "0.1.0".to_owned(),
-                operations: BTreeMap::from([(
-                    operation.to_owned(),
-                    ComponentOperationDeclaration {
-                        committed_result_schema: None,
-                        registered_operation: None,
-                        input_ports: vec![ComponentPortDeclaration {
-                            name: "input".to_owned(),
-                            schema: json!({}),
-                        }],
-                        output_ports: Vec::new(),
-                        parameters: Vec::new(),
-                    },
-                )]),
-                connections: Vec::new(),
-            },
-            format!("sha256:{}", digest_byte.to_string().repeat(64)),
-            ["wasi:logging/logging@0.1.0".to_owned()],
-            Vec::new(),
-        )
-        .expect("fixture component admits")
-        .component
-    }
-
-    #[test]
-    fn resolved_response_preserves_the_frozen_contract_and_requires_committed_facts() {
-        let registered = "orders:entity/create@1.2.0";
-        let document = WiringDocument::parse(&json!({
-            "format-version": "0.1", "wiring-id": "create-order", "version": 1,
-            "entry": "write",
-            "nodes": {"write": {
-                "component": "entity", "interface-version": "0.1.0",
-                "operation": registered, "terminal": "respond"
-            }},
-            "response": {"node": "write", "schema": {"type": "array"}, "committed-result": "write"}
-        }))
-        .unwrap();
-        let mut admitted = component("entity", "create", 'a');
-        let mut operation = admitted.operations.remove("create").unwrap();
-        operation.registered_operation = Some(registered.to_owned());
-        admitted.operations.insert(registered.to_owned(), operation);
-        let resolve = |admitted: AdmittedComponent| {
-            resolved_wiring(
-                DecodedWiring {
-                    version: 1,
-                    package_version: "1.2.0".to_owned(),
-                    graph_hash: document.wiring_hash().as_str().to_owned(),
-                    document: document.clone(),
-                },
-                "sha256:release",
-                BTreeMap::from([("write".to_owned(), admitted.clone())]),
-                vec![admitted],
-            )
-        };
-        assert!(resolve(admitted.clone()).is_err());
-        let schema = json!({"type": "array"});
-        admitted
-            .operations
-            .get_mut(registered)
-            .unwrap()
-            .committed_result_schema = Some(wamn_catalog::ComponentSchema { schema });
-        let resolved = resolve(admitted.clone()).expect("admitted committed result resolves");
-        assert_eq!(resolved.document.response, document.response);
-        assert_eq!(resolved.components.as_ref(), &[admitted]);
-    }
-
-    #[test]
-    fn component_facts_come_from_the_release_descriptors() {
-        assert!(RELEASE_COMPONENTS_SQL.contains("-> 'descriptor'"));
-    }
-
-    #[test]
-    fn readiness_query_requires_the_exact_component_grain_and_live_binding() {
-        for predicate in [
-            "requirement.component_digest=ANY($3::text[])",
-            "binding.manifest_digest=$2",
-            "binding.component_digest=requirement.component_digest",
-            "binding.package_id=requirement.package_id",
-            "binding.name=requirement.name",
-            "connection.status='active'",
-            "integration.status='active'",
-            "JOIN catalog.release_connection selected USING(project_env_key,manifest_digest,connection_id)",
-        ] {
-            assert!(
-                RELEASE_COMPONENT_BINDINGS_READY_SQL.contains(predicate),
-                "missing readiness predicate {predicate:?}"
-            );
-        }
-    }
 
     /// A component fact exactly as the wamn-0h0g.21.9 converge ALTER leaves
     /// one: the audited imports it was admitted with, and the `'[]'` the

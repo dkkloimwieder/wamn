@@ -28,11 +28,22 @@ pub(super) fn sequence_refusals(
 }
 
 /// The project database URL: the system URL with the environment's database.
-pub(crate) fn project_url(
+pub(crate) async fn project_url(
     platform: &Platform,
     document: &EnvironmentDocument,
     row: &EnvironmentRow,
 ) -> anyhow::Result<String> {
+    if wamn_postgres::configuration(&platform.system_database_url)?
+        .trim_start()
+        .starts_with('{')
+    {
+        return wamn_platform_install::environment::connection(
+            &platform.system_database_url,
+            &document.triple(),
+        )
+        .await?
+        .to_json();
+    }
     wamn_postgres::database_configuration(
         &platform.system_database_url,
         &wamn_control_provision::project_env_database_name(
@@ -58,11 +69,14 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
     if let Some(release) = &authorities.release {
         for component in &release.manifest.components {
             for requirement in &component.descriptor.connections {
+                let Some(alias) = requirement.store_alias.name() else {
+                    continue;
+                };
                 if let Some(connection) = authorities.connections.get(&super::super::bindings::key(
                     document
                         .application_for_package(&component.package_id)
                         .unwrap_or(""),
-                    &requirement.store_alias,
+                    alias,
                 )) && !matches!(
                     (connection.requirement_type, requirement.requirement_type),
                     (
@@ -75,7 +89,7 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                 ) {
                     refusals.push(format!(
                         "connection {} has a different type from its release requirement",
-                        requirement.store_alias
+                        alias
                     ));
                 }
             }
@@ -85,7 +99,10 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                 .application_for_package(&component.package_id)
                 .unwrap_or("");
             for requirement in &component.descriptor.connections {
-                let key = super::super::bindings::key(application, &requirement.store_alias);
+                let Some(alias) = requirement.store_alias.name() else {
+                    continue;
+                };
+                let key = super::super::bindings::key(application, alias);
                 if !authorities.connections.contains_key(&key)
                     && !authorities.artifact_bindings.contains(&key)
                 {

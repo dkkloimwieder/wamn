@@ -1,4 +1,13 @@
-//! BuildKit publication and chart stamping.
+#[path = "platform_pools.rs"]
+mod platform_pools;
+#[path = "platform_project.rs"]
+mod platform_project;
+#[path = "platform_project_commands.rs"]
+mod platform_project_commands;
+#[path = "platform_tofu.rs"]
+mod platform_tofu;
+pub use platform_project_commands::{ProjectCommand, project};
+// BuildKit publication and chart stamping.
 
 use crate::process;
 use anyhow::{Context as _, ensure};
@@ -39,7 +48,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     let ui = args
         .cluster
         .as_deref()
-        .map(wamn_environment::platform::document::ClusterDocument::compile)
+        .map(wamn_platform_install::platform::document::ClusterDocument::compile)
         .transpose()?
         .is_some_and(|cluster| !cluster.buckets.web.is_empty());
     let components = tempfile::tempdir()?;
@@ -54,6 +63,16 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         }
         for component in wamn_build::palette::build(&root).await? {
             let bytes = std::fs::read(&component.file)?;
+            std::fs::write(
+                components.path().join(format!(
+                    "{}.wasm",
+                    component
+                        .declaration
+                        .component_digest
+                        .trim_start_matches("sha256:")
+                )),
+                &bytes,
+            )?;
             let repository = format!("{}/wamn/palette/{}", args.registry, component.name);
             let reference = format!("{repository}:{version}");
             wash_runtime::oci::push_component(
@@ -63,7 +82,10 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                     insecure: loopback(&args.registry),
                     ..Default::default()
                 },
-                None,
+                Some(std::collections::HashMap::from([(
+                    wamn_catalog::PALETTE_DESCRIPTOR_ANNOTATION.to_owned(),
+                    serde_json::to_string(&component.declaration)?,
+                )])),
             )
             .await?;
             let digest = inspect(&root, &reference).await?;
@@ -71,9 +93,22 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 component.name,
                 serde_json::json!({
                     "artifact": format!("{repository}@{digest}"),
-                    "declaration": component.declaration,
+                    "descriptor": component.declaration,
                 }),
             );
+        }
+        let palette_directory = components.path().join("palette");
+        std::fs::create_dir(&palette_directory)?;
+        std::fs::write(
+            palette_directory.join(wamn_catalog::PALETTE_FILE),
+            wamn_digest::canonical_json_bytes(&serde_json::to_value(&palette_pins)?),
+        )?;
+        for pin in palette_pins.values() {
+            let digest = pin["descriptor"]["component-digest"]
+                .as_str()
+                .context("palette digest missing")?;
+            let name = format!("{}.wasm", digest.trim_start_matches("sha256:"));
+            std::fs::copy(components.path().join(&name), palette_directory.join(name))?;
         }
         if ui {
             process::run(&root, "pnpm", &["--filter", "@wamn/platform-ui", "build"]).await?;
@@ -133,17 +168,48 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         }
     }
     if args.stamp_only {
-        for declaration in wamn_build::palette::declarations(&root)? {
-            let repository = format!("{}/wamn/palette/{}", args.registry, declaration.component);
-            let digest = inspect(&root, &format!("{repository}:{version}")).await?;
-            palette_pins.insert(
-                declaration.component.clone(),
-                serde_json::json!({
-                    "artifact": format!("{repository}@{digest}"), "declaration": declaration,
-                }),
-            );
+        for name in wamn_build::palette::names(&root)? {
+            let repository = format!("{}/wamn/palette/{name}", args.registry);
+            let reference = format!("{repository}:{version}");
+            let digest = inspect(&root, &reference).await?;
+            let manifest = process::output(
+                &root,
+                "docker",
+                &[
+                    "buildx",
+                    "imagetools",
+                    "inspect",
+                    "--raw",
+                    &format!("{repository}@{digest}"),
+                ],
+            )
+            .await?;
+            let manifest: Value = serde_json::from_str(&manifest)?;
+            let descriptor: wamn_catalog::ComponentDescriptor = serde_json::from_str(
+                manifest["annotations"][wamn_catalog::PALETTE_DESCRIPTOR_ANNOTATION]
+                    .as_str()
+                    .context("published palette has no sealed descriptor")?,
+            )?;
+            let (bytes, _) = wash_runtime::oci::pull_component(
+                &format!("{repository}@{digest}"),
+                wash_runtime::oci::OciConfig {
+                    insecure: loopback(&args.registry),
+                    ..Default::default()
+                },
+                wash_runtime::oci::OciPullPolicy::Always,
+            )
+            .await?;
+            std::fs::write(
+                components.path().join(format!(
+                    "{}.wasm",
+                    descriptor.component_digest.trim_start_matches("sha256:")
+                )),
+                bytes,
+            )?;
+            palette_pins.insert(name, serde_json::json!({"artifact": format!("{repository}@{digest}"), "descriptor": descriptor}));
         }
     }
+
     let mut images = std::collections::BTreeMap::new();
     for image in IMAGES {
         let reference = format!("{}/wamn-{image}:{version}", args.registry);
@@ -153,11 +219,21 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     let mut roles = Vec::new();
     for (_, role) in ROLES {
         let reference = format!("{}/wamn/{role}:{version}", args.registry);
-        roles.push(format!(
-            "{}/wamn/{role}@{}",
-            args.registry,
-            inspect(&root, &reference).await?
-        ));
+        let digest = inspect(&root, &reference).await?;
+        let pinned = format!("{}/wamn/{role}@{digest}", args.registry);
+        if args.stamp_only && role == "http" {
+            let (bytes, _) = wash_runtime::oci::pull_component(
+                &pinned,
+                wash_runtime::oci::OciConfig {
+                    insecure: loopback(&args.registry),
+                    ..Default::default()
+                },
+                wash_runtime::oci::OciPullPolicy::Always,
+            )
+            .await?;
+            std::fs::write(components.path().join("http.wasm"), bytes)?;
+        }
+        roles.push(pinned);
     }
     let ui_digest = if ui {
         if args.stamp_only {
@@ -226,14 +302,51 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     }
     values["platformUi"] = ui_digest.unwrap_or_default().into();
     std::fs::write(path, serde_yaml::to_string(&values)?)?;
-    wamn_environment::platform::artifact_plan::prepare_payload(&root, &stamped)?;
+    wamn_platform_install::platform::artifact_plan::prepare_payload(&root, &stamped)?;
     println!("{}", stamped.display());
+    std::fs::copy(
+        components.path().join("http.wasm"),
+        args.out.join("http_route.wasm"),
+    )?;
+    for pin in palette_pins.values() {
+        let digest = pin["descriptor"]["component-digest"]
+            .as_str()
+            .context("palette descriptor has no component digest")?;
+        let name = format!("{}.wasm", digest.trim_start_matches("sha256:"));
+        std::fs::copy(components.path().join(&name), args.out.join(name))?;
+    }
     if !palette_pins.is_empty() {
         std::fs::write(
             args.out.join("palette.json"),
             wamn_digest::canonical_json_bytes(&serde_json::to_value(palette_pins)?),
         )?;
     }
+    process::run(
+        &root,
+        "helm",
+        &[
+            "package",
+            stamped.to_str().context("chart path")?,
+            "--destination",
+            args.out.to_str().context("chart output")?,
+        ],
+    )
+    .await?;
+    let archive = args.out.join(format!("release-{version}.tgz"));
+    let destination = format!("oci://{}/wamn/charts", args.registry);
+    let archive = archive.to_str().context("chart archive")?;
+    let mut push = vec!["push", archive, destination.as_str()];
+    if loopback(&args.registry) {
+        push.push("--plain-http");
+    }
+    let registry_auth = std::env::var("WAMN_REGISTRY_AUTH_FILE").ok();
+    if let Some(configuration) = &registry_auth {
+        push.extend(["--registry-config", configuration]);
+    }
+    process::run(&root, "helm", &push).await?;
+    let repository = format!("{}/wamn/charts/release", args.registry);
+    let digest = inspect(&root, &format!("{repository}:{version}")).await?;
+    println!("oci://{repository}@{digest}");
     Ok(())
 }
 
@@ -272,4 +385,34 @@ fn loopback(registry: &str) -> bool {
         registry.split([':', '/']).next(),
         Some("localhost" | "127.0.0.1")
     ) || registry.starts_with("[::1]")
+}
+
+pub use self::platform_pools::{Direction, resize, work_directory};
+
+/// Cloud node pool operations from the declared project.
+#[derive(Debug, clap::Subcommand)]
+pub enum CloudCommand {
+    /// Set every node pool to its declared size.
+    Wake { file: PathBuf },
+    /// Set every node pool to zero nodes.
+    Sleep { file: PathBuf },
+}
+
+pub async fn cloud(command: CloudCommand) -> anyhow::Result<()> {
+    let (file, direction) = match command {
+        CloudCommand::Wake { file } => (file, Direction::Wake),
+        CloudCommand::Sleep { file } => (file, Direction::Sleep),
+    };
+    let document = wamn_platform_install::platform::document::ClusterDocument::compile(&file)?;
+    resize(
+        &document,
+        &file.with_file_name("project.k"),
+        direction,
+        &work_directory()?,
+        |line| {
+            println!("{line}");
+            Ok(())
+        },
+    )
+    .await
 }

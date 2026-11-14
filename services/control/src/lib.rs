@@ -147,6 +147,7 @@ impl Configuration {
                 namespace: self.org.clone(),
             },
             chart: self.chart.clone(),
+            chart_download: None,
             release_artifact_base: self.release_artifact_base.clone(),
             registry_auth_file: self.registry_auth_file.clone(),
             registry_token_metadata: self.registry_token_metadata,
@@ -204,7 +205,7 @@ pub async fn execute(config: &Configuration, operation: Operation) -> anyhow::Re
             json!({"removed":wamn_environment::environment::retention::prune(&platform, &triple).await?}),
         );
     }
-    let owner = if matches!(operation.verb.as_str(), "apply" | "reset") {
+    let credentials = if matches!(operation.verb.as_str(), "apply" | "reset") {
         Some({
             let instance = wamn_environment::provision_project_env::read_project_env_instance(
                 &platform.system_database_url,
@@ -226,8 +227,21 @@ pub async fn execute(config: &Configuration, operation: Operation) -> anyhow::Re
                 wamn_postgres::identity(&database)?.1 == database_name,
                 "operation connection differs from the registry database"
             );
-            wamn_control_provision::migrations::MigrationDatabase::Project
-                .configuration(&database)?
+            wamn_environment::environment::sql::reset::Credentials {
+                owner: wamn_control_provision::migrations::MigrationDatabase::Project
+                    .configuration(&database)?,
+                migration: wamn_control_provision::migration::configuration(
+                    &database,
+                    &operation.org,
+                    &operation.project,
+                    &operation.env,
+                )?,
+                capture: wamn_platform_install::environment::capture_connection(
+                    &platform.system_database_url,
+                    &triple,
+                )
+                .await?,
+            }
         })
     } else {
         None
@@ -243,7 +257,7 @@ pub async fn execute(config: &Configuration, operation: Operation) -> anyhow::Re
             release: operation.release.as_deref(),
         },
         &actor,
-        owner.as_deref(),
+        credentials.as_ref(),
     )
     .await
 }
@@ -270,6 +284,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     config.worker.database_credential = config.apply_database.credentials.name.clone();
     config.worker.administration = config.administration_dir.clone();
     let platform = Arc::new(config.platform()?);
+    write_kubeconfig(&platform.target.kubeconfig, &config.org)?;
     let integration_registry = wamn_package_artifact::PackageRegistry {
         artifact_base: config.integration_artifact_base.clone(),
         credentials: None,

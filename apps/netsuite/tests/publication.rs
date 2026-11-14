@@ -116,7 +116,7 @@ async fn pull_checkpoint_commits_through_the_application_role() -> anyhow::Resul
         admissions,
         documents,
     } = fixture();
-    let assembled = assemble_local_release(&args, &roots, &admissions)?;
+    let assembled = assemble_local_release(&args, &roots, &admissions, &[])?;
     condition_documents(&args, &assembled.published.manifest, &documents)?;
     checkpoint_live::invoke(&roots, &assembled.published.manifest, &admissions).await
 }
@@ -129,7 +129,7 @@ fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
         admissions,
         documents,
     } = fixture();
-    let assembled = assemble_local_release(&args, &roots, &admissions).unwrap();
+    let assembled = assemble_local_release(&args, &roots, &admissions, &[]).unwrap();
     condition_documents(&args, &assembled.published.manifest, &documents).unwrap();
     assert_eq!(
         assembled

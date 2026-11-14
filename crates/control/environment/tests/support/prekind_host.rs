@@ -709,10 +709,13 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         for connection in &component.descriptor.connections {
             let requirement = ComponentConnectionRequirement::new(
                 &component.descriptor.component_digest,
-                &connection.store_alias,
+                connection
+                    .store_alias
+                    .name()
+                    .expect("fixture connection has a literal alias"),
                 ConnectionTypeDescriptor::http_v1(),
             );
-            sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wamn:connection/http@0.1.0','write') ON CONFLICT DO NOTHING").bind(&project_env_key).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(&connection.store_alias).execute(&mut project).await.map(|result| result.rows_affected())?;
+            sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wamn:connection/http@0.1.0','write') ON CONFLICT DO NOTHING").bind(&project_env_key).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(connection.store_alias.name().expect("fixture connection has a literal alias")).execute(&mut project).await.map(|result| result.rows_affected())?;
             let selection = wamn_runtime::local_application::selection(
                 &requirement,
                 &upstream.connection_id,

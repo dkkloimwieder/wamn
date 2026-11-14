@@ -1,9 +1,6 @@
 //! Workload credential preparation, retirement, and observed role state.
 
-use super::{
-    WorkloadRoleFamily, escape_identifier, escape_literal, platform_group_membership_sql,
-    stable_surface_sql,
-};
+use super::{WorkloadRoleFamily, escape_identifier, escape_literal, stable_surface_sql};
 
 /// Idempotently create or harden one stable workload ACL role as NOLOGIN.
 pub fn ensure_workload_acl_role_sql(family: WorkloadRoleFamily) -> String {
@@ -30,9 +27,8 @@ pub(crate) fn ensure_acl_role_sql(role: &str) -> String {
 /// Grant database access after CNPG creates this login.
 pub fn grant_workload_login_sql(family: WorkloadRoleFamily, database: &str, role: &str) -> String {
     format!(
-        "{} {} GRANT CONNECT ON DATABASE {} TO {};",
+        "{} GRANT CONNECT ON DATABASE {} TO {};",
         stable_surface_sql(family).unwrap_or_else(|| ensure_workload_acl_role_sql(family)),
-        platform_group_membership_sql(family),
         escape_identifier(database),
         escape_identifier(role)
     )

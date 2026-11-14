@@ -20,6 +20,9 @@ struct Cli {
 #[cfg(target_os = "linux")]
 #[derive(Debug, Subcommand)]
 enum Command {
+    #[command(subcommand)]
+    Env(wamn_ctl::environment_requests::Command),
+    RevokePat(wamn_ctl::environment_requests::RevokePat),
     RecoverCaptureGap(wamn_ctl::provisioning_verbs::RecoverCaptureGapArgs),
     CloseCaptureGap(wamn_ctl::provisioning_verbs::CloseCaptureGapArgs),
     GrantProjectEnvMembership(wamn_ctl::identity_verbs::ProjectEnvMembershipArgs),
@@ -121,6 +124,8 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
     match Cli::parse().command {
+        Command::Env(command) => wamn_ctl::environment_requests::run(command).await,
+        Command::RevokePat(args) => wamn_ctl::environment_requests::revoke_pat(args).await,
         Command::RecoverCaptureGap(args) => {
             wamn_ctl::provisioning_verbs::recover_capture_gap(args).await
         }

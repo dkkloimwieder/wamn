@@ -67,7 +67,7 @@ struct ComponentPolicy {
     runtime_schema: Option<String>,
     /// The environment map name of the application that holds this component, which
     /// every call binds as `app.application`.
-    application: String,
+    application: Option<String>,
 }
 
 /// The facts of one native call that only this policy reads.
@@ -169,17 +169,23 @@ pub(super) fn new_native_policy(
                 statements: prepare_statement_sets(served, &manifest.routes),
                 members,
                 runtime_schema: served.runtime_schema.clone(),
-                application: wamn_catalog::application_for_package(
-                    &resources.release.target().applications,
-                    &served.package_id,
-                )
-                .with_context(|| {
-                    format!(
-                        "package {} must belong to exactly one declared application",
-                        served.package_id
+                application: if served.package_id == wamn_catalog::PALETTE_PACKAGE_ID {
+                    None
+                } else {
+                    Some(
+                        wamn_catalog::application_for_package(
+                            &resources.release.target().applications,
+                            &served.package_id,
+                        )
+                        .with_context(|| {
+                            format!(
+                                "package {} must belong to exactly one declared application",
+                                served.package_id
+                            )
+                        })?
+                        .to_owned(),
                     )
-                })?
-                .to_owned(),
+                },
             }))
         };
     let mut facts = BTreeMap::new();
@@ -262,9 +268,18 @@ impl InvocationPolicy for NativePolicy {
             );
             return Ok(facts.clone());
         }
+        let application = match component.application.as_deref() {
+            Some(application) => application,
+            None => connection_http::released_invocation_application(
+                self.resources.release.manifest(),
+                self.resources.release.target(),
+                &facts.acquisition.invocation,
+            )
+            .context("palette invocation has no declared workflow application")?,
+        };
         let mut identity = facts
             .acquisition
-            .executing_identity(facts.caller.as_ref(), &component.application);
+            .executing_identity(facts.caller.as_ref(), application);
         if let Some(schema) = &component.runtime_schema {
             identity.schema = Some(schema.clone());
         }

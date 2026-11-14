@@ -249,6 +249,34 @@ pub struct HostRoute {
 
 const ROUTES: &[HostRoute] = &[
     HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.configure",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.delete",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.operation_status",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "pat.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
         set: HostRouteSet::Application,
         operation: "file.put",
         type_: OperationType::Command,

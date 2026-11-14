@@ -72,24 +72,21 @@ impl Operation {
         project: &str,
         env: &str,
         database: &str,
-        metadata: bool,
         apply_credential: &str,
     ) -> Vec<(String, &'static str, &'static str)> {
         let mut needs = vec![
             (apply_credential.into(), "apply", "/credentials/apply"),
             ("wamn-ctl-nats".into(), "nats", "/credentials/nats"),
         ];
-        if !metadata {
-            needs.push((
-                wamn_registry::name::operation_registry(org),
-                "registry",
-                "/credentials/registry",
-            ));
-        }
         if self.privileged() {
             let owner = wamn_control_provision::migrations::MigrationDatabase::Project
                 .managed_role(database);
             needs.push((owner.password_secret.name, "owner", "/credentials/owner"));
+            needs.push((
+                wamn_control_provision::project_env_cdc_secret_name(org, project, env),
+                "capture",
+                "/credentials/capture",
+            ));
             needs.push((
                 wamn_control_provision::workload_secret_name(
                     wamn_control_provision::WorkloadRoleFamily::Migration,
@@ -337,7 +334,6 @@ fn manifest(
         &request.project,
         &request.env,
         database,
-        metadata,
         apply_credential,
     ) {
         volumes.push(json!({"name":volume,"secret":{"secretName":secret}}));
@@ -364,6 +360,7 @@ fn manifest(
     container["volumeMounts"] = mounts.into();
     container["resources"] =
         json!({"requests":{"cpu":"100m","memory":"256Mi"},"limits":{"cpu":"2","memory":"2Gi"}});
+    wamn_kubernetes::job::registry(&mut job, metadata);
     wamn_kubernetes::job::environment(&mut job, &[("WAMN_DEPLOY_ACTOR", actor)]);
     job
 }

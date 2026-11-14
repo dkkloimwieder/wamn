@@ -3923,13 +3923,18 @@ async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_u
 }
 
 #[tokio::test]
-async fn queued_caller_retains_typed_connection_unavailable() -> anyhow::Result<()> {
+async fn workflow_caller_retains_typed_connection_unavailable() -> anyhow::Result<()> {
     let postgres = WamnPostgres::with_provider(std::sync::Arc::new(StaticCredentialProvider::new(
         std::collections::HashMap::new(),
         None,
     )));
     let error = postgres
-        .queued_run_caller("default", "org--dev--a", "principal", None)
+        .workflow_node_caller(
+            "default",
+            "org--dev--a",
+            "00000000-0000-4000-8000-000000000081",
+            "reader",
+        )
         .await
         .expect_err("an unavailable credential refuses the caller lookup");
     assert!(matches!(

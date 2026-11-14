@@ -55,8 +55,6 @@ targets = [
   { workspace="root", package="wamn-environment", target="test:netsuite_publication", tier="live-postgres" },
   { workspace="root", package="wamn-package-control", target="test:package_artifact_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:platform_grants_live", tier="live-postgres" },
-  { workspace="root", package="wamn-environment", target="test:platform_render", tier="contract" },
-  { workspace="root", package="wamn-environment", target="test:provision_org_admin_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:provision_system_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:prune_record_history_live", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:release_chart_render", tier="contract" },
@@ -150,10 +148,6 @@ targets = [
   { workspace="root", package="wamn-platform-identity", target="test:project_connections", tier="live-postgres" },
   { workspace="root", package="wamn-platform-identity", target="test:project_schema", tier="live-postgres" },
   { workspace="root", package="wamn-receiving-tests", target="lib:wamn_receiving_tests", tier="live-nats" },
-  { workspace="root", package="wamn-router", target="lib:wamn_router", tier="unit" },
-  { workspace="root", package="wamn-router", target="test:route", tier="unit" },
-  { workspace="root", package="wamn-router", target="test:terminal", tier="unit" },
-  { workspace="root", package="wamn-router", target="test:walk", tier="unit" },
   { workspace="root", package="wamn-run-state", target="lib:wamn_run_state", tier="contract" },
   { workspace="root", package="wamn-run-state", target="test:admission_live", tier="live-postgres" },
   { workspace="root", package="wamn-run-state", target="test:queue", tier="unit" },
@@ -201,7 +195,6 @@ targets = [
   { workspace="root", package="wamn-wms-tests", target="lib:wamn_wms_tests", tier="live-nats" },
   { workspace="root", package="wamn-workflow", target="lib:wamn_workflow", tier="live-postgres" },
   { workspace="root", package="wamn-workflow", target="test:schedule_decisions", tier="unit" },
-  { workspace="root", package="wamn-workflow", target="test:wiring_lowering", tier="contract" },
   { workspace="root", package="wamn-digest", target="lib:wamn_digest", tier="contract" },
   { workspace="root", package="wamn-scalar", target="lib:wamn_scalar", tier="contract" },
   { workspace="apps", package="fixture", target="cdylib:fixture", tier="contract" },
@@ -533,11 +526,6 @@ target = ["test:application_composition"]
 prerequisites = ["http-route"]
 
 [[preparation]]
-packages = ["wamn-ctl"]
-target = ["test:platform_update"]
-prerequisites = ["helm"]
-
-[[preparation]]
 packages = ["wamn-runtime"]
 target = ["lib:wamn_runtime"]
 prerequisites = ["nats", "sqlx-command"]
@@ -661,7 +649,7 @@ id = "prekind"
 tier = "contract"
 workspace = "root"
 package = "wamn-environment"
-target = ["test:environment_render", "test:platform_render"]
+target = ["test:environment_render"]
 tests = []
 features = ["ops"]
 prerequisites = ["helm"]

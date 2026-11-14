@@ -55,6 +55,6 @@
     }
   },
   "connections": [
-    { "store-alias": "upstream", "requirement-type": "http" }
+    { "store-alias": { "parameter": "requirement" }, "requirement-type": "http" }
   ]
 }

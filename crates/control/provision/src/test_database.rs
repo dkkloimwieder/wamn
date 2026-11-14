@@ -156,7 +156,11 @@ pub fn login_sql(
         crate::sql::ensure_workload_acl_role_sql(family),
         escape_identifier(role),
         escape_literal(password),
-        membership_sql(family, role, true),
+        format!(
+            "{} {}",
+            membership_sql(family, role, true),
+            sql::platform_group_membership_sql(family)
+        ),
         crate::sql::grant_workload_login_sql(family, database, role)
     )
 }

@@ -226,23 +226,22 @@ pub async fn write(
          FROM catalog.connection_requirement q WHERE q.project_env_key=$1 AND EXISTS (\
          SELECT FROM catalog.releases r CROSS JOIN LATERAL \
          jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb->'components') c \
-         WHERE r.project_env_key=$1 AND r.manifest_digest=$2 AND c->>'package-id'=q.package_id \
+         WHERE r.project_env_key=$1 AND r.manifest_digest=$2 AND (c->>'package-id'=q.package_id OR (c->>'package-id'=$3 AND EXISTS (SELECT FROM jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb #> '{release,packages}') p WHERE p->>'package-id'=q.package_id))) \
          AND c->'descriptor'->>'component-digest'=q.component_digest)",
     )
     .bind(project_env_key)
     .bind(digest)
+    .bind(wamn_catalog::PALETTE_PACKAGE_ID)
     .fetch_all(&mut **tx)
     .await?
     {
         let package: String = row.get(1);
-        let application = document.application_for_package(&package).ok_or_else(|| {
-            anyhow::anyhow!("release package {package} has no sole application owner")
-        })?;
+        let application = document.application_for_package(&package).ok_or_else(|| anyhow::anyhow!("release package {package} has no sole application owner"))?;
         let name: String = row.get(2);
         let binding = bindings
             .iter()
-            .find(|b| b.application == application && b.alias == name)
-            .ok_or_else(|| anyhow::anyhow!("connection_unbound: {application}.{name}"))?;
+            .find(|b| b.application == application && b.alias == name);
+        let binding = binding.ok_or_else(|| anyhow::anyhow!("connection_unbound: {application}.{name}"))?;
         let required: String = row.get(3);
         anyhow::ensure!(
             exports_satisfy(&binding.exports, std::slice::from_ref(&required)),

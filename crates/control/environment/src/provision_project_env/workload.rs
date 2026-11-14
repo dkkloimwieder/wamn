@@ -1,195 +1,19 @@
 //! CNPG role credentials and non-secret component connection configuration.
 
-use std::path::Path;
-use std::time::Duration;
-
 use anyhow::Context as _;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ring::rand::{SecureRandom as _, SystemRandom};
-use serde_json::{Value, json};
-use wamn_control_provision::connection::{ManagedRole, managed_role};
+use serde_json::json;
+use wamn_control_provision::connection::managed_role;
 use wamn_control_provision::{
     WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, sql, workload_login,
 };
-use wamn_kubernetes::{kubectl, secret};
-use wamn_postgres::{ConnectionConfig, SecretRef};
+use wamn_kubernetes::kubectl;
 use wamn_registry::Triple;
 
 use crate::environment::{Platform, document::EnvironmentDocument};
 
-/// Reconcile one basic-auth Secret and one entry in CNPG's role declarations.
-/// A resource-version comparison preserves other environments' role declarations.
-pub(crate) async fn reconcile(
-    kubeconfig: &Path,
-    context: &str,
-    namespace: &str,
-    cluster: &str,
-    declaration: &ManagedRole,
-) -> anyhow::Result<()> {
-    let username = declaration.name.as_str();
-    let secret_name = declaration.password_secret.name.as_str();
-    secret::update(kubeconfig, context, namespace, secret_name, |secret| {
-        if secret.metadata.resource_version.is_none() {
-            let mut bytes = [0u8; 32];
-            SystemRandom::new()
-                .fill(&mut bytes)
-                .map_err(|_| anyhow::anyhow!("generate database credential"))?;
-            *secret =
-                secret::Secret::basic_auth(namespace, secret_name, username, &hex::encode(bytes));
-        } else {
-            anyhow::ensure!(
-                secret.content_type == "kubernetes.io/basic-auth",
-                "old database Secret shape refused"
-            );
-            let user = secret
-                .data
-                .get("username")
-                .context("database Secret has no username")?;
-            anyhow::ensure!(
-                STANDARD.decode(user)? == username.as_bytes()
-                    && secret.data.contains_key("password"),
-                "database Secret names another role"
-            );
-        }
-        Ok(())
-    })
-    .await?;
-    let role = serde_json::to_value(declaration)?;
-    edit_roles(kubeconfig, context, namespace, cluster, |roles| {
-        if let Some(existing) = roles.iter_mut().find(|entry| entry["name"] == username) {
-            *existing = role.clone();
-        } else {
-            roles.push(role.clone());
-        }
-    })
-    .await
-}
-
-/// Stop managing logins before their owning environment drops them.
-pub(crate) async fn remove_roles(
-    kubeconfig: &Path,
-    context: &str,
-    namespace: &str,
-    cluster: &str,
-    names: &[String],
-) -> anyhow::Result<()> {
-    edit_roles(kubeconfig, context, namespace, cluster, |roles| {
-        roles.retain(|role| {
-            role["name"]
-                .as_str()
-                .is_none_or(|name| !names.iter().any(|entry| entry == name))
-        });
-    })
-    .await
-}
-
-async fn edit_roles(
-    kubeconfig: &Path,
-    context: &str,
-    namespace: &str,
-    cluster: &str,
-    edit: impl Fn(&mut Vec<Value>),
-) -> anyhow::Result<()> {
-    for attempt in 0..5 {
-        let object: Value = kubectl::get(
-            kubeconfig,
-            context,
-            namespace,
-            "cluster.postgresql.cnpg.io",
-            cluster,
-        )
-        .await?
-        .context("CNPG cluster is absent from the org namespace")?;
-        let mut managed = object["spec"]["managed"]
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
-        let mut roles = managed
-            .get("roles")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let previous = roles.clone();
-        edit(&mut roles);
-        if previous == roles {
-            return Ok(());
-        }
-        managed.insert("roles".into(), roles.into());
-        let patch = json!([
-            {"op":"test", "path":"/metadata/resourceVersion", "value":object["metadata"]["resourceVersion"]},
-            {"op":"add", "path":"/spec/managed", "value":managed}
-        ]).to_string();
-        let result = kubectl::kubectl(
-            kubeconfig,
-            context,
-            namespace,
-            &[
-                "patch",
-                "cluster.postgresql.cnpg.io",
-                cluster,
-                "--type=json",
-                "-p",
-                &patch,
-            ],
-            None,
-        )
-        .await;
-        match result {
-            Ok(_) => return Ok(()),
-            Err(error) if attempt < 4 && error.is::<kubectl::Conflict>() => {}
-            Err(error) => return Err(error),
-        }
-    }
-    unreachable!("last role declaration update returns its result")
-}
-
-pub(crate) fn configuration(
-    namespace: &str,
-    cluster: &str,
-    host: String,
-    port: u16,
-    database: String,
-    username: String,
-    secret: String,
-) -> ConnectionConfig {
-    ConnectionConfig {
-        host,
-        port,
-        database,
-        username,
-        credentials: SecretRef {
-            namespace: namespace.into(),
-            name: secret,
-        },
-        server_ca: SecretRef {
-            namespace: namespace.into(),
-            name: format!("{cluster}-ca"),
-        },
-    }
-}
-
-pub(crate) async fn wait_role(
-    connection: &mut sqlx::PgConnection,
-    username: &str,
-) -> anyhow::Result<()> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-    loop {
-        let present: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1 AND rolcanlogin)",
-        )
-        .bind(username)
-        .fetch_one(&mut *connection)
-        .await?;
-        if present {
-            return Ok(());
-        }
-        anyhow::ensure!(
-            tokio::time::Instant::now() < deadline,
-            "CNPG did not reconcile the database login"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
+pub(crate) use wamn_platform_install::credentials::{
+    configuration, provision_platform_migration, reconcile, remove_roles, wait_role,
+};
 
 /// Provision every role once and publish only public connection facts in a ConfigMap.
 pub(crate) async fn provision(
@@ -268,6 +92,7 @@ pub(crate) async fn provision(
             .execute(&mut *connection)
             .await?;
         reconcile(
+            &platform.system_database_url,
             &platform.target.kubeconfig,
             &platform.target.context,
             namespace,
@@ -276,14 +101,6 @@ pub(crate) async fn provision(
         )
         .await?;
         wait_role(connection, &username).await?;
-        if family == WorkloadRoleFamily::Migration {
-            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-                "GRANT {} TO wamn_db_owner WITH ADMIN FALSE, INHERIT TRUE, SET TRUE",
-                postgres_protocol::escape::escape_identifier(&username)
-            )))
-            .execute(&mut *connection)
-            .await?;
-        }
         sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
             family, database, &username,
         )))
@@ -421,103 +238,4 @@ pub(crate) async fn restore_database_access(
         }
     }
     Ok(())
-}
-
-/// Create a managed control-database login and publish its public configuration.
-pub async fn provision_control_role(
-    input: &str,
-    namespace: &str,
-    family: WorkloadRoleFamily,
-) -> anyhow::Result<()> {
-    let options = wamn_postgres::connect_options(input).await?;
-    let database = options
-        .get_database()
-        .context("control database is absent")?;
-    let cluster = options
-        .get_host()
-        .split('.')
-        .next()
-        .context("control host is absent")?
-        .trim_end_matches("-rw");
-    let username = workload_login(
-        family,
-        WorkloadRoleIdentity::Org {
-            org: namespace,
-            database,
-        },
-    )?;
-    let secret = wamn_control_provision::org_workload_secret_name(family, namespace);
-    let kubeconfig = std::env::var_os("KUBECONFIG")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_default();
-    let mut connection = wamn_postgres::connect(input).await?;
-    let surface = sql::stable_surface_sql(family)
-        .unwrap_or_else(|| sql::ensure_workload_acl_role_sql(family));
-    sqlx::raw_sql(sqlx::AssertSqlSafe(surface))
-        .execute(&mut connection)
-        .await?;
-    reconcile(
-        &kubeconfig,
-        "",
-        namespace,
-        cluster,
-        &managed_role(username.clone(), family.acl_role(), secret.clone()),
-    )
-    .await?;
-    wait_role(&mut connection, &username).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
-        family, database, &username,
-    )))
-    .execute(&mut connection)
-    .await?;
-    let config = configuration(
-        namespace,
-        cluster,
-        options.get_host().into(),
-        options.get_port(),
-        database.into(),
-        username,
-        secret,
-    );
-    let name = wamn_registry::name::control_administration_secret_name(namespace);
-    let object = json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":name,"namespace":namespace},"data":{"control.json":config.to_json()?}});
-    kubectl::apply(&kubeconfig, "", namespace, &object).await?;
-    Ok(())
-}
-
-/// Reconcile the platform scope's own CNPG login and return its public connection configuration.
-pub(crate) async fn provision_platform_migration(
-    input: &str,
-    scope: wamn_control_provision::migrations::MigrationDatabase,
-) -> anyhow::Result<String> {
-    let source = wamn_postgres::configuration(input)?;
-    let config: ConnectionConfig = serde_json::from_str(&source)
-        .context("explicit platform initialization requires a separate migration connection")?;
-    let cluster = config
-        .server_ca
-        .name
-        .strip_suffix("-ca")
-        .context("CNPG CA Secret must identify its cluster")?;
-    let role = scope.managed_role(&config.database);
-    let kubeconfig = std::env::var_os("KUBECONFIG")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_default();
-    reconcile(
-        &kubeconfig,
-        "",
-        &config.credentials.namespace,
-        cluster,
-        &role,
-    )
-    .await?;
-    let mut admin = wamn_postgres::connect(input).await?;
-    wait_role(&mut admin, &role.name).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "GRANT CONNECT ON DATABASE {} TO {}",
-        postgres_protocol::escape::escape_identifier(&config.database),
-        postgres_protocol::escape::escape_identifier(&role.name)
-    )))
-    .execute(&mut admin)
-    .await?;
-    scope.configuration(input)
 }

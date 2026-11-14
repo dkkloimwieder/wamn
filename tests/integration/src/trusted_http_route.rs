@@ -32,7 +32,6 @@ use wamn_catalog::component_artifact_reference;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
     ComponentDescriptor, SERVING_MANIFEST_FORMAT_VERSION, WiringDocument, WiringNode,
-    WiringTerminal,
 };
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
@@ -119,13 +118,16 @@ pub struct TrustedHttpRoute {
 
 impl TrustedHttpRoute {
     /// Execute the request shape that the queue supplies for an environment workflow.
-    pub async fn execute(
-        &self,
-        run: wamn_workflow::RouterDriverRequest,
-    ) -> anyhow::Result<wamn_workflow::RouterDelivery> {
+    pub async fn execute(&self, id: u64) -> anyhow::Result<wamn_workflow::Outcome> {
         self.driver
             .execute_workflow(wamn_workflow::WorkflowRunRequest {
-                run,
+                project_env_key: PROJECT_ENV_KEY.to_owned(),
+                package_id: PACKAGE.to_owned(),
+                environment: ENVIRONMENT.to_owned(),
+                wiring_id: WIRING_ID.to_owned(),
+                wiring_version: WIRING_VERSION,
+                delivery_id: format!("reuse-{id}"),
+                payload: serde_json::json!({"id": id}),
                 wiring_hash: self.wiring_hash.clone(),
                 node_digests: BTreeMap::from([(NODE_ID.to_owned(), self.component_digest.clone())]),
                 identity: wamn_workflow::WorkflowIdentity {
@@ -135,6 +137,7 @@ impl TrustedHttpRoute {
                 causation: None,
             })
             .await
+            .0
     }
 }
 
@@ -372,23 +375,21 @@ async fn build_with_credentials(
     })
 }
 
-/// The SHIPPED palette declaration, rendered from its template.
-///
-/// Read from the template rather than restated here: a copy would drift from
-/// the guest's real parameter contract, and `validate_parameters` in
-/// `wiring_lowering` tests this node's params against exactly these
-/// declarations.
+/// The shipped guest declaration, rendered for this package fixture.
+/// Catalog wiring compatibility owns validation of node parameters and ports.
 fn declaration() -> anyhow::Result<ComponentDeclaration> {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let template = std::fs::read_to_string(format!(
+    let template = PathBuf::from(format!(
         "{root}/apps/platform/no-std/http-request/declaration.json.in"
-    ))
-    .context("read the http-request declaration template")?;
-    let rendered = template
-        .replace("__PROJECT_ENV_KEY__", PROJECT_ENV_KEY)
-        .replace("__PACKAGE_ID__", PACKAGE)
-        .replace("__PACKAGE_VERSION__", PACKAGE_VERSION);
-    serde_json::from_str(&rendered).context("parse the rendered http-request declaration")
+    ));
+    let target =
+        wamn_catalog::ComponentPackageCoordinate::new(PROJECT_ENV_KEY, PACKAGE, PACKAGE_VERSION)?;
+    let document = wamn_package_control::component_declaration::render_palette_declaration(
+        &template,
+        &target,
+        Some(STORE_ALIAS),
+    )?;
+    serde_json::from_value(document).context("parse the rendered http-request declaration")
 }
 
 /// One node: the guest calls the upstream and responds with what it answered.
@@ -417,7 +418,7 @@ fn wiring_document(path_and_query: &str) -> WiringDocument {
                         serde_json::Value::from(path_and_query),
                     ),
                 ]),
-                terminal: Some(WiringTerminal::Respond),
+                terminal: None,
             },
         )]),
         edges: Vec::new(),
@@ -445,7 +446,7 @@ fn release_manifest(
             "descriptor": ComponentDescriptor::new(
                 component.clone(),
                 vec![ComponentConnection {
-                    store_alias: STORE_ALIAS.to_owned(),
+                    store_alias: STORE_ALIAS.to_owned().into(),
                     requirement_type: ComponentConnectionType::Http,
                 }],
             ),
@@ -783,11 +784,11 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::task::{JoinHandle, JoinSet};
 
-    use wamn_workflow::{RouterDelivery, RouterDriverRequest};
+    use wamn_workflow::Outcome;
 
     use super::{
-        CREDENTIAL_HANDLE, ENVIRONMENT, NODE_ID, PACKAGE, PROJECT, PROJECT_ENV_KEY, RouteOptions,
-        WIRING_ID, WIRING_VERSION, build_with_credentials, credential_fixture, credential_secret,
+        CREDENTIAL_HANDLE, ENVIRONMENT, NODE_ID, PROJECT, RouteOptions, build_with_credentials,
+        credential_fixture, credential_secret,
     };
 
     const ROTATED_HANDLE: &str = "org:acme:upstream-v2";
@@ -907,34 +908,18 @@ mod tests {
         }
     }
 
-    fn request(id: u64) -> RouterDriverRequest {
-        RouterDriverRequest {
-            project_env_key: PROJECT_ENV_KEY.to_owned(),
-            package_id: PACKAGE.to_owned(),
-            environment: ENVIRONMENT.to_owned(),
-            wiring_id: WIRING_ID.to_owned(),
-            wiring_version: WIRING_VERSION,
-            delivery_id: format!("reuse-{id}"),
-            payload: serde_json::json!({"id": id}),
-            caller_attached: true,
-            caller: None,
-            traceparent: None,
-            tracestate: None,
-        }
-    }
-
     async fn assert_observed_request(
         origin: &mut Origin,
-        delivery: RouterDelivery,
+        delivery: Outcome,
         request_id: u64,
         authorization: &str,
     ) -> anyhow::Result<u64> {
         assert!(
-            delivery.outcome.failure.is_none(),
+            delivery.failure.is_none(),
             "real HTTP guest failed: {:?}",
-            delivery.outcome.failure
+            delivery.failure
         );
-        assert_eq!(delivery.outcome.result["status"], 200);
+        assert_eq!(delivery.result["status"], 200);
         let observed_request = origin
             .requests
             .recv()
@@ -949,9 +934,9 @@ mod tests {
             observed_request.idempotency_key,
             format!("reuse-{request_id}:{NODE_ID}:0")
         );
-        assert_eq!(delivery.outcome.result["body"]["request-id"], request_id);
+        assert_eq!(delivery.result["body"]["request-id"], request_id);
         assert_eq!(
-            delivery.outcome.result["body"]["connection-id"],
+            delivery.result["body"]["connection-id"],
             observed_request.connection_id
         );
         Ok(observed_request.connection_id)
@@ -1070,14 +1055,14 @@ mod tests {
         // The peer identity comes from accept(), not a transport cache counter.
         let first = assert_observed_request(
             &mut origin,
-            route.execute(request(1)).await?,
+            route.execute(1).await?,
             1,
             "Basic Zml4dHVyZTpmaXh0dXJlLXRva2Vu",
         )
         .await?;
         let second = assert_observed_request(
             &mut origin,
-            route.execute(request(2)).await?,
+            route.execute(2).await?,
             2,
             "Basic Zml4dHVyZTpmaXh0dXJlLXRva2Vu",
         )
@@ -1088,9 +1073,8 @@ mod tests {
         );
 
         set_instance_status(route.credential_database.url(), "disabled").await?;
-        let denied = route.execute(request(3)).await?;
+        let denied = route.execute(3).await?;
         let failure = denied
-            .outcome
             .failure
             .context("warm transport bypassed the disabled connection instance")?;
         assert_eq!(failure.node, NODE_ID);
@@ -1111,7 +1095,7 @@ mod tests {
         rotate(route.credential_database.url(), 2, CREDENTIAL_HANDLE).await?;
         let generation_two = assert_observed_request(
             &mut origin,
-            route.execute(request(7)).await?,
+            route.execute(7).await?,
             7,
             "Basic Zml4dHVyZTpmaXh0dXJlLXRva2Vu",
         )
@@ -1123,7 +1107,7 @@ mod tests {
         rotate(route.credential_database.url(), 3, ROTATED_HANDLE).await?;
         let generation_three = assert_observed_request(
             &mut origin,
-            route.execute(request(10)).await?,
+            route.execute(10).await?,
             10,
             ROTATED_AUTHORIZATION,
         )
@@ -1134,7 +1118,7 @@ mod tests {
         );
         let generation_three_again = assert_observed_request(
             &mut origin,
-            route.execute(request(11)).await?,
+            route.execute(11).await?,
             11,
             ROTATED_AUTHORIZATION,
         )
@@ -1145,7 +1129,7 @@ mod tests {
         );
         assert_observed_request(
             &mut origin,
-            route.execute(request(13)).await?,
+            route.execute(13).await?,
             13,
             ROTATED_AUTHORIZATION,
         )

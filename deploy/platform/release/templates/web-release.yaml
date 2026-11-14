@@ -2,8 +2,8 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Release.Name }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ (default .Release.Name .Values.name) }}
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
   {{- if .Values.applications }}
   annotations:
     {{- include "release.annotations" . | nindent 4 }}
@@ -17,8 +17,8 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Release.Name }}-route
-  namespace: {{ .Release.Namespace }}
+  name: {{ (default .Release.Name .Values.name) }}-route
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
   labels:
     wamn.route: "true"
   {{- if .Values.applications }}
@@ -26,5 +26,5 @@ metadata:
     {{- include "release.annotations" . | nindent 4 }}
   {{- end }}
 data:
-  route.json: {{ dict "host" .Values.routeHost "release" .Release.Name "api" (printf "http://%s-http.%s.svc.cluster.local" .Release.Name .Release.Namespace) "files" (ternary (printf "http://%s-files.%s.svc.cluster.local" .Release.Name .Release.Namespace) "" (not (empty .Values.applications))) | toJson | quote }}
+  route.json: {{ dict "host" .Values.routeHost "release" (default .Release.Name .Values.name) "api" (printf "http://%s-http.%s.svc.cluster.local" (default .Release.Name .Values.name) (default .Release.Namespace .Values.namespace)) "files" (ternary (printf "http://%s-files.%s.svc.cluster.local" (default .Release.Name .Values.name) (default .Release.Namespace .Values.namespace)) "" (not (empty .Values.applications))) | toJson | quote }}
 {{- end }}

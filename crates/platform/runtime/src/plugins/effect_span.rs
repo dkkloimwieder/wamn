@@ -96,9 +96,6 @@
 //! node on three of its four operations, and on the fourth its native callers
 //! hand down a position but no per-visit invocation (`wamn-0h0g.24.15`).
 //! `wamn-0h0g.24.2` landed the invocation span itself and covered none of them.
-//! (`wamn_router::NodeInvoker` has only test implementors because its `invoke`
-//! is synchronous; `RouterDriver` drives `wiring.next` / `Step::Invoke` directly
-//! and is the production driver.)
 //!
 //! The EXECUTING COMPONENT IDENTITY and the NODE OPERATION arrive the same way,
 //! and a reader has to know what each one answers. `ConnectionInvocation`, the

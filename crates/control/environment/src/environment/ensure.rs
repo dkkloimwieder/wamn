@@ -3,7 +3,6 @@
 
 use sqlx::Row as _;
 pub(super) mod plan;
-pub use plan::credential_access;
 pub(super) use plan::management_author_pat_name;
 
 use std::io::Write as _;
@@ -63,16 +62,26 @@ pub async fn provision_resources(
         issue_pat.then_some(pat_secret.as_path()),
     )
     .await?;
-    crate::platform::operations::provision(platform, document, &cluster).await?;
-    ensure_credential_access(platform, document, &cluster).await?;
-    kubectl(
-        platform,
-        &platform.database_namespace,
-        &["apply", "-f", "-"],
-        Some(&serde_json::to_vec(&outcome.database_cr)?),
+    crate::platform::operations::provision(
+        &platform.target,
+        &platform.chart,
+        &triple,
+        &cluster,
+        &outcome.database,
     )
-    .await
-    .context("apply the Database CR")?;
+    .await?;
+    ensure_credential_access(platform, document, &cluster).await?;
+    wamn_platform_install::environment::apply(
+        &platform.target,
+        &platform.chart.join("platform/environment"),
+        &wamn_control_provision::environment_names::environment_resource_name(
+            &document.org,
+            &document.project,
+            &document.env,
+        )?,
+        outcome.database_values.clone(),
+    )
+    .await?;
     wait_applied(platform, "database", &outcome.database).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(outcome.privilege_sql.clone()))
         .execute(&mut admin)
@@ -107,22 +116,24 @@ pub async fn provision_resources(
         std::time::Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?),
     )
     .await?;
-    for mut object in wamn_broker::authorization::update_authorization(
+    let certificates = wamn_broker::authorization::update_authorization(
         &platform.target,
         &document.org,
         Some(&document.triple()),
     )
-    .await?
-    {
-        object["metadata"]["namespace"] = namespace.into();
-        wamn_kubernetes::kubectl::apply(
-            &platform.target.kubeconfig,
-            &platform.target.context,
-            namespace,
-            &object,
-        )
-        .await?;
-    }
+    .await?;
+    let name = wamn_control_provision::environment_names::environment_resource_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    )?;
+    wamn_platform_install::environment::apply(
+        &platform.target,
+        &platform.chart.join("platform/environment"),
+        &name,
+        wamn_platform_install::environment::broker_certificates(certificates),
+    )
+    .await?;
     prepare_cdc(platform, document, &mut admin, &project_admin).await?;
     ensure_streams(platform, document, &[]).await?;
     provision_materializer(platform, control, document).await?;
@@ -285,15 +296,16 @@ pub fn materializer_host_values(
 
 /// Render the environment materializer on its stable host group.
 pub fn materializer_workload(
+    chart: &Path,
     document: &EnvironmentDocument,
     namespace: &str,
     image: &str,
     insecure_registry: bool,
 ) -> anyhow::Result<serde_json::Value> {
-    use wamn_control_provision::materializer_workload::{self, EventIdentity, MaterializerInput};
+    use crate::platform::materializer::{self, EventIdentity, MaterializerInput};
     let name = environment_host_name(&document.org, &document.project, &document.env)?;
-    let rendered = materializer_workload::render_materializer(
-        include_str!("../../../../../deploy/platform/materializer.example.yaml"),
+    let rendered = materializer::render_materializer(
+        &chart.join("platform/environment"),
         &MaterializerInput {
             workload: wamn_registry::name::resource_suffix(&name, "materializer"),
             namespace: namespace.to_owned(),
@@ -313,8 +325,8 @@ pub fn materializer_workload(
                 &document.project,
                 &document.env,
             ),
-            fetch_ms: materializer_workload::FETCH_MS,
-            sweep_ms: materializer_workload::SWEEP_MS,
+            fetch_ms: materializer::FETCH_MS,
+            sweep_ms: materializer::SWEEP_MS,
         },
     )?;
     let mut workload: serde_json::Value = serde_yaml::from_str(&rendered)?;
@@ -358,38 +370,23 @@ pub(super) async fn provision_materializer(
         platform.insecure_registry,
         installed.as_ref(),
     )?;
-    let private = PrivateDirectory::create()?;
-    let values = private.path("environment-host.yaml");
-    std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
-    super::runtime::require_chart_references(&platform.target, &platform.chart, &name, &desired)
-        .await?;
-    release_chart::recover_pending(&platform.target, &name).await?;
-    release_chart::upgrade(
-        &platform.target,
-        &platform.chart,
-        &name,
-        &values,
-        std::time::Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?),
-        "environment provisioning",
-    )
-    .await?;
+    let mut values: serde_json::Value =
+        serde_yaml::from_slice(&std::fs::read(platform.chart.join("values.yaml"))?)?;
+    crate::platform::resources::merge(&mut values, desired);
     let image = release_chart::image_set(&platform.chart)
         .await?
         .materializer;
-    let workload = materializer_workload(
-        document,
-        &platform.target.namespace,
-        &image,
-        platform.insecure_registry,
-    )?;
-    wamn_kubernetes::kubectl::apply(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        &platform.target.namespace,
-        &workload,
-    )
-    .await
-    .context("apply the environment materializer")?;
+    values["materializer"] = serde_json::json!({
+        "name":wamn_registry::name::resource_suffix(&name,"materializer"),"hostGroup":name,
+        "image":super::runtime::pod_artifact_base(platform.insecure_registry, &image)?,
+        "projectEnvKey":wamn_registry::project_env_key(&document.org,&document.project,&document.env),
+        "org":document.org,"project":document.project,"environment":document.env,
+        "stream":wamn_event_wire::stream_name(&document.org,&document.project,&document.env),
+        "fetchMs":crate::platform::materializer::FETCH_MS,"sweepMs":crate::platform::materializer::SWEEP_MS,
+    });
+    let chart = platform.chart.join("platform/environment");
+    super::runtime::require_chart_references(&platform.target, &chart, &name, &values).await?;
+    wamn_platform_install::environment::apply(&platform.target, &chart, &name, values).await?;
     kubectl(
         platform,
         &platform.target.namespace,
@@ -514,6 +511,7 @@ pub(crate) async fn ensure_project_database_with_migrations(
     let mut project = connect(&project_admin).await?;
     if crate::platform_migrations::install_project(&mut project).await? {
         let migration_input = crate::provision_project_env::workload::provision_platform_migration(
+            &platform.system_database_url,
             &project_admin,
             wamn_control_provision::migrations::MigrationDatabase::Project,
         )
@@ -578,6 +576,7 @@ pub(super) async fn prepare_cdc(
         &document.env,
     );
     crate::provision_project_env::workload::reconcile(
+        &platform.system_database_url,
         &platform.target.kubeconfig,
         &platform.target.context,
         &document.org,
@@ -714,8 +713,21 @@ pub(crate) async fn ensure_cdc_inputs(
         &administrator_env
     };
     let admin_url = wamn_postgres::database_configuration(administrator, &database)?;
+    let capture = if wamn_postgres::configuration(&platform.system_database_url)?
+        .trim_start()
+        .starts_with('{')
+    {
+        wamn_platform_install::environment::capture_connection(
+            &platform.system_database_url,
+            &document.triple(),
+        )
+        .await?
+    } else {
+        admin_url.clone()
+    };
     crate::enable_cdc_project_env::apply_cdc_sql(
         admin_url.as_str(),
+        &capture,
         &schemas,
         &cdc_name,
         &database,
@@ -779,7 +791,7 @@ pub(crate) async fn ensure_cdc_inputs(
 /// Provision the environment's source and advisory streams, with the same
 /// target, consumers and duplicate window as [`enable_cdc`], and no slot,
 /// publication or reader. Without an event broker there is nothing to provision.
-async fn ensure_streams(
+pub(super) async fn ensure_streams(
     platform: &Platform,
     document: &EnvironmentDocument,
     manifests: &[wamn_compiler::manifest::PackageManifest],
@@ -835,11 +847,10 @@ async fn enable_cdc(
         &document.env,
         instance,
     );
-    let publication = wamn_control_provision::database::render_project_env_publication(
+    let publication = wamn_platform_install::environment::publication_values(
         &document.triple(),
         instance,
         &cluster,
-        &platform.database_namespace,
         &capture,
         schemas,
     );
@@ -860,11 +871,16 @@ async fn enable_cdc(
             None,
         )
         .await?;
-        kubectl(
-            platform,
-            &platform.database_namespace,
-            &["apply", "-f", "-"],
-            Some(&serde_json::to_vec(&publication)?),
+        let name = wamn_control_provision::environment_names::environment_resource_name(
+            &document.org,
+            &document.project,
+            &document.env,
+        )?;
+        wamn_platform_install::environment::apply(
+            &platform.target,
+            &platform.chart.join("platform/environment"),
+            &name,
+            publication.clone(),
         )
         .await?;
         wait_applied(platform, "publication", &database).await?;
@@ -906,6 +922,17 @@ pub async fn cdc_in_place(
 /// The URL of the environment's project database: the system URL's login on
 /// the database the registry row names.
 pub(super) async fn project_url(platform: &Platform, triple: &Triple) -> anyhow::Result<String> {
+    if wamn_postgres::configuration(&platform.system_database_url)?
+        .trim_start()
+        .starts_with('{')
+    {
+        return wamn_platform_install::environment::connection(
+            &platform.system_database_url,
+            triple,
+        )
+        .await?
+        .to_json();
+    }
     let instance = read_project_env_instance(&platform.system_database_url, triple).await?;
     wamn_postgres::database_configuration(
         &platform.system_database_url,
@@ -1074,112 +1101,23 @@ async fn ensure_credential_access(
                 )
             }),
     );
-    for (_, mut object) in credential_access(&account, &secrets[0]) {
-        if object["kind"] == "Role" {
-            object["rules"][0]["resourceNames"] = serde_json::to_value(&secrets)?;
-        }
-        kubectl(
-            platform,
-            &document.org,
-            &["apply", "-f", "-"],
-            Some(&serde_json::to_vec(&object)?),
-        )
-        .await?;
-    }
-    Ok(())
+    let name = wamn_control_provision::environment_names::environment_resource_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    )?;
+    wamn_platform_install::environment::apply(
+        &platform.target,
+        &platform.chart.join("platform/environment"),
+        &name,
+        serde_json::json!({"credentialAccess":{"account":account,"secrets":secrets}}),
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn fresh_shared_host_consumes_installed_provider_runtime() -> anyhow::Result<()> {
-        use crate::platform::{control, document::ClusterDocument};
-        use serde_json::json;
-        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let chart = crate::platform::artifact_plan::test_util::prepared_chart(&repository)?;
-        for provider in ["gcp", "kind"] {
-            let cluster: ClusterDocument = serde_json::from_value(json!({
-                "provider":provider,
-                "project_id":if provider == "gcp" { "selected-project" } else { "" },
-                "zone":if provider == "gcp" { "us-east1-b" } else { "" },
-                "cluster_name":"selected", "org":document.org, "owner_email":"owner@example.com",
-                "registry":"registry.example", "buckets":{"web":"", "otel":"", "state":""},
-                "route_hosts":{"control":"control.example.com"}, "resend_from":"owner@example.com"
-            }))?;
-            let control = control::release_values(&cluster, &json!({}))?;
-            let insecure = super::super::runtime::insecure_registry(
-                &control["runtime-operator"]["runtime"]["hostGroups"][0],
-            );
-            let runtime =
-                super::super::runtime::host_group(&control, None, "registry.example/components")?;
-            let expected = serde_json::to_value(&runtime)?;
-            let desired =
-                materializer_host_values(&document, 70, 1, 120, Some(runtime), insecure, None)?;
-            let entry = json!({"chart":chart.0,
-                "version":crate::platform::artifact_plan::select(&chart.0)?.version,
-                "name":environment_host_name(&document.org, &document.project, &document.env)?,
-                "namespace":"hosts", "values":desired});
-            let objects = wamn_kubernetes::helm::template(&entry)?;
-            let deployment = objects
-                .iter()
-                .find(|object| object["kind"] == "Deployment")
-                .context("shared host Deployment")?;
-            let pod = &deployment["spec"]["template"]["spec"];
-            let host = &pod["containers"][0];
-            let variables = host["env"].as_array().context("shared host variables")?;
-            for variable in expected["env"]
-                .as_array()
-                .context("platform runtime variables")?
-            {
-                assert!(variables.contains(variable), "{provider}: {variable}");
-                let argument = match variable["name"].as_str() {
-                    Some("WAMN_REGISTRY_AUTH_FILE") => Some(format!(
-                        "--registry-auth-file={}",
-                        variable["value"].as_str().unwrap()
-                    )),
-                    Some("WAMN_REGISTRY_TOKEN_METADATA") => {
-                        Some("--registry-token-metadata".into())
-                    }
-                    _ => None,
-                };
-                if let Some(argument) = argument {
-                    assert!(host["args"].as_array().unwrap().contains(&json!(argument)));
-                }
-            }
-            for (field, rendered) in [
-                ("volumes", &pod["volumes"]),
-                ("volumeMounts", &host["volumeMounts"]),
-            ] {
-                for entry in expected[field]
-                    .as_array()
-                    .context("platform runtime mounts")?
-                {
-                    assert!(
-                        rendered.as_array().unwrap().contains(entry),
-                        "{provider}: {entry}"
-                    );
-                }
-            }
-            assert_eq!(
-                variables
-                    .iter()
-                    .any(|variable| variable["name"] == "WAMN_OAUTH_KEY_FILE"),
-                provider == "kind"
-            );
-            assert_eq!(
-                pod["volumes"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|volume| volume["secret"]["secretName"] == "wamn-oauth"),
-                provider == "kind"
-            );
-        }
-        Ok(())
-    }
 
     #[test]
     fn shared_host_reapply_keeps_only_its_named_host_image() -> anyhow::Result<()> {
@@ -1225,103 +1163,32 @@ mod tests {
         assert_eq!(reapplied, fresh);
         Ok(())
     }
-
-    #[test]
-    fn shared_materializer_uses_platform_registry_transport_and_addresses() -> anyhow::Result<()> {
-        use crate::platform::resources::{LOCAL_REGISTRY, POD_REGISTRY};
-        use serde_json::json;
-        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
-        for (insecure_registry, registry, pod_registry) in [
-            (true, LOCAL_REGISTRY, POD_REGISTRY),
-            (false, "registry.example", "registry.example"),
-        ] {
-            let variables = [
-                ("WAMN_COMPONENT_ARTIFACT_BASE", "components"),
-                ("WAMN_PACKAGE_ARTIFACT_BASE", "packages"),
-                ("WAMN_RELEASE_ARTIFACT_BASE", "releases"),
-            ].map(|(name, repository)| json!({"name":name, "value":format!("{registry}/wamn/{repository}")}));
-            let values = materializer_host_values(
-                &document,
-                30,
-                1,
-                120,
-                Some(serde_yaml::from_value(serde_yaml::to_value(
-                    json!({"env":variables}),
-                )?)?),
-                insecure_registry,
-                None,
-            )?;
-            let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
-            assert_eq!(
-                group["extraArgs"]
-                    .as_array()
-                    .unwrap()
-                    .contains(&json!("--allow-insecure-registries")),
-                insecure_registry
-            );
-            let rendered = group["env"].as_array().unwrap();
-            for variable in &variables {
-                let (_, repository) = variable["value"].as_str().unwrap().split_once('/').unwrap();
-                let actual = rendered
-                    .iter()
-                    .find(|entry| entry["name"] == variable["name"])
-                    .unwrap();
-                assert_eq!(actual["value"], format!("{pod_registry}/{repository}"));
-            }
-            let reference = format!("wamn/materializer@sha256:{}", "a".repeat(64));
-            let workload = materializer_workload(
-                &document,
-                "hosts",
-                &format!("{registry}/{reference}"),
-                insecure_registry,
-            )?;
-            assert_eq!(
-                workload["spec"]["template"]["spec"]["service"]["image"],
-                format!("{pod_registry}/{reference}")
-            );
-        }
-        Ok(())
-    }
 }
 
-#[cfg(test)]
-mod credential_access_tests {
-    use super::*;
-
-    #[test]
-    fn colliding_coordinates_read_only_their_own_secret() {
-        use wamn_registry::{credential_secret_name as secret_name, service_account_name};
-
-        let coordinates = [("a", "b-c", "d"), ("a", "b", "c-d")];
-        let accounts =
-            coordinates.map(|(org, project, env)| service_account_name(org, project, env));
-        let secrets = coordinates.map(|(org, project, env)| secret_name(org, project, env));
-        assert_ne!(accounts[0], accounts[1]);
-        assert_ne!(secrets[0], secrets[1]);
-
-        for index in 0..2 {
-            let account = &accounts[index];
-            let secret = &secrets[index];
-            let objects = credential_access(account, secret);
-            for (_, object) in &objects {
-                assert_eq!(object["metadata"]["name"], *account);
-            }
-            assert_eq!(
-                objects[1].1["rules"],
-                serde_json::json!([{"apiGroups":[""],"resources":["secrets"],"resourceNames":[secret],"verbs":["get"]}])
-            );
-            assert!(
-                !objects[1].1["rules"][0]["resourceNames"]
-                    .as_array()
-                    .unwrap()
-                    .contains(&serde_json::json!(secrets[1 - index]))
-            );
-            assert_eq!(
-                objects[2].1["roleRef"]["name"],
-                objects[1].1["metadata"]["name"]
-            );
-            assert_eq!(objects[2].1["subjects"].as_array().unwrap().len(), 1);
-            assert_eq!(objects[2].1["subjects"][0]["name"], *account);
-        }
-    }
+/// Slot creation uses the capture role; schema ownership grants no replication privilege.
+pub(super) async fn prepare_cdc_with_connection(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    capture: &str,
+) -> anyhow::Result<()> {
+    let instance =
+        read_project_env_instance(&platform.system_database_url, &document.triple()).await?;
+    let role = wamn_control_provision::cdc_object_name(
+        &document.org,
+        &document.project,
+        &document.env,
+        &instance,
+    );
+    let mut connection = connect(capture).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::create_failover_slot_sql(&role),
+    ))
+    .execute(&mut connection)
+    .await?;
+    let name = wamn_control_provision::project_env_cdc_secret_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    );
+    wamn_kubernetes::kubectl::apply(&platform.target.kubeconfig,&platform.target.context,&document.org,&serde_json::json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":name,"namespace":document.org},"data":{"connection.json":capture}})).await
 }

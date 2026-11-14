@@ -37,7 +37,8 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
 | `wamn-package-control` | Package admission and artifacts |
 | `wamn-release-control` | Release publication and charts |
-| `wamn-environment` | Environment provisioning, package application, schema lifecycle, and platform operations |
+| `wamn-environment` | Environment provisioning, package application, and schema lifecycle |
+| `wamn-platform-install` | Helm installation, platform configuration, and explicit bootstrap Jobs |
 | `wamn-dev-control` | Development orchestration and process supervision |
 | `wamn-ctl` | Command-line client of the four control crates |
 
@@ -54,7 +55,19 @@ Package artifacts contain three tar layers and no browser files.
 A deployed service reads package facts through `wamn-package-artifact`.
 A control operation takes ordinary inputs, keeps its own validation, and returns its result without printing.
 
-The four control crates live under `crates/control/{package,release,environment,dev}`.
+`wamn-platform-install` lives under `crates/control/platform-install`.
+Helm records infrastructure in `platform/wamn-infrastructure` and platform services in `platform/wamn`.
+The org chart owns PostgreSQL clusters and backup resources in the org namespace.
+The environment chart owns databases, publications, worker accounts, hosts, and materializers in that same namespace.
+Credential Secrets and bootstrap SQL Jobs stay outside Helm values.
+Each org chart update derives its complete role list from registry facts and fixed platform definitions.
+Bootstrap declares only the fixed platform roles. Helm stores the derived list.
+Each worker fetches the selected chart by its immutable OCI digest.
+The installed-platform reader supplies registry and chart configuration to later operations.
+Host groups reference shared configuration through a ConfigMap.
+Cloud project, node pool, and OpenTofu tools live in xtask.
+
+The other control crates live under `crates/control/{package,release,environment,dev}`.
 They run the `git`, `docker`, `kubectl`, and `cargo` processes that their work needs.
 `wamn-dev-control::owned_command` owns the child process groups.
 The environment crate owns history retention. Its library interfaces enforce the retention login and coordinate.
@@ -302,7 +315,7 @@ Five layers run a component, and each layer depends only on the layers below it:
 2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, `invoke_operation`, and the host side of the `wamn:operation` binding that the separate route component calls. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
 3. [`wamn-runtime`](../../crates/platform/runtime/src/lib.rs) holds the plugin set: Postgres, JetStream, blobstore, HTTP connections, credentials, logging, route authentication, and the OCI registry source. `WamnPostgres` is the Postgres adapter of `RunStore`.
 4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) holds the route path, `OperationHost`, and the delivery bridge.
-5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) holds everything that walks or delivers a wiring: the driver, wiring delivery, the queue, the lowering of a wiring, and the workflow contract (start, park, release, list). It depends on the pure walk, [`wamn-router`](../../crates/execution/workflow/router/src/lib.rs). A route never enters it.
+5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) owns the private graph walk, the node invocation driver, the durable queue, and the workflow contract (start, park, release, list). It indexes catalog graphs directly. A route never enters it.
 
 The services compose these layers.
 
