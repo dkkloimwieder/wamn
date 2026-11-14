@@ -123,3 +123,9 @@ W28. Guest memory enforcement (owner, 2026-11-14, revises how R2 is met). The pi
 W29. W23 setup (owner, 2026-11-14). The bounded `kind` measurement can create the cluster and the local registry and install the platform first. Root runs it only when its own lanes are idle and the machine load is low. If the setup or the measurement fails, root stops, files a bead and does not debug it, because the code changes too fast for that time to pay off.
 
 W30. Connections per operation (owner, 2026-11-14, revises W16). Each operation declares the connections it calls, in a new per-operation manifest field. The build refuses an operation that declares both SQL work and an external connection, so no external call ever runs while a transaction is open. A component can hold SQL operations and connection operations together. The component-level check of W16 goes. The invocation authority gives each operation only the connections it declares, so an undeclared connection does not resolve. There is no run-time transaction check.
+
+W31. Environment configuration storage (owner, 2026-11-14, revises W19). The fields that apply reads, such as revocation bounds, applications and releases, live in typed columns or child tables of `registry.environment_projects`, so Postgres constrains them. The `configuration jsonb` column keeps only what no read depends on, or goes if nothing is left.
+
+W32. Migration versions (owner, 2026-11-14, revises W10). Authored and generated history migrations share one version sequence. An author takes the highest version across `migrations/` and `history/` plus one. The build refuses a duplicate version and a new version below the highest existing one.
+
+W33. Dev package tags (owner, 2026-11-14, revises W25). A dev tag (`-dev.h<12 hex>`) expires 7 days after publication unless a release pins it. A new prune step in the retention task deletes expired dev tags from the registry.
