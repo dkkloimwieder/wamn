@@ -180,7 +180,6 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
             org: ORG.into(),
             changes: Publisher::new(nats),
         },
-        None,
     )
     .with_operation_jobs(api.client.clone());
     let mut started = Vec::new();

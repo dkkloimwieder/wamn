@@ -11,7 +11,6 @@ mod bindings {
             "../../../../wit/wamn-flow-http-routing",
             "../../../../wit/wamn-jetstream",
             "../../../../wit/wamn-postgres-0.4",
-            "../../../../wit/wamn-router-delivery-0.4",
             "wit",
         ],
         generate_all,

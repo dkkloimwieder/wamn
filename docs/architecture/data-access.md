@@ -308,16 +308,16 @@ Its key is the claim operation without its `@version`, for example `wamn-wms:loc
 The key is the input field that the route's `idempotency` names: `idempotency_key` for a create, and `value.idempotency_key` for a command item.
 An update, a delete, and any other route without a key field key each item by its `request_id`.
 
-The current Receiving path claims through the engine.
-It runs the intent rules of [`intent.rs`](../../crates/platform/engine/src/operation/intent.rs) around every create, update, delete and command, in the cloud and on the edge.
-No generated export, data function or component spells a claim.
-The engine calls the component once for each item, with a one-item list.
+The concrete operation owner handles claims for each create, update, delete and command.
+The PostgreSQL owner serves HTTP calls and workflow nodes. The edge owns its SQLx SQLite claims.
+Generated application exports contain no claim implementation.
+The operation boundary invokes each new item alone and returns stored results for completed keys.
 For an operation with SQL, the host begins one transaction for each item, and the steps of that item run inside it:
 
 1. The host opens the transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, because the retry below reads the row that another transaction committed.
-2. The engine claims the key with an insert that does nothing on conflict. An uncommitted claim of another transaction makes the insert wait until that transaction ends.
-3. If the insert claimed nothing, a committed claim holds the key. The engine reads its request and result. The same request answers the stored result, and another request answers `idempotency_conflict` with the detail `{field, intent}`. The host rolls back, so the retry runs no work.
-4. If the insert claimed the key, the component does the work in the same transaction. The engine stores the result in the claim, and it commits with the work. A refusal rolls back, and the claim goes with it.
+2. The operation owner claims the key with an insert that does nothing on conflict. An uncommitted claim of another transaction makes the insert wait until that transaction ends.
+3. If the insert claimed nothing, a committed claim holds the key. The operation owner reads its request and result. The same request answers the stored result, and another request answers `idempotency_conflict` with the detail `{field, intent}`. The host rolls back, so the retry runs no work.
+4. If the insert claimed the key, the component does the work in the same transaction. The operation owner stores the result in the claim, and it commits with the work. A refusal rolls back, and the claim goes with it.
 
 The host runs `BEGIN`, local session identity, and the write-log claim in that order before it runs the component.
 After the component returns, the host runs the finish, the causation message when present, and `COMMIT` in that order.
@@ -403,10 +403,11 @@ It opens no transaction and claims no write-log key.
 After `authorize`, `commit`, `rollback`, and `wal-position` return `not-begun`.
 A read writes no causation message, so it does not invalidate a list tag.
 
-This interface returns `uncertain`, `resolved(string)`, `conflict`, `unknown-operation`, `grant-denied`, `invalid-caller`, `not-begun`, `already-begun`, `postgres(pg-error)`, or `reads-claim-nothing`.
-The `resolved` payload carries the operator basis text for the existing `intent-resolved` response.
-The write log supports no operator resolution, so it produces no `resolved`.
-An unread commit answer returns `uncertain`.
+The interface returns typed refusals for conflicts, unknown operations, denied grants, invalid callers and invalid lifecycle calls.
+PostgreSQL failures carry `postgres(pg-error)`.
+Unfinished claims return `in-progress` until the maximum call duration, then `outcome-unknown`.
+An unread commit answer also returns `outcome-unknown`.
+The interface has no operator resolution state.
 
 The request hash covers parsed JSON with sorted object keys.
 It leaves out `request_id` and the route's key field.
@@ -458,7 +459,7 @@ Two ways to do it wrong: define the linker per request instead of per digest; or
 
 wamn has one way to compose packages inside an application: the caller sequences the callee's exported operations, and a callee joins the invocation's host-owned transaction by asking the host for it with operation-transaction(). Existing read exports that open their own guest transaction do not join; inside a command their begin refuses, as today. Converting them is listed in [Deferred](../plan/trx-pkg-plan.md#deferred--build-when-a-consumer-exists). No transaction handle crosses a component boundary. No platform participant or pre-commit mechanism exists; base-declared WIT imports remain as ordinary dependencies.
 
-Idempotency (ruled 2026-10-12): a key identifies one request to one operation. Acme's `record_receipt` has SQL of its own (the inspection statement), so it claims under its own operation, `acme.record_receipt`, as an ordinary `idempotent_by = claim` command with `transaction = explicit_per_input`. It no longer inherits Receiving's claim: `idempotent_by = {inherited = …}` (wamn.k:55,104) existed for the participant-era SQL-free orchestrator, and dies with it (Cleanup). Consequences, all accepted: (1) a key recorded through `receiving.record_receipt` and resubmitted through `acme.record_receipt` is a second request to a second operation — it runs, Acme's rules apply, and Receiving's row rules decide whether a second receipt exists; the base write entry in a client application is therefore not a routed target (authoring rule; ACL after C). (2) Participant-era keys stored under `receiving.record_receipt` are not replayed by Acme's entry at all; a retry through Acme runs again. Receiving and Acme are portfolio applications on wamn-dev with no production data. The request hash drops the participation term (intent.rs:139-147) and is the canonical item alone. `write_log` stays keyed (operation, idempotency\_key), operation versionless (app-schema.sql:630-632), so a retry across a release of the same operation answers the stored result. Cached replay across two entry points with different business rules is exactly what own-operation claims rule out.
+Idempotency (ruled 2026-10-12): a key identifies one request to one operation. Acme's `record_receipt` has SQL of its own (the inspection statement), so it claims under its own operation, `acme.record_receipt`, as an ordinary `idempotent_by = claim` command with `transaction = explicit_per_input`. It no longer inherits Receiving's claim: `idempotent_by = {inherited = …}` (wamn.k:55,104) existed for the participant-era SQL-free orchestrator, and dies with it (Cleanup). Consequences, all accepted: (1) a key recorded through `receiving.record_receipt` and resubmitted through `acme.record_receipt` is a second request to a second operation — it runs, Acme's rules apply, and Receiving's row rules decide whether a second receipt exists; the base write entry in a client application is therefore not a routed target (authoring rule; ACL after C). (2) Participant-era keys stored under `receiving.record_receipt` are not replayed by Acme's entry at all; a retry through Acme runs again. Receiving and Acme are portfolio applications on wamn-dev with no production data. The request hash covers the canonical item without its request ID and caller key. `write_log` stays keyed (operation, idempotency\_key), operation versionless (app-schema.sql:630-632), so a retry across a release of the same operation answers the stored result. Cached replay across two entry points with different business rules is exactly what own-operation claims rule out.
 
 The database is the project, so the log carries no `project_id` and no row policy. `wamn_app` gets `INSERT`, `SELECT` and `UPDATE (result)`, nothing else. No `user_id`: record history stamps the rows the work writes.
 

@@ -8,18 +8,9 @@ mod support;
 use std::net::SocketAddr;
 
 use serde_json::{Value, json};
+use support::{HOST, PATH, ROLE, bundle, config, key, session, start};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
-use wamn_edge::intents;
-use wamn_engine::operation::intent::request_element_hash;
-use wamn_run_state::IntentStore as _;
-use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoredOutcome};
-use wamn_run_state::operator_action::OperatorActionBasis;
-use wamn_run_state_sqlite::SqliteIntentStore;
-
-use support::{
-    HOST, OPERATION, ORG, PACKAGE, PATH, ROLE, bundle, config, key, release, session, start,
-};
 
 /// The capture time of every request element.
 const CAPTURED_AT: &str = "2026-09-25T12:00:00.000000Z";
@@ -124,120 +115,28 @@ fn outcome(request_id: &str, frame: &str) -> Value {
     request_element(request_id, frame)
 }
 
-/// Begin the intent of `request_element` as the edge would, for a store seeded before the
-/// edge starts.
-async fn begin(store: &SqliteIntentStore, release: &str, request_element: &Value) -> IntentId {
-    let begun = store
-        .begin(&Intent {
-            partition: ORG,
-            release,
-            package: PACKAGE,
-            operation: OPERATION,
-            idempotency_key: request_element["request_id"]
-                .as_str()
-                .expect("a request id"),
-            input_hash: &request_element_hash(request_element, None),
-            deadline_ms: 1_000,
-        })
-        .await
-        .expect("begin");
-    let Begun::New(id) = begun else {
-        panic!("expected a new intent, got {begun:?}");
-    };
-    id
-}
-
-/// A command route logs one intent for each request element. A finished key answers its
-/// stored outcome without running, an unfinished key answers intent-uncertain, a
-/// resolved key answers intent-resolved with its basis, and only the new request
-/// element runs. The operator lists and resolves the uncertain intent with the edge
-/// stopped.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_write_logs_one_intent_per_request_element_and_runs_only_new_request_elements() {
+async fn a_write_replays_after_reopen_and_refuses_a_changed_request() {
     let (pair, public) = key("key-one", 1);
-    let (directory, digest) = bundle("intents", &public);
-    let db = directory.join("edge.db");
-    let release = release(&directory);
-    let (stored, open, resolved) = (
-        request_element("r-stored", "1 kg"),
-        request_element("r-open", "2 kg"),
-        request_element("r-resolved", "3 kg"),
-    );
-    let open_id = {
-        let store = SqliteIntentStore::open(&db).expect("open the store before the edge");
-        let id = begin(&store, &release, &stored).await;
-        // The component would answer "1 kg", so this answer shows no run.
-        store
-            .finish(&id, &StoredOutcome(json!({"value": {"frame": "stored"}})))
-            .await
-            .expect("finish");
-        let open_id = begin(&store, &release, &open).await;
-        let id = begin(&store, &release, &resolved).await;
-        store
-            .resolve(&id, OperatorActionBasis::OperatorJudgment)
-            .await
-            .expect("resolve");
-        open_id
-    };
-
-    let host = start(config(&directory, digest)).await;
-    let addr = host.addr();
+    let (directory, digest) = bundle("claims", &public);
+    let config = config(&directory, digest);
+    let host = start(config.clone()).await;
     let token = session(&pair, "key-one", &[ROLE]);
-    let batch = json!([request_element("r-new", " 4 kg"), stored, open, resolved]).to_string();
-    let (status, answer) = post(addr, Some(&token), &batch).await;
-    assert_eq!(status, 200, "{answer}");
-    let answer: Value = serde_json::from_str(&answer).expect("a JSON body");
-    assert_eq!(
-        answer[0],
-        outcome("r-new", "4 kg"),
-        "the new request element runs"
-    );
-    assert_eq!(
-        answer[1],
-        json!({"request_id": "r-stored", "value": {"frame": "stored"}}),
-        "a finished key answers its stored outcome"
-    );
-    assert_eq!(answer[2]["error"]["code"], "intent-uncertain");
-    // The route guest names the intent by the operation and the key, as in
-    // the cloud; the operator lists it by its row id below.
-    assert_eq!(
-        answer[2]["error"]["detail"]["intent"],
-        "edge-device:sample/read#r-open"
-    );
-    assert_eq!(answer[3]["error"]["code"], "intent-resolved");
-    assert_eq!(answer[3]["error"]["detail"]["basis"], "operator-judgment");
-
-    let replay = json!([request_element("r-new", " 4 kg")]).to_string();
-    let (status, again) = post(addr, Some(&token), &replay).await;
-    assert_eq!(status, 200, "{again}");
-    assert_eq!(
-        serde_json::from_str::<Value>(&again).expect("a JSON body"),
-        json!([outcome("r-new", "4 kg")])
-    );
-    let changed = json!([request_element("r-new", "5 kg")]).to_string();
-    let (status, conflict) = post(addr, Some(&token), &changed).await;
-    assert_eq!(status, 200, "{conflict}");
-    let conflict: Value = serde_json::from_str(&conflict).expect("a JSON body");
-    assert_eq!(conflict[0]["error"]["code"], "idempotency_conflict");
-    host.stop().await.expect("the edge stops");
-
-    let command = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
-    let listed = intents::run(&command(&["list"]), &db)
-        .await
-        .expect("list with the edge stopped");
-    assert_eq!(
-        listed
-            .lines()
-            .map(|line| line.split('\t').next())
-            .collect::<Vec<_>>(),
-        [Some(open_id.0.as_str())],
-        "only the unfinished intent is uncertain: {listed}"
-    );
-    intents::run(&command(&["resolve", &open_id.0, "external-evidence"]), &db)
-        .await
-        .expect("resolve with the edge stopped");
-    assert_eq!(
-        intents::run(&command(&["list"]), &db).await.expect("list"),
-        ""
-    );
+    let input = json!([request_element("durable", " 4 kg")]).to_string();
+    let (status, answer) = post(host.addr(), Some(&token), &input).await;
+    assert_eq!(status, 200);
+    let answer: Value = serde_json::from_str(&answer).unwrap();
+    assert!(answer[0].get("value").is_some());
+    host.stop().await.unwrap();
+    let reopened = start(config).await;
+    let (status, replay) = post(reopened.addr(), Some(&token), &input).await;
+    assert_eq!(status, 200);
+    let replay: Value = serde_json::from_str(&replay).unwrap();
+    assert_eq!(answer[0]["value"]["frame"], replay[0]["value"]["frame"]);
+    let changed = json!([request_element("durable", "5 kg")]).to_string();
+    let (status, conflict) = post(reopened.addr(), Some(&token), &changed).await;
+    assert_eq!(status, 200);
+    let conflict: Value = serde_json::from_str(&conflict).unwrap();
+    assert!(conflict[0].get("error").is_some());
+    reopened.stop().await.unwrap();
 }

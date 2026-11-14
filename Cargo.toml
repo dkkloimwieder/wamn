@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/platform/postgres", "crates/platform/digest", "crates/platform/scalar", "services/host", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "xtask/build", "tools/submodule-pins", "tests/conformance", "tests/integration", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/generator", "crates/schema/introspection", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/protocol", "crates/kubernetes", "crates/broker"]
+members = ["crates/platform/postgres", "crates/platform/digest", "crates/platform/scalar", "services/host", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "xtask/build", "tools/submodule-pins", "tests/conformance", "tests/integration", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/run-state", "crates/execution/workflow", "crates/schema/generator", "crates/schema/introspection", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/protocol", "crates/kubernetes", "crates/broker"]
 default-members = [
   "crates/catalog/model",
   "crates/execution/host",
@@ -201,8 +201,6 @@ rustls = { version = "0.23", default-features = false }
 rustls-native-certs = "0.8"
 rustls-platform-verifier = "0.7"
 rustix = { version = "1", features = ["fs", "process"] }
-# The edge intent log. Bundled, so the box needs no system SQLite.
-rusqlite = { version = "0.39", features = ["bundled"] }
 schemars = "0.8"
 serde = "1"
 serde_json = "1"
@@ -257,7 +255,6 @@ wamn-record-history = { path = "apps/platform/data/record-history", version = "0
 wamn-conformance-tests = { path = "tests/conformance", version = "0.1.0" }
 wamn-integration-tests = { path = "tests/integration", version = "0.1.0" }
 wamn-run-state = { path = "crates/execution/run-state", version = "0.1.0" }
-wamn-run-state-sqlite = { path = "crates/execution/run-state-sqlite", version = "0.1.0" }
 wamn-runtime = { path = "crates/platform/runtime", version = "0.1.0" }
 wamn-compiler = { path = "crates/schema/generator", version = "0.1.0" }
 wamn-schema-introspection = { path = "crates/schema/introspection", version = "0.1.0" }

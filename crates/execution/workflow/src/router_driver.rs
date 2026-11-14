@@ -8,15 +8,15 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::Instrument as _;
-use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
-use wamn_engine::release_manifest::validate_component_in_release;
-use wamn_engine::router_delivery::{
+use wamn_engine::native_routes::{
     OperationRefusal, OperationRefusalType, authorize_registered_operation,
     bounded_node_deadline_ms,
 };
+use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
+use wamn_engine::release_manifest::validate_component_in_release;
 use wamn_event_wire::Causation;
 use wamn_execution_host::{
-    CallIntents, DeadlineAdjustment, InvocationSite, NativeFacts, NodeAcquisition, OperationHost,
+    DeadlineAdjustment, InvocationSite, NativeFacts, NodeAcquisition, OperationHost,
     component_invocation, invocation_span, node_trace_context,
 };
 use wamn_identity_protocol::PlatformComponent;
@@ -141,8 +141,7 @@ impl RouterDriver {
                                         causation: request.causation.clone(), platform: Some(PlatformComponent::Executor),
                                     }, Some(caller)),
                                 };
-                                let intents = self.operations.call_intents(component, operation_name)?;
-                                Box::pin(invoke_operation(&*self.operations, operation_call, intents.as_ref().map(CallIntents::context))).await.and_then(lower_node_outcome)
+                                Box::pin(invoke_operation(&*self.operations, operation_call)).await.and_then(lower_node_outcome)
                             }.instrument(span).await
                         }.await;
                         let outcome = match result {

@@ -1667,7 +1667,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                         .map(|(org, client)| (client.clone(), org.clone())),
                     changes: auth_changes.clone(),
                 },
-                None,
             )
             .with_files(files.clone()),
         ))
@@ -1720,7 +1719,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     org: connection.org.clone(),
                     changes: auth_changes.clone(),
                 },
-                None,
             )
             .with_registry_token_metadata(args.registry_token_metadata)
             .with_connection_health(Arc::new(health))

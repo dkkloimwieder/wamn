@@ -15,17 +15,13 @@ use anyhow::Context as _;
 use wamn_catalog::AdmittedComponent;
 
 pub(crate) mod ambient_cli;
-pub mod intent;
 pub mod invocation_policy;
 pub mod json;
 pub mod native_call;
 pub mod native_workload;
 
-pub use intent::{IntentContext, logs_intent};
-pub use invocation_policy::{
-    ApplicationHost, CommitFailure, InvocationPolicy, NoTransaction, Transaction,
-};
-use native_call::{NativeInput, NativeInvocation, NativeOutcome, invoke_raw};
+pub use invocation_policy::{ApplicationHost, InvocationPolicy};
+use native_call::{NativeInput, NativeInvocation, NativeOutcome};
 pub use native_workload::NativeApplication;
 
 mod bindings {
@@ -94,12 +90,9 @@ impl<P: InvocationPolicy> fmt::Debug for OperationCall<'_, P> {
 /// Call one export once, under the call's deadline, and return what the
 /// component returned. The caller lowers the result for its own entry.
 ///
-/// With an [`IntentContext`] of a type that [`logs_intent`], the call logs one intent
-/// for each input request element and runs only the new request elements ([`intent`]).
 pub async fn invoke_operation<H: ApplicationHost>(
     host: &H,
     mut call: OperationCall<'_, H::Policy>,
-    intent: Option<IntentContext<'_>>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
     let closure = call.closure;
     let component = call.component;
@@ -117,14 +110,9 @@ pub async fn invoke_operation<H: ApplicationHost>(
     .await
     .context("native admission deadline elapsed")??;
     let facts = call.facts.clone();
-    let outcome = tokio::time::timeout_at(deadline, async {
-        match intent.filter(|intent| logs_intent(intent.type_)) {
-            Some(intent) => Box::pin(intent::invoke_logged(host, call, intent)).await,
-            None => Box::pin(run_export(host, call)).await,
-        }
-    })
-    .await
-    .context("native operation deadline elapsed")??;
+    let outcome = tokio::time::timeout_at(deadline, run_export(host, call))
+        .await
+        .context("native operation deadline elapsed")??;
     // Persist UUIDs in the write log. Every delivery, including a replay,
     // signs its own URLs under the originating operation's authority.
     tokio::time::timeout_at(deadline, async {
@@ -162,18 +150,21 @@ async fn call_export<H: ApplicationHost>(
         let id = component_id_of(&application, call.component)?;
         let target = application.dispatch_target(id)?;
         let json = serde_json::to_string(call.input).context("encode node input")?;
-        invoke_raw(
-            target,
-            NativeInvocation {
-                operation: call.operation.to_owned(),
-                context: call.context,
-                input: NativeInput::Encoded(json),
-                deadline,
-                facts: call.facts,
-                application: Arc::clone(&application),
-            },
-        )
-        .await
+        application
+            .policy
+            .invoke(
+                id,
+                target,
+                NativeInvocation {
+                    operation: call.operation.to_owned(),
+                    context: call.context,
+                    input: NativeInput::Encoded(json),
+                    deadline,
+                    facts: call.facts,
+                    application: Arc::clone(&application),
+                },
+            )
+            .await
     })
     .await
     .context("native node enclosing deadline elapsed")?

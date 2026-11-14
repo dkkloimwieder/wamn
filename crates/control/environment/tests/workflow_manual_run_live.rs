@@ -36,8 +36,8 @@ use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
+use wamn_engine::native_routes::{DeliveryRequest, Source};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-use wamn_engine::router_delivery::{DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source};
 use wamn_environment::author_workflow::{
     AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
     author_workflow_in_databases,
@@ -473,7 +473,6 @@ fn host(postgres: &Arc<WamnPostgres>, release: &Arc<LoadedRelease>) -> HostRoute
             identity: None,
             changes: Publisher::default(),
         },
-        None,
     )
 }
 
@@ -633,7 +632,7 @@ impl Fixture {
                 Some(caller),
             )
             .await;
-        let Ok(DeliveryOutcome::Respond(body)) = report.outcome else {
+        let Ok(body) = report.outcome else {
             panic!(
                 "workflow.start answers one request element: {:?}",
                 report.outcome

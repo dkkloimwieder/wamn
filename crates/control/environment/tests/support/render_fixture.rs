@@ -357,7 +357,7 @@ pub fn assert_complete(documents: &[Value], secrets: &[Value]) -> anyhow::Result
                             require("WAMN_EVENT_MATERIALIZER_PG_URL")?;
                         }
                     }
-                    (Some("wamn"), Some("operation" | "router-delivery")) => {
+                    (Some("wamn"), Some("operation")) => {
                         require("WAMN_EXECUTOR_PLATFORM_PG_URL")?;
                     }
                     _ => {}

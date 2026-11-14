@@ -68,7 +68,7 @@ impl AuthorizedInvocation {
             members,
             principal,
         } = request;
-        wamn_engine::router_delivery::authorize_registered_operation(
+        wamn_engine::native_routes::authorize_registered_operation(
             caller.as_ref(),
             registered_operation,
         )?;

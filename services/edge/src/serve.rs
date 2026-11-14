@@ -15,6 +15,7 @@ use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::store::{EdgeStore, StoreClosed};
 use anyhow::Context as _;
 use chrono::{SecondsFormat, Utc};
 use wamn_digest::bytes_sha256;
@@ -24,10 +25,8 @@ use wamn_engine::engine::{
 };
 use wamn_engine::expected_router::expected_host_router;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
-use wamn_engine::router_delivery::RouterDelivery;
 use wamn_identity_protocol::file_keys::FileKeys;
 use wamn_identity_protocol::verifier::SessionVerifier;
-use wamn_run_state_sqlite::{SqliteIntentStore, StoreClosed};
 use wash_runtime::engine::guest_memory::GuestMemoryMode;
 use wash_runtime::host::http::Ingress;
 use wash_runtime::host::{Host, HostApi as _, HostBuilder};
@@ -40,7 +39,6 @@ use wash_runtime::wit::WitInterface;
 use crate::application::EdgeApplication;
 use crate::authenticator::EdgeAuthenticator;
 use crate::config::EdgeConfig;
-use crate::delivery::EdgeDelivery;
 use crate::device::{self, DeviceLoop};
 use crate::forward::{self, Forward};
 use crate::operation::EdgeOperation;
@@ -199,9 +197,11 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         .context("load the session key file")?;
     let verifier = SessionVerifier::new(keys, &config.session.org, &config.session.audience)
         .context("bind the session target")?;
-    let intents = SqliteIntentStore::open(&config.store.db).context("open the run-state file")?;
-    let closed = intents.closed();
-    let samples = SampleStore::open(intents.clone())
+    let store = EdgeStore::open(&config.store.db)
+        .await
+        .context("open the run-state file")?;
+    let closed = store.closed();
+    let samples = SampleStore::open(store.clone())
         .await
         .context("open the samples table")?;
     let started_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
@@ -211,13 +211,14 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         .await
         .context("load the release application")?;
 
+    let application = Arc::new(application);
     let routing = FlowHttpRouting::new(Some(Arc::clone(release.release()))).with_authenticator(
         Arc::new(EdgeAuthenticator::new(verifier, Arc::clone(&release))),
     );
-    let delivery = Arc::new(EdgeDelivery::new(
+    let operation = Arc::new(EdgeOperation::new(
         Arc::clone(&release),
         application,
-        intents.clone(),
+        store,
         config.session.org.clone(),
     ));
 
@@ -234,15 +235,11 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     let addr = ingress.addr();
     let host = HostBuilder::default()
         .with_engine((*engine).clone())
+        .with_plugin(Arc::new(
+            wash_runtime::plugin::wasi_config::DynamicConfig::builder().build(),
+        ))?
         .with_plugin(Arc::new(routing))?
-        .with_plugin(Arc::new(RouterDelivery::new(Arc::<EdgeDelivery>::clone(
-            &delivery,
-        ))))?
-        .with_plugin(Arc::new(EdgeOperation::new(
-            Arc::clone(&release),
-            intents,
-            config.session.org.clone(),
-        )))?
+        .with_plugin(Arc::clone(&operation) as _)?
         .with_http_handler(ingress)
         .build()
         .context("build the host")?
@@ -272,17 +269,19 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         None => None,
     };
     let device = match &config.device {
-        Some(device) => match device::start(device, &release, delivery, samples.clone(), stopped) {
-            Ok(device) => Some(device),
-            Err(error) => {
-                let _ = stopping.send(true);
-                if let Some(forward) = forward {
-                    forward.join().await;
+        Some(device) => {
+            match device::start(device, &release, operation, samples.clone(), stopped) {
+                Ok(device) => Some(device),
+                Err(error) => {
+                    let _ = stopping.send(true);
+                    if let Some(forward) = forward {
+                        forward.join().await;
+                    }
+                    host.stop().await?;
+                    return Err(error.context("start the device loop"));
                 }
-                host.stop().await?;
-                return Err(error.context("start the device loop"));
             }
-        },
+        }
         None => None,
     };
     let status = status::start(
@@ -333,7 +332,19 @@ fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartReq
                 name: INGRESS_WORKLOAD.to_owned(),
                 bytes: release.ingress().to_vec().into(),
                 digest: Some(bytes_sha256(release.ingress())),
-                local_resources: LocalResources::default(),
+                local_resources: LocalResources {
+                    config: std::collections::BTreeMap::from([(
+                        wamn_catalog::http_routes::HTTP_ROUTES_CONFIG.into(),
+                        serde_json::to_string(&wamn_catalog::http_routes::route_data(
+                            release.release().manifest(),
+                            release.release().release().manifest_digest.as_str(),
+                        ))
+                        .expect("release route data is JSON"),
+                    )])
+                    .into_iter()
+                    .collect(),
+                    ..LocalResources::default()
+                },
                 pool_size: 0,
                 max_invocations: 0,
                 max_concurrency: 0,
@@ -342,8 +353,8 @@ fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartReq
             }],
             host_interfaces: vec![
                 handler,
+                WitInterface::from("wasi:config/store@0.2.0-rc.1"),
                 WitInterface::from("wamn:flow-http-routing/routing@0.1.0"),
-                WitInterface::from("wamn:router-delivery/delivery@0.4.0"),
                 WitInterface::from("wamn:operation/operation@0.1.0"),
             ],
             volumes: Vec::new(),

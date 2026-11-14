@@ -15,8 +15,7 @@ use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_environment::apply_package::{ApplyPackageRequest, apply_package};
 use wamn_execution_host::{
-    OperationHost, OperationHostConfig, RouterDeliveryBridge, RouterReadinessProbe,
-    RouterReadinessStatus,
+    OperationHost, OperationHostConfig, RouterReadinessProbe, RouterReadinessStatus,
 };
 use wamn_package_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_platform_identity::{assign_project_role, create_service, issue_pat, operator_subject};
@@ -29,7 +28,6 @@ use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::route_authentication::{
     PlatformRouteAuthenticator, RouteAuthentication,
 };
-use wamn_runtime::plugins::wamn_jetstream::{WamnJetstream, WamnJetstreamConfig};
 use wamn_runtime::plugins::wamn_logging::WamnLoggingConfig;
 use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
@@ -363,12 +361,6 @@ pub(super) async fn assemble(
         readiness.status == RouterReadinessStatus::Ready,
         "local application release is not ready: {readiness:?}"
     );
-    let jetstream = Arc::new(WamnJetstream::new(WamnJetstreamConfig::default()));
-    let bridge = Arc::new(RouterDeliveryBridge::new(
-        driver.operations(),
-        jetstream,
-        input.project,
-    )?);
     let bridge = Arc::new(wamn_execution_host::HostRouteDelivery::new(
         Arc::clone(&release),
         wamn_execution_host::HostRouteHandlers::Application {
@@ -377,7 +369,6 @@ pub(super) async fn assemble(
             identity: None,
             changes: wamn_broker::Publisher::default(),
         },
-        Some(bridge),
     ));
     let system_database = system_database_name(input.system_database_url)?;
     let identity_role = system_reader_login(

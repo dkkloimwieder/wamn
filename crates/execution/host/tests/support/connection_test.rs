@@ -160,7 +160,6 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
             org: ORG.into(),
             changes: Publisher::new(nats),
         },
-        None,
     )
     .with_connection_health(Arc::new(health));
     call(

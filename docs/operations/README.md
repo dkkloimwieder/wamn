@@ -13,5 +13,5 @@ These pages contain current commands and their prerequisites. Start with the dev
 - [observability.md](observability.md): the trace bucket layout and the DuckDB queries of one hour.
 - [benchmark.md](benchmark.md): the local run, and the current tier 2, local, and PostgreSQL minimum baselines.
 - [delivery.md](delivery.md): release publication, selection, and deployment.
-- [edge.md](edge.md): serve the edge box, read its status, and resolve refused samples and uncertain intents.
+- [edge.md](edge.md): serve the edge box, read its status, and resolve refused samples.
 - [queued-automation.md](queued-automation.md): start, park, release, and list queued workflow runs.
