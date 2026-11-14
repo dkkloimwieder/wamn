@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use serde_json::{Value, json};
 
-use crate::entry_response::with_request_id;
+use crate::entry_response::{boundary, with_request_id};
 
 use super::bindings::wamn::flow_http_routing::routing::AuthenticatedCaller;
 use super::bindings::wamn::node::types::{NodeContext, NodeError};
@@ -405,16 +405,6 @@ async fn read_call(
     decode(&emission.payload).map(|value| (value, position))
 }
 
-fn boundary(error: &operation::Refusal, id: &str) -> HttpResponse {
-    match error {
-        operation::Refusal::GrantDenied | operation::Refusal::InvalidCaller => {
-            operation_refusal_response("permission-denied", id)
-        }
-        operation::Refusal::UnknownOperation => error_response(404, "operation-not-found"),
-        _ => error_response(503, "execution-failed"),
-    }
-}
-
 fn invalid(message: &str) -> HttpResponse {
     detailed_error_response(400, "invalid_input", Some(message), None)
 }
@@ -485,16 +475,4 @@ fn remove(value: &mut Value, path: &[&str]) {
 
 fn refusal(code: &str, message: &str, detail: &Value) -> Value {
     json!({"error": {"code": code, "message": message, "detail": detail}})
-}
-
-fn operation_refusal_response(code: &str, operation: &str) -> HttpResponse {
-    HttpResponse {
-        read: None,
-        status: 403,
-        content_type: "application/json",
-        body: serde_json::to_vec(&json!({
-            "error": { "code": code, "operation": operation }
-        }))
-        .unwrap_or_default(),
-    }
 }

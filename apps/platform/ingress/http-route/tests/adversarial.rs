@@ -386,6 +386,27 @@ fn default_raw_body_ceiling_accepts_one_mebibyte_and_refuses_the_next_byte() {
 }
 
 #[test]
+fn missing_exact_operation_is_a_discoverable_forbidden_refusal() {
+    let mut backend = FakeBackend::new(route());
+    backend.response = response(
+        403,
+        &json!({"error": {"operation": backend.routes[0].sealed_operation_id}}).to_string(),
+    );
+    backend.etag = Some("W/\"stale\"".into());
+
+    let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+
+    assert_eq!(output.status, 403);
+    let body: Value = serde_json::from_slice(&output.body).unwrap();
+    assert_eq!(
+        body["error"]["operation"].as_str(),
+        Some(backend.routes[0].sealed_operation_id.as_str())
+    );
+    assert_eq!(backend.invocations.len(), 1);
+    assert!(output.read.is_none());
+}
+
+#[test]
 fn authentication_backend_outage_has_one_generic_service_refusal() {
     let mut backend = FakeBackend::new(route());
     backend.auth = Err(AuthRejection {
@@ -400,7 +421,17 @@ fn authentication_backend_outage_has_one_generic_service_refusal() {
 }
 
 #[test]
-fn a_body_read_failure_prevents_invocation() {
+fn provider_and_body_faults_are_bounded() {
+    let mut backend = FakeBackend::new(route());
+    backend.fault = Fault::Routes;
+    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
+    let output = block_on(handle_request(&mut backend, &mut body, &head(), limits()));
+    assert_eq!(output.status, 503);
+    assert!(output.read.is_none());
+    assert_eq!(body.reads, 0);
+    assert!(backend.authenticated_attachments.is_empty());
+    assert!(backend.invocations.is_empty());
+
     let mut backend = FakeBackend::new(route());
     let mut body = Chunks {
         chunks: VecDeque::from([Err(BodyReadError)]),
@@ -482,6 +513,56 @@ fn a_query_read_answers_its_page_as_one_body() {
             .unwrap()
             .is_array()
     );
+}
+
+#[test]
+fn a_feed_read_is_revalidated_every_time_under_the_target_of_its_list() {
+    for (policy, is_public) in [
+        ("private, max-age=10, stale-while-revalidate=60", false),
+        ("public, max-age=10, stale-while-revalidate=60", true),
+    ] {
+        let mut read = route();
+        read.method = "GET".into();
+        read.cache_control = Some(policy.into());
+        let mut get = head();
+        get.method = "GET".into();
+        let element = json!({"feed": {"cursor": "Y3Vyc29y"}});
+        get.target = format!("{}?{}", read.path, read_query(element.as_object().unwrap()));
+        let mut backend = FakeBackend::new(read);
+
+        let output = request(&mut backend, &get, b"");
+
+        assert_eq!(output.status, 200);
+        assert_eq!(backend.invocations.len(), 1);
+        let headers = output.cache_headers();
+        let control = headers
+            .iter()
+            .find_map(|(name, value)| name.eq_ignore_ascii_case("cache-control").then_some(value))
+            .unwrap();
+        let mut visibility = None;
+        let mut revalidate = false;
+        let mut no_store = false;
+        let mut fresh_for = None;
+        let mut stale_for = None;
+        for directive in control.split(',').map(str::trim) {
+            match directive.split_once('=') {
+                Some(("max-age", value)) => fresh_for = Some(value.parse::<u64>().unwrap()),
+                Some(("stale-while-revalidate", value)) => {
+                    stale_for = Some(value.parse::<u64>().unwrap())
+                }
+                _ if directive.eq_ignore_ascii_case("public") => visibility = Some(true),
+                _ if directive.eq_ignore_ascii_case("private") => visibility = Some(false),
+                _ if directive.eq_ignore_ascii_case("no-cache") => revalidate = true,
+                _ if directive.eq_ignore_ascii_case("no-store") => no_store = true,
+                _ => {}
+            }
+        }
+        assert_eq!(visibility, Some(is_public));
+        assert!(revalidate);
+        assert!(!no_store);
+        assert!(fresh_for.is_none());
+        assert!(stale_for.is_none());
+    }
 }
 
 #[test]
