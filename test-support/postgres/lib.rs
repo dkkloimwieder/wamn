@@ -104,9 +104,10 @@ pub fn require_prerequisites(names: &[&str]) {
     require_ignored_prerequisites(&format!("requires: {}", names.join(", ")));
 }
 
-/// Parse test needs: services, preparation inputs, executable programs, and environment variables.
+/// Parse test needs: resources, preparation inputs, executable programs, and environment variables.
 ///
-/// Services are `postgres`, `nats`, and `cluster`. SQLx tests already declare
+/// Resources are `runtime`, `network`, `postgres`, `nats`, and `cluster`.
+/// Runtime and network resources select contract tests. SQLx tests already declare
 /// PostgreSQL through their test attribute and need no repeated service entry.
 /// An `input:ID` entry selects the preparation recipe named `ID`.
 pub fn parse_prerequisites(reason: &str) -> Result<Vec<(&str, &str)>, String> {
@@ -116,7 +117,10 @@ pub fn parse_prerequisites(reason: &str) -> Result<Vec<(&str, &str)>, String> {
     names
         .split(", ")
         .map(|item| {
-            if matches!(item, "postgres" | "nats" | "cluster") {
+            if matches!(
+                item,
+                "runtime" | "network" | "postgres" | "nats" | "cluster"
+            ) {
                 return Ok(("service", item));
             }
             let (type_, name) = item
@@ -153,6 +157,7 @@ pub fn parse_prerequisites(reason: &str) -> Result<Vec<(&str, &str)>, String> {
 }
 
 /// Derive the execution tier from the strongest resource a test uses.
+/// Runtime and network resources select contract when no live resource is needed.
 pub fn test_tier<'a>(
     names: impl IntoIterator<Item = (&'a str, &'a str)>,
     integration: bool,

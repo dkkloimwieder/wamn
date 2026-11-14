@@ -489,6 +489,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: runtime"]
     fn scalars_and_omitted_null_and_value_follow_the_export_type() {
         let ty = argument(
             r"record input { revision: s32, quantity: s64, change: option<option<string>>, limit: option<u32> }",
@@ -530,6 +531,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: runtime"]
     fn invalid_elements_keep_their_correlation_and_refuse_before_execution() {
         let ty = argument(
             "record request { name: string } record invalid { field: string } record item { request-id: string, input: result<request, invalid> } type input = list<item>;",
@@ -557,6 +559,7 @@ mod tests {
         }
     }
     #[test]
+    #[ignore = "requires: runtime"]
     fn json_values_and_text_keep_their_distinct_http_shapes() {
         let ty = argument("use wamn:node/types@0.1.0.{json-value}; type input = json-value;");
         for value in [
@@ -584,6 +587,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: runtime"]
     fn feed_changes_and_refusals_preserve_the_published_envelope() {
         let ty = argument(
             "record row { name: string } record input { id: string, row-version: s64, data: option<row> }",

@@ -47,12 +47,6 @@ outputs = {}
 commands = [["pnpm", "install", "--offline"]]
 
 [[preparation]]
-id = "application-components"
-outputs = {WAMN_APPLICATION_COMPONENTS = "{target}/wasm32-wasip2/release"}
-applications = ["apps/wamn_receiving", "apps/client_acme_receiving", "apps/wamn_wms"]
-prerequisites = ["web-install"]
-
-[[preparation]]
 id = "edge"
 outputs = {WAMN_EDGE_DEVICE_COMPONENT = "{root}/apps/target/wamn/edge_device/components/device.wasm"}
 prerequisites = ["edge-application"]
@@ -63,8 +57,10 @@ applications = ["apps/edge_device"]
 
 [[preparation]]
 id = "jsonata"
-outputs = {WAMN_JSONATA_COMPONENT = "{root}/apps/target/wamn/wamn_wms/components/jsonata.wasm"}
-applications = ["apps/wamn_wms"]
+outputs = {WAMN_JSONATA_COMPONENT = "{target}/wasm32-wasip2/debug/jsonata_expression.wasm"}
+commands = [
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "jsonata-expression"],
+]
 
 [[preparation]]
 id = "fixture"
@@ -76,12 +72,6 @@ outputs = {WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM = "{root}/apps/target/wamn
 applications = ["apps/platform_fixture", "apps/platform_fixture_overlay"]
 
 [[preparation]]
-id = "host"
-outputs = {WAMN_HOST_BINARY = "{target}/debug/wamn-host"}
-aliases = {WAMN_RECEIVING_DEV_HOST_BIN = "WAMN_HOST_BINARY"}
-commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-host"]]
-
-[[preparation]]
 id = "ctl"
 outputs = {WAMN_CTL_BIN = "{target}/debug/wamn"}
 aliases = {WAMN_RECEIVING_DEV_BIN = "WAMN_CTL_BIN", WAMN_SESSION_EXCHANGE_CTL_BIN = "WAMN_CTL_BIN"}
@@ -90,11 +80,6 @@ prerequisites = ["control-binaries"]
 [[preparation]]
 id = "control-binaries"
 commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-ctl", "--bin", "wamn", "--bin", "wamn-ctl"]]
-
-[[preparation]]
-id = "identity"
-outputs = {WAMN_IDENTITY_BINARY = "{target}/debug/wamn-identity"}
-commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-identity", "--features", "test-util"]]
 
 [[preparation]]
 id = "http-route"
@@ -110,12 +95,6 @@ outputs = {WAMN_BLOB_PUT_COMPONENT = "{target}/wasm32-wasip2/debug/blob_put.wasm
 commands = [
   ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "blob-put"],
 ]
-
-[[preparation]]
-id = "platform-ui"
-outputs = {WAMN_PLATFORM_UI_DIST = "{root}/apps/platform_ui/dist"}
-prerequisites = ["web-install"]
-commands = [["pnpm", "--filter", "@wamn/platform-ui", "build"]]
 
 [[preparation]]
 id = "sync-bench"

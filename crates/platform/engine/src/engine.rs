@@ -311,6 +311,7 @@ pub(crate) mod tests {
     /// wash-runtime names no other way to set this grace. If it changes the
     /// setting, the cancellation tests of the host and runtime fail with it.
     #[test]
+    #[ignore = "requires: runtime"]
     fn every_engine_sets_the_abandoned_call_grace_to_zero() {
         build_engine(&[]).expect("production WAMN engine");
         assert_eq!(
@@ -655,6 +656,7 @@ interface tcp-create-socket {
 
     /// Every production builder passes the Enforce policy to guest stores.
     #[tokio::test]
+    #[ignore = "requires: network, runtime"]
     async fn every_production_engine_refuses_an_unlisted_guest_connect() {
         let cache_dir = cache_test_path();
         let engines = [
@@ -721,6 +723,7 @@ interface tcp-create-socket {
     /// Pin both parts of the surviving native path: the pooling allocator is
     /// active, and `HostMemoryBudgets` supplies the platform ceiling it uses.
     #[test]
+    #[ignore = "requires: runtime"]
     fn the_production_engine_pools_at_the_default_platform_ceiling() {
         let engine = build_engine(&[]).expect("the production pooling engine");
         assert_memory_ceiling(&engine, MEMORY_CAP_BYTES);
@@ -733,6 +736,7 @@ interface tcp-create-socket {
     }
 
     #[test]
+    #[ignore = "requires: runtime"]
     fn a_serving_engine_persists_compiled_components_in_its_declared_cache() {
         let cache_dir = cache_test_path();
         let engine = build_engine_with_host_memory_and_compilation_cache(
@@ -753,6 +757,7 @@ interface tcp-create-socket {
     }
 
     #[test]
+    #[ignore = "requires: runtime"]
     fn a_relative_compilation_cache_path_is_refused() {
         let error = build_engine_with_host_memory_and_compilation_cache(
             &[],
@@ -769,6 +774,7 @@ interface tcp-create-socket {
     /// the CONFIGURED value: an engine built with a different cap pools at that
     /// cap, which is what makes the knob more than a field nobody reads.
     #[test]
+    #[ignore = "requires: runtime"]
     fn a_configured_memory_cap_moves_the_pooling_ceiling() {
         let cap_bytes = 64 << 20;
         assert_ne!(
@@ -792,6 +798,7 @@ interface tcp-create-socket {
     /// engine admits one live instance and refuses the second. Without this the
     /// slot count could be dropped on the minimum and only the cap would notice.
     #[test]
+    #[ignore = "requires: runtime"]
     fn configured_slots_bound_concurrent_live_instances() {
         let budgets = host_memory_budgets(1 << 20, 1).expect("one-slot native budgets");
         let engine =
@@ -832,6 +839,7 @@ interface tcp-create-socket {
     }
 
     #[test]
+    #[ignore = "requires: runtime"]
     fn a_guest_cannot_grow_past_the_default_heap_ceiling() -> anyhow::Result<()> {
         let engine = build_engine(&[])?;
         let bytes = wat::parse_str(
@@ -856,6 +864,7 @@ interface tcp-create-socket {
     }
 
     #[test]
+    #[ignore = "requires: runtime"]
     fn count_mode_accounts_for_concurrent_stores_and_keeps_the_heap_ceiling() {
         let engine = build_engine_with_host_memory(
             &[],
@@ -888,6 +897,7 @@ interface tcp-create-socket {
     }
 
     #[test]
+    #[ignore = "requires: runtime"]
     fn enforce_mode_refuses_aggregate_growth_until_another_store_releases_memory() {
         let cache_dir = cache_test_path();
         for engine in [
@@ -929,6 +939,7 @@ interface tcp-create-socket {
     }
 
     #[tokio::test]
+    #[ignore = "requires: runtime"]
     async fn cancelling_a_guest_waiting_in_a_host_call_releases_its_memory() {
         let engine = build_engine_with_host_memory(
             &[],
@@ -980,6 +991,7 @@ interface tcp-create-socket {
     }
 
     #[tokio::test]
+    #[ignore = "requires: runtime"]
     async fn dropping_a_store_after_epoch_interruption_releases_its_memory() {
         let engine = build_engine_with_host_memory(
             &[],
@@ -1038,6 +1050,7 @@ interface tcp-create-socket {
     }
 
     #[tokio::test]
+    #[ignore = "requires: runtime"]
     async fn dropping_a_store_after_a_guest_start_trap_releases_its_memory() {
         let engine = build_engine_with_host_memory(
             &[],

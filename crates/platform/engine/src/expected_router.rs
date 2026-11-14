@@ -160,6 +160,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires: network"]
     async fn native_ingress_preserves_refusals_bind_transitions_and_application_404() {
         let (stop, stopping) = tokio::sync::watch::channel(false);
         let ingress = Ingress::new(
@@ -264,6 +265,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires: network"]
     async fn a_missing_native_handle_still_returns_404() {
         let router = expected_host_router(Some(HOST), tokio::sync::watch::channel(false).1);
         router
@@ -282,6 +284,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires: network"]
     async fn no_release_keeps_native_unknown_host_behavior() {
         let ingress = Ingress::new(
             expected_host_router(None, tokio::sync::watch::channel(false).1),

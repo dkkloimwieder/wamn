@@ -50,6 +50,7 @@ Use `--tier T[,T]` to choose tiers.
 A test states external needs in its `#[ignore = "requires: ..."]` reason.
 The shared parser in `wamn-test-postgres` derives the tier from these needs:
 
+- `runtime` and `network` select contract for component execution and owned socket fixtures.
 - `postgres` selects live-postgres for a test that owns a private server.
 - `nats` selects live-nats.
 - `cluster` selects the cluster tier, selected with `--tier kind`.
@@ -59,7 +60,7 @@ The strongest service determines the tier: cluster, then NATS, then PostgreSQL.
 The selector runs these cases through `wamn-test-postgres`, with one private server per test binary.
 SQLx owns the separate database for each test.
 Tests without declared needs use unit for library and binary targets, or contract for integration targets.
-Other declared needs select contract when they name no service.
+Other declared needs select contract when they need no database, broker, or cluster.
 
 An `input:ID` need selects the named preparation recipe when it has no environment output.
 An `env:NAME` need selects its output recipe and requires a nonempty variable after preparation.
@@ -95,17 +96,17 @@ The tool builds native binaries, application packages, and guests only when sele
 The selection file names each preparation step, its output variables, and its commands.
 The runner keeps nonempty overrides and skips their preparation commands.
 The pinned HTTP guest keeps its required release artifact. Other native and standalone guest inputs use debug mode.
+The `jsonata` recipe builds the platform `jsonata-expression` guest directly.
 It builds applications through a private PostgreSQL database.
 Root workspace targets compile without `apps/target/wamn`.
 Preparation follows only cases that match the tier, name, and suite filters.
 Test declarations select named recipes or recipes that supply their environment inputs.
-The `control-binaries` recipe builds both `wamn` and `wamn-ctl` beside the native test executables.
+The `control-binaries` recipe builds `TARGET/debug/wamn` and `TARGET/debug/wamn-ctl`.
 Journey cases request this recipe directly and check those executable paths.
 Package feature entries affect compilation and do not request runtime preparation.
 Application preparation builds each base before its overlays.
 Web consumers share one workspace installation per selection.
 The runner skips that installation when no selected consumer needs it.
-It exports `WAMN_APPLICATION_COMPONENTS` and the selected guest and host paths.
 Control and CLI suites enable `ops`.
 Runtime changes also select the ignored JetStream round trip.
 Runtime and host changes also select the exact native host case.
@@ -145,21 +146,16 @@ In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this che
 | Override | Default input |
 | --- | --- |
 | `WAMN_NATIVE_C_NATS_BIN` | `nats-server` |
-| `WAMN_APPLICATION_COMPONENTS` | `TARGET/wasm32-wasip2/release` |
 | `WAMN_EDGE_DEVICE_COMPONENT` | `ROOT/apps/target/wamn/edge_device/components/device.wasm` |
-| `WAMN_JSONATA_COMPONENT` | `ROOT/apps/target/wamn/wamn_wms/components/jsonata.wasm` |
+| `WAMN_JSONATA_COMPONENT` | `TARGET/wasm32-wasip2/debug/jsonata_expression.wasm` |
 | `WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM` | `ROOT/apps/target/wamn/platform_fixture/components/fixture.wasm` |
 | `WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM` | `ROOT/apps/target/wamn/platform_fixture_overlay/components/fixture_overlay.wasm` |
 | `WAMN_GENERATED_WIDGET_UPDATE_SCHEMA` | `ROOT/apps/target/wamn/platform_fixture/routes/widget/update.json` |
-| `WAMN_HOST_BINARY` | `TARGET/debug/wamn-host` |
 | `WAMN_RECEIVING_DEV_BIN` | `TARGET/debug/wamn-ctl` |
-| `WAMN_IDENTITY_BINARY` | `TARGET/debug/wamn-identity` |
 | `WAMN_FLOW_HTTP_COMPONENT` | `TARGET/apps/wasm32-wasip2/release/http_route.wasm` |
 | `WAMN_BLOB_PUT_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/blob_put.wasm` |
-| `WAMN_PLATFORM_UI_DIST` | `ROOT/apps/platform_ui/dist` |
 | `WAMN_SYNC_BENCH_DIST` | `TARGET/sync-bench/web` |
 | `WAMN_HOST_LIVE_NATS_SERVER_BIN` | Same input as `WAMN_NATIVE_C_NATS_BIN` |
-| `WAMN_RECEIVING_DEV_HOST_BIN` | Same input as `WAMN_HOST_BINARY` |
 | `WAMN_SESSION_EXCHANGE_CTL_BIN` | Same input as `WAMN_RECEIVING_DEV_BIN` |
 | `WAMN_DEV_ENV_FLOW_HTTP_COMPONENT` | Same input as `WAMN_FLOW_HTTP_COMPONENT` |
 | `WAMN_POSTGRES_BIN_DIR` | `/usr/lib/postgresql/18/bin` |
@@ -369,12 +365,12 @@ Application builds own generated history migrations.
 
 Cargo metadata defines executable targets through `test = true`.
 Each test declares its needs beside its body.
-The shared parser assigns the test to the tier of its strongest service.
+The shared parser assigns the test to the tier of its strongest resource.
 A library can contain cases from several tiers.
 [Select the relevant tests](#select-the-relevant-tests) gives the declarations and defaults.
 
 - Unit covers pure decisions and controlled time. It uses no database, broker, network service, subprocess, or component runtime.
-- Contract covers serialized values, WIT, generated artifacts, rendered objects, files, command-line tools, and owned loopback fixtures.
+- Contract covers serialized values, WIT, component runtimes, generated artifacts, rendered objects, files, command-line tools, and owned network fixtures.
 - Live-postgres requires private PostgreSQL behavior.
 - Live-nats requires a real NATS broker. A test that also requires PostgreSQL takes this tier.
 - Kind requires Kubernetes.
@@ -396,7 +392,7 @@ The connection and caller case lives in `wamn-dev --test platform_apply_kind` an
 ## Ignored tests
 
 An ignore reason lists needs with comma-separated entries after `requires:`.
-Use `postgres`, `nats`, or `cluster` for services, `bin:<program>` for programs, and `env:<VARIABLE>` for environment inputs.
+Use `runtime`, `network`, `postgres`, `nats`, or `cluster` for resources, `bin:<program>` for programs, and `env:<VARIABLE>` for environment inputs.
 Use `input:<ID>` for a named preparation recipe.
 The shared parser derives the tier and validates these declarations.
 The selector checks required programs and variables before it runs a test.
