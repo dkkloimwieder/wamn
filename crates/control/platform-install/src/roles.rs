@@ -33,6 +33,15 @@ pub fn platform(namespace: &str, cluster: &str, database: &str) -> anyhow::Resul
 
 /// Rebuild the whole org declaration; installed Helm role values are never read.
 pub async fn registered(registry_input: &str, namespace: &str) -> anyhow::Result<Declarations> {
+    type ProjectFact = (
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+    );
     let options = wamn_postgres::connect_options(registry_input).await?;
     let cluster = "wamn-pg";
     let database = options.get_database().context("registry database")?;
@@ -60,15 +69,6 @@ pub async fn registered(registry_input: &str, namespace: &str) -> anyhow::Result
         );
         declarations.entry(cluster.into()).or_default().push(role);
     }
-    type ProjectFact = (
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-    );
     let projects: Vec<ProjectFact> = sqlx::query_as(wamn_registry::sql::INSTALL_PROJECTS)
         .bind(namespace)
         .fetch_all(&mut *snapshot)
@@ -207,10 +207,12 @@ pub fn values(declarations: &Declarations) -> anyhow::Result<Value> {
         }
         let platform = roles.contains_key("wamn_platform");
         if let Some(owner) = roles.get_mut("wamn_db_owner") {
-            owner["inRoles"] = platform
-                .then(|| vec!["wamn_platform"])
-                .unwrap_or_default()
-                .into();
+            owner["inRoles"] = if platform {
+                vec!["wamn_platform"]
+            } else {
+                Vec::new()
+            }
+            .into();
         }
         let migrations = logins
             .iter()

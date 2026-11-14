@@ -495,7 +495,7 @@ impl WamnPostgres {
                 .iter()
                 .map(|application| ("application", *application)),
         ) {
-            let row = sqlx::query(sqlx::AssertSqlSafe(("SELECT value::text FROM platform.setting WHERE target_type=$1 AND target_id=$2 AND key='revocation-seconds'").to_string())).bind(&target_type).bind(&target_id).fetch_optional(&mut *connection).await.context("read revocation configuration")?
+            let row = sqlx::query(sqlx::AssertSqlSafe(("SELECT value::text FROM platform.setting WHERE target_type=$1 AND target_id=$2 AND key='revocation-seconds'").to_string())).bind(target_type).bind(target_id).fetch_optional(&mut *connection).await.context("read revocation configuration")?
                 .with_context(|| format!("{target_type} {target_id} must state revocation-seconds"))?;
             let value: String = row.try_get(0)?;
             let seconds: u64 = serde_json::from_str(&value).with_context(|| {
