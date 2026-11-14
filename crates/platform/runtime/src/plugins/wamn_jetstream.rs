@@ -779,6 +779,7 @@ mod tests {
 /// One message from one entity consumer. Target and release come from the host.
 #[derive(Debug)]
 pub struct EventBatchAdmission<'a> {
+    pub application: &'a str,
     pub source_package: &'a str,
     pub entity: &'a str,
     pub envelope: &'a str,

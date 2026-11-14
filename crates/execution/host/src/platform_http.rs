@@ -1,6 +1,8 @@
 //! Bind native platform endpoints to the application's ingress host.
 
-use std::sync::Arc;
+use anyhow::Context as _;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use wash_runtime::engine::workload::ResolvedWorkload;
 use wash_runtime::host::http::{
     HostHandler, IngressRoute, NormalizedPathPrefix, RouteScope, ServiceHttpJob,
@@ -12,7 +14,8 @@ use wamn_engine::flow_http_routing::FlowHttpRouting;
 /// Native handlers use the same ingress host as their application workload.
 pub struct PlatformHttp {
     ingress: Arc<dyn HostHandler>,
-    handlers: Arc<HostRouteDelivery>,
+    handlers: Option<Arc<HostRouteDelivery>>,
+    workloads: RwLock<HashMap<String, Arc<HostRouteDelivery>>>,
     routing: Arc<FlowHttpRouting>,
 }
 impl std::fmt::Debug for PlatformHttp {
@@ -29,12 +32,49 @@ impl PlatformHttp {
     ) -> Self {
         Self {
             ingress,
-            handlers,
+            handlers: Some(handlers),
+            workloads: RwLock::default(),
             routing,
         }
     }
+    /// Select platform handlers independently for each application workload.
+    pub fn for_workloads(ingress: Arc<dyn HostHandler>, routing: Arc<FlowHttpRouting>) -> Self {
+        Self {
+            ingress,
+            handlers: None,
+            workloads: RwLock::default(),
+            routing,
+        }
+    }
+
+    pub fn register(&self, workload: &str, handlers: Arc<HostRouteDelivery>) {
+        self.workloads
+            .write()
+            .expect("platform handlers lock poisoned")
+            .insert(workload.to_owned(), handlers);
+    }
+
+    pub fn unregister(&self, workload: &str) {
+        self.workloads
+            .write()
+            .expect("platform handlers lock poisoned")
+            .remove(workload);
+    }
+
     /// Control endpoints bind directly, since control runs no guest workload.
     pub async fn bind(&self, id: &str, host: String) -> anyhow::Result<()> {
+        let handlers = self
+            .handlers
+            .as_ref()
+            .map(Arc::clone)
+            .or_else(|| {
+                self.workloads
+                    .read()
+                    .expect("platform handlers lock poisoned")
+                    .get(id)
+                    .map(Arc::clone)
+            })
+            .context("workload has no platform handlers")?;
         let route = IngressRoute {
             host,
             path_prefix: NormalizedPathPrefix::new("/wamn_control/"),
@@ -44,7 +84,6 @@ impl PlatformHttp {
         self.ingress
             .on_service_http_resolved(&format!("{id}/platform-http"), &[route], sender)
             .await?;
-        let handlers = Arc::clone(&self.handlers);
         let routing = Arc::clone(&self.routing);
         tokio::spawn(async move {
             while let Some(job) = jobs.recv().await {
@@ -94,6 +133,7 @@ impl HostHandler for PlatformHttp {
         Ok(())
     }
     async fn on_workload_unbind(&self, workload_id: &str) -> anyhow::Result<()> {
+        self.unregister(workload_id);
         let platform = self
             .ingress
             .on_service_http_unbind(&format!("{workload_id}/platform-http"))

@@ -623,6 +623,7 @@ pub async fn admit(
         PROJECT,
         &fixture.release,
         &EventBatchAdmission {
+            application: APP,
             source_package: APPLICATION,
             entity: "order",
             envelope,

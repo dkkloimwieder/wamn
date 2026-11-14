@@ -532,6 +532,11 @@ It also records the member byte digests.
 Each host joins the entry path with its own `WAMN_COMPONENT_ARTIFACT_BASE`, as it does for the members.
 The manifest names no registry, so a release copied with its components and entry starts in the new registry.
 The release chart starts that entry with `poolSize: 0`.
+The host loads application releases from verified catalog bytes when workloads or unfinished runs need them.
+It also restores the releases pinned by unfinished runs after restart.
+A release preparation failure appears in the host log with its digest and pinned run ids.
+It does not stop queues belonging to other releases.
+The host takes no process release digest or release registry argument.
 It pushes the manifest to the release repository that `WAMN_RELEASE_ARTIFACT_BASE` names, and it prints the digest.
 The credential of `--registry-auth-file` must pull the packages and push to the release repository.
 Each component of the release carries its admitted descriptor from the package artifact.

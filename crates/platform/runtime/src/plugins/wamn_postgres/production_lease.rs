@@ -9,6 +9,43 @@ pub use wamn_run_state::run_store::{
 };
 
 impl WamnPostgres {
+    /// Whether a released invocation still retains this deployment.
+    pub fn release_in_use(&self, release: &wamn_engine::release_manifest::LoadedRelease) -> bool {
+        self.scopes.any::<crate::invocation::Authority>(|record| {
+            record.invocation.is_some()
+                && record
+                    .context
+                    .as_ref()
+                    .is_some_and(|context| std::ptr::eq(context.release.as_ref(), release))
+        })
+    }
+
+    /// Read restart pins through this project's executor credential.
+    pub async fn unfinished_releases(
+        &self,
+        project: &str,
+        project_env_key: &str,
+        environment: &str,
+    ) -> anyhow::Result<Vec<(String, String, String)>> {
+        self.executor_read(project, project_env_key, async |connection| {
+            Ok(persistence::unfinished_releases(connection, project_env_key, environment).await?)
+        })
+        .await
+    }
+
+    /// Load immutable catalog bytes through the owning project's executor credential.
+    pub async fn release_bytes(
+        &self,
+        project: &str,
+        project_env_key: &str,
+        digest: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        self.executor_read(project, project_env_key, async |connection| {
+            Ok(sqlx::query_scalar("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2")
+                .bind(project_env_key).bind(digest).fetch_one(connection).await?)
+        }).await
+    }
+
     /// Run lease next under the bound executor identity.
     pub async fn lease_next(
         &self,

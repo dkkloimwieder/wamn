@@ -1,6 +1,6 @@
 //! Manual and event workflow admission through the real queue.
 
-use super::{QUEUE_LEASE_INVOCATION, QueueTarget, drain_one};
+use super::{QueueTarget, drain_one};
 use serde_json::json;
 use sqlx::Row as _;
 use std::collections::BTreeSet;
@@ -258,7 +258,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(provider)));
     postgres
         .bind_session_identity(
-            QUEUE_LEASE_INVOCATION,
+            "automation-live-queue",
             &SessionIdentity {
                 project_env_key: PROJECT_ENV_KEY.to_owned(),
                 project: Some("default".to_owned()),
@@ -313,6 +313,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         },
     )?)));
     let target = QueueTarget {
+        invocation: "automation-live-queue".to_owned(),
         project_env_key: PROJECT_ENV_KEY.to_owned(),
         project: "default".to_owned(),
         package_ids: vec!["automation".to_owned()],
@@ -464,6 +465,7 @@ async fn event_run(
         },
     );
     let mut admission = EventBatchAdmission {
+        application: "automation",
         source_package: "automation",
         entity: "movement",
         envelope: &envelope,

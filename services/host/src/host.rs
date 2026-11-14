@@ -23,7 +23,9 @@ use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::washlet::AttachedHostControl;
 
 mod commands;
+mod releases;
 
+#[cfg(test)]
 use wamn_catalog::ServingManifest;
 use wamn_control_provision::session_target::session_audience;
 use wamn_control_provision::{SystemReader, project_env_database_name, system_reader_login};
@@ -32,15 +34,10 @@ use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
     build_engine_with_host_memory_and_compilation_cache,
 };
-use wamn_engine::flow_http_routing::{
-    FlowHttpRouting, requires_pat_route_authentication, requires_session_route_authentication,
-};
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget, release_label};
-use wamn_execution_host::{
-    HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig,
-};
+use wamn_engine::flow_http_routing::FlowHttpRouting;
+use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
+use wamn_execution_host::OperationHostConfig;
 use wamn_identity_protocol::verifier::SessionVerifier;
-use wamn_package_artifact::release_manifest_source::ReleaseManifestSource;
 use wamn_registry::{Triple, environment_nats_user, project_env_key};
 use wamn_runtime::auth_cache::replicate;
 use wamn_runtime::component_artifact_source::{
@@ -57,7 +54,7 @@ use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
 use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnPostgres};
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
-use wamn_workflow::{DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig, RouterDriver};
+use wamn_workflow::DEFAULT_QUEUE_LEASE_TTL_MS;
 
 #[expect(
     clippy::struct_excessive_bools,
@@ -151,10 +148,7 @@ pub struct HostArgs {
     #[arg(long = "environment", overrides_with = "environment")]
     pub environment: Option<String>,
 
-    /// The one application this host serves, as canonical JSON:
-    /// application name to `{"packages": [...]}`. A release passes it in its
-    /// `extraArgs` beside `--environment`. A host that serves a release from
-    /// the registry refuses to start without it.
+    /// Declared application membership for this project, as canonical JSON.
     #[arg(long = "applications")]
     pub applications: Option<String>,
 
@@ -282,37 +276,6 @@ pub struct HostArgs {
     )]
     pub socket_egress: EgressMode,
 
-    /// Registry/repository holding this environment's release-manifest
-    /// artifacts, paired with [`HostArgs::release_manifest_digest`].
-    ///
-    /// Both absent means this host serves no release; both present and the pull
-    /// unusable means it refuses to start. See [`load_release`] for why that
-    /// distinction lives in these arguments' shape rather than in an error.
-    ///
-    /// The pair is mutually `requires`d, so the third state a pair invents —
-    /// base without digest — is refused by clap at startup rather than
-    /// discovered as a pod that quietly serves nothing.
-    ///
-    /// Unlike every flag above it, this one is NOT part of the chart's rendered
-    /// surface: `wash host` upstream has no release model. It is carried per
-    /// host group by `hostGroups[].extraArgs`.
-    #[arg(
-        long = "release-artifact-base",
-        env = "WAMN_RELEASE_ARTIFACT_BASE",
-        requires = "release_manifest_digest"
-    )]
-    pub release_artifact_base: Option<String>,
-
-    /// SHA-256 digest, `sha256:<hex>`, of the one serving manifest this host is
-    /// bound to. Travels in the pod template; the registry's bytes are refused
-    /// unless they hash to exactly this.
-    #[arg(
-        long = "release-manifest-digest",
-        env = "WAMN_RELEASE_MANIFEST_DIGEST",
-        requires = "release_artifact_base"
-    )]
-    pub release_manifest_digest: Option<String>,
-
     /// OAuth envelope provider as JSON: local, or gcp with project and region.
     #[arg(long, env = "WAMN_OAUTH_ENCRYPTION")]
     pub oauth_encryption: Option<String>,
@@ -342,10 +305,7 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_PROJECT", default_value = "default")]
     pub project: String,
 
-    /// Organization owning this host's project.
-    ///
-    /// Required only when the loaded release carries a PAT-protected HTTP
-    /// route; it targets the identity-reader URL.
+    /// Organization owning this host's project deployment.
     #[arg(long, env = "WAMN_ORG")]
     pub org: Option<String>,
 
@@ -374,39 +334,7 @@ pub struct HostArgs {
     pub allowed_hosts: Vec<String>,
 }
 
-/// Pull and verify this process's release, or record that it carries none.
-///
-/// This is the wash host's release load site: the one place in this process
-/// that turns registry bytes into a manifest. flow-http routing
-/// (`wamn-0h0g.15.96`) and jetstream delivery gating (`wamn-0h0g.15.95`) take the
-/// loaded manifest from here by reference; nobody loads a second copy.
-///
-/// # Why the registry and not a mount
-///
-/// A projected ConfigMap carries no usable binding between the bytes and the
-/// name the template asked for: the same template places both, so comparing
-/// them tests the template against itself. A registry is a third party — the
-/// digest travels in the pod template, the bytes come from the registry, and the
-/// pull refuses unless they agree (`wamn-0h0g.15.98`).
-///
-/// # The absent-release posture
-///
-/// The two absent cases are told apart by the *arguments*, never by inspecting a
-/// failure:
-///
-/// - **No pair passed.** This host was never given a release: nothing to pull
-///   and nothing to refuse. It serves exactly as it did before the release model
-///   existed.
-/// - **Passed, but the artifact is absent, unreachable or non-canonical.** This
-///   host was told it serves a release and cannot. Startup fails and the pod
-///   never goes ready — the only refusal worth making, since a host serving an
-///   unverified manifest would be routing and gating against nothing.
-///
-/// The half-passed third state cannot reach here at all: the two arguments
-/// mutually `requires` each other, so clap refuses it at startup.
-///
-/// The registry credential of a release-backed host: exactly one of
-/// `--registry-auth-file` and `--registry-token-metadata`.
+/// The registry credential selected by the host operator.
 enum RegistryPullCredential<'a> {
     AuthFile(&'a Path),
     TokenMetadata,
@@ -422,52 +350,6 @@ impl<'a> RegistryPullCredential<'a> {
             "a release-backed host requires --registry-auth-file or --registry-token-metadata",
         )
     }
-}
-
-/// The node-component registry is deliberately a separate explicit argument.
-/// A release artifact establishes release identity; it never implies where
-/// digest-addressed component bytes may be pulled from.
-async fn load_release(
-    artifact_base: Option<&str>,
-    manifest_digest: Option<&str>,
-    insecure_registry: bool,
-    registry_auth_file: Option<&Path>,
-    registry_token_metadata: bool,
-    ca_paths: &[PathBuf],
-    target: anyhow::Result<ReleaseTarget>,
-) -> anyhow::Result<Option<Arc<LoadedRelease>>> {
-    let (Some(artifact_base), Some(manifest_digest)) = (artifact_base, manifest_digest) else {
-        return Ok(None);
-    };
-    let target = target?;
-    let source = match RegistryPullCredential::select(registry_auth_file, registry_token_metadata)?
-    {
-        RegistryPullCredential::AuthFile(path) => {
-            ReleaseManifestSource::new(artifact_base, insecure_registry, path)
-        }
-        RegistryPullCredential::TokenMetadata => {
-            ReleaseManifestSource::with_registry_token_metadata(artifact_base, insecure_registry)
-        }
-    }
-    .context("configure the release-manifest registry")?
-    .with_ca_paths(ca_paths)
-    .context("trust the configured OCI CA bundles for the release pull")?;
-    let canonical_bytes = source
-        .pull_verified(manifest_digest)
-        .await
-        .context("pull the serving release manifest")?;
-    let origin = format!("{artifact_base}@{manifest_digest}");
-    let loaded_release = LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin, target)
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "serving release manifest {origin} is unusable ({:?}): {error}",
-                error.error_type()
-            )
-        })?;
-    // Shared by reference-count rather than by borrow: every release-conditioned
-    // plugin and the router driver are `Arc`-owned, so none can hold a lifetime
-    // tied to `run`'s stack. One allocation remains the process's only manifest.
-    Ok(Some(Arc::new(loaded_release)))
 }
 
 /// The environment key and declared applications that this host serves (R1).
@@ -499,22 +381,6 @@ fn release_target(args: &HostArgs) -> anyhow::Result<ReleaseTarget> {
         environment,
     )
     .with_applications(applications))
-}
-
-/// The target of a host that serves a release from the registry. Env apply
-/// renders `--applications` for every such host, and a host without it
-/// refuses to start.
-fn served_release_target(args: &HostArgs) -> anyhow::Result<ReleaseTarget> {
-    anyhow::ensure!(
-        args.applications.is_some(),
-        "a host that serves a release requires --applications"
-    );
-    let target = release_target(args)?;
-    anyhow::ensure!(
-        target.applications.len() == 1,
-        "an application host requires exactly one application"
-    );
-    Ok(target)
 }
 
 /// The `host.plugins` entries of the chart's host configuration file. Only
@@ -673,27 +539,6 @@ fn host_credentials(
     }
 }
 
-fn declares_connection_requirement(manifest: &ServingManifest) -> bool {
-    manifest
-        .components
-        .iter()
-        .any(|component| !component.descriptor.connections.is_empty())
-}
-
-/// Name the callable-HTTP credential for route authorization or connection resolution.
-/// A host with neither demand ignores an ambient URL rather than acquiring its pool.
-fn demanded_http_admitter_url(
-    authenticated_routes: bool,
-    connection_requirements: bool,
-    configured_url: Option<String>,
-) -> Option<String> {
-    if authenticated_routes || connection_requirements {
-        configured_url
-    } else {
-        None
-    }
-}
-
 fn require_queue_admission(
     released: bool,
     guest_url: Option<&str>,
@@ -779,7 +624,7 @@ async fn connect_data_nats(
         .client_capacity(SCHEDULER_NATS_BUFFER);
     if let Some(user) = user {
         opts = opts.custom_inbox_prefix(wamn_registry::name::nats_subject(&[
-            &wamn_registry::name::nats_token("_INBOX_", (user).as_ref(), ""),
+            &wamn_registry::name::nats_token("_INBOX_", user, ""),
         ]));
     }
     opts = wamn_broker::nats::tls_options(
@@ -900,106 +745,51 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .context("trust the configured OCI CA bundles")?;
     }
 
-    // THE RELEASE LOADS FIRST, and the ordering is load-bearing rather than
-    // tidy. Under ruling wamn-0h0g.15.102 the verified manifest is the SOLE carrier
-    // of the (effective release id, manifest digest) pair, so every consumer takes the
-    // pair from this object — including the lease-time recording that
-    // wamn-0h0g.15.103 repoints at it. A component that bound before the loaded release
-    // existed would have no pair to record. Building it here, ahead of the NATS
-    // connections, the engine and every plugin, makes that ordering impossible to
-    // get wrong, and makes a host that cannot verify its release refuse before it
-    // opens a socket. The ordering guard in
-    // tests/conformance/src/runtime_policy.rs keeps the load ahead of binding.
-    //
-    // It also runs after the CA install above, which is why the release pull can
-    // reach a registry behind the chart's own CA.
-    let release = load_release(
-        args.release_artifact_base.as_deref(),
-        args.release_manifest_digest.as_deref(),
-        args.allow_insecure_registries,
-        args.registry_auth_file.as_deref(),
-        args.registry_token_metadata,
-        &args.oci_ca_paths,
-        served_release_target(&args),
-    )
-    .await?;
-    let application = release.as_ref();
-    let pat_routes = application
-        .is_some_and(|loaded_release| requires_pat_route_authentication(loaded_release.manifest()));
-    let session_routes = application.is_some_and(|loaded_release| {
-        requires_session_route_authentication(loaded_release.manifest())
-    });
-    let signature_routes = application.is_some_and(|loaded_release| {
-        loaded_release
-            .manifest()
-            .every_served_attachment()
-            .any(|(_, attachment)| {
-                matches!(
-                    wamn_catalog::parse_attachment_auth_policy(attachment.auth_policy()),
-                    Some(wamn_catalog::AttachmentAuthPolicy::Signature { .. })
-                )
-            })
-    });
-    let connection_requirements = application
-        .is_some_and(|loaded_release| declares_connection_requirement(loaded_release.manifest()));
+    let target = args
+        .org
+        .as_ref()
+        .zip(args.environment.as_ref())
+        .map(|_| release_target(&args))
+        .transpose()?;
     let http_admitter_url = std::env::var("WAMN_HTTP_ADMITTER_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
-    let session_verifier = if session_routes {
-        let loaded_release = release
-            .as_ref()
-            .expect("a session route belongs to a loaded release");
+    let session_verifier = if args.session_issuer.is_some() {
         Some(session_verifier(
             &args,
-            &loaded_release.target().environment,
+            &target
+                .as_ref()
+                .context("session routes require an environment")?
+                .environment,
             http_admitter_url
                 .as_deref()
-                .context("a session route requires WAMN_HTTP_ADMITTER_PG_URL")?,
+                .context("session routes require WAMN_HTTP_ADMITTER_PG_URL")?,
         )?)
     } else {
         None
     };
-
-    // The release pull above is what makes the PAT requirement knowable. Once
-    // it is known, settle every targeted input before opening the identity, NATS,
-    // project-database, or ingress sockets. A release-less or anonymous-only
-    // host takes the absent arm and acquires no identity-reader connection.
-    let (route_auth_target, identity_reader) = if pat_routes || session_routes {
-        let loaded_release = release
-            .as_ref()
-            .expect("an authenticated route was found only inside a loaded release");
-        let org = args
-            .org
-            .as_deref()
-            .filter(|org| !org.is_empty())
-            .context("an authenticated route requires --org/WAMN_ORG")?;
-        let project = (!args.project.is_empty())
-            .then_some(args.project.as_str())
-            .context("an authenticated route requires a nonempty --project/WAMN_PROJECT")?;
-        let system_url = std::env::var("WAMN_SYSTEM_URL")
-            .ok()
-            .filter(|url| !url.is_empty())
-            .context("an authenticated route requires WAMN_SYSTEM_URL")?;
-        http_admitter_url
-            .as_deref()
-            .context("an authenticated route requires WAMN_HTTP_ADMITTER_PG_URL")?;
-        let (login, database) = wamn_postgres::identity(&system_url)?;
-        anyhow::ensure!(
-            login
-                == system_reader_login(
-                    SystemReader::Identity,
-                    org,
-                    project,
-                    &loaded_release.target().environment,
-                    &database
-                ),
-            "identity reader targets another environment"
-        );
-        let client = wamn_postgres::pool(&system_url, 4).await?;
-        (Some(org.to_owned()), Some(client))
-    } else {
-        (None, None)
-    };
+    let (route_auth_target, identity_reader) =
+        if let (Some(target), Ok(system_url)) = (&target, std::env::var("WAMN_SYSTEM_URL")) {
+            let org = args.org.as_deref().context("host org is absent")?;
+            let (login, database) = wamn_postgres::identity(&system_url)?;
+            anyhow::ensure!(
+                login
+                    == system_reader_login(
+                        SystemReader::Identity,
+                        org,
+                        &args.project,
+                        &target.environment,
+                        &database
+                    ),
+                "identity reader targets another environment"
+            );
+            (
+                Some(org.to_owned()),
+                Some(wamn_postgres::pool(&system_url, 4).await?),
+            )
+        } else {
+            (None, None)
+        };
     let router_owner = args
         .runner
         .clone()
@@ -1014,16 +804,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let scheduler_nats_client =
         connect_scheduler_nats(&args, args.host_name.as_deref().unwrap_or(&router_owner)).await?;
     // The data connection carries the environment identity.
-    let data_nats_user = application
-        .map(|release| environment_nats_user(&release.target().project_env_key))
-        .or_else(|| {
-            args.org
-                .as_deref()
-                .zip(args.environment.as_deref())
-                .map(|(org, environment)| {
-                    environment_nats_user(&project_env_key(org, &args.project, environment))
-                })
-        });
+    let data_nats_user = target
+        .as_ref()
+        .map(|target| environment_nats_user(&target.project_env_key));
     let data_nats_client = connect_data_nats(
         &args,
         args.host_name.as_deref().unwrap_or(&router_owner),
@@ -1049,52 +832,18 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             )?
         },
     );
-    // wamn-0h0g.22.8.3: the host NAMES its own credential sources here rather
-    // than letting the config layer pick one up implicitly. deploy/platform
-    // injects WAMN_PG_URL via secretKeyRef (values-host-default.yaml),
-    // so the environment is the transport; reading it at
-    // composition is what makes it the explicit source instead of a fallback.
-    // A PAT-only host without guest SQL can instead name just CallableHttp below;
-    // no base URL is borrowed for that authority.
-    // wamn-0h0g.22.16: the host also names WHICH AUTHORITY the credential
-    // belongs to.
-    //
-    // wamn-0h0g.22.31 CUT THE EXECUTOR-PLATFORM CLASS OVER, and the ABSENT arm
-    // is the load-bearing half. Once that family authenticates as its own
-    // provisioned generation, the shared `WAMN_PG_URL` login stops being a
-    // placeholder for it and becomes a GUEST credential that would still satisfy
-    // the map — and `pool::credential_exactness_hook` refuses it on every
-    // physical connection anyway, for failing
-    // `pg_has_role(current_user, 'wamn_executor_platform', MEMBER)`. So a host
-    // given no executor-platform generation UNNAMES the class rather than
-    // keeping the guest entry: checkout then refuses for a missing credential,
-    // which is the real fault, instead of for a membership the guest login can
-    // never hold. The host is NOT refused at startup for this — unlike the
-    // executor it can serve with no run-plane work at all.
-    //
-    // wamn-0h0g.22.11 CUT THE CALLABLE-HTTP CLASS OVER on the same terms.
-    // Trusted component HTTP effects remain executor-only (wamn-0h0g.10.16),
-    // but wamn-10yt.3.2 reuses that exact pool family for the host-owned
-    // platform.permission read that PAT/session routes require. Connection
-    // resolution also uses this class. The manifest-derived condition retains the
-    // pool for either demand; a host with neither retains the absent arm.
     let executor_platform_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
-    let http_admitter_url = demanded_http_admitter_url(
-        pat_routes || session_routes || signature_routes,
-        connection_requirements,
-        http_admitter_url,
-    );
     let guest_url = std::env::var("WAMN_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
     // An application host refuses every route while its environment is
     // inactive, from its row read as `wamn_app`
     // (docs/architecture/execution.md#routing-and-availability).
-    let reads_environment_status = application.is_some() && guest_url.is_some();
+    let reads_environment_status = target.is_some() && guest_url.is_some();
     let queue_credentials_complete = require_queue_admission(
-        application.is_some(),
+        target.is_some(),
         guest_url.as_deref(),
         executor_platform_url.as_deref(),
     )?;
@@ -1103,7 +852,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // (docs/architecture/data-access.md#actors).
     let administration_url = std::env::var("WAMN_ADMINISTRATION_PG_URL")
         .ok()
-        .filter(|url| !url.is_empty() && application.is_some());
+        .filter(|url| !url.is_empty() && target.is_some());
     let postgres_credentials = if guest_url.is_some()
         || executor_platform_url.is_some()
         || http_admitter_url.is_some()
@@ -1112,7 +861,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Some(host_credentials(
             guest_url.clone(),
             executor_platform_url.clone(),
-            http_admitter_url,
+            http_admitter_url.clone(),
             administration_url.clone(),
         ))
     } else {
@@ -1120,14 +869,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
     let mut postgres = WamnPostgres::from_env_for_project(&args.project, postgres_credentials)
         .context("wamn:postgres plugin init")?;
-    if (pat_routes || session_routes || signature_routes)
-        && let Some(release) = &release
+    if http_admitter_url.is_some()
+        && let Some(target) = &target
     {
         postgres
             .configure_revocation(
                 &args.project,
-                &release
-                    .target()
+                &target
                     .applications
                     .keys()
                     .map(String::as_str)
@@ -1139,8 +887,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
     let mut file_connection_reader = None;
-    let credentials = match (&application, &args.connection_store_url) {
-        (Some(release), Some(url)) => {
+    let credentials = match (&target, &args.connection_store_url) {
+        (Some(target), Some(url)) => {
             let org = args.org.as_deref().context("host org is absent")?;
             let (login, database) = wamn_postgres::identity(url)?;
             anyhow::ensure!(
@@ -1149,7 +897,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                         SystemReader::Connection,
                         org,
                         &args.project,
-                        &release.target().environment,
+                        &target.environment,
                         &database
                     ),
                 "connection reader targets another environment"
@@ -1169,7 +917,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&resource_leases)));
     let changes = connection_memory::replicate(
         &data_nats_client,
-        application.map(|release| release.target().project_env_key.as_str()),
+        target
+            .as_ref()
+            .map(|target| target.project_env_key.as_str()),
         Arc::clone(&memory),
     );
     let oauth_encryption = args
@@ -1189,9 +939,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             changes,
             Arc::clone(&credentials),
             &postgres,
-            application.map_or("", |release| release.target().project_env_key.as_str()),
+            target
+                .as_ref()
+                .map_or("", |target| target.project_env_key.as_str()),
             &args.project,
-            application.map_or("", |release| release.target().environment.as_str()),
+            target
+                .as_ref()
+                .map_or("", |target| target.environment.as_str()),
         )
         .with_oauth_encryption(oauth_encryption.clone()),
     );
@@ -1216,83 +970,38 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     } else {
         None
     };
-    let integrations = match (application, &integration_registry) {
-        (Some(release), Some((registry, credentials))) => Some(Arc::new(
-            wamn_runtime::integrations::Integrations::new(
-                Arc::clone(&facts),
-                release,
-                &postgres,
-                &args.project,
-                registry.clone(),
-                credentials.clone(),
-            )
-            .await?,
-        )),
-        _ => None,
-    };
-    let operations = match application {
-        Some(release) => {
-            let artifact_base = args
-                .component_artifact_base
-                .as_deref()
-                .context("a serving host requires --component-artifact-base")?;
-            let source_config = ComponentArtifactSourceConfig::new(
-                artifact_base,
-                args.allow_insecure_registries,
-                Duration::from_secs(30),
-            )?;
-            let source_config = match RegistryPullCredential::select(
-                args.registry_auth_file.as_deref(),
-                args.registry_token_metadata,
-            )? {
-                RegistryPullCredential::AuthFile(path) => source_config
+    let source = if target.is_some() {
+        let artifact_base = args
+            .component_artifact_base
+            .as_deref()
+            .context("a serving host requires --component-artifact-base")?;
+        let source_config = ComponentArtifactSourceConfig::new(
+            artifact_base,
+            args.allow_insecure_registries,
+            Duration::from_secs(30),
+        )?;
+        let source_config = match RegistryPullCredential::select(
+            args.registry_auth_file.as_deref(),
+            args.registry_token_metadata,
+        )? {
+            RegistryPullCredential::AuthFile(path) => {
+                source_config
                     .with_registry_auth_file(path)
-                    .context("load component registry pull credential")?,
-                RegistryPullCredential::TokenMetadata => {
-                    source_config.with_registry_token_metadata()
-                }
+                    .context("load component registry pull credential")?
             }
-            .with_ca_paths(&args.oci_ca_paths)
-            .context("trust the configured OCI CA bundles for component pulls")?;
-            let source = Arc::new(
-                ComponentArtifactSource::new(source_config)
-                    .context("configure the component artifact registry client")?,
-            );
-            let source: Arc<dyn ArtifactSource> = source;
-            let allowed_hosts = args
-                .allowed_hosts
-                .iter()
-                .map(|value| value.parse())
-                .collect::<Result<Vec<_>, _>>()?;
-            Some(Arc::new(OperationHost::new(
-                Arc::clone(&engine),
-                Arc::clone(&postgres),
-                Arc::clone(&http_transport),
-                Arc::clone(&facts),
-                Arc::clone(&logging),
-                allowed_hosts.into(),
-                Arc::clone(release),
-                source,
-                OperationHostConfig {
-                    project: args.project.clone(),
-                    schema: args.schema.clone(),
-                    owner_prefix: router_owner.clone(),
-                    warm_reuse: wamn_engine::warm_reuse::WarmReuse::new(
-                        &args.trusted_warm_component_digest,
-                        args.component_pool_size,
-                        args.component_reclaim_window_seconds,
-                    )?,
-                },
-            )?))
+            RegistryPullCredential::TokenMetadata => source_config.with_registry_token_metadata(),
         }
-        None => None,
+        .with_ca_paths(&args.oci_ca_paths)
+        .context("trust the configured OCI CA bundles for component pulls")?;
+        let source = Arc::new(
+            ComponentArtifactSource::new(source_config)
+                .context("configure the component artifact registry client")?,
+        );
+        let source: Arc<dyn ArtifactSource> = source;
+        Some(source)
+    } else {
+        None
     };
-    if let (Some(operations), Some(integrations)) = (&operations, &integrations) {
-        operations.set_integrations(Arc::clone(integrations))?;
-    }
-    let router_driver = operations
-        .as_ref()
-        .map(|operations| Arc::new(RouterDriver::new(Arc::clone(operations))));
     let host_config = HostConfig {
         allow_oci_insecure: args.allow_insecure_registries,
         oci_pull_timeout: Some(Duration::from_secs(30)),
@@ -1313,9 +1022,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // The auth memory is the replica of the NATS KV bucket wamn-auth, and
     // the host deletes the keys of its own writes there
     // (docs/architecture/execution.md#auth-memory).
-    let project_env_key = release
-        .as_ref()
-        .map(|release| release.target().project_env_key.clone());
+    let project_env_key = target.as_ref().map(|target| target.project_env_key.clone());
     let auth_changes = replicate(
         &data_nats_client,
         project_env_key.as_deref(),
@@ -1347,34 +1054,52 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
 
     let flow_http = Arc::new(flow_http);
-    let files = application.map(|release| {
-        let connections = Arc::new(wamn_execution_host::file_route::RegistryFileConnections {
-            client: file_connection_reader,
-            release: Arc::clone(release),
-            facts: Arc::clone(&facts),
-            org: args.org.clone().unwrap_or_default(),
-            project: args.project.clone(),
-            environment: release.target().environment.clone(),
-        });
-        let blobstore = Arc::new(
-            wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
-                &postgres,
-            )),
+    let releases = if let (Some(target), Some(source)) = (target, source) {
+        anyhow::ensure!(
+            queue_credentials_complete,
+            "project host has no queue credentials"
         );
-        Arc::new(wamn_execution_host::file_route::FileRoutes::new(
-            Arc::clone(&operations.as_ref().expect("application operations").context),
-            Arc::clone(&postgres),
-            blobstore,
-            connections,
-            args.project.clone(),
-            administration_url.clone(),
-        ))
-    });
-
-    if let (Some(operations), Some(files)) = (&operations, &files) {
-        operations.set_file_routes(Arc::clone(files))?;
-    }
-
+        Some(Arc::new(releases::Releases::new(
+            releases::Resources {
+                engine: Arc::clone(&engine),
+                postgres: Arc::clone(&postgres),
+                transport: Arc::clone(&http_transport),
+                facts: Arc::clone(&facts),
+                logging: Arc::clone(&logging),
+                source,
+                allowed_hosts: args
+                    .allowed_hosts
+                    .iter()
+                    .map(|value| value.parse())
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into(),
+                configuration: OperationHostConfig {
+                    project: args.project.clone(),
+                    schema: args.schema.clone(),
+                    owner_prefix: router_owner.clone(),
+                    warm_reuse: wamn_engine::warm_reuse::WarmReuse::new(
+                        &args.trusted_warm_component_digest,
+                        args.component_pool_size,
+                        args.component_reclaim_window_seconds,
+                    )?,
+                },
+                target,
+                org: args.org.clone().context("host org is absent")?,
+                connection_reader: file_connection_reader,
+                identity: route_auth_target
+                    .zip(identity_reader)
+                    .map(|(org, client)| (client, org)),
+                administration_url,
+                changes: auth_changes,
+                jetstream: Arc::clone(&jetstream),
+                registry: integration_registry,
+                queue_lease_ttl_ms: args.queue_lease_ttl_ms,
+            },
+            wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?,
+        )))
+    } else {
+        None
+    };
     let mut plugins: Vec<Arc<dyn plugin::HostPlugin>> = vec![
         Arc::new(
             plugin::wasi_config::DynamicConfig::builder()
@@ -1396,44 +1121,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::<FlowHttpRouting>::clone(&flow_http),
     ];
 
-    let application_http = if let Some(operations) = &operations {
-        Some(Arc::new(
-            HostRouteDelivery::new(
-                Arc::clone(&operations.release),
-                HostRouteHandlers::Application {
-                    postgres: Arc::clone(&postgres),
-                    project: args.project.clone(),
-                    identity: route_auth_target
-                        .as_ref()
-                        .zip(identity_reader.as_ref())
-                        .map(|(org, client)| (client.clone(), org.clone())),
-                    changes: auth_changes.clone(),
-                },
-            )
-            .with_files(files.clone()),
-        ))
-    } else {
-        None
-    };
-    let queue = match (&router_driver, &release) {
-        (Some(driver), Some(release)) if queue_credentials_complete => Some(
-            QueueService::bind(
-                Arc::clone(driver),
-                Arc::clone(&postgres),
-                Arc::clone(&jetstream),
-                release,
-                QueueServiceConfig {
-                    project: args.project.clone(),
-                    runner: router_owner,
-                    lease_ttl_ms: args.queue_lease_ttl_ms,
-                },
-            )
-            .await
-            .context("bind durable queue execution")?,
-        ),
-        _ => None,
-    };
-
     let native_event_bindings = if let Some(path) = &args.user_config {
         let source = tokio::fs::read_to_string(path)
             .await
@@ -1451,13 +1138,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         None
     };
 
-    if let Some(integrations) = &integrations {
-        plugins.push(Arc::new(wamn_runtime::integrations::IntegrationIngress {
-            interfaces: integrations.interfaces(),
-            scopes: Arc::clone(&postgres.scopes),
-        }));
-    }
-
     // Count the same plugins supplied to the native host, including the optional bridge.
     let cleanup_budget = host_cleanup_budget(plugins.len())?;
     let mut host_builder = wash_runtime::host::HostBuilder::default();
@@ -1466,13 +1146,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
     if let Some(bindings) = native_event_bindings {
         host_builder = host_builder.with_plugin_bindings(bindings);
-    }
-    // The heartbeat carries the release so that `hostSelector` can tell this
-    // host from a host of another release in the same group (docs/architecture/naming.md#environment-names).
-    if let Some(digest) = &args.release_manifest_digest {
-        let label =
-            release_label(digest).context("--release-manifest-digest is not a sha256 digest")?;
-        host_builder = host_builder.with_label("wamn.release", label);
     }
     let mut builder = host_builder
         .with_engine((*engine).clone())
@@ -1491,47 +1164,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let liveness = Liveness::new(silence_budget);
     let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
     let (stop_queue, stopping) = tokio::sync::watch::channel(false);
-    let mut schedule_tasks = tokio::task::JoinSet::new();
-    if let Some(release) = application {
-        let events = Arc::clone(&jetstream);
-        let postgres = Arc::clone(&postgres);
-        let args_project = args.project.clone();
-        schedule_tasks.spawn(serve_application_events(
-            Arc::clone(release),
-            stopping.clone(),
-            async move |release: &Arc<LoadedRelease>| {
-                if let Err(error) = wamn_workflow::event_admission::admit_application_events(
-                    &events,
-                    &postgres,
-                    &args_project,
-                    release,
-                )
-                .await
-                {
-                    tracing::warn!(?error, "application event admission failed");
-                }
-            },
-        ));
-    }
-    // Each host admits schedules with its own loaded application release.
-    if let Some(release) = application {
-        let schedules = wamn_workflow::schedule::PostgresSchedules::new(
-            Arc::clone(&postgres),
-            &args.project,
-            Arc::clone(release),
-        );
-        let schedule_stopping = stopping.clone();
-        let task = schedule_tasks.spawn(async move {
-            if let Err(error) = wamn_workflow::schedule::serve(&schedules, schedule_stopping).await
-            {
-                tracing::warn!(%error, "workflow schedule task stopped");
-            }
-        });
-        probe_state.register(Arc::new(ScheduleProbe { task }));
-    }
-
     let mut ingress_connections = None;
     let mut ingress_handler = None;
+    let mut application_http = None;
     if let Some(addr) = args.http_addr {
         // The route host lives only on the http workload's `config.host`
         // (R2), so the host expects no host before a workload binds one.
@@ -1550,13 +1185,15 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         let server = Arc::new(ingress.build().await?);
         let mut http_handler: Arc<dyn wash_runtime::host::http::HostHandler> =
             Arc::clone(&server) as Arc<dyn wash_runtime::host::http::HostHandler>;
-        if let Some(handlers) = application_http.as_ref() {
-            let platform = Arc::new(wamn_execution_host::platform_http::PlatformHttp::new(
-                Arc::clone(&server) as Arc<dyn wash_runtime::host::http::HostHandler>,
-                Arc::clone(handlers),
-                Arc::clone(&flow_http),
-            ));
-            http_handler = platform;
+        if releases.is_some() {
+            let platform = Arc::new(
+                wamn_execution_host::platform_http::PlatformHttp::for_workloads(
+                    Arc::clone(&server) as Arc<dyn wash_runtime::host::http::HostHandler>,
+                    Arc::clone(&flow_http),
+                ),
+            );
+            http_handler = Arc::clone(&platform) as Arc<_>;
+            application_http = Some(platform);
         }
         let connections = server.connection_limit();
         probe_state.register(Arc::new(connections.clone()));
@@ -1567,7 +1204,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let file_listener = match args.files_addr {
         Some(address) => {
             anyhow::ensure!(
-                files.is_some(),
+                releases.is_some(),
                 "--files-addr requires a release host with file routes"
             );
             Some(
@@ -1585,30 +1222,19 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let prepared_host = builder.build().context("failed to build native host")?;
     tracing::info!(
-        router_delivery = router_driver.is_some(),
+        router_delivery = releases.is_some(),
         "wamn-host starting (base plugins: wasi:config, wasi:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing)"
     );
-    // Whether this host carries a release is the first thing an operator needs from
-    // the log: it decides whether the release-conditioned interfaces have a manifest to
-    // serve from at all. The binding also has to outlive this point — `release`
-    // holds the process's only loaded manifest for as long as `run` is on the
-    // stack, which is the whole serving period.
-    match release.as_ref() {
-        Some(loaded_release) => tracing::info!(
-            manifest_digest = %loaded_release.release().manifest_digest,
-            "wamn-host loaded its release"
-        ),
-        None => {
-            tracing::info!(
-                "wamn-host carries no release; no release-conditioned interface is served"
-            );
-        }
-    }
     let mut file_tasks = tokio::task::JoinSet::new();
     if let Some(listener) = file_listener {
-        file_tasks.spawn(wamn_execution_host::file_route::serve(
+        let releases = Arc::clone(
+            releases
+                .as_ref()
+                .expect("file listener requires project resources"),
+        );
+        file_tasks.spawn(wamn_execution_host::file_route::serve_selected(
             listener,
-            Arc::clone(files.as_ref().expect("file listener requires file routes")),
+            move |host| releases.files(host),
             Arc::clone(&flow_http),
         ));
     }
@@ -1631,7 +1257,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .with_liveness(Arc::clone(&liveness))
             .with_handler(Arc::new(commands::Commands {
                 postgres: Arc::clone(&postgres),
-                operations: operations.clone(),
+                releases: releases.as_ref().map(Arc::clone),
+                http: application_http,
+                workloads: std::sync::Mutex::default(),
                 component_artifact_base: args.component_artifact_base.clone(),
                 drain: Arc::clone(&workload_drain),
             }));
@@ -1653,67 +1281,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         control_result?;
         host_result
     };
-    // The host heartbeats from here on. The preload compiles after it, so a
-    // cold compile cache delays the workload and not the heartbeat.
-    if files.is_some() {
-        let mut stopped = stopping.clone();
-        let files = files.clone();
-        schedule_tasks.spawn(async move {
-            let mut ticks =
-                tokio::time::interval(wamn_execution_host::file_collector::COLLECTION_INTERVAL);
-            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            let mut collection = tokio::task::JoinSet::new();
-            loop {
-                tokio::select! {
-                    _ = stopped.changed() => return,
-                    result = collection.join_next(), if !collection.is_empty() => {
-                        match result {
-                            Some(Ok(Ok(_))) => {},
-                            result => tracing::warn!(?result, "host file orphan collection failed"),
-                        }
-                        continue;
-                    }
-                    _ = ticks.tick() => {}
-                }
-                if let Some(files) = &files
-                    && collection.is_empty()
-                {
-                    let files = Arc::clone(files);
-                    collection.spawn(async move { files.collect_orphan_files().await });
-                }
-            }
-        });
-    }
-    let started = preload_release(operations.as_ref()).await;
-    if let Err(error) = started {
-        let _ = stop_queue.send(true);
-        wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, async {
-            let _ = workload_drain
-                .stop(&native_host, Duration::from_secs(args.drain_bound_seconds))
-                .await;
-            let had_ingress = ingress_handler.is_some();
-            let explicit_stop = match ingress_handler.as_ref() {
-                Some(handler) => handler.stop().await.context("stop HTTP admission"),
-                None => Ok(()),
-            };
-            let component_result = workload_drain
-                .stop_components(&native_host, async {
-                    if let Some(connections) = &ingress_connections {
-                        connections.drained().await;
-                    }
-                })
-                .await;
-            let native_result = normalize_explicit_ingress_stop(
-                native_cleanup.await,
-                had_ingress && explicit_stop.is_ok(),
-            );
-            explicit_stop.and(component_result).and(native_result)
-        })
-        .await?;
-
-        return Err(error);
-    }
-    // The host is subscribed and its release is compiled, so readiness can report ready.
     probe_state.started();
     tracing::info!(
         elapsed_ms = %startup_started.elapsed().as_millis(),
@@ -1722,8 +1289,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     );
     let result = {
         let queue_serving = async {
-            match queue.as_ref() {
-                Some(queue) => queue.serve(stopping).await,
+            match releases.as_ref() {
+                Some(releases) => releases.serve(stopping).await,
                 None => std::future::pending().await,
             }
         };
@@ -1733,22 +1300,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         let mut sigterm =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         let stopped = async {
-            let queue_failure = async {
-                let Some(queue) = queue.as_ref() else {
-                    return std::future::pending::<anyhow::Error>().await;
-                };
-                let liveness = queue.liveness();
-                wamn_engine::lifecycle::watch_liveness(
-                    &liveness,
-                    None,
-                    Duration::from_millis(args.queue_lease_ttl_ms).saturating_mul(3),
-                )
-                .await
-            };
             tokio::select! {
                 signal = tokio::signal::ctrl_c() => signal.context("receive SIGINT"),
                 _ = sigterm.recv() => Ok(()),
-                error = queue_failure => Err(error),
                 error = wamn_engine::lifecycle::watch_liveness(&liveness, Some(&probe_state), silence_budget) => Err(error),
                 () = ingress_stopped(ingress_connections.as_ref()) => Err(anyhow::anyhow!("native HTTP ingress stopped unexpectedly")),
                 task = file_tasks.join_next(), if !file_tasks.is_empty() => {
@@ -1759,7 +1313,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 }
             }
         };
-        let queue_enabled = queue.is_some();
+        let queue_enabled = releases.is_some();
         let had_ingress = ingress_handler.is_some();
         let draining_connections = ingress_connections.clone();
         let stop_ingress = async move {
@@ -1797,11 +1351,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         )
         .await
     };
-    schedule_tasks.shutdown().await;
-    if let Some(queue) = &queue {
-        queue.revoke();
-    }
-    drop(queue);
     // Abort and join auxiliary tasks even when the native command task skipped Host::stop.
     file_tasks.abort_all();
     let file_result = wamn_engine::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
@@ -1818,9 +1367,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     result.and(file_result).and(probe_result)
 }
 
-/// Admit events with the startup release until the host stops.
+/// Resolve each event admission tick through the current release selection.
 async fn serve_application_events(
-    release: Arc<LoadedRelease>,
+    selection: tokio::sync::watch::Receiver<Option<Arc<LoadedRelease>>>,
     mut stopped: tokio::sync::watch::Receiver<bool>,
     mut admit: impl AsyncFnMut(&Arc<LoadedRelease>),
 ) {
@@ -1831,41 +1380,14 @@ async fn serve_application_events(
             _ = stopped.changed() => return,
             _ = ticks.tick() => {},
         }
+        let Some(release) = selection.borrow().as_ref().map(Arc::clone) else {
+            continue;
+        };
         tokio::select! {
             _ = stopped.changed() => return,
             () = admit(&release) => {},
         }
     }
-}
-
-/// Pull and compile every component that the release serves.
-async fn preload_release(operations: Option<&Arc<OperationHost>>) -> anyhow::Result<()> {
-    // SCHEDULE-TIME PRELOAD. prepare_synchronous_release pulls and compiles
-    // every digest this release serves and populates the driver's digest-keyed
-    // component cache; without it the FIRST request pays a full pull and compile
-    // -- measured at 35.8 s in the record retained by commit 1106dc4e6792.
-    //
-    // It ran only in services/executor before this: the probe was constructed
-    // there and nowhere else, so the host that actually serves HTTP routes never
-    // preloaded anything. Readiness follows compilation of every released component.
-    if let Some(operations) = operations {
-        let readiness = wamn_execution_host::RouterReadinessProbe::new(Arc::clone(operations));
-        let snapshot = readiness.refresh().await;
-        anyhow::ensure!(
-            matches!(
-                snapshot.status,
-                wamn_execution_host::RouterReadinessStatus::Ready
-            ),
-            "release preload did not reach ready: {:?} ({})",
-            snapshot.status,
-            snapshot.refusal.unwrap_or("no refusal recorded")
-        );
-        tracing::info!(
-            target: "wamn::host",
-            "release preload completed; component cache warm"
-        );
-    }
-    Ok(())
 }
 
 /// The time the auxiliary teardown after [`stop_combined_after`] may take:
@@ -1887,23 +1409,6 @@ fn host_namespace(chart: Option<String>) -> Option<String> {
 /// same drain bound.
 fn shutdown_budget(drain_bound_seconds: u64) -> Duration {
     Duration::from_secs(drain_bound_seconds).saturating_sub(EXIT_RESERVE)
-}
-
-#[derive(Debug)]
-struct ScheduleProbe {
-    task: tokio::task::AbortHandle,
-}
-
-impl probes::ReadinessCheck for ScheduleProbe {
-    fn name(&self) -> &'static str {
-        "workflow_schedule"
-    }
-    fn ready(&self) -> bool {
-        !self.task.is_finished()
-    }
-    fn unrecoverable(&self) -> bool {
-        self.task.is_finished()
-    }
 }
 
 fn probe_listener_failure(task: Option<&Result<(), tokio::task::JoinError>>) -> anyhow::Error {
@@ -2058,12 +1563,11 @@ mod tests {
 
     use super::*;
 
-    const RELEASE_BASE: &str = "registry.invalid/wamn/releases";
     const RELEASE_DIGEST: &str =
         "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
     #[tokio::test(start_paused = true)]
-    async fn event_admission_reuses_the_startup_release_across_ticks() {
+    async fn event_admission_uses_the_current_selection() {
         let bytes = anonymous_release(Vec::new()).canonical_bytes();
         let release = Arc::new(
             LoadedRelease::load_canonical_bytes(
@@ -2075,14 +1579,29 @@ mod tests {
             )
             .unwrap(),
         );
+        let mut next = anonymous_release(Vec::new());
+        next.host_routes
+            .insert(wamn_catalog::HostRouteSet::Application);
+        let next = Arc::new(
+            LoadedRelease::load_canonical_bytes(
+                &next.canonical_bytes(),
+                "next release",
+                release.target().clone(),
+            )
+            .unwrap(),
+        );
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let mut admissions = 0;
-        serve_application_events(Arc::clone(&release), stopped, async |received| {
-            assert!(Arc::ptr_eq(&release, received));
-            admissions += 1;
-            if admissions == 2 {
+        let (selection, selected) = tokio::sync::watch::channel(Some(Arc::clone(&release)));
+        serve_application_events(selected, stopped, async |received| {
+            if admissions == 0 {
+                assert!(Arc::ptr_eq(&release, received));
+                selection.send_replace(Some(Arc::clone(&next)));
+            } else {
+                assert!(Arc::ptr_eq(&next, received));
                 stop.send(true).unwrap();
             }
+            admissions += 1;
         })
         .await;
     }
@@ -2206,49 +1725,6 @@ host:
         .unwrap()
         .args;
         assert_eq!(args.environment.as_deref(), Some("dev"));
-    }
-
-    /// A host that serves a release takes the declared applications beside
-    /// its environment, and refuses to start without them.
-    #[test]
-    fn a_served_release_target_requires_the_declared_applications() {
-        let target = |extra: &[&str]| {
-            let mut arguments = vec![
-                "wamn-host",
-                "--org=acme",
-                "--project=wms",
-                "--environment=dev",
-            ];
-            arguments.extend_from_slice(extra);
-            served_release_target(&parse(arguments).unwrap().args)
-        };
-        assert!(target(&[]).is_err());
-        assert!(target(&["--applications={}"]).is_err());
-        assert!(
-            target(&[r#"--applications={"a":{"packages":["a"]},"b":{"packages":["b"]}}"#]).is_err()
-        );
-        let target = target(&[r#"--applications={"wms":{"packages":["wamn_wms"]}}"#])
-            .expect("the map parses");
-        assert_eq!(
-            target.applications["wms"].packages,
-            ["wamn_wms".to_owned()].into()
-        );
-        assert_eq!(target.environment, "dev");
-        assert!(
-            release_target(
-                &parse([
-                    "wamn-host",
-                    "--org=acme",
-                    "--project=wms",
-                    "--environment=dev",
-                    "--applications=[]"
-                ])
-                .unwrap()
-                .args
-            )
-            .is_err(),
-            "a map that is not the declared applications refuses"
-        );
     }
 
     #[test]
@@ -2757,20 +2233,6 @@ host:
         }
     }
 
-    #[test]
-    fn callable_http_configuration_is_not_authority_without_release_demand() {
-        assert_eq!(
-            demanded_http_admitter_url(false, false, Some(ADMITTER.to_owned())),
-            None,
-            "an anonymous-only release without connections must not name an ambient credential"
-        );
-        assert_eq!(
-            demanded_http_admitter_url(true, false, Some(ADMITTER.to_owned())).as_deref(),
-            Some(ADMITTER),
-            "a PAT/session-protected release keeps the credential it requires"
-        );
-    }
-
     fn anonymous_release(connections: Vec<wamn_catalog::ComponentConnection>) -> ServingManifest {
         use std::collections::{BTreeMap, BTreeSet};
         use wamn_catalog::{
@@ -2837,95 +2299,6 @@ host:
             )]),
         )
         .expect("anonymous release is valid")
-    }
-
-    #[test]
-    fn an_anonymous_release_with_a_connection_keeps_the_callable_http_credential() {
-        let manifest = anonymous_release(vec![wamn_catalog::ComponentConnection {
-            store_alias: "upstream".into(),
-            requirement_type: wamn_catalog::ComponentConnectionType::Http,
-            mode: wamn_catalog::ConnectionMode::Write,
-        }]);
-        let authenticated_routes = requires_pat_route_authentication(&manifest)
-            || requires_session_route_authentication(&manifest);
-        assert!(!authenticated_routes);
-        assert!(declares_connection_requirement(&manifest));
-        assert_eq!(
-            demanded_http_admitter_url(
-                authenticated_routes,
-                declares_connection_requirement(&manifest),
-                Some(ADMITTER.to_owned()),
-            )
-            .as_deref(),
-            Some(ADMITTER),
-            "an anonymous-only release needs the credential to resolve its connection"
-        );
-    }
-
-    #[test]
-    fn an_anonymous_release_without_connections_drops_the_callable_http_credential() {
-        let manifest = anonymous_release(Vec::new());
-        let authenticated_routes = requires_pat_route_authentication(&manifest)
-            || requires_session_route_authentication(&manifest);
-        assert!(!authenticated_routes);
-        assert!(!declares_connection_requirement(&manifest));
-        assert_eq!(
-            demanded_http_admitter_url(
-                authenticated_routes,
-                declares_connection_requirement(&manifest),
-                Some(ADMITTER.to_owned()),
-            ),
-            None,
-            "an anonymous-only release without connections must not name an ambient credential"
-        );
-    }
-
-    /// The R2 posture's first half: a host given no release pair was never given
-    /// a release, so there is nothing to pull and nothing to refuse.
-    #[tokio::test]
-    async fn a_host_given_no_release_pair_carries_no_release() {
-        let release = load_release(
-            None,
-            None,
-            false,
-            None,
-            false,
-            &[],
-            Ok(ReleaseTarget::new("project", "test")),
-        )
-        .await
-        .expect("no release pair is not a failure");
-        assert!(
-            release.is_none(),
-            "a host with no release pair must carry no release rather than \
-             loading one from somewhere else"
-        );
-    }
-
-    /// The R2 posture's second half: a host told it serves a release and unable
-    /// to configure the pull must fail startup before the host serves a release.
-    ///
-    /// The credential is the first thing the source reads, so an absent one
-    /// refuses before any network I/O — which is what keeps this test isolated.
-    #[tokio::test]
-    async fn a_host_given_an_unusable_release_pair_refuses() {
-        let auth_file = Path::new("/nonexistent/wamn-registry-auth.json");
-        let error = load_release(
-            Some(RELEASE_BASE),
-            Some(RELEASE_DIGEST),
-            false,
-            Some(auth_file),
-            false,
-            &[],
-            Ok(ReleaseTarget::new("project", "test")),
-        )
-        .await
-        .expect_err("an unusable release pair must refuse");
-        let message = format!("{error:#}");
-        assert!(
-            message.contains("registry-credentials-unreadable"),
-            "the refusal must name the transfer invariant it could not satisfy: {message}"
-        );
     }
 
     /// The chart's native memory settings reach `HostMemoryBudgets` intact.
@@ -3001,47 +2374,5 @@ host:
                 "legacy runtime flag {flag} must not remain an accepted contract"
             );
         }
-    }
-
-    /// The third state a base-plus-digest pair invents — one half without the
-    /// other — is refused by the parser, so it never reaches [`load_release`] and
-    /// never becomes a pod that quietly serves no release.
-    #[test]
-    fn a_host_given_half_a_release_pair_refuses_to_parse() {
-        for half in [
-            ["--release-artifact-base", RELEASE_BASE],
-            ["--release-manifest-digest", RELEASE_DIGEST],
-        ] {
-            let error = parse(["wamn-host", half[0], half[1]])
-                .expect_err("half a release pair must refuse to parse");
-            let message = error.to_string();
-            assert!(
-                message.contains("--release-artifact-base")
-                    && message.contains("--release-manifest-digest"),
-                "the refusal must name both halves of the pair: {message}"
-            );
-        }
-    }
-
-    /// Both halves together parse, so the refusal above is the missing half and
-    /// not the pair itself.
-    #[test]
-    fn a_host_given_both_release_halves_parses() {
-        let cli = parse([
-            "wamn-host",
-            "--release-artifact-base",
-            RELEASE_BASE,
-            "--release-manifest-digest",
-            RELEASE_DIGEST,
-        ])
-        .expect("a complete release pair parses");
-        assert_eq!(
-            cli.args.release_artifact_base.as_deref(),
-            Some(RELEASE_BASE)
-        );
-        assert_eq!(
-            cli.args.release_manifest_digest.as_deref(),
-            Some(RELEASE_DIGEST)
-        );
     }
 }

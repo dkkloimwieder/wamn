@@ -105,6 +105,7 @@ mod event_batch {
                 .unwrap()
                 .sequence;
             let admission = EventBatchAdmission {
+                application: APP,
                 source_package: APPLICATION,
                 entity: "order",
                 envelope: &body,
@@ -115,6 +116,7 @@ mod event_batch {
                 &events,
                 &fixture.postgres,
                 PROJECT,
+                "billing",
                 &billing,
             )
             .await
@@ -165,6 +167,7 @@ mod event_batch {
                 wamn_workflow::event_admission::admit_event_batch(
                     &fixture.postgres,
                     PROJECT,
+                    APP,
                     loaded,
                     &admission,
                 )
@@ -178,6 +181,7 @@ mod event_batch {
                     &events,
                     &fixture.postgres,
                     PROJECT,
+                    APP,
                     &retired,
                 )
                 .await
@@ -211,6 +215,7 @@ mod event_batch {
                     &events,
                     &fixture.postgres,
                     PROJECT,
+                    APP,
                     &upgraded,
                 )
                 .await
@@ -220,6 +225,7 @@ mod event_batch {
                     &events,
                     &fixture.postgres,
                     PROJECT,
+                    APP,
                     loaded,
                 )
                 .await
@@ -228,6 +234,7 @@ mod event_batch {
             // A later stream sequence still names the original admitted event.
             // A host with another release must retain its run.
             let replay = EventBatchAdmission {
+                application: APP,
                 sequence: sequence + 1000,
                 ..admission
             };

@@ -149,8 +149,6 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     group.insert(
         "extraArgs".into(),
         Value::Sequence(vec![
-            format!("--release-artifact-base={}", input.artifact_base).into(),
-            format!("--release-manifest-digest={}", input.manifest_digest).into(),
             format!("--environment={}", input.env).into(),
             "--files-addr=0.0.0.0:8082".into(),
             format!(

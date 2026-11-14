@@ -54,6 +54,19 @@ impl InvocationScopes {
         ))
     }
 
+    /// Observe host-owned authority without exposing registry records.
+    pub fn any<T: 'static>(&self, predicate: impl Fn(&T) -> bool) -> bool {
+        self.records
+            .read()
+            .expect("invocation scopes lock poisoned")
+            .values()
+            .any(|record| {
+                (record.authority.as_ref() as &dyn Any)
+                    .downcast_ref::<T>()
+                    .is_some_and(&predicate)
+            })
+    }
+
     /// Populate host-owned workload facts before execution.
     pub fn update<T: Default + InvocationAuthority, R>(
         &self,
@@ -223,5 +236,25 @@ impl HostPlugin for InvocationScopes {
             imports: HashSet::new(),
             exports: HashSet::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authority_observation_ends_with_the_invocation_lifetime() {
+        let scopes = Arc::new(InvocationScopes::default());
+        let lifetime = scopes
+            .enter(
+                "request".to_owned(),
+                ReleaseScope::default(),
+                InvocationTrace::capture(),
+            )
+            .unwrap();
+        assert!(scopes.any::<ReleaseScope>(|_| true));
+        drop(lifetime);
+        assert!(!scopes.any::<ReleaseScope>(|_| true));
     }
 }

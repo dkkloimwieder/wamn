@@ -363,7 +363,8 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
         Arc::clone(&fixture.postgres),
         PROJECT,
-        Arc::clone(&fixture.release),
+        APP,
+        tokio::sync::watch::channel(Some(Arc::clone(&fixture.release))).1,
     );
     let (stop, stopping) = tokio::sync::watch::channel(false);
     let task =
@@ -430,7 +431,8 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
         postgres,
         PROJECT,
-        Arc::clone(&fixture.release),
+        APP,
+        tokio::sync::watch::channel(Some(Arc::clone(&fixture.release))).1,
     );
     let executor = url::Url::parse(&fixture.executor_url)
         .unwrap()
@@ -486,7 +488,12 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
          SELECT project_env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application=$1").bind(&APP).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
     let upgraded = Arc::new(release_variant(&mut fixture, APP, b"1251").await);
     let billing = Arc::new(release_variant(&mut fixture, "billing", b"1252").await);
-    let b = PostgresSchedules::new(Arc::clone(&fixture.postgres), PROJECT, Arc::clone(&billing));
+    let b = PostgresSchedules::new(
+        Arc::clone(&fixture.postgres),
+        PROJECT,
+        "billing",
+        tokio::sync::watch::channel(Some(Arc::clone(&billing))).1,
+    );
     let rows_tick = due("2026-10-20T10:15:00Z");
     let b_rows = b.enabled(rows_tick).await.unwrap();
     assert!(b_rows.iter().all(|row| row.application == "billing"));
@@ -496,7 +503,12 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
         (20, &upgraded),
         (25, &fixture.release),
     ] {
-        let a = PostgresSchedules::new(Arc::clone(&fixture.postgres), PROJECT, Arc::clone(release));
+        let a = PostgresSchedules::new(
+            Arc::clone(&fixture.postgres),
+            PROJECT,
+            APP,
+            tokio::sync::watch::channel(Some(Arc::clone(release))).1,
+        );
         let a_rows = a.enabled(rows_tick).await.unwrap();
         assert!(a_rows.iter().all(|row| row.application == APP));
         assert!(!a_rows.is_empty());
@@ -554,7 +566,8 @@ async fn schedule_ticks_use_the_environment_time_zone() {
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
         Arc::clone(&fixture.postgres),
         PROJECT,
-        Arc::clone(&fixture.release),
+        APP,
+        tokio::sync::watch::channel(Some(Arc::clone(&fixture.release))).1,
     );
     for tick in [
         "2026-03-07T11:00:00Z",

@@ -1082,11 +1082,13 @@ impl AsyncRead for BodyReader {
 }
 
 /// Serve native file requests independently of component workloads.
-pub async fn serve(
+/// Serve file requests through the current application selection for their host.
+pub async fn serve_selected(
     listener: tokio::net::TcpListener,
-    files: Arc<FileRoutes>,
+    select: impl Fn(&str) -> Option<Arc<FileRoutes>> + Send + Sync + 'static,
     routing: Arc<FlowHttpRouting>,
 ) -> std::io::Result<()> {
+    let select = Arc::new(select);
     let mut connections = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
@@ -1097,15 +1099,18 @@ pub async fn serve(
             }
             accepted = listener.accept() => {
                 let (stream, peer) = accepted?;
-                let files = Arc::clone(&files);
+                let select = Arc::clone(&select);
                 let routing = Arc::clone(&routing);
                 connections.spawn(async move {
                     let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
-                        let files = Arc::clone(&files);
+                        let files = request.headers().get(hyper::header::HOST).and_then(|host| host.to_str().ok()).and_then(|host| select(host));
                         let routing = Arc::clone(&routing);
                         async move {
                             let request = request.map(|body| body.map_err(wasmtime_wasi_http::Error::from).boxed_unsync());
-                            let response = files.http(&routing, request).await.unwrap_or_else(|| {
+                            let response = match files {
+                                Some(files) => files.http(&routing, request).await,
+                                None => None,
+                            }.unwrap_or_else(|| {
                                 let mut response = hyper::Response::new(WasiBody::default());
                                 *response.status_mut() = hyper::StatusCode::NOT_FOUND;
                                 response
@@ -1435,7 +1440,11 @@ mod tests {
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let task = tokio::spawn(serve(listener, files, routing));
+        let task = tokio::spawn(serve_selected(
+            listener,
+            move |host| (host == "orders.example.com").then(|| Arc::clone(&files)),
+            routing,
+        ));
         let client = reqwest::Client::new();
         for (authorization, status) in [(None, 401), (Some("Bearer session"), 403)] {
             let mut request = client
@@ -1451,6 +1460,13 @@ mod tests {
             let response = request.send().await.unwrap();
             assert_eq!(response.status().as_u16(), status);
         }
+        let foreign = client
+            .post(format!("http://{address}/api/orders/files"))
+            .header("Host", "billing.example.com")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(foreign.status().as_u16(), 404);
         let response = client
             .get(format!("http://{address}/other"))
             .send()

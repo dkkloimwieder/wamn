@@ -101,6 +101,7 @@ impl WamnJetstream {
                     project,
                     release,
                     &EventBatchAdmission {
+                        application,
                         source_package: package,
                         entity,
                         envelope,

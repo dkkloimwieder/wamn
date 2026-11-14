@@ -22,14 +22,13 @@ use crate::resolution::{WorkflowResolutionError, WorkflowResolutionErrorType};
 use crate::router_action::{ProductionRouterAction, production_router_action};
 use crate::{RouterDriver, WorkflowIdentity, WorkflowRunRequest};
 
-/// The lease target the queue binds; an event admission runs under it too.
-pub(crate) const QUEUE_LEASE_INVOCATION: &str = "wamn-executor-queue";
 pub const DEFAULT_QUEUE_LEASE_TTL_MS: u64 = 30_000;
 const PRODUCTION_JANITOR_GRACE_MS: i64 = 3_600_000;
 const IDLE_POLL_MS: u64 = 250;
 
 #[derive(Debug, Clone)]
 struct QueueTarget {
+    invocation: String,
     project_env_key: String,
     project: String,
     package_ids: Vec<String>,
@@ -61,6 +60,12 @@ impl std::fmt::Debug for QueueService {
     }
 }
 
+impl Drop for QueueService {
+    fn drop(&mut self) {
+        self.revoke();
+    }
+}
+
 impl QueueService {
     pub async fn bind(
         driver: Arc<RouterDriver>,
@@ -74,6 +79,7 @@ impl QueueService {
             .filter(|ttl| *ttl > 0)
             .context("queue lease TTL must be a positive signed 64-bit integer")?;
         let target = QueueTarget {
+            invocation: wamn_engine::operation::next_scope("queue").into(),
             project_env_key: release.target().project_env_key.clone(),
             project: config.project.clone(),
             package_ids: release.target().applications.keys().cloned().collect(),
@@ -81,7 +87,7 @@ impl QueueService {
         };
         postgres
             .bind_session_identity(
-                QUEUE_LEASE_INVOCATION,
+                &target.invocation,
                 &SessionIdentity {
                     project_env_key: target.project_env_key.clone(),
                     project: Some(config.project.clone()),
@@ -118,7 +124,7 @@ impl QueueService {
         serve_queue(
             stopping,
             &self.liveness,
-            async || {
+            || {
                 Box::pin(drain_one(
                     &self.driver,
                     &self.postgres,
@@ -127,17 +133,18 @@ impl QueueService {
                     self.lease_ttl_ms,
                     &self.liveness,
                 ))
-                .await
             },
-            async || {
-                Ok(self
-                    .postgres
-                    .pinned_backlog(
-                        QUEUE_LEASE_INVOCATION,
-                        &self.target.package_ids,
-                        &self.target.environment,
-                    )
-                    .await?)
+            || {
+                Box::pin(async {
+                    Ok(self
+                        .postgres
+                        .pinned_backlog(
+                            &self.target.invocation,
+                            &self.target.package_ids,
+                            &self.target.environment,
+                        )
+                        .await?)
+                })
             },
         )
         .await
@@ -145,7 +152,7 @@ impl QueueService {
 
     pub fn revoke(&self) {
         self.postgres
-            .revoke_session_identity(QUEUE_LEASE_INVOCATION);
+            .revoke_session_identity(&self.target.invocation);
     }
 }
 
@@ -169,19 +176,23 @@ fn queue_delivery_span(
 /// dispatched or running, and return once it reports none
 /// (docs/architecture/execution.md#process-lifecycle). The pod's `terminationGracePeriodSeconds` bounds
 /// the drain. Kubernetes owns that clock, so the loop adds no timer.
-async fn serve_queue(
+async fn serve_queue<Turn, Backlog>(
     mut stopping: tokio::sync::watch::Receiver<bool>,
     liveness: &Liveness,
-    mut turn: impl AsyncFnMut() -> anyhow::Result<bool>,
-    mut pinned_backlog: impl AsyncFnMut() -> anyhow::Result<bool>,
-) -> anyhow::Result<()> {
+    mut turn: impl FnMut() -> Turn,
+    mut pinned_backlog: impl FnMut() -> Backlog,
+) -> anyhow::Result<()>
+where
+    Turn: Future<Output = anyhow::Result<bool>>,
+    Backlog: Future<Output = anyhow::Result<bool>>,
+{
     loop {
         if *stopping.borrow() {
             match pinned_backlog().await {
                 Ok(false) => return Ok(()),
                 Ok(true) => {}
                 Err(error) => {
-                    tracing::warn!(%error, "executor queue backlog read failed; retrying")
+                    tracing::warn!(%error, "executor queue backlog read failed; retrying");
                 }
             }
         }
@@ -212,7 +223,7 @@ async fn drain_one(
 ) -> anyhow::Result<bool> {
     match postgres
         .reap_exhausted(
-            QUEUE_LEASE_INVOCATION,
+            &target.invocation,
             &target.package_ids,
             &target.environment,
             PRODUCTION_JANITOR_GRACE_MS,
@@ -227,7 +238,7 @@ async fn drain_one(
 
     match postgres
         .lease_next(
-            QUEUE_LEASE_INVOCATION,
+            &target.invocation,
             &target.package_ids,
             &target.environment,
             lease_ttl_ms,
@@ -270,6 +281,7 @@ async fn drain_one(
             Box::pin(
                 drive_lease(
                     driver,
+                    target,
                     postgres,
                     jetstream,
                     &package_id,
@@ -293,6 +305,7 @@ async fn drain_one(
 )]
 async fn drive_lease(
     driver: &RouterDriver,
+    target: &QueueTarget,
     postgres: &WamnPostgres,
     jetstream: &WamnJetstream,
     package_id: &str,
@@ -320,7 +333,7 @@ async fn drive_lease(
             _ = heartbeat.tick() => {
                 match postgres
                     .renew(
-                        QUEUE_LEASE_INVOCATION,
+                        &target.invocation,
                         run_id,
                         lease_generation,
                         lease_ttl_ms,
@@ -341,7 +354,7 @@ async fn drive_lease(
     if !adjustments.is_empty()
         && !postgres
             .record_deadline_adjustments(
-                QUEUE_LEASE_INVOCATION,
+                &target.invocation,
                 run_id,
                 lease_generation,
                 &serde_json::to_value(&adjustments)?,
@@ -358,6 +371,7 @@ async fn drive_lease(
                 tracing::warn!(run_id, error = %error, "workflow run refused");
                 commit_completion(
                     postgres,
+                    target,
                     run_id,
                     lease_generation,
                     &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::failed(
@@ -374,7 +388,7 @@ async fn drive_lease(
     let action = production_router_action(&delivery)?;
     match action {
         ProductionRouterAction::Complete(completion) => {
-            commit_completion(postgres, run_id, lease_generation, &completion).await?;
+            commit_completion(postgres, target, run_id, lease_generation, &completion).await?;
         }
         ProductionRouterAction::Emit {
             event,
@@ -385,7 +399,7 @@ async fn drive_lease(
         } => {
             let publish = jetstream
                 .publish_derived(DerivedPublishRequest {
-                    component_id: QUEUE_LEASE_INVOCATION.to_owned(),
+                    component_id: run_id.to_owned(),
                     package_id: package_id.to_owned(),
                     wiring_id,
                     wiring_version,
@@ -421,6 +435,7 @@ async fn drive_lease(
             }
             commit_completion(
                 postgres,
+                target,
                 run_id,
                 lease_generation,
                 &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::completed(event),
@@ -476,12 +491,13 @@ fn workflow_resolution_refusal(
 
 async fn commit_completion(
     postgres: &WamnPostgres,
+    target: &QueueTarget,
     run_id: &str,
     lease_generation: i64,
     completion: &wamn_runtime::plugins::wamn_postgres::ProductionCompletion,
 ) -> anyhow::Result<()> {
     let result = postgres
-        .complete(QUEUE_LEASE_INVOCATION, run_id, lease_generation, completion)
+        .complete(&target.invocation, run_id, lease_generation, completion)
         .await?;
     match result {
         ProductionCompletionResult::Terminalized
@@ -511,15 +527,16 @@ mod tests {
         let serving = serve_queue(
             stopping,
             &liveness,
-            async || {
-                turns.fetch_add(1, Ordering::Relaxed);
-                entered
-                    .take()
-                    .expect("one turn")
-                    .send(())
-                    .expect("receiver");
-                release_turn.notified().await;
-                Ok(true)
+            || {
+                let entered = entered.take().expect("one turn");
+                let turns = &turns;
+                let release_turn = &release_turn;
+                async move {
+                    turns.fetch_add(1, Ordering::Relaxed);
+                    entered.send(()).expect("receiver");
+                    release_turn.notified().await;
+                    Ok(true)
+                }
             },
             async || Ok(false),
         );

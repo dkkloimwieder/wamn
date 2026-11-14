@@ -6094,6 +6094,7 @@ dependencies = [
  "wamn-execution-host",
  "wamn-identity-client",
  "wamn-identity-protocol",
+ "wamn-kubernetes",
  "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-postgres",

@@ -21,11 +21,8 @@ pub use operation::{
     InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost, OperationHostConfig,
     component_invocation, invocation_span, node_trace_context, remote_trace_context,
 };
-pub use readiness::{
-    RELEASE_READINESS_INVALIDATED, RELEASE_READINESS_PROBE_FAILED, RouterReadinessProbe,
-    RouterReadinessSnapshot, RouterReadinessStatus, synchronous_request_type,
-    synchronous_route_count,
-};
+pub use readiness::prepare_release;
+
 pub use wamn_engine::native_routes::DeadlineAdjustment;
 
 pub mod credential_cleanup;

@@ -547,6 +547,23 @@ pub async fn record_deadline_adjustments(
     row_value(&row, 0, "deadline report fence")
 }
 
+/// Unfinished runs and their immutable application and release pins after restart.
+pub async fn unfinished_releases(
+    connection: &mut sqlx::PgConnection,
+    project_env_key: &str,
+    environment: &str,
+) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT package_id, manifest_digest, run_id FROM wamn_run.runs \
+         WHERE project_env_key=$1 AND environment=$2 AND status IN ('dispatched','running') \
+         ORDER BY package_id, manifest_digest, run_id",
+    )
+    .bind(project_env_key)
+    .bind(environment)
+    .fetch_all(connection)
+    .await
+}
+
 /// Whether this release still has queued work.
 pub async fn pinned_backlog(
     connection: &mut sqlx::PgConnection,

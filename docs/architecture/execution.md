@@ -330,6 +330,14 @@ The native route controller can reach Pods directly, so a readiness change alone
 ## Native dispatch
 
 One native application owns a loaded release or frozen candidate.
+One host serves current selections and releases pinned by unfinished runs together.
+The host reads current selections from the Helm release projections.
+After restart, it also reads unfinished runs and loads their original catalog manifest bytes.
+It verifies each digest before preparing that release.
+A failed preparation refuses that release and reports its pinned runs. Other release queues continue.
+Release preparation does not control process readiness.
+Each project deployment and digest has one loaded release.
+A release stays resident while selected, while an unfinished run pins it, or while a workload or invocation retains it.
 Native dispatch reuses compiled component bytes. Untrusted components receive a fresh store, which holds guest memory and resources, for each call.
 The deployment owner can select reviewed component digests for native warm-instance reuse.
 [Deployment configuration](../operations/deployment.md#trusted-component-reuse) owns this selection and pool sizing.
@@ -488,7 +496,7 @@ That refusal carries SQLSTATE `55000` and the message `actor-required`, as the s
 ## Workflows
 
 A workflow is an authored graph that runs off the request path.
-The host admits runs against its loaded release. Run-state functions own their persistence.
+The host admits new runs against the current application selection. Existing runs retain their admission digest. Run-state functions own their persistence.
 The release loader resolves admitted component facts and verifies their stored effect projections once.
 Workflow resolution and host execution share those immutable facts.
 
@@ -504,7 +512,7 @@ An event workflow is an enabled row of `catalog.workflows` in an environment app
 Its trigger names the source package, entity, operations, and an optional JMESPath condition over the old and new images.
 Env apply creates one durable consumer per application, source package and captured entity.
 Workflow reads trigger rows and admits all matching workflows for one message through one host transaction.
-Admission resolves each graph against the serving release and freezes its node digests.
+Admission resolves each graph against that application's current release and freezes its node digests. Each consumer admits only its own application.
 The native broker transport acknowledges the message after that transaction commits.
 
 The workflow identity and source event identity form the run key.
@@ -536,20 +544,20 @@ An absent setting uses UTC. A setting with an invalid type or zone refuses that 
 The environment document declares its applications: each name with the packages of the release that belong to it.
 `environment::apply` refuses a release package that belongs to no application or to two, and a declared package that the release does not carry.
 The release chart passes the map to the host as canonical JSON in `--applications`, beside `--environment`, and keeps it in the Helm revision's values, where `env show` and `wamn workflow author` read it.
-A host that serves a release from the registry refuses to start without `--applications`. A local candidate host takes the map when it is given and otherwise declares none.
+The host uses the declared application membership for each loaded release. A restored run retains its application and manifest digest.
 A workflow belongs to one declared application, by name: `workflow author` and `workflow.start` refuse a name that the environment does not declare.
 An application is a name, never a package. The workflow condition resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue leases the declared application names, and the executor resolves the run's nodes within that application's packages.
 
-Every application host runs one schedule task, which wakes at each minute boundary.
+The host runs one schedule task per selected application. Each task wakes at a minute boundary.
 Its first tick is strictly after startup.
-At each tick it reads the enabled schedule rows of every declared application with one `SELECT` (`application = ANY(...)`), and calls `wamn_workflow::admission::admit_schedule_run` for each row whose cron names that minute.
+At each tick it reads the enabled schedule rows of that application with one `SELECT`, and calls `wamn_workflow::admission::admit_schedule_run` for each row whose cron names that minute.
 A host whose environment declares no application runs no schedule task.
 An enable or a disable between ticks takes effect at the next tick.
 The task polls the rows; it does not reload on an enable or disable message over NATS, which would cost one more subject and a stale window when the broker is lost.
 The run has input `{"due":"<due RFC 3339>"}` and key `schedule:<application>/<workflow id>:<due RFC 3339>`, with UTC spelled as `Z`.
 Replicas use the same key, so concurrent admissions return one run.
 The run executes as the `workflow` user with its execution role, or with `admin` for type `invoker`.
-Schedule reads and admissions use the runtime executor pool. Admission uses the release already loaded by the host.
+Schedule reads and admissions use the runtime executor pool. Each admission reads the current release selection. A missing or unusable selection pauses admission for that application.
 The due moment and its key remain UTC across daylight saving changes.
 
 Apply creates one service principal per application that composes `wamn_integration`, in each environment.
@@ -1405,13 +1413,13 @@ No new route. `wamn-control:environment/status@0.9.0` gains three additive answe
 ## Process lifecycle
 
 Host readiness requires a real native command-loop beat.
-Queue liveness follows durable polls and successful lease renewals in each host replica.
+Each release has its own queue worker and explicit executor scope. Queue liveness follows durable polls and successful lease renewals.
 No timer creates a synthetic beat.
 An absent first beat fails through the normal silence budget.
 
-The host drains readiness, stops queue leases, and starts native HTTP shutdown together.
+The host drains readiness, stops new schedule and event admission, and starts native HTTP shutdown together.
 The same admission signal refuses further HTTP requests on existing connections.
-One shutdown signal stops HTTP admission and queue polling, bounds active work in both paths, and then performs shared cleanup.
+One shutdown signal stops HTTP admission. Every resident release then drains its pinned queue within the shared shutdown bound. Shared cleanup follows.
 Ingress failure, probe failure, or command-task failure follows the failure cleanup path.
 The process bounds plugin coordination, auxiliary task cleanup, telemetry flush, and final runtime shutdown.
 Cleanup timeout remains an error and can leave plugin cleanup incomplete.

@@ -44,7 +44,13 @@ pub async fn admit_event_batch(
             if source.source() != (admission.source_package, admission.entity) {
                 return Ok(());
             }
-            let names: Vec<_> = target.applications.keys().cloned().collect();
+            if !target.applications.contains_key(admission.application) {
+                return Err(ProductionLeaseError::contract(
+                    "select event application",
+                    "consumer is outside the selected release",
+                ));
+            }
+            let names = vec![admission.application.to_owned()];
             let packages = target
                 .applications
                 .values()
@@ -169,6 +175,7 @@ pub async fn admit_application_events(
     jetstream: &wamn_runtime::plugins::wamn_jetstream::WamnJetstream,
     postgres: &WamnPostgres,
     project: &str,
+    application: &str,
     release: &LoadedRelease,
 ) -> anyhow::Result<()> {
     let target = release.target();
@@ -188,7 +195,9 @@ pub async fn admit_application_events(
         .await?;
     let sources = triggers
         .iter()
-        .filter(|trigger| target.applications.contains_key(&trigger.application))
+        .filter(|trigger| {
+            trigger.application == application && target.applications.contains_key(application)
+        })
         .map(|trigger| {
             (
                 trigger.application.as_str(),

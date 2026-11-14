@@ -2,7 +2,7 @@
 //! (docs/architecture/execution.md#workflows).
 //!
 //! The task wakes at every minute boundary, reads the enabled schedule
-//! workflows of the application its loaded release serves in one SELECT, and
+//! workflows of the current application selection in one SELECT, and
 //! admits a run for each row whose cron names that minute. A row enabled or disabled between ticks takes
 //! effect at the next tick.
 
@@ -31,30 +31,35 @@ pub struct EnabledSchedule {
 pub struct PostgresSchedules {
     postgres: Arc<WamnPostgres>,
     project: String,
-    release: Arc<wamn_engine::release_manifest::LoadedRelease>,
+    application: String,
+    selection:
+        tokio::sync::watch::Receiver<Option<Arc<wamn_engine::release_manifest::LoadedRelease>>>,
 }
 
 impl std::fmt::Debug for PostgresSchedules {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PostgresSchedules")
             .field("project", &self.project)
-            .field("release", &self.release)
+            .field("selection", &self.selection.borrow())
             .finish_non_exhaustive()
     }
 }
 
 impl PostgresSchedules {
-    /// Serve the schedules of `applications` in `project_env_key` and `environment`,
-    /// against the release `manifest_digest`.
+    /// Resolve schedule admission against the current host selection.
     pub fn new(
         postgres: Arc<WamnPostgres>,
         project: impl Into<String>,
-        release: Arc<wamn_engine::release_manifest::LoadedRelease>,
+        application: impl Into<String>,
+        selection: tokio::sync::watch::Receiver<
+            Option<Arc<wamn_engine::release_manifest::LoadedRelease>>,
+        >,
     ) -> Self {
         Self {
             postgres,
             project: project.into(),
-            release,
+            application: application.into(),
+            selection,
         }
     }
 }
@@ -62,8 +67,18 @@ impl PostgresSchedules {
 impl PostgresSchedules {
     /// Read schedules through the executor pool owned by the runtime.
     pub async fn enabled(&self, tick: DateTime<Utc>) -> anyhow::Result<Vec<EnabledSchedule>> {
-        let target = self.release.target();
-        let applications: Vec<_> = target.applications.keys().cloned().collect();
+        let release = self
+            .selection
+            .borrow()
+            .as_ref()
+            .map(Arc::clone)
+            .context("no current release")?;
+        let target = release.target();
+        anyhow::ensure!(
+            target.applications.contains_key(&self.application),
+            "schedule application is outside the selected release"
+        );
+        let applications = vec![self.application.clone()];
         self.postgres
             .executor_read(&self.project, &target.project_env_key, async |connection| {
                 Ok(wamn_run_state::admission::enabled_schedules(
@@ -89,16 +104,26 @@ impl PostgresSchedules {
             .await
     }
 
-    /// Admit one due schedule against the loaded release.
+    /// Admit one due schedule against the current release.
     pub async fn admit(
         &self,
         schedule: &EnabledSchedule,
         due: DateTime<Utc>,
     ) -> anyhow::Result<ScheduleRunAdmitted> {
+        let release = self
+            .selection
+            .borrow()
+            .as_ref()
+            .map(Arc::clone)
+            .context("no current release")?;
+        anyhow::ensure!(
+            schedule.application == self.application,
+            "schedule belongs to another application"
+        );
         Ok(admit_schedule_run(
             &self.postgres,
             &self.project,
-            &self.release,
+            &release,
             &schedule.application,
             &schedule.workflow_id,
             due,

@@ -8,9 +8,7 @@ use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 use wash_runtime::engine::Engine;
 use wash_runtime::host::probes::Liveness;
 
-use super::{
-    NODE_TYPES, OPERATION, QUEUE_LEASE_INVOCATION, QueueTarget, RouterDriver, WamnJetstream,
-};
+use super::{NODE_TYPES, OPERATION, QueueTarget, RouterDriver, WamnJetstream};
 
 pub(super) fn component_bytes() -> Vec<u8> {
     wat::parse_str(format!(r#"(component
@@ -73,7 +71,7 @@ pub(super) async fn run(
             Ok(execution
                 .postgres
                 .pinned_backlog(
-                    QUEUE_LEASE_INVOCATION,
+                    &execution.target.invocation,
                     &execution.target.package_ids,
                     &execution.target.environment,
                 )
@@ -171,7 +169,7 @@ pub(super) async fn run(
     let recovered = execution
         .postgres
         .lease_next(
-            QUEUE_LEASE_INVOCATION,
+            &execution.target.invocation,
             &execution.target.package_ids,
             &execution.target.environment,
             1000,
@@ -193,7 +191,7 @@ pub(super) async fn run(
     let stale = execution
         .postgres
         .complete(
-            QUEUE_LEASE_INVOCATION,
+            &execution.target.invocation,
             &run,
             generation,
             &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::completed(
@@ -204,11 +202,11 @@ pub(super) async fn run(
     assert_eq!(stale, super::super::ProductionCompletionResult::FenceLost);
     execution
         .postgres
-        .revoke_session_identity(QUEUE_LEASE_INVOCATION);
+        .revoke_session_identity(&execution.target.invocation);
     assert!(
         execution
             .postgres
-            .session_identity(QUEUE_LEASE_INVOCATION)
+            .session_identity(&execution.target.invocation)
             .is_none()
     );
     timeout(Duration::from_secs(25), async {

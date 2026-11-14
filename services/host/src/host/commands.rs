@@ -8,12 +8,15 @@ use anyhow::Context as _;
 use wash_runtime::host::{Host, HostApi as _};
 use wash_runtime::washlet::{HostCommandHandler, HostControlDefaults, types::v2};
 
-use wamn_execution_host::OperationHost;
+use super::releases::{Releases, ResidentRelease};
+use wamn_execution_host::platform_http::PlatformHttp;
 use wamn_runtime::plugins::WamnPostgres;
 
 pub(super) struct Commands {
     pub postgres: Arc<WamnPostgres>,
-    pub operations: Option<Arc<OperationHost>>,
+    pub releases: Option<Arc<Releases>>,
+    pub http: Option<Arc<PlatformHttp>>,
+    pub workloads: std::sync::Mutex<std::collections::HashMap<String, Arc<ResidentRelease>>>,
     /// The base the host resolves members and the composed entry against.
     pub component_artifact_base: Option<String>,
     pub drain: Arc<WorkloadDrain>,
@@ -155,47 +158,58 @@ impl HostCommandHandler for Commands {
             wamn_catalog::validate_component_start_reference(&component.image)?;
         }
         let workload_id = request.workload_id.clone();
+        let mut pending = None;
+        let resident = if let Some(releases) = &self.releases {
+            Some(releases.for_workload(&workload.annotations).await?)
+        } else {
+            None
+        };
+        if let Some(resident) = &resident {
+            let operations = &resident.operations;
+            if let Some(entry) = &operations.release.manifest().composed_entry {
+                let reference = wamn_catalog::composed_entry_start_reference(
+                    self.component_artifact_base.as_deref(),
+                    &entry.reference,
+                )?;
+                let mut entries = components
+                    .iter()
+                    .filter(|component| component.image == reference);
+                if let Some(component) = entries.next() {
+                    anyhow::ensure!(
+                        entries.next().is_none(),
+                        "workload repeats its composed entry"
+                    );
+                    anyhow::ensure!(
+                        component.pool_size == 0,
+                        "composed entry requires poolSize 0"
+                    );
+                    self.postgres.bind_operation_workload(
+                        &workload_id,
+                        Arc::clone(&operations.context),
+                        &component.image,
+                        &component.name,
+                        operations.identity(
+                            &operations.release.target().project_env_key,
+                            Some(operations.release_identity()),
+                        ),
+                    )?;
+                    let invoker: Arc<dyn wamn_runtime::plugins::wamn_postgres::OperationInvoker> =
+                        Arc::clone(operations) as Arc<_>;
+                    self.postgres
+                        .bind_operation_invoker(&workload_id, Arc::downgrade(&invoker))?;
+                    pending = Some(PendingStart {
+                        postgres: &self.postgres,
+                        workload: &workload_id,
+                    });
+                } else {
+                    anyhow::bail!("workload does not carry its release's composed entry");
+                }
+            }
+        }
         self.drain.admit(&workload_id, workload.service.is_some())?;
         let mut draining = self.drain.state.subscribe();
-        let mut pending = None;
-        if let Some(operations) = &self.operations
-            && let Some(entry) = &operations.release.manifest().composed_entry
-        {
-            let reference = wamn_catalog::composed_entry_start_reference(
-                self.component_artifact_base.as_deref(),
-                &entry.reference,
-            )?;
-            let mut entries = components
-                .iter()
-                .filter(|component| component.image == reference);
-            if let Some(component) = entries.next() {
-                anyhow::ensure!(
-                    entries.next().is_none(),
-                    "workload repeats its composed entry"
-                );
-                anyhow::ensure!(
-                    component.pool_size == 0,
-                    "composed entry requires poolSize 0"
-                );
-                self.postgres.bind_operation_workload(
-                    &workload_id,
-                    Arc::clone(&operations.context),
-                    &component.image,
-                    &component.name,
-                    operations.identity(
-                        &operations.release.target().project_env_key,
-                        Some(operations.release_identity()),
-                    ),
-                )?;
-                let invoker: Arc<dyn wamn_runtime::plugins::wamn_postgres::OperationInvoker> =
-                    Arc::clone(operations) as Arc<_>;
-                self.postgres
-                    .bind_operation_invoker(&workload_id, Arc::downgrade(&invoker))?;
-                pending = Some(PendingStart {
-                    postgres: &self.postgres,
-                    workload: &workload_id,
-                });
-            }
+        if let (Some(http), Some(resident)) = (&self.http, &resident) {
+            http.register(&workload_id, Arc::clone(&resident.handlers));
         }
         // The runtime still owns reservations, pulls, verification, compilation and stop races.
         let result = tokio::select! {
@@ -206,6 +220,19 @@ impl HostCommandHandler for Commands {
             result = defaults.start(request) => result,
         };
         drop(pending);
+        if result.is_ok() {
+            if let Some(resident) = resident {
+                self.workloads
+                    .lock()
+                    .expect("host workloads lock poisoned")
+                    .insert(workload_id, resident);
+            }
+        } else {
+            if let Some(http) = &self.http {
+                http.unregister(&workload_id);
+            }
+            self.drain.stopped(&workload_id);
+        }
         result
     }
 
@@ -220,6 +247,10 @@ impl HostCommandHandler for Commands {
         }
         let result = defaults.stop(request).await?;
         self.drain.stopped(&workload);
+        self.workloads
+            .lock()
+            .expect("host workloads lock poisoned")
+            .remove(&workload);
         Ok(result)
     }
 }
