@@ -28,9 +28,8 @@
 //! showing nothing.
 
 use anyhow::Context as _;
-use serde_json::Value;
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 
 use url::Url;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
@@ -38,9 +37,8 @@ use wamn_runtime::plugins::wamn_postgres::{
     AclExpectation, AclTarget, AmbientCredentialState, ClassCredentials, CredentialConnectionType,
     CredentialProbeErrorType, CredentialProbePredicate, ExpectedCredentialIdentity,
     MembershipExpectation, MembershipMode, ProductionCompletion, ProductionCompletionResult,
-    ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult, RELEASE_COMPONENTS_SQL,
-    ReleaseIdentity, WamnPostgres, WamnPostgresConfig, credential_exactness_probe,
-    explicit_credential_source,
+    ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult, ReleaseIdentity,
+    WamnPostgres, WamnPostgresConfig, credential_exactness_probe, explicit_credential_source,
 };
 
 /// The generation login every leg runs as.
@@ -67,9 +65,7 @@ fn digest(fill: &str) -> String {
 }
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let mut client = wamn_postgres::connect(url).await?;
-
-    Ok(client)
+    wamn_postgres::connect(url).await
 }
 
 /// Rewrite an admin url onto the generation's credential, optionally moving it
@@ -282,33 +278,13 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         ))).execute(&mut admin).await.map(drop)
         .context("seed the plan-supply fixture")?;
 
+    let manifest_digest = wamn_digest::bytes_sha256(manifest_body.as_bytes());
+
     // ---- PLAN SUPPLY, LIVE UNDER THE CREDENTIAL ---------------------------
     let platform_url = generation_url(admin_url, None)?;
     let mut generation = connect(&platform_url).await?;
     begin_bound(&mut generation).await?;
 
-    let manifest_digest: String =
-        sqlx::query("SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1")
-            .bind(&PROJECT_ENV_KEY)
-            .fetch_one(&mut admin)
-            .await?
-            .get(0);
-    let release = sqlx::query(RELEASE_COMPONENTS_SQL.as_str())
-        .bind(&PROJECT_ENV_KEY)
-        .bind(&manifest_digest)
-        .fetch_one(&mut generation)
-        .await?;
-    let components: Value = serde_json::from_str(&release.get::<String, _>(0))?;
-    assert_eq!(components.as_array().map(Vec::len), Some(1));
-    assert_eq!(components[0]["component-digest"], component_digest);
-    assert!(
-        sqlx::query(RELEASE_COMPONENTS_SQL.as_str())
-            .bind(&PROJECT_ENV_KEY)
-            .bind(&digest("e"))
-            .fetch_all(&mut generation)
-            .await?
-            .is_empty()
-    );
     // *** `has_table_privilege` IS BLIND TO RLS. *** The ACL says this
     // principal may SELECT `wamn_run.run_queue`; `run_queue_project_env_key` carries no
     // `TO` clause and keys on `app.project_env_key`, so the SAME connection reads one

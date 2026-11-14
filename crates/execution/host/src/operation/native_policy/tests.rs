@@ -796,17 +796,15 @@ impl Fixture {
                     Arc::clone(&postgres),
                     Arc::new(HttpTransport::new().expect("HTTP transport")),
                     Arc::clone(&facts),
-                    "org-a",
                     "test",
                     Arc::from(Vec::new()),
-                    Some(Arc::clone(&release)),
+                    Arc::clone(&release),
                 )),
                 blobstore: Arc::new(WamnBlobstore::new(
                     Arc::clone(&postgres),
                     facts,
-                    "org-a",
                     "test",
-                    Some(Arc::clone(&release)),
+                    Arc::clone(&release),
                 )),
                 postgres,
                 logging: Arc::new(
@@ -925,6 +923,7 @@ impl Fixture {
                         },
                         entry: wamn_runtime::plugins::connection_http::InvocationEntry::Wiring(
                             wamn_runtime::plugins::connection_http::WiringPosition {
+                                configuration: Default::default(),
                                 package_id: "workflow".into(),
                                 wiring_hash: format!("sha256:{}", "a".repeat(64)),
                                 wiring_id: "trusted-wiring".into(),

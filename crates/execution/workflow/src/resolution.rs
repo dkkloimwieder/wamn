@@ -1,8 +1,25 @@
 //! Resolve workflow graphs against their frozen release and component identities.
 use anyhow::Context as _;
 use std::collections::{BTreeMap, BTreeSet};
-use wamn_catalog::{ComponentPackageCoordinate, ServingManifest, WiringDocument};
-use wamn_runtime::plugins::wamn_postgres::{ResolvedActiveWiring, WamnPostgres};
+use std::sync::Arc;
+use wamn_catalog::{AdmittedComponent, WiringDocument};
+use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
+
+/// An immutable wiring and its resolved catalog facts.
+///
+/// The workflow layer indexes `document` directly.
+#[derive(Debug, Clone)]
+pub struct ResolvedActiveWiring {
+    pub version: u32,
+    /// The release the wiring resolved under, as its manifest digest.
+    pub manifest_digest: String,
+    pub graph_hash: Arc<str>,
+    pub package_version: String,
+    pub document: WiringDocument,
+    /// Complete admitted facts selected by each exact wiring node.
+    pub node_components: Arc<BTreeMap<String, AdmittedComponent>>,
+    pub components: Arc<[AdmittedComponent]>,
+}
 
 /// The facts a manual run row carries, which key its resolution.
 #[derive(Debug, Clone, Copy)]
@@ -68,7 +85,7 @@ impl std::fmt::Display for WorkflowResolutionError {
 
 impl std::error::Error for WorkflowResolutionError {}
 
-/// Resolve one workflow run over `manifest`, the release it pins: the stored
+/// Resolve one workflow run over the admitted components of its loaded release: the stored
 /// graph `document` under `stored_hash`, each node to the component of the
 /// release whose descriptor carries the node's frozen digest, component,
 /// interface version and operation.
@@ -80,7 +97,7 @@ impl std::error::Error for WorkflowResolutionError {}
 /// resolved wiring names none.
 pub fn resolve_workflow_in_release(
     run: &WorkflowRunKey<'_>,
-    manifest: &ServingManifest,
+    components: &Arc<[AdmittedComponent]>,
     document: WiringDocument,
     stored_hash: &str,
 ) -> Result<ResolvedActiveWiring, WorkflowResolutionError> {
@@ -102,31 +119,6 @@ pub fn resolve_workflow_in_release(
             ),
         ));
     }
-    let versions: BTreeMap<&str, &str> = manifest
-        .release
-        .packages
-        .iter()
-        .map(|package| (package.package_id(), package.package_version()))
-        .collect();
-    let admitted = |component: &wamn_catalog::ServingComponent| {
-        component
-            .descriptor
-            .clone()
-            .into_admitted(ComponentPackageCoordinate {
-                project_env_key: run.project_env_key.to_owned(),
-                package_id: component.package_id.clone(),
-                package_version: versions
-                    .get(component.package_id.as_str())
-                    .copied()
-                    .or_else(|| {
-                        (component.package_id == wamn_catalog::PALETTE_PACKAGE_ID)
-                            .then_some(wamn_catalog::PALETTE_PACKAGE_VERSION)
-                    })
-                    .unwrap_or_default()
-                    .to_owned(),
-            })
-            .component
-    };
     if let Some(extra) = run
         .node_digests
         .keys()
@@ -145,22 +137,21 @@ pub fn resolve_workflow_in_release(
                 format!("the run froze no digest for node {node_id:?}"),
             )
         })?;
-        let serving: Vec<_> = manifest
-            .components
+        let serving: Vec<_> = components
             .iter()
             .filter(|component| {
-                &component.descriptor.component_digest == digest
-                    && component.descriptor.component == node.component
-                    && component.descriptor.interface_version == node.interface_version
-                    && component
-                        .descriptor
-                        .operations
-                        .contains_key(&node.operation)
+                &component.component_digest == digest
+                    && component.component == node.component
+                    && component.interface_version == node.interface_version
+                    && component.operations.contains_key(&node.operation)
             })
             .collect();
         let chosen = serving
             .iter()
-            .find(|component| run.application_packages.contains(&component.package_id))
+            .find(|component| {
+                run.application_packages
+                    .contains(&component.target.package_id)
+            })
             .or_else(|| serving.first())
             .ok_or_else(|| {
                 WorkflowResolutionError::new(
@@ -172,9 +163,8 @@ pub fn resolve_workflow_in_release(
                     ),
                 )
             })?;
-        node_components.insert(node_id.clone(), admitted(chosen));
+        node_components.insert(node_id.clone(), (*chosen).clone());
     }
-    let components = manifest.components.iter().map(admitted).collect();
     Ok(ResolvedActiveWiring {
         version: run.version,
         manifest_digest: run.manifest_digest.to_owned(),
@@ -182,7 +172,7 @@ pub fn resolve_workflow_in_release(
         package_version: String::new(),
         document,
         node_components: std::sync::Arc::new(node_components),
-        components: components.into(),
+        components: Arc::clone(components),
     })
 }
 
@@ -223,7 +213,7 @@ pub async fn resolve_workflow(
     let graph = crate::admission::parse_graph(&graph_json)?;
     Ok(resolve_workflow_in_release(
         run,
-        release.manifest(),
+        release.components(),
         graph,
         &hash,
     )?)
@@ -236,7 +226,7 @@ mod tests {
         WiringNode, WiringTerminal,
     };
 
-    use wamn_catalog::AdmittedComponent;
+    use wamn_catalog::{ComponentPackageCoordinate, ServingManifest};
 
     use super::*;
 
@@ -325,9 +315,13 @@ mod tests {
         let document = document();
         let hash = document.wiring_hash().as_str().to_owned();
         let digests = BTreeMap::from([("node".to_owned(), DIGEST.to_owned())]);
-        let resolved =
-            resolve_workflow_in_release(&run(&hash, &digests), &manifest(), document, &hash)
-                .expect("the frozen digest is a component of the release");
+        let resolved = resolve_workflow_in_release(
+            &run(&hash, &digests),
+            &manifest().admitted_components("t1").unwrap().into(),
+            document,
+            &hash,
+        )
+        .expect("the frozen digest is a component of the release");
         assert_eq!(resolved.node_components["node"].component_digest, DIGEST);
         assert_eq!(resolved.manifest_digest, RELEASE);
         assert_eq!(resolved.package_version, "");
@@ -348,7 +342,7 @@ mod tests {
         ] {
             let refusal = resolve_workflow_in_release(
                 &run(&hash, &digests),
-                &manifest(),
+                &manifest().admitted_components("t1").unwrap().into(),
                 document.clone(),
                 &hash,
             )
@@ -368,7 +362,7 @@ mod tests {
         // The stored row carries another hash than the run.
         let refusal = resolve_workflow_in_release(
             &run(OTHER, &digests),
-            &manifest(),
+            &manifest().admitted_components("t1").unwrap().into(),
             document.clone(),
             &hash,
         )
@@ -378,9 +372,13 @@ mod tests {
             WorkflowResolutionErrorType::HashMismatch
         );
         // The stored graph does not hash to its row.
-        let refusal =
-            resolve_workflow_in_release(&run(OTHER, &digests), &manifest(), document, OTHER)
-                .expect_err("a graph that does not hash to its row refuses");
+        let refusal = resolve_workflow_in_release(
+            &run(OTHER, &digests),
+            &manifest().admitted_components("t1").unwrap().into(),
+            document,
+            OTHER,
+        )
+        .expect_err("a graph that does not hash to its row refuses");
         assert_eq!(
             refusal.error_type(),
             WorkflowResolutionErrorType::HashMismatch

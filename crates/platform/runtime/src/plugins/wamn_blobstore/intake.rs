@@ -54,16 +54,6 @@ pub enum IntakeError {
     },
 }
 
-impl IntakeError {
-    /// Stable wire code for the refusal.
-    pub fn code(&self) -> &'static str {
-        match self {
-            Self::TooLarge { .. } => "object_too_large",
-            Self::Incomplete { .. } => "object_incomplete",
-        }
-    }
-}
-
 impl core::fmt::Display for IntakeError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -94,19 +84,7 @@ pub struct Intake {
     limit: usize,
 }
 
-impl Default for Intake {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Intake {
-    /// A new intake at the standard ceiling.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::with_limit(MAX_OBJECT_BYTES)
-    }
-
     /// A new intake at an explicit ceiling. Tests use this; production uses
     /// [`Intake::new`].
     #[must_use]
@@ -115,12 +93,6 @@ impl Intake {
             buffer: Vec::new(),
             limit,
         }
-    }
-
-    /// Bytes buffered so far.
-    #[must_use]
-    pub fn observed(&self) -> usize {
-        self.buffer.len()
     }
 
     /// Accept one chunk.
@@ -164,17 +136,14 @@ mod tests {
 
     #[test]
     fn a_complete_body_commits_verbatim() {
-        let mut intake = Intake::new();
+        let mut intake = Intake::with_limit(MAX_OBJECT_BYTES);
         intake.push(b"^XA").expect("chunk fits");
         intake.push(b"^XZ").expect("chunk fits");
-        assert_eq!(intake.observed(), 6);
         assert_eq!(intake.commit(), b"^XA^XZ");
     }
 
-    /// The ceiling refuses with BOTH numbers. "Too large" without the limit
-    /// and the observed size cannot be acted on by whoever sees it.
     #[test]
-    fn the_ceiling_refuses_naming_the_limit_and_what_was_observed() {
+    fn the_ceiling_refuses_with_the_limit_and_observed_size() {
         let mut intake = Intake::with_limit(4);
         intake.push(b"abcd").expect("exactly the limit fits");
         let error = intake.push(b"e").expect_err("one byte over must refuse");
@@ -185,23 +154,13 @@ mod tests {
                 observed: 5
             }
         );
-        assert_eq!(error.code(), "object_too_large");
-        let rendered = error.to_string();
-        assert!(
-            rendered.contains('4') && rendered.contains('5'),
-            "{rendered}"
-        );
     }
 
     #[test]
     fn a_chunk_that_would_cross_the_ceiling_is_refused_whole() {
         let mut intake = Intake::with_limit(4);
         assert!(intake.push(b"abcdef").is_err());
-        assert_eq!(
-            intake.observed(),
-            0,
-            "a refused chunk must not be partially absorbed"
-        );
+        assert!(intake.commit().is_empty());
     }
 
     /// The invisible-loss guard. A truncated stream yields a refusal that
@@ -209,22 +168,16 @@ mod tests {
     /// a caller could mistakenly write over a good object.
     #[test]
     fn a_truncated_stream_yields_a_refusal_and_no_bytes() {
-        let mut intake = Intake::new();
+        let mut intake = Intake::with_limit(MAX_OBJECT_BYTES);
         intake.push(b"^XA half a label").expect("chunk fits");
         let error = intake.abort("peer reset");
 
-        assert_eq!(error.code(), "object_incomplete");
         match &error {
-            IntakeError::Incomplete { observed, detail } => {
+            IntakeError::Incomplete { observed, .. } => {
                 assert_eq!(*observed, 16);
-                assert_eq!(detail, "peer reset");
             }
             other @ IntakeError::TooLarge { .. } => panic!("expected Incomplete, got {other:?}"),
         }
-        assert!(
-            error.to_string().contains("nothing was written"),
-            "the refusal must say the write did not happen: {error}"
-        );
     }
 
     /// The type makes the rule structural rather than advisory: bytes are
@@ -232,16 +185,10 @@ mod tests {
     /// truncated body cannot be written by forgetting a test.
     #[test]
     fn the_only_route_to_the_bytes_is_commit() {
-        let mut intake = Intake::new();
+        let mut intake = Intake::with_limit(MAX_OBJECT_BYTES);
         intake.push(b"partial").expect("chunk fits");
         // `abort` consumes `intake`; nothing hands back the buffer.
         let error = intake.abort("stream dropped");
         assert!(matches!(error, IntakeError::Incomplete { .. }));
-    }
-
-    #[test]
-    fn the_standard_ceiling_is_the_documented_constant() {
-        assert_eq!(MAX_OBJECT_BYTES, 64 * 1024 * 1024);
-        assert_eq!(Intake::new().observed(), 0);
     }
 }

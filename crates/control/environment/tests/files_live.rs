@@ -270,7 +270,7 @@ async fn raw_blobstore_mutations_refuse_file_namespaces_on_minio() -> anyhow::Re
             .with_allow_http(true)
             .build()?,
     );
-    let raw = BoundContainer::new(
+    let raw = BoundContainer::for_test(
         Arc::<object_store::aws::AmazonS3>::clone(&backend),
         "files-a",
         "generation-one",

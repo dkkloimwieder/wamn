@@ -86,7 +86,6 @@ mod tests {
         for refusal in [
             KeyRefusal::Absolute,
             KeyRefusal::ParentTraversal,
-            KeyRefusal::EscapedPrefix,
             KeyRefusal::Empty,
         ] {
             assert!(matches!(

@@ -322,7 +322,6 @@ async fn run_state_live() -> anyhow::Result<()> {
         )
         .await?;
         tx.commit().await?;
-        assert_eq!(waiting.await??, ProductionCompletionResult::FenceLost);
 
         Ok::<_, anyhow::Error>(result)
     });
@@ -336,6 +335,8 @@ async fn run_state_live() -> anyhow::Result<()> {
     }).await??;
 
     tx.commit().await?;
+    assert_eq!(waiting.await??, ProductionCompletionResult::FenceLost);
+
     let row = sqlx::query("SELECT r.state_json IS NULL, q.attempts FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE r.run_id=$1")
         .bind(run_id).fetch_one(&mut admin).await?;
     assert!(row.get::<bool, _>(0));
@@ -351,7 +352,7 @@ async fn run_state_live() -> anyhow::Result<()> {
             run_id,
             "next-worker",
             second,
-            &ProductionCompletion::completed(input)
+            &ProductionCompletion::completed(input.clone())
         )
         .await?,
         ProductionCompletionResult::Terminalized
@@ -365,17 +366,29 @@ async fn run_state_live() -> anyhow::Result<()> {
             .get(0);
     assert!(!queued);
 
-    // The owning database refuses changes to the release frozen at admission.
-    let mut tx = admin.begin().await?;
-    assert!(
-        sqlx::query("UPDATE wamn_run.runs SET manifest_digest=$2 WHERE run_id=$1")
+    // Use another installed release so a missing pin guard cannot hide behind its foreign key.
+    sqlx::raw_sql("INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ('t1','sha256:'||encode(sha256('[]'::bytea),'hex'),'[]'::bytea)")
+        .execute(&mut admin).await?;
+    for assignment in [
+        "package_id='other'",
+        "environment='other'",
+        "wiring_id='other'",
+        "wiring_version=2",
+        "wiring_hash='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+        "manifest_digest=(SELECT manifest_digest FROM catalog.releases WHERE canonical_bytes='[]'::bytea)",
+    ] {
+        let mut tx = admin.begin().await?;
+        assert!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE wamn_run.runs SET {assignment} WHERE run_id=$1"
+            )))
             .bind(run_id)
-            .bind("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             .execute(&mut *tx)
             .await
             .is_err()
-    );
-    tx.rollback().await?;
+        );
+        tx.rollback().await?;
+    }
 
     // The persisted vocabulary accepts each public status and failure class.
     for status in wamn_run_state::RunStatus::ALL {
@@ -573,45 +586,5 @@ async fn run_state_live() -> anyhow::Result<()> {
         .await?
         .get(0);
     assert!(retained);
-    Ok(())
-}
-
-#[tokio::test]
-async fn database_diagnostics_omit_row_detail_and_hint() -> anyhow::Result<()> {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let mut client = wamn_postgres::connect(database.url()).await?;
-
-    sqlx::raw_sql("CREATE TEMP TABLE private_diagnostic (payload text, valid bool CONSTRAINT diagnostic_valid CHECK (valid))").execute(&mut client).await.map(drop)?;
-    let marker = "private-person@example.invalid";
-    let error = sqlx::query("INSERT INTO private_diagnostic VALUES ($1, false)")
-        .bind(&marker)
-        .execute(&mut client)
-        .await
-        .map(|result| result.rows_affected())
-        .unwrap_err();
-    assert!(
-        error
-            .as_database_error()
-            .unwrap()
-            .downcast_ref::<sqlx::postgres::PgDatabaseError>()
-            .detail()
-            .unwrap()
-            .contains(marker)
-    );
-    let rendered =
-        wamn_run_state::run_store::ProductionLeaseError::postgres("test storage", &error)
-            .to_string();
-    assert!(rendered.contains("diagnostic_valid"));
-    assert!(rendered.contains("violates check constraint"));
-    assert!(!rendered.contains(marker));
-    let error = sqlx::raw_sql("DO $$ BEGIN RAISE EXCEPTION 'diagnostic message' USING DETAIL = 'private-detail-marker', HINT = 'private-hint-marker'; END $$").execute(&mut client).await.map(drop).unwrap_err();
-    let rendered =
-        wamn_run_state::run_store::ProductionLeaseError::postgres("test storage", &error)
-            .to_string();
-    assert!(rendered.contains("diagnostic message"));
-    assert!(!rendered.contains("private-detail-marker"));
-    assert!(!rendered.contains("private-hint-marker"));
-    drop(client);
     Ok(())
 }

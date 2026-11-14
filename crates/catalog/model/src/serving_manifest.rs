@@ -672,6 +672,36 @@ pub struct ServingManifest {
 }
 
 impl ServingManifest {
+    /// Resolve the manifest's admitted component facts for one project environment.
+    pub fn admitted_components(
+        &self,
+        project_env_key: &str,
+    ) -> Result<Vec<AdmittedComponent>, CatalogIdentityError> {
+        self.components
+            .iter()
+            .map(|component| {
+                let version = if component.package_id == crate::PALETTE_PACKAGE_ID {
+                    crate::PALETTE_PACKAGE_VERSION
+                } else {
+                    self.release
+                        .packages
+                        .iter()
+                        .find(|package| package.package_id() == component.package_id)
+                        .ok_or_else(|| CatalogIdentityError::InvalidDefinition {
+                            message: "component package absent from release".to_owned(),
+                        })?
+                        .package_version()
+                };
+                let target = crate::ComponentPackageCoordinate::new(
+                    project_env_key,
+                    &component.package_id,
+                    version,
+                )?;
+                Ok(component.descriptor.clone().into_admitted(target).component)
+            })
+            .collect()
+    }
+
     /// Whether this operation returns short-lived file capabilities.
     pub fn signs_file_results(&self, package: &str, component: &str, operation: &str) -> bool {
         self.components

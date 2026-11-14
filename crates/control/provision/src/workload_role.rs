@@ -5,7 +5,6 @@ use std::fmt;
 use sha2::{Digest as _, Sha256};
 use wamn_identity_protocol::{AuthorityClass, app_identity_hash};
 
-use crate::APP_ROLE;
 use crate::name::GUEST_SECRET_PREFIX;
 
 /// Stable NOLOGIN role used by service-reader logins.
@@ -13,13 +12,13 @@ pub const SERVICE_READER_ROLE: &str = "wamn_service_reader";
 /// Stable NOLOGIN role used by run-retention logins.
 pub const RETENTION_ROLE: &str = "wamn_run_retention";
 /// Stable NOLOGIN role used by executor-platform logins.
-pub const EXECUTOR_PLATFORM_ROLE: &str = "wamn_executor_platform";
+pub use wamn_identity_protocol::authority_class::EXECUTOR_PLATFORM_ROLE;
 /// Compact prefix that leaves room for the full identity digest.
 const EXECUTOR_PLATFORM_LOGIN_PREFIX: &str = "wamn_exec_platform";
-/// Stable NOLOGIN role used by callable-HTTP admission logins.
-pub const HTTP_ADMITTER_ROLE: &str = "wamn_http_admitter";
 /// Stable NOLOGIN role used by event-materializer logins.
-pub const EVENT_MATERIALIZER_ROLE: &str = "wamn_event_materializer";
+pub use wamn_identity_protocol::authority_class::EVENT_MATERIALIZER_ROLE;
+/// Stable NOLOGIN role used by callable-HTTP admission logins.
+pub use wamn_identity_protocol::authority_class::HTTP_ADMITTER_ROLE;
 /// Compact prefix that leaves room for the full identity digest.
 const EVENT_MATERIALIZER_LOGIN_PREFIX: &str = "wamn_materializer";
 /// Stable NOLOGIN role used by control-registry reader logins.
@@ -32,11 +31,11 @@ pub const CONNECTION_READER_ROLE: &str = "wamn_conn_reader";
 pub const SESSION_ROLE_READER_ROLE: &str = "wamn_session_role_reader";
 /// Keep the 40-hex identity digest within PostgreSQL's 63 bytes.
 const SESSION_ROLE_READER_LOGIN_PREFIX: &str = "wamn_session_roles";
-/// Stable NOLOGIN role used by record history retention logins.
-pub use wamn_record_history::AUDIT_RETENTION_ROLE;
 /// Stable NOLOGIN role used by administration logins. Its 19 bytes
 /// form a 60-byte login, so the role name is its own prefix.
-pub const ADMINISTRATION_ROLE: &str = "wamn_administration";
+pub use wamn_identity_protocol::authority_class::ADMINISTRATION_ROLE;
+/// Stable NOLOGIN role used by record history retention logins.
+pub use wamn_record_history::AUDIT_RETENTION_ROLE;
 /// Stable NOLOGIN role used by control logins, the credential of an org's
 /// control host (docs/architecture/execution.md#host-run-routes).
 pub const CONTROL_ROLE: &str = "wamn_control";
@@ -136,19 +135,19 @@ impl WorkloadRoleFamily {
     pub const fn acl_role(self) -> &'static str {
         match self {
             Self::ServiceReader => SERVICE_READER_ROLE,
-            Self::App => APP_ROLE,
-            Self::Query => "wamn_query",
+            Self::App => AuthorityClass::GuestSql.acl_role(),
+            Self::Query => AuthorityClass::DynamicSql.acl_role(),
             Self::Migration => crate::migration::OWNER_ROLE,
             Self::Retention => RETENTION_ROLE,
-            Self::ExecutorPlatform => EXECUTOR_PLATFORM_ROLE,
-            Self::HttpAdmitter => HTTP_ADMITTER_ROLE,
-            Self::EventMaterializer => EVENT_MATERIALIZER_ROLE,
+            Self::ExecutorPlatform => AuthorityClass::ExecutorPlatform.acl_role(),
+            Self::HttpAdmitter => AuthorityClass::CallableHttp.acl_role(),
+            Self::EventMaterializer => AuthorityClass::EventMaterializer.acl_role(),
             Self::RegistryReader => REGISTRY_READER_ROLE,
             Self::IdentityReader => IDENTITY_READER_ROLE,
             Self::ConnectionReader => CONNECTION_READER_ROLE,
             Self::SessionRoleReader => SESSION_ROLE_READER_ROLE,
             Self::AuditRetention => AUDIT_RETENTION_ROLE,
-            Self::Administration => ADMINISTRATION_ROLE,
+            Self::Administration => AuthorityClass::Administration.acl_role(),
             Self::Control => CONTROL_ROLE,
         }
     }

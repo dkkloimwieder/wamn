@@ -283,7 +283,34 @@ impl FileConnections for RegistryFileConnections {
                     .ok_or_else(|| refused(FileRefusal::BindingRefused, "binding"))?;
                 (
                     binding.connection_id,
-                    binding.mode == "read",
+                    self.release
+                        .manifest()
+                        .components
+                        .iter()
+                        .find_map(|component| {
+                            (component.descriptor.component_digest == binding.component_digest
+                                && (component.package_id == binding.package_id
+                                    || component.package_id == wamn_catalog::PALETTE_PACKAGE_ID))
+                                .then(|| {
+                                    component
+                                        .descriptor
+                                        .connections
+                                        .iter()
+                                        .find_map(|connection| {
+                                            connection
+                                                .store_alias
+                                                .accepts(name)
+                                                .then(|| {
+                                                    connection
+                                                        .mode
+                                                        .read_only(&binding.package_id, name)
+                                                })
+                                                .flatten()
+                                        })
+                                })
+                                .flatten()
+                        })
+                        .ok_or_else(|| refused(FileRefusal::BindingRefused, "connection mode"))?,
                     Some(binding.version),
                 )
             }
@@ -301,7 +328,7 @@ impl FileConnections for RegistryFileConnections {
             .await
             .map_err(|error| failed("binding", error))?;
         if generation.runtime_type != "host"
-            || !matches!(generation.integration_type.as_str(), "gcs" | "s3" | "disk")
+            || !matches!(generation.integration_type.as_str(), "gcs" | "s3")
         {
             return Err(refused(FileRefusal::BindingRefused, "connection"));
         }
@@ -1120,6 +1147,7 @@ mod tests {
         descriptor.connections = vec![ComponentConnection {
             store_alias: "documents".into(),
             requirement_type: ComponentConnectionType::Blobstore,
+            mode: wamn_catalog::ConnectionMode::Write,
         }];
         let mut manifest = ServingManifest::new(
             ServingRelease {
@@ -1229,9 +1257,8 @@ mod tests {
                 "project",
                 "dev",
             )),
-            "acme",
             "project",
-            Some(Arc::clone(&release)),
+            Arc::clone(&release),
         ));
         FileRoutes::new(
             release,
@@ -1424,6 +1451,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status().as_u16(), 404);
         assert!(response.bytes().await.unwrap().is_empty());
+        task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
     }
 

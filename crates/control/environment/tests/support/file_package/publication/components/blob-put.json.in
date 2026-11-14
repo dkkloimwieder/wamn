@@ -55,15 +55,15 @@
   "connections": [
     {
       "store-alias": "files",
-      "requirement-type": "blobstore"
+      "requirement-type": "blobstore", "mode": "write"
     },
     {
       "store-alias": "files-read",
-      "requirement-type": "blobstore"
+      "requirement-type": "blobstore", "mode": "read"
     },
     {
       "store-alias": "files-no-cdn",
-      "requirement-type": "blobstore"
+      "requirement-type": "blobstore", "mode": "write"
     }
   ]
 }

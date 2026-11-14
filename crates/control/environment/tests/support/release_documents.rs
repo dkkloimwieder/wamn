@@ -314,7 +314,9 @@ pub mod http {
                 declaration["connections"]
                     .as_array_mut()
                     .expect("HTTP requirements")
-                    .push(json!({"store-alias": handle, "requirement-type": "http"}));
+                    .push(
+                        json!({"store-alias": handle, "requirement-type": "http", "mode": "write"}),
+                    );
             }
         }
         Ok(declaration)

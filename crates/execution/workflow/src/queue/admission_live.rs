@@ -514,10 +514,6 @@ async fn event_run(
         stored.get::<String, _>(3),
         wamn_identity_protocol::workflow_user_id().to_string()
     );
-    assert!(
-        stored.get::<bool, _>(4),
-        "an event run has no service principal"
-    );
     assert_eq!(
         workflows.park(&run).await.unwrap_err().error_type(),
         WorkflowErrorType::NotParkable

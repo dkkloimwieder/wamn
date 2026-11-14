@@ -3,9 +3,8 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex;
 
 use wamn_runtime::connection_authority::{
-    AuthorityError, AuthorityErrorType, DnsResolver, HttpScheme, NetworkPolicy, TlsIdentity,
-    TlsPolicy, TransportDecision, parse_http_connection_authority, resolve_http_redirect,
-    resolve_http_request,
+    AuthorityError, AuthorityErrorType, DnsResolver, HttpScheme, TlsIdentity, TlsPolicy,
+    parse_http_connection_authority, resolve_http_request,
 };
 use wamn_runtime::{CanonicalHttpTarget, normalize_portable_http_target};
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -42,7 +41,7 @@ impl DnsResolver for FixedDns {
 #[derive(Debug)]
 struct ExactNetwork(Vec<SocketAddr>);
 
-impl NetworkPolicy for ExactNetwork {
+impl ExactNetwork {
     fn allows(&self, address: SocketAddr) -> bool {
         self.0.contains(&address)
     }
@@ -83,12 +82,9 @@ fn target(value: &str) -> CanonicalHttpTarget {
 
 #[tokio::test]
 async fn canonical_request_pins_dns_and_preserves_host_and_tls_identity() {
-    let connection = parse_http_connection_authority(
-        "HTTPS://ERP.Example:443/api",
-        TlsPolicy::VerifyAuthority,
-        None,
-    )
-    .expect("connection definition");
+    let connection =
+        parse_http_connection_authority("HTTPS://ERP.Example:443/api", TlsPolicy::VerifyAuthority)
+            .expect("connection definition");
     let selected = socket(1, 443);
     let denied = socket(2, 443);
     let dns = FixedDns::with("erp.example", vec![denied, selected]);
@@ -98,7 +94,7 @@ async fn canonical_request_pins_dns_and_preserves_host_and_tls_identity() {
         &connection,
         &target("/orders?id=7"),
         &[allowed("https://erp.example")],
-        &network,
+        &|address| network.allows(address),
         &dns,
     )
     .await
@@ -114,11 +110,9 @@ async fn canonical_request_pins_dns_and_preserves_host_and_tls_identity() {
     assert_eq!(decision.host_header.as_ref(), "erp.example");
     assert_eq!(
         decision.transport,
-        TransportDecision::Direct {
-            origin: wamn_runtime::connection_authority::PinnedEndpoint {
-                address: selected,
-                tls_identity: Some(TlsIdentity::Dns("erp.example".into())),
-            },
+        wamn_runtime::connection_authority::PinnedEndpoint {
+            address: selected,
+            tls_identity: Some(TlsIdentity::Dns("erp.example".into())),
         }
     );
     assert_eq!(
@@ -130,7 +124,7 @@ async fn canonical_request_pins_dns_and_preserves_host_and_tls_identity() {
 #[tokio::test]
 async fn exact_http_service_authority_with_non_default_port_reaches_the_resolver() {
     let connection =
-        parse_http_connection_authority("http://serve-echo:8091/", TlsPolicy::Disabled, None)
+        parse_http_connection_authority("http://serve-echo:8091/", TlsPolicy::Disabled)
             .expect("connection definition");
     let selected = socket(1, 8091);
     let dns = FixedDns::with("serve-echo", vec![selected]);
@@ -139,7 +133,7 @@ async fn exact_http_service_authority_with_non_default_port_reaches_the_resolver
         &connection,
         &target("/hook"),
         &[allowed("serve-echo:8091")],
-        &ExactNetwork(vec![selected]),
+        &|address| ExactNetwork(vec![selected]).allows(address),
         &dns,
     )
     .await
@@ -149,23 +143,18 @@ async fn exact_http_service_authority_with_non_default_port_reaches_the_resolver
     assert_eq!(decision.host_header.as_ref(), "serve-echo:8091");
     assert_eq!(
         decision.transport,
-        TransportDecision::Direct {
-            origin: wamn_runtime::connection_authority::PinnedEndpoint {
-                address: selected,
-                tls_identity: None,
-            },
+        wamn_runtime::connection_authority::PinnedEndpoint {
+            address: selected,
+            tls_identity: None,
         }
     );
 }
 
 #[tokio::test]
 async fn request_authority_and_base_path_injection_fail_before_dns() {
-    let connection = parse_http_connection_authority(
-        "https://erp.example/api/",
-        TlsPolicy::VerifyAuthority,
-        None,
-    )
-    .expect("connection definition");
+    let connection =
+        parse_http_connection_authority("https://erp.example/api/", TlsPolicy::VerifyAuthority)
+            .expect("connection definition");
     let dns = FixedDns::default();
     let network = ExactNetwork(Vec::new());
     let policy = [allowed("https://erp.example")];
@@ -179,9 +168,15 @@ async fn request_authority_and_base_path_injection_fail_before_dns() {
     }
     for spelling in ["/../outside", "/%2e%2e/outside", "/orders%2f..%2foutside"] {
         let normalized = target(spelling);
-        let error = resolve_http_request(&connection, &normalized, &policy, &network, &dns)
-            .await
-            .expect_err(spelling);
+        let error = resolve_http_request(
+            &connection,
+            &normalized,
+            &policy,
+            &|address| network.allows(address),
+            &dns,
+        )
+        .await
+        .expect_err(spelling);
         assert!(
             matches!(
                 error.error_type(),
@@ -195,12 +190,9 @@ async fn request_authority_and_base_path_injection_fail_before_dns() {
 
 #[tokio::test]
 async fn dns_rebinding_cannot_change_an_already_pinned_transport_address() {
-    let connection = parse_http_connection_authority(
-        "https://erp.example/api/",
-        TlsPolicy::VerifyAuthority,
-        None,
-    )
-    .expect("connection definition");
+    let connection =
+        parse_http_connection_authority("https://erp.example/api/", TlsPolicy::VerifyAuthority)
+            .expect("connection definition");
     let admitted = socket(1, 443);
     let rebound = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)), 443);
     let dns = SequenceDns {
@@ -210,18 +202,27 @@ async fn dns_rebinding_cannot_change_an_already_pinned_transport_address() {
     let policy = [allowed("https://erp.example")];
 
     let request = target("/orders");
-    let first = resolve_http_request(&connection, &request, &policy, &network, &dns)
-        .await
-        .expect("first DNS answer is admitted");
-    let first_endpoint = match &first.transport {
-        TransportDecision::Direct { origin } => origin,
-        TransportDecision::Proxy { .. } => panic!("connection has no proxy"),
-    };
+    let first = resolve_http_request(
+        &connection,
+        &request,
+        &policy,
+        &|address| network.allows(address),
+        &dns,
+    )
+    .await
+    .expect("first DNS answer is admitted");
+    let first_endpoint = &first.transport;
     assert_eq!(first_endpoint.address, admitted);
 
-    let error = resolve_http_request(&connection, &request, &policy, &network, &dns)
-        .await
-        .expect_err("rebound address is outside the network ceiling");
+    let error = resolve_http_request(
+        &connection,
+        &request,
+        &policy,
+        &|address| network.allows(address),
+        &dns,
+    )
+    .await
+    .expect_err("rebound address is outside the network ceiling");
     assert_eq!(error.error_type(), AuthorityErrorType::NetworkDenied);
     assert_eq!(
         first_endpoint.address, admitted,
@@ -231,12 +232,9 @@ async fn dns_rebinding_cannot_change_an_already_pinned_transport_address() {
 
 #[tokio::test]
 async fn both_outer_policy_ceiling_denials_are_final() {
-    let connection = parse_http_connection_authority(
-        "https://erp.example/api/",
-        TlsPolicy::VerifyAuthority,
-        None,
-    )
-    .expect("connection definition");
+    let connection =
+        parse_http_connection_authority("https://erp.example/api/", TlsPolicy::VerifyAuthority)
+            .expect("connection definition");
     let address = socket(1, 443);
     let dns = FixedDns::with("erp.example", vec![address]);
 
@@ -244,7 +242,7 @@ async fn both_outer_policy_ceiling_denials_are_final() {
         &connection,
         &target("/orders"),
         &[allowed("https://other.example")],
-        &ExactNetwork(vec![address]),
+        &|address| ExactNetwork(vec![address]).allows(address),
         &dns,
     )
     .await
@@ -258,7 +256,7 @@ async fn both_outer_policy_ceiling_denials_are_final() {
         &connection,
         &target("/orders"),
         &[allowed("https://erp.example")],
-        &ExactNetwork(Vec::new()),
+        &|address| ExactNetwork(Vec::new()).allows(address),
         &dns,
     )
     .await
@@ -269,142 +267,27 @@ async fn both_outer_policy_ceiling_denials_are_final() {
     );
 }
 
-#[tokio::test]
-async fn configured_proxy_is_pinned_without_replacing_logical_authority() {
-    let connection = parse_http_connection_authority(
-        "https://erp.example/api/",
-        TlsPolicy::VerifyAuthority,
-        Some("http://proxy.internal:8080"),
-    )
-    .expect("connection definition");
-    let origin = socket(1, 443);
-    let proxy = socket(2, 8080);
-    let mut dns = FixedDns::with("erp.example", vec![origin]);
-    dns.answers.insert("proxy.internal".into(), vec![proxy]);
-    let network = ExactNetwork(vec![origin, proxy]);
-
-    let decision = resolve_http_request(
-        &connection,
-        &target("/orders"),
-        &[
-            allowed("https://erp.example"),
-            allowed("http://proxy.internal:8080"),
-        ],
-        &network,
-        &dns,
-    )
-    .await
-    .expect("proxied request resolves");
-
-    assert_eq!(decision.host_header.as_ref(), "erp.example");
-    assert_eq!(
-        decision.transport,
-        TransportDecision::Proxy {
-            proxy: wamn_runtime::connection_authority::PinnedEndpoint {
-                address: proxy,
-                tls_identity: None,
-            },
-            origin: wamn_runtime::connection_authority::PinnedEndpoint {
-                address: origin,
-                tls_identity: Some(TlsIdentity::Dns("erp.example".into())),
-            },
-        }
-    );
-}
-
-#[tokio::test]
-async fn redirects_reenter_policy_and_cannot_change_authority_or_base_path() {
-    let connection = parse_http_connection_authority(
-        "https://erp.example/api/",
-        TlsPolicy::VerifyAuthority,
-        None,
-    )
-    .expect("connection definition");
-    let address = socket(1, 443);
-    let dns = FixedDns::with("erp.example", vec![address]);
-    let network = ExactNetwork(vec![address]);
-    let policy = [allowed("https://erp.example")];
-
-    let redirected = resolve_http_redirect(
-        &connection,
-        "https://erp.example/api/orders/1",
-        "/api/orders/2",
-        &policy,
-        &network,
-        &dns,
-    )
-    .await
-    .expect("same-authority authorized redirect");
-    assert_eq!(
-        redirected.logical_url.as_ref(),
-        "https://erp.example/api/orders/2"
-    );
-
-    for location in [
-        "https://evil.example/api/orders/2",
-        "/outside",
-        "%2e%2e/outside",
-    ] {
-        let error = resolve_http_redirect(
-            &connection,
-            "https://erp.example/api/orders/1",
-            location,
-            &policy,
-            &network,
-            &dns,
-        )
-        .await
-        .expect_err(location);
-        assert!(
-            matches!(
-                error.error_type(),
-                AuthorityErrorType::RedirectDenied | AuthorityErrorType::BasePathEscape
-            ),
-            "unexpected failure for {location}: {error:?}"
-        );
-    }
-}
-
 #[test]
-fn definition_rejects_userinfo_fragments_proxy_paths_and_incoherent_tls() {
+fn definition_rejects_userinfo_fragments_incoherent_tls() {
     let cases = [
-        (
-            "https://user@erp.example/api",
-            TlsPolicy::VerifyAuthority,
-            None,
-        ),
-        (
-            "https://erp.example/api#frag",
-            TlsPolicy::VerifyAuthority,
-            None,
-        ),
+        ("https://user@erp.example/api", TlsPolicy::VerifyAuthority),
+        ("https://erp.example/api#frag", TlsPolicy::VerifyAuthority),
         (
             "https://erp.example/api/../private",
             TlsPolicy::VerifyAuthority,
-            None,
         ),
         (
             "https://erp.example/api/%2e%2e/private",
             TlsPolicy::VerifyAuthority,
-            None,
         ),
-        (
-            "https://%65rp.example/api",
-            TlsPolicy::VerifyAuthority,
-            None,
-        ),
-        ("https://erp.example/api", TlsPolicy::Disabled, None),
-        ("http://erp.example/api", TlsPolicy::VerifyAuthority, None),
-        (
-            "https://erp.example/api",
-            TlsPolicy::VerifyAuthority,
-            Some("http://proxy.internal:8080/path"),
-        ),
+        ("https://%65rp.example/api", TlsPolicy::VerifyAuthority),
+        ("https://erp.example/api", TlsPolicy::Disabled),
+        ("http://erp.example/api", TlsPolicy::VerifyAuthority),
     ];
-    for (base, tls, proxy) in cases {
+    for (base, tls) in cases {
         assert!(
-            parse_http_connection_authority(base, tls, proxy).is_err(),
-            "accepted invalid definition {base:?} {proxy:?}"
+            parse_http_connection_authority(base, tls).is_err(),
+            "accepted invalid definition {base:?}"
         );
     }
 }

@@ -31,10 +31,6 @@ pub enum KeyRefusal {
     ControlCharacter,
     /// The key exceeded [`MAX_KEY_BYTES`].
     TooLong,
-    /// The resolved key did not fall under the bound prefix. This is the
-    /// belt-and-braces arm: it should be unreachable given the others, and it
-    /// fires rather than trusting that reasoning.
-    EscapedPrefix,
 }
 
 impl KeyRefusal {
@@ -47,7 +43,6 @@ impl KeyRefusal {
             Self::ParentTraversal => "key_parent_traversal",
             Self::ControlCharacter => "key_control_character",
             Self::TooLong => "key_too_long",
-            Self::EscapedPrefix => "key_escaped_prefix",
         }
     }
 }
@@ -89,9 +84,6 @@ pub fn resolve_key(prefix: &str, author_key: &str) -> Result<String, KeyRefusal>
     };
     if resolved.len() > MAX_KEY_BYTES {
         return Err(KeyRefusal::TooLong);
-    }
-    if !trimmed_prefix.is_empty() && !resolved.starts_with(&format!("{trimmed_prefix}/")) {
-        return Err(KeyRefusal::EscapedPrefix);
     }
     Ok(resolved)
 }

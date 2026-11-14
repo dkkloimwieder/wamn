@@ -35,8 +35,6 @@ mod wiring_resolution;
 pub mod write_log;
 pub use file_collection::FileCollection;
 
-pub use wiring_resolution::{RELEASE_COMPONENTS_SQL, ResolvedActiveWiring};
-
 pub use credential_exactness::{
     AclExpectation, AclTarget, AmbientCredentialState, CredentialConnectionType,
     CredentialExactnessProbe, CredentialProbeError, CredentialProbeErrorType,

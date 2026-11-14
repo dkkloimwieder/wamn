@@ -67,6 +67,8 @@ pub struct ConnectionFacts {
     project_env_key: String,
     project: String,
     environment: String,
+    pub(crate) stores:
+        Cache<(uuid::Uuid, i64), Arc<crate::plugins::wamn_blobstore::plugin::StoreClient>>,
     generations: Cache<(uuid::Uuid, i64), Arc<ConnectionGeneration>>,
     versions: Cache<(String, i32), Arc<IntegrationVersion>>,
     secrets: Cache<uuid::Uuid, Arc<Secret>>,
@@ -102,6 +104,7 @@ impl ConnectionFacts {
             project_env_key: project_env_key.to_owned(),
             project: project.to_owned(),
             environment: environment.to_owned(),
+            stores: bounded(),
             generations: bounded(),
             versions: bounded(),
             secrets: bounded(),
@@ -172,6 +175,12 @@ impl ConnectionFacts {
             anyhow::bail!("connection changed during lease acquisition");
         }
         Ok(Some(call))
+    }
+
+    /// Configure the local connection reader once at host setup.
+    pub fn configure_postgres_credentials(&self) {
+        self.postgres
+            .set_connection_credentials(&self.reader, &self.project);
     }
 
     /// The reader of the facts, for the local application.

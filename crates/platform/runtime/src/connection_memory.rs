@@ -54,7 +54,7 @@ pub struct ConnectionFact {
 }
 
 /// One name a release binds: (component, package, name) to (connection,
-/// version, mode).
+/// version).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseBinding {
@@ -63,7 +63,6 @@ pub struct ReleaseBinding {
     pub name: String,
     pub connection_id: uuid::Uuid,
     pub version: i32,
-    pub mode: String,
 }
 
 /// The connection map of one release.
@@ -413,7 +412,6 @@ mod tests {
                 name: "erp".into(),
                 connection_id: id,
                 version: 1,
-                mode: "write".into(),
             }],
         };
         let first = fact(1);

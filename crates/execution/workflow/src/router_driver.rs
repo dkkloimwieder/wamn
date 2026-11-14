@@ -2,6 +2,7 @@
 use crate::graph::{
     Delivery, ErrorDetail, NodeError, NodeOutcome, Outcome, RateLimitDetail, Step, Wiring,
 };
+use crate::resolution::ResolvedActiveWiring;
 use crate::resolution::WorkflowRunKey;
 use anyhow::Context as _;
 use std::collections::BTreeMap;
@@ -24,7 +25,6 @@ use wamn_identity_protocol::PlatformComponent;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, InvocationEntry, WiringPosition,
 };
-use wamn_runtime::plugins::wamn_postgres::ResolvedActiveWiring;
 
 /// The pinned graph and execution identity of one queued workflow.
 #[derive(Debug)]
@@ -133,6 +133,7 @@ impl RouterDriver {
                                 let entry = InvocationEntry::Wiring(WiringPosition {
                                     package_id: request.package_id.clone(), wiring_hash: graph_hash.to_string(),
                                     wiring_id: request.wiring_id.clone(), wiring_version: version, node_id: call.node.clone(), occurrence: call.occurrence,
+                                    configuration: Arc::new(call.definition.params.clone()),
                                 });
                                 let operation_call = OperationCall {
                                     closure: OperationClosure::Released(&components), component, operation: operation_name,

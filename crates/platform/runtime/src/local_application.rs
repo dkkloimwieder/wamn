@@ -8,7 +8,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnectionRequirement, ManifestDigest, ServingManifest,
-    WiringDocument,
 };
 use wamn_engine::release_manifest::ReleaseTarget;
 
@@ -42,7 +41,6 @@ pub struct LocalBindingFacts {
 /// A validated local definition closure bound to one physical disposable target.
 #[derive(Clone, Debug)]
 pub struct LocalApplication {
-    pub(crate) manifest: ServingManifest,
     pub(crate) target: ReleaseTarget,
     pub(crate) facts: LocalApplicationFacts,
     instance: u32,
@@ -66,7 +64,6 @@ pub async fn load_local_application(
         read_local_target(database_url, &target.project_env_key, &target.environment).await?;
     let facts = load_local_facts(directory, manifest, &target.project_env_key)?;
     Ok(LocalApplication {
-        manifest: manifest.clone(),
         target,
         facts,
         instance,
@@ -164,167 +161,6 @@ impl LocalApplication {
         }
         Ok(true)
     }
-
-    pub(crate) async fn effect_snapshot(
-        &self,
-        client: &mut sqlx::PgConnection,
-        project_env_key: &str,
-        lookup: &crate::plugins::wamn_postgres::ConnectionEffectLookup<'_>,
-    ) -> anyhow::Result<Option<crate::plugins::wamn_postgres::ConnectionEffectSnapshot>> {
-        self.require_instance(client).await?;
-        anyhow::ensure!(
-            project_env_key == self.target.project_env_key
-                && lookup.environment == self.target.environment
-                && lookup.manifest_digest == self.facts.manifest_digest.as_str(),
-            "local connection release target mismatch"
-        );
-        let Some((wiring_hash, entry_permitted)) =
-            entry_facts(client, &self.manifest, &self.target, &self.facts, lookup).await?
-        else {
-            return Ok(None);
-        };
-        let Some(component) = self.facts.components.iter().find(|component| {
-            component.target.package_id == lookup.package_id
-                && component.component_digest == lookup.component_digest
-        }) else {
-            return Ok(None);
-        };
-        let Some(binding) = self.facts.bindings.iter().find(|binding| {
-            (binding.package_id == lookup.package_id
-                || (lookup.package_id == wamn_catalog::PALETTE_PACKAGE_ID
-                    && wamn_catalog::application_for_package(
-                        &self.target.applications,
-                        &binding.package_id,
-                    ) == Some(lookup.entry.package_id)
-                    && self
-                        .manifest
-                        .release
-                        .packages
-                        .iter()
-                        .any(|package| package.package_id() == binding.package_id)))
-                && binding.requirement.component_digest() == lookup.component_digest
-                && binding.requirement.store_alias() == lookup.store_alias
-        }) else {
-            return Ok(None);
-        };
-        let reader = self.connection_reader()?;
-        let (current, definition, active_generation) = read_binding(
-            client,
-            &self.binding_target(&binding.package_id, &reader),
-            &binding.requirement,
-            &binding.selection.instance_id,
-            &reader.credentials,
-        )
-        .await?;
-        let node_permitted = entry_permitted && component.operations.contains_key(lookup.operation);
-        let valid = current == binding.selection
-            && lookup
-                .candidate_binding
-                .is_none_or(|candidate| candidate == &current);
-        Ok(Some(
-            crate::plugins::wamn_postgres::ConnectionEffectSnapshot {
-                connection_name: read_local_connection_name(client, &current.instance_id).await?,
-                read_only: current.read_only,
-                wiring_hash,
-                component: Some(component.component.clone()),
-                interface_version: Some(component.interface_version.clone()),
-                operation: Some(lookup.operation.to_owned()),
-                registered_operation: component
-                    .operations
-                    .get(lookup.operation)
-                    .and_then(|operation| operation.registered_operation.clone()),
-                requirement_json: Some(serde_json::to_value(&binding.requirement)?),
-                requirement_hash: Some(current.requirement_hash.clone()),
-                node_permitted,
-                binding_active: valid,
-                binding_valid: valid,
-                instance_id: Some(current.instance_id),
-                validation_hash: Some(current.validation_hash),
-                requirement_type: Some(current.requirement_type),
-                contract: Some(current.contract),
-                instance_enabled: true,
-                active_generation,
-                pinned_generation: Some(current.generation),
-                instance_revision: Some(current.instance_revision),
-                generation: Some(current.generation),
-                definition: Some(definition),
-                definition_hash: Some(current.definition_hash),
-                credential_handle: current.credential_set_handle,
-            },
-        ))
-    }
-}
-
-/// The entry half of a local effect snapshot: the wiring hash, and whether the
-/// origin may enter here. `None` when the entry is not in this application.
-///
-/// The same entry rule as the Postgres snapshot: a route needs only its origin
-/// export, and a wiring node must name the origin component.
-async fn entry_facts(
-    client: &mut sqlx::PgConnection,
-    manifest: &ServingManifest,
-    target: &ReleaseTarget,
-    facts: &LocalApplicationFacts,
-    lookup: &crate::plugins::wamn_postgres::ConnectionEffectLookup<'_>,
-) -> anyhow::Result<Option<(Option<String>, bool)>> {
-    let origin_exports = |origin: &AdmittedComponent| {
-        origin.target.package_id == lookup.origin_package_id
-            && origin.component_digest == lookup.origin_component_digest
-            && origin.component == lookup.origin_component
-            && origin.interface_version == lookup.origin_interface_version
-            && origin.operations.contains_key(lookup.origin_operation)
-    };
-    Ok(Some(match lookup.entry.wiring {
-        None => {
-            if !manifest
-                .release
-                .packages
-                .iter()
-                .any(|package| package.package_id() == lookup.entry.package_id)
-            {
-                return Ok(None);
-            }
-            (None, facts.components.iter().any(origin_exports))
-        }
-        Some(position) => {
-            let Some(row) = sqlx::query("SELECT graph_json::text FROM catalog.workflows WHERE project_env_key = $1 AND environment = $2 AND application = $3 AND workflow_id = $4 AND version = $5").bind(&target.project_env_key).bind(&target.environment).bind(lookup.entry.package_id).bind(position.wiring_id).bind(position.wiring_version).fetch_optional(&mut *client).await? else { return Ok(None); };
-            let value: serde_json::Value = serde_json::from_str(&row.get::<String, _>(0))?;
-            let document = WiringDocument::parse(&value)?;
-            let Some(application) = target.applications.get(lookup.entry.package_id) else {
-                return Ok(None);
-            };
-            let components = wamn_catalog::resolve_workflow_components(
-                &target.project_env_key,
-                &application.packages,
-                manifest,
-                &document,
-            )?;
-            let permitted = components.get(position.node_id).is_some_and(origin_exports)
-                && document.nodes.get(position.node_id).is_some_and(|node| {
-                    node.operation == lookup.origin_operation
-                        && (lookup.package_id != wamn_catalog::PALETTE_PACKAGE_ID
-                            || manifest.components.iter().any(|component| {
-                                component.package_id == lookup.package_id
-                                    && component.descriptor.component_digest
-                                        == lookup.component_digest
-                                    && component.descriptor.connections.iter().any(|connection| {
-                                        connection.store_alias.resolve(&node.params)
-                                            == Some(lookup.store_alias)
-                                    })
-                            }))
-                });
-            // The cluster snapshot derives the hash from the graph too
-            // (session_identity.rs); wamn_http_admitter holds no grant on wiring_hash.
-            (Some(document.wiring_hash().as_str().to_owned()), permitted)
-        }
-    }))
-}
-
-async fn read_local_connection_name(
-    client: &mut sqlx::PgConnection,
-    instance: &str,
-) -> anyhow::Result<Option<String>> {
-    Ok(sqlx::query("SELECT i.name FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE c.id=$1::text::uuid").bind(instance).fetch_one(&mut *client).await?.get(0))
 }
 
 /// Build the local selection from resolved administration facts.
@@ -784,65 +620,6 @@ mod tests {
         (facts, manifest)
     }
 
-    #[tokio::test]
-    async fn a_route_entry_needs_only_its_origin_export_and_a_release_package() {
-        use crate::plugins::wamn_postgres::{ConnectionEffectLookup, ConnectionEntryLookup};
-        let _lock = wamn_test_postgres::lock();
-        let database = wamn_catalog::test_database::project();
-        let mut client = wamn_postgres::connect(database.url()).await.unwrap();
-
-        let target = wamn_engine::release_manifest::ReleaseTarget::new("org-a", "dev");
-        let (facts, manifest) = fixture();
-        let digest = facts.components[0].component_digest.clone();
-        let route = ConnectionEffectLookup {
-            entry: ConnectionEntryLookup {
-                package_id: "orders",
-                wiring: None,
-            },
-            origin_package_id: "orders",
-            origin_component_digest: &digest,
-            origin_component: "transform",
-            origin_interface_version: "0.1.0",
-            origin_operation: "run",
-            package_id: "orders",
-            operation: "run",
-            manifest_digest: facts.manifest_digest.as_str(),
-            environment: "dev",
-            component_digest: &digest,
-            store_alias: "store",
-            candidate_binding: None,
-        };
-        assert_eq!(
-            super::entry_facts(&mut client, &manifest, &target, &facts, &route)
-                .await
-                .unwrap(),
-            Some((None, true))
-        );
-        let unexported = ConnectionEffectLookup {
-            origin_operation: "absent",
-            ..route
-        };
-        assert_eq!(
-            super::entry_facts(&mut client, &manifest, &target, &facts, &unexported)
-                .await
-                .unwrap(),
-            Some((None, false))
-        );
-        let foreign = ConnectionEffectLookup {
-            entry: ConnectionEntryLookup {
-                package_id: "absent",
-                wiring: None,
-            },
-            ..route
-        };
-        assert_eq!(
-            super::entry_facts(&mut client, &manifest, &target, &facts, &foreign)
-                .await
-                .unwrap(),
-            None
-        );
-    }
-
     #[test]
     fn exact_local_facts_round_trip_and_refuse_missing_or_changed_closure() {
         let (facts, manifest) = fixture();
@@ -913,7 +690,6 @@ mod tests {
 
     #[tokio::test]
     async fn local_readiness_and_dispatch_refuse_a_forged_binding_mode() {
-        use crate::plugins::wamn_postgres::{ConnectionEffectLookup, ConnectionEntryLookup};
         let _lock = wamn_test_postgres::lock();
         let mut authority = crate::connection_credentials::test_util::Fixture::new().await;
         authority.put("erp", "secret", &["project-a"]).await;
@@ -970,7 +746,6 @@ mod tests {
                 serde_json::from_value(serde_json::json!({"app":{"packages":["orders"]}})).unwrap(),
             );
         let local = super::LocalApplication {
-            manifest,
             target,
             facts,
             instance: sqlx::query("SELECT oid FROM pg_database WHERE datname=current_database()")
@@ -991,33 +766,6 @@ mod tests {
                 .await
                 .unwrap()
         );
-        let mut forged = selection;
-        forged.read_only = false;
-        let lookup = ConnectionEffectLookup {
-            entry: ConnectionEntryLookup {
-                package_id: "orders",
-                wiring: None,
-            },
-            origin_package_id: "orders",
-            origin_component_digest: &component.component_digest,
-            origin_component: &component.component,
-            origin_interface_version: &component.interface_version,
-            origin_operation: "run",
-            package_id: "orders",
-            operation: "run",
-            manifest_digest: local.facts.manifest_digest.as_str(),
-            environment: "dev",
-            component_digest: &component.component_digest,
-            store_alias: "erp",
-            candidate_binding: Some(&forged),
-        };
-        let snapshot = local
-            .effect_snapshot(&mut client, "org-a", &lookup)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(snapshot.read_only);
-        assert!(!snapshot.binding_active);
         let mut forged_local = local.clone();
         forged_local.facts.bindings[0].selection.read_only = false;
         assert!(

@@ -66,9 +66,9 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     let original = application_fixture::load_release()?;
     let mut manifest = serde_json::to_value(original.manifest())?;
     manifest["components"][0]["descriptor"]["connections"] = json!([
-        {"store-alias":"files","requirement-type":"blobstore"},
-        {"store-alias":"files-read","requirement-type":"blobstore"},
-        {"store-alias":"files-no-cdn","requirement-type":"blobstore"}
+        {"store-alias":"files","requirement-type":"blobstore","mode":"write"},
+        {"store-alias":"files-read","requirement-type":"blobstore","mode":"read"},
+        {"store-alias":"files-no-cdn","requirement-type":"blobstore","mode":"write"}
     ]);
     let manifest: wamn_catalog::ServingManifest = serde_json::from_value(manifest)?;
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
@@ -162,9 +162,8 @@ impl FileHost {
         let blobstore = Arc::new(WamnBlobstore::new(
             Arc::clone(&postgres),
             Arc::clone(&facts),
-            PROJECT_ENV_KEY,
             PROJECT,
-            Some(Arc::clone(&release)),
+            Arc::clone(&release),
         ));
         let routes = Arc::new(FileRoutes::new(
             Arc::clone(&release),
@@ -664,10 +663,9 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn native_upload_streams_more_than_64_mib_and_hashes_the_stored_bytes() -> anyhow::Result<()>
-{
+async fn native_upload_streams_the_limit_and_hashes_the_stored_bytes() -> anyhow::Result<()> {
     let mut fixture = FileHost::start("file_transfer").await?;
-    let size = 65usize * 1024 * 1024 + 17;
+    let size = wamn_runtime::plugins::wamn_blobstore::intake::MAX_OBJECT_BYTES;
     let stream = futures_util::stream::unfold(size, |remaining| async move {
         if remaining == 0 {
             None
@@ -716,101 +714,6 @@ async fn native_upload_streams_more_than_64_mib_and_hashes_the_stored_bytes() ->
     assert_eq!(
         hex::encode(Sha256::digest(&stored)),
         row.get::<String, _>(1)
-    );
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn legacy_unsegmented_file_still_reads_signs_exposes_and_deletes() -> anyhow::Result<()> {
-    let mut fixture = FileHost::start("file_legacy_key").await?;
-    let id = Uuid::new_v4();
-    let key = format!("_wamn_files/live/{id}");
-    fixture
-        .minio
-        .mc(
-            &[
-                "cp",
-                "/input",
-                &format!("file/files-a/generation-one/{key}"),
-            ],
-            b"legacy bytes",
-        )
-        .await?;
-    sqlx::query("INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key) \
-         VALUES ($1::text::uuid,'files',$2::text::uuid,'legacy.txt','text/plain',12,$3,$4)").bind(&id.to_string()).bind(&fixture.registry.connection_id).bind(&hex::encode(Sha256::digest(b"legacy bytes"))).bind(&key).execute(&mut fixture.writer).await.map(|result| result.rows_affected())?;
-    let read = fixture
-        .read("files", id, Some(&fixture.token(false)))
-        .await?;
-    assert_eq!(read.0, 200);
-    assert_eq!(read.2, b"legacy bytes");
-    let caller = fixture.bind_operation()?;
-    let signed = fixture
-        .routes
-        .signed_url(
-            &fixture.blobstore,
-            "file-operation",
-            &caller,
-            id,
-            Duration::from_secs(60),
-        )
-        .await?;
-    assert_eq!(
-        url::Url::parse(&signed)?.path(),
-        format!("/files-a/generation-one/{key}")
-    );
-    let client = fixture.minio.client()?;
-    assert_eq!(
-        client.get(signed).send().await?.bytes().await?.as_ref(),
-        b"legacy bytes"
-    );
-    let exposed = fixture
-        .mutate("expose", id, "files", Some("public"))
-        .await?;
-    let url = exposed["value"]["url"]
-        .as_str()
-        .context("legacy public URL")?;
-    assert_eq!(
-        url::Url::parse(url)?.path(),
-        format!("/generation-one/public/{key}")
-    );
-    assert_eq!(
-        client.get(url).send().await?.bytes().await?.as_ref(),
-        b"legacy bytes"
-    );
-    fixture
-        .mutate("expose", id, "files", Some("application"))
-        .await?;
-    assert_eq!(client.get(url).send().await?.status(), 404);
-    fixture
-        .mutate("expose", id, "files", Some("public"))
-        .await?;
-    assert_eq!(
-        sqlx::query("SELECT blob_key FROM platform.file WHERE id=$1::text::uuid")
-            .bind(&id.to_string())
-            .fetch_one(&mut fixture.writer)
-            .await?
-            .get::<String, _>(0),
-        key
-    );
-    let deleted = fixture.mutate("delete", id, "files", None).await?;
-    assert_eq!(deleted["value"]["file_id"], json!(id));
-    assert_eq!(
-        fixture
-            .read("files", id, Some(&fixture.token(false)))
-            .await?
-            .0,
-        404
-    );
-    assert_eq!(client.get(url).send().await?.status(), 404);
-    assert!(
-        fixture
-            .minio
-            .mc(
-                &["stat", &format!("file/files-a/generation-one/{key}")],
-                b""
-            )
-            .await
-            .is_err()
     );
     Ok(())
 }

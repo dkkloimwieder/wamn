@@ -184,23 +184,18 @@ mod tests {
     }
     fn decision() -> AuthorityDecision {
         use crate::connection_authority::{
-            PinnedEndpoint, TlsPolicy, TransportDecision, parse_http_connection_authority,
+            PinnedEndpoint, TlsPolicy, parse_http_connection_authority,
         };
-        let authority = parse_http_connection_authority(
-            "https://example.com/",
-            TlsPolicy::VerifyAuthority,
-            None,
-        )
-        .unwrap();
+        let authority =
+            parse_http_connection_authority("https://example.com/", TlsPolicy::VerifyAuthority)
+                .unwrap();
         AuthorityDecision {
             logical_url: "https://example.com/notify?key=guest".into(),
             logical_authority: authority.authority().clone(),
             host_header: "example.com".into(),
-            transport: TransportDecision::Direct {
-                origin: PinnedEndpoint {
-                    address: "93.184.216.34:443".parse().unwrap(),
-                    tls_identity: None,
-                },
+            transport: PinnedEndpoint {
+                address: "93.184.216.34:443".parse().unwrap(),
+                tls_identity: None,
             },
         }
     }

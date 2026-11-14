@@ -56,7 +56,10 @@ pub(super) fn signed_read_fixture(project_env_key: &str) -> anyhow::Result<Signe
             "query/read_file_id.sql",
             statement,
         )],
-        &wamn_compiler::StatementTransactionality::default(),
+        &wamn_compiler::StatementTransactionality::from_paths(BTreeMap::from([(
+            "query/read_file_id.sql".into(),
+            false,
+        )])),
     ))?;
     for file in generated.files() {
         if file.path().starts_with("generated/") {

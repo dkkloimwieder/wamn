@@ -216,11 +216,12 @@ pub async fn schedule_run(
     operations: &[&str],
     due: &str,
 ) -> anyhow::Result<String> {
+    use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
     use wamn_environment::author_workflow::{
         AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger, author_workflow_in_databases,
     };
     use wamn_environment::workflow_lifecycle::{WorkflowVersion, enable_workflow};
-    use wamn_runtime::plugins::wamn_postgres::{ScheduleRunAdmission, ScheduleRunAdmitted};
+    use wamn_workflow::admission::{ScheduleRunAdmitted, admit_schedule_run};
 
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
@@ -261,20 +262,20 @@ pub async fn schedule_run(
         None,
     )
     .await?;
-    match host
-        .admit_schedule_run(
-            "test",
-            PROJECT_ENV_KEY,
-            &ScheduleRunAdmission {
-                environment: "test",
-                application,
-                application_packages: &declared[application].packages,
-                workflow_id: &document.wiring_id,
-                manifest_digest: digest.as_str(),
-                due: chrono::DateTime::parse_from_rfc3339(due)?.with_timezone(&chrono::Utc),
-            },
-        )
-        .await?
+    let release = LoadedRelease::load_canonical_bytes(
+        &manifest.canonical_bytes(),
+        "schedule fixture",
+        ReleaseTarget::new(PROJECT_ENV_KEY, "test").with_applications(declared),
+    )?;
+    match admit_schedule_run(
+        host,
+        "test",
+        &release,
+        application,
+        &document.wiring_id,
+        chrono::DateTime::parse_from_rfc3339(due)?.with_timezone(&chrono::Utc),
+    )
+    .await?
     {
         ScheduleRunAdmitted::Queued { run_id } => Ok(run_id),
         other => anyhow::bail!("the schedule admission queued no run: {other:?}"),
@@ -650,6 +651,7 @@ pub async fn invoke(
                         component,
                         operation,
                         InvocationEntry::Wiring(WiringPosition {
+                            configuration: Default::default(),
                             package_id: "rest_connector".into(),
                             wiring_hash: format!("sha256:{}", "a".repeat(64)),
                             wiring_id: "rest_item".into(),

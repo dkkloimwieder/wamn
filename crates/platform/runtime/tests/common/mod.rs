@@ -1,7 +1,7 @@
 //! Shared fixtures for production queue tests.
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::sync::Arc;
 
 use url::Url;
@@ -138,7 +138,7 @@ pub async fn seed_run(client: &mut Client, run_id: &str, package_id: &str) -> an
                    (project_env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,input_json,trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) \
                  VALUES ($1,$2,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','dispatched',$3,'{POD_MANIFEST_DIGEST}','test',$4,$5, \
-                         '{{\"input\":true}}','http')"
+                         '{{\"input\":true}}','manual','00000000-0000-0000-0000-000000000001','admin','manual','00000000-0000-0000-0000-000000000001','{{}}')"
             ))).bind(&PROJECT_ENV_KEY).bind(&run_id).bind(&package_id).bind(&WIRING_ID).bind(&WIRING_VERSION).execute(&mut *client).await.map(|result| result.rows_affected())?;
     sqlx::query(sqlx::AssertSqlSafe(
         (&format!(

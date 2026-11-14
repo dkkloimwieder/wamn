@@ -155,7 +155,6 @@ targets = [
   { workspace="root", package="wamn-run-state", target="test:store", tier="live-postgres" },
   { workspace="root", package="wamn-runtime", target="lib:wamn_runtime", tier="live-nats" },
   { workspace="root", package="wamn-runtime", target="test:connection_authority", tier="contract" },
-  { workspace="root", package="wamn-runtime", target="test:effect_snapshot_live", tier="live-nats" },
   { workspace="root", package="wamn-runtime", target="test:environment_status_route", tier="live-postgres" },
   { workspace="root", package="wamn-runtime", target="test:executor_platform_surface_live", tier="live-postgres" },
   { workspace="root", package="wamn-runtime", target="test:executor_plugin_no_trap_live", tier="contract" },

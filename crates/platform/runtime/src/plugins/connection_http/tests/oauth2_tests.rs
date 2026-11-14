@@ -51,7 +51,9 @@ impl Fixture {
         api: Vec<u16>,
         assertion_verifier: Option<AssertionVerifier>,
     ) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind((super::interface_address(), 0))
+            .await
+            .unwrap();
         let base = format!("http://{}/bound/", listener.local_addr().unwrap());
         let observed = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&observed);
@@ -276,6 +278,14 @@ impl Fixture {
             }))
             .unwrap(),
         );
+        component.descriptor.connections = ["handle", "other-handle"]
+            .into_iter()
+            .map(|name| wamn_catalog::ComponentConnection {
+                store_alias: name.into(),
+                requirement_type: wamn_catalog::ComponentConnectionType::Http,
+                mode: wamn_catalog::ConnectionMode::Write,
+            })
+            .collect();
         manifest.components.insert(component);
         manifest.routes.insert(ServingRoute {
             package_id: invocation.origin.package_id.clone(),
@@ -291,7 +301,10 @@ impl Fixture {
             LoadedRelease::load_canonical_bytes(
                 &bytes,
                 "oauth2-test",
-                ReleaseTarget::new("acme--dev--project-a", "dev"),
+                ReleaseTarget::new("acme--dev--project-a", "dev").with_applications(
+                    serde_json::from_value(serde_json::json!({"app":{"packages":["package_a"]}}))
+                        .unwrap(),
+                ),
             )
             .unwrap(),
         );
@@ -382,10 +395,9 @@ impl Fixture {
             postgres,
             Arc::new(HttpTransport::new().unwrap()),
             facts,
-            "acme--dev--project-a",
             "project-a",
             vec![self.base.strip_suffix("bound/").unwrap().parse().unwrap()].into(),
-            Some(release),
+            release,
         );
         plugin
             .postgres
@@ -413,10 +425,9 @@ impl Fixture {
             Arc::clone(&first.postgres),
             Arc::new(HttpTransport::new().unwrap()),
             facts,
-            "acme--dev--project-a",
             "project-a",
             Arc::clone(&first.allowed_hosts),
-            first.release.clone(),
+            Arc::clone(&first.release),
         );
         plugin
     }
@@ -459,19 +470,17 @@ impl Fixture {
     async fn use_project(&self, plugin: &mut ConnectionHttp, project: &str) {
         use wamn_engine::release_manifest::ReleaseTarget;
         let project_env_key = wamn_registry::project_env_key("acme", project, "dev");
-        plugin.release = Some(Arc::new(
+        plugin.release = Arc::new(
             LoadedRelease::load_canonical_bytes(
-                &plugin
-                    .release
-                    .as_ref()
-                    .unwrap()
-                    .manifest()
-                    .canonical_bytes(),
+                &plugin.release.manifest().canonical_bytes(),
                 "oauth2-test",
-                ReleaseTarget::new(&project_env_key, "dev"),
+                ReleaseTarget::new(&project_env_key, "dev").with_applications(
+                    serde_json::from_value(serde_json::json!({"app":{"packages":["package_a"]}}))
+                        .unwrap(),
+                ),
             )
             .unwrap(),
-        ));
+        );
         plugin.facts = Arc::new(
             ConnectionFacts::new(
                 Arc::new(ConnectionMemory::default()),
@@ -491,7 +500,6 @@ impl Fixture {
             .postgres
             .set_project_env_key("instance", &project_env_key)
             .unwrap();
-        plugin.project_env_key = project_env_key.into();
         plugin.project = project.into();
     }
 
@@ -1645,9 +1653,11 @@ struct TlsTokenEndpoint {
 
 impl TlsTokenEndpoint {
     async fn start() -> Self {
-        let certificate =
-            rcgen::generate_simple_self_signed(vec!["127.0.0.1".into(), "localhost".into()])
-                .unwrap();
+        let certificate = rcgen::generate_simple_self_signed(vec![
+            super::interface_address().to_string(),
+            "localhost".into(),
+        ])
+        .unwrap();
         let server = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::aws_lc_rs::default_provider(),
         ))
@@ -1671,7 +1681,9 @@ impl TlsTokenEndpoint {
         .with_root_certificates(roots)
         .with_no_client_auth();
         let transport = Arc::new(HttpTransport::with_tls_config(client));
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind((super::interface_address(), 0))
+            .await
+            .unwrap();
         let url = format!("https://{}/token", listener.local_addr().unwrap());
         let observed = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&observed);
@@ -1734,7 +1746,7 @@ async fn token_authority_health_allows_secret_and_jwt_and_refuses_other_origins(
         } else {
             serde_json::json!({"client_secret":"secret"}).to_string()
         };
-        let mut parameters = serde_json::json!({"primary-authority":format!("https://localhost:{port}/api/"), "tls-verification":"verify-authority", "auth":auth});
+        let mut parameters = serde_json::json!({"primary-authority":format!("https://{}:{port}/api/", super::interface_address()), "tls-verification":"verify-authority", "auth":auth});
         health(&endpoint.transport, &parameters, auth_type, Some(&material))
             .await
             .unwrap();

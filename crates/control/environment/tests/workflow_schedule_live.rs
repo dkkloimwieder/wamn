@@ -416,8 +416,19 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
         .execute(&mut *hold)
         .await
         .unwrap();
+    let postgres = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: Some(
+                ClassCredentials::default()
+                    .with_class(AuthorityClass::ExecutorPlatform, &fixture.executor_url),
+            ),
+            statement_timeout_ms: 120_000,
+            ..WamnPostgresConfig::from_env()
+        })
+        .unwrap(),
+    );
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
-        Arc::clone(&fixture.postgres),
+        postgres,
         PROJECT,
         Arc::clone(&fixture.release),
     );
@@ -476,7 +487,8 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
     let upgraded = Arc::new(release_variant(&mut fixture, APP, b"1251").await);
     let billing = Arc::new(release_variant(&mut fixture, "billing", b"1252").await);
     let b = PostgresSchedules::new(Arc::clone(&fixture.postgres), PROJECT, Arc::clone(&billing));
-    let b_rows = b.enabled(Utc::now()).await.unwrap();
+    let rows_tick = due("2026-10-20T10:15:00Z");
+    let b_rows = b.enabled(rows_tick).await.unwrap();
     assert!(b_rows.iter().all(|row| row.application == "billing"));
     assert!(!b_rows.is_empty());
     for (minute, release) in [
@@ -485,7 +497,7 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
         (25, &fixture.release),
     ] {
         let a = PostgresSchedules::new(Arc::clone(&fixture.postgres), PROJECT, Arc::clone(release));
-        let a_rows = a.enabled(Utc::now()).await.unwrap();
+        let a_rows = a.enabled(rows_tick).await.unwrap();
         assert!(a_rows.iter().all(|row| row.application == APP));
         assert!(!a_rows.is_empty());
         let tick = due(&format!("2026-10-20T10:{minute}:00Z"));
@@ -517,7 +529,7 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
             }
         }
         assert!(a.admit(&b_rows[0], tick).await.is_err());
-        assert_eq!(b.enabled(Utc::now()).await.unwrap(), b_rows);
+        assert_eq!(b.enabled(rows_tick).await.unwrap(), b_rows);
     }
 }
 

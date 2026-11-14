@@ -68,7 +68,6 @@ pub struct HttpConnectionAuthority {
     base_url: Url,
     authority: CanonicalAuthority,
     base_path: Box<str>,
-    proxy: Option<ProxyAuthority>,
 }
 
 impl HttpConnectionAuthority {
@@ -80,11 +79,6 @@ impl HttpConnectionAuthority {
     /// Canonical logical authority selected by this definition.
     pub fn authority(&self) -> &CanonicalAuthority {
         &self.authority
-    }
-
-    /// Canonical configured proxy URL, when present.
-    pub fn canonical_proxy_url(&self) -> Option<&str> {
-        self.proxy.as_ref().map(|proxy| proxy.url.as_str())
     }
 }
 
@@ -102,31 +96,13 @@ pub struct PinnedEndpoint {
     pub tls_identity: Option<TlsIdentity>,
 }
 
-/// The transport path selected exclusively from the connection definition.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TransportDecision {
-    Direct {
-        origin: PinnedEndpoint,
-    },
-    Proxy {
-        proxy: PinnedEndpoint,
-        origin: PinnedEndpoint,
-    },
-}
-
 /// Complete output of one authority decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityDecision {
     pub logical_url: Box<str>,
     pub logical_authority: CanonicalAuthority,
     pub host_header: Box<str>,
-    pub transport: TransportDecision,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ProxyAuthority {
-    url: Url,
-    authority: CanonicalAuthority,
+    pub transport: PinnedEndpoint,
 }
 
 /// Stable classification for a refused authority decision.
@@ -137,7 +113,6 @@ pub enum AuthorityErrorType {
     InvalidTlsPolicy,
     InvalidRequestTarget,
     BasePathEscape,
-    RedirectDenied,
     PlatformHostDenied,
     DnsResolutionFailed,
     NetworkDenied,
@@ -185,11 +160,6 @@ pub trait DnsResolver: Send + Sync {
     ) -> impl Future<Output = Result<Vec<SocketAddr>, AuthorityError>> + Send;
 }
 
-/// The cluster network ceiling applied to resolved transport addresses.
-pub trait NetworkPolicy: Send + Sync {
-    fn allows(&self, address: SocketAddr) -> bool;
-}
-
 /// Production DNS resolver backed by Tokio's host-controlled resolver.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TokioDnsResolver;
@@ -215,11 +185,24 @@ impl DnsResolver for TokioDnsResolver {
     }
 }
 
+/// Parse a connection definition through the catalog's typed contract.
+pub(crate) fn parse_http_definition(
+    value: &serde_json::Value,
+) -> Result<HttpConnectionAuthority, AuthorityError> {
+    let definition = wamn_catalog::HttpConnectionDefinition::parse(value).map_err(|error| {
+        AuthorityError::new(AuthorityErrorType::InvalidDefinition, error.to_string())
+    })?;
+    let tls = match definition.tls_verification {
+        wamn_catalog::HttpTlsVerification::Disabled => TlsPolicy::Disabled,
+        wamn_catalog::HttpTlsVerification::VerifyAuthority => TlsPolicy::VerifyAuthority,
+    };
+    parse_http_connection_authority(&definition.primary_authority, tls)
+}
+
 /// Parse and validate the authority-bearing fields of one connection generation.
 pub fn parse_http_connection_authority(
     base_url: &str,
     tls: TlsPolicy,
-    proxy_url: Option<&str>,
 ) -> Result<HttpConnectionAuthority, AuthorityError> {
     let mut base_url = parse_absolute_url(base_url, "connection base URL")?;
     let authority = canonical_authority(&base_url)?;
@@ -233,13 +216,11 @@ pub fn parse_http_connection_authority(
 
     let base_path = canonical_base_path(base_url.path())?;
     base_url.set_path(&base_path);
-    let proxy = proxy_url.map(parse_proxy).transpose()?;
 
     Ok(HttpConnectionAuthority {
         base_url,
         authority,
         base_path: base_path.into_boxed_str(),
-        proxy,
     })
 }
 
@@ -253,7 +234,7 @@ pub async fn resolve_http_request<R, N>(
 ) -> Result<AuthorityDecision, AuthorityError>
 where
     R: DnsResolver,
-    N: NetworkPolicy,
+    N: Fn(SocketAddr) -> bool + Send + Sync,
 {
     validate_relative_target(target.as_str())?;
     let target = connection.base_url.join(target.as_str()).map_err(|error| {
@@ -308,7 +289,6 @@ pub(crate) fn bound_oauth_token(
             parse_http_connection_authority(
                 &format!("https://{value}/"),
                 TlsPolicy::VerifyAuthority,
-                connection.canonical_proxy_url(),
             )
         })
         .transpose()?;
@@ -322,41 +302,6 @@ pub(crate) fn bound_oauth_token(
     Ok((selected.clone(), target, endpoint))
 }
 
-/// Re-enter the resolver for one redirect without widening authority or base path.
-pub async fn resolve_http_redirect<R, N>(
-    connection: &HttpConnectionAuthority,
-    previous_logical_url: &str,
-    location: &str,
-    platform_hosts: &[AllowedHost],
-    network: &N,
-    dns: &R,
-) -> Result<AuthorityDecision, AuthorityError>
-where
-    R: DnsResolver,
-    N: NetworkPolicy,
-{
-    reject_ambiguous_target(location, AuthorityErrorType::RedirectDenied)?;
-    let previous = Url::parse(previous_logical_url).map_err(|error| {
-        AuthorityError::new(
-            AuthorityErrorType::RedirectDenied,
-            format!("invalid previous redirect URL: {error}"),
-        )
-    })?;
-    let target = previous.join(location).map_err(|error| {
-        AuthorityError::new(
-            AuthorityErrorType::RedirectDenied,
-            format!("invalid redirect location: {error}"),
-        )
-    })?;
-    if canonical_authority(&target)? != connection.authority {
-        return Err(AuthorityError::new(
-            AuthorityErrorType::RedirectDenied,
-            "redirect changes the connection authority",
-        ));
-    }
-    resolve_target(connection, target, platform_hosts, network, dns).await
-}
-
 async fn resolve_target<R, N>(
     connection: &HttpConnectionAuthority,
     target: Url,
@@ -366,25 +311,17 @@ async fn resolve_target<R, N>(
 ) -> Result<AuthorityDecision, AuthorityError>
 where
     R: DnsResolver,
-    N: NetworkPolicy,
+    N: Fn(SocketAddr) -> bool + Send + Sync,
 {
     validate_target_url(connection, &target)?;
     require_host_policy(&target, platform_hosts)?;
 
     let origin = pin_endpoint(&connection.authority, network, dns).await?;
-    let transport = if let Some(proxy) = &connection.proxy {
-        require_host_policy(&proxy.url, platform_hosts)?;
-        let proxy = pin_endpoint(&proxy.authority, network, dns).await?;
-        TransportDecision::Proxy { proxy, origin }
-    } else {
-        TransportDecision::Direct { origin }
-    };
-
     Ok(AuthorityDecision {
         logical_url: target.as_str().into(),
         logical_authority: connection.authority.clone(),
         host_header: connection.authority.http_authority().into(),
-        transport,
+        transport: origin,
     })
 }
 
@@ -499,23 +436,6 @@ fn canonical_base_path(path: &str) -> Result<String, AuthorityError> {
     Ok(path)
 }
 
-fn parse_proxy(value: &str) -> Result<ProxyAuthority, AuthorityError> {
-    let url = parse_absolute_url(value, "proxy URL")?;
-    if url.query().is_some() || url.path() != "/" {
-        return Err(AuthorityError::new(
-            AuthorityErrorType::InvalidDefinition,
-            "proxy URL cannot contain a path or query",
-        ));
-    }
-    let authority = canonical_authority(&url)?;
-    let tls = match authority.scheme {
-        HttpScheme::Http => TlsPolicy::Disabled,
-        HttpScheme::Https => TlsPolicy::VerifyAuthority,
-    };
-    validate_tls(authority.scheme, tls, "proxy")?;
-    Ok(ProxyAuthority { url, authority })
-}
-
 fn validate_relative_target(value: &str) -> Result<(), AuthorityError> {
     if Url::parse(value).is_ok() {
         return Err(AuthorityError::new(
@@ -592,7 +512,7 @@ fn validate_target_url(
     }
     if canonical_authority(target)? != connection.authority {
         return Err(AuthorityError::new(
-            AuthorityErrorType::RedirectDenied,
+            AuthorityErrorType::InvalidRequestTarget,
             "resolved HTTP target changes the connection authority",
         ));
     }
@@ -629,7 +549,7 @@ async fn pin_endpoint<R, N>(
 ) -> Result<PinnedEndpoint, AuthorityError>
 where
     R: DnsResolver,
-    N: NetworkPolicy,
+    N: Fn(SocketAddr) -> bool + Send + Sync,
 {
     let mut addresses = match authority.host.parse::<IpAddr>() {
         Ok(address) => vec![SocketAddr::new(address, authority.port)],
@@ -645,7 +565,7 @@ where
     }
     let address = addresses
         .into_iter()
-        .find(|address| address.port() == authority.port && network.allows(*address))
+        .find(|address| address.port() == authority.port && network(*address))
         .ok_or_else(|| {
             AuthorityError::new(
                 AuthorityErrorType::NetworkDenied,
@@ -693,25 +613,15 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
-    struct DenyNetwork;
-
-    impl NetworkPolicy for DenyNetwork {
-        fn allows(&self, _address: SocketAddr) -> bool {
-            false
-        }
-    }
-
     #[tokio::test]
     async fn resolved_target_outside_base_is_refused() {
         let connection = parse_http_connection_authority(
             "https://manager.example/api/",
             TlsPolicy::VerifyAuthority,
-            None,
         )
         .expect("connection definition");
         let outside = Url::parse("https://manager.example/outside").expect("outside target");
-        let error = resolve_target(&connection, outside, &[], &DenyNetwork, &EmptyDns)
+        let error = resolve_target(&connection, outside, &[], &|_| false, &EmptyDns)
             .await
             .expect_err("resolved target escaped its configured base");
         assert_eq!(error.error_type(), AuthorityErrorType::BasePathEscape);
@@ -727,7 +637,6 @@ mod oauth_tests {
         let connection = parse_http_connection_authority(
             "https://api.example/base/",
             TlsPolicy::VerifyAuthority,
-            None,
         )
         .unwrap();
         let (selected, _, _) = bound_oauth_token(

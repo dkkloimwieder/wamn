@@ -606,7 +606,7 @@ pub fn assemble_local_release(
     for component in palette {
         components.insert(ServingComponent::project(
             &component.facts.component,
-            component.facts.connections.clone(),
+            components::palette_connections(&component.facts.connections, &package_manifests),
         )?);
     }
     let route_attachments = ServingAttachment::routes(attachments.clone());
@@ -735,7 +735,10 @@ async fn publish_candidate(
                 .components
                 .insert(ServingComponent::project(
                     fact,
-                    component.facts.connections.clone(),
+                    components::palette_connections(
+                        &component.facts.connections,
+                        &package_manifests,
+                    ),
                 )?);
         }
         let bytes = published.manifest.canonical_bytes();
@@ -1732,6 +1735,7 @@ mod tests {
             vec![ComponentConnection {
                 store_alias: "labels".to_owned().into(),
                 requirement_type: wamn_catalog::ComponentConnectionType::Blobstore,
+                mode: wamn_catalog::ConnectionMode::Write,
             }],
         );
         let bytes = wamn_digest::canonical_json_bytes(&serde_json::to_value(&descriptor).unwrap());

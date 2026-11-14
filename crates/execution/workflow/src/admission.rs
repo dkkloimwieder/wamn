@@ -80,6 +80,13 @@ pub async fn admit_schedule_run(
     tick: DateTime<Utc>,
 ) -> Result<ScheduleRunAdmitted, ProductionLeaseError> {
     let target = release.target();
+    if !target.applications.contains_key(application) {
+        return Err(ProductionLeaseError::contract(
+            "admit schedule run",
+            format!("application {application:?} is not declared by the loaded release"),
+        ));
+    }
+
     let due = due_text(tick);
     let input = serde_json::json!({"due": due});
     let key = format!("schedule:{application}/{workflow_id}:{due}");

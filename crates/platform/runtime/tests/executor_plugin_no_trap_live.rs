@@ -619,10 +619,9 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
             "fixture",
             "test",
         )),
-        "org-a",
         "fixture",
         allowed_hosts,
-        None,
+        connection_http::test_release("org-a"),
     ));
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(

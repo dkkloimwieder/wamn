@@ -4,17 +4,16 @@ use sqlx::{Connection as _, Row as _};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use serde_json::json;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wamn_catalog::{ComponentDescriptor, PackageCoordinate, ServingComponent, ServingManifest};
 use wamn_compiler::manifest::PackageManifest;
-use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentityType};
 use wamn_digest::bytes_sha256;
 use wamn_environment::environment::{Platform, document::EnvironmentDocument, ensure, expand, sql};
 
-use wamn_environment::provision_project_env::{finish_database, require_connected};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 const PROJECT_ENV_KEY: &str = "acme--dev--apps";
@@ -139,6 +138,7 @@ fn component(
         .map(|alias| wamn_catalog::ComponentConnection {
             store_alias: (*alias).into(),
             requirement_type: wamn_catalog::ComponentConnectionType::Http,
+            mode: wamn_catalog::ConnectionMode::Write,
         })
         .collect();
     let admitted = descriptor
@@ -766,28 +766,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
 
     assert_eq!(before_sql, continuity(&mut observer).await?);
     // The failed candidate remains cached, but the runtime resolves the mounted digest.
-    let postgres = wamn_runtime::plugins::wamn_postgres::WamnPostgres::new(
-        wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig {
-            credentials: Some(
-                wamn_runtime::plugins::wamn_postgres::ClassCredentials::every_class(
-                    observer_url.to_string(),
-                ),
-            ),
-            guest_pool_max_size: 1,
-            platform_pool_max_size: 1,
-            wait_timeout_ms: 2000,
-            statement_timeout_ms: 5000,
-            row_limit: 100,
-        },
-    )?;
-    let resolved = postgres
-        .resolve_release_components(
-            wamn_runtime::plugins::wamn_postgres::DEFAULT_PROJECT,
-            PROJECT_ENV_KEY,
-            "dev",
-            mounted.release().manifest_digest.as_str(),
-        )
-        .await?;
+    let resolved = Arc::clone(mounted.components());
     assert_eq!(
         resolved
             .iter()
