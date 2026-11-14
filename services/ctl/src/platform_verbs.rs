@@ -7,7 +7,6 @@ use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
 use wamn_control_provision::migrations::MigrationDatabase;
 use wamn_environment::platform::document::{ClusterDocument, UpgradeTarget};
-use wamn_environment::platform::pools::Direction;
 use wamn_environment::platform::{artifact_plan, deploy, provider, status};
 use wamn_environment::platform_migrations;
 use wamn_release_control::release_chart::Target;
@@ -17,10 +16,6 @@ use wamn_release_control::release_chart::Target;
 pub enum PlatformCommand {
     /// Print a cluster.k file in its standard KCL form.
     Show(ShowArgs),
-    /// Set every node pool to its declared size and wait for PostgreSQL and NATS.
-    Wake(PoolsArgs),
-    /// Set every node pool to 0 nodes.
-    Sleep(PoolsArgs),
 }
 
 /// Platform verbs exposed by the product command.
@@ -161,12 +156,6 @@ pub struct DeployArgs {
     /// Select control, identity, or host:<release>/<group> for an existing platform.
     #[arg(long, value_name = "TARGET")]
     pub only: Option<UpgradeTarget>,
-}
-
-#[derive(Debug, Args)]
-pub struct PoolsArgs {
-    /// The cluster.k document. Its pools come from project.k in the same directory.
-    pub file: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -428,32 +417,8 @@ fn work_directory() -> anyhow::Result<PathBuf> {
     Ok(directory)
 }
 
-pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Result<()> {
-    if let PlatformCommand::Wake(args) | PlatformCommand::Sleep(args) = &command {
-        let direction = match &command {
-            PlatformCommand::Wake(_) => Direction::Wake,
-            _ => Direction::Sleep,
-        };
-        let document = ClusterDocument::compile(&args.file)?;
-        return wamn_environment::platform::pools::resize(
-            &document,
-            &args
-                .file
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join("project.k"),
-            direction,
-            &wamn_environment::platform::pools::work_directory()?,
-            |line| {
-                writeln!(output, "{line}")?;
-                output.flush().context("write resize progress")
-            },
-        )
-        .await;
-    }
-    let PlatformCommand::Show(args) = command else {
-        unreachable!()
-    };
+pub async fn run(command: PlatformCommand, output: impl Write) -> anyhow::Result<()> {
+    let PlatformCommand::Show(args) = command;
     show(&args, output)
 }
 
@@ -490,9 +455,7 @@ mod tests {
         .expect("parse platform show");
         let Command::Platform(command) = cli.command;
         let mut output = Vec::new();
-        let super::PlatformCommand::Show(args) = command else {
-            panic!("expected show");
-        };
+        let super::PlatformCommand::Show(args) = command;
         show(&args, &mut output).expect("show the cluster document");
         output
     }

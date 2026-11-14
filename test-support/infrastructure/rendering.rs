@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context as _, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
-pub use wamn_control_provision::materializer_workload::EventIdentity;
+pub use wamn_control_provision::environment_names::EventIdentity;
 use wamn_control_provision::{workload_role::WorkloadRoleFamily, workload_secret_name};
 
 /// Parse rendered Kubernetes objects without accepting command output as a document.

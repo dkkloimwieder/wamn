@@ -37,6 +37,7 @@ pub(super) async fn delete_control_roles(
         .map(|family| workload_login(family, target))
         .collect::<Result<Vec<_>, _>>()?;
     crate::provision_project_env::workload::remove_roles(
+        &platform.system_database_url,
         &platform.target.kubeconfig,
         &platform.target.context,
         &triple.org,

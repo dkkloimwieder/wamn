@@ -52,10 +52,6 @@ const HOST_REAP_TIMEOUT: Duration = Duration::from_secs(5);
 const FLOW_HTTP_NAME: &str = "flow-http";
 const FLOW_HTTP_WORKLOAD_ID: &str = "wamn-dev-flow-http";
 const MATERIALIZER_WORKLOAD_ID: &str = "wamn-dev-materializer";
-/// The platform materializer's one template, which the cluster files and the
-/// cluster tests render too.
-const MATERIALIZER_TEMPLATE: &str =
-    include_str!("../../../../../deploy/platform/materializer.example.yaml");
 const LOOPBACK_HTTP_BIND: &str = "127.0.0.1:0";
 // The runtime-operator chart template sets the same HOME value.
 const HOST_HOME: &str = "/tmp";
@@ -650,7 +646,7 @@ fn materializer_request(
     config: &DevConfig,
     digest: &str,
 ) -> anyhow::Result<v2::WorkloadStartRequest> {
-    use wamn_control_provision::materializer_workload::{
+    use wamn_environment::platform::materializer::{
         EventIdentity, FETCH_MS, MaterializerInput, SWEEP_MS, render_materializer,
     };
 
@@ -665,7 +661,8 @@ fn materializer_request(
         Duration::from_secs(config.dup_window_secs()),
     );
     let rendered = render_materializer(
-        MATERIALIZER_TEMPLATE,
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../deploy/platform/environment"),
         &MaterializerInput {
             workload: format!("{}-materializer", identity.project),
             namespace: host_namespace(identity).to_owned(),
@@ -1668,7 +1665,7 @@ mod tests {
         assert_eq!(resources.environment["WAMN_MAT_MAX_DELIVER"], "5");
         assert_eq!(
             resources.environment["WAMN_MAT_FETCH_MS"],
-            wamn_control_provision::materializer_workload::FETCH_MS.to_string()
+            wamn_environment::platform::materializer::FETCH_MS.to_string()
         );
         let world = staged.wit_world.unwrap();
         assert!(world.components.is_empty());

@@ -679,7 +679,7 @@ Platform recovery publishes no applications.
 After a body succeeds, `wamn-ctl env delete <org/env/project> --data` deletes its environment, database, and roles.
 Reset and platform schema cases also delete their isolation environments after all assertions succeed.
 Failed bodies retain their resources and logs.
-Project deletion has no command or control route (`services/ctl/src/project_verbs.rs:10`, `crates/catalog/model/src/host_route.rs:192`).
+Project deletion has no command or control route (`xtask/src/platform_project_commands.rs::ProjectCommand`, `crates/catalog/model/src/host_route.rs:192`).
 The `--data` confirmation requires a terminal (`services/ctl/src/env_verbs.rs:338`).
 The harness supplies a virtual terminal with `script` and types only the coordinate of the environment that it created.
 Tests do not write control tables or supply a project deletion workaround.

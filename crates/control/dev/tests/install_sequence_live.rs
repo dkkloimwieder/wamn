@@ -62,6 +62,7 @@ fn platform(system_url: &str) -> Platform {
             namespace: "hosts".into(),
         },
         chart: PathBuf::new(),
+        chart_download: None,
         release_artifact_base: String::new(),
         registry_token_metadata: false,
         registry_auth_file: PathBuf::new(),
@@ -84,10 +85,8 @@ fn org_request(system_url: &str) -> ProvisionOrgRequest {
         org: ORG.into(),
         template: wamn_control_provision::Template::trials(),
         pool: "wamn-pg".into(),
-        cluster_namespace: "platform".into(),
         record: Some(OrgRecord {
             system_database_url: system_url.into(),
-            admin: OWNER.into(),
         }),
     }
 }

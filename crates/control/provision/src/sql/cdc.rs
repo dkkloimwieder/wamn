@@ -72,7 +72,7 @@ pub const PUBLICATION_PROBE_SQL: &str = "SELECT 1 FROM pg_publication WHERE pubn
 
 /// The `publish` parameter of every CDC publication: insert, update and
 /// delete, never truncate. [`create_publication_sql`] and the CNPG
-/// `Publication` CR of [`crate::database::render_project_env_publication`]
+/// `Publication` CR of the environment chart
 /// both take it from here.
 pub const CDC_PUBLISH: &str = "insert, update, delete";
 

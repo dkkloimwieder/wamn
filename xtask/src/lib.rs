@@ -37,6 +37,12 @@ enum Task {
     GuestRustflags,
     /// Build, push, and stamp one platform chart.
     BuildPlatform(platform::Args),
+    /// Render a project document for OpenTofu.
+    #[command(subcommand)]
+    Project(platform::ProjectCommand),
+    /// Resize the declared cloud node pools.
+    #[command(subcommand)]
+    Platform(platform::CloudCommand),
     /// Run the deployed application benchmark.
     Bench(bench::Args),
     /// Measure a disposable local development deployment.
@@ -139,6 +145,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             Ok(())
         }
         Task::BuildPlatform(args) => platform::run(args).await,
+        Task::Project(command) => platform::project(command),
+        Task::Platform(command) => platform::cloud(command).await,
         Task::Bench(args) => bench::run(args).await,
         Task::BenchLocal(args) => bench_local::run(&root, &args).await,
         Task::BenchTier(args) => bench_cloud::tier(&root, &args).await,

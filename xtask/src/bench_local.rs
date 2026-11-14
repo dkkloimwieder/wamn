@@ -6,7 +6,6 @@ use tokio::io::AsyncWriteExt as _;
 use crate::{bench_data as data, process};
 use anyhow::{Context as _, ensure};
 use clap::Args as ClapArgs;
-use serde::Deserialize as _;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -261,8 +260,19 @@ async fn measure(local: &mut Local<'_>, args: &Args, target: &Path) -> anyhow::R
         "postgresql://postgres:probe@127.0.0.1:{}/wamn_system",
         ports[0]
     );
-    let cluster: Value =
-        serde_yaml::from_slice(&std::fs::read(root.join("deploy/infra/cnpg-cluster.yaml"))?)?;
+    let document = wamn_platform_install::platform::document::ClusterDocument::compile(
+        &root.join("deploy/kind/cluster.k"),
+    )?;
+    let entry = wamn_platform_install::environment::entry(
+        &root.join("deploy/platform/org"),
+        &document.org,
+        "benchmark",
+        wamn_platform_install::platform::installation::organization_values(&document),
+    )?;
+    let cluster = wamn_platform_install::environment::resource(
+        wamn_kubernetes::helm::template(&entry)?,
+        "Cluster",
+    )?;
     let mut postgres = vec![
         "--name".to_owned(),
         format!("{}-postgres", local.prefix),
@@ -413,29 +423,36 @@ async fn measure(local: &mut Local<'_>, args: &Args, target: &Path) -> anyhow::R
                 .arg(root.join("apps/target/wamn/wamn_receiving/wamn.json")),
         )
         .await?;
-    let deployment = std::fs::read_to_string(root.join("deploy/infra/nats-jetstream.yaml"))?;
-    let documents = serde_yaml::Deserializer::from_str(&deployment)
-        .map(Value::deserialize)
-        .collect::<Result<Vec<_>, _>>()?;
+    let entry = wamn_platform_install::environment::entry(
+        &root.join("deploy/platform/installation"),
+        "platform",
+        "wamn",
+        json!({"org":document.org,"registry":document.registry}),
+    )?;
+    let documents = wamn_kubernetes::helm::template(&entry)?;
     let configuration = documents
         .iter()
         .find_map(|doc| doc.pointer("/data/nats.conf").and_then(Value::as_str))
         .context("NATS configuration")?
-        .replace("$POD_NAME", &format!("{}-events", local.prefix));
+        .replace("$SERVER_NAME", &format!("{}-events", local.prefix));
     std::fs::write(local.work.join("events.conf"), configuration)?;
-    let memory = documents
+    let nats = documents
         .iter()
-        .find_map(|doc| {
-            doc.pointer("/spec/template/spec/containers/0/resources/limits/memory")
-                .and_then(Value::as_str)
-        })
-        .context("NATS memory limit")?
-        .to_owned();
+        .find(|object| object["kind"] == "StatefulSet" && object["metadata"]["name"] == "wamn-nats")
+        .context("NATS StatefulSet")?["spec"]["template"]["spec"]["containers"]
+        .as_array()
+        .context("NATS containers")?
+        .iter()
+        .find(|container| container["name"] == "nats")
+        .context("NATS container")?;
+    let memory = nats["resources"]["limits"]["memory"]
+        .as_str()
+        .context("NATS memory limit")?;
     let mut events = vec![
         "--name".to_owned(),
         format!("{}-events", local.prefix),
         "--memory".into(),
-        memory,
+        memory.into(),
         "-p".into(),
         format!("127.0.0.1:{}:4222", ports[1]),
         "--tmpfs".into(),
@@ -447,9 +464,9 @@ async fn measure(local: &mut Local<'_>, args: &Args, target: &Path) -> anyhow::R
             "event-nats/authorization.conf",
             "/etc/nats-authorization/authorization.conf",
         ),
-        ("event-nats/ca.crt", "/etc/nats-tls/ca.crt"),
-        ("event-nats/server.crt", "/etc/nats-tls/tls.crt"),
-        ("event-nats/server.key", "/etc/nats-tls/tls.key"),
+        ("event-nats/ca.crt", "/etc/nats-ca-cert/ca.crt"),
+        ("event-nats/server.crt", "/etc/nats-certs/nats/tls.crt"),
+        ("event-nats/server.key", "/etc/nats-certs/nats/tls.key"),
     ] {
         events.extend([
             "--mount".into(),
@@ -460,7 +477,7 @@ async fn measure(local: &mut Local<'_>, args: &Args, target: &Path) -> anyhow::R
         ]);
     }
     events.extend([
-        "nats:2.10-alpine".into(),
+        nats["image"].as_str().context("NATS image")?.into(),
         "--config=/etc/nats-config/nats.conf".into(),
     ]);
     local

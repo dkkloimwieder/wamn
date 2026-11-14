@@ -9,7 +9,6 @@ use std::str::FromStr as _;
 
 use wamn_ctl::platform_verbs;
 mod print_platform_principals;
-mod project_verbs;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
@@ -107,9 +106,6 @@ enum Command {
     /// Read a cluster document.
     #[command(subcommand)]
     Platform(platform_verbs::PlatformCommand),
-    /// Render a project document for OpenTofu.
-    #[command(subcommand)]
-    Project(project_verbs::ProjectCommand),
 }
 
 #[derive(clap::Args)]
@@ -201,7 +197,6 @@ async fn main() -> anyhow::Result<()> {
         Command::Workflow(command) => workflow_verbs::run(command).await,
         Command::Env(command) => Box::pin(env_verbs::run(command)).await,
         Command::Platform(command) => platform_verbs::run(command, std::io::stdout().lock()).await,
-        Command::Project(command) => project_verbs::run(command),
     }
 }
 

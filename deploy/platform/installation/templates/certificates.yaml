@@ -1,0 +1,190 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: wamn-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  secretName: wasmcloud-ca
+  commonName: wasmcloud-ca
+  duration: 43800h
+  renewBefore: 8760h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    kind: ClusterIssuer
+    name: wamn-selfsigned
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: wasmcloud-ca
+spec:
+  ca:
+    secretName: wasmcloud-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-nats-tls
+  namespace: platform
+spec:
+  secretName: wasmcloud-nats-tls
+  commonName: wamn-nats.platform.svc.cluster.local
+  dnsNames:
+    - wamn-nats.platform.svc.cluster.local
+    - wamn-nats.platform.svc
+    - wamn-nats.platform
+    - wamn-nats
+  ipAddresses:
+    - 127.0.0.1
+  usages:
+    - server auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-operator-tls
+  namespace: platform
+spec:
+  secretName: wasmcloud-operator-tls
+  commonName: wasmcloud-operator
+  dnsNames:
+    - wasmcloud-operator
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-runtime-tls
+  namespace: {{ .Values.org }}
+spec:
+  secretName: wasmcloud-runtime-tls
+  commonName: wasmcloud-runtime
+  dnsNames:
+    - wasmcloud-runtime
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-data-tls
+  namespace: {{ .Values.org }}
+spec:
+  secretName: wasmcloud-data-tls
+  commonName: wasmcloud-data
+  dnsNames:
+    - wasmcloud-data
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wamn-identity-nats
+  namespace: {{ .Values.org }}
+spec:
+  secretName: wamn-identity-nats
+  commonName: wamn-identity
+  dnsNames:
+    - wamn-identity
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wamn-ctl-nats
+  namespace: {{ .Values.org }}
+spec:
+  secretName: wamn-ctl-nats
+  commonName: wamn-ctl
+  dnsNames:
+    - wamn-ctl
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wamn-provisioning-nats
+  namespace: {{ .Values.org }}
+spec:
+  secretName: wamn-provisioning-nats
+  commonName: wamn-provisioning
+  dnsNames:
+    - wamn-provisioning
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wamn-cdc-reader-nats
+  namespace: {{ .Values.org }}
+spec:
+  secretName: wamn-cdc-reader-nats
+  commonName: wamn-cdc-reader
+  dnsNames:
+    - wamn-cdc-reader
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io

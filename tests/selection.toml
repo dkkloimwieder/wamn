@@ -56,8 +56,6 @@ targets = [
   { workspace="root", package="wamn-environment", target="test:netsuite_publication", tier="live-postgres" },
   { workspace="root", package="wamn-package-control", target="test:package_artifact_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:platform_grants_live", tier="live-postgres" },
-  { workspace="root", package="wamn-environment", target="test:platform_render", tier="contract" },
-  { workspace="root", package="wamn-environment", target="test:provision_org_admin_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:provision_system_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:prune_record_history_live", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:release_chart_render", tier="contract" },
@@ -660,7 +658,7 @@ id = "prekind"
 tier = "contract"
 workspace = "root"
 package = "wamn-environment"
-target = ["test:environment_render", "test:platform_render"]
+target = ["test:environment_render"]
 tests = []
 features = ["ops"]
 prerequisites = ["helm"]

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ required "Set org." .Values.org }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hosts

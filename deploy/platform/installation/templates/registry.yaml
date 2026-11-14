@@ -1,0 +1,30 @@
+{{- if .Values.registryEndpoint }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: wamn-registry
+  namespace: platform
+spec:
+  ports:
+    - name: registry
+      port: 5000
+      targetPort: 5000
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: wamn-registry
+  namespace: platform
+  labels:
+    kubernetes.io/service-name: wamn-registry
+    endpointslice.kubernetes.io/managed-by: wamn
+addressType: {{ .Values.registryEndpoint.addressType }}
+ports:
+  - name: registry
+    protocol: TCP
+    port: {{ .Values.registryEndpoint.port }}
+endpoints:
+  - addresses: [{{ .Values.registryEndpoint.address | quote }}]
+    conditions: {ready: true}
+
+{{- end }}

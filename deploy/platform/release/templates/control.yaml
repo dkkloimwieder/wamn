@@ -1,4 +1,16 @@
-{{- range .Values.controlResources }}
----
-{{ toYaml . }}
+{{- if .Values.controlService }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-http" (default .Release.Name .Values.name) }}
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
+spec:
+  selector:
+    wasmcloud.com/hostgroup: {{ (default .Release.Name .Values.name) }}
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
 {{- end }}

@@ -1,6 +1,5 @@
 //! Canonical release documents shared by type and render-only cases.
 
-use sqlx::Row as _;
 use std::path::{Path, PathBuf};
 use wamn_environment::environment::{
     self,

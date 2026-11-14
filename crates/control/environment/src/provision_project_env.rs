@@ -1,6 +1,5 @@
 //! Render and record an environment. CNPG owns its database and role passwords.
 
-use sqlx::Connection as _;
 use sqlx::PgConnection as Client;
 pub(super) mod plan;
 pub use plan::{privilege_sql, role_posture_sql, role_sql};
@@ -19,9 +18,8 @@ use serde_json::{Value, json};
 
 use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::{
-    APP_ROLE, INSTANCE_SUFFIX_LEN, PlatformComponent, bind_platform_principal_sql,
-    project_env_database_name, project_env_namespace, project_env_secret_name,
-    render_project_env_database, sql, validate_instance_suffix, validate_project_env,
+    APP_ROLE, INSTANCE_SUFFIX_LEN, project_env_database_name, project_env_namespace,
+    project_env_secret_name, sql, validate_instance_suffix, validate_project_env,
 };
 use wamn_control_provision::{Org, Placement, cluster_of};
 use wamn_platform_identity::{
@@ -156,33 +154,14 @@ pub struct ProvisionProjectEnvOutcome {
     pub cluster: String,
     /// The environment namespace the stored instance suffix names.
     pub namespace: String,
-    pub database_cr: Value,
+    pub database_values: Value,
     pub role_sql: String,
     pub privilege_sql: String,
     /// The PAT Secrets issued and written, in issuance order.
     pub pat_secrets: Vec<IssuedPatSecret>,
 }
 
-/// Begin a system database transaction that writes as `wamn:provisioning`.
-///
-/// The identity relations stamp the bound actor. The binding ends with the
-/// transaction.
-pub async fn provisioning_transaction(
-    client: &mut Client,
-) -> anyhow::Result<sqlx::Transaction<'_, sqlx::Postgres>> {
-    let mut transaction = client
-        .begin()
-        .await
-        .context("begin a system database write transaction")?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
-        PlatformComponent::Provisioning,
-    )))
-    .execute(&mut *transaction)
-    .await
-    .map(drop)
-    .context("bind wamn:provisioning as the actor")?;
-    Ok(transaction)
-}
+pub use wamn_platform_install::transaction::provisioning_transaction;
 
 /// Record one project-env, render its artifacts, and write the requested files
 /// and credential Secrets.
@@ -281,13 +260,7 @@ pub async fn provision_project_env(
     let db_name = project_env_database_name(org, project, env, &instance);
 
     // Render the artifacts the runbook applies.
-    let db_cr = render_project_env_database(
-        &triple,
-        &instance,
-        &cluster,
-        &args.cluster_namespace,
-        args.connection_limit,
-    );
+    let database_values = serde_json::json!({"database":{"name":db_name,"cluster":cluster,"connectionLimit":args.connection_limit}});
     // Ordinary provisioning establishes cluster roles before it creates the
     // database. The shared-login drain is an operator finalizer and is emitted
     // only by a successful App login preparation after every carrier has a
@@ -301,7 +274,7 @@ pub async fn provision_project_env(
 
     write_output(
         args.emit_database.as_deref(),
-        &serde_json::to_string_pretty(&db_cr)?,
+        &serde_json::to_string_pretty(&database_values)?,
     )?;
     write_output(args.emit_role_sql.as_deref(), &role_sql)?;
     write_output(args.emit_privilege_sql.as_deref(), &privilege_sql)?;
@@ -331,7 +304,7 @@ pub async fn provision_project_env(
         instance,
         database: db_name,
         cluster,
-        database_cr: db_cr,
+        database_values,
         role_sql,
         privilege_sql,
         pat_secrets,

@@ -6,27 +6,20 @@
 
 pub mod apply;
 pub mod audit_retention;
-#[cfg(feature = "ops")]
-pub mod backup;
 pub mod connection;
-pub mod database;
 pub mod environment_names;
 mod error;
 pub mod host_credentials;
 pub mod identity_role;
-pub mod materializer_workload;
 pub mod migration;
 pub mod migrations;
 mod name;
 pub mod operation_grants;
-pub mod org;
 pub mod platform_principals;
 /// The pure derivation guest RLS uses to reach a project from `current_user`.
 pub mod project_key;
 /// The two T1 control-database read consumers' targeted credential contract.
 pub mod readers;
-#[cfg(feature = "ops")]
-pub mod recovery;
 pub mod session_target;
 pub mod sql;
 /// Test databases with the system control store minimum.
@@ -34,12 +27,6 @@ pub mod sql;
 pub mod test_database;
 pub mod workload_role;
 
-#[cfg(feature = "ops")]
-pub use backup::{
-    BACKUP_PLUGIN_NAME, MINIO_ENDPOINT, OBJECT_STORE_SECRET, WAL_BUCKET, cluster_backup_plugin,
-    object_store_name, render_object_store, render_scheduled_backup, scheduled_backup_name,
-};
-pub use database::render_project_env_database;
 pub use error::ProvisionError;
 pub use name::{
     APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_OWNER_ROLE, DB_PREFIX, GUEST_SECRET_PREFIX,
@@ -50,17 +37,11 @@ pub use name::{
     project_env_namespace, project_env_secret_name, validate_instance_suffix, validate_project_env,
     validate_project_env_cdc, validate_project_id, workload_secret_name,
 };
-pub use org::{OrgClusters, render_org_cluster_set};
 pub use platform_principals::{
     PlatformDomainError, bind_platform_principal_sql, platform_principals_sql,
     validate_platform_domain,
 };
 pub use readers::{SystemReader, system_reader_identity_hash, system_reader_login};
-#[cfg(feature = "ops")]
-pub use recovery::{
-    RecoveredCluster, recovery_bootstrap, recovery_external_cluster, render_recovery_cluster,
-};
-
 /// The platform component list, for callers that bind a component as the actor.
 pub use wamn_identity_protocol::PlatformComponent;
 pub use workload_role::{

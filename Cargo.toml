@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/platform/postgres", "crates/platform/digest", "crates/platform/scalar", "services/host", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "xtask/build", "tools/submodule-pins", "tests/conformance", "tests/integration", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/run-state", "crates/execution/workflow", "crates/schema/generator", "crates/schema/introspection", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/protocol", "crates/kubernetes", "crates/broker"]
+members = ["crates/platform/postgres", "crates/platform/digest", "crates/platform/scalar", "services/host", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "xtask/build", "tools/submodule-pins", "tests/conformance", "tests/integration", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/run-state", "crates/execution/workflow", "crates/schema/generator", "crates/schema/introspection", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/platform-install", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/protocol", "crates/kubernetes", "crates/broker"]
 default-members = [
   "crates/catalog/model",
   "crates/execution/host",
@@ -237,6 +237,7 @@ wamn-component-policy = { path = "crates/platform/component-policy", version = "
 wamn-component-composer = { path = "crates/platform/component-composer", version = "0.1.0" }
 wamn-package-control = { path = "crates/control/package", version = "0.1.0" }
 wamn-release-control = { path = "crates/control/release", version = "0.1.0" }
+wamn-platform-install = { path = "crates/control/platform-install", version = "0.1.0" }
 wamn-environment = { path = "crates/control/environment", version = "0.1.0" }
 wamn-dev-control = { path = "crates/control/dev", version = "0.1.0" }
 wamn-control-provision = { path = "crates/control/provision", version = "0.1.0" }

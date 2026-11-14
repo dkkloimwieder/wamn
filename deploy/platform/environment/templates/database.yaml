@@ -1,0 +1,18 @@
+{{- with .Values.database }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  name: {{ .name }}
+  owner: wamn_db_owner
+  cluster: {name: {{ .cluster }}}
+  ensure: present
+  databaseReclaimPolicy: retain
+  {{- if ne .connectionLimit nil }}
+  connectionLimit: {{ .connectionLimit }}
+  {{- end }}
+{{- end }}
