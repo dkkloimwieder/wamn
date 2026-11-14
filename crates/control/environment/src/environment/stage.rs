@@ -794,7 +794,7 @@ mod tests {
         descriptor.connections = aliases
             .iter()
             .map(|alias| ComponentConnection {
-                store_alias: (*alias).to_owned(),
+                store_alias: (*alias).to_owned().into(),
                 requirement_type: ComponentConnectionType::Blobstore,
             })
             .collect();

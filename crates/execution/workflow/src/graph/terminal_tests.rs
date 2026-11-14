@@ -1,30 +1,33 @@
-//! Terminal verdicts — `respond`, `emit`, discard (wamn-0h0g.16.3).
-//!
-//! The retired engine decided `respond` by comparing a node's reserved type
-//! name against the string `"respond"`; the node language retires with it, so
-//! here a wiring node DECLARES its [`Terminal`] and the walk reads a variant.
-//! These cases pin what each verdict means, what makes one rejected, and — the
-//! part a string compare could never express — that `discard` is a decision the
-//! walk records rather than the absence of one.
-
-use serde_json::{Value, json};
-use wamn_event_wire::Op;
-use wamn_router::{
-    ApplyErrorType, DEDUP_ID_FIELD, Delivery, ErrorDetail, FailureType, NodeError, NodeOutcome,
-    Step, Terminal, Verdict, Walk, WalkStatus, Wiring, WiringEdge, WiringNode,
-};
-
-// ---- fixtures -------------------------------------------------------------
-
-fn node(id: &str, terminal: Option<Terminal>) -> WiringNode {
-    WiringNode {
-        id: id.to_string(),
-        component: "echo".to_string(),
-        operation: "echo".to_string(),
-        config: Value::Null,
-        connection: None,
-        terminal,
+fn message(text: &str) -> ErrorDetail {
+    ErrorDetail {
+        message: text.into(),
+        ..Default::default()
     }
+}
+
+use super::{
+    Delivery, ErrorDetail, FailureType, NodeError, NodeOutcome, Step, Verdict, WalkStatus,
+};
+use serde_json::json;
+use wamn_event_wire::Op;
+
+use super::terminal::DEDUP_ID_FIELD;
+use super::walk::Walk;
+use super::wiring::Wiring;
+use wamn_catalog::{WiringEdge, WiringNode, WiringTerminal as Terminal};
+
+fn node(id: &str, terminal: Option<Terminal>) -> (String, WiringNode) {
+    (
+        id.to_owned(),
+        WiringNode {
+            interface_version: "0.1.0".into(),
+            operation_dependency: None,
+            component: "echo".to_string(),
+            operation: "echo".to_string(),
+            params: Default::default(),
+            terminal,
+        },
+    )
 }
 
 fn edge_on(from: &str, port: &str, to: &str) -> WiringEdge {
@@ -32,8 +35,7 @@ fn edge_on(from: &str, port: &str, to: &str) -> WiringEdge {
         from: from.to_string(),
         from_port: port.to_string(),
         to: to.to_string(),
-        to_port: "input".to_string(),
-        ordinal: None,
+        to_port: Some("input".to_string()),
     }
 }
 
@@ -41,19 +43,21 @@ fn edge(from: &str, to: &str) -> WiringEdge {
     edge_on(from, "main", to)
 }
 
-fn wiring(entry: &str, nodes: Vec<WiringNode>, edges: Vec<WiringEdge>) -> Wiring {
-    Wiring::compile(entry, nodes, edges).expect("fixture wiring compiles")
+fn wiring(entry: &str, nodes: Vec<(String, WiringNode)>, edges: Vec<WiringEdge>) -> Wiring {
+    let document = wamn_catalog::WiringDocument::parse(&json!({
+        "format-version": "0.1", "wiring-id": "test", "version": 1,
+        "entry": entry, "nodes": nodes.into_iter().collect::<std::collections::BTreeMap<_, _>>(), "edges": edges,
+    })).expect("catalog fixture admits");
+    Wiring::compile(document, &std::collections::BTreeMap::new()).expect("graph indexes")
 }
 
 fn started(wiring: &Wiring, caller_attached: bool) -> Walk {
     wiring.start(Delivery {
-        id: "d1".to_string(),
         payload: json!({}),
         caller_attached,
     })
 }
 
-/// Drive to a terminal status, letting each node emit `outcome_fn`'s answer.
 fn run(
     w: &Wiring,
     walk: &mut Walk,
@@ -73,7 +77,6 @@ fn run(
     }
 }
 
-/// A node emitting a payload that names it.
 fn says(node: &str) -> NodeOutcome {
     NodeOutcome::ok(json!({ "at": node }))
 }
@@ -82,11 +85,6 @@ fn emit_terminal() -> Terminal {
     Terminal::emit("orders", Op::Insert)
 }
 
-// ---- respond --------------------------------------------------------------
-
-/// The caller's answer is the RESPOND node's payload, even when the wiring keeps
-/// working afterwards — which is why the verdict carries a payload of its own
-/// instead of the host reading the walk's `result`.
 #[test]
 fn respond_answers_the_attached_caller_and_the_walk_carries_on() {
     let w = wiring(
@@ -106,8 +104,6 @@ fn respond_answers_the_attached_caller_and_the_walk_carries_on() {
             node_id: "a".to_string(),
         })
     );
-    // The post-respond node still moved the walk's result along; the caller's
-    // answer did not move with it.
     assert_eq!(walk.result(), &json!({ "at": "audit" }));
 }
 
@@ -133,23 +129,17 @@ fn respond_node_attribution_is_wiring_owned_not_guest_echoed() {
 }
 
 #[test]
-fn respond_with_no_caller_attached_is_rejected_and_leaves_the_walk_untouched() {
+fn respond_with_no_caller_fails_the_walk() {
     let w = wiring("a", vec![node("a", Some(Terminal::Respond))], vec![]);
     let mut walk = started(&w, false);
     let Step::Invoke(call) = w.next(&mut walk, 0) else {
         panic!("expected an invocation");
     };
-    let before = walk.clone();
-
-    let error = w
-        .apply(&mut walk, &call, says("a"), 0)
-        .expect_err("responding to nobody is a wiring contract violation");
-
+    w.apply(&mut walk, &call, says("a"), 0).unwrap();
     assert_eq!(
-        error.error_type(),
-        &ApplyErrorType::RespondWithoutCaller("a".to_string())
+        walk.failure().unwrap().type_,
+        FailureType::RespondWithoutCaller
     );
-    assert_eq!(walk, before, "a rejected verdict must not mutate the walk");
 }
 
 #[test]
@@ -172,14 +162,8 @@ fn a_second_terminal_node_is_rejected() {
         panic!("expected an invocation");
     };
 
-    let error = w
-        .apply(&mut walk, &second, says("b"), 0)
-        .expect_err("one delivery ends once");
-
-    assert_eq!(
-        error.error_type(),
-        &ApplyErrorType::SecondVerdict("b".to_string())
-    );
+    w.apply(&mut walk, &second, says("b"), 0).unwrap();
+    assert_eq!(walk.failure().unwrap().type_, FailureType::SecondVerdict);
     assert_eq!(
         walk.verdict(),
         Some(&Verdict::Respond {
@@ -205,7 +189,7 @@ fn first_respond_verdict_stands_when_later_work_fails_or_cancels() {
         let (_, status) = run(&w, &mut walk, |node| match node {
             "respond" => says(node),
             _ if cancelled => NodeOutcome::Cancelled,
-            _ => NodeOutcome::Error(NodeError::Terminal(ErrorDetail::msg("later failed"))),
+            _ => NodeOutcome::Error(NodeError::Terminal(message("later failed"))),
         });
 
         assert_eq!(
@@ -226,8 +210,6 @@ fn first_respond_verdict_stands_when_later_work_fails_or_cancels() {
         );
     }
 }
-
-// ---- emit -----------------------------------------------------------------
 
 #[test]
 fn emit_publishes_the_event_under_the_authors_dedup_id() {
@@ -251,8 +233,6 @@ fn emit_publishes_the_event_under_the_authors_dedup_id() {
     );
 }
 
-/// No dedup id means nothing publishable, which is a node data failure — so it
-/// takes the ordinary error edge rather than ending the delivery.
 #[test]
 fn emit_without_a_dedup_id_routes_to_the_error_edge() {
     let w = wiring(
@@ -279,7 +259,6 @@ fn emit_without_a_dedup_id_routes_to_the_error_edge() {
 fn emit_without_a_dedup_id_and_no_error_edge_fails_the_walk() {
     let w = wiring("a", vec![node("a", Some(emit_terminal()))], vec![]);
     let mut walk = started(&w, false);
-    // An empty dedup id is as unpublishable as an absent one.
     let (_, status) = run(&w, &mut walk, |_| {
         NodeOutcome::ok(json!({ DEDUP_ID_FIELD: "" }))
     });
@@ -291,8 +270,6 @@ fn emit_without_a_dedup_id_and_no_error_edge_fails_the_walk() {
     );
     assert_eq!(walk.verdict(), None, "a failed walk reached no verdict");
 }
-
-// ---- discard --------------------------------------------------------------
 
 #[test]
 fn an_exhausted_frontier_with_no_caller_discards() {
@@ -312,8 +289,6 @@ fn an_exhausted_frontier_with_no_caller_discards() {
     );
 }
 
-/// The mirror of discard: exhausting the frontier while somebody is still
-/// waiting is not a quiet completion, it is a caller left hanging.
 #[test]
 fn an_exhausted_frontier_with_a_caller_still_attached_fails() {
     let w = wiring("a", vec![node("a", None)], vec![]);
@@ -333,7 +308,7 @@ fn a_failed_walk_reaches_no_verdict() {
     let w = wiring("a", vec![node("a", Some(Terminal::Respond))], vec![]);
     let mut walk = started(&w, true);
     let (_, status) = run(&w, &mut walk, |_| {
-        NodeOutcome::Error(NodeError::Terminal(ErrorDetail::msg("boom")))
+        NodeOutcome::Error(NodeError::Terminal(message("boom")))
     });
 
     assert_eq!(status, WalkStatus::Failed);

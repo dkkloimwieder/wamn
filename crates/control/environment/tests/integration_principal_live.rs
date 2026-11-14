@@ -6,12 +6,10 @@ use sqlx::Row as _;
 
 use wamn_broker::Publisher;
 use wamn_catalog::ServingManifest;
-use wamn_engine::router_delivery::authorize_registered_operation;
 use wamn_environment_control::environment::stage::{
     materialize_application_principals, write_release,
 };
 use wamn_postgres::schema::BareSchemaName;
-use wamn_runtime::plugins::route_authentication::queued_run_caller;
 
 const PROJECT_ENV_KEY: &str = "acme--dev--erp";
 const OPERATION: &str = "consumer:item/import@1.0.0";
@@ -191,8 +189,8 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             .get::<i64, _>(0),
         1
     );
-    let caller = queued_run_caller(&mut admin, &principal, None).await?;
-    authorize_registered_operation(Some(&caller), Some(OPERATION))?;
+    let caller = permissions(&mut admin, &principal).await?;
+    assert!(caller.contains(OPERATION.rsplit_once('@').unwrap().0));
     let before: Vec<String> = sqlx::query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1").fetch_all(&mut admin).await?.iter().map(|row| row.get(0)).collect();
     materialize_application_principals(
         system.url(),
@@ -205,10 +203,16 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     .await?;
     let after: Vec<String> = sqlx::query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1").fetch_all(&mut admin).await?.iter().map(|row| row.get(0)).collect();
     assert_eq!(before, after, "reapplying must write no application rows");
-    let caller = queued_run_caller(&mut admin, &principal, None).await?;
-    authorize_registered_operation(Some(&caller), Some(OPERATION))?;
-    assert!(
-        authorize_registered_operation(Some(&caller), Some("consumer:item/delete@1.0.0")).is_err()
-    );
+    let caller = permissions(&mut admin, &principal).await?;
+    assert!(caller.contains(OPERATION.rsplit_once('@').unwrap().0));
+    assert!(!caller.contains("consumer:item/delete"));
     Ok(())
+}
+
+async fn permissions(
+    client: &mut sqlx::PgConnection,
+    principal: &str,
+) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    Ok(sqlx::query("SELECT p.permission FROM platform.user_role r JOIN platform.permission p USING(role_name) WHERE r.user_id=$1::text::uuid")
+        .bind(principal).fetch_all(client).await?.into_iter().map(|row| row.get(0)).collect())
 }

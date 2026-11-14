@@ -873,6 +873,10 @@ impl ServingManifest {
         }
         let mut package_versions = BTreeMap::new();
         for package in &self.release.packages {
+            if package.package_id() == crate::PALETTE_PACKAGE_ID {
+                return invalid("the platform palette is not an application package");
+            }
+
             if package_versions
                 .insert(package.package_id(), package.package_version())
                 .is_some()
@@ -944,7 +948,22 @@ impl ServingManifest {
             {
                 return invalid("components of one application must carry the same runtime schema");
             }
-            validate_package_member(&package_versions, &component.package_id)?;
+            if component.package_id == crate::PALETTE_PACKAGE_ID {
+                if component.runtime_schema.is_some()
+                    || !component.statement_instances.is_empty()
+                    || component.descriptor.operations.values().any(|operation| {
+                        operation.registered_operation.is_some()
+                            || operation.host_transaction
+                            || !operation.statements.is_empty()
+                    })
+                {
+                    return invalid(
+                        "platform palette components cannot own application operations or SQL",
+                    );
+                }
+            } else {
+                validate_package_member(&package_versions, &component.package_id)?;
+            }
             let descriptor = &component.descriptor;
             validate_text(&descriptor.component, "component")?;
             validate_text(&descriptor.interface_version, "interface-version")?;

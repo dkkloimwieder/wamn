@@ -889,7 +889,7 @@ fn declares_store(
     release.manifest().components.iter().any(|component| {
         app.packages.contains(&component.package_id)
             && component.descriptor.connections.iter().any(|requirement| {
-                requirement.store_alias == alias
+                requirement.store_alias.name() == Some(alias)
                     && requirement.requirement_type == ComponentConnectionType::Blobstore
             })
     })

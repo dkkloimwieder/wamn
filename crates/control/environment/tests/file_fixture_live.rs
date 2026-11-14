@@ -33,6 +33,7 @@ mod native_files {
             &release_request()?,
             &[package],
             &admissions,
+            &[],
         )?
         .published;
         let roles =

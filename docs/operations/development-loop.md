@@ -291,7 +291,7 @@ A failure during preparation keeps that application running.
 A failed stage prints its top context first and every cause under it.
 The printed line names the refusal that stopped the stage.
 The loop replaces the host only after the candidate passes preparation.
-Platform builds publish palette components independently of application packages.
+Platform builds publish palette components independently of application packages. The dev loop reads the sealed `palette.json` beside its selected HTTP route guest and copies verified palette bytes into its local component source.
 The environment document owns connection bindings.
 The runtime enforces operation grants, connection bindings and credentials for each database role.
 

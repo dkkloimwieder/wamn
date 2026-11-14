@@ -3,7 +3,7 @@
 //!
 //! A route calls its one operation through `wamn_engine::invoke_operation`.
 //! The workflow queue uses this host to call its nodes. This crate links
-//! neither `wamn-workflow` nor `wamn-router`.
+//! no `wamn-workflow`.
 
 mod application_route;
 mod control_route;

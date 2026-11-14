@@ -313,6 +313,9 @@ fn validate_parameters(
     operation: &AdmittedComponentOperation,
 ) -> Result<(), WiringCompatibilityError> {
     for (name, value) in &node.params {
+        if matches!(name.as_str(), "retry" | "deadline-ms") {
+            continue;
+        }
         let Some(parameter) = operation
             .parameters
             .iter()
@@ -367,7 +370,8 @@ fn validate_parameter_value(
     })
 }
 
-fn resolve_input_port<'a>(
+/// Resolve an authored input port, or the operation's single input.
+pub fn resolve_input_port<'a>(
     node_id: &str,
     operation_name: &str,
     authored_port: Option<&str>,

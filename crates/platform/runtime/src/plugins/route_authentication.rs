@@ -10,6 +10,7 @@
 //! A signature policy verifies the raw body with the bound connection's
 //! credential and returns its active service principal.
 
+#[cfg(test)]
 use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -30,73 +31,6 @@ use wamn_platform_identity::PrincipalType;
 use crate::connection_facts::ConnectionFacts;
 use crate::connection_memory::ConnectionStatus;
 use crate::session_keys::IssuerKeys;
-
-/// The user row of one active service or user principal, each role it
-/// holds and each permission of that role. A principal without roles yields
-/// one row with a null role.
-const QUEUED_RUN_CALLER_SQL: &str = "SELECT \"user\".id::text, \"user\".type, user_role.role_name, \
-         permission.permission \
-    FROM platform.\"user\" AS \"user\" \
-    LEFT JOIN platform.user_role AS user_role \
-      ON user_role.user_id = \"user\".id \
-    LEFT JOIN platform.permission AS permission \
-      ON permission.role_name = user_role.role_name \
-   WHERE \"user\".id = $1::text::uuid \
-     AND \"user\".type IN ('service', 'user') AND \"user\".status = 'active'";
-
-/// Resolve the principal of a queued run against its current environment status
-/// and role grants.
-///
-/// With `role`, the run executes with that one role active
-/// (docs/architecture/execution.md#environment-workflows): the principal is an
-/// active service (the `workflow` user or an application principal) or user
-/// that holds `role`, its permissions are the rows of `role` only, and it is
-/// `admin` only when `role` is `admin`. A principal that does not hold `role`
-/// refuses.
-///
-/// Without `role`, the run is an operator-admitted automation run: the
-/// principal is an active service, and its permissions are the rows of every
-/// role it holds.
-pub async fn queued_run_caller(
-    client: &mut sqlx::PgConnection,
-    principal_id: &str,
-    role: Option<&str>,
-) -> anyhow::Result<AuthenticatedCaller> {
-    let rows = sqlx::query(QUEUED_RUN_CALLER_SQL)
-        .bind(principal_id)
-        .fetch_all(&mut *client)
-        .await?;
-    let first = rows
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("queued principal is absent or inactive"))?;
-    let principal: String = first.try_get(0)?;
-    let principal_type: String = first.try_get(1)?;
-    let mut held: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for row in &rows {
-        if let Some(role) = row.try_get::<Option<String>, _>(2)? {
-            held.entry(role)
-                .or_default()
-                .extend(row.try_get::<Option<String>, _>(3)?);
-        }
-    }
-    if let Some(role) = role {
-        return role_caller(&principal, role, &held).ok_or_else(|| {
-            anyhow::anyhow!("queued principal does not hold the run's role {role:?}")
-        });
-    }
-    anyhow::ensure!(
-        principal_type == "service",
-        "queued service principal is absent or inactive"
-    );
-    Ok(AuthenticatedCaller::new(
-        "automation",
-        principal,
-        CredentialType::QueuedService,
-        held.contains_key(ADMIN_ROLE),
-        held.into_values().flatten().collect(),
-        None,
-    ))
-}
 
 /// The caller of a run that executes as `principal_id` with `role` active,
 /// from the roles the principal `held` with their permissions: the

@@ -523,7 +523,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
             required
                 == connections
                     .iter()
-                    .map(|connection| connection.store_alias.as_str())
+                    .filter_map(|connection| connection.store_alias.name())
                     .collect::<Vec<_>>(),
             "component {} admits connections {required:?}, not its declared ones",
             source.name

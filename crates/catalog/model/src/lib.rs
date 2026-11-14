@@ -35,11 +35,11 @@ pub use component_artifact_reference::{
 pub use component_facts::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentFacts, AdmittedComponentOperation,
     AdmittedComponentParameter, AdmittedComponentPort, ComponentConnection,
-    ComponentConnectionType, ComponentDeclaration, ComponentDescriptor, ComponentEffectProvenance,
-    ComponentFactError, ComponentFactErrorType, ComponentOperationDeclaration,
-    ComponentPackageCoordinate, ComponentParameterDeclaration, ComponentPortDeclaration,
-    ComponentSchema, ComponentSqlField, ComponentSqlStatement, bind_component_statement_facts,
-    normalize_component_fact, verify_stored_effect_projection,
+    ComponentConnectionAlias, ComponentConnectionType, ComponentDeclaration, ComponentDescriptor,
+    ComponentEffectProvenance, ComponentFactError, ComponentFactErrorType,
+    ComponentOperationDeclaration, ComponentPackageCoordinate, ComponentParameterDeclaration,
+    ComponentPortDeclaration, ComponentSchema, ComponentSqlField, ComponentSqlStatement,
+    bind_component_statement_facts, normalize_component_fact, verify_stored_effect_projection,
 };
 pub use connection::{
     CONNECTION_DESCRIPTOR_VERSION, ComponentConnectionRequirement, ConnectionAuthorityModel,
@@ -82,8 +82,8 @@ pub use wiring::{
     WiringOperationDependency, WiringResponse, WiringTerminal, partial_response_schema,
 };
 pub use wiring_compatibility::{
-    WiringCompatibilityError, WiringCompatibilityErrorType, validate_resolved_wiring_compatibility,
-    validate_wiring_compatibility,
+    WiringCompatibilityError, WiringCompatibilityErrorType, resolve_input_port,
+    validate_resolved_wiring_compatibility, validate_wiring_compatibility,
 };
 pub use workflow_condition::{
     WorkflowConditionError, condition_workflow_document, resolve_workflow_components,
@@ -424,3 +424,9 @@ mod tests {
 
 pub mod exposure;
 pub mod package_schema;
+
+mod palette;
+pub use palette::{
+    PALETTE_DESCRIPTOR_ANNOTATION, PALETTE_FILE, PALETTE_PACKAGE_ID, PALETTE_PACKAGE_VERSION,
+    Palette, PalettePin, palette_target, read_palette,
+};

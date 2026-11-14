@@ -1,9 +1,9 @@
 //! Map a terminal router outcome onto the production run-store boundary.
 
-use wamn_router::{FailureType as RouterFailureType, Outcome, Verdict, WalkStatus};
+use crate::graph::{FailureType as RouterFailureType, Outcome, Verdict, WalkStatus};
 use wamn_run_state::FailType;
 use wamn_run_state::run_store::{
-    ProductionCallerOutcome, ProductionCompletion, ProductionLeaseError, ProductionLeaseErrorType,
+    ProductionCompletion, ProductionLeaseError, ProductionLeaseErrorType,
 };
 
 /// Boundary work selected from a terminal router outcome.
@@ -17,6 +17,7 @@ pub(crate) enum ProductionRouterAction {
         dedup_id: String,
         entity: String,
         operation: wamn_event_wire::Op,
+        node_id: String,
     },
     /// Cancellation is not a failure verdict; leave the lease to redelivery.
     Cancelled,
@@ -25,27 +26,6 @@ pub(crate) enum ProductionRouterAction {
 /// Translate the router taxonomy exactly once at the run-store boundary.
 pub(crate) fn production_router_action(
     outcome: &Outcome,
-    caller_attached: bool,
-) -> Result<ProductionRouterAction, ProductionLeaseError> {
-    production_router_action_with_mode(
-        outcome,
-        if caller_attached {
-            RouterResultMode::DurableCaller
-        } else {
-            RouterResultMode::Detached
-        },
-    )
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RouterResultMode {
-    Detached,
-    DurableCaller,
-}
-
-fn production_router_action_with_mode(
-    outcome: &Outcome,
-    mode: RouterResultMode,
 ) -> Result<ProductionRouterAction, ProductionLeaseError> {
     if outcome.status == WalkStatus::Running {
         return Err(ProductionLeaseError::new(
@@ -70,46 +50,31 @@ fn production_router_action_with_mode(
         );
     }
     match outcome.verdict.as_ref() {
-        Some(Verdict::Respond { payload, node_id }) => match mode {
-            RouterResultMode::DurableCaller => {
-                let caller =
-                    ProductionCallerOutcome::responded(payload.clone(), 200, node_id.clone());
-                return Ok(ProductionRouterAction::Complete(
-                    ProductionCompletion::completed(payload.clone(), Some(caller)),
-                ));
-            }
-            RouterResultMode::Detached => {
-                return Err(ProductionLeaseError::new(
-                    ProductionLeaseErrorType::Contract,
-                    "map router response",
-                    "router-response-without-result-owner",
-                ));
-            }
-        },
+        Some(Verdict::Respond { .. }) => {
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
+                "map router response",
+                "router-response-without-result-owner",
+            ));
+        }
         Some(Verdict::Emit {
             event,
             dedup_id,
             entity,
             operation,
-            ..
+            node_id,
         }) => {
             return Ok(ProductionRouterAction::Emit {
                 event: event.clone(),
                 dedup_id: dedup_id.clone(),
                 entity: entity.clone(),
                 operation: *operation,
+                node_id: node_id.clone(),
             });
         }
-        Some(Verdict::Discard) if mode != RouterResultMode::DurableCaller => {
+        Some(Verdict::Discard) => {
             return Ok(ProductionRouterAction::Complete(
                 ProductionCompletion::completed(outcome.result.clone(), None),
-            ));
-        }
-        Some(Verdict::Discard) => {
-            return Err(ProductionLeaseError::new(
-                ProductionLeaseErrorType::Contract,
-                "map router discard",
-                "router-discard-with-caller",
             ));
         }
         None => {}
@@ -134,7 +99,7 @@ fn production_router_action_with_mode(
                 .detail
                 .code
                 .as_deref()
-                .unwrap_or_else(|| router_failure_code(failure.type_));
+                .unwrap_or_else(|| failure.type_.code());
             let mut error = serde_json::Map::from_iter([
                 (
                     "code".to_owned(),
@@ -156,11 +121,8 @@ fn production_router_action_with_mode(
                 "error".to_owned(),
                 serde_json::Value::Object(error),
             )]));
-            let caller = (mode == RouterResultMode::DurableCaller).then(|| {
-                ProductionCallerOutcome::failed(body.clone(), 500, Some(failure.node.clone()))
-            });
             Ok(ProductionRouterAction::Complete(
-                ProductionCompletion::failed(body, fail_type, caller),
+                ProductionCompletion::failed(body, fail_type, None),
             ))
         }
         WalkStatus::Cancelled => Ok(ProductionRouterAction::Cancelled),
@@ -181,65 +143,11 @@ fn persisted_router_failure(type_: RouterFailureType) -> FailType {
     }
 }
 
-fn router_failure_code(type_: RouterFailureType) -> &'static str {
-    match type_ {
-        RouterFailureType::Terminal => "terminal",
-        RouterFailureType::RetryExhausted => "retry-exhausted",
-        RouterFailureType::InvalidInput => "invalid-input",
-        RouterFailureType::HopLimit => "hop-limit",
-        RouterFailureType::UnreleasedCaller => "unreleased-caller",
-        RouterFailureType::MissingDedupId => "missing-dedup-id",
-        RouterFailureType::RespondWithoutCaller => "respond-without-caller",
-        RouterFailureType::SecondVerdict => "second-verdict",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use wamn_run_state::RunStatus;
 
     use super::*;
-
-    #[test]
-    fn durable_respond_carries_the_host_terminal_node_through_completion() {
-        let payload = serde_json::json!({
-            "accepted": true,
-            "release-node-id": "guest-forged"
-        });
-        for status in [
-            WalkStatus::Completed,
-            WalkStatus::Failed,
-            WalkStatus::Cancelled,
-        ] {
-            let outcome = Outcome {
-                status,
-                result: serde_json::Value::Null,
-                failure: (status == WalkStatus::Failed).then(|| wamn_router::Failure {
-                    node: "later".into(),
-                    type_: RouterFailureType::Terminal,
-                    detail: wamn_router::ErrorDetail::msg("later work failed"),
-                }),
-                hops: 2,
-                verdict: Some(Verdict::Respond {
-                    payload: payload.clone(),
-                    node_id: "wiring-terminal".into(),
-                }),
-            };
-            let ProductionRouterAction::Complete(completion) =
-                production_router_action(&outcome, true).expect("durable response maps")
-            else {
-                panic!("durable response must complete the queue run");
-            };
-
-            assert_eq!(completion.status(), RunStatus::Completed);
-            assert_eq!(completion.result(), &payload);
-            let caller = completion.caller().expect("durable caller is released");
-            assert_eq!(caller.outcome_type(), "responded");
-            assert_eq!(caller.body(), &payload);
-            assert_eq!(caller.http_status(), 200);
-            assert_eq!(caller.release_node_id(), Some("wiring-terminal"));
-        }
-    }
 
     #[test]
     fn detached_respond_still_has_no_result_owner() {
@@ -254,14 +162,9 @@ mod tests {
             }),
         };
 
-        let error = production_router_action(&outcome, false)
+        let error = production_router_action(&outcome)
             .expect_err("detached delivery cannot own a response");
         assert_eq!(error.error_type(), ProductionLeaseErrorType::Contract);
-        assert!(
-            error
-                .to_string()
-                .contains("router-response-without-result-owner")
-        );
     }
 
     #[test]
@@ -269,16 +172,16 @@ mod tests {
         let outcome = Outcome {
             status: WalkStatus::Failed,
             result: serde_json::Value::Null,
-            failure: Some(wamn_router::Failure {
+            failure: Some(crate::graph::Failure {
                 node: "validate".into(),
                 type_: RouterFailureType::InvalidInput,
-                detail: wamn_router::ErrorDetail::coded("bad-order", "order is malformed"),
+                detail: crate::graph::ErrorDetail::coded("bad-order", "order is malformed"),
             }),
             hops: 1,
             verdict: None,
         };
         let ProductionRouterAction::Complete(completion) =
-            production_router_action(&outcome, true).expect("failed walk maps")
+            production_router_action(&outcome).expect("failed walk maps")
         else {
             panic!("failed walk must complete the run");
         };
@@ -286,9 +189,7 @@ mod tests {
         assert_eq!(completion.fail_type(), Some(FailType::InvalidInput));
         assert_eq!(completion.result()["error"]["code"], "bad-order");
         assert_eq!(completion.result()["error"]["node"], "validate");
-        let caller = completion.caller().expect("attached caller gets failure");
-        assert_eq!(caller.outcome_type(), "failed");
-        assert_eq!(caller.release_node_id(), Some("validate"));
+        assert!(completion.caller().is_none());
     }
 
     #[test]
@@ -301,7 +202,7 @@ mod tests {
             verdict: Some(Verdict::Discard),
         };
         let ProductionRouterAction::Complete(completion) =
-            production_router_action(&outcome, false).expect("discard maps")
+            production_router_action(&outcome).expect("discard maps")
         else {
             panic!("discard must complete the run");
         };
@@ -316,10 +217,10 @@ mod tests {
             let outcome = Outcome {
                 status,
                 result: serde_json::Value::Null,
-                failure: (status == WalkStatus::Failed).then(|| wamn_router::Failure {
+                failure: (status == WalkStatus::Failed).then(|| crate::graph::Failure {
                     node: "later".into(),
                     type_: RouterFailureType::SecondVerdict,
-                    detail: wamn_router::ErrorDetail::coded(
+                    detail: crate::graph::ErrorDetail::coded(
                         "second-verdict",
                         "later frontier reached another terminal",
                     ),
@@ -335,12 +236,13 @@ mod tests {
             };
 
             assert_eq!(
-                production_router_action(&outcome, false).expect("first verdict maps"),
+                production_router_action(&outcome).expect("first verdict maps"),
                 ProductionRouterAction::Emit {
                     event: serde_json::json!({"order": 42}),
                     dedup_id: "wiring-1:7:first:d1".into(),
                     entity: "orders".into(),
                     operation: wamn_event_wire::Op::Insert,
+                    node_id: "first".into(),
                 },
                 "later {status:?} must not suppress the first emit verdict"
             );
@@ -357,13 +259,8 @@ mod tests {
             verdict: Some(Verdict::Discard),
         };
 
-        let error = production_router_action(&outcome, false)
+        let error = production_router_action(&outcome)
             .expect_err("an in-progress router result is not a queue terminal");
         assert_eq!(error.error_type(), ProductionLeaseErrorType::Contract);
-        assert!(
-            error
-                .to_string()
-                .contains("router-returned-running-outcome")
-        );
     }
 }

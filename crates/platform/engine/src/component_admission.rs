@@ -1270,7 +1270,7 @@ mod tests {
             "wamn:connection".to_string(),
         ]);
         request.declaration.connections = vec![wamn_catalog::ComponentConnection {
-            store_alias: "erp".to_string(),
+            store_alias: "erp".to_string().into(),
             requirement_type: wamn_catalog::ComponentConnectionType::Http,
         }];
 
@@ -1294,7 +1294,7 @@ mod tests {
         );
         assert_eq!(facts.component.imports.len(), 4);
         assert_eq!(facts.connections.len(), 1);
-        assert_eq!(facts.connections[0].store_alias, "erp");
+        assert_eq!(facts.connections[0].store_alias.name(), Some("erp"));
     }
 
     /// The negative control. A composed dependency adds no effect of its own:

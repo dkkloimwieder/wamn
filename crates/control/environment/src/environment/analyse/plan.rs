@@ -58,11 +58,14 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
     if let Some(release) = &authorities.release {
         for component in &release.manifest.components {
             for requirement in &component.descriptor.connections {
+                let Some(alias) = requirement.store_alias.name() else {
+                    continue;
+                };
                 if let Some(connection) = authorities.connections.get(&super::super::bindings::key(
                     document
                         .application_for_package(&component.package_id)
                         .unwrap_or(""),
-                    &requirement.store_alias,
+                    alias,
                 )) && !matches!(
                     (connection.requirement_type, requirement.requirement_type),
                     (
@@ -75,7 +78,7 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                 ) {
                     refusals.push(format!(
                         "connection {} has a different type from its release requirement",
-                        requirement.store_alias
+                        alias
                     ));
                 }
             }
@@ -85,7 +88,10 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                 .application_for_package(&component.package_id)
                 .unwrap_or("");
             for requirement in &component.descriptor.connections {
-                let key = super::super::bindings::key(application, &requirement.store_alias);
+                let Some(alias) = requirement.store_alias.name() else {
+                    continue;
+                };
+                let key = super::super::bindings::key(application, alias);
                 if !authorities.connections.contains_key(&key)
                     && !authorities.artifact_bindings.contains(&key)
                 {

@@ -1,4 +1,4 @@
-//! Per-node retry policy + backoff, and the shared-throttle identity.
+//! Per-node retry policy and deterministic backoff.
 //!
 //! The router owns the backoff *curve*; the node contract owns only the
 //! *classification* (retryable / rate-limited / …) and the optional
@@ -9,6 +9,7 @@
 use std::time::Duration;
 
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 /// A node's retry policy. Backoff is **deterministic** exponential — no jitter —
 /// so the walk stays a pure function (a driver may add jitter around the
@@ -49,7 +50,7 @@ impl RetryPolicy {
     /// optional). A missing object, a non-object config, or a `Null` config all
     /// yield [`RetryPolicy::DEFAULT`]; individual missing keys fall back per
     /// field.
-    pub fn from_config(config: &Value) -> RetryPolicy {
+    pub fn from_config(config: &BTreeMap<String, Value>) -> RetryPolicy {
         let Some(retry) = config.get("retry").filter(|v| v.is_object()) else {
             return RetryPolicy::DEFAULT;
         };
@@ -101,36 +102,11 @@ impl RetryPolicy {
     }
 }
 
-/// The identity a shared throttle condition is keyed on: `(component, credential
-/// handle, target host)`. Two invocations that would hammer the same upstream
-/// share a condition; everything else is independent. The router only *emits* the
-/// key on a rate-limited retry — coordinating on it belongs to the host.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ThrottleKey {
-    pub component: String,
-    pub credential: Option<String>,
-    pub host: Option<String>,
-}
-
-impl ThrottleKey {
-    pub fn new(
-        component: impl Into<String>,
-        credential: Option<String>,
-        host: Option<String>,
-    ) -> ThrottleKey {
-        ThrottleKey {
-            component: component.into(),
-            credential,
-            host,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::RetryPolicy;
+    use super::{BTreeMap, RetryPolicy};
 
     // An author cap-ms past the platform ceiling is clamped at parse time — a
     // retry must not outlast the delivery lifecycle's own horizon. A day-long
@@ -139,7 +115,7 @@ mod tests {
     fn author_cap_ms_over_ceiling_is_clamped() {
         let cfg = json!({ "retry": { "cap-ms": 86_400_000u64 } });
         assert_eq!(
-            RetryPolicy::from_config(&cfg).cap_ms,
+            RetryPolicy::from_config(&serde_json::from_value(cfg).unwrap()).cap_ms,
             RetryPolicy::CAP_MS_CEILING
         );
     }
@@ -148,14 +124,20 @@ mod tests {
     #[test]
     fn author_cap_ms_in_range_passes_through() {
         let cfg = json!({ "retry": { "cap-ms": 60_000u64 } });
-        assert_eq!(RetryPolicy::from_config(&cfg).cap_ms, 60_000);
+        assert_eq!(
+            RetryPolicy::from_config(&serde_json::from_value(cfg).unwrap()).cap_ms,
+            60_000
+        );
     }
 
     // The default policy (no `retry` object) is unchanged: cap stays at 30 s,
     // well under the ceiling.
     #[test]
     fn default_cap_ms_unchanged() {
-        assert_eq!(RetryPolicy::from_config(&json!({})), RetryPolicy::DEFAULT);
+        assert_eq!(
+            RetryPolicy::from_config(&BTreeMap::new()),
+            RetryPolicy::DEFAULT
+        );
         assert_eq!(RetryPolicy::DEFAULT.cap_ms, 30_000);
     }
 }

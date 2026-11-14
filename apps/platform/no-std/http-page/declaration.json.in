@@ -149,7 +149,7 @@
   },
   "connections": [
     {
-      "store-alias": "upstream",
+      "store-alias": { "parameter": "requirement" },
       "requirement-type": "http"
     }
   ]

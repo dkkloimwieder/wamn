@@ -31,6 +31,66 @@ pub async fn install(
     Ok(written)
 }
 
+/// Select application-owned connections that can supply a platform declaration.
+pub fn palette_connections<'a>(
+    connection: &wamn_catalog::ComponentConnection,
+    packages: &'a [PackageManifest],
+) -> std::collections::BTreeMap<
+    (&'a str, &'a str),
+    &'a wamn_compiler::manifest::ConnectionDeclaration,
+> {
+    let mut names = std::collections::BTreeMap::new();
+    for package in packages {
+        for (name, declaration) in &package.connections {
+            if connection.store_alias.accepts(name)
+                && declaration
+                    .interface
+                    .split_once('/')
+                    .is_some_and(|(import, _)| {
+                        import == connection.requirement_type.import_package()
+                    })
+            {
+                names.insert((package.package.id.as_str(), name.as_str()), declaration);
+            }
+        }
+    }
+    names
+}
+
+#[cfg(test)]
+mod palette_tests {
+    #[test]
+    fn configured_connections_keep_each_application_declaration_owner() {
+        let packages: Vec<wamn_compiler::manifest::PackageManifest> = ["orders", "shipping"]
+            .into_iter()
+            .map(|id| {
+                serde_json::from_value(serde_json::json!({
+                    "package": {"id": id, "version": "1.0.0"},
+                    "required_platform_policy_contract": {"id": "fixture_data_access", "state": "satisfied"},
+                    "connections": {"labels": {"interface": "wasmcloud:blobstore/blobstore@0.1.0", "mode": "write"}},
+                    "models": {}, "components": {}
+                }))
+                .unwrap()
+            })
+            .collect();
+        let connection = wamn_catalog::ComponentConnection {
+            store_alias: wamn_catalog::ComponentConnectionAlias::Configuration {
+                parameter: "store_alias".into(),
+            },
+            requirement_type: wamn_catalog::ComponentConnectionType::Blobstore,
+        };
+        let selected = super::palette_connections(&connection, &packages);
+        for package in &packages {
+            for (alias, declaration) in &package.connections {
+                assert_eq!(
+                    selected.get(&(package.package.id.as_str(), alias.as_str())),
+                    Some(&declaration)
+                );
+            }
+        }
+    }
+}
+
 /// Prepare requirements only for components in the selected release, without installing SQL.
 pub async fn prepare_release(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -44,6 +104,44 @@ pub async fn prepare_release(
         .map(wamn_runtime::component_artifact_source::ComponentArtifactSource::new)
         .transpose()?;
     for component in &release.components {
+        if component.package_id == wamn_catalog::PALETTE_PACKAGE_ID {
+            for connection in &component.descriptor.connections {
+                for ((owner, alias), declaration) in palette_connections(connection, packages) {
+                    if !release
+                        .release
+                        .packages
+                        .iter()
+                        .any(|package| package.package_id() == owner)
+                    {
+                        continue;
+                    }
+                    let source = source
+                        .as_ref()
+                        .context("set WAMN_COMPONENT_ARTIFACT_BASE for palette activation")?;
+                    let fact = component
+                        .descriptor
+                        .clone()
+                        .into_admitted(wamn_catalog::palette_target(project_env_key));
+                    let bytes = source.pull_verified(&fact.component).await?;
+                    let interface = require_imports(&bytes, alias, &declaration.interface)?;
+                    let mode = match declaration.mode {
+                        wamn_compiler::manifest::ConnectionMode::Read => "read",
+                        wamn_compiler::manifest::ConnectionMode::Write => "write",
+                    };
+                    sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING")
+                    .bind(project_env_key).bind(&component.descriptor.component_digest).bind(owner)
+                    .bind(alias).bind(&interface).bind(mode).execute(&mut **tx).await?;
+                    let exact: bool = sqlx::query("SELECT EXISTS(SELECT FROM catalog.connection_requirement WHERE project_env_key=$1 AND component_digest=$2 AND package_id=$3 AND name=$4 AND interface=$5 AND mode=$6)")
+                    .bind(project_env_key).bind(&component.descriptor.component_digest).bind(owner)
+                    .bind(alias).bind(&interface).bind(mode).fetch_one(&mut **tx).await?.get(0);
+                    ensure!(
+                        exact,
+                        "palette connection differs from its installed requirement"
+                    );
+                }
+            }
+            continue;
+        }
         let package = packages
             .iter()
             .find(|package| package.package.id == component.package_id)

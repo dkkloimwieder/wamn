@@ -19,7 +19,7 @@ pub struct PaletteDeclaration {
 pub struct PaletteComponent {
     pub name: String,
     pub file: PathBuf,
-    pub declaration: PaletteDeclaration,
+    pub declaration: wamn_catalog::ComponentDescriptor,
 }
 
 fn sources(repository: &Path) -> Result<Vec<(PathBuf, String, PaletteDeclaration)>> {
@@ -44,12 +44,54 @@ fn sources(repository: &Path) -> Result<Vec<(PathBuf, String, PaletteDeclaration
     Ok(sources)
 }
 
-/// Read palette declarations for a publication that reuses existing component artifacts.
-pub fn declarations(repository: &Path) -> Result<Vec<PaletteDeclaration>> {
+/// Platform component names, without reading application package declarations.
+pub fn names(repository: &Path) -> Result<Vec<String>> {
     Ok(sources(repository)?
         .into_iter()
-        .map(|(_, _, declaration)| declaration)
+        .map(|(_, _, declaration)| declaration.component)
         .collect())
+}
+
+/// Seal one palette declaration against the exact bytes that the platform publishes.
+fn seal(
+    bytes: &[u8],
+    declaration: PaletteDeclaration,
+) -> Result<wamn_catalog::ComponentDescriptor> {
+    let engine = wamn_engine::build_engine(&[])?;
+    let connections = declaration.connections;
+    let admitted_platform_packages = declaration
+        .operations
+        .keys()
+        .filter_map(|operation| {
+            operation
+                .split_once('/')
+                .map(|(package, _)| package.to_owned())
+        })
+        .chain(
+            connections
+                .iter()
+                .map(|connection| connection.requirement_type.import_package().to_owned()),
+        )
+        .collect();
+    let facts = wamn_engine::component_admission::validate_component_admission(
+        &engine,
+        bytes,
+        wamn_engine::component_admission::ComponentAdmissionRequest {
+            declaration: wamn_catalog::ComponentDeclaration {
+                target: wamn_catalog::palette_target("platform-palette"),
+                component: declaration.component,
+                interface_version: declaration.interface_version,
+                operations: declaration.operations,
+                connections,
+            },
+            admitted_platform_packages,
+            base_digests: std::collections::BTreeSet::new(),
+        },
+    )?;
+    Ok(wamn_catalog::ComponentDescriptor::new(
+        facts.component,
+        facts.connections,
+    ))
 }
 
 /// Build palette guests once through the shared compiler, independently of applications.
@@ -57,6 +99,7 @@ pub async fn build(repository: &Path) -> Result<Vec<PaletteComponent>> {
     let mut palette = Vec::new();
     for (manifest, package, declaration) in sources(repository)? {
         let file = crate::build_guest(repository, &manifest, &package, None).await?;
+        let declaration = seal(&fs::read(&file)?, declaration)?;
         palette.push(PaletteComponent {
             name: declaration.component.clone(),
             file,

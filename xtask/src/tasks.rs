@@ -241,7 +241,7 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
         ),
     ] {
         let mut refused = network.to_vec();
-        refused.extend(["wamn-router", "wamn-runtime"]);
+        refused.push("wamn-runtime");
         if package == "wamn-edge" {
             refused.extend([
                 "wamn-workflow",
@@ -273,9 +273,7 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
     for package in ["wamn-runtime", "wamn-execution-host"] {
         let all = linked(root, package, &[]).await?;
         ensure!(
-            !["wamn-workflow", "wamn-router"]
-                .iter()
-                .any(|name| all.contains(*name)),
+            !["wamn-workflow"].iter().any(|name| all.contains(*name)),
             "{package} links the workflow layer"
         );
     }

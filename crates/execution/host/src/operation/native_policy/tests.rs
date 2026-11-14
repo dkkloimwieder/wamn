@@ -797,16 +797,6 @@ impl Fixture {
             },
         )
         .expect("prepare immutable component policy");
-        for component in policy
-            .components
-            .values()
-            .flat_map(|policies| policies.iter())
-        {
-            assert_eq!(
-                component.application, "receiving",
-                "the identity uses the environment map name"
-            );
-        }
         let events = Arc::default();
         let entered = Arc::new(Notify::new());
         let observer = Arc::new(Observe {

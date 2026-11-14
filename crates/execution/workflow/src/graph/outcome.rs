@@ -5,16 +5,17 @@
 //! Rust mirror of the node-operation WIT package: it is a WIT-shaped enum
 //! because it *is* the shape crossing that seam, and it is the only enum-shaped
 //! error vocabulary in this crate (the router's own faults are contextual
-//! structs — see [`ApplyError`](crate::ApplyError) and
-//! [`WiringError`](crate::WiringError)).
+//! structs — see `ApplyError` and
+//! the catalog condition).
 
 use serde_json::Value;
 
+#[cfg(test)]
 use wamn_catalog::MAIN_PORT;
 
 /// What an invoked node returned. `Success` carries the output payload and the
 /// **port** it chose (a branching node selects a named port; most nodes emit on
-/// [`MAIN_PORT`]); `Error` carries the classified failure; `Cancelled` is the
+/// [`wamn_catalog::MAIN_PORT`]); `Error` carries the classified failure; `Cancelled` is the
 /// explicit non-failure disposition of WIT `node-error.cancelled`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NodeOutcome {
@@ -29,18 +30,11 @@ pub enum NodeOutcome {
 
 impl NodeOutcome {
     /// A success on the default `main` port — the common case.
+    #[cfg(test)]
     pub fn ok(payload: Value) -> NodeOutcome {
         NodeOutcome::Success {
             payload,
             port: MAIN_PORT.to_string(),
-        }
-    }
-
-    /// A success routed out a named port (a branch).
-    pub fn ok_on(payload: Value, port: impl Into<String>) -> NodeOutcome {
-        NodeOutcome::Success {
-            payload,
-            port: port.into(),
         }
     }
 }
@@ -63,15 +57,6 @@ pub struct ErrorDetail {
 }
 
 impl ErrorDetail {
-    /// An error detail containing only a message.
-    pub fn msg(message: impl Into<String>) -> ErrorDetail {
-        ErrorDetail {
-            message: message.into(),
-            code: None,
-            data: None,
-        }
-    }
-
     /// An error detail with a stable machine-readable code.
     pub fn coded(code: impl Into<String>, message: impl Into<String>) -> ErrorDetail {
         ErrorDetail {
@@ -103,5 +88,4 @@ impl ErrorDetail {
 pub struct RateLimitDetail {
     pub detail: ErrorDetail,
     pub retry_after_ms: Option<u64>,
-    pub target_host: Option<String>,
 }

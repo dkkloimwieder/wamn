@@ -600,6 +600,11 @@ impl ProductionDevStageRunner {
             packages: package_coordinates,
         };
         let local = self.config.local_artifacts();
+        let palette = wamn_release_control::palette::read(
+            &local.flow_http_component,
+            &identity.project_env_key(),
+        )
+        .map_err(|source| ProductionDevStageError::owner("read platform palette", source))?;
         let (mut published, mut local_facts) = publish_release::publish_local(
             request,
             publish_release::LocalReleaseTarget {
@@ -609,12 +614,25 @@ impl ProductionDevStageRunner {
             },
             &package_roots,
             &self.admissions,
+            &palette,
         )
         .await
         .map_err(|source| ProductionDevStageError::owner("assemble local application", source))?;
         fs::create_dir_all(&local.directory).map_err(|source| {
             ProductionDevStageError::owner("create local artifact directory", source.into())
         })?;
+        for component in &palette {
+            let file = wamn_engine::artifact_source::local_component_path(
+                &local.directory,
+                &component.facts.component.component_digest,
+            )
+            .map_err(|source| {
+                ProductionDevStageError::owner("name local palette component", source.into())
+            })?;
+            fs::write(file, &component.bytes).map_err(|source| {
+                ProductionDevStageError::owner("save local palette component", source.into())
+            })?;
+        }
         let applications = self.environment.membership();
         let entry_changed = publish_release::refresh_composed_entry(
             &mut self.composed_entry,
@@ -696,11 +714,23 @@ impl ProductionDevStageRunner {
             &self.environment,
             &packages,
             published.digest.as_str(),
+            &palette,
         )
         .await
         .map_err(|source| {
             ProductionDevStageError::owner("prepare local connection selections", source)
         })?;
+        local_facts.requirements.extend(
+            binding_inputs
+                .iter()
+                .filter(|input| {
+                    palette.iter().any(|component| {
+                        component.facts.component.component_digest
+                            == input.requirement.component_digest()
+                    })
+                })
+                .map(|input| input.requirement.clone()),
+        );
         local_facts.bindings = resolve_local_bindings(
             &self.config,
             &self.environment,
@@ -1256,6 +1286,7 @@ async fn prepare_local_bindings(
     environment: &wamn_environment_control::environment::document::EnvironmentDocument,
     packages: &[wamn_compiler::manifest::PackageManifest],
     manifest_digest: &str,
+    palette: &[wamn_release_control::palette::PaletteComponent],
 ) -> anyhow::Result<Vec<PreparedLocalBinding>> {
     let mut system = wamn_postgres::connect(config.system_database_url()).await?;
     sqlx::raw_sql("SET ROLE wamn_db_owner")
@@ -1316,23 +1347,74 @@ async fn prepare_local_bindings(
             });
         }
     }
+    for component in palette {
+        for connection in &component.facts.connections {
+            for ((owner, alias), _) in
+                wamn_package_control::connection_requirement::palette_connections(
+                    connection, packages,
+                )
+            {
+                let application = environment
+                    .application_for_package(owner)
+                    .context("palette binding owner has no application")?;
+                let matching = bindings
+                    .iter()
+                    .filter(|binding| binding.alias == alias && binding.application == application)
+                    .collect::<Vec<_>>();
+                let [binding] = matching.as_slice() else {
+                    anyhow::ensure!(
+                        matching.is_empty(),
+                        "palette connection alias has more than one application owner"
+                    );
+                    continue;
+                };
+                let requirement = wamn_package_control::component_admission::portable_requirement(
+                    &component.facts.component.component_digest,
+                    connection,
+                    alias,
+                );
+                let resolved = binding
+                    .resolved
+                    .as_ref()
+                    .context("local palette binding requires a host integration")?;
+                anyhow::ensure!(
+                    &resolved.requirement_type.descriptor() == requirement.requirement(),
+                    "local palette instance differs from its declared type"
+                );
+                prepared.push(PreparedLocalBinding {
+                    package_id: owner.to_owned(),
+                    read_only: binding.mode == wamn_compiler::manifest::ConnectionMode::Read,
+                    requirement,
+                    instance_id: binding.connection_id.clone(),
+                });
+            }
+        }
+    }
     let mut project = wamn_postgres::connect(config.target_database_url()).await?;
     let mut tx = project.begin().await?;
     for input in &prepared {
-        let admission = admissions
-            .iter()
-            .find(|admission| {
-                admission.package_id() == input.package_id
-                    && admission.facts().component_digest == input.requirement.component_digest()
-            })
-            .context("local admitted requirement missing")?;
+        let bytes = if let Some(component) = palette.iter().find(|component| {
+            component.facts.component.component_digest == input.requirement.component_digest()
+        }) {
+            component.bytes.as_slice()
+        } else {
+            admissions
+                .iter()
+                .find(|admission| {
+                    admission.package_id() == input.package_id
+                        && admission.facts().component_digest
+                            == input.requirement.component_digest()
+                })
+                .map(ComponentAdmission::bytes)
+                .context("local admitted requirement missing")?
+        };
         let declaration = packages
             .iter()
-            .find(|package| package.package.id == input.package_id)
-            .and_then(|package| package.connections.get(input.requirement.store_alias()))
+            .filter(|package| package.package.id == input.package_id)
+            .find_map(|package| package.connections.get(input.requirement.store_alias()))
             .context("local connection declaration missing")?;
         let interface = wamn_package_control::connection_requirement::require_imports(
-            admission.bytes(),
+            bytes,
             input.requirement.store_alias(),
             &declaration.interface,
         )?;

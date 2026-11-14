@@ -17,7 +17,6 @@ wamn-event-wire = { workspace = true }
 wamn-execution-host = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-run-state = { workspace = true }
-wamn-router = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-engine = { workspace = true }
 wash-runtime = { workspace = true }

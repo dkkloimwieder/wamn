@@ -2,7 +2,11 @@
 
 A component is compiled behavior with one digest, import set, and export set.
 A package owns schema contributions, operations, SQL, and contracts.
-A palette component supplies schema-less behavior for wiring and has its own component identity.
+A palette component supplies behavior for wiring. The platform seals its ports, parameters, connections and digest in `palette.json`. Release and dev resolution share that reader. Palette calls use the host invocation entry and receive no public HTTP routes.
+The sealed connection declaration names the node parameter that selects an application binding.
+Blob nodes use `store_alias`. HTTP nodes use `requirement`.
+The host reads that parameter from the pinned node configuration and checks the application's declaration and binding.
+The platform owns the component. The workflow application owns the connection authority.
 Components contain no deployment endpoint, database identity, or credential.
 
 ## Grouping and publication

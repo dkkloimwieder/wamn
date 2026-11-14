@@ -5528,6 +5528,7 @@ dependencies = [
  "wamn-compiler",
  "wamn-component-composer",
  "wamn-digest",
+ "wamn-engine",
  "wat",
 ]
 
@@ -6471,16 +6472,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-router"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "serde_json",
- "wamn-catalog",
- "wamn-event-wire",
-]
-
-[[package]]
 name = "wamn-run-state"
 version = "0.1.0"
 dependencies = [
@@ -6747,7 +6738,6 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-platform-identity",
  "wamn-postgres",
- "wamn-router",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-test-infrastructure",
@@ -8107,6 +8097,7 @@ dependencies = [
  "url",
  "uuid",
  "wamn-build",
+ "wamn-catalog",
  "wamn-compiler",
  "wamn-component-composer",
  "wamn-dev-control",

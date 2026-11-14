@@ -15,23 +15,21 @@ use std::collections::{HashMap, VecDeque};
 
 use serde_json::Value;
 
-use crate::outcome::{ErrorDetail, NodeError, NodeOutcome};
-use crate::retry::{RetryPolicy, ThrottleKey};
-use crate::terminal::{DEDUP_ID_FIELD, Terminal, Verdict};
-use crate::wiring::Wiring;
+use super::outcome::{ErrorDetail, NodeError, NodeOutcome};
+use super::retry::RetryPolicy;
+use super::terminal::{DEDUP_ID_FIELD, Verdict};
+use super::wiring::{DEFAULT_HOP_LIMIT, Wiring};
+use std::sync::Arc;
 use wamn_catalog::ERROR_PORT;
+use wamn_catalog::{WiringNode, WiringTerminal as Terminal};
 
 /// One delivery entering the router: the unit of work a walk carries.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Delivery {
     /// Caller-assigned id, carried through for correlation only.
-    pub id: String,
     /// The payload admitted at the entry node.
     pub payload: Value,
-    /// Whether a synchronous caller is waiting on this delivery: true for
-    /// ingress paths 1 (hot HTTP) and 3 (`begin`/`wait`), false for path 2
-    /// (streams). It is what makes [`Terminal::Respond`] answerable and what
-    /// separates a legitimate [`Verdict::Discard`] from a stranded caller.
+    /// Whether a synchronous caller waits for a terminal response.
     pub caller_attached: bool,
 }
 
@@ -60,7 +58,7 @@ pub enum FailureType {
     RetryExhausted,
     /// A node returned `invalid-input` (never retried) with no error edge.
     InvalidInput,
-    /// The delivery spent its hop limit ([`Wiring::set_hop_limit`]) — a
+    /// The delivery spent its hop limit (the fixed hop limit) — a
     /// permitted loop that never terminated. Unconditionally terminal: never
     /// routed to an error edge, which could itself be part of the loop.
     HopLimit,
@@ -74,13 +72,28 @@ pub enum FailureType {
     /// dedup the publish on. Routed to the node's error edge if it has one.
     MissingDedupId,
     /// A [`Terminal::Respond`] node was reached by a delivery with no caller
-    /// attached ([`ApplyErrorType::RespondWithoutCaller`]) — an authored wiring
+    /// attached (the respond-without-caller refusal) — an authored wiring
     /// meeting an ingress path it does not fit.
     RespondWithoutCaller,
     /// A second terminal node emitted after this delivery already had a verdict
-    /// ([`ApplyErrorType::SecondVerdict`]). The first verdict stands and the
+    /// (the second-verdict refusal). The first verdict stands and the
     /// second node is the failure.
     SecondVerdict,
+}
+
+impl FailureType {
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            Self::Terminal => "terminal",
+            Self::RetryExhausted => "retry-exhausted",
+            Self::InvalidInput => "invalid-input",
+            Self::HopLimit => "hop-limit",
+            Self::UnreleasedCaller => "unreleased-caller",
+            Self::MissingDedupId => "missing-dedup-id",
+            Self::RespondWithoutCaller => "respond-without-caller",
+            Self::SecondVerdict => "second-verdict",
+        }
+    }
 }
 
 /// The recorded failure of a walk.
@@ -98,7 +111,7 @@ struct Token {
     /// `None` only for the wiring entry; routed tokens carry the edge's resolved
     /// target operation input.
     input_port: Option<String>,
-    payload: Value,
+    payload: Arc<Value>,
 }
 
 /// The node currently being invoked (or awaiting a scheduled retry).
@@ -106,25 +119,20 @@ struct Token {
 struct Active {
     node: String,
     input_port: Option<String>,
-    payload: Value,
+    payload: Arc<Value>,
     /// 0 on first execution, incremented per retry.
     attempt: u32,
     /// Monotonic-ms deadline before which this node must not be re-invoked
     /// (0 = ready now). Set when a retry is scheduled.
     retry_until_ms: u64,
-    /// The shared-throttle key to coordinate on before the next invocation (set
-    /// on a `rate-limited` retry).
-    throttle: Option<ThrottleKey>,
 }
 
 /// One delivery's mutable walk state. Opaque; inspect via the accessors.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Walk {
-    delivery_id: String,
     status: WalkStatus,
     frontier: VecDeque<Token>,
     current: Option<Active>,
-    step_seq: u64,
     /// Invocations [`Wiring::next`] has handed out for this walk — the counter
     /// the hop limit is validated against.
     hops: u64,
@@ -132,7 +140,7 @@ pub struct Walk {
     /// of one visit do not count) — the source of [`NodeCall::occurrence`], so a
     /// merge/loop node's Nth visit is distinguishable from its first.
     visits: HashMap<String, u32>,
-    result: Value,
+    result: Arc<Value>,
     failure: Option<Failure>,
     /// Whether this delivery arrived with a synchronous caller waiting
     /// ([`Delivery::caller_attached`]).
@@ -143,28 +151,31 @@ pub struct Walk {
 }
 
 impl Walk {
-    /// The id of the delivery being walked.
-    pub fn delivery_id(&self) -> &str {
-        &self.delivery_id
-    }
-    pub fn status(&self) -> WalkStatus {
-        self.status
-    }
-    /// Count of successfully-completed node steps.
-    pub fn step_seq(&self) -> u64 {
-        self.step_seq
+    pub(crate) fn into_outcome(self) -> super::Outcome {
+        drop(self.frontier);
+        drop(self.current);
+        super::Outcome {
+            status: self.status,
+            result: Arc::unwrap_or_clone(self.result),
+            failure: self.failure,
+            hops: self.hops,
+            verdict: self.verdict,
+        }
     }
     /// Invocations handed out for this walk (the counter the hop limit is
     /// validated against).
+    #[cfg(test)]
     pub fn hops(&self) -> u64 {
         self.hops
     }
     /// The payload of the last node that completed successfully (the delivery's
     /// result on completion).
+    #[cfg(test)]
     pub fn result(&self) -> &Value {
         &self.result
     }
     /// The recorded failure, if the walk failed.
+    #[cfg(test)]
     pub fn failure(&self) -> Option<&Failure> {
         self.failure.as_ref()
     }
@@ -177,40 +188,27 @@ impl Walk {
 }
 
 /// What the caller should do next.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Step {
+#[derive(Debug, PartialEq)]
+pub enum Step<'a> {
     /// Invoke this node, then feed its outcome back via [`Wiring::apply`].
-    Invoke(NodeCall),
-    /// The next node is a scheduled retry not yet due: coordinate on `throttle`
-    /// (if any) and wait until `until_ms`, then call [`Wiring::next`] again.
-    Wait {
-        node: String,
-        until_ms: u64,
-        /// The attempt the pending retry will run as.
-        attempt: u32,
-        throttle: Option<ThrottleKey>,
-    },
+    Invoke(NodeCall<'a>),
+    /// Wait for the pending retry.
+    Wait { until_ms: u64 },
     /// The walk reached a terminal status.
     Done(WalkStatus),
 }
 
 /// A single node invocation the caller must perform.
-#[derive(Debug, Clone, PartialEq)]
-pub struct NodeCall {
+#[derive(Debug, PartialEq)]
+pub struct NodeCall<'a> {
     pub node: String,
     /// The target operation input selected by the incoming edge. `None` only
     /// for the wiring entry, which has no incoming edge.
     pub input_port: Option<String>,
-    /// The component to acquire a pooled instance of.
-    pub component: String,
-    /// Exact exported handler instance to invoke inside the component.
-    pub operation: String,
-    pub config: Value,
-    pub connection: Option<String>,
-    pub credential: Option<String>,
+    pub definition: &'a WiringNode,
     /// The payload entering this node — the delivery payload at the entry,
     /// otherwise the upstream node's output (unchanged across retries).
-    pub payload: Value,
+    pub payload: Arc<Value>,
     /// 0 on first execution, incremented per retry.
     pub attempt: u32,
     /// Which VISIT of this node in this delivery (0 = first): a merge runs once
@@ -237,43 +235,6 @@ pub enum ApplyErrorType {
     NoActiveNode,
     /// The outcome names a node the walk is not on.
     MismatchedNode { expected: String, actual: String },
-    /// The named [`Terminal::Respond`] node emitted, but no caller is attached
-    /// to this delivery — a wiring answering nobody.
-    RespondWithoutCaller(String),
-    /// The named terminal node emitted after this delivery already had a
-    /// verdict. One delivery ends once.
-    SecondVerdict(String),
-}
-
-impl ApplyError {
-    /// Which boundary the transition broke.
-    pub fn error_type(&self) -> &ApplyErrorType {
-        &self.type_
-    }
-
-    /// The walk failure this refusal folds into, with its stable code, or `None`
-    /// when it cannot be folded at all.
-    ///
-    /// The split is the whole point of the two groups.
-    /// [`ApplyErrorType::RespondWithoutCaller`] and
-    /// [`ApplyErrorType::SecondVerdict`] are an authored wiring meeting a
-    /// delivery it does not fit. Both are DATA, so they end ONE delivery.
-    /// The other three describe a driver feeding back an outcome the walk never
-    /// handed out — a defect in the driver, which no wiring can recover from
-    /// and which [`route`](crate::route) therefore still panics on.
-    fn node_data_failure(&self) -> Option<(FailureType, &'static str)> {
-        match &self.type_ {
-            ApplyErrorType::RespondWithoutCaller(_) => {
-                Some((FailureType::RespondWithoutCaller, "respond-without-caller"))
-            }
-            ApplyErrorType::SecondVerdict(_) => {
-                Some((FailureType::SecondVerdict, "second-verdict"))
-            }
-            ApplyErrorType::Terminal(_)
-            | ApplyErrorType::NoActiveNode
-            | ApplyErrorType::MismatchedNode { .. } => None,
-        }
-    }
 }
 
 impl std::fmt::Display for ApplyError {
@@ -283,12 +244,6 @@ impl std::fmt::Display for ApplyError {
             ApplyErrorType::NoActiveNode => write!(f, "walk has no active node"),
             ApplyErrorType::MismatchedNode { expected, actual } => {
                 write!(f, "active node is {expected:?}, not {actual:?}")
-            }
-            ApplyErrorType::RespondWithoutCaller(node) => {
-                write!(f, "node {node:?} responds, but no caller is attached")
-            }
-            ApplyErrorType::SecondVerdict(node) => {
-                write!(f, "node {node:?} is a second terminal for this delivery")
             }
         }
     }
@@ -303,17 +258,15 @@ impl Wiring {
         frontier.push_back(Token {
             node: self.entry().to_string(),
             input_port: None,
-            payload: delivery.payload,
+            payload: Arc::new(delivery.payload),
         });
         Walk {
-            delivery_id: delivery.id,
             status: WalkStatus::Running,
             frontier,
             current: None,
-            step_seq: 0,
             hops: 0,
             visits: HashMap::new(),
-            result: Value::Null,
+            result: Arc::new(Value::Null),
             failure: None,
             caller_attached: delivery.caller_attached,
             verdict: None,
@@ -323,10 +276,10 @@ impl Wiring {
     /// Decide the next [`Step`]. Promotes the next frontier token to the active
     /// slot when idle; a due active node is invoked, a not-yet-due retry waits,
     /// an empty frontier completes the walk. Each invocation handed out counts
-    /// against the hop limit ([`Wiring::set_hop_limit`]); once spent, the walk
+    /// against the hop limit (the fixed hop limit); once spent, the walk
     /// fails [`FailureType::HopLimit`] — the runtime bound that keeps a
     /// permitted cycle from running forever.
-    pub fn next(&self, walk: &mut Walk, now_ms: u64) -> Step {
+    pub fn next(&self, walk: &mut Walk, now_ms: u64) -> Step<'_> {
         if walk.status.is_terminal() {
             return Step::Done(walk.status);
         }
@@ -339,7 +292,6 @@ impl Wiring {
                         payload: tok.payload,
                         attempt: 0,
                         retry_until_ms: 0,
-                        throttle: None,
                     });
                 }
                 None => return Step::Done(self.settle(walk)),
@@ -349,14 +301,11 @@ impl Wiring {
             let a = walk.current.as_ref().expect("current set above");
             if now_ms < a.retry_until_ms {
                 return Step::Wait {
-                    node: a.node.clone(),
                     until_ms: a.retry_until_ms,
-                    attempt: a.attempt,
-                    throttle: a.throttle.clone(),
                 };
             }
         }
-        if walk.hops >= self.hop_limit {
+        if walk.hops >= DEFAULT_HOP_LIMIT {
             // Deliberately NOT error_or_fail: an error edge could itself be part
             // of the loop, so the hop-limit verdict is unconditionally terminal.
             let node = walk.current.take().expect("current set above").node;
@@ -365,8 +314,8 @@ impl Wiring {
                 node,
                 type_: FailureType::HopLimit,
                 detail: ErrorDetail::coded(
-                    "hop-limit",
-                    format!("hop limit of {} spent without terminating", self.hop_limit),
+                    FailureType::HopLimit.code(),
+                    format!("hop limit of {DEFAULT_HOP_LIMIT} spent without terminating"),
                 ),
             });
             return Step::Done(WalkStatus::Failed);
@@ -388,7 +337,7 @@ impl Wiring {
                     node: self.entry().to_string(),
                     type_: FailureType::UnreleasedCaller,
                     detail: ErrorDetail::coded(
-                        "unreleased-caller",
+                        FailureType::UnreleasedCaller.code(),
                         "frontier emptied with a caller attached and no respond",
                     ),
                 });
@@ -400,7 +349,7 @@ impl Wiring {
         WalkStatus::Completed
     }
 
-    fn build_call(&self, walk: &Walk, a: &Active) -> NodeCall {
+    fn build_call<'a>(&'a self, walk: &Walk, a: &Active) -> NodeCall<'a> {
         // The node is guaranteed present: the entry token and every enqueued
         // edge target resolve against the compiled wiring.
         let node = self.node(&a.node).expect("active node in wiring");
@@ -408,15 +357,11 @@ impl Wiring {
         NodeCall {
             node: a.node.clone(),
             input_port: a.input_port.clone(),
-            component: node.component.clone(),
-            operation: node.operation.clone(),
-            config: node.config.clone(),
-            connection: node.connection.clone(),
-            credential: None,
-            payload: a.payload.clone(),
+            definition: node,
+            payload: Arc::clone(&a.payload),
             attempt: a.attempt,
             occurrence,
-            deadline_ms: node.config.get("deadline-ms").and_then(Value::as_u64),
+            deadline_ms: node.params.get("deadline-ms").and_then(Value::as_u64),
         }
     }
 
@@ -426,7 +371,7 @@ impl Wiring {
     pub fn apply(
         &self,
         walk: &mut Walk,
-        call: &NodeCall,
+        call: &NodeCall<'_>,
         outcome: NodeOutcome,
         now_ms: u64,
     ) -> Result<(), ApplyError> {
@@ -461,52 +406,51 @@ impl Wiring {
                         // An emit node that produced no dedup id published
                         // nothing, so it is a node data failure taking the
                         // ordinary error-edge route, not a verdict.
-                        let Some(recorded) =
-                            terminal_verdict(walk, &call.node, terminal, &payload)?
-                        else {
-                            self.error_or_fail(
-                                walk,
-                                &call.node,
-                                ErrorDetail::coded(
-                                    "missing-dedup-id",
-                                    format!("emit node emitted no {DEDUP_ID_FIELD} string"),
-                                ),
-                                FailureType::MissingDedupId,
-                            );
-                            return Ok(());
+                        let recorded = match terminal_verdict(walk, &call.node, terminal, &payload)
+                        {
+                            Ok(Some(verdict)) => verdict,
+                            outcome => {
+                                let type_ = match outcome {
+                                    Ok(None) => FailureType::MissingDedupId,
+                                    Err(type_) => type_,
+                                    Ok(Some(_)) => unreachable!(),
+                                };
+                                self.error_or_fail(
+                                    walk,
+                                    &call.node,
+                                    ErrorDetail::coded(type_.code(), type_.code()),
+                                    type_,
+                                );
+                                return Ok(());
+                            }
                         };
                         Some(recorded)
                     }
                 };
                 walk.current = None;
-                walk.step_seq += 1;
                 *walk.visits.entry(call.node.clone()).or_default() += 1;
-                walk.result = payload.clone();
+                let payload = Arc::new(payload);
+                walk.result = Arc::clone(&payload);
                 if verdict.is_some() {
                     walk.verdict = verdict;
                 }
                 self.enqueue_successors(walk, &call.node, &port, &payload);
             }
             NodeOutcome::Error(NodeError::Retryable(detail)) => {
-                let policy = RetryPolicy::from_config(&call.config);
+                let policy = RetryPolicy::from_config(&call.definition.params);
                 if policy.may_retry(attempt) {
-                    schedule_retry(walk, now_ms + policy.backoff_ms(attempt), None);
+                    schedule_retry(walk, now_ms.saturating_add(policy.backoff_ms(attempt)));
                 } else {
                     self.error_or_fail(walk, &call.node, detail, FailureType::RetryExhausted);
                 }
             }
             NodeOutcome::Error(NodeError::RateLimited(rl)) => {
-                let policy = RetryPolicy::from_config(&call.config);
+                let policy = RetryPolicy::from_config(&call.definition.params);
                 if policy.may_retry(attempt) {
                     let delay = rl
                         .retry_after_ms
                         .unwrap_or_else(|| policy.backoff_ms(attempt));
-                    let key = ThrottleKey::new(
-                        call.component.clone(),
-                        call.credential.clone(),
-                        rl.target_host,
-                    );
-                    schedule_retry(walk, now_ms + delay, Some(key));
+                    schedule_retry(walk, now_ms.saturating_add(delay));
                 } else {
                     self.error_or_fail(walk, &call.node, rl.detail, FailureType::RetryExhausted);
                 }
@@ -526,42 +470,13 @@ impl Wiring {
         Ok(())
     }
 
-    /// Fold an [`ApplyError`] that DATA caused into the walk: `node`'s error
-    /// edge if it has one, otherwise a failed walk carrying the matching
-    /// [`FailureType`]. Gives the error back unchanged when it instead describes
-    /// a driver feeding back an outcome the walk never handed out, which no
-    /// wiring can recover from.
-    ///
-    /// [`Wiring::apply`] deliberately does not do this itself: its refusal is
-    /// atomic, so a driver that can re-ask its component sees the walk exactly
-    /// as it found it. Folding is the driver's decision, and
-    /// [`route`](crate::route) — which hands out one call and feeds back its
-    /// answer, so cannot re-ask anything — makes it.
-    pub fn fail_on_node_data(
-        &self,
-        walk: &mut Walk,
-        node: &str,
-        error: ApplyError,
-    ) -> Result<(), ApplyError> {
-        let Some((type_, code)) = error.node_data_failure() else {
-            return Err(error);
-        };
-        self.error_or_fail(
-            walk,
-            node,
-            ErrorDetail::coded(code, error.to_string()),
-            type_,
-        );
-        Ok(())
-    }
-
     /// Enqueue the edges leaving `node` on `port`, each carrying `payload`.
-    fn enqueue_successors(&self, walk: &mut Walk, node: &str, port: &str, payload: &Value) {
-        for edge in self.successors(node, port) {
+    fn enqueue_successors(&self, walk: &mut Walk, node: &str, port: &str, payload: &Arc<Value>) {
+        for (edge, input_port) in self.successors(node, port) {
             walk.frontier.push_back(Token {
                 node: edge.to.clone(),
-                input_port: Some(edge.to_port.clone()),
-                payload: payload.clone(),
+                input_port: Some(input_port.to_owned()),
+                payload: Arc::clone(payload),
             });
         }
     }
@@ -572,7 +487,7 @@ impl Wiring {
     /// [`ERROR_PORT`](wamn_catalog::ERROR_PORT) successors carrying `payload`.
     /// Deliberately leaves `step_seq` and `result` untouched: an error route is
     /// not a success completion.
-    fn route_error(&self, walk: &mut Walk, node: &str, payload: &Value) {
+    fn route_error(&self, walk: &mut Walk, node: &str, payload: &Arc<Value>) {
         walk.current = None;
         *walk.visits.entry(node.to_string()).or_default() += 1;
         self.enqueue_successors(walk, node, ERROR_PORT, payload);
@@ -593,7 +508,7 @@ impl Wiring {
             // An error-ROUTED emission is a COMPLETED visit, so it advances the
             // node's occurrence exactly as a success does; a walk-ending failure
             // above does not.
-            self.route_error(walk, node, &detail.to_error_payload());
+            self.route_error(walk, node, &Arc::new(detail.to_error_payload()));
         }
     }
 }
@@ -607,16 +522,12 @@ fn terminal_verdict(
     node: &str,
     terminal: &Terminal,
     payload: &Value,
-) -> Result<Option<Verdict>, ApplyError> {
+) -> Result<Option<Verdict>, FailureType> {
     if walk.verdict.is_some() {
-        return Err(ApplyError {
-            type_: ApplyErrorType::SecondVerdict(node.to_string()),
-        });
+        return Err(FailureType::SecondVerdict);
     }
     match terminal {
-        Terminal::Respond if !walk.caller_attached => Err(ApplyError {
-            type_: ApplyErrorType::RespondWithoutCaller(node.to_string()),
-        }),
+        Terminal::Respond if !walk.caller_attached => Err(FailureType::RespondWithoutCaller),
         Terminal::Respond => Ok(Some(Verdict::Respond {
             payload: payload.clone(),
             node_id: node.to_string(),
@@ -636,11 +547,10 @@ fn terminal_verdict(
 }
 
 /// Mark the active node for a retry at `until_ms` (keeping the same input
-/// payload), coordinating on `throttle` if set.
-fn schedule_retry(walk: &mut Walk, until_ms: u64, throttle: Option<ThrottleKey>) {
+/// payload).
+fn schedule_retry(walk: &mut Walk, until_ms: u64) {
     if let Some(a) = walk.current.as_mut() {
         a.attempt += 1;
         a.retry_until_ms = until_ms;
-        a.throttle = throttle;
     }
 }

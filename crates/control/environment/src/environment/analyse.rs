@@ -490,7 +490,7 @@ async fn read_release(platform: &Platform, digest: &str) -> anyhow::Result<Relea
         .components
         .iter()
         .flat_map(|component| &component.descriptor.connections)
-        .map(|connection| connection.store_alias.clone())
+        .filter_map(|connection| connection.store_alias.name().map(str::to_owned))
         .collect();
     Ok(ReleaseFacts {
         digest: digest.to_owned(),

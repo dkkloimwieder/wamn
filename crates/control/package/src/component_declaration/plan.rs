@@ -1,6 +1,6 @@
 use super::{
-    COMPONENT_DECLARATION_PLACEHOLDER, COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER,
-    ComponentDeclarationError, ComponentDeclarationErrorType, Path, Value,
+    COMPONENT_DECLARATION_PLACEHOLDER, ComponentDeclarationError, ComponentDeclarationErrorType,
+    Path, Value,
 };
 
 pub(super) fn render_palette_declaration(
@@ -48,16 +48,13 @@ pub(super) fn render_palette_declaration(
         let Some(alias) = connection.get_mut("store-alias") else {
             continue;
         };
-        if alias.as_str() != Some(COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER) {
+        if !alias.is_object() {
             continue;
         }
-        let store_alias = store_alias.ok_or_else(|| {
-            invalid(format!(
-                "leaves a store alias as {COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER}, and no \
-                 binding selection names a store alias for it"
-            ))
-        })?;
-        *alias = Value::String(store_alias.to_owned());
+        let selected = store_alias
+            .or_else(|| (alias["parameter"] == "requirement").then_some("upstream"))
+            .ok_or_else(|| invalid("configuration alias has no binding selection".to_owned()))?;
+        *alias = Value::String(selected.to_owned());
     }
     Ok(document)
 }
