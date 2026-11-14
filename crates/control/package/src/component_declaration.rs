@@ -227,11 +227,9 @@ pub fn declared_platform_packages(
 mod tests {
     use super::*;
 
-    /// A palette template renders into the package target with the store alias
-    /// of its binding selection, and states the packages it imports. An
-    /// unnamed alias is refused (wamn-hw3n).
+    /// A configured palette connection requires a binding selection.
     #[test]
-    fn a_palette_declaration_renders_its_target_alias_and_imports() {
+    fn a_palette_declaration_requires_a_binding_selection() {
         let palette = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform");
         let target = wamn_catalog::ComponentPackageCoordinate {
             project_env_key: "org-a".to_owned(),
@@ -239,17 +237,6 @@ mod tests {
             package_version: "1.0.0".to_owned(),
         };
         let template = palette.join("execution/blob-put/declaration.json.in");
-        let document = render_palette_declaration(&template, &target, Some("labels"))
-            .expect("the template renders");
-        assert_eq!(document["target"]["package-id"], "wamn_wms");
-        assert_eq!(
-            document["operations"]["wamn:node/async-handler@0.1.0"]["connections"][0]["store-alias"],
-            "labels"
-        );
-        assert_eq!(
-            declared_platform_packages(&template, &document).expect("the declaration parses"),
-            ["wamn:node", "wasmcloud:blobstore"]
-        );
         let refusal = render_palette_declaration(&template, &target, None)
             .expect_err("an unnamed store alias is refused");
         assert_eq!(

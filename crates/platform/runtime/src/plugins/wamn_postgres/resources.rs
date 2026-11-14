@@ -505,11 +505,20 @@ async fn begin_transaction(
     })
 }
 
-pub(super) async fn begin_statement_transaction(
+pub(crate) async fn begin_statement_transaction(
     plugin: &WamnPostgres,
     component_id: &str,
     project: &str,
 ) -> Result<PgTransaction, PgError> {
+    let authorized = plugin
+        .scopes
+        .read::<crate::invocation::Authority, _>(component_id, |record| {
+            record.statements.active.is_some()
+        })
+        .unwrap_or(false);
+    if !authorized {
+        return Err(PgError::PermissionDenied);
+    }
     let (transaction, mut identity) =
         prepare_statement_transaction(plugin, component_id, project).await?;
     let mut connection = StatementConnectionGuard::new(
@@ -1440,11 +1449,13 @@ async fn statement_begin<T: 'static>(
     })?;
     trace
         .run(async move {
+            let Some(statements) = plugin.active_statement_set(&component_id, instance) else {
+                return Ok(Err(StatementError::Postgres(PgError::PermissionDenied)));
+            };
             if let Err(refused) = plugin.refuse_in_host_transaction(&component_id, "begin") {
                 return Ok(Err(refused));
             }
             let project = plugin.project_for(&component_id);
-            let statements = plugin.active_statement_set(&component_id, instance);
             let span = db_span_for_project(&plugin, &component_id, &project, "statement.begin");
             let started = std::time::Instant::now();
             let opened = begin_statement_transaction(&plugin, &component_id, &project)
@@ -1459,7 +1470,7 @@ async fn statement_begin<T: 'static>(
                         .push(PgStatementTransaction {
                             transaction,
                             owner_scope: component_id.clone(),
-                            statements,
+                            statements: Some(statements),
                         })
                         .map(Ok)
                         .map_err(Into::into)

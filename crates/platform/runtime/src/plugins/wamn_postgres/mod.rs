@@ -53,6 +53,8 @@ pub use production_lease::{
     ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult,
     ProductionWorkflow,
 };
+#[cfg(test)]
+pub(crate) use resources::begin_statement_transaction;
 #[cfg(feature = "test-util")]
 pub use resources::retained_transaction_for_test;
 pub use resources::{PgCursor, PgStatementTransaction, PgTransaction};

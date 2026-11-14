@@ -174,8 +174,7 @@ pub async fn publish_declarations(
                 "target":{"project_env_key":"__PROJECT_ENV_KEY__","package-id":name},
                 "component":"fixture","interface-version":"0.1.0",
                 "operations":{&operation:{"registered-operation":operation,
-                    "input-ports":[],"output-ports":[],"parameters":[]}},
-                "connections":[]
+                    "input-ports":[],"output-ports":[],"parameters":[]}}
             }))?,
         )?;
         std::fs::write(

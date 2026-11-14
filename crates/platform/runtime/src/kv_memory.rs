@@ -82,6 +82,18 @@ where
         self.entries().clear();
     }
 
+    #[cfg(test)]
+    pub(crate) fn seed(&self, key: String, answer: A) {
+        self.entries().insert(
+            key,
+            Entry {
+                revision: 1,
+                seen: Instant::now(),
+                answer: Some(answer),
+            },
+        );
+    }
+
     /// The live answer of `key`, or the ticket of a read of it.
     /// Replica expiry uses the original publication time.
     pub(crate) fn answer(&self, key: &str) -> Result<A, Ticket> {
