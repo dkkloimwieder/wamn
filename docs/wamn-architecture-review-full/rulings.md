@@ -106,3 +106,5 @@ W24. S8 runs as three serial lanes after S7-D: S8-A (run persistence), S8-B (nat
 - Workflow already depends on runtime. Workflow orchestrates matching over the plugin transport, and runtime never depends on workflow.
 - Reset keeps `reset.rs::stop_users` to stop the reader, and the per-commit lock goes after that.
 - The CDC event identity uses the timeline that contains the commit LSN. Transactions that replay after a promotion keep their identity.
+
+W25. S10-D questions. Package coordinates stay immutable: a publish never changes the bytes at an existing coordinate. The dev loop publishes each changed build at a prerelease version taken from its content digest, for example `0.1.0-dev.<first 12 hex of the digest>`, so repeated saves need no manual version change. Surviving tests that call the deleted local assembler or provisioner move to the product `kind` path in S10-D where the product can drive the step. Each step that the product cannot drive becomes a bead against the deploy routes, and its test code does not compensate.
