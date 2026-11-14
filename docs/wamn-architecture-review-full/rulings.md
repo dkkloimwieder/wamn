@@ -79,3 +79,18 @@ W16. Claim commands (S7-A question). Ruling 1 applies: an operation with an exte
 W17. Platform migration logins (S6-A question). Ruling 6 applies to platform scopes as well. Each platform migration role gets its own CNPG managed login with one basic-auth Secret, like the S4 roles. The owner roles stay `NOLOGIN`, and the migration login holds their privileges through membership.
 
 W18. JSON values in WIT (S7-B question). A JSON column or field gets its own WIT type in the shared wamn WIT package, apart from `string`. The host converter recognizes that type by its WIT shape. It decodes a JSON request value of any kind into it, and it encodes the result back as JSON, not as a string. The compiler maps JSON to this type in `generate/wit.rs::wit_type`. No second type source, such as the publication schema, takes part in the conversion.
+
+W19. S10 runs as four lanes: S10-A (Helm installation), S10-B (environment and publication), S10-C (native control and CLI) and S10-D (dev on `kind`). A and B start together, C follows B, and D needs A to C and S7-C and S7-D. Decisions on the plan questions:
+- The applied environment configuration has one owner: one `configuration jsonb` column on `registry.environment_projects`, typed by `wamn-registry`. The ConfigMap reader `environment/document/store.rs::read_target` goes.
+- Rollback follows ruling 32 target B: after a failed head, rollback restores the latest successful revision, also when earlier parts of the same rollout succeeded.
+- `release_chart.rs::upgrade` drops `--rollback-on-failure` before pod-report polling goes.
+- C27 stays with `broker::authorization::update_authorization`.
+- `operation_job.rs::Operation::needs` mounts the credentials of the owning role, never superuser credentials.
+- The S10-D `kind` measurement needs owner consent before it runs.
+
+W20. S12 runs as three serial lanes after S7-C: S12-A (bindings and storage), S12-B (clients, tokens and logging) and S12-C (capability crates). Decisions on the plan questions:
+- P3: publication seals the connection mode in `ComponentConnection`, and then `CONNECTION_EFFECT_SNAPSHOT_SQL` goes.
+- C34: the blob handle records the connection generation, and a changed generation is refused before the backend call.
+- P5: wamn consolidates the clients that it owns. The upstream transport inside `oci-client` stays.
+- Logging uses the public binding hook of the pinned wash runtime and the host invocation span. Nobody recreates the guest context parser.
+- C33 is fixed at `18829c35c`, and the cache replacement keeps that fix.
