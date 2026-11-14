@@ -7,9 +7,9 @@ use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 
 use wamn_control_provision::Template;
-use wamn_environment_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
-use wamn_environment_control::provision_project_env::provisioning_transaction;
-use wamn_environment_control::provision_system::{ProvisionSystemRequest, provision_system};
+use wamn_environment::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
+use wamn_environment::provision_project_env::provisioning_transaction;
+use wamn_environment::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_test_infrastructure::locked_database;
 
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";

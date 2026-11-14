@@ -1,4 +1,4 @@
-//! Prepare chart inputs before selection persistence, then apply one application's Helm release.
+//! Prepare chart inputs, then apply one application's Helm release.
 //! Helm handles pending operations and reports rollout failures.
 
 pub(super) mod plan;
@@ -13,7 +13,6 @@ use super::Platform;
 use super::analyse::{Analysis, ReleaseFacts};
 use super::document::EnvironmentDocument;
 use super::ensure::PrivateDirectory;
-use super::host_report;
 use wamn_control_provision::host_credentials::HOST_CREDENTIALS;
 use wamn_release_control::release_chart::{self, RoleName, ValuesInput};
 
@@ -34,7 +33,7 @@ pub(super) struct Prepared {
     budget: Duration,
 }
 
-/// Render and validate chart inputs before persisting the application selection.
+/// Render and validate chart inputs before applying the release.
 pub(super) async fn prepare(
     platform: &Platform,
     document: &EnvironmentDocument,
@@ -109,8 +108,7 @@ pub(super) async fn write(
     let deadline = Instant::now() + budget;
     let values = prepared.directory.path("values.yaml");
     release_chart::recover_pending(&platform.target, &release_name).await?;
-    let poller = host_report::Poller::start(&platform.target, &release_name);
-    let upgraded = release_chart::upgrade(
+    release_chart::upgrade(
         &platform.target,
         &platform.chart,
         &release_name,
@@ -122,9 +120,8 @@ pub(super) async fn write(
             analysis.actor
         ),
     )
-    .await;
-    let report = poller.finish();
-    upgraded.map_err(|error| host_report::attach(&error, &report))?;
+    .await
+    .with_context(|| format!("Helm release {release_name} failed; inspect its status and pods"))?;
     Ok(Written {
         release_name,
         roles: prepared.roles,
@@ -203,75 +200,4 @@ pub fn host_group(
         .with_context(|| format!("{} is not a YAML mapping", path.display()))?,
     };
     plan::host_group(group, org, project, env)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn application_reapply_keeps_only_its_named_host_image() -> anyhow::Result<()> {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let chart = crate::platform::artifact_plan::test_util::prepared_chart(&repository)?;
-        let digest = format!("sha256:{}", "c".repeat(64));
-        let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-            "org":"acme", "project":"apps", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
-            "applications":{"alpha":{"packages":["alpha"],"current":digest,"revocation_seconds":5,"hostname":"alpha.example"}}
-        }))?)?;
-        let manifest = serde_json::from_value(json!({
-            "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
-            "release":{"packages":[]}, "components":[], "routes":[], "attachments":{}
-        }))?;
-        let render = |installed| {
-            release_values(
-                &document,
-                "alpha",
-                &manifest,
-                &digest,
-                "registry.example/releases",
-                70,
-                "render",
-                None,
-                installed,
-            )
-        };
-        let (fresh, _) = render(None)?;
-        let mut installed = serde_json::to_value(&fresh)?;
-        let image = json!({"registry":"selected.example", "repository":"host",
-            "tag":format!("selected@sha256:{}", "b".repeat(64)), "pull_policy":"IfNotPresent"});
-        let group = &mut installed["runtime-operator"]["runtime"]["hostGroups"][0];
-        group["image"] = image.clone();
-        group["replicas"] = 9.into();
-        installed["routeHost"] = "stale.example".into();
-        installed["release"]["manifestDigest"] = "stale".into();
-        installed["runtime-operator"]["runtime"]["hostGroups"]
-            .as_array_mut()
-            .unwrap()
-            .insert(0, json!({"name":"unrelated", "image":{"tag":"wrong"}}));
-        let (mut reapplied, _) = render(Some(&installed))?;
-        assert_eq!(
-            serde_json::to_value(
-                &reapplied["runtime-operator"]["runtime"]["hostGroups"][0]["image"]
-            )?,
-            image
-        );
-        let entry = json!({"chart":chart.0, "version":crate::platform::artifact_plan::select(&chart.0)?.version,
-            "name":"alpha", "namespace":"hosts", "values":reapplied});
-        let objects = wamn_kubernetes::helm::template(&entry)?;
-        let host = objects
-            .iter()
-            .find(|object| object["kind"] == "Deployment")
-            .unwrap();
-        assert_eq!(
-            host["spec"]["template"]["spec"]["containers"][0]["image"],
-            format!("selected.example/host:selected@sha256:{}", "b".repeat(64))
-        );
-        reapplied["runtime-operator"]["runtime"]["hostGroups"][0]
-            .as_mapping_mut()
-            .unwrap()
-            .remove("image");
-        assert_eq!(reapplied, fresh);
-        Ok(())
-    }
 }

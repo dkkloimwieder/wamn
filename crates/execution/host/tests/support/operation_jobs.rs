@@ -193,6 +193,7 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
         let mut value = json!({"project":"billing","env":"dev"});
         match route {
             "application.deploy" => {
+                value["application"] = "billing_app".into();
                 value["release"] = format!("sha256:{}", "a".repeat(64)).into();
             }
             "application.rollback" | "schema.apply" | "schema.diff" => {

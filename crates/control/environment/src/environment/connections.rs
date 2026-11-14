@@ -28,96 +28,104 @@ pub async fn write(
     let lock =
         super::lock::LifecycleLock::acquire(&platform.system_database_url, &document.triple())
             .await?;
-    crate::provision_project_env::registry::require_connected(
-        &mut *lock.client().await,
-        &document.triple(),
-    )
-    .await?;
-    let mut client = wamn_postgres::connect(&platform.system_database_url).await?;
-    let mut tx = client
-        .begin()
-        .await
-        .context("begin the connection writes")?;
-    sqlx::raw_sql("SET LOCAL ROLE wamn_system")
-        .execute(&mut *tx)
-        .await
-        .map(drop)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
-        ),
-    ))
-    .execute(&mut *tx)
-    .await
-    .map(drop)?;
-    let mut writes = Writes {
-        tx: &mut tx,
-        org: &document.org,
-        auth: AuthDrops::default(),
-        drops: ConnectionDrops::default(),
-    };
-    let mut lines = Vec::new();
-    for name in document.integrations.keys() {
-        let integration = read(documents, &format!("{name}.integration.json"))?;
-        let connection = read(documents, &format!("{name}.json"))?;
-        anyhow::ensure!(
-            integration["name"] == name.as_str()
-                && connection["name"] == name.as_str()
-                && integration["project"] == document.project.as_str()
-                && connection["project"] == document.project.as_str()
-                && connection["env"] == document.env.as_str(),
-            "the documents of integration {name} name another integration or environment"
-        );
-        if let Some(system) = integration["external_system"].as_str() {
-            let external = read(documents, &format!("{system}.external-system.json"))?;
-            let listed = writes
-                .run(
-                    "external_system.list",
-                    &json!({"project": document.project}),
-                )
-                .await?;
-            if !listed["external_systems"]
-                .as_array()
-                .is_some_and(|rows| rows.iter().any(|row| row["name"] == system))
-            {
-                writes.run("external_system.write", &external).await?;
-                lines.push(format!("wrote external system {system}"));
-            }
-        }
-        let key = json!({"project": document.project, "name": name});
-        if writes.stored("integration.get", &key).await?.is_none() {
-            writes.run("integration.write", &integration).await?;
-            lines.push(format!("wrote integration {name}"));
-        }
-        let key = json!({"project": document.project, "env": document.env, "name": name});
-        let mut request = connection.clone();
-        match writes.stored("connection.get", &key).await? {
-            Some(stored) if stored["parameters"] == connection["parameters"] => continue,
-            // A first write of an authenticated integration stores an empty
-            // credential, which `connection.set_credential` replaces.
-            None if integration["auth_type"] != "none" => request["credential"] = "{}".into(),
-            Some(_) | None => {}
-        }
-        writes.run("connection.write", &request).await?;
-        lines.push(format!("wrote connection {name}"));
-    }
-    let Writes { auth, drops, .. } = writes;
-    tx.commit().await.context("commit the connection writes")?;
-    let changes = platform.auth_changes().await?;
-    changes.publish(auth).await;
-    changes.publish(drops).await;
-    let project_url = super::ensure::project_url(platform, &document.triple()).await?;
-    changes
-        .publish(
-            super::bindings::project_authority(
-                &platform.system_database_url,
-                &project_url,
-                document,
+    let result = lock
+        .protect(async {
+            crate::provision_project_env::registry::require_connected(
+                &mut *lock.client().await,
+                &document.triple(),
             )
-            .await?,
-        )
+            .await?;
+            let mut client = wamn_postgres::connect(&platform.system_database_url).await?;
+            let mut tx = client
+                .begin()
+                .await
+                .context("begin the connection writes")?;
+            sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+                .execute(&mut *tx)
+                .await
+                .map(drop)?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                wamn_control_provision::bind_platform_principal_sql(
+                    wamn_control_provision::PlatformComponent::Provisioning,
+                ),
+            ))
+            .execute(&mut *tx)
+            .await
+            .map(drop)?;
+            let mut writes = Writes {
+                tx: &mut tx,
+                org: &document.org,
+                auth: AuthDrops::default(),
+                drops: ConnectionDrops::default(),
+            };
+            let mut lines = Vec::new();
+            for name in document.integrations.keys() {
+                let integration = read(documents, &format!("{name}.integration.json"))?;
+                let connection = read(documents, &format!("{name}.json"))?;
+                anyhow::ensure!(
+                    integration["name"] == name.as_str()
+                        && connection["name"] == name.as_str()
+                        && integration["project"] == document.project.as_str()
+                        && connection["project"] == document.project.as_str()
+                        && connection["env"] == document.env.as_str(),
+                    "the documents of integration {name} name another integration or environment"
+                );
+                if let Some(system) = integration["external_system"].as_str() {
+                    let external = read(documents, &format!("{system}.external-system.json"))?;
+                    let listed = writes
+                        .run(
+                            "external_system.list",
+                            &json!({"project": document.project}),
+                        )
+                        .await?;
+                    if !listed["external_systems"]
+                        .as_array()
+                        .is_some_and(|rows| rows.iter().any(|row| row["name"] == system))
+                    {
+                        writes.run("external_system.write", &external).await?;
+                        lines.push(format!("wrote external system {system}"));
+                    }
+                }
+                let key = json!({"project": document.project, "name": name});
+                if writes.stored("integration.get", &key).await?.is_none() {
+                    writes.run("integration.write", &integration).await?;
+                    lines.push(format!("wrote integration {name}"));
+                }
+                let key = json!({"project": document.project, "env": document.env, "name": name});
+                let mut request = connection.clone();
+                match writes.stored("connection.get", &key).await? {
+                    Some(stored) if stored["parameters"] == connection["parameters"] => continue,
+                    // A first write of an authenticated integration stores an empty
+                    // credential, which `connection.set_credential` replaces.
+                    None if integration["auth_type"] != "none" => {
+                        request["credential"] = "{}".into();
+                    }
+                    Some(_) | None => {}
+                }
+                writes.run("connection.write", &request).await?;
+                lines.push(format!("wrote connection {name}"));
+            }
+            let Writes { auth, drops, .. } = writes;
+            tx.commit().await.context("commit the connection writes")?;
+            let changes = platform.auth_changes().await?;
+            changes.publish(auth).await;
+            changes.publish(drops).await;
+            let project_url = super::ensure::project_url(platform, &document.triple()).await?;
+            changes
+                .publish(
+                    super::bindings::project_authority(
+                        &platform.system_database_url,
+                        &project_url,
+                        document,
+                    )
+                    .await?,
+                )
+                .await;
+            Ok(lines)
+        })
         .await;
-    Ok(lines)
+    lock.release().await;
+    result
 }
 
 fn read(documents: &Path, file: &str) -> anyhow::Result<Value> {

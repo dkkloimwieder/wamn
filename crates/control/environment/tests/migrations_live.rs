@@ -3,7 +3,7 @@
 use sqlx::SqlSafeStr as _;
 use sqlx::migrate::{MigrateError, Migration, MigrationType, Migrator};
 use wamn_control_provision::migration;
-use wamn_environment_control::migrations;
+use wamn_environment::migrations;
 
 fn source(version: i64, sql: &str) -> Migration {
     Migration::new(
@@ -206,7 +206,7 @@ async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic
 
 #[tokio::test]
 async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Result<()> {
-    use wamn_environment_control::apply_package::{self, ApplyPackageRequest, PackageRoot};
+    use wamn_environment::apply_package::{self, ApplyPackageRequest, PackageRoot};
     let _lock = wamn_test_postgres::lock();
     let database = wamn_platform_identity::test_database::project_platform();
     let migration_input = wamn_control_provision::test_database::package_migration_input(
@@ -316,7 +316,7 @@ async fn platform_migrations_refuse_administrators_and_use_scope_credentials() -
 #[tokio::test]
 async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() -> anyhow::Result<()>
 {
-    use wamn_environment_control::{apply_package, environment::sql::reset::reset_database};
+    use wamn_environment::{apply_package, environment::sql::reset::reset_database};
     let _lock = wamn_test_postgres::lock();
     let system = wamn_control_provision::test_database::system();
     system.execute(&[

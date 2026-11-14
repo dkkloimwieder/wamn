@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
-use wamn_environment_control::platform::project::ProjectDocument;
+use wamn_environment::platform::project::ProjectDocument;
 
 #[derive(Debug, Subcommand)]
 pub enum ProjectCommand {
@@ -30,7 +30,7 @@ pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
     match command {
         ProjectCommand::Render(args) => {
             let project = ProjectDocument::compile(&args.file)?;
-            let bytes = wamn_environment_control::platform::tofu::render_project_tofu(
+            let bytes = wamn_environment::platform::tofu::render_project_tofu(
                 &project,
                 &args.state_bucket,
                 &args.state_prefix,

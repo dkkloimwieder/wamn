@@ -268,10 +268,10 @@ fn validate(operation: Operation, request: &Request) -> Result<(), Refusal> {
         }
     }
     match operation {
-        Operation::Deploy if request.release.is_none() || request.application.is_some() => {
+        Operation::Deploy if request.release.is_none() => {
             return Err(invalid("release"));
         }
-        Operation::Rollback | Operation::Apply | Operation::Diff
+        Operation::Deploy | Operation::Rollback | Operation::Apply | Operation::Diff
             if request.application.is_none() =>
         {
             return Err(invalid("application"));
@@ -490,12 +490,19 @@ mod tests {
             "project": "billing", "env": "dev"
         }))
         .unwrap();
-        for operation in [Operation::Apply, Operation::Diff] {
+        request.release = Some(wamn_digest::bytes_sha256(b"release"));
+        for operation in [
+            Operation::Deploy,
+            Operation::Rollback,
+            Operation::Apply,
+            Operation::Diff,
+        ] {
             assert!(validate(operation, &request).is_err());
             request.application = Some("billing".into());
             assert!(validate(operation, &request).is_ok());
             request.application = None;
         }
+        request.release = None;
         assert!(validate(Operation::Reset, &request).is_ok());
     }
 

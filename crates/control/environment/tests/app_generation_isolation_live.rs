@@ -36,7 +36,7 @@ use sqlx::Row as _;
 use wamn_control_provision::{
     WorkloadRoleFamily, WorkloadRoleIdentity, project_env_database_name, workload_login,
 };
-use wamn_environment_control::provision_project_env::{privilege_sql, role_posture_sql};
+use wamn_environment::provision_project_env::{privilege_sql, role_posture_sql};
 use wamn_test_infrastructure::locked_database;
 
 const ORG: &str = "dkzrisolation";

@@ -9,7 +9,7 @@ GRANT SELECT ON registry.orgs, registry.env_policies, registry.environment_proje
     wamn_authority.author_login_projects TO wamn_apply;
 GRANT SELECT (org, id), INSERT (org, id) ON registry.projects TO wamn_apply;
 GRANT INSERT (org, env, project, secret_name, secret_namespace, instance_suffix) ON registry.environment_projects TO wamn_apply;
-GRANT UPDATE (secret_name, secret_namespace, route_host)
+GRANT UPDATE (secret_name, secret_namespace, configuration)
     ON registry.environment_projects TO wamn_apply;
 GRANT SELECT (id, principal_id, token_prefix, token_hash, revoked_at, expires_at)
     ON identity.pats TO wamn_apply;

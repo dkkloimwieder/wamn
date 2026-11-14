@@ -1,5 +1,5 @@
 use clap::{CommandFactory as _, Parser};
-use wamn_environment_control::provision_project_env::ensure_distinct_secret_paths;
+use wamn_environment::provision_project_env::ensure_distinct_secret_paths;
 
 use super::*;
 

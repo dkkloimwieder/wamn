@@ -30,7 +30,7 @@ wamn-integration-tests = { workspace = true }
 
 wamn-package-control = { workspace = true, features = ["test-util"] }
 wamn-release-control = { workspace = true }
-wamn-environment-control = { workspace = true, features = ["test-util"] }
+wamn-environment = { workspace = true, features = ["test-util"] }
 wamn-dev-control = { workspace = true, features = ["test-util"] }
 # The publisher a run-plane reconciliation takes (Publisher).
 wamn-platform-identity = { workspace = true }

@@ -5661,7 +5661,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
- "wamn-environment-control",
+ "wamn-environment",
  "wamn-execution-host",
  "wamn-fixture-package",
  "wamn-registry",
@@ -5730,7 +5730,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-dev-control",
  "wamn-digest",
- "wamn-environment-control",
+ "wamn-environment",
  "wamn-fixture-package",
  "wamn-identity-client",
  "wamn-identity-protocol",
@@ -5782,7 +5782,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
- "wamn-environment-control",
+ "wamn-environment",
  "wamn-event-wire",
  "wamn-execution-host",
  "wamn-fixture-package",
@@ -5887,7 +5887,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-environment-control"
+name = "wamn-environment"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6008,7 +6008,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
- "wamn-environment-control",
+ "wamn-environment",
  "wamn-event-wire",
  "wamn-fixture-package",
  "wamn-identity-client",
@@ -6197,7 +6197,7 @@ dependencies = [
  "wamn-dev-control",
  "wamn-digest",
  "wamn-engine",
- "wamn-environment-control",
+ "wamn-environment",
  "wamn-event-wire",
  "wamn-execution-host",
  "wamn-identity-protocol",
@@ -6396,7 +6396,7 @@ dependencies = [
  "wamn-dev-control",
  "wamn-digest",
  "wamn-engine",
- "wamn-environment-control",
+ "wamn-environment",
  "wamn-event-wire",
  "wamn-identity-protocol",
  "wamn-integration-tests",
@@ -6430,6 +6430,7 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "serde",
+ "sqlx",
  "wamn-digest",
 ]
 
@@ -6693,7 +6694,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-dev-control",
  "wamn-digest",
- "wamn-environment-control",
+ "wamn-environment",
  "wamn-event-wire",
  "wamn-identity-client",
  "wamn-identity-protocol",
@@ -6732,7 +6733,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
- "wamn-environment-control",
+ "wamn-environment",
  "wamn-event-wire",
  "wamn-execution-host",
  "wamn-identity-protocol",
@@ -8102,7 +8103,7 @@ dependencies = [
  "wamn-component-composer",
  "wamn-dev-control",
  "wamn-digest",
- "wamn-environment-control",
+ "wamn-environment",
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-postgres",

@@ -158,7 +158,7 @@ async fn enable_cdc(
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let instance = wamn_environment_control::provision_project_env::read_project_env_instance(
+    let instance = wamn_environment::provision_project_env::read_project_env_instance(
         &args.system_database_url,
         &triple,
     )
@@ -193,18 +193,17 @@ async fn enable_cdc(
     )
     .await?;
     let (_, database) = wamn_postgres::identity(target_url)?;
-    let mut sql = wamn_environment_control::enable_cdc_project_env::cdc_sql_bundle(
-        &schemas, &name, &database,
-    );
+    let mut sql =
+        wamn_environment::enable_cdc_project_env::cdc_sql_bundle(&schemas, &name, &database);
     for model in manifests
         .iter()
         .flat_map(|manifest| manifest.models.values())
     {
         sql.push_str(
-            &wamn_environment_control::replica_identity::alter_replica_identity_sql(
+            &wamn_environment::replica_identity::alter_replica_identity_sql(
                 &model.schema,
                 &model.table,
-                wamn_environment_control::replica_identity::ReplicaIdentity::Full,
+                wamn_environment::replica_identity::ReplicaIdentity::Full,
             ),
         );
         sql.push(';');
@@ -212,7 +211,7 @@ async fn enable_cdc(
     sql.push_str(&wamn_control_provision::sql::create_publication_schemas_sql(&name, &schemas));
     let cdc_sql_file = args.root.join("cdc.sql");
     write_private(&cdc_sql_file, sql.as_bytes())?;
-    wamn_environment_control::enable_cdc_project_env::record_event_reader(
+    wamn_environment::enable_cdc_project_env::record_event_reader(
         &args.system_database_url,
         &triple,
         &schemas,

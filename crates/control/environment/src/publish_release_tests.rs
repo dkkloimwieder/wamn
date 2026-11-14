@@ -63,10 +63,13 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
     .unwrap();
     assert_eq!(published.manifest.components.len(), 2);
     let mut document = crate::environment::document::EnvironmentDocument::from_json(
-            serde_json::json!({"org":"acme", "project":"erp", "env":"dev",
+        serde_json::json!({"org":"acme", "project":"erp", "env":"dev",
                 "target": "cloud", "policy":"dev","revocation_seconds":60,
-                "applications": {"erp": {"current": published.digest.as_str(), "revocation_seconds":5,"hostname": "erp.acme.example", "packages": ["consumer", "integration"]}}}).to_string().as_bytes()
-        ).unwrap();
+                "applications": {"erp": {"revocation_seconds":5,"hostname": "erp.acme.example"}}})
+        .to_string()
+        .as_bytes(),
+    )
+    .unwrap();
     let authorities = Authorities {
         release_name: "acme--dev--erp".to_owned(),
         artifact_bindings: BTreeSet::new(),

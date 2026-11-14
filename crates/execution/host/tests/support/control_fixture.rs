@@ -34,7 +34,7 @@ pub(super) async fn install(admin: &mut Client, admin_url: &str) -> anyhow::Resu
         .execute(&mut *admin)
         .await
         .map(drop)?;
-    wamn_environment_control::provision_system::install_control_store(admin).await?;
+    wamn_environment::provision_system::install_control_store(admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "SET ROLE wamn_system; SET app.user_id = '{}'",
@@ -93,7 +93,7 @@ pub(super) async fn project_database(
     instance: &str,
     logins: &std::path::Path,
 ) -> anyhow::Result<Client> {
-    use wamn_environment_control::provision_project_env;
+    use wamn_environment::provision_project_env;
     let mut database =
         wamn_control_provision::project_env_database_name(ORG, project, "dev", instance);
     sqlx::raw_sql(sqlx::AssertSqlSafe(

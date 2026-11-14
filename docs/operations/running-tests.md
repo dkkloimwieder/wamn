@@ -61,7 +61,7 @@ The platform producer builds both role components through the package component 
 Platform fixture and catalog changes select `wamn-control-provision`.
 SQL changes select `wamn-ctl` with `ops`, including `protected_relations_live`.
 Control and platform deployment changes select the exact native host case.
-Every change outside documentation selects `environment_render` and `platform_render` in `wamn-environment-control` through prekind or Cargo selection.
+Every change outside documentation selects `environment_render` and `platform_render` in `wamn-environment` through prekind or Cargo selection.
 The release-chart-render suite runs the ignored Helm cases in `release_chart_render`.
 Path rules add to the selected targets and cases.
 The runner combines feature requirements for targets that both Cargo paths and suites select.
@@ -206,7 +206,7 @@ Run these tests with the build environment in [building](building.md):
 
 ```bash
 cargo test --locked --offline -p wamn-runtime resource_lease::tests -- --test-threads=1
-cargo test --locked --offline -p wamn-environment-control --test integration_restart_live -- --ignored --test-threads=1
+cargo test --locked --offline -p wamn-environment --test integration_restart_live -- --ignored --test-threads=1
 cargo test --locked --offline -p wamn-host --bin wamn-host host::lease_tests::sigterm_drains_calls_then_hands_the_lease_to_a_ready_host -- --ignored --exact --test-threads=1
 ```
 
@@ -316,7 +316,7 @@ Run the environment render cases by their full names:
 ```bash
 for name in prekind_environment_renders prekind_rejects_old_missing_conn_reader \
   prekind_receiving_pat_renders prekind_wms_pat_renders; do
-  cargo test --locked --offline -p wamn-environment-control --test environment_render \
+  cargo test --locked --offline -p wamn-environment --test environment_render \
     "$name" -- --exact --nocapture --test-threads=1 || exit "$?"
 done
 ```
@@ -387,8 +387,8 @@ It gives no expected duration.
 The epoch interruption case lives in `wamn-engine --test deadline`.
 Paused-time scheduling decisions live in `wamn-workflow --test schedule_decisions`.
 Admission authority stays in `wamn-run-state --test admission_live`.
-Schedule storage stays in `wamn-environment-control --test workflow_schedule_live`.
-Broker acknowledgement lives in `wamn-environment-control --test workflow_event_nats`.
+Schedule storage stays in `wamn-environment --test workflow_schedule_live`.
+Broker acknowledgement lives in `wamn-environment --test workflow_event_nats`.
 The native host case lives in `wamn-dev-control --test native_host` and takes live-nats.
 
 ## Ignored tests
@@ -773,7 +773,7 @@ cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind pla
 
 DEP6's bounded case uses one fresh platform, trusted product commands for its first environment,
 and authenticated control routes for the subsequent deploy, rollback, and schema mutation.
-It reads actual Job pods, the canonical environment ConfigMap, and application release ConfigMaps.
+It reads actual Job pods, the applied configuration in `registry.environment_projects.configuration`, and application release ConfigMaps.
 It deletes its publishing checkout before route execution.
 It reads the worker's image, immutable chart inputs, and storage mounts to exclude paths from the submitting machine.
 Kind has no web bucket, so hosted platform UI serving is verified on GCP in DEP7.
@@ -924,7 +924,7 @@ The C4 tests use disposable PostgreSQL databases. Compile them without starting 
 
 ```bash
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='kache test-runner'
-cargo test --locked --offline -p wamn-environment-control --test files_live --test platform_grants_live --no-run
+cargo test --locked --offline -p wamn-environment --test files_live --test platform_grants_live --no-run
 cargo test --locked --offline -p wamn-control-provision --test family_denial_matrix --test deploy_sql_authority --no-run
 cargo test --locked --offline -p wamn-execution-host --test files_live --test host_route_live --no-run
 cargo test --locked --offline -p wamn-schema-introspection --test file_reference_live --no-run
@@ -935,7 +935,7 @@ The NATS variable selects an existing server binary and prevents a native NATS b
 Run the live cases with Docker and the PostgreSQL binaries:
 
 ```bash
-cargo test --locked --offline -p wamn-environment-control --test files_live --test platform_grants_live -- --nocapture
+cargo test --locked --offline -p wamn-environment --test files_live --test platform_grants_live -- --nocapture
 cargo test --locked --offline -p wamn-control-provision --test family_denial_matrix --test deploy_sql_authority -- --nocapture
 cargo test --locked --offline -p wamn-execution-host --test files_live --test host_route_live -- --nocapture
 cargo test --locked --offline -p wamn-schema-introspection --test file_reference_live -- --nocapture
@@ -987,7 +987,7 @@ It requires the `blob-put` component named in its prerequisite declaration.
 It asserts that the release has an HTTP role and an authored HTTP route.
 
 ```bash
-cargo test --locked --offline -p wamn-environment-control --test file_fixture_live \
+cargo test --locked --offline -p wamn-environment --test file_fixture_live \
   native_files::file_fixture_assembles_an_http_role_without_kind -- --ignored --exact
 ```
 
@@ -1355,7 +1355,7 @@ Another holds a lock on the rows across one minute: the late tick admits its own
 Each of these two cases takes up to about three minutes.
 
 ```bash
-cargo test -p wamn-environment-control --test workflow_schedule_live -- --nocapture
+cargo test -p wamn-environment --test workflow_schedule_live -- --nocapture
 ```
 
 ### Connection candidates

@@ -4,6 +4,7 @@
 #[path = "../../cli_help_tests.rs"]
 mod help_env_tests;
 
+use anyhow::Context as _;
 use std::str::FromStr as _;
 
 use wamn_ctl::platform_verbs;
@@ -121,7 +122,7 @@ struct OperationArgs {
     project: String,
     #[arg(long)]
     env: String,
-    #[arg(long, required_if_eq_any = [("operation", "diff"), ("operation", "apply")])]
+    #[arg(long, required_if_eq_any = [("operation", "deploy"), ("operation", "rollback"), ("operation", "diff"), ("operation", "apply")])]
     application: Option<String>,
     #[arg(long)]
     release: Option<String>,
@@ -146,8 +147,14 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Operation(args) => {
-            let result = wamn_environment_control::environment::operation::run(
-                wamn_environment_control::environment::operation::Request {
+            let platform = wamn_environment::environment::Platform::apply_from_env()?;
+            let actor = std::env::var("WAMN_DEPLOY_ACTOR")
+                .context("authenticated actor is absent")?
+                .parse()?;
+            let administrator = std::env::var("WAMN_SYSTEM_ADMIN_URL").ok();
+            let result = wamn_environment::environment::operation::execute(
+                &platform,
+                wamn_environment::environment::operation::Request {
                     operation: &args.operation,
                     org: &args.org,
                     project: &args.project,
@@ -155,6 +162,8 @@ async fn main() -> anyhow::Result<()> {
                     application: args.application.as_deref(),
                     release: args.release.as_deref(),
                 },
+                &actor,
+                administrator.as_deref(),
             )
             .await?;
             println!("{}", serde_json::to_string(&result)?);

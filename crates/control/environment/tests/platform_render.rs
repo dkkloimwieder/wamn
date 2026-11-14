@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use std::path::Path;
-use wamn_environment_control::platform::identity;
+use wamn_environment::platform::identity;
 
 #[test]
 fn identity_chart_mounts_only_the_selected_credentials() -> anyhow::Result<()> {
@@ -92,7 +92,7 @@ fn identity_chart_mounts_only_the_selected_credentials() -> anyhow::Result<()> {
 
 #[test]
 fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::Result<()> {
-    use wamn_environment_control::platform::{
+    use wamn_environment::platform::{
         document::{ClusterDocument, Provider},
         edge,
     };
@@ -191,14 +191,13 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
             provider == Provider::Gcp
         );
         if provider == Provider::Gcp {
-            let project = wamn_environment_control::platform::project::ProjectDocument::compile(
+            let project = wamn_environment::platform::project::ProjectDocument::compile(
                 &repository.join("deploy/gcp/project.k"),
             )?;
-            let infrastructure: serde_json::Value = serde_json::from_slice(
-                &wamn_environment_control::platform::tofu::render_project_tofu(
+            let infrastructure: serde_json::Value =
+                serde_json::from_slice(&wamn_environment::platform::tofu::render_project_tofu(
                     &project, "state", "fixture",
-                )?,
-            )?;
+                )?)?;
             let neg: serde_json::Value = serde_json::from_str(
                 service["metadata"]["annotations"]["cloud.google.com/neg"]
                     .as_str()
@@ -220,9 +219,7 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
 #[test]
 fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() -> anyhow::Result<()>
 {
-    use wamn_environment_control::{
-        environment::document::EnvironmentDocument, platform::operations,
-    };
+    use wamn_environment::{environment::document::EnvironmentDocument, platform::operations};
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
         "org":"acme","project":"billing","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}
     }))?)?;

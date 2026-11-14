@@ -105,26 +105,23 @@ pub async fn release_candidates(
     application: &str,
     release: Option<&str>,
 ) -> anyhow::Result<(String, Vec<Candidate>)> {
-    let selected = analyse::select_application(document, Some(application))?;
-    let release = match release {
-        Some(digest) => digest,
-        None => match &selected.applications[application].current {
-            DeclaredRelease::Digest(digest) => digest,
-            DeclaredRelease::None => anyhow::bail!(
-                "application {application} has no current schema source; select --release or a built source package"
-            ),
-        },
+    ensure!(
+        document.applications.contains_key(application),
+        "application {application} is not declared"
+    );
+    let revision;
+    let release = if let Some(digest) = release {
+        digest
+    } else {
+        let name = analyse::application_release_name(document, application)?;
+        revision = analyse::read_revision(platform, &name)
+            .await?
+            .context("application has no current schema source")?;
+        revision
+            .manifest_digest()
+            .context("application revision has no release digest")?
     };
     let manifest = analyse::pull_release_manifest(platform, release).await?;
-    let refusals = analyse::application_refusals(
-        &selected.membership(),
-        manifest
-            .release
-            .packages
-            .iter()
-            .map(wamn_catalog::PackageCoordinate::package_id),
-    );
-    ensure!(refusals.is_empty(), "{}", refusals.join("; "));
     let mut candidates = Vec::new();
     for package in &manifest.release.packages {
         candidates.push(
@@ -292,7 +289,6 @@ pub async fn reset_candidates(
 
 /// Validate all replacement inputs before stopping users.
 pub fn validate_candidates(
-    document: &EnvironmentDocument,
     candidates: &[Candidate],
     sources: &BTreeMap<String, SchemaSource>,
 ) -> anyhow::Result<(Vec<wamn_compiler::manifest::PackageManifest>, Vec<usize>)> {
@@ -305,13 +301,6 @@ pub fn validate_candidates(
         )?;
         let id = &manifest.package.id;
         ensure!(found.insert(id.clone()), "duplicate reset package {id}");
-        ensure!(
-            document
-                .applications
-                .values()
-                .any(|application| application.packages.contains(id)),
-            "reset package {id} has no declared application"
-        );
         let source = sources
             .get(id)
             .with_context(|| format!("unexpected reset package {id}"))?;
@@ -479,4 +468,40 @@ pub async fn status(
         applications,
         unknowns,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_validates_selected_sources_without_document_membership() -> anyhow::Result<()> {
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+        let manifest = wamn_package_control::test_support::source_manifest();
+        std::fs::create_dir_all(scratch.path().join("generated"))?;
+        std::fs::write(
+            scratch.path().join("generated/wamn.json"),
+            serde_json::to_vec(&manifest)?,
+        )?;
+        let candidate = Candidate::source(PackageRoot {
+            path: scratch.path().to_owned(),
+            artifact_digest: None,
+        })?;
+        let mut sources = BTreeMap::from([(
+            manifest.package.id.clone(),
+            SchemaSource {
+                version: manifest.package.version.clone(),
+                artifact: None,
+            },
+        )]);
+        validate_candidates(std::slice::from_ref(&candidate), &sources)?;
+        sources
+            .values_mut()
+            .next()
+            .unwrap()
+            .version
+            .push_str("-different");
+        assert!(validate_candidates(&[candidate], &sources).is_err());
+        Ok(())
+    }
 }

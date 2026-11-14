@@ -29,7 +29,7 @@ wasm-encoder = { workspace = true }
 
 [dev-dependencies]
 wamn-build.workspace = true
-wamn-environment-control = { workspace = true }
+wamn-environment = { workspace = true }
 wamn-release-control = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-control-provision = { workspace = true }

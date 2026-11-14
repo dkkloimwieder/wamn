@@ -110,7 +110,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         .execute(&mut admin)
         .await
         .map(drop)?;
-    wamn_environment_control::platform_migrations::install_project(&mut admin).await?;
+    wamn_environment::platform_migrations::install_project(&mut admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::platform_principals_sql("automation.invalid")?).to_string(),
     ))

@@ -2,7 +2,7 @@
 
 use sqlx::Row as _;
 use std::path::{Path, PathBuf};
-use wamn_environment_control::environment::{
+use wamn_environment::environment::{
     self,
     document::{DeclaredRelease, EnvironmentDocument},
 };
@@ -105,7 +105,7 @@ pub const POLICY: &str = "dev";
 pub const PLATFORM_DOMAIN: &str = "example.invalid";
 
 pub fn fixture_host_group(document: &EnvironmentDocument, local: &str) -> Value {
-    let installed = wamn_environment_control::platform::control::host_values(&document.org);
+    let installed = wamn_environment::platform::control::host_values(&document.org);
     let shared =
         environment::ensure::materializer_host_values(document, 70, 1, 120, None, false, None)
             .expect("shared environment host");
@@ -142,7 +142,6 @@ pub fn fixture_document(env: &str, route_host: &str, digest: &str) -> Environmen
             PACKAGE.to_owned(),
             environment::document::ApplicationSelection {
                 current: DeclaredRelease::Digest(digest.to_owned()),
-                previous: None,
                 hostname: route_host.to_owned(),
                 revocation_seconds: 5,
                 client: None,
@@ -262,7 +261,7 @@ pub mod http {
         ComponentDescriptor, ComponentPackageCoordinate, ServingComponent, ServingManifest,
         WiringDocument,
     };
-    use wamn_environment_control::environment::document::EnvironmentDocument;
+    use wamn_environment::environment::document::EnvironmentDocument;
 
     pub const SERVICE: &str = "http-fixture";
     pub const ORIGIN: &str = "http://http-fixture:8080";
@@ -548,16 +547,16 @@ pub mod workflow {
     use sqlx::{Connection as _, Row as _};
     use std::collections::BTreeMap;
     use std::path::Path;
-    use wamn_environment_control::environment::document::{DeclaredRelease, EnvironmentDocument};
+    use wamn_environment::environment::document::{DeclaredRelease, EnvironmentDocument};
     const ENVIRONMENT: &str = "integration";
     const CONSUMER: &str = "rest_consumer_fixture";
     use wamn_broker::Publisher;
     use wamn_catalog::WiringDocument;
-    use wamn_environment_control::author_workflow::{
+    use wamn_environment::author_workflow::{
         AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger, author_workflow_in_databases,
     };
-    use wamn_environment_control::environment;
-    use wamn_environment_control::workflow_lifecycle::{
+    use wamn_environment::environment;
+    use wamn_environment::workflow_lifecycle::{
         WorkflowVersion, disable_workflow, enable_workflow,
     };
 
@@ -1034,9 +1033,8 @@ pub mod workflow {
             // models in two schemas. The connector supplies the workflow components.
             applications: BTreeMap::from([(
                 connector.to_owned(),
-                wamn_environment_control::environment::document::ApplicationSelection {
+                wamn_environment::environment::document::ApplicationSelection {
                     current: DeclaredRelease::None,
-                    previous: None,
                     hostname: "integration.orders.example".into(),
                     revocation_seconds: 5,
                     client: None,

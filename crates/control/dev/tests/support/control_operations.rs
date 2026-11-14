@@ -7,7 +7,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_catalog::HostRouteSet;
-use wamn_environment_control::platform::{artifact_plan, document::Provider};
+use wamn_environment::platform::{artifact_plan, document::Provider};
 
 use super::{Journey, get, route_request, success};
 
@@ -153,7 +153,7 @@ pub(super) async fn exercise(
         journey
             .apply(
                 &format!("bootstrap-{application}-code"),
-                &mut journey.deploy(&artifacts[key]),
+                &mut journey.deploy(application, &artifacts[key]),
             )
             .await?;
     }
@@ -207,7 +207,10 @@ pub(super) async fn exercise(
     let before = document(journey, &coordinate).await?;
     let alpha_release = application_release(journey, "alpha").await?;
     let deployed = control
-        .operation("application.deploy", json!({"release":artifacts["b1"]}))
+        .operation(
+            "application.deploy",
+            json!({"application":"beta","release":artifacts["b1"]}),
+        )
         .await?;
     let after = document(journey, &coordinate).await?;
     ensure!(
@@ -315,7 +318,10 @@ async fn denial(control: &Control<'_>, identity_url: &str, release: &str) -> any
     let before = jobs(control).await?;
     // A control route denial is the documented 403 `permission-denied` delivery answer.
     let answer = outsider
-        .request("application.deploy", json!({"release":release}))
+        .request(
+            "application.deploy",
+            json!({"application":"alpha","release":release}),
+        )
         .await;
     ensure!(
         answer

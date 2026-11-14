@@ -94,3 +94,7 @@ W20. S12 runs as three serial lanes after S7-C: S12-A (bindings and storage), S1
 - P5: wamn consolidates the clients that it owns. The upstream transport inside `oci-client` stays.
 - Logging uses the public binding hook of the pinned wash runtime and the host invocation span. Nobody recreates the guest context parser.
 - C33 is fixed at `18829c35c`, and the cache replacement keeps that fix.
+
+W21. Blob store aliases on palette nodes (S7-C question). A blob node keeps any store alias per node. The alias comes from the invocation configuration of the node. The sealed palette descriptor keeps the declaration, and nobody seals the `__STORE_ALIAS__` placeholder as a literal alias.
+
+W22. CNPG managed roles (C22, S10-A question). The registry facts own the role list. The installer derives the org and project roles from `wamn-registry` and the fixed platform roles from code, and it writes them into the Helm values on each install. Helm values hold no role list that another source does not derive. Bootstrap installs the platform roles alone, and partial provisioning derives what the registry holds at that time. No new table or column.

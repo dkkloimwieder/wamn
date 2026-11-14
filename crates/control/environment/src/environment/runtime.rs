@@ -599,7 +599,7 @@ mod tests {
         let digest = format!("sha256:{}", "a".repeat(64));
         let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
             "org":"example", "project":"orders", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
-            "applications":{"orders":{"packages":["orders"],"current":digest,"revocation_seconds":5,"hostname":"orders.example"}}
+            "applications":{"orders":{"revocation_seconds":5,"hostname":"orders.example"}}
         }))?)?;
         let shared = crate::environment::ensure::materializer_host_values(
             &document, 70, 1, 120, None, false, None,

@@ -4,7 +4,7 @@ use serde_json::json;
 use sqlx::{Connection as _, Row as _};
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_compiler::manifest::PackageManifest;
-use wamn_environment_control::environment::{analyse, bindings, document::EnvironmentDocument};
+use wamn_environment::environment::{analyse, bindings, document::EnvironmentDocument};
 use wamn_platform_identity::connections::administration;
 
 async fn connect(url: &str) -> sqlx::PgConnection {
@@ -13,10 +13,17 @@ async fn connect(url: &str) -> sqlx::PgConnection {
     client
 }
 fn document() -> EnvironmentDocument {
-    EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
+    let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
         "org":"acme","project":"one","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,
         "integrations":{"erp":{"version":1}},
-        "applications": {"app":{"current": format!("sha256:{}","a".repeat(64)), "revocation_seconds":5,"hostname": "one.example", "packages":["fixture"],"connections":{"upstream":"erp"}}}})).unwrap()).unwrap()
+        "applications": {"app":{"revocation_seconds":5,"hostname": "one.example","connections":{"upstream":"erp"}}}})).unwrap()).unwrap();
+    let selection = document.applications.get_mut("app").unwrap();
+    selection.current = wamn_environment::environment::document::DeclaredRelease::Digest(format!(
+        "sha256:{:064x}",
+        1
+    ));
+    selection.packages.insert("fixture".to_owned());
+    document
 }
 fn package(integration_type: &str) -> PackageManifest {
     let interface = match integration_type {
@@ -81,7 +88,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
     // Neither an unreferenced integration nor another application's connection is a prerequisite.
     doc.integrations.insert(
         "unavailable".into(),
-        wamn_environment_control::environment::document::Integration { version: 1 },
+        wamn_environment::environment::document::Integration { version: 1 },
     );
     let mut unrelated = doc.applications["app"].clone();
     unrelated.packages = std::collections::BTreeSet::from(["unrelated".into()]);
@@ -275,7 +282,7 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate() {
     doc.integrations.clear();
     doc.integrations.insert(
         "meter".into(),
-        wamn_environment_control::environment::document::Integration { version: 2 },
+        wamn_environment::environment::document::Integration { version: 2 },
     );
     doc.applications
         .get_mut("app")
@@ -504,7 +511,7 @@ async fn blobstore_interfaces_accept_another_storage_provider() {
     let mut doc = document();
     doc.integrations = std::collections::BTreeMap::from([(
         "labels".into(),
-        wamn_environment_control::environment::document::Integration { version: 1 },
+        wamn_environment::environment::document::Integration { version: 1 },
     )]);
     doc.applications
         .get_mut("app")
@@ -565,7 +572,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface() {
     let mut doc = document();
     doc.integrations = std::collections::BTreeMap::from([(
         "meter".into(),
-        wamn_environment_control::environment::document::Integration { version: 1 },
+        wamn_environment::environment::document::Integration { version: 1 },
     )]);
     doc.applications
         .get_mut("app")
@@ -667,7 +674,7 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings() {
     );
     doc.integrations = std::collections::BTreeMap::from([(
         "meter".into(),
-        wamn_environment_control::environment::document::Integration { version: 1 },
+        wamn_environment::environment::document::Integration { version: 1 },
     )]);
     doc.applications
         .get_mut("app")

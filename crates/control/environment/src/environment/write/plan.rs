@@ -121,7 +121,12 @@ pub(super) fn release_values(
     let applications = std::collections::BTreeMap::from([(
         application.to_owned(),
         wamn_catalog::ApplicationDefinition {
-            packages: selection.packages.clone(),
+            packages: manifest
+                .release
+                .packages
+                .iter()
+                .map(|package| package.package_id().to_owned())
+                .collect(),
             connections: std::collections::BTreeMap::new(),
         },
     )]);

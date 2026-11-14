@@ -19,11 +19,11 @@ pub use wamn_engine::component_admission::{
 };
 pub use wamn_engine::engine::build_engine;
 pub use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-pub use wamn_environment_control::author_workflow::{
+pub use wamn_environment::author_workflow::{
     AuthorWorkflowError, AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution,
     WorkflowTrigger, author_workflow_in_databases,
 };
-pub use wamn_environment_control::workflow_lifecycle::{
+pub use wamn_environment::workflow_lifecycle::{
     WorkflowLifecycleError, WorkflowLifecycleErrorType, WorkflowVersion, disable_workflow,
     enable_workflow,
 };
@@ -185,7 +185,7 @@ pub async fn fixture() -> Fixture {
         .await
         .map(drop)
         .unwrap();
-    wamn_environment_control::platform_migrations::install_project(&mut admin)
+    wamn_environment::platform_migrations::install_project(&mut admin)
         .await
         .expect("install the run plane and the catalog");
     sqlx::raw_sql(sqlx::AssertSqlSafe(

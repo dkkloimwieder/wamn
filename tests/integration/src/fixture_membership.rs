@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use wamn_broker::Publisher;
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::validate_project_env;
-use wamn_environment_control::provision_project_env::provisioning_transaction;
+use wamn_environment::provision_project_env::provisioning_transaction;
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::{grant_project_env_membership, revoke_project_env_membership};
 

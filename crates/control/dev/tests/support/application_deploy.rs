@@ -14,8 +14,8 @@ use anyhow::{Context as _, ensure};
 use base64::Engine as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_environment_control::environment::document::{EnvironmentDocument, SchemaMode};
-use wamn_environment_control::platform::document::Provider;
+use wamn_environment::environment::document::{EnvironmentDocument, SchemaMode};
+use wamn_environment::platform::document::Provider;
 
 use super::{POLL_LIMIT, ProcessGroup, Run, execute, get, kubectl, success};
 
@@ -106,8 +106,15 @@ impl Journey<'_> {
         Ok(())
     }
 
-    fn deploy(&self, digest: &str) -> Command {
-        let mut command = self.command(&["deploy", "--release", digest, "--env"]);
+    fn deploy(&self, application: &str, digest: &str) -> Command {
+        let mut command = self.command(&[
+            "deploy",
+            "--application",
+            application,
+            "--release",
+            digest,
+            "--env",
+        ]);
         command.arg(&self.file);
         command
     }
@@ -117,7 +124,7 @@ impl Journey<'_> {
         let release = status["applications"]["alpha"]["current"]
             .as_str()
             .context("canonical alpha selection")?;
-        Ok(self.deploy(release))
+        Ok(self.deploy("alpha", release))
     }
 
     async fn status(&self) -> anyhow::Result<Value> {
@@ -400,8 +407,8 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
         "org":run.document.org,"project":project,"env":environment,"target":"cloud","policy":"dev","revocation_seconds":60,
         "applications":{
-            "alpha":{"current":"none","revocation_seconds":5,"hostname":alpha_host,"packages":["alpha"]},
-            "beta":{"current":"none","revocation_seconds":5,"hostname":beta_host,"packages":["beta"]}
+            "alpha":{"revocation_seconds":5,"hostname":alpha_host},
+            "beta":{"revocation_seconds":5,"hostname":beta_host}
         }
     }))?)?;
     std::fs::write(&file, document.to_kcl())?;
@@ -727,7 +734,7 @@ async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> any
         journey
             .apply(
                 &format!("install-{application}"),
-                &mut journey.deploy(&artifacts[key]),
+                &mut journey.deploy(application, &artifacts[key]),
             )
             .await?;
     }
@@ -758,7 +765,7 @@ async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> any
     let mut database = observer(journey).await?;
     // Hold the application-DDL lock so the stopped state is observable before reset writes.
     let mut blocked = database.begin().await?;
-    sqlx::raw_sql(wamn_environment_control::apply_package::LOCK_SQL)
+    sqlx::raw_sql(wamn_environment::apply_package::LOCK_SQL)
         .execute(&mut *blocked)
         .await?;
     let stopped = async {
@@ -791,9 +798,7 @@ async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> any
     ensure!(indexed, "reset omitted the selected package's index");
     for (app, (_, widget)) in &rows {
         ensure!(
-            status["applications"][app]["current"] == selections["applications"][app]["current"]
-                && status["applications"][app]["previous"]
-                    == selections["applications"][app]["previous"],
+            status["applications"][app]["current"] == selections["applications"][app]["current"],
             "reset changed {app}'s code selections"
         );
         let removed: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
@@ -842,7 +847,10 @@ async fn application_recovery(
         )
         .await?;
     journey
-        .apply("install-alpha", &mut journey.deploy(&artifacts["a0"]))
+        .apply(
+            "install-alpha",
+            &mut journey.deploy("alpha", &artifacts["a0"]),
+        )
         .await?;
     let rows = data(journey).await?;
     let mut database = observer(journey).await?;
@@ -943,7 +951,7 @@ async fn first_install(
                 .await?;
         }
         let mut command = if after_sql {
-            journey.deploy(digest)
+            journey.deploy("beta", digest)
         } else {
             let mut command = journey.cli(
                 &journey.run.binary.with_file_name("wamn-ctl"),
@@ -1066,7 +1074,7 @@ async fn first_install(
     let mut database = observer(journey).await?;
     let baseline = stored(journey, &mut database).await?;
     let output = journey
-        .run("install-beta", &mut journey.deploy(digest))
+        .run("install-beta", &mut journey.deploy("beta", digest))
         .await?;
     ensure!(
         output.status.success(),
@@ -1359,7 +1367,7 @@ async fn runtime(journey: &Journey<'_>, app: &str) -> anyhow::Result<Value> {
     }
     ensure!(!workloads.is_empty(), "{app} has no workload");
     let service = get(journey.run, "hosts", "service", &format!("{name}-http")).await?;
-    let runtime = json!({"current":selected["current"],"previous":selected["previous"],"hostname":selected["hostname"],"revision":observed["revision"],"live":observed["live"],"pods":uids,"deployment":deployment["spec"],"workloads":workloads,"service":service["spec"]});
+    let runtime = json!({"current":selected["current"],"hostname":selected["hostname"],"revision":observed["revision"],"live":observed["live"],"pods":uids,"deployment":deployment["spec"],"workloads":workloads,"service":service["spec"]});
     eprintln!("{app} runtime: {runtime}");
     Ok(runtime)
 }
@@ -1399,7 +1407,7 @@ async fn recovery(
         let before = runtime(journey, "beta").await?;
         let alpha_before = runtime(journey, "alpha").await?;
         let output = journey
-            .run("failed-alpha", &mut journey.deploy(candidate))
+            .run("failed-alpha", &mut journey.deploy("alpha", candidate))
             .await?;
         ensure!(
             !output.status.success(),
@@ -1408,8 +1416,8 @@ async fn recovery(
         let status = journey.status().await?;
         let alpha = &status["applications"]["alpha"];
         ensure!(
-            alpha["current"] == candidate && alpha["previous"] == running,
-            "failed selection was not retained"
+            alpha["current"] == running,
+            "failed rollout replaced the successful release"
         );
         ensure!(
             alpha["observed"]["live"][running]
@@ -1510,13 +1518,13 @@ async fn recovery(
     result?;
     cleanup?;
     journey
-        .apply("recover-alpha", &mut journey.reapply().await?)
+        .apply("recover-alpha", &mut journey.deploy("alpha", candidate))
         .await?;
     let status = journey.status().await?;
     let selected = &status["applications"]["alpha"];
     ensure!(
-        selected["current"] == candidate && selected["previous"] == running,
-        "recovery changed the persisted selection"
+        selected["current"] == candidate,
+        "recovery did not apply the requested release"
     );
     let live = selected["observed"]["live"]
         .as_object()

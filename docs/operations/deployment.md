@@ -138,7 +138,7 @@ POST requests put those members under `value`.
 GET requests use the existing read query parameters.
 POST requests also supply `request_id` in the existing request envelope.
 
-`POST /wamn_control/application/deploy` takes a published `release` digest.
+`POST /wamn_control/application/deploy` takes `application` and a published `release` digest.
 It selects and deploys that release's declared application.
 `POST /wamn_control/application/rollback` takes `application` and an optional `release` digest.
 Both operations change code selections without running SQL.
@@ -205,25 +205,22 @@ Supply the existing application inputs before trusted commands:
 - Set `WAMN_REGISTRY_AUTH_FILE` and the existing certificate and broker inputs for that platform.
 - Set `DATABASE_URL` to a separate disposable PostgreSQL server when building source.
 
-The canonical environment document lives in a non-secret ConfigMap in the provisioning namespace, `hosts`.
-Its name is the existing environment resource name, `e-<env-slug>-<coordinate-hash>`.
-Its `data.environment.json` holds the existing JSON document form.
-Set `revocation_seconds` for the project at the top level and for each application.
-These required nonnegative values bound credential revocation delay when an invalidation is lost.
-Zero disables auth caching. Deploy writes the settings before the host starts; restart hosts after changing a bound.
-Run `wamn env apply <environment.k> --application <application>` to create it or apply explicit configuration edits.
-Configuration edits preserve recorded application release pairs.
-Checkout files are configuration inputs or exports.
-Deploy, rollback, status, and deployed schema operations read the ConfigMap.
-If the ConfigMap cannot be read, deployed operations fail.
-The `--env` file names the target.
-Stale shared configuration or target selections produce a warning with both values.
-`wamn env show <environment.k>` exports the canonical document as KCL.
+The applied environment configuration lives in `registry.environment_projects.configuration`.
+`wamn-registry` defines its type. Unconfigured deployments hold NULL.
+The configuration contains hostnames, policy, schema mode, clients, connections and integrations.
+It contains no release digest or package membership. Old document shapes are refused.
+Set `revocation_seconds` for the project and each application.
+These nonnegative values bound credential revocation delay when an invalidation is lost.
+Zero disables auth caching. Restart hosts after changing a bound.
+`env apply` reads `environment.k` and stores the configuration after provisioning succeeds.
+Other lifecycle operations take the coordinate and read the registry.
+Helm history records the applied release. Each release manifest defines its packages.
+The configuration export contains no code selection.
 Use a source package directory for source deployment. Use an application release digest for deployment without source:
 
 ```bash
-wamn deploy apps/sample_app --env environments/dev/environment.k
-wamn deploy --release sha256:<release-digest> --env environments/dev/environment.k
+wamn deploy apps/sample_app --application sample_app --env environments/dev/environment.k
+wamn deploy --release sha256:<release-digest> --application sample_app --env environments/dev/environment.k
 wamn rollback sample_app --env environments/dev/environment.k
 wamn rollback sample_app --release sha256:<release-digest> --env environments/dev/environment.k
 wamn status --env environments/dev/environment.k
@@ -234,19 +231,20 @@ Provision the environment with `env apply` and apply its application SQL before 
 Each application owns its Helm release, host group, workloads, Services, and route ConfigMaps.
 The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
 Code-only deploy, reapply, and rollback preserve installed SQL and other applications' data, permissions, routes, and workloads.
-Under the application lock, selection derives `previous` from the last successful Helm apply.
-Helm keeps the applied-release history.
-Deploy and rollback write only the target application's release pair to the ConfigMap before Helm applies it.
-The write uses the resourceVersion read with the document.
-On a conflict, the command rereads and merges only the target pair, with bounded retries.
-Deploy and rollback never write the checkout file.
-An explicit rollback release resolves an ambiguous prior selection. Rollback never reverses SQL.
+Helm is the only owner of release history. Deploy names the application and release digest.
+After a failed head, rollback restores the latest successful revision, including its web client pin.
+After a successful head, rollback restores the preceding distinct release and client pair.
+An explicit rollback digest selects that release. Rollback preserves installed SQL.
+Failed Helm upgrades keep their revision and pods for inspection. Rollback is an explicit operation.
 
 Deployment prepares bindings and grants before Helm changes the application.
 Readiness precedes a bounded drain wait, which lets old hosts finish their work.
 The policy's `drain_bound_seconds` supplies the pod termination grace period. Observation allows another 15 seconds for pod removal.
-If old hosts remain or pinned work still needs a binding, WAMN retains the binding and its required grants.
-If observation fails, WAMN retains those facts. Retry the same selection after repairing the reported failure.
+Rollout retains older bindings, release facts and generated permissions.
+A separate retention operation removes facts that no live host, current selection or unfinished run needs.
+If host observation fails, retention refuses cleanup.
+Environment status reports unfinished runs with no live host.
+If the lifecycle lock session fails, the operation stops and returns an error.
 
 ### Select SQL independently
 
@@ -267,7 +265,7 @@ wamn schema apply apps/sample_app --env environments/dev/environment.k
 wamn schema reset --env environments/dev/environment.k
 ```
 
-An application name selects its configured `current` release. `--release` selects another application release for SQL without selecting its code.
+An application name selects its latest successful Helm release. `--release` selects another application release for SQL without selecting its code.
 A source diff requires current build output and performs no publication or mutation.
 A deployed source apply builds and publishes first, then executes those immutable bytes through the same SQL Job.
 `schema publish` prints the application release digest without installing SQL or selecting code.
@@ -836,9 +834,10 @@ Application package migrations keep their own streams.
 
 ## Rollback and maintenance
 
-Run `wamn rollback <application> --env <environment.k>` to restore the prior application release.
-If the prior selection is ambiguous, select the target with `--release <digest>`.
-The low-level form is `wamn-ctl env rollback <environment.k> --application <application> [--release <digest>]`.
+Rollback restores the latest successful revision after a failed head. Otherwise, it restores the preceding distinct release and client pin.
+Use `wamn-ctl env rollback <org/env/project> --application <application>` for the low-level command.
+`env show` and `env status` also take `org/env/project`.
+Use `--release <digest>` to select an explicit published release.
 Both forms use the same selection and application deployment owner.
 
 A release digest selects exact bytes, but a mutable image tag does not.

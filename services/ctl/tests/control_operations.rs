@@ -134,7 +134,7 @@ fn command(root: &Path, url: &str, arguments: &[&str]) -> anyhow::Result<Command
         &file,
         serde_json::to_vec(&json!({
             "org":"acme", "project":"apps", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
-            "applications":{"a":{"current":"none", "revocation_seconds":5,"hostname":"a.invalid", "packages":["a"]}}
+            "applications":{"a":{ "revocation_seconds":5,"hostname":"a.invalid"}}
         }))?,
     )?;
     let internal = arguments.first() == Some(&"env");
@@ -152,7 +152,11 @@ fn command(root: &Path, url: &str, arguments: &[&str]) -> anyhow::Result<Command
     if !internal {
         command.arg("--env");
     }
-    command.arg(file);
+    if internal {
+        command.arg("acme/dev/apps");
+    } else {
+        command.arg(file);
+    }
     Ok(command)
 }
 
@@ -214,7 +218,7 @@ fn remote_commands_send_only_contract_targets_without_direct_credentials() -> an
         })
     {
         let arguments: Vec<&str> = match attachment.route.operation {
-            "application.deploy" => vec!["deploy", "--release", &digest],
+            "application.deploy" => vec!["deploy", "--application", "a", "--release", &digest],
             "application.rollback" => vec!["rollback", "a", "--release", &digest],
             "schema.diff" => vec!["schema", "diff", "a", "--release", &digest],
             "schema.apply" => vec!["schema", "apply", "a", "--release", &digest],

@@ -16,7 +16,7 @@ use sqlx::{Connection as _, Row as _};
 use wamn_control_provision::{
     PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql, sql,
 };
-use wamn_environment_control::create_user::{CreateUserRequest, create_user_principal};
+use wamn_environment::create_user::{CreateUserRequest, create_user_principal};
 use wamn_platform_identity::{IdentityError, IdentityErrorType};
 
 use wamn_test_infrastructure::locked_database;

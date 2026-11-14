@@ -93,25 +93,23 @@ pub(in crate::environment) async fn recorded_cluster(
 /// Reset every application from retained sources, or replace one application's SQL source.
 pub async fn reset_deployed(
     platform: &Platform,
-    file: &std::path::Path,
+    triple: &wamn_registry::Triple,
     candidate: Option<(&str, &str)>,
 ) -> anyhow::Result<Value> {
     let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("reset administrator URL")?;
-    Box::pin(reset_deployed_with_admin(platform, file, candidate, &admin)).await
+    Box::pin(reset_deployed_with_admin(
+        platform, triple, candidate, &admin,
+    ))
+    .await
 }
 
 pub async fn reset_deployed_with_admin(
     platform: &Platform,
-    file: &std::path::Path,
+    triple: &wamn_registry::Triple,
     candidate: Option<(&str, &str)>,
     admin_url: &str,
 ) -> anyhow::Result<Value> {
-    let document = EnvironmentDocument::read_deployed(
-        platform,
-        file,
-        candidate.map(|(application, _)| application),
-    )
-    .await?;
+    let document = EnvironmentDocument::read_serving(platform, triple).await?;
     let private = ensure::PrivateDirectory::create()?;
     let mut platform = platform.clone();
     super::super::runtime::resolve_target(&mut platform, &document, &private.path(".")).await?;
@@ -120,114 +118,117 @@ pub async fn reset_deployed_with_admin(
         &document.triple(),
     )
     .await?;
-    let result = async {
-        let current = EnvironmentDocument::read_target(&platform, &document, None).await?;
-        ensure!(
-            current == document,
-            "environment document changed during reset"
-        );
-        let state = schema::state(&platform, &document).await?;
-        ensure!(
-            state.disposable == Some(true),
-            "environment is not recorded as disposable"
-        );
-        let mut sources = state
-            .packages
-            .iter()
-            .map(|(id, p)| {
-                (
-                    id.clone(),
-                    SchemaSource {
-                        version: p.coordinate.package_version().to_owned(),
-                        artifact: p.artifact_digest.clone(),
-                    },
-                )
-            })
-            .collect::<std::collections::BTreeMap<_, _>>();
-        let mut candidates = Vec::new();
-        if let Some((application, release)) = candidate {
-            let (_, selected) =
-                schema::release_candidates(&platform, &document, application, Some(release))
-                    .await?;
-            for c in &selected {
-                let metadata = wamn_catalog::package_schema::package_metadata(&c.directory)?;
-                sources.insert(
-                    metadata.coordinate.package_id().to_owned(),
-                    SchemaSource {
-                        version: metadata.coordinate.package_version().to_owned(),
-                        artifact: c.root.artifact_digest.clone(),
-                    },
-                );
-            }
-            candidates = selected;
-        }
-        // A failed reset can leave a package without a completion row. Its declared release
-        // supplies the source when the same operation is retried.
-        for (application, selection) in &document.applications {
-            if matches!(
-                selection.current,
-                super::super::document::DeclaredRelease::None
-            ) || selection.packages.iter().all(|id| sources.contains_key(id))
-            {
-                continue;
-            }
-            let (_, selected) =
-                schema::release_candidates(&platform, &document, application, None).await?;
-            for c in selected {
-                let metadata = wamn_catalog::package_schema::package_metadata(&c.directory)?;
-                let id = metadata.coordinate.package_id();
-                if !sources.contains_key(id) {
+    let result = lock
+        .protect(async {
+            let current = EnvironmentDocument::read_serving(&platform, triple).await?;
+            ensure!(
+                current == document,
+                "environment document changed during reset"
+            );
+            let state = schema::state(&platform, &document).await?;
+            ensure!(
+                state.disposable == Some(true),
+                "environment is not recorded as disposable"
+            );
+            let mut sources = state
+                .packages
+                .iter()
+                .map(|(id, p)| {
+                    (
+                        id.clone(),
+                        SchemaSource {
+                            version: p.coordinate.package_version().to_owned(),
+                            artifact: p.artifact_digest.clone(),
+                        },
+                    )
+                })
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let mut candidates = Vec::new();
+            if let Some((application, release)) = candidate {
+                let (_, selected) =
+                    schema::release_candidates(&platform, &document, application, Some(release))
+                        .await?;
+                for c in &selected {
+                    let metadata = wamn_catalog::package_schema::package_metadata(&c.directory)?;
                     sources.insert(
-                        id.to_owned(),
+                        metadata.coordinate.package_id().to_owned(),
                         SchemaSource {
                             version: metadata.coordinate.package_version().to_owned(),
                             artifact: c.root.artifact_digest.clone(),
                         },
                     );
-                    candidates.push(c);
+                }
+                candidates = selected;
+            }
+            // A failed reset can leave a package without a completion row. Its declared release
+            // supplies the source when the same operation is retried.
+            for (application, selection) in &document.applications {
+                if matches!(
+                    selection.current,
+                    super::super::document::DeclaredRelease::None
+                ) || selection.packages.iter().all(|id| sources.contains_key(id))
+                {
+                    continue;
+                }
+                let (_, selected) =
+                    schema::release_candidates(&platform, &document, application, None).await?;
+                for c in selected {
+                    let metadata = wamn_catalog::package_schema::package_metadata(&c.directory)?;
+                    let id = metadata.coordinate.package_id();
+                    if !sources.contains_key(id) {
+                        sources.insert(
+                            id.to_owned(),
+                            SchemaSource {
+                                version: metadata.coordinate.package_version().to_owned(),
+                                artifact: c.root.artifact_digest.clone(),
+                            },
+                        );
+                        candidates.push(c);
+                    }
                 }
             }
-        }
-        for (id, source) in &sources {
-            if candidates.iter().any(|c: &Candidate| {
-                wamn_catalog::package_schema::package_metadata(&c.directory)
-                    .is_ok_and(|m| m.coordinate.package_id() == id)
-            }) {
-                continue;
+            for (id, source) in &sources {
+                if candidates.iter().any(|c: &Candidate| {
+                    wamn_catalog::package_schema::package_metadata(&c.directory)
+                        .is_ok_and(|m| m.coordinate.package_id() == id)
+                }) {
+                    continue;
+                }
+                let digest = source
+                    .artifact
+                    .as_deref()
+                    .with_context(|| format!("retained package {id} has no published source"))?;
+                candidates.push(schema::open(&platform, id, &source.version, Some(digest)).await?);
             }
-            let digest = source
-                .artifact
-                .as_deref()
-                .with_context(|| format!("retained package {id} has no published source"))?;
-            candidates.push(schema::open(&platform, id, &source.version, Some(digest)).await?);
-        }
-        schema::validate_candidates(&document, &candidates, &sources)?;
-        // Resolve every file through SQLx before users stop or data changes.
-        for c in &candidates {
-            crate::apply_package::prepare_package(&c.root).await?;
-        }
-        let url = ensure::project_url(&platform, &document.triple()).await?;
-        let admin =
-            wamn_postgres::database_configuration(admin_url, &wamn_postgres::identity(&url)?.1)?;
-        let event_inputs = platform
-            .events
-            .as_ref()
-            .context("reset requires the environment event broker")?;
-        let broker = async_nats::jetstream::new(event_inputs.nats.connect().await?);
-        stop_users(&platform, &document).await?;
-        crate::enable_cdc_project_env::discard_backlog(
-            &platform.system_database_url,
-            &admin,
-            &document.triple(),
-        )
-        .await?;
-        reset_database(&platform.system_database_url, &admin, &document.triple()).await?;
-        wamn_broker::streams::discard(&broker, &document.triple()).await?;
-        schema::apply_candidates(&platform, &document, candidates, &url).await?;
-        resume_users(&platform, &document, admin_url).await?;
-        Ok(serde_json::json!({"database": wamn_postgres::identity(&url)?.1, "result":"reset"}))
-    }
-    .await;
+            schema::validate_candidates(&candidates, &sources)?;
+            // Resolve every file through SQLx before users stop or data changes.
+            for c in &candidates {
+                crate::apply_package::prepare_package(&c.root).await?;
+            }
+            let url = ensure::project_url(&platform, &document.triple()).await?;
+            let admin = wamn_postgres::database_configuration(
+                admin_url,
+                &wamn_postgres::identity(&url)?.1,
+            )?;
+            let event_inputs = platform
+                .events
+                .as_ref()
+                .context("reset requires the environment event broker")?;
+            let broker = async_nats::jetstream::new(event_inputs.nats.connect().await?);
+            stop_users(&platform, &document).await?;
+            crate::enable_cdc_project_env::discard_backlog(
+                &platform.system_database_url,
+                &admin,
+                &document.triple(),
+            )
+            .await?;
+            reset_database(&platform.system_database_url, &admin, &document.triple()).await?;
+            wamn_broker::streams::discard(&broker, &document.triple()).await?;
+            schema::apply_candidates(&platform, &document, candidates, &url).await?;
+            resume_users(&platform, &document, admin_url).await?;
+            Ok(serde_json::json!({"database": wamn_postgres::identity(&url)?.1, "result":"reset"}))
+        })
+        .await;
     lock.release().await;
     result
 }

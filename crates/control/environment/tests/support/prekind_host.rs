@@ -93,8 +93,7 @@ async fn credential_secrets(
         .map(drop)?;
         if credential.database == CredentialDatabase::Control {
             let mut tx =
-                wamn_environment_control::provision_project_env::provisioning_transaction(system)
-                    .await?;
+                wamn_environment::provision_project_env::provisioning_transaction(system).await?;
             sqlx::raw_sql("SET LOCAL ROLE wamn_system")
                 .execute(&mut *tx)
                 .await
@@ -419,7 +418,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         PLATFORM_DOMAIN,
     )
     .await?;
-    wamn_environment_control::platform_migrations::install_project(&mut project).await?;
+    wamn_environment::platform_migrations::install_project(&mut project).await?;
     sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:prekind',false)").bind(&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut project).await.map(|result| result.rows_affected())?;
     sqlx::query("SELECT set_config('app.project_env_key',$1,false)")
         .bind(&project_env_key)
@@ -676,7 +675,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     document.integrations.clear();
     document.integrations.insert(
         "upstream".into(),
-        wamn_environment_control::environment::document::Integration { version: 1 },
+        wamn_environment::environment::document::Integration { version: 1 },
     );
     // Match the write mode declared by org_bindings::publish_declarations.
     let package = wamn_compiler::manifest::PackageManifest::from_slice(&serde_json::to_vec(
@@ -689,17 +688,15 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     )?)?;
     // The system base grants seeds the active cloud target used by this document.
     let mut tx =
-        wamn_environment_control::provision_project_env::provisioning_transaction(&mut seed)
-            .await?;
+        wamn_environment::provision_project_env::provisioning_transaction(&mut seed).await?;
     sqlx::raw_sql("SET LOCAL ROLE wamn_db_owner")
         .execute(&mut *tx)
         .await
         .map(drop)?;
     let reserved =
-        wamn_environment_control::environment::bindings::analyse(&mut tx, &document, &[package])
-            .await?;
+        wamn_environment::environment::bindings::analyse(&mut tx, &document, &[package]).await?;
     tx.commit().await?;
-    let _ = wamn_environment_control::environment::bindings::project_authority(
+    let _ = wamn_environment::environment::bindings::project_authority(
         control.url(),
         database.url(),
         &document,
@@ -737,7 +734,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let mut target = wamn_postgres::connect(database.url()).await?;
 
     let mut tx = target.begin().await?;
-    wamn_environment_control::environment::bindings::write(
+    wamn_environment::environment::bindings::write(
         &mut tx,
         &project_env_key,
         digest,
@@ -828,7 +825,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             wiring,
             &wiring.wiring_id,
             &[],
-            wamn_environment_control::author_workflow::WorkflowTrigger::Manual,
+            wamn_environment::author_workflow::WorkflowTrigger::Manual,
             None,
         )
         .await?;

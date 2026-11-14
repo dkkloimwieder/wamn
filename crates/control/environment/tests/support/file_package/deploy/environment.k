@@ -13,7 +13,8 @@ environment.Environment {
     }
     applications = {
         files = {
-            current = "__RELEASE_DIGEST__", revocation_seconds = 5, hostname = "files.orders.example", packages = ["file_fixture"]
+            revocation_seconds = 5
+            hostname = "files.orders.example"
             connections = {
                 files = "file-store"
                 "files-read" = "file-store"

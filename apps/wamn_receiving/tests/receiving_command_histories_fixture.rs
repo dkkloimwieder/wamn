@@ -1070,10 +1070,9 @@ async fn project_admin(
     let mut system = connect(&inputs.system_pg_url).await?;
     let mut target = connect(&inputs.project_pg_url).await?;
     let mut drops = AuthDrops::default();
-    let mut authority = wamn_environment_control::provision_project_env::provisioning_transaction(
-        &mut system.client,
-    )
-    .await?;
+    let mut authority =
+        wamn_environment::provision_project_env::provisioning_transaction(&mut system.client)
+            .await?;
     if org_admin && grant {
         wamn_platform_identity::org::grant_org_admin(&mut authority, principal, &inputs.org)
             .await?;

@@ -11,7 +11,7 @@ use wamn_compiler::{
     build::{default_output_root, package_output},
     build_record,
 };
-use wamn_environment_control::environment::{Platform, document::EnvironmentDocument};
+use wamn_environment::environment::{Platform, document::EnvironmentDocument};
 use wamn_package_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_release_control::publish_release::{
     EntryPublicationInputs, PublishReleaseRequest, publish_release,
@@ -29,8 +29,7 @@ pub async fn publish(
 ) -> anyhow::Result<(String, ManifestDigest)> {
     let source = build(document, root, database_url).await?;
     let mut platform = platform.clone();
-    wamn_environment_control::environment::runtime::resolve_platform(&mut platform, &document.org)
-        .await?;
+    wamn_environment::environment::runtime::resolve_platform(&mut platform, &document.org).await?;
     let registry = PackageRegistry {
         artifact_base: platform
             .package_artifact_base
@@ -158,7 +157,10 @@ async fn publish_built(
             applications: [(
                 application.clone(),
                 wamn_catalog::ApplicationDefinition {
-                    packages: selection.packages.clone(),
+                    packages: packages
+                        .iter()
+                        .map(|package| package.package_id().to_owned())
+                        .collect(),
                     connections: selection.connections.clone(),
                 },
             )]
@@ -189,30 +191,34 @@ pub fn sources(
         .canonicalize()
         .context("resolve selected package root")?;
     let manifest = read_package_manifest(&root)?;
-    let mut owners = document
-        .applications
-        .iter()
-        .filter(|(_, selection)| selection.packages.contains(&manifest.package.id));
-    let (application, selection) = owners
-        .next()
-        .context("source package has no declared application")?;
     ensure!(
-        owners.next().is_none(),
-        "source package belongs to multiple applications"
+        document.applications.len() == 1,
+        "select one application before publishing source"
     );
+    let application = document
+        .applications
+        .keys()
+        .next()
+        .expect("one application");
     let output = default_output_root(&root);
     let mut manifests = BTreeMap::new();
     manifests.insert(manifest.package.id.clone(), (root, manifest));
-    for id in &selection.packages {
-        if !manifests.contains_key(id) {
-            let root = build_record::source_root(&package_output(&output, id))?;
-            let manifest = read_package_manifest(&root)?;
-            ensure!(
-                &manifest.package.id == id,
-                "source directory does not declare package {id}"
-            );
-            manifests.insert(id.clone(), (root, manifest));
-        }
+    loop {
+        let missing = manifests
+            .values()
+            .flat_map(|(_, manifest)| manifest.base_dependencies.values())
+            .find(|dependency| !manifests.contains_key(&dependency.package))
+            .map(|dependency| dependency.package.clone());
+        let Some(id) = missing else {
+            break;
+        };
+        let root = build_record::source_root(&package_output(&output, &id))?;
+        let manifest = read_package_manifest(&root)?;
+        ensure!(
+            manifest.package.id == id,
+            "source directory does not declare package {id}"
+        );
+        manifests.insert(id, (root, manifest));
     }
     let mut visiting = BTreeSet::new();
     let mut visited = BTreeSet::new();
@@ -262,62 +268,27 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn source_membership_orders_dependencies_without_reading_other_applications()
+    fn selected_application_publishes_the_source_closure_without_document_membership()
     -> anyhow::Result<()> {
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
-        let mut expected = Vec::new();
-        for (id, dependency) in [
-            ("base", None),
-            ("middle", Some("base")),
-            ("overlay", Some("middle")),
-        ] {
-            let root = scratch.path().join(id);
-            std::fs::create_dir_all(root.join("generated"))?;
-            let mut manifest = json!({
-                "package": {"id": id, "version": "1.0.0"},
-                "required_platform_policy_contract": {"id": "fixture", "state": "satisfied"},
-                "models": {}, "components": {}, "connections": {}, "base_dependencies": {}
-            });
-            if let Some(dependency) = dependency {
-                manifest["base_dependencies"][dependency] = json!({
-                    "package": dependency, "version": "1.0.0",
-                    "digest": format!("sha256:{}", "a".repeat(64)), "operations": []
-                });
-            }
-            std::fs::write(
-                root.join("generated/wamn.json"),
-                serde_json::to_vec(&manifest)?,
-            )?;
-            expected.push(root);
-        }
-        let members = expected
-            .iter()
-            .map(|root| root.file_name().unwrap().to_str().unwrap())
-            .collect::<Vec<_>>();
+        std::fs::create_dir_all(scratch.path().join("generated"))?;
+        let manifest = wamn_package_control::test_support::source_manifest();
+        std::fs::write(
+            scratch.path().join("generated/wamn.json"),
+            serde_json::to_vec(&manifest)?,
+        )?;
         let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-            "org": "acme", "project": "source", "env": "dev", "target": "cloud", "policy": "dev","revocation_seconds":60,
-            "applications": {
-                "selected": {"current": "none", "revocation_seconds":5,"hostname": "selected.invalid", "packages": members},
-                "unavailable": {"current": "none", "revocation_seconds":5,"hostname": "unavailable.invalid", "packages": ["missing"]}
-            }
+            "org":"acme","project":"source","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,
+            "applications":{"selected":{"revocation_seconds":5,"hostname":"selected.example"}}
         }))?)?;
-        let (name, roots) = sources(&document, &scratch.path().join("overlay"))?;
-        assert_eq!(name, "selected");
-        assert_eq!(roots, expected);
-        document
-            .applications
-            .get_mut("selected")
-            .unwrap()
-            .packages
-            .remove("base");
-        assert!(sources(&document, &scratch.path().join("overlay")).is_err());
-        document
-            .applications
-            .get_mut("unavailable")
-            .unwrap()
-            .packages
-            .insert("overlay".into());
-        assert!(sources(&document, &scratch.path().join("overlay")).is_err());
+        let (application, roots) = sources(&document, scratch.path())?;
+        assert!(document.applications.contains_key(&application));
+        assert_eq!(roots, [scratch.path().canonicalize()?]);
+        document.applications.insert(
+            "other".to_owned(),
+            document.applications["selected"].clone(),
+        );
+        assert!(sources(&document, scratch.path()).is_err());
         Ok(())
     }
 }

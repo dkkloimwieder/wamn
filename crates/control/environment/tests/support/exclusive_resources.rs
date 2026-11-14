@@ -89,17 +89,25 @@ impl Fixture {
         "org":"acme","project":"one","env":"dev","target":"cloud",
         "integrations":{"meter":{"version":2}},"policy":"dev","revocation_seconds":60,
         "applications": {
-            "reader":{"current": format!("sha256:{}","c".repeat(64)), "revocation_seconds":5,"hostname": "reader.example", "packages":["modbus_reader"],"connections":{"registers":"meter"}},
-            "writer":{"current": format!("sha256:{}","c".repeat(64)), "revocation_seconds":5,"hostname": "reader.example", "packages":["observer_fixture"],"connections":{"registers":"meter"}}
+            "reader":{"revocation_seconds":5,"hostname": "reader.example","connections":{"registers":"meter"}},
+            "writer":{"revocation_seconds":5,"hostname": "reader.example","connections":{"registers":"meter"}}
         }}))?)?;
+        for (name, package) in [("reader", "modbus_reader"), ("writer", "observer_fixture")] {
+            document
+                .applications
+                .get_mut(name)
+                .unwrap()
+                .packages
+                .insert(package.to_owned());
+        }
         let release = loaded_release(&document, "reader")?;
         document.applications.get_mut("reader").unwrap().current =
-            wamn_environment_control::environment::document::DeclaredRelease::Digest(
+            wamn_environment::environment::document::DeclaredRelease::Digest(
                 release.release().manifest_digest.to_string(),
             );
         let writer = loaded_release(&document, "writer")?;
         document.applications.get_mut("writer").unwrap().current =
-            wamn_environment_control::environment::document::DeclaredRelease::Digest(
+            wamn_environment::environment::document::DeclaredRelease::Digest(
                 writer.release().manifest_digest.to_string(),
             );
         let package = wamn_compiler::manifest::PackageManifest::from_slice(&serde_json::to_vec(
@@ -199,7 +207,7 @@ impl Fixture {
         self.document.integrations.clear();
         self.document.integrations.insert(
             name.to_owned(),
-            wamn_environment_control::environment::document::Integration { version: 2 },
+            wamn_environment::environment::document::Integration { version: 2 },
         );
         for application in self.document.applications.values_mut() {
             application
@@ -211,7 +219,7 @@ impl Fixture {
             .applications
             .get_mut("reader")
             .unwrap()
-            .current = wamn_environment_control::environment::document::DeclaredRelease::Digest(
+            .current = wamn_environment::environment::document::DeclaredRelease::Digest(
             self.release.release().manifest_digest.to_string(),
         );
         apply(

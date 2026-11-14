@@ -74,22 +74,28 @@ pub async fn drain(
     let project_url = super::ensure::project_url(platform, &document.triple()).await?;
     let project_env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
-    let membership = &document.applications[&analysis.application];
-    let mut packages: Vec<_> = membership
-        .packages
-        .iter()
-        .filter(|package| {
-            document.application_for_package(package) == Some(analysis.application.as_str())
-        })
-        .cloned()
-        .collect();
-    packages.push(analysis.application.clone());
+    let observed = wamn_kubernetes::environment_state::observe_environment(
+        &platform.target.namespace,
+        &document.triple().to_string(),
+        |path| async move {
+            let body = super::ensure::kubectl(
+                platform,
+                &platform.target.namespace,
+                &["get", "--raw", &path],
+                None,
+            )
+            .await?;
+            serde_json::from_str(&body).context("read environment hosts")
+        },
+    )
+    .await?;
+    let environment_live = live_set(&observed.pods);
     let stranded = stranded(
         &project_url,
         &project_env_key,
         &document.env,
-        Some(&packages),
-        &live,
+        None,
+        &environment_live,
     )
     .await?;
     if !stranded.is_empty() {

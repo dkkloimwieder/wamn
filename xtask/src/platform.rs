@@ -39,7 +39,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     let ui = args
         .cluster
         .as_deref()
-        .map(wamn_environment_control::platform::document::ClusterDocument::compile)
+        .map(wamn_environment::platform::document::ClusterDocument::compile)
         .transpose()?
         .is_some_and(|cluster| !cluster.buckets.web.is_empty());
     let components = tempfile::tempdir()?;
@@ -293,7 +293,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     }
     values["platformUi"] = ui_digest.unwrap_or_default().into();
     std::fs::write(path, serde_yaml::to_string(&values)?)?;
-    wamn_environment_control::platform::artifact_plan::prepare_payload(&root, &stamped)?;
+    wamn_environment::platform::artifact_plan::prepare_payload(&root, &stamped)?;
     println!("{}", stamped.display());
     std::fs::copy(
         components.path().join("http.wasm"),

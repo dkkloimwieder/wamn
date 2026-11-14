@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_environment_control::environment::document::{DeclaredRelease, EnvironmentDocument};
-use wamn_environment_control::platform::artifact_plan::{self, SelectedChart};
+use wamn_environment::environment::document::{DeclaredRelease, EnvironmentDocument};
+use wamn_environment::platform::artifact_plan::{self, SelectedChart};
 
 use super::{Journey, Run, helm_history};
 
@@ -139,7 +139,7 @@ async fn applications(journey: &Journey<'_>) -> anyhow::Result<Value> {
         applications.insert(
             app,
             json!({
-                "current":selection["current"], "previous":selection["previous"],
+                "current":selection["current"],
                 "hostname":selection["hostname"], "served":served,
                 "release_name":name, "revision":observed["revision"],
                 "helm_revision":helm["revision"], "helm_status":helm["status"]
@@ -241,7 +241,6 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         .get_mut("alpha")
         .context("isolated application")?;
     application.current = DeclaredRelease::None;
-    application.previous = None;
     application.hostname = journey.isolated_host.into();
     let file = journey
         .run
@@ -275,7 +274,7 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         environment
             .apply(
                 "install-schema-application",
-                &mut environment.deploy(release),
+                &mut environment.deploy("alpha", release),
             )
             .await?;
     }

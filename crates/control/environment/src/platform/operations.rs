@@ -1,7 +1,5 @@
 //! Prepared inputs and namespace grants for server-authorized operation Jobs.
 
-use std::path::Path;
-
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_release_control::release_chart::Target;
@@ -61,22 +59,6 @@ pub(super) async fn prepare(
     .await
 }
 
-/// Prepare the chart carried by the ctl image with the server-selected values.
-///
-/// # Errors
-/// Returns an error if the image payload or selected chart metadata cannot be read.
-pub(crate) fn worker_chart(repository: &Path, inputs: &Path, chart: &Path) -> anyhow::Result<()> {
-    crate::platform::artifact_plan::copy_package_output(
-        &repository.join("deploy/platform/release"),
-        chart,
-    )?;
-    crate::platform::artifact_plan::prepare_payload(repository, chart)?;
-    for file in ["Chart.yaml", "values.yaml"] {
-        std::fs::copy(inputs.join(file), chart.join(file))?;
-    }
-    Ok(())
-}
-
 /// The accounts and Roles of one environment's code and privileged SQL workers.
 /// Their credentials reuse the existing platform identities.
 ///
@@ -123,10 +105,6 @@ pub fn target_objects(
                 json!({"apiGroups":["apps"],"resources":["deployments/scale"],"verbs":["get","update","patch"]}),
             ]);
         }
-        if !privileged {
-            // Only deploy/rollback persist the selected release pair by replacement.
-            host_rules.push(json!({"apiGroups":[""],"resources":["configmaps"],"resourceNames":[coordinate],"verbs":["update"]}));
-        }
         if privileged {
             host_rules.extend([
                 json!({"apiGroups":[""],"resources":["secrets"],"resourceNames":["wamn-apply",format!("{cluster}-superuser"),format!("{cluster}-ca"),"wamn-pg-ca"],"verbs":["get"]}),
@@ -166,23 +144,4 @@ pub(crate) async fn provision(
         resources::apply_object(&platform.target, &object).await?;
     }
     Ok(())
-}
-
-/// Read the existing administrator credential mounted only in privileged workers.
-///
-/// # Errors
-/// Returns an error when the mounted credential or target cluster is absent.
-pub(crate) fn administrator(cluster: &str) -> anyhow::Result<String> {
-    let namespace =
-        std::fs::read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/namespace")?;
-    crate::provision_project_env::workload::configuration(
-        namespace.trim(),
-        cluster,
-        crate::provision_project_env::database_host(None, cluster, namespace.trim()).into_owned(),
-        5432,
-        "wamn_system".into(),
-        "postgres".into(),
-        format!("{cluster}-superuser"),
-    )
-    .to_json()
 }

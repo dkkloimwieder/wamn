@@ -1,5 +1,6 @@
 //! Registry coordinates, resource names, and system database statements.
 
+pub mod configuration;
 pub mod identifiers;
 pub mod name;
 pub mod sql;

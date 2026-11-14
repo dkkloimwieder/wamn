@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use serde_json::{Value, json};
-use wamn_environment_control::environment::{document::EnvironmentDocument, ensure, write};
-use wamn_environment_control::platform::artifact_plan::test_util::{Chart, prepared_chart};
-use wamn_environment_control::platform::document::{ClusterDocument, UpgradeTarget};
-use wamn_environment_control::platform::{artifact_plan, control, identity};
+use wamn_environment::environment::{document::EnvironmentDocument, ensure, write};
+use wamn_environment::platform::artifact_plan::test_util::{Chart, prepared_chart};
+use wamn_environment::platform::document::{ClusterDocument, UpgradeTarget};
+use wamn_environment::platform::{artifact_plan, control, identity};
 
 const TOOL: &str = r#"#!/usr/bin/python3
 import base64, json, pathlib, re, subprocess, sys, time, yaml
@@ -325,7 +325,7 @@ impl Fixture {
             let digest = format!("sha256:{}", "c".repeat(64));
             let environment = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
                 "org":self.document.org,"project":"fixture","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,
-                "applications":{"alpha":{"packages":["alpha"],"current":digest,"revocation_seconds":5,"hostname":"alpha.example"}}
+                "applications":{"alpha":{"revocation_seconds":5,"hostname":"alpha.example"}}
             }))?)?;
             let manifest = serde_json::from_value(json!({
                 "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
@@ -619,7 +619,7 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
         .execute(&mut system)
         .await
         .map(drop)?;
-    wamn_environment_control::provision_system::install_control_store(&mut system).await?;
+    wamn_environment::provision_system::install_control_store(&mut system).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::seed_org_project_env_sql(
             "dep5", "fixture", "dev",
@@ -644,7 +644,7 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
     let project = postgres.database(&name)?;
     let mut client = wamn_postgres::connect(project.url()).await?;
 
-    wamn_environment_control::platform_migrations::install_project(&mut client).await?;
+    wamn_environment::platform_migrations::install_project(&mut client).await?;
     let text = r#"{"org":"dep5","project":"fixture","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#;
     let document = EnvironmentDocument::from_json(text.as_bytes())?;
     // The deployed environment ConfigMap is the document authority.
@@ -808,7 +808,7 @@ fn platform_service_updates_change_only_the_selected_release() -> anyhow::Result
                 workload["spec"]["template"]["spec"]["components"][0]["image"],
                 format!(
                     "{}/{}",
-                    wamn_environment_control::platform::resources::POD_REGISTRY,
+                    wamn_environment::platform::resources::POD_REGISTRY,
                     selected.image("http")?.split_once('/').unwrap().1
                 )
             );
@@ -1158,7 +1158,7 @@ fn platform_updates_use_recovered_values() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn platform_host_update_refuses_a_held_application_or_environment_lock() -> anyhow::Result<()>
 {
-    use wamn_environment_control::environment::lock::LifecycleLock;
+    use wamn_environment::environment::lock::LifecycleLock;
     use wamn_registry::Triple;
 
     let fixture = Fixture::new()?;
@@ -1192,7 +1192,7 @@ async fn platform_host_update_refuses_a_held_application_or_environment_lock() -
         );
         assert!(
             String::from_utf8_lossy(&output.stderr)
-                .contains(wamn_environment_control::environment::lock::DEPLOYMENT_IN_PROGRESS),
+                .contains(wamn_environment::environment::lock::DEPLOYMENT_IN_PROGRESS),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
@@ -1856,7 +1856,7 @@ fn platform_targeted_reselection_and_retry_use_only_the_owner() -> anyhow::Resul
 
 #[test]
 fn platform_deploy_cleans_only_successful_unmounted_work_directories() -> anyhow::Result<()> {
-    use wamn_environment_control::platform::document::Provider;
+    use wamn_environment::platform::document::Provider;
 
     for (provider, fresh, fail) in [
         (Provider::Kind, false, false),
