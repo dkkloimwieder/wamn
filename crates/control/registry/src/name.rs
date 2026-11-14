@@ -33,11 +33,6 @@ pub fn credential_secret_name(org: &str, project: &str, env: &str) -> String {
     format!("wamn-credential-{}", project_env_key(org, project, env))
 }
 
-/// The account used by a project deployment's hosts.
-pub fn service_account_name(org: &str, project: &str, env: &str) -> String {
-    format!("wamn-host-{}", project_env_key(org, project, env))
-}
-
 /// Name budget or prefix.
 pub const GUEST_SECRET_PREFIX: &str = "wamn-guest-";
 
@@ -248,7 +243,21 @@ pub fn environment_resource_name(org: &str, project: &str, env: &str) -> Result<
     Ok(format!("e-{slug}-{}", &hash[..HASH_LEN]))
 }
 
-/// The Helm release and host group of one application.
+/// The Helm release and host group shared by an org and environment.
+pub fn environment_host_name(org: &str, env: &str) -> Result<String, NameError> {
+    validate_coordinate("org", org, true)?;
+    validate_coordinate("environment", env, false)?;
+    let hash = hex::encode(sha256(format!("{org}/{env}").as_bytes()));
+    let slug: String = env.chars().take(SLUG_LEN).collect();
+    Ok(format!("h-{slug}-{}", &hash[..HASH_LEN]))
+}
+
+/// The ServiceAccount shared by an environment's project resources.
+pub fn environment_service_account(org: &str, env: &str) -> String {
+    format!("wamn-host-{}", environment_key(org, env))
+}
+
+/// The Helm release of one application.
 pub fn application_release_name(
     org: &str,
     project: &str,

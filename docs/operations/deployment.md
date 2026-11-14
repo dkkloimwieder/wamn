@@ -178,6 +178,8 @@ SQL steps run inside the authorized operation Job with their owning role credent
 The control image runs workers and reads the installed chart reference.
 The installed control configuration names the pinned worker image and its configuration.
 Environment provisioning creates separate code and SQL ServiceAccounts and namespace Roles.
+Reset uses the existing lifecycle worker account to stop and resume the shared environment host.
+Each project's CDC account reads only its replication credential and database CA.
 
 
 Set `WAMN_CONTROL_URL` to the deployed control host and `WAMN_TOKEN` to your password session token.
@@ -233,7 +235,10 @@ wamn status --env environments/dev/environment.k
 
 Publication needs no destination database.
 Run `wamn env apply environments/dev/environment.k` before applying application SQL and deploying code.
-Each application owns its Helm release, host group, workloads, Services, and route ConfigMaps.
+Each application owns its Helm history, workloads, Services, and route ConfigMaps.
+The environment chart owns one host for each org and environment. All projects share it.
+Application workloads and file Services select that host. Database credentials and event bindings remain separate for each project.
+Status reports loaded application releases and the unfinished runs that pin them.
 The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
 Code-only deploy, reapply, and rollback preserve installed SQL and other applications' data, permissions, routes, and workloads.
 Helm is the only owner of release history. Deploy names the application and release digest.
@@ -561,7 +566,7 @@ The bucket must allow reads without credentials.
 Edge deployment remains outside the local platform milestone.
 
 Release hosts expose workload HTTP on port 80, probes on port 8081, and native file transfers on port 8082.
-The `<release>-files` Service selects the host group pods and maps port 80 to the named `files` port.
+The `<release>-files` Service selects the shared environment host and maps port 80 to the named `files` port.
 The edge sends `/api/<application>/files` and its child paths there before the general `/api/` route.
 File requests keep the full path. Other API requests lose the `/api` prefix.
 

@@ -908,7 +908,11 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             PROJECT_ENV_KEY,
             "dev",
             Some(&["a".to_owned()]),
-            &BTreeMap::from([(new_a.digest().to_string(), 1)]),
+            &BTreeMap::from([
+                (("a".into(), new_a.digest().to_string()), 1),
+                // Another application loading the old digest cannot serve a's pinned run.
+                (("b".into(), old_a.digest().to_string()), 1),
+            ]),
         )
         .await?;
         assert_eq!(

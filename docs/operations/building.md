@@ -31,6 +31,8 @@ These files own each schema.
 The platform version lives in `deploy/platform/release/Chart.yaml`.
 Keep `version` and `appVersion` equal.
 `cargo xtask build-platform` reads this version to tag images and role components.
+The published defaults keep the host image at `platform.host.image`.
+The prepared environment chart receives that image and owns the host runtime defaults.
 BuildKit decides which layers need to run again.
 
 ## Compile cache
