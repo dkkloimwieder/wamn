@@ -11,7 +11,6 @@ pub struct PaletteDeclaration {
     pub component: String,
     pub interface_version: String,
     pub operations: std::collections::BTreeMap<String, wamn_catalog::ComponentOperationDeclaration>,
-    pub connections: Vec<wamn_catalog::ComponentConnection>,
 }
 
 /// One platform palette component and its declaration.
@@ -58,7 +57,6 @@ fn seal(
     declaration: PaletteDeclaration,
 ) -> Result<wamn_catalog::ComponentDescriptor> {
     let engine = wamn_engine::build_engine(&[])?;
-    let connections = declaration.connections;
     let admitted_platform_packages = declaration
         .operations
         .keys()
@@ -68,8 +66,11 @@ fn seal(
                 .map(|(package, _)| package.to_owned())
         })
         .chain(
-            connections
-                .iter()
+            declaration
+                .operations
+                .values()
+                .flat_map(|operation| &operation.connections)
+                .filter_map(wamn_catalog::OperationConnection::host)
                 .map(|connection| connection.requirement_type.import_package().to_owned()),
         )
         .collect();
@@ -82,7 +83,6 @@ fn seal(
                 component: declaration.component,
                 interface_version: declaration.interface_version,
                 operations: declaration.operations,
-                connections,
             },
             admitted_platform_packages,
             base_digests: std::collections::BTreeSet::new(),

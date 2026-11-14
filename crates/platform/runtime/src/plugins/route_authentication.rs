@@ -642,6 +642,7 @@ pub(crate) mod tests {
                     descriptor.operations = BTreeMap::from([(
                         "request".into(),
                         AdmittedComponentOperation {
+                            connections: Vec::new(),
                             host_transaction: false,
                             input_ports: Vec::new(),
                             output_ports: Vec::new(),

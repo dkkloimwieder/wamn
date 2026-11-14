@@ -337,6 +337,7 @@ mod tests {
                     descriptor.operations = BTreeMap::from([(
                         "map".into(),
                         AdmittedComponentOperation {
+                            connections: Vec::new(),
                             host_transaction: false,
                             input_ports: Vec::new(),
                             output_ports: Vec::new(),
@@ -604,6 +605,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "map".into(),
                 wamn_catalog::AdmittedComponentOperation {
+                    connections: Vec::new(),
                     registered_operation: None,
                     committed_result_schema: None,
                     host_transaction: false,

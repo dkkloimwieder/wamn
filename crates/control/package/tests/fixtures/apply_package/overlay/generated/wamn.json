@@ -202,10 +202,6 @@
   },
   "connections": {},
   "components": {
-    "client_overlay_inventory": {
-      "connections": [
-        "postgres"
-      ]
-    }
+    "client_overlay_inventory": {}
   }
 }

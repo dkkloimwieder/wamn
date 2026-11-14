@@ -248,6 +248,7 @@ mod tests {
             operations: BTreeMap::from([(
                 ORDERS_GET.to_owned(),
                 AdmittedComponentOperation {
+                    connections: Vec::new(),
                     committed_result_schema: None,
                     registered_operation: Some(ORDERS_GET.to_owned()),
                     host_transaction: false,

@@ -361,6 +361,18 @@ impl ConnectionDispatch for ComponentImports {
                     == self.resources.manifest_digest,
             "integration invocation release mismatch"
         );
+        let declared = scopes
+            .read::<crate::invocation::Authority, _>(scope, |record| {
+                record.invocation.as_ref().is_some_and(|invocation| {
+                    invocation
+                        .connection(context.release.manifest(), name)
+                        .is_some()
+                })
+            })
+            .unwrap_or(false);
+        if !declared {
+            return Ok(None);
+        }
         self.call(name, interface, function, parameters).await
     }
 

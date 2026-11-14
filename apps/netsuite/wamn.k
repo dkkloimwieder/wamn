@@ -30,5 +30,5 @@ manifest.Package {
         }
     }
     connections = {upstream = {interface = "wamn:connection/http@0.1.0", mode = "write"}}
-    components = {netsuite = {connections = ["postgres"]}}
+    components = {netsuite = {}}
 }

@@ -1,30 +1,22 @@
 use super::{
-    BTreeMap, ComponentConnection, EMPTY_CONFIG, EMPTY_CONFIG_MEDIA_TYPE, PACKAGE_ARTIFACT_TYPE,
-    PackageManifest, PackedLayer, Path, PathBuf, bytes_sha256, ensure,
+    BTreeMap, EMPTY_CONFIG, EMPTY_CONFIG_MEDIA_TYPE, PACKAGE_ARTIFACT_TYPE, PackedLayer, Path,
+    PathBuf, bytes_sha256, ensure,
 };
 use anyhow::Context as _;
 
-pub(crate) fn component_connection_names(
-    manifest: &PackageManifest,
-    component: &str,
-    connections: &[ComponentConnection],
+pub(crate) fn component_connection_names<'a>(
+    connections: impl Iterator<Item = &'a wamn_catalog::OperationConnection>,
 ) -> Vec<String> {
-    let mut names = std::collections::BTreeSet::new();
-    names.extend(
-        connections
-            .iter()
-            .filter_map(|connection| connection.store_alias.name().map(str::to_owned)),
-    );
-    if let Some(declaration) = manifest.components.get(component) {
-        names.extend(
-            declaration
-                .connections
-                .iter()
-                .filter(|name| manifest.connections.contains_key(*name))
-                .cloned(),
-        );
-    }
-    names.into_iter().collect()
+    connections
+        .filter_map(|connection| match connection {
+            wamn_catalog::OperationConnection::Import(name) => Some(name.clone()),
+            wamn_catalog::OperationConnection::Host(connection) => {
+                connection.store_alias.name().map(str::to_owned)
+            }
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// The canonical image manifest bytes of `layers`.

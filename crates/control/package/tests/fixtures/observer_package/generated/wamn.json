@@ -93,10 +93,6 @@
   },
   "connections": {},
   "components": {
-    "observer_fixture": {
-      "connections": [
-        "postgres"
-      ]
-    }
+    "observer_fixture": {}
   }
 }

@@ -46,6 +46,7 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
             operations: BTreeMap::from([(
                 export.into(),
                 AdmittedComponentOperation {
+                    connections: Vec::new(),
                     registered_operation: None,
                     committed_result_schema: None,
                     host_transaction: false,

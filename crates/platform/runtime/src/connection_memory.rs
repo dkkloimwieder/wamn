@@ -153,6 +153,12 @@ impl ConnectionMemory {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn seed_release(&self, project_env_key: &str, digest: &str, fact: ReleaseFact) {
+        self.memory
+            .seed(release_key(project_env_key, digest), Answer::Release(fact));
+    }
+
     pub(crate) fn connection_ticket(&self, project_env_key: &str, id: &uuid::Uuid) -> Ticket {
         self.memory.ticket(&connection_key(project_env_key, id))
     }

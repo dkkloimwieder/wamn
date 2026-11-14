@@ -59,4 +59,5 @@
     (export "json" (type $json)) (export "node-context" (type $context))
     (export "node-error" (type $error)) (export "emission" (type $emission))
     (export "run" (func $run)))
-  (export "file-fixture:document/signed-read@0.1.0" (instance $handler)))
+  (export "file-fixture:document/signed-read@0.1.0" (instance $handler))
+  (export "wamn:node/async-handler@0.1.0" (instance $handler)))

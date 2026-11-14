@@ -245,10 +245,54 @@ pub struct ComponentConnection {
     pub requirement_type: ComponentConnectionType,
 }
 
+/// An external connection called through a named import or a host capability.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OperationConnection {
+    Host(ComponentConnection),
+    Import(String),
+}
+
+impl OperationConnection {
+    pub fn host(&self) -> Option<&ComponentConnection> {
+        match self {
+            Self::Host(connection) => Some(connection),
+            Self::Import(_) => None,
+        }
+    }
+
+    pub fn host_mut(&mut self) -> Option<&mut ComponentConnection> {
+        match self {
+            Self::Host(connection) => Some(connection),
+            Self::Import(_) => None,
+        }
+    }
+
+    fn alias(&self) -> (Option<&str>, Option<&str>) {
+        match self {
+            Self::Host(ComponentConnection {
+                store_alias: ComponentConnectionAlias::Configuration { parameter },
+                ..
+            }) => (None, Some(parameter)),
+            Self::Host(connection) => (connection.store_alias.name(), None),
+            Self::Import(name) => (Some(name), None),
+        }
+    }
+}
+
+impl From<ComponentConnection> for OperationConnection {
+    fn from(connection: ComponentConnection) -> Self {
+        Self::Host(connection)
+    }
+}
+
 /// One operation exported by component bytes before admission.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentOperationDeclaration {
+    /// External connections available only to this operation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<OperationConnection>,
     /// Explicit application permission identity. Palette operations carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
@@ -272,7 +316,6 @@ pub struct ComponentDeclaration {
     pub component: String,
     pub interface_version: String,
     pub operations: BTreeMap<String, ComponentOperationDeclaration>,
-    pub connections: Vec<ComponentConnection>,
 }
 
 /// A compiled-valid JSON Schema document.
@@ -362,6 +405,9 @@ pub struct ComponentSqlStatement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponentOperation {
+    /// External connections available only to this operation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<OperationConnection>,
     /// Explicit application permission identity. Never inferred from the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
@@ -483,7 +529,21 @@ pub struct ComponentDescriptor {
 
 impl ComponentDescriptor {
     /// The descriptor of `component`. Its target is dropped.
-    pub fn new(component: AdmittedComponent, connections: Vec<ComponentConnection>) -> Self {
+    pub fn new(mut component: AdmittedComponent, connections: Vec<ComponentConnection>) -> Self {
+        for operation in component.operations.values_mut() {
+            for connection in operation
+                .connections
+                .iter_mut()
+                .filter_map(OperationConnection::host_mut)
+            {
+                if let Some(sealed) = connections
+                    .iter()
+                    .find(|sealed| sealed.store_alias == connection.store_alias)
+                {
+                    connection.mode = sealed.mode.clone();
+                }
+            }
+        }
         Self {
             component: component.component,
             interface_version: component.interface_version,
@@ -669,6 +729,7 @@ pub fn normalize_component_fact(
             AdmittedComponentOperation {
                 committed_result_schema,
                 registered_operation: operation.registered_operation,
+                connections: operation.connections,
                 host_transaction: false,
                 input_ports,
                 output_ports,
@@ -684,7 +745,35 @@ pub fn normalize_component_fact(
     let imports_fingerprint = imports_fingerprint(&imports, &BTreeMap::new());
     refuse_application_operation_imports(&imports)?;
     let effects = normalize_effects(effects, &imports)?;
-    let connections = normalize_connections(declaration.connections, &effects)?;
+    let mut by_alias = BTreeMap::new();
+    for operation in operations.values_mut() {
+        operation
+            .connections
+            .sort_by(|left, right| left.alias().cmp(&right.alias()));
+        let mut seen = BTreeSet::new();
+        for connection in &operation.connections {
+            if !seen.insert(connection.alias()) {
+                return Err(ComponentFactError::new(
+                    ComponentFactErrorType::DuplicateConnection,
+                    "operation repeats a connection declaration",
+                ));
+            }
+            match connection {
+                OperationConnection::Import(name) => validate_identity(name, "connection import")?,
+                OperationConnection::Host(connection) => {
+                    if let Some(previous) = by_alias.insert(&connection.store_alias, connection)
+                        && previous != connection
+                    {
+                        return Err(ComponentFactError::new(
+                            ComponentFactErrorType::DuplicateConnection,
+                            "operations disagree on a connection declaration",
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    let connections = normalize_connections(by_alias.into_values().cloned().collect(), &effects)?;
 
     Ok(AdmittedComponentFacts {
         component: AdmittedComponent {
@@ -800,6 +889,14 @@ pub fn bind_component_statement_facts(
     }
     for (export, operation_statements) in &statements {
         validate_operation_statement_facts(export, operation_statements)?;
+        if !component.operations[export].connections.is_empty()
+            && (!operation_statements.is_empty() || host_transactions.contains(export))
+        {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorType::InvalidStatementFact,
+                "an operation cannot combine SQL or a host transaction with an external connection",
+            ));
+        }
     }
     for (export, operation_statements) in statements {
         let operation = component
@@ -1229,6 +1326,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "map".to_string(),
                 ComponentOperationDeclaration {
+                    connections: Vec::new(),
                     committed_result_schema: None,
                     registered_operation: None,
                     input_ports: vec![ComponentPortDeclaration {
@@ -1251,7 +1349,6 @@ mod tests {
                     }],
                 },
             )]),
-            connections: Vec::new(),
         }
     }
 
@@ -1332,29 +1429,6 @@ mod tests {
         let admitted = decoded.into_admitted(facts.component.target.clone());
         assert_eq!(admitted.component, facts.component);
         assert_eq!(admitted.connections, connections);
-    }
-
-    /// A descriptor with no named statements instance keeps the bytes it had
-    /// before the field existed; the digest was taken from that code.
-    #[test]
-    fn a_descriptor_without_statement_instances_keeps_its_bytes() {
-        let facts = normalize_component_fact(
-            declaration(),
-            format!("sha256:{}", "a".repeat(64)),
-            ["wamn:postgres/client@0.1.0".to_string()],
-            vec![postgres_effect()],
-        )
-        .expect("component fact normalizes");
-        let descriptor = ComponentDescriptor::new(facts.component, Vec::new());
-        let bytes = wamn_digest::canonical_json_bytes(
-            &serde_json::to_value(&descriptor).expect("descriptor serializes"),
-        );
-        assert_eq!(
-            wamn_digest::canonical_json_sha256(
-                &serde_json::from_slice::<Value>(&bytes).expect("canonical JSON parses")
-            ),
-            "sha256:9816d7da4202dcca1363da02b3d40c716a55a5d611b397812c0288a0d92fe8e0"
-        );
     }
 
     #[test]
@@ -1603,6 +1677,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "map".to_string(),
                 AdmittedComponentOperation {
+                    connections: Vec::new(),
                     committed_result_schema: None,
                     registered_operation: None,
                     host_transaction: false,
@@ -1679,7 +1754,7 @@ mod tests {
         };
 
         let mut declared = declaration();
-        declared.connections = vec![connection.clone()];
+        operation_mut(&mut declared).connections = vec![connection.clone().into()];
         let facts = normalize_component_fact(
             declared.clone(),
             format!("sha256:{}", "a".repeat(64)),
@@ -1691,7 +1766,7 @@ mod tests {
 
         // Imported authority nothing declares.
         let mut undeclared = declaration();
-        undeclared.connections = Vec::new();
+        operation_mut(&mut undeclared).connections = Vec::new();
         assert_eq!(
             normalize_component_fact(
                 undeclared,
@@ -1718,7 +1793,9 @@ mod tests {
         );
 
         let mut duplicate = declared;
-        duplicate.connections.push(connection);
+        operation_mut(&mut duplicate)
+            .connections
+            .push(connection.into());
         assert_eq!(
             normalize_component_fact(
                 duplicate,

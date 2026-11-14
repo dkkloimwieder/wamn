@@ -5,7 +5,7 @@ use wamn_compiler::manifest::{ConnectionMode, PackageManifest};
 fn manifest() -> serde_json::Value {
     json!({"package":{"id":"fixture","version":"1.0.0"},
         "required_platform_policy_contract":{"id":"fixture_data_access","state":"satisfied"},
-        "models":{},"components":{"fixture":{"connections":[]}},
+        "models":{},"components":{"fixture":{}},
         "connections":{"signed-upstream":{"interface":"wamn:modbus/read@1.0.0","mode":"read"}}})
 }
 
@@ -79,7 +79,7 @@ manifest.Package {{
  package = {{id = "fixture", version = "1.0.0"}}
  required_platform_policy_contract = {{id = "fixture_data_access", state = "satisfied"}}
  models = {{}}
- components = {{fixture = {{connections = []}}}}
+ components = {{fixture = {{}}}}
  connections = {{erp = {{{entry}}}}}
 }}
 "#

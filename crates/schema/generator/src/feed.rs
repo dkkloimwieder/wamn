@@ -848,7 +848,7 @@ mod tests {
         operation["connection"] = json!("postgres");
         operation["input"]["fields"] =
             json!([{"path": "value_id", "type": "uuid", "nullable": false}]);
-        document["components"] = json!({"fixture": {"connections": ["postgres"]}});
+        document["components"] = json!({"fixture": {}});
         operation["errors"] = json!([
             "invalid_input",
             "retry",

@@ -71,6 +71,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             descriptor.operations = std::collections::BTreeMap::from([(
                 OPERATION.into(),
                 wamn_catalog::AdmittedComponentOperation {
+                    connections: Vec::new(),
                     host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),

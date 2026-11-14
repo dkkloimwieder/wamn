@@ -197,7 +197,7 @@ mod tests {
             "models": {},
             "custom_operations": operations,
             "connections": {},
-            "components": {"data": {"connections": []}},
+            "components": {"data": {}},
         })
     }
 

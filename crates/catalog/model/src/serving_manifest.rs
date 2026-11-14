@@ -1674,6 +1674,7 @@ mod tests {
         statement: Option<&str>,
     ) -> crate::AdmittedComponentOperation {
         crate::AdmittedComponentOperation {
+            connections: Vec::new(),
             registered_operation: Some(registered.into()),
             committed_result_schema: None,
             host_transaction: false,

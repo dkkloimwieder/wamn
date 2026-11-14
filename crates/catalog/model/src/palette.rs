@@ -91,6 +91,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     "wamn:node/handler@0.1.0".into(),
                     ComponentOperationDeclaration {
+                        connections: Vec::new(),
                         registered_operation: None,
                         committed_result_schema: None,
                         input_ports: vec![ComponentPortDeclaration {
@@ -104,7 +105,6 @@ mod tests {
                         parameters: vec![],
                     },
                 )]),
-                connections: vec![],
             },
             format!("sha256:{}", "a".repeat(64)),
             Vec::<String>::new(),

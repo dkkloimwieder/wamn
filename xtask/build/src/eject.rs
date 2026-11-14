@@ -236,7 +236,7 @@ mod tests {
             "package": {"id": "package", "version": "1.0.0"},
             "required_platform_policy_contract": {"id": "access", "state": "satisfied"},
             "models": {"thing": {"schema": "data", "table": "thing", "owner": "package", "audit_log": {"columns": [], "retention": "none"}, "operations": {"get": {"permission": "thing.get", "result": "one"}}}},
-            "connections": {}, "components": {"component": {"connections": []}}
+            "connections": {}, "components": {"component": {}}
         })).unwrap()).unwrap();
         fs::write(output.join("component/thing.rs"), "pub mod get { pub async fn default_handle(request: contract::GetRequest) -> contract::GetResult { let _row = model::Row; let _error: Option<Error> = None; request } }").unwrap();
         action(&package, "thing.get").unwrap();

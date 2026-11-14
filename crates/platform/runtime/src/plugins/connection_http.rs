@@ -106,6 +106,49 @@ pub struct ConnectionInvocation {
 }
 
 impl ConnectionInvocation {
+    /// Resolve an external connection only from this operation's declarations.
+    pub(crate) fn connection<'a>(
+        &self,
+        manifest: &'a ServingManifest,
+        alias: &str,
+    ) -> Option<&'a wamn_catalog::OperationConnection> {
+        self.declaration(manifest)?
+            .connections
+            .iter()
+            .find(|connection| {
+                let configuration = self
+                    .entry
+                    .wiring()
+                    .map(|position| position.configuration.as_ref());
+                match connection {
+                    wamn_catalog::OperationConnection::Import(name) => name == alias,
+                    wamn_catalog::OperationConnection::Host(connection) => {
+                        connection.store_alias.name() == Some(alias)
+                            || configuration.and_then(|configuration| {
+                                connection.store_alias.resolve(configuration)
+                            }) == Some(alias)
+                    }
+                }
+            })
+    }
+
+    pub(crate) fn declaration<'a>(
+        &self,
+        manifest: &'a ServingManifest,
+    ) -> Option<&'a wamn_catalog::AdmittedComponentOperation> {
+        manifest
+            .components
+            .iter()
+            .find(|component| {
+                component.package_id == self.package_id
+                    && component.descriptor.component_digest == self.component_digest
+                    && component.descriptor.component == self.component
+            })?
+            .descriptor
+            .operations
+            .get(&self.operation)
+    }
+
     /// The span coordinates of this invocation. A route has no wiring
     /// position, so it records the wiring keys empty.
     pub(crate) fn effect_wiring(&self) -> EffectWiring<'_> {
@@ -1475,6 +1518,137 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connection_resolution_scopes_sql_and_external_authority() {
+        use crate::invocation::{
+            AuthorizedInvocation, InvocationRequest, PrincipalVerification, ReleaseContext,
+        };
+        use crate::plugins::wamn_postgres::{
+            ReleaseIdentity, SessionIdentity, VerifiedStatement, begin_statement_transaction,
+        };
+        use wamn_engine::entry_operation::postgres_types::PgError;
+
+        let project_env_key = wamn_registry::project_env_key("acme", "project-a", "dev");
+        let postgres = Arc::new(offline_postgres());
+        let mut manifest = manifest();
+        let mut component = manifest.components.pop_first().unwrap();
+        for operation in component.descriptor.operations.values_mut() {
+            operation.registered_operation = None;
+            operation.host_transaction = true;
+        }
+        let mut external = component
+            .descriptor
+            .operations
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+        external.host_transaction = false;
+        let connection = wamn_catalog::ComponentConnection {
+            store_alias: "manager".into(),
+            requirement_type: wamn_catalog::ComponentConnectionType::Http,
+            mode: wamn_catalog::ConnectionMode::Write,
+        };
+        component.descriptor.connections = vec![connection.clone()];
+        external.connections = vec![connection.into()];
+        component
+            .descriptor
+            .operations
+            .insert("external".into(), external);
+        manifest.components.insert(component);
+        let release = Arc::new(
+            LoadedRelease::load_canonical_bytes(
+                &manifest.canonical_bytes(),
+                "connection authority test",
+                wamn_engine::release_manifest::ReleaseTarget::new(&project_env_key, "dev")
+                    .with_applications(
+                        serde_json::from_value(
+                            serde_json::json!({"app": {"packages": ["package_a"]}}),
+                        )
+                        .unwrap(),
+                    ),
+            )
+            .unwrap(),
+        );
+        let memory = Arc::new(ConnectionMemory::default());
+        memory.seed_release(
+            &project_env_key,
+            release.release().manifest_digest.as_str(),
+            Default::default(),
+        );
+        let facts = Arc::new(ConnectionFacts::new(
+            memory,
+            Publisher::default(),
+            Arc::new(ConnectionCredentials::empty()),
+            &postgres,
+            &project_env_key,
+            "project-a",
+            "dev",
+        ));
+        let context = Arc::new(ReleaseContext::new(release, facts).unwrap());
+        let statements = WamnPostgres::prepare_statement_set(
+            BTreeMap::from([(
+                "query/read.sql".into(),
+                VerifiedStatement {
+                    exact_sql: "SELECT 1".into(),
+                    binds: Box::default(),
+                    columns: Box::default(),
+                    transactional: false,
+                },
+            )]),
+            false,
+        );
+        let members =
+            WamnPostgres::prepare_statement_members([("sql-0".into(), statements.clone())]);
+        let mut invocation = invocation();
+        if let InvocationEntry::Wiring(position) = &mut invocation.entry {
+            position.package_id = "app".into();
+        }
+        let sql_operation = invocation.operation.clone();
+        for (operation, allowed) in [("external", true), (sql_operation.as_str(), false)] {
+            invocation.operation = operation.into();
+            invocation.origin.operation = operation.into();
+            let owner = AuthorizedInvocation::enter(
+                &postgres,
+                InvocationRequest {
+                    scope: operation.into(),
+                    identity: SessionIdentity {
+                        project_env_key: project_env_key.clone(),
+                        project: Some("project-a".into()),
+                        release: Some(ReleaseIdentity::from_loaded(&context.release)),
+                        ..SessionIdentity::default()
+                    },
+                    context: Some(Arc::clone(&context)),
+                    caller: None,
+                    registered_operation: None,
+                    causation: None,
+                    invocation: Some(invocation.clone()),
+                    statements: statements.clone(),
+                    members: members.clone(),
+                    principal: PrincipalVerification::Authenticated,
+                },
+            )
+            .await
+            .unwrap();
+            let resolved =
+                crate::connection_binding::resolve(&postgres, owner.id(), "manager").await;
+            if allowed {
+                assert!(resolved.unwrap().node_permitted);
+                assert!(matches!(
+                    begin_statement_transaction(&postgres, owner.id(), "project-a").await,
+                    Err(PgError::PermissionDenied)
+                ));
+                assert!(
+                    crate::connection_binding::resolve(&postgres, owner.id(), "manager")
+                        .await
+                        .is_ok()
+                );
+            } else {
+                assert!(resolved.is_err());
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn revoked_invocation_refuses_send_and_can_be_rebound() {
         let plugin = offline_plugin();
         let component_id = "component-store-7";
@@ -1631,6 +1805,7 @@ mod tests {
                     descriptor.operations = BTreeMap::from([(
                         snapshot.operation.expect("operation"),
                         AdmittedComponentOperation {
+                            connections: Vec::new(),
                             host_transaction: false,
                             input_ports: Vec::new(),
                             output_ports: Vec::new(),

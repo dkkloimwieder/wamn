@@ -129,8 +129,7 @@ pub fn read_declaration() -> Value {
         "operations": {(READ): {"registered-operation": READ,
             "input-ports": [{"name": "input", "schema": {}}],
             "output-ports": [{"name": "main", "schema": {}}],
-            "parameters": []}},
-        "connections": []
+            "parameters": []}}
     })
 }
 
