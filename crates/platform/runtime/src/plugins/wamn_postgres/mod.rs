@@ -52,6 +52,7 @@ pub use event_admission::{
 };
 pub use event_batch::EventBatchAdmission;
 pub use numbering::{CounterSet, CounterSetError, CounterSetRefusal};
+pub use operation::OperationInvoker;
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};
 pub use pool::{
     CheckoutProbe, ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
@@ -90,7 +91,8 @@ mod bindings {
             "../../../wit/wamn-connection",
             "../../../wit/wamn-flow-http-routing",
             "../../../wit/wamn-postgres-0.4",
-            "../../../wit/wamn-operation-0.1",
+            "../../../wit/wamn-node",
+        "../../../wit/wamn-operation-0.1",
             "../../../wit/wamn-jetstream",
             "../../../wit/wasmcloud-blobstore",
             "wit",
@@ -117,7 +119,8 @@ mod bindings {
             "../../../wit/wamn-connection",
             "../../../wit/wamn-flow-http-routing",
             "../../../wit/wamn-postgres-0.4",
-            "../../../wit/wamn-operation-0.1",
+            "../../../wit/wamn-node",
+        "../../../wit/wamn-operation-0.1",
             "../../../wit/wamn-jetstream",
             "../../../wit/wasmcloud-blobstore",
             "wit",

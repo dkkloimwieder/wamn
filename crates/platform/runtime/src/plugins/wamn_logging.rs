@@ -73,6 +73,7 @@ mod bindings {
             "../../../wit/wamn-connection",
             "../../../wit/wamn-flow-http-routing",
             "../../../wit/wamn-postgres-0.4",
+            "../../../wit/wamn-node",
             "../../../wit/wamn-operation-0.1",
             "../../../wit/wamn-jetstream",
             "../../../wit/wasmcloud-blobstore",

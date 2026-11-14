@@ -1,5 +1,6 @@
 //! Pure byte admission for project component-library entries.
 
+use anyhow::Context as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -11,16 +12,7 @@ use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
 use wash_runtime::wasmtime::component::types::ComponentItem;
 
-mod node_contract {
-    wash_runtime::wasmtime::component::bindgen!({
-        path: "../../../wit/wamn-node",
-        world: "node",
-        exports: { default: async },
-        wasmtime_crate: wash_runtime::wasmtime,
-    });
-}
-
-use node_contract::wamn::node::types as node_types;
+use crate::operation::node_types;
 
 /// The async contract for generic nodes. Application operations also support async.
 pub const ASYNC_HANDLER_OPERATION: &str = "wamn:node/async-handler@0.1.0";
@@ -214,21 +206,14 @@ pub fn validate_component_admission(
         let ComponentItem::ComponentFunc(run) = run.ty else {
             anyhow::bail!("interface member run is not a component function");
         };
-        let adapter = instance.get_export(raw, "run-json");
-        if let Some(adapter) = adapter {
-            let ComponentItem::ComponentFunc(adapter) = adapter.ty else {
-                anyhow::bail!("run-json is not a component function");
-            };
-            anyhow::ensure!(adapter.async_(), "typed JSON adapters must be async");
-            adapter.typecheck::<
-                (&node_types::NodeContext, &str),
-                (Result<node_types::Emission, node_types::NodeError>,),
-            >(&component_type.instance_type())?;
+        let params: Vec<_> = run.params().collect();
+        if params
+            .get(1)
+            .is_some_and(|(_, ty)| !matches!(ty, wash_runtime::wasmtime::component::Type::String))
+        {
             anyhow::ensure!(run.async_(), "typed operations must be async");
-            let params: Vec<_> = run.params().collect();
-            let adapter_params: Vec<_> = adapter.params().collect();
             anyhow::ensure!(
-                params.len() == 2 && params[0].1 == adapter_params[0].1,
+                params.len() == 2,
                 "typed operation must accept node-context and one input"
             );
             anyhow::ensure!(
@@ -244,18 +229,41 @@ pub fn validate_component_admission(
                 "typed operations cannot transfer store-owned resources"
             );
             let results: Vec<_> = run.results().collect();
-            let adapter_results: Vec<_> = adapter.results().collect();
             let [wash_runtime::wasmtime::component::Type::Result(result)] = results.as_slice()
             else {
                 anyhow::bail!("typed operation must return one result");
             };
-            let wash_runtime::wasmtime::component::Type::Result(adapter_result) =
-                &adapter_results[0]
+            // Derive context and refusal types from the same WIT as the host bindings.
+            let reference = Component::new(
+                engine.inner(),
+                include_bytes!(concat!(env!("OUT_DIR"), "/node-contract.wasm")),
+            )?;
+            let ComponentItem::ComponentInstance(handler) = reference
+                .component_type()
+                .get_export(raw, "wamn:node/handler@0.1.0")
+                .context("node reference has no handler")?
+                .ty
             else {
-                unreachable!("the JSON adapter passed its result type test");
+                anyhow::bail!("node reference handler is not an interface")
+            };
+            let ComponentItem::ComponentFunc(handler) = handler
+                .get_export(raw, "run")
+                .context("node reference has no run")?
+                .ty
+            else {
+                anyhow::bail!("node reference run is not a function")
             };
             anyhow::ensure!(
-                result.err() == adapter_result.err(),
+                params[0].1 == handler.params().next().expect("node context").1,
+                "typed operation must accept node-context"
+            );
+            let Some(wash_runtime::wasmtime::component::Type::Result(reference_result)) =
+                handler.results().next()
+            else {
+                anyhow::bail!("node reference must return result")
+            };
+            anyhow::ensure!(
+                result.err() == reference_result.err(),
                 "typed operation must retain node-error"
             );
             anyhow::ensure!(
@@ -271,7 +279,7 @@ pub fn validate_component_admission(
             return Ok(());
         }
         if run.async_() && export == "wamn:node/handler@0.1.0" {
-            anyhow::bail!("run uses the async ABI without a typed contract and JSON adapter");
+            anyhow::bail!("run uses the async ABI without a typed contract");
         }
         run.typecheck::<
             (&node_types::NodeContext, &str),
@@ -944,13 +952,26 @@ mod tests {
     fn typed_async_operation_requires_owned_values() {
         const TYPED_OPERATION: &str = "platform-fixture:widget/record-batch@1.0.0";
         let engine = crate::build_engine(&[]).expect("engine builds");
-        for (input, output, expected) in [
-            ("list<item>", "list<item>", true),
-            ("item", "item", true),
-            ("string", "list<item>", false),
-            ("list<own<handle>>", "list<item>", false),
+        for (input, output, context, refusal, expected) in [
+            (
+                "list<item>",
+                "list<item>",
+                "node-context",
+                "node-error",
+                true,
+            ),
+            ("item", "item", "node-context", "node-error", true),
+            ("string", "list<item>", "node-context", "node-error", false),
+            (
+                "list<own<handle>>",
+                "list<item>",
+                "node-context",
+                "node-error",
+                false,
+            ),
+            ("list<item>", "list<item>", "string", "node-error", false),
+            ("list<item>", "list<item>", "node-context", "string", false),
         ] {
-            let adapter = "run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;";
             let fixture = "export record-batch;";
             let mut resolve = Resolve::new();
             resolve
@@ -959,17 +980,23 @@ mod tests {
                     include_str!("../../../../wit/wamn-node/package.wit"),
                 )
                 .unwrap();
-            let package = resolve.push_str("typed.wit", &format!(r"
+            let package = resolve
+                .push_str(
+                    "typed.wit",
+                    &format!(
+                        r"
                 package platform-fixture:widget@1.0.0;
                 interface record-batch {{
                     use wamn:node/types@0.1.0.{{node-context, node-error, emission}};
                     resource handle;
                     record item {{ request-id: string, quantity: string }}
-                    run: async func(ctx: node-context, input: {input}) -> result<{output}, node-error>;
-                    {adapter}
+                    run: async func(ctx: {context}, input: {input}) -> result<{output}, {refusal}>;
                 }}
                 world fixture {{ {fixture} }}
-            ")).unwrap();
+            "
+                    ),
+                )
+                .unwrap();
             let world = resolve.select_world(&[package], Some("fixture")).unwrap();
             let mut module = dummy_module(
                 &resolve,

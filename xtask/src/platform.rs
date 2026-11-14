@@ -51,10 +51,6 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 .await?;
             let bytes = std::fs::read(path)?;
             std::fs::write(components.path().join(format!("{role}.wasm")), &bytes)?;
-            if role == "http" {
-                let entry = wamn_component_composer::compose_control_entry(bytes)?;
-                std::fs::write(components.path().join("control-http.wasm"), entry)?;
-            }
         }
         for component in wamn_build::palette::build(&root).await? {
             let bytes = std::fs::read(&component.file)?;
@@ -122,11 +118,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             process::execute(&mut command).await?;
         }
         for (_, role) in ROLES {
-            let file = if role == "http" {
-                "control-http.wasm".to_owned()
-            } else {
-                format!("{role}.wasm")
-            };
+            let file = format!("{role}.wasm");
             let bytes = std::fs::read(components.path().join(file))?;
             wash_runtime::oci::push_component(
                 &format!("{}/wamn/{role}:{version}", args.registry),

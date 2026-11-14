@@ -17,7 +17,6 @@ wit_bindgen::generate!({
     generate_all,
     async: [
         "export:modbus-reader:register/read@0.1.1#run",
-        "export:modbus-reader:register/read@0.1.1#run-json",
     ],
 });
 
@@ -27,11 +26,11 @@ use registers::{self as read_registers, Error};
 struct Application;
 export!(Application);
 
-mod codec {
+mod operation {
     use super::contract;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/wamn/modbus_reader/wit/register_read_codec.rs"
+        "/../../target/wamn/modbus_reader/wit/register_read_operation.rs"
     ));
 }
 
@@ -60,7 +59,7 @@ async fn read(
     })
 }
 
-use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
+use wamn::node::types::{ErrorDetail, NodeContext, NodeError};
 
 fn invalid(message: &str) -> NodeError {
     NodeError::InvalidInput(ErrorDetail {
@@ -74,7 +73,7 @@ impl contract::Guest for Application {
         context: NodeContext,
         input: Vec<contract::ReadItem>,
     ) -> Result<Vec<contract::ReadOutcome>, NodeError> {
-        codec::validate(&input).map_err(|error| invalid(error.context()))?;
+        operation::validate(&input).map_err(|error| invalid(error.context()))?;
         let mut unit = serde_json::from_str::<serde_json::Value>(&context.config)
             .ok()
             .and_then(|value| {
@@ -84,15 +83,6 @@ impl contract::Guest for Application {
             })
             .filter(|unit| (1..=247).contains(unit))
             .ok_or_else(|| invalid("unit must be between 1 and 247"))?;
-        Ok(codec::run(input, &mut unit, read).await)
-    }
-
-    async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let input = codec::decode(&input).map_err(|error| invalid(error.context()))?;
-        let output = <Self as contract::Guest>::run(context, input).await?;
-        Ok(Emission {
-            payload: codec::encode(&output),
-            port: None,
-        })
+        Ok(operation::run(input, &mut unit, read).await)
     }
 }

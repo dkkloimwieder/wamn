@@ -25,10 +25,8 @@ pub(super) fn emit_row_adapter<'a>(
         let member =
             binding_identifier(list.unwrap_or(name)).expect("validated field has a Rust name");
         let value = match ty {
-            SqlValueType::Uuid
-            | SqlValueType::Numeric
-            | SqlValueType::Timestamptz
-            | SqlValueType::Json => "value.0",
+            SqlValueType::Uuid | SqlValueType::Numeric | SqlValueType::Timestamptz => "value.0",
+            SqlValueType::Json => "crate::wamn::node::types::JsonValue { encoded_json: value.0 }",
             SqlValueType::Boolean
             | SqlValueType::Int32
             | SqlValueType::Int64
@@ -61,6 +59,7 @@ pub(super) fn emit_error_mapper<'a>(
     error_type: &str,
     cases: impl IntoIterator<Item = (&'a str, &'a OperationErrorDetailDeclaration)>,
     revision: Option<SqlValueType>,
+    guarded_fields: &std::collections::BTreeMap<String, String>,
 ) -> String {
     // A revision detail parses at the width its own column declares.
     let revision_type = if revision == Some(SqlValueType::Int32) {
@@ -84,7 +83,21 @@ pub(super) fn emit_error_mapper<'a>(
             .chain(declaration.optional.iter().map(|key| (*key, false)))
         {
             let name = detail_name(key);
-            let value = format!("detail({name:?})");
+            let mut value = format!("detail({name:?})");
+            if key == OperationErrorDetailKey::Field
+                && !required
+                && declaration
+                    .required
+                    .contains(&OperationErrorDetailKey::Constraint)
+                && !guarded_fields.is_empty()
+            {
+                value.push_str(".or_else(|| match constraint.as_str() {");
+                for (constraint, field) in guarded_fields {
+                    write!(value, "{constraint:?} => Some({field:?}.to_owned()),")
+                        .expect("write constraint field");
+                }
+                value.push_str("_ => None })");
+            }
             // Only a revision is a number; a bound or observed value stays
             // the decimal string its producer wrote.
             let numeric = matches!(
@@ -147,132 +160,33 @@ fn detail_name(key: OperationErrorDetailKey) -> &'static str {
     }
 }
 
-/// Emit component exports around an application's typed handler.
-///
-/// A `transacted` operation works in the transaction that the host began for
-/// it (`docs/history/host-transaction.md` 4.1), so its export takes no state: its
-/// handler gets the operation transaction.
-pub(super) fn emit_export_adapter(
-    type_name: &str,
-    direct: bool,
-    transacted: bool,
-    projection: bool,
-) -> String {
-    let input_type = if direct {
-        format!("__contract::{type_name}Request")
-    } else {
-        format!("Vec<__contract::{type_name}Item>")
-    };
-    let output_type = if direct {
-        input_type.clone()
-    } else {
-        format!("Vec<__contract::{type_name}Outcome>")
-    };
-    let run = if transacted {
-        format!(
-            r#"__codec::validate(&input).map_err(invalid)?;
-                    let output = __codec::run(input, &mut state, async |state, request| {{
-                        if state.1.is_some() {{ return Err(__contract::{type_name}Error::InternalError); }}
-                        if state.0.is_none() {{
-                            match wamn_postgres_statements::operation_transaction().await {{
-                                Ok(transaction) => state.0 = Some(transaction),
-                                Err(error) => {{
-                                    state.1 = Some(__node::NodeError::Terminal(__node::ErrorDetail {{
-                                        message: error.to_string(), code: Some("internal_error".to_owned()),
-                                    }}));
-                                    return Err(__contract::{type_name}Error::InternalError);
-                                }}
-                            }}
-                        }}
-                        $handler(state.0.as_mut().expect("operation transaction was acquired"), request).await
-                    }}).await;
-                    match state.1.take() {{ Some(error) => Err(error), None => Ok(output) }}"#
-        )
-    } else if direct {
-        "let mut input = input;
-                    __codec::normalize(&mut input).map_err(invalid)?;
-                    $handler(&mut state, input).await"
-            .to_owned()
-    } else {
-        "__codec::validate(&input).map_err(invalid)?;
-                    Ok(__codec::run(input, &mut state, $handler).await)"
-            .to_owned()
-    };
-    let run_json = if direct {
-        "let raw = input;\n                    let input = __codec::decode(&raw).map_err(invalid)?;\n                    <Self as __contract::Guest>::run(context, input).await?;\n                    Ok(__node::Emission { payload: raw, port: None })"
-            .to_owned()
-    } else {
-        "let input = __codec::decode(&input).map_err(invalid)?;\n                    let output = <Self as __contract::Guest>::run(context, input).await?;\n                    Ok(__node::Emission {\n                        payload: __codec::encode(&output),\n                        port: None,\n                    })"
-            .to_owned()
-    };
-    let (state_parameter, state) = if transacted {
+/// Emit an operation export that validates before calling the application.
+pub(super) fn emit_export_adapter(type_name: &str, direct: bool, transacted: bool) -> String {
+    let (input, output, export) = if direct {
         (
-            "",
-            "(None::<wamn_postgres_statements::Transaction>, None::<__node::NodeError>)",
+            format!("contract::{type_name}Request"),
+            format!("contract::{type_name}Request"),
+            "export_direct",
         )
     } else {
-        (" $state:expr,", "$state")
+        (
+            format!("Vec<contract::{type_name}Item>"),
+            format!("Vec<contract::{type_name}Outcome>"),
+            if transacted {
+                "export_transaction"
+            } else {
+                "export_batch"
+            },
+        )
     };
-    let read_json = if projection {
-        r"
-                async fn read_json(
-                    _context: __node::NodeContext,
-                    input: String,
-                    want_wal_position: bool,
-                ) -> Result<(__node::Emission, Option<String>), __node::NodeError> {
-                    let input = __codec::decode(&input).map_err(invalid)?;
-                    __codec::validate(&input).map_err(invalid)?;
-                    let mut state = $state;
-                    state.want_wal_position(want_wal_position);
-                    let output = __codec::run(input, &mut state, $handler).await;
-                    Ok((__node::Emission {
-                        payload: __codec::encode(&output),
-                        port: None,
-                    }, state.wal_position().map(str::to_owned)))
-                }
-"
+    let error = if direct {
+        String::new()
     } else {
-        ""
+        format!(
+            "#[allow(dead_code)]\npub(crate) type OperationError = contract::{type_name}Error;\n"
+        )
     };
     format!(
-        r#"
-#[allow(unused_macros)]
-macro_rules! export_operation {{
-    ($component:ty, $contract:path, $node:path,{state_parameter} $handler:path, $codec:ident) => {{
-        const _: () = {{
-            use $contract as __contract;
-            use $node as __node;
-            use $codec as __codec;
-
-            fn invalid(error: __codec::CodecError) -> __node::NodeError {{
-                __node::NodeError::InvalidInput(__node::ErrorDetail {{
-                    message: error.context().to_owned(),
-                    code: Some("invalid_input".to_owned()),
-                }})
-            }}
-
-            impl __contract::Guest for $component {{
-                async fn run(
-                    _context: __node::NodeContext,
-                    input: {input_type},
-                ) -> Result<{output_type}, __node::NodeError> {{
-                    let mut state = {state};
-                    {run}
-                }}
-
-                async fn run_json(
-                    context: __node::NodeContext,
-                    input: String,
-                ) -> Result<__node::Emission, __node::NodeError> {{
-                    {run_json}
-                }}
-                {read_json}
-            }}
-        }};
-    }};
-}}
-#[allow(unused_imports)]
-pub(crate) use export_operation;
-"#
+        "pub(crate) type Input = {input};\npub(crate) type Output = {output};\n{error}pub(crate) use wamn_data_access::{export} as export_operation;\n"
     )
 }

@@ -111,12 +111,12 @@ fn integration_import(name: &str) -> bool {
         ("wasi:sockets" | "wasi:io" | "wasi:clocks" | "wasi:random", Some(version)) => {
             admits_version(WASI_FAMILY, version)
         }
+        ("wasi:cli", _) => capability_row(name).is_some(),
         _ => name == "wamn:integration/bound@0.1.0",
     }
 }
 
-/// The version family of the `wasi:*` rows the virtualizer and Rust std
-/// author (docs/plan/alignment.md W1).
+/// The version family of the standard WASI imports that Rust emits.
 pub const WASI_FAMILY: &str = "0.2";
 
 /// Whether a row's version admits an import's version.
@@ -200,21 +200,10 @@ pub struct CapabilityRow {
 ///
 /// # Two provenance classes
 ///
-/// The `wamn:*` rows and `wasi:logging` carry versions WE author. The remaining
-/// `wasi:*` rows do not: measured on `receiving`, the authored WIT says
-/// `0.2.12`, the raw build imports `0.2.9`, and the virtualized artifact that
-/// admission actually sees imports `0.2.12` — the virtualizer rewrites it. Those
-/// rows name the family, so a WASI-Virt or Rust toolchain bump inside it needs
-/// no edit here. The WASI-Virt revision and adapter digest of
-/// `docs/architecture/native-alignment.md` stay exact:
-/// `capability_registry_wasi_rows_match_the_pinned_adapter` in the conformance
-/// suite fails on a change to either.
-///
-/// `wasi:random` passes through the pinned WASI-Virt without rewrapping, so the
-/// virtualized artifact imports random at the version Rust std's
-/// `wasm32-wasip2` target links: `0.2.12` on toolchain 1.99.0, measured on the
-/// `jsonata` node (wamn-upl3.2, wamn-ro7m). The family row admits it.
-pub const CAPABILITY_REGISTRY: [CapabilityRow; 11] = [
+/// The `wamn:*` rows and `wasi:logging` carry versions we author. Standard
+/// WASI imports come from the Rust toolchain. Their rows admit the host's
+/// supported version family without rewriting the component bytes.
+pub const CAPABILITY_REGISTRY: [CapabilityRow; 12] = [
     // Versions we author.
     CapabilityRow {
         package: "wamn:modbus",
@@ -258,7 +247,7 @@ pub const CAPABILITY_REGISTRY: [CapabilityRow; 11] = [
         version: "0.1.0-draft",
         posture: Posture::Ambient,
     },
-    // Families the virtualizer and Rust std author. See the provenance note
+    // Standard WASI version families. See the provenance note
     // above.
     CapabilityRow {
         package: "wasi:io",
@@ -271,10 +260,29 @@ pub const CAPABILITY_REGISTRY: [CapabilityRow; 11] = [
         posture: Posture::Ambient,
     },
     CapabilityRow {
+        package: "wasi:cli",
+        version: WASI_FAMILY,
+        posture: Posture::Ambient,
+    },
+    CapabilityRow {
         package: "wasi:random",
         version: WASI_FAMILY,
         posture: Posture::Ambient,
     },
+];
+
+/// Ambient CLI interfaces supplied with empty arguments, environment and streams.
+pub const AMBIENT_CLI_INTERFACES: [&str; 10] = [
+    "wasi:cli/environment",
+    "wasi:cli/exit",
+    "wasi:cli/stdin",
+    "wasi:cli/stdout",
+    "wasi:cli/stderr",
+    "wasi:cli/terminal-input",
+    "wasi:cli/terminal-output",
+    "wasi:cli/terminal-stdin",
+    "wasi:cli/terminal-stdout",
+    "wasi:cli/terminal-stderr",
 ];
 
 /// Interfaces an application component may not import, whatever its grant,
@@ -302,6 +310,9 @@ fn is_denied_to_applications(import_name: &str) -> bool {
 pub fn capability_row(import_name: &str) -> Option<&'static CapabilityRow> {
     let package = import_pkg(import_name);
     let version = import_version(import_name)?;
+    if package == "wasi:cli" && !AMBIENT_CLI_INTERFACES.contains(&import_name.rsplit_once('@')?.0) {
+        return None;
+    }
     CAPABILITY_REGISTRY
         .iter()
         .find(|row| row.package == package && admits_version(row.version, version))
@@ -662,6 +673,15 @@ mod tests {
 
         assert!(analyze_project(&imports, &admitted, "project-node").is_ok());
 
+        let ambient = ComponentImports::new(
+            super::AMBIENT_CLI_INTERFACES
+                .iter()
+                .map(|interface| format!("{interface}@0.2.12")),
+        );
+        assert!(analyze_project(&ambient, &BTreeSet::new(), "project-node").is_ok());
+        let drifted = ComponentImports::new(["wasi:cli/environment@0.3.0".to_owned()]);
+        assert!(analyze_project(&drifted, &BTreeSet::new(), "project-node").is_err());
+
         // Same import list, one authored version off: refused.
         let drifted = ComponentImports::new(["wamn:node/types@0.1.1".to_string()]);
         let error = analyze_project(&drifted, &admitted, "project-node")
@@ -675,7 +695,7 @@ mod tests {
             "wasi:filesystem/types@0.2.3".to_string(),
             "wasi:sockets/tcp@0.2.3".to_string(),
             "wasi:http/outgoing-handler@0.2.3".to_string(),
-            "wasi:cli/environment@0.2.3".to_string(),
+            "wasi:cli/run@0.2.3".to_string(),
             "wamn:postgres/client@0.1.0".to_string(),
             "other:host/process@1.0.0".to_string(),
         ]);

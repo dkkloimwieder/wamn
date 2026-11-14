@@ -1,11 +1,11 @@
 //! Append one outcome, retaining the existing row on redelivery.
 use super::exports::wamn_integration::log::append as contract;
 use wamn_postgres_statements::{Json, Transaction};
-mod codec {
+mod operation {
     use super::contract;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../target/wamn/wamn_integration/wit/log_append_codec.rs"
+        "/../../../target/wamn/wamn_integration/wit/log_append_operation.rs"
     ));
 }
 #[expect(
@@ -34,7 +34,7 @@ async fn append(
         request.delivery_id,
         request.record_id.clone(),
         request.outcome,
-        request.detail.map(Json),
+        request.detail.map(|value| Json(value.encoded_json)),
     )
     .await
     .map_err(|error| super::statement_error(&error))?;
@@ -42,7 +42,7 @@ async fn append(
 }
 export_operation!(
     contract,
-    codec,
+    operation,
     AppendItem,
     AppendOutcome,
     AppendError,
@@ -77,17 +77,22 @@ mod tests {
         use std::future::Future as _;
         use std::task::{Context, Poll, Waker};
         for outcome in ["pushed", "refused", "vendor_refused"] {
-            let input = serde_json::json!([{"request_id":"r", "value":{"idempotency_key":"r", "delivery_id":"d", "record_id":"i", "outcome":outcome, "detail":null}}]);
+            let input = vec![contract::AppendItem {
+                request_id: "r".into(),
+                input: Ok(contract::AppendRequest {
+                    idempotency_key: "r".into(),
+                    delivery_id: "d".into(),
+                    record_id: "i".into(),
+                    outcome: outcome.into(),
+                    detail: None,
+                }),
+            }];
             let mut state = ();
-            let future = codec::run(
-                codec::decode(&input.to_string()).unwrap(),
-                &mut state,
-                async |(), request| {
-                    Ok(contract::AppendResult {
-                        record_id: request.record_id,
-                    })
-                },
-            );
+            let future = operation::run(input, &mut state, async |(), request| {
+                Ok(contract::AppendResult {
+                    record_id: request.record_id,
+                })
+            });
             let Poll::Ready(results) =
                 std::pin::pin!(future).poll(&mut Context::from_waker(Waker::noop()))
             else {

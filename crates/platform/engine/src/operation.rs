@@ -14,8 +14,10 @@ use std::time::Duration;
 use anyhow::Context as _;
 use wamn_catalog::AdmittedComponent;
 
+pub(crate) mod ambient_cli;
 pub mod intent;
 pub mod invocation_policy;
+pub mod json;
 pub mod native_call;
 pub mod native_workload;
 
@@ -165,7 +167,7 @@ async fn call_export<H: ApplicationHost>(
             NativeInvocation {
                 operation: call.operation.to_owned(),
                 context: call.context,
-                input: NativeInput::Json(json),
+                input: NativeInput::Encoded(json),
                 deadline,
                 facts: call.facts,
                 application: Arc::clone(&application),

@@ -17,7 +17,7 @@ mod tests {
     #[test]
     fn every_vector_decodes_to_its_request_element() {
         let vectors: Vec<Value> = serde_json::from_str(include_str!(
-            "../../../../../services/ctl/read-query-vectors.json"
+            "../../../../services/ctl/read-query-vectors.json"
         ))
         .expect("read-query vectors are JSON");
         for vector in vectors {

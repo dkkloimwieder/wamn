@@ -33,17 +33,6 @@ pub struct NativeComponent {
     pub bytes: Vec<u8>,
 }
 
-/// The composed entry of a release: one component that exports the
-/// operations of every member it carries.
-#[derive(Debug)]
-pub struct NativeEntry {
-    /// The admitted facts of the members, each a component of the release.
-    pub members: Vec<AdmittedComponent>,
-    pub bytes: Vec<u8>,
-    /// The digest that the HTTP entry start compiles the same bytes under.
-    pub digest: String,
-}
-
 /// The immutable release or candidate workload selected by the owning driver.
 #[derive(Debug)]
 pub struct NativeWorkloadSpec {
@@ -52,9 +41,6 @@ pub struct NativeWorkloadSpec {
     pub namespace: String,
     pub name: String,
     pub components: Vec<NativeComponent>,
-    /// The composed entry, which runs its members' operations in place of
-    /// their own components.
-    pub entry: Option<NativeEntry>,
     pub local_resources: LocalResources,
     pub host_interfaces: Vec<WitInterface>,
 }
@@ -70,8 +56,6 @@ pub struct NativeWorkloadSpec {
 pub struct NativeWorkload {
     workloads: BTreeMap<String, ResolvedWorkload>,
     pub facts_by_component_id: BTreeMap<String, AdmittedComponent>,
-    /// The native id of the composed entry and the members that it runs.
-    pub entry: Option<(String, Vec<AdmittedComponent>)>,
     // The workload's stores hold this handler weakly, so the application keeps
     // it alive. `NullServer` refuses every outgoing request.
     _egress: Arc<dyn HostHandler>,
@@ -82,7 +66,6 @@ impl std::fmt::Debug for NativeWorkload {
         f.debug_struct("NativeWorkload")
             .field("workloads", &self.workloads)
             .field("facts_by_component_id", &self.facts_by_component_id)
-            .field("entry", &self.entry)
             .finish_non_exhaustive()
     }
 }
@@ -112,12 +95,6 @@ impl NativeWorkload {
         self.facts_by_component_id
             .iter()
             .find_map(|(id, loaded)| (loaded == fact).then_some(id.as_str()))
-            .or_else(|| {
-                self.entry
-                    .as_ref()
-                    .filter(|(_, members)| members.contains(fact))
-                    .map(|(id, _)| id.as_str())
-            })
     }
 
     /// The native dispatch target of one admitted component.
@@ -228,11 +205,6 @@ pub async fn load_native_application<P: InvocationPolicy>(
     }))
 }
 
-/// Name the composed entry by the digest that its bytes compile under.
-pub fn native_entry_name(digest: &str) -> String {
-    format!("wamn-entry:{digest}")
-}
-
 /// Identify a complete admitted fact before native plugin binding begins.
 ///
 /// This name is metadatan identity, not the digest used by the compilation cache.
@@ -255,6 +227,14 @@ pub(super) async fn load_native_workload(
     plugin_bindings: &PluginBindings,
     meters: &Meters,
 ) -> anyhow::Result<NativeWorkload> {
+    let mut plugins: HashMap<_, _> = plugins
+        .iter()
+        .map(|(id, plugin)| (*id, Arc::clone(plugin)))
+        .collect();
+    plugins.insert(
+        super::ambient_cli::ID,
+        Arc::new(super::ambient_cli::EmptyCli),
+    );
     let mut facts_by_name = BTreeMap::new();
     let mut components = Vec::new();
     for input in spec.components {
@@ -308,28 +288,11 @@ pub(super) async fn load_native_workload(
             }
         }
     }
-    // The entry compiles under the digest of the HTTP entry start, and runs
-    // with no warm pool (poolSize 0), as that start does.
-    let entry = spec.entry.map(|entry| {
-        let component = Component {
-            name: native_entry_name(&entry.digest),
-            bytes: entry.bytes.into(),
-            digest: Some(entry.digest),
-            local_resources: spec.local_resources.clone(),
-            ..Component::default()
-        };
-        (component, Some(entry.members))
-    });
     let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
     let host = HostRef::from_handler(&egress);
     let mut workloads = BTreeMap::new();
     let mut facts_by_component_id = BTreeMap::new();
-    let mut loaded_entry = None;
-    let items = components
-        .into_iter()
-        .map(|component| (component, None))
-        .chain(entry);
-    for (component, members) in items {
+    for component in components {
         let name = component.name.clone();
         // Boxed so the loop does not carry native resolution inline in every caller's future.
         let loaded = Box::pin(load_component_workload(
@@ -339,7 +302,7 @@ pub(super) async fn load_native_workload(
             &spec.name,
             component,
             &spec.host_interfaces,
-            plugins,
+            &plugins,
             plugin_bindings,
             &host,
             meters,
@@ -347,14 +310,10 @@ pub(super) async fn load_native_workload(
         .await;
         match loaded {
             Ok((component_id, resolved)) => {
-                if let Some(members) = members {
-                    loaded_entry = Some((component_id.clone(), members));
-                } else {
-                    let fact = facts_by_name
-                        .remove(&name)
-                        .expect("each loaded component names one admitted fact");
-                    facts_by_component_id.insert(component_id.clone(), fact);
-                }
+                let fact = facts_by_name
+                    .remove(&name)
+                    .expect("each loaded component names one admitted fact");
+                facts_by_component_id.insert(component_id.clone(), fact);
                 workloads.insert(component_id, resolved);
             }
             Err(error) => {
@@ -368,7 +327,6 @@ pub(super) async fn load_native_workload(
     Ok(NativeWorkload {
         workloads,
         facts_by_component_id,
-        entry: loaded_entry,
         _egress: egress,
     })
 }
@@ -400,7 +358,11 @@ async fn load_component_workload(
         annotations: HashMap::new(),
         service: None,
         components: vec![component],
-        host_interfaces: host_interfaces.to_vec(),
+        host_interfaces: host_interfaces
+            .iter()
+            .cloned()
+            .chain(super::ambient_cli::EmptyCli.world().imports)
+            .collect(),
         volumes: Vec::new(),
     };
     let engine = Arc::clone(engine);

@@ -461,10 +461,14 @@ impl ProductionDevStageRunner {
         Ok(())
     }
 
-    fn virtualize(&mut self) -> Result<(), ProductionDevStageError> {
-        self.clear_after(DevStage::Virtualize);
-        // The Build stage virtualized each component; this stage selects the
-        // components that each package's build.json records.
+    #[expect(
+        clippy::unused_async,
+        clippy::unused_async_trait_impl,
+        reason = "Admit is one stage of the `DevStageRunner` seam, and every stage the \
+                  dispatcher awaits has the same shape; this one reaches no I/O today"
+    )]
+    async fn admit(&mut self) -> Result<(), ProductionDevStageError> {
+        self.clear_after(DevStage::Admit);
         self.artifacts = select_component_artifacts(&self.package_inputs()?)?;
 
         let packages = self
@@ -482,21 +486,10 @@ impl ProductionDevStageRunner {
             let verified = base.component_digest().verify(artifact.digest.clone());
             self.verified_base_digests.push(verified);
         }
-        Ok(())
-    }
-
-    #[expect(
-        clippy::unused_async,
-        clippy::unused_async_trait_impl,
-        reason = "Admit is one stage of the `DevStageRunner` seam, and every stage the \
-                  dispatcher awaits has the same shape; this one reaches no I/O today"
-    )]
-    async fn admit(&mut self) -> Result<(), ProductionDevStageError> {
-        self.clear_after(DevStage::Admit);
         if self.artifacts.is_empty() {
             return Err(ProductionDevStageError::invalid(
                 "admit components",
-                "the Virtualize stage selected no package components",
+                "the build selected no package components",
             ));
         }
         for artifact in self.artifacts.clone() {
@@ -1012,13 +1005,9 @@ impl ProductionDevStageRunner {
 
     fn clear_after(&mut self, stage: DevStage) {
         match stage {
-            DevStage::Migrate | DevStage::Build | DevStage::Virtualize => {
+            DevStage::Migrate | DevStage::Build | DevStage::Admit => {
                 self.artifacts.clear();
                 self.verified_base_digests.clear();
-                self.admissions.clear();
-                self.release = None;
-            }
-            DevStage::Admit => {
                 self.admissions.clear();
                 self.release = None;
             }
@@ -1233,7 +1222,6 @@ impl DevStageRunner for ProductionDevStageRunner {
         match stage {
             DevStage::Migrate => self.migrate().await,
             DevStage::Build => self.build().await,
-            DevStage::Virtualize => self.virtualize(),
             DevStage::Admit => self.admit().await,
             DevStage::Condition => self.condition().await,
             DevStage::Acl => self.acl().await,

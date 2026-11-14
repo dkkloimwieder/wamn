@@ -87,7 +87,7 @@ The generator compares those choices with the schema and SQL. It does not replac
 | `models.*.schema`, `.table`, `.owner` | Application relation selection and package ownership. PostgreSQL supplies the selected relation's schema. Retain selection and ownership. |
 | `server_owned_fields`, `client_field_extensible` | Application exposure and extension policies. Database defaults do not determine these choices. Retain, except the stamp columns `created_at`, `created_by`, `updated_at` and `updated_by`: generation makes each one the table carries server-owned, and refuses a list that names one. |
 | `enum_fields` | Application value policy of a text column. A CHECK that carries a quoted value takes the form `CHECK (<column> IN ('a', ...))`, which PostgreSQL stores as `(<column> = ANY (ARRAY['a'::text, ...]))`, and generation reads the column's value set from it into the compiled manifest. A CHECK of any other form with a quoted value refuses with its name, and a CHECK without one is not a value set. The author states a list only to narrow a CHECK's set or to name a set that no CHECK carries; a list equal to the CHECK's set, or one that widens it, refuses. Derive. |
-| `min_lengths` | Application value policy: the fewest characters that a text column holds after a trim. The generated codec refuses a shorter value with `invalid_input` on its field. The author writes `CHECK (char_length(btrim(<column>)) >= <n>)` in a migration, and generation refuses the model without it. That CHECK is the database guard and never the answer, so no operation contract lists it. Retain. |
+| `min_lengths` | Application value policy: the fewest characters that a text column holds after a trim. The generated typed export refuses a shorter value with `invalid_input` on its field. The author writes `CHECK (char_length(btrim(<column>)) >= <n>)` in a migration, and generation refuses the model without it. That CHECK is the database guard and never the answer, so no operation contract lists it. Retain. |
 | `audit_log.columns`, `.retention` | Application history policy. Retain. |
 | `operations` keys, `permission`, `writable_fields`, `revision_field`, `result` | Application operation, authority, revision, and result choices. Retain. |
 | Create `values` | Application value policy for a new record: the subset of an `enum_fields` list that a create accepts. The generated input contract states it, and states the model list for every other enum field, so a client and the generated route schema offer only those values. Retain. |
@@ -135,17 +135,17 @@ Each package owns its contracts under `wit/` in its build output.
 Names, fields, revision inputs, nested values, results, and error details follow the declarations.
 Separate operations over one table retain separate writable fields and permissions.
 
-Generated codecs handle JSON entry, typed input validation, primitive conversion, correlation, and declared error details.
-Their `export_operation!` macro connects a typed application handler to `run` and `run-json`.
-Known component calls use typed values.
-HTTP and dynamic entry use the JSON adapter.
+Generated exports validate typed input before calling a handler or an override.
+Their `export_operation!` macro connects each application handler to typed `run`.
+The host converts HTTP JSON from the WIT export type.
+Known component calls keep typed values.
 Revision inputs, returned revisions, and conflict revisions follow their declared integer type in JSON.
 An `int32` uses a JSON number, and an `int64` uses a decimal string.
 Database and WIT revision values remain numeric.
 The `minimum`, `maximum`, and `observed` refusal details are decimal strings in WIT and JSON, spelled as a numeric value is and never as a float.
 Custom fields declare `revision: true`; CRUD operations use their declared revision field.
 Other integer fields follow the same rule.
-The common integer codec preserves exact values above JavaScript’s safe-integer limit.
+The host converter preserves integers above JavaScript’s safe-integer limit.
 Application handlers of custom operations retain business rules, transaction sequencing, and deliberate result transformations.
 
 ## Generated operations
@@ -310,7 +310,7 @@ An update, a delete, and any other route without a key field key each item by it
 
 The current Receiving path claims through the engine.
 It runs the intent rules of [`intent.rs`](../../crates/platform/engine/src/operation/intent.rs) around every create, update, delete and command, in the cloud and on the edge.
-No codec, data function or component spells a claim.
+No generated export, data function or component spells a claim.
 The engine calls the component once for each item, with a one-item list.
 For an operation with SQL, the host begins one transaction for each item, and the steps of that item run inside it:
 
@@ -351,10 +351,10 @@ A result can finish late within that period without a separate claim identifier.
 The write log provides idempotency protection, which prevents repeated work for the same key.
 Record history carries the actor and provides the audit.
 
-The host also provides `wamn:operation/operation@0.1.0` for the composed application entry.
-Receiving calls this interface through its composed HTTP entry.
+The host also provides `wamn:operation/operation@0.1.0` for the separate route component.
+The route component calls this interface before it invokes a Receiving operation.
 The host binds its workload to a component in the loaded release before serving calls.
-Only the composed entry imports `wamn:operation`.
+Only the route component imports `wamn:operation`.
 The control-only entry links this interface without operation authority.
 Its begin calls return `unknown-operation`, and its commit, rollback, and WAL calls return `not-begun`.
 Package members that import `wamn:postgres/statements` need only the PostgreSQL WIT package path.
@@ -426,9 +426,9 @@ A generated query returns its page as one result: its rows, and the keyset curso
 For a cursor, SQL compares the sort field and ID as one row, so a matching index starts at that cursor.
 `wamn build` requires a `(field, id)` index for every allowed sort field, including the default.
 It reads indexes across all package migrations and refuses a missing index with the operation, table, and exact `CREATE INDEX` line.
-Its `run-json` entry returns the page as the outcome list of one item, and its `read-json` entry also returns the WAL position.
+Its typed `run` export returns the page. The host converts it to a JSON outcome and retains the WAL position.
 The generated `query` action declares a `limit` that defaults to 100 and accepts 1 to 100.
-The query's codec fills the default and refuses a limit below 1.
+The query's typed export fills the default and refuses a limit below 1.
 The entry refuses a limit above the declared maximum or the platform ceiling before the query runs.
 An application query reads through `statements.run` of `wamn:postgres` 0.4.0, with the WAL position on the same connection when the entry asks for it.
 The statement reads one row past the limit, and that row says whether a next read has rows.
@@ -468,7 +468,7 @@ A second caller waits at step 2 for the whole of the first caller's work. A lock
 - The transaction is keyed by Store, never by member instance. Base and overlay share one invocation, one connection, one commit, and the overlay still sequences base-exported steps before, between and after its own as component-model calls. A package with its own database (analytics) gets its own connection and transaction, as today. A cross-application call is host-mediated through the router with no shared transaction, as today.
 - `run` / `run-stream` stay refused inside a host transaction.
 - Authorization stays at publish; the only runtime test is the entry's grant, once, at `begin-operation` or at `authenticate`.
-- The composed component's digest is a function of source bytes only; `wac` is deterministic, and the route layer's bytes are pinned like any member.
+- The composed application's digest depends on its source bytes. The separate route component has its own digest pin.
 - The guest supplies no trust data (ruled 2026-10-20 from the spike, `wamn-cbqzl`). The host mints the delivery id at `begin-operation`. `authenticate` returns an opaque caller handle, and `begin-operation` makes sure of it. The request hash and the result are the application's idempotency data, which the host stores without interpreting.
 
 8. Resolved 2026-10-20: under A5 the component handles a batched request. The entry loops over the items and calls `begin-operation` and `commit` per item; the host sees single operations and never knows a batch exists. Per-item claims and transactions stay as today (an item failing does not roll back the others; a retry replays only unfinished keys). Whole-batch atomicity, if an operation wants it, is one begin with one key, declared by that operation's contract. Owner: batch semantics and error handling belong to the application, not the host; the response shapes (per-item errors in a 200, partial completion on a run failure) stay as the entry builds them today, and validate-all-before-run is kept.

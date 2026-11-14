@@ -17,35 +17,17 @@ wit_bindgen::generate!({
 });
 
 use exports::netsuite::sync::finish;
-use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
+use wamn::node::types::{ErrorDetail, NodeContext, NodeError};
 use wamn_integration::setting::write;
 
 struct Component;
 export!(Component);
 
-impl exports::wamn::node::async_handler::Guest for Component {
-    async fn run(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let config: serde_json::Value =
-            serde_json::from_str(&context.config).map_err(|error| invalid(error.to_string()))?;
-        match config["operation"].as_str() {
-            Some("setting.read") => wamn_integration::setting::read::run_json(context, input).await,
-            _ => Err(invalid("operation must be setting.read".into())),
-        }
-    }
-}
-
-fn invalid(message: String) -> NodeError {
-    NodeError::Terminal(ErrorDetail {
-        message,
-        code: Some("invalid_config".into()),
-    })
-}
-
-mod finish_codec {
+mod finish_operation {
     use super::finish as contract;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/wamn/netsuite/wit/sync_finish_codec.rs"
+        "/../../target/wamn/netsuite/wit/sync_finish_operation.rs"
     ));
 }
 
@@ -61,7 +43,7 @@ impl finish::Guest for Component {
         context: NodeContext,
         input: Vec<finish::FinishItem>,
     ) -> Result<Vec<finish::FinishOutcome>, NodeError> {
-        finish_codec::validate(&input).map_err(|error| invalid_input(error.context()))?;
+        finish_operation::validate(&input).map_err(|error| invalid_input(error.context()))?;
         for item in &input {
             if let Ok(request) = &item.input {
                 chrono::DateTime::parse_from_rfc3339(&request.due)
@@ -69,7 +51,7 @@ impl finish::Guest for Component {
             }
         }
         let mut failure = None;
-        let rows = finish_codec::run(input, &mut failure, async |failure, request| {
+        let rows = finish_operation::run(input, &mut failure, async |failure, request| {
             let rows = write::run(
                 context.clone(),
                 vec![write::WriteItem {
@@ -77,7 +59,9 @@ impl finish::Guest for Component {
                     input: Ok(write::WriteRequest {
                         idempotency_key: context.delivery_id.clone(),
                         key: "last_synced_at".into(),
-                        value: serde_json::json!(request.due).to_string(),
+                        value: wamn::node::types::JsonValue {
+                            encoded_json: serde_json::json!(request.due).to_string(),
+                        },
                     }),
                 }],
             )
@@ -101,15 +85,6 @@ impl finish::Guest for Component {
             Some(error) => Err(error),
             None => Ok(rows),
         }
-    }
-
-    async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let input = finish_codec::decode(&input).map_err(|error| invalid_input(error.context()))?;
-        let rows = <Self as finish::Guest>::run(context, input).await?;
-        Ok(Emission {
-            payload: finish_codec::encode(&rows),
-            port: None,
-        })
     }
 }
 

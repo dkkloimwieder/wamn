@@ -34,7 +34,7 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
 - Any `Cargo.toml` or `Cargo.lock` also runs `cargo xtask compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it.
-- Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies. Changes to `wit/wamn-router-delivery-0.4/`, `wit/wamn-application-dispatch/`, and materializer WASI WIT select root and apps.
+- Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies. Changes to `wit/wamn-router-delivery-0.4/`, materializer WASI WIT select root and apps.
 - A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
 - A path that no package owns and no rule names selects every applicable workspace and suite.
 - Documentation-only changes select nothing, including quality, and exit successfully.
@@ -129,7 +129,7 @@ In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this che
 | Override | Default input |
 | --- | --- |
 | `WAMN_NATIVE_C_NATS_BIN` | `nats-server` |
-| `WAMN_APPLICATION_COMPONENTS` | `TARGET/virtualized/std-empty-environment` |
+| `WAMN_APPLICATION_COMPONENTS` | `TARGET/wasm32-wasip2/release` |
 | `WAMN_EDGE_DEVICE_COMPONENT` | `ROOT/apps/target/wamn/edge_device/components/device.wasm` |
 | `WAMN_JSONATA_COMPONENT` | `ROOT/apps/target/wamn/wamn_wms/components/jsonata.wasm` |
 | `WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM` | `ROOT/apps/target/wamn/platform_fixture/components/fixture.wasm` |
@@ -243,7 +243,7 @@ The expected value of the test must not come from the code under test.
 ## Local application business tests
 
 Receiving command histories and WMS operation/replay assertions use real components, the HTTP shell, production authorization, and disposable PostgreSQL.
-The fixture composes the pinned HTTP entry with the application and binds operation authority from its format-11 manifest.
+The fixture starts the pinned route component separately from the application and binds authority from the release manifest.
 They share the in-process runtime setup in `tests/integration/src/local_application.rs`.
 The fixture starts a private NATS with TLS and replicates the host auth cache from its `wamn-auth` bucket.
 Select `receiving-business,wms-local` with the runner described above.
@@ -263,7 +263,7 @@ The edge route, device and forward tests run in the workspace run.
 Each test binary builds the edge release bundle of [`apps/edge_device`](../../apps/edge_device/README.md) once, when its first test starts.
 The `edge` preparation step supplies its application component.
 The HTTP guest must match its pin.
-The bundle writer composes the guest with the component into the entry that the edge serves.
+The bundle writer stores the route guest separately. The edge invocation switch follows in S7-D.
 The dev loop's bundle writer admits the component and writes the bundle, with no session.
 The tests sign their own sessions.
 The device test writes scale frames into a pseudo-terminal pair, which is its virtual serial port.
@@ -305,7 +305,7 @@ The runner starts a private PostgreSQL database for application generation.
 The case resolves rendered Secrets through the production credential provisioner and starts private PostgreSQL and NATS servers.
 It starts the debug host with rendered arguments and local component files.
 It also sends an upload to the separate file listener and requires the answer of the native file handler.
-This release serves no application host routes, so the handler answers `route-capacity-exhausted`.
+This release serves no application host routes, so the native handler refuses the request.
 It requires readiness, the rendered HTTP workload, and a completed manual HTTP workflow with the expected response.
 Its old `respond` terminal must fail with `respond-without-caller` after the successful workflow.
 That failure proves that rendering alone cannot establish workflow success.
@@ -537,7 +537,6 @@ Do not infer execution from the aggregate Cargo pass count.
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
 | `[CAPTURE-GAP]` | `crates/control/environment/tests/capture_gap_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs the platform NATS inputs below. It does not test the refusal of an active slot, because only a streaming reader holds a slot active |
 | `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored in live-postgres, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
-| `[STD-GUEST-VIRTUALIZATION]` | `tests/integration/src/virtualized_std_guest.rs`: ignored in live-nats, and needs built guest files and its explicit `WAMN_STD_VIRTUALIZATION_*` inputs |
 
 The source owners declare additional credentials, artifact paths, and selected assertions.
 Do not substitute shared services for missing test inputs.
@@ -984,7 +983,7 @@ The test installs a one-day lifecycle rule for staging only, then requires that 
 No clock change or external aged snapshot is required.
 
 The retained `file_fixture_live` test assembles the file package on disposable PostgreSQL without kind.
-It requires the `blob-put` component and component virtualizer named in its prerequisite declaration.
+It requires the `blob-put` component named in its prerequisite declaration.
 It asserts that the release has an HTTP role and an authored HTTP route.
 
 ```bash

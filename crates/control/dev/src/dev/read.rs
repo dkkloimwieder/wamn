@@ -287,7 +287,7 @@ mod tests {
         let snapshot = handle.snapshot();
 
         assert_eq!(
-            snapshot.stages()[DevStage::Virtualize.position()].state(),
+            snapshot.stages()[DevStage::Build.position()].state(),
             &DevStageState::Passed
         );
         assert_eq!(

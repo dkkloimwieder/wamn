@@ -15,7 +15,7 @@ fn repository() -> PathBuf {
 
 #[test]
 #[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT"]
-fn the_bundle_pins_the_entry_composed_from_the_route_guest_and_the_application() {
+fn the_bundle_pins_the_separate_route_component() {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT",
     );
@@ -52,12 +52,5 @@ fn the_bundle_pins_the_entry_composed_from_the_route_guest_and_the_application()
         bytes_sha256(&entry),
         "the bundle pins the entry"
     );
-    assert_ne!(
-        entry,
-        std::fs::read(&route).expect("read the route guest"),
-        "the bundle carries the composed entry, not the route guest"
-    );
-    wamn_component_composer::validate_application_dispatch(&entry)
-        .expect("the entry supplies application dispatch inside the composition");
     let _ = std::fs::remove_dir_all(&out);
 }

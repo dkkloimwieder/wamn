@@ -117,7 +117,7 @@ The release name is `r-<slug>-<hash>`, derived from the coordinate `org/env/proj
 The name is also the host group of the environment.
 The chart holds the pinned runtime-operator subchart in host-only mode, which renders only the host.
 It adds one WorkloadDeployment for the `http` role and one for the `materializer` role.
-The `http` role starts the composed entry with `poolSize` 0, and a Service of the same name routes to it.
+The `http` role starts the separate route component with `poolSize` 0. A Service of the same name routes to it.
 
 When the environment has a route host, the chart also writes a ConfigMap.
 Its `release.json` names the host, the release digest, client packages in `clients`, and pinned web digests in `webs`.
@@ -305,7 +305,7 @@ Migrate mode preserves data. Reset mode clears application state before it reapp
 Five layers run a component, and each layer depends only on the layers below it:
 
 1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) holds pure run decisions and two storage traits. `RunStore` is the queued-run lifecycle. `IntentStore` is the per-call intent record. `wamn-runtime`, `wamn-run-state-sqlite` and the edge implement it.
-2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, `invoke_operation`, and the host side of the `wamn:operation` binding that the route guest calls. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
+2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, `invoke_operation`, and the host side of the `wamn:operation` binding that the separate route component calls. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
 3. [`wamn-runtime`](../../crates/platform/runtime/src/lib.rs) holds the plugin set: Postgres, JetStream, blobstore, HTTP connections, credentials, logging, route authentication, and the OCI registry source. `WamnPostgres` is the Postgres adapter of `RunStore`.
 4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) holds the route path, `OperationHost`, and the delivery bridge.
 5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) holds everything that walks or delivers a wiring: the driver, wiring delivery, the queue, the lowering of a wiring, and the workflow contract (start, park, release, list). It depends on the pure walk, [`wamn-router`](../../crates/execution/workflow/router/src/lib.rs). A route never enters it.

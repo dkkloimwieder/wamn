@@ -18,9 +18,7 @@ use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_
 use wamn_engine::component_admission::{
     ComponentAdmissionErrorType, ComponentAdmissionRequest, validate_component_admission,
 };
-use wamn_engine::flow_http_routing::{
-    AuthenticatedCaller, CredentialType, FlowHttpRouting, RouteInFlightLimit,
-};
+use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType, FlowHttpRouting};
 use wamn_engine::operation::invocation_policy::InvocationPolicy as _;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_protocol::verifier::SessionVerifier;
@@ -293,10 +291,9 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
                 json!({"receiving": {"packages": ["root", "child"]}}),
             )?),
     )?);
-    let route = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
-        .with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_session_authentication(authentication),
-        ));
+    let route = FlowHttpRouting::new(Some(release)).with_authenticator(Arc::new(
+        PlatformRouteAuthenticator::default().with_session_authentication(authentication),
+    ));
     Ok((server, route))
 }
 
@@ -1401,12 +1398,11 @@ async fn pat_caller(
                 json!({"receiving": {"packages": ["root", "child"]}}),
             )?),
     )?);
-    let routing = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
-        .with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_authentication(Arc::new(
-                RouteAuthentication::new(reader, postgres, PROJECT),
-            )),
-        ));
+    let routing = FlowHttpRouting::new(Some(release)).with_authenticator(Arc::new(
+        PlatformRouteAuthenticator::default().with_authentication(Arc::new(
+            RouteAuthentication::new(reader, postgres, PROJECT),
+        )),
+    ));
     routing
         .authenticate_authorization_for_test(ATTACHMENT, Some(&format!("Bearer {}", token.token())))
         .await

@@ -30,5 +30,5 @@ manifest.Package {
         }
     }
     connections = {upstream = {interface = "wamn:connection/http@0.1.0", mode = "write"}}
-    components = {netsuite = {connections = ["postgres"], exports = {"wamn:node/async-handler@0.1.0": {"input-ports": [{"name": "input", "schema": {"type": "array"}}], "output-ports": [{"name": "main", "schema": {}}], "parameters": [{"name": "operation", "schema": {"type": "string", "enum": ["setting.read"]}, "required": True}]}}}}
+    components = {netsuite = {connections = ["postgres"]}}
 }

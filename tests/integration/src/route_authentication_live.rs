@@ -11,7 +11,7 @@ use anyhow::Context as _;
 use sqlx::PgConnection as Client;
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::WorkloadRoleFamily;
-use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
+use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::authorize_attachment_for_test;
 use wamn_environment::apply_package::{self, ApplyPackageRequest};
@@ -356,12 +356,11 @@ async fn routing(
     loaded_release: Arc<LoadedRelease>,
 ) -> anyhow::Result<FlowHttpRouting> {
     Ok(
-        FlowHttpRouting::new(Some(loaded_release), RouteInFlightLimit::default())
-            .with_authenticator(Arc::new(
-                PlatformRouteAuthenticator::default().with_authentication(Arc::new(
-                    RouteAuthentication::new(identity_reader, postgres, PROJECT),
-                )),
+        FlowHttpRouting::new(Some(loaded_release)).with_authenticator(Arc::new(
+            PlatformRouteAuthenticator::default().with_authentication(Arc::new(
+                RouteAuthentication::new(identity_reader, postgres, PROJECT),
             )),
+        )),
     )
 }
 
@@ -526,15 +525,12 @@ async fn assert_user_environment_membership(
     )?;
     let verifier =
         wamn_identity_protocol::verifier::SessionVerifier::new(server.cache().0, ORG, &audience)?;
-    let session_routing = FlowHttpRouting::new(
-        Some(Arc::clone(&loaded_release)),
-        RouteInFlightLimit::default(),
-    )
-    .with_authenticator(Arc::new(
-        PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
-            SessionRouteAuthentication::new(verifier, identity_reader, postgres, PROJECT),
-        )),
-    ));
+    let session_routing = FlowHttpRouting::new(Some(Arc::clone(&loaded_release)))
+        .with_authenticator(Arc::new(
+            PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
+                SessionRouteAuthentication::new(verifier, identity_reader, postgres, PROJECT),
+            )),
+        ));
     let route_auth = &session_routing;
     let loaded_release = loaded_release.as_ref();
     let authorization = format!(

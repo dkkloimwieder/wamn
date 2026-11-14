@@ -59,7 +59,7 @@ wamn-workflow = { workspace = true }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true }
 wamn-compiler = { workspace = true }
-wash-runtime = { workspace = true }
+wash-runtime = { workspace = true, features = ["wasi-config"] }
 wasmtime-wasi = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
 
@@ -67,7 +67,7 @@ wasmtime-wasi-http = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["test-util"] }
 # `wamn_catalog::fixture_graph` is conditioned behind `test-util`.
 wamn-catalog = { workspace = true, features = ["test-util"] }
-# The session fixture of the runtime tests, which control_client_live includes.
+# The shared runtime session fixture.
 tokio-rustls = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }

@@ -10,8 +10,11 @@
 pub mod cursor;
 pub mod error;
 pub mod feed;
+mod input;
+pub mod operation;
 pub mod page;
 pub mod scalar;
+pub use input::InputError;
 
 pub use cursor::Direction;
 pub use page::Page;

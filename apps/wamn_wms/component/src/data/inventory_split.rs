@@ -5,7 +5,7 @@
 //! validates them, and writes through `RETURNING` dependencies. A locking CTE
 //! alone cannot refresh the snapshot after a lock wait.
 //!
-//! The generated codec holds the transaction and write log for exact replay.
+//! The generated operation holds the transaction and write log for exact replay.
 
 use serde::Deserialize;
 use wamn_postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
@@ -73,7 +73,7 @@ fn parse(command: &SplitCommand) -> Result<Parsed, AccessError> {
     })
 }
 
-/// Run one command request element in the transaction its codec holds for the write log.
+/// Run one command request element in the transaction its operation holds for the write log.
 ///
 /// # Errors
 ///

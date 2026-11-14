@@ -11,7 +11,7 @@ use wamn_control_provision::{
 };
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::engine::build_engine;
-use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
+use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_environment::apply_package::{ApplyPackageRequest, apply_package};
 use wamn_execution_host::{
@@ -328,7 +328,7 @@ pub(super) async fn assemble(
         Some(input.project_env_key),
         Arc::clone(&postgres),
     );
-    let driver = Arc::new(RouterDriver::new(Arc::new(OperationHost::new(
+    let operations = Arc::new(OperationHost::new(
         Arc::clone(&engine),
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new()?),
@@ -351,7 +351,11 @@ pub(super) async fn assemble(
             owner_prefix: "local-application".into(),
             warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
         },
-    )?)));
+    )?);
+    let invoker: Arc<dyn wamn_runtime::plugins::wamn_postgres::OperationInvoker> =
+        Arc::clone(&operations) as Arc<dyn wamn_runtime::plugins::wamn_postgres::OperationInvoker>;
+    postgres.bind_operation_invoker(super::LOCAL_WORKLOAD_ID, Arc::downgrade(&invoker))?;
+    let driver = Arc::new(RouterDriver::new(operations));
     let readiness = RouterReadinessProbe::new(driver.operations())
         .refresh()
         .await;
@@ -400,19 +404,27 @@ pub(super) async fn assemble(
     )
     .await?;
 
+    let local_resources = wash_runtime::types::LocalResources {
+        config: HashMap::from([(
+            wamn_catalog::http_routes::HTTP_ROUTES_CONFIG.into(),
+            serde_json::to_string(&wamn_catalog::http_routes::route_data(
+                release.manifest(),
+                release.manifest().digest().as_str(),
+            ))?,
+        )]),
+        ..Default::default()
+    };
     let queue = LocalQueue {
         driver,
         postgres: Arc::clone(&postgres),
         release: Arc::clone(&release),
     };
     let routing = Arc::new(
-        FlowHttpRouting::new(Some(release), RouteInFlightLimit::default()).with_authenticator(
-            Arc::new(
-                PlatformRouteAuthenticator::default().with_authentication(Arc::new(
-                    RouteAuthentication::new(reader, Arc::clone(&postgres), input.project),
-                )),
-            ),
-        ),
+        FlowHttpRouting::new(Some(release)).with_authenticator(Arc::new(
+            PlatformRouteAuthenticator::default().with_authentication(Arc::new(
+                RouteAuthentication::new(reader, Arc::clone(&postgres), input.project),
+            )),
+        )),
     );
     let flow_http = Component::new(engine.inner(), entry.bytes())?;
     let secret = input.scratch.join("operator-pat.json");
@@ -426,6 +438,7 @@ pub(super) async fn assemble(
             engine,
             flow_http,
             plugins: vec![postgres],
+            local_resources,
             routing,
             bridge,
             queue,

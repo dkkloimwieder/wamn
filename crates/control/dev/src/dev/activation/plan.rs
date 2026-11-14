@@ -57,21 +57,7 @@ pub(super) fn host_namespace(identity: &DevActivationIdentity) -> &str {
     &identity.environment
 }
 
-/// The identity fields the host injects into the flow-http workload, paired
-/// with the field of [`DevActivationIdentity`] each one carries.
-///
-/// This is the SINGLE SOURCE for the identity set. It exists because the set was
-/// previously written out by hand in two places -- here and in the cluster
-/// journey's workload renderer -- and the second copy had four of the five.
-/// `wamn.catalog` was left at the template's placeholder, with no identity test, no
-/// substitution and no assertion, so a second application would have deployed
-/// under the first one's catalog and route resolution would have looked in
-/// the wrong one. An enumeration maintained by hand on both sides misses
-/// whatever the enumeration missed; nothing compared the two.
-///
-/// `deploy/platform/http-route-workload.example.yaml` is held equal to this
-/// by a test in this module, so the template gaining or losing an identity fails
-/// here rather than in a cluster.
+/// The application identity supplied to the local route workload.
 pub fn flow_http_identity_fields(identity: &DevActivationIdentity) -> [(&'static str, String); 4] {
     [
         ("wamn.project_env_key", identity.project_env_key()),
@@ -136,9 +122,8 @@ pub(super) fn flow_http_request(request: &DevActivationRequest<'_>) -> v2::Workl
                         name: String::new(),
                     },
                     wit_interface("wamn", "flow-http-routing", "0.1.0", "routing"),
-                    wit_interface("wamn", "router-delivery", "0.4.0", "delivery"),
+                    wit_interface("wasi", "config", "0.2.0-rc.1", "store"),
                     wit_interface("wamn", "operation", "0.1.0", "operation"),
-                    wit_interface("wamn", "postgres", "0.4.0", "statements"),
                 ],
             }),
             volumes: Vec::new(),

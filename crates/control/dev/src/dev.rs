@@ -556,17 +556,17 @@ mod tests {
 
     #[tokio::test]
     async fn stage_failure_stops_before_every_later_side_effect() {
-        let mut runner = RecordingRunner::failing_at(DevStage::Virtualize);
+        let mut runner = RecordingRunner::failing_at(DevStage::Admit);
 
         let error = run_once(&mut runner)
             .await
-            .expect_err("synthetic virtualization failure must stop the run");
+            .expect_err("synthetic admission failure must stop the run");
 
         assert_eq!(error.error_type(), DevRunErrorType::StageFailed);
-        assert_eq!(error.stage(), DevStage::Virtualize);
+        assert_eq!(error.stage(), DevStage::Admit);
         let failed = DEV_STAGE_ORDER
             .iter()
-            .position(|stage| *stage == DevStage::Virtualize)
+            .position(|stage| *stage == DevStage::Admit)
             .unwrap();
         assert_eq!(runner.invoked, DEV_STAGE_ORDER[..=failed]);
     }
@@ -814,7 +814,7 @@ mod tests {
         let mut runner = WatchRunner::inject_during(
             DevStage::Condition,
             vec![DevInvalidation::Rerun {
-                from: DevStage::Virtualize,
+                from: DevStage::Admit,
             }],
             events,
         );
@@ -825,20 +825,11 @@ mod tests {
             .await
             .expect("fake source is infallible");
 
-        let expected = [
-            DevStage::Build,
-            DevStage::Virtualize,
-            DevStage::Acl,
-            DevStage::Admit,
-            DevStage::Condition,
-        ]
-        .into_iter()
-        .chain(
-            DEV_STAGE_ORDER[DevStage::Virtualize.position()..]
-                .iter()
-                .copied(),
-        )
-        .collect::<Vec<_>>();
+        let expected = DEV_STAGE_ORDER[DevStage::Build.position()..=DevStage::Condition.position()]
+            .iter()
+            .chain(&DEV_STAGE_ORDER[DevStage::Admit.position()..])
+            .copied()
+            .collect::<Vec<_>>();
         assert_eq!(runner.invoked, expected);
         assert_eq!(observer.outcomes.len(), 2);
         let first = observer.outcomes[0]

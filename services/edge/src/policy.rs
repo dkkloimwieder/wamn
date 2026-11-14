@@ -233,7 +233,6 @@ mod tests {
                 namespace: "test".into(),
                 name: "test".into(),
                 components: Vec::new(),
-                entry: None,
                 local_resources: wash_runtime::types::LocalResources::default(),
                 host_interfaces: Vec::new(),
             },

@@ -87,16 +87,13 @@ pub async fn invoke(
         .unwrap()
         .facts();
     let application = host
-        .load_application(
-            vec![NativeComponent {
-                fact: component.clone(),
-                bytes: std::fs::read(
-                    wamn_compiler::output_root(&super::support::repository().join("apps/netsuite"))
-                        .join("components/netsuite.wasm"),
-                )?,
-            }],
-            None,
-        )
+        .load_application(vec![NativeComponent {
+            fact: component.clone(),
+            bytes: std::fs::read(
+                wamn_compiler::output_root(&super::support::repository().join("apps/netsuite"))
+                    .join("components/netsuite.wasm"),
+            )?,
+        }])
         .await?;
     let wiring: wamn_catalog::WiringDocument = serde_json::from_slice(&std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR"))

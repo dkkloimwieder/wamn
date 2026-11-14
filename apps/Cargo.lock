@@ -377,6 +377,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-data-access",
  "wit-bindgen 0.62.0",
 ]
 
@@ -972,6 +973,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-data-access",
  "wit-bindgen 0.62.0",
 ]
 
@@ -984,6 +986,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-data-access",
  "wit-bindgen 0.62.0",
 ]
 
@@ -1210,6 +1213,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-data-access",
  "wit-bindgen 0.62.0",
 ]
 
@@ -1220,6 +1224,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-data-access",
  "wamn-postgres-statements",
  "wit-bindgen 0.62.0",
 ]
@@ -1491,14 +1496,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "std-virtualization-probe"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wit-bindgen 0.62.0",
-]
-
-[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1740,6 +1737,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-data-access",
  "wamn-postgres-statements",
  "wit-bindgen 0.62.0",
 ]

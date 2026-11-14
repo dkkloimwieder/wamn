@@ -54,16 +54,19 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
                 .composed_entry
                 .as_ref()
                 .map(|entry| entry.reference.clone()),
-            statements: manifest
-                .composing_member()
-                .map_or_else(Vec::new, |application| {
-                    if application.statement_instances.is_empty() {
-                        vec!["sql-0".to_owned()]
-                    } else {
-                        application.statement_instances.keys().cloned().collect()
-                    }
-                }),
-            config: target(&[]),
+            config: {
+                let mut config = target(&[]);
+                config.insert(
+                    wamn_catalog::http_routes::HTTP_ROUTES_CONFIG.into(),
+                    serde_json::to_string(&wamn_catalog::http_routes::route_data(
+                        manifest,
+                        manifest.digest().as_str(),
+                    ))
+                    .expect("route data is JSON")
+                    .into(),
+                );
+                config
+            },
         });
     }
     roles
@@ -238,10 +241,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
                 .context("the host group's WAMN_COMPONENT_ARTIFACT_BASE resolves the entry")?;
                 entry.insert("entry".into(), image.into());
             }
-            entry.insert(
-                "statements".into(),
-                Value::Sequence(role.statements.iter().cloned().map(Value::String).collect()),
-            );
+
             Ok(Value::Mapping(entry))
         })
         .collect::<anyhow::Result<_>>()?;
@@ -359,8 +359,6 @@ pub struct Role {
     /// The HTTP entry path recorded by the release, relative to the component
     /// artifact base. [`values`] joins it with the host group's base.
     pub entry: Option<String>,
-    /// The entry's named SQL import instances.
-    pub statements: Vec<String>,
     /// `localResources.config` of the role's component.
     pub config: Mapping,
 }

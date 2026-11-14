@@ -3,11 +3,11 @@ use wamn_postgres_statements::Transaction;
 
 use crate::exports::platform_fixture::number::issue as contract;
 
-mod codec {
+mod operation {
     use super::contract;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/wamn/platform_fixture/wit/number_issue_codec.rs"
+        "/../../target/wamn/platform_fixture/wit/number_issue_operation.rs"
     ));
 }
 
@@ -29,13 +29,13 @@ async fn handle(
         })
     }
     .await;
-    result.map_err(|_| codec::map_error("internal_error", |_| None))
+    result.map_err(|_| operation::map_error("internal_error", |_| None))
 }
 
-codec::export_operation!(
+operation::export_operation!(
     crate::Component,
     contract,
     crate::wamn::node::types,
     handle,
-    codec
+    operation
 );

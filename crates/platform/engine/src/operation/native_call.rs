@@ -12,7 +12,7 @@ use tokio::time::{Instant, timeout_at};
 use tracing::Instrument as _;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
-use wash_runtime::wasmtime::component::{Accessor, Instance, TypedFunc, Val};
+use wash_runtime::wasmtime::component::{Accessor, Instance, Val};
 
 use super::invocation_policy::{InvocationPolicy, InvocationScope};
 use super::native_workload::NativeApplication;
@@ -38,19 +38,19 @@ pub struct NativeInvocation<P: InvocationPolicy> {
 /// JSON exists only at dynamic routing. Nested known calls retain WIT values.
 #[derive(Debug)]
 pub enum NativeInput {
-    Json(String),
+    Encoded(String),
     Typed(Val),
 }
 
 impl From<String> for NativeInput {
     fn from(value: String) -> Self {
-        Self::Json(value)
+        Self::Encoded(value)
     }
 }
 
 impl From<&str> for NativeInput {
     fn from(value: &str) -> Self {
-        Self::Json(value.to_owned())
+        Self::Encoded(value.to_owned())
     }
 }
 
@@ -153,74 +153,69 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
             // The guest's host calls parent to this span, because the policy
             // binds the current span when it activates the scope.
             async move {
-            anyhow::ensure!(
-                Instant::now() < request.deadline,
-                "native-node-deadline-exceeded"
-            );
-            let native_id =
-                accessor.with(|mut access| Arc::clone(&access.get().active_ctx.component_id));
-            let warm = request
-                .application
-                .workload
-                .warm_instance_policy(&native_id)
-                .await?
-                .keeps_instances_warm();
-            let component_id = accessor.with(|mut access| {
-                let active = &mut access.get().active_ctx;
-                std::mem::replace(&mut active.component_id, Arc::from(scope.id.as_ref()))
-            });
-            let active_scope = ActiveScope {
-                accessor,
-                component_id,
-            };
-            // Declared after active_scope, so authority is revoked before the
-            // native component identity is restored, including cancellation.
-            let _authority = request
-                .application
-                .policy
-                .activate(
-                    &active_scope.component_id,
-                    &scope,
-                    &request,
-                    Arc::clone(&failure),
-                )
-                .await?;
-            let outcome =
-                match request.input {
-                    NativeInput::Json(input) => {
-                        let run = accessor.with(|mut access| {
-                            let handler = instance
-                                .get_export_index(&mut access, None, &request.operation)
-                                .context("component has no admitted operation export")?;
-                            // Generated adapters own JSON at the dynamic routing boundary.
-                            let entry = instance
-                                .get_export_index(&mut access, Some(&handler), "run-json")
-                                .or_else(|| {
-                                    instance.get_export_index(&mut access, Some(&handler), "run")
-                                })
-                                .context("operation has no dynamic entrypoint")?;
-                            let run: WholeEntry = instance.get_typed_func(&mut access, entry)?;
-                            Ok::<_, anyhow::Error>(run)
-                        })?;
-                        let (outcome,) = tokio::select! {
-                            biased;
-                            () = scope.cancelled() => anyhow::bail!("native invocation was cancelled"),
-                            result = run.call_concurrent(accessor, (request.context, input)) => result,
-                        }.map_err(anyhow::Error::from).context("dynamic operation trapped")?;
-                        NativeOutcome::Json(outcome)
+                anyhow::ensure!(
+                    Instant::now() < request.deadline,
+                    "native-node-deadline-exceeded"
+                );
+                let native_id =
+                    accessor.with(|mut access| Arc::clone(&access.get().active_ctx.component_id));
+                let warm = request
+                    .application
+                    .workload
+                    .warm_instance_policy(&native_id)
+                    .await?
+                    .keeps_instances_warm();
+                let component_id = accessor.with(|mut access| {
+                    let active = &mut access.get().active_ctx;
+                    std::mem::replace(&mut active.component_id, Arc::from(scope.id.as_ref()))
+                });
+                let active_scope = ActiveScope {
+                    accessor,
+                    component_id,
+                };
+                // Declared after active_scope, so authority is revoked before the
+                // native component identity is restored, including cancellation.
+                let _authority = request
+                    .application
+                    .policy
+                    .activate(
+                        &active_scope.component_id,
+                        &scope,
+                        &request,
+                        Arc::clone(&failure),
+                    )
+                    .await?;
+                let run = accessor.with(|mut access| {
+                    let handler = instance
+                        .get_export_index(&mut access, None, &request.operation)
+                        .context("component has no admitted operation export")?;
+                    let export = instance
+                        .get_export_index(&mut access, Some(&handler), "run")
+                        .context("operation has no typed entrypoint")?;
+                    instance
+                        .get_func(&mut access, export)
+                        .context("typed entrypoint is not a function")
+                })?;
+                let encoded = matches!(&request.input, NativeInput::Encoded(_));
+                let input = match request.input {
+                    NativeInput::Typed(value) => Ok(value),
+                    NativeInput::Encoded(input) => {
+                        let ty = accessor
+                            .with(|mut access| {
+                                run.ty(&mut access).params().nth(1).map(|(_, ty)| ty)
+                            })
+                            .context("operation has no input")?;
+                        if ty == wash_runtime::wasmtime::component::Type::String {
+                            Ok(Val::String(input))
+                        } else {
+                            serde_json::from_str(&input)
+                                .map_err(anyhow::Error::from)
+                                .and_then(|value| super::json::input(&ty, &value))
+                        }
                     }
-                    NativeInput::Typed(input) => {
-                        let run = accessor.with(|mut access| {
-                            let handler = instance
-                                .get_export_index(&mut access, None, &request.operation)
-                                .context("component has no admitted operation export")?;
-                            let run = instance
-                                .get_export_index(&mut access, Some(&handler), "run")
-                                .context("operation has no typed entrypoint")?;
-                            instance
-                                .get_func(&mut access, run)
-                                .context("typed entrypoint is not a function")
-                        })?;
+                };
+                let outcome = match input {
+                    Ok(input) => {
                         let arguments = [context_value(request.context), input];
                         let mut results = [Val::Bool(false)];
                         tokio::select! {
@@ -228,53 +223,64 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                         () = scope.cancelled() => anyhow::bail!("native invocation was cancelled"),
                         result = run.call_concurrent(accessor, &arguments, &mut results) => result,
                     }.map_err(anyhow::Error::from).context("typed operation trapped")?;
-                        NativeOutcome::Typed(
-                            results
-                                .into_iter()
-                                .next()
-                                .expect("one typed operation result"),
-                        )
+                        if encoded {
+                            NativeOutcome::Json(super::json::emission(&results[0])?)
+                        } else {
+                            NativeOutcome::Typed(
+                                results.into_iter().next().expect("one operation result"),
+                            )
+                        }
                     }
+                    Err(error) => NativeOutcome::Json(Err(node_types::NodeError::InvalidInput(
+                        node_types::ErrorDetail {
+                            code: Some("invalid_input".into()),
+                            message: error.to_string(),
+                        },
+                    ))),
                 };
-            // Direct native calls finish here under their active authority.
-            // The engine's intent path finishes after commit or replay instead.
-            let outcome = if finish_result {
-                request.application.policy.finish_result(
-                    &active_scope.component_id, &request.operation, &request.facts, outcome,
-                ).await?
-            } else { outcome };
-            let refused = match &outcome {
-                NativeOutcome::Json(value) => value.is_err(),
-                NativeOutcome::Typed(value) => matches!(value, Val::Result(Err(_))),
-            }
-            .then_some("handler");
-            reply
-                .send(outcome)
-                .map_err(|_| anyhow::anyhow!("native-node-response-abandoned"))?;
-            if warm && accessor.with(|mut access| !access.get().table.is_empty()) {
-                // Deleting table entries and then reusing this store can alias a
-                // retained guest handle to a later invocation's resource. Native
-                // retirement discards the whole instance before accepting more work.
-                let resources = accessor.with(|mut access| std::mem::take(&mut access.get().table));
-                drop(resources);
-                retired_after_reply.store(true, Ordering::SeqCst);
-                anyhow::bail!(
-                    "native invocation completed with retained resources; retire instance"
-                );
-            }
-            Ok(refused)
+                // Direct native calls finish here under their active authority.
+                // The engine's intent path finishes after commit or replay instead.
+                let outcome = if finish_result {
+                    request
+                        .application
+                        .policy
+                        .finish_result(
+                            &active_scope.component_id,
+                            &request.operation,
+                            &request.facts,
+                            outcome,
+                        )
+                        .await?
+                } else {
+                    outcome
+                };
+                let refused = match &outcome {
+                    NativeOutcome::Json(value) => value.is_err(),
+                    NativeOutcome::Typed(value) => matches!(value, Val::Result(Err(_))),
+                }
+                .then_some("handler");
+                reply
+                    .send(outcome)
+                    .map_err(|_| anyhow::anyhow!("native-node-response-abandoned"))?;
+                if warm && accessor.with(|mut access| !access.get().table.is_empty()) {
+                    // Deleting table entries and then reusing this store can alias a
+                    // retained guest handle to a later invocation's resource. Native
+                    // retirement discards the whole instance before accepting more work.
+                    let resources =
+                        accessor.with(|mut access| std::mem::take(&mut access.get().table));
+                    drop(resources);
+                    retired_after_reply.store(true, Ordering::SeqCst);
+                    anyhow::bail!(
+                        "native invocation completed with retained resources; retire instance"
+                    );
+                }
+                Ok(refused)
             }
             .instrument(tracing::info_span!("wamn.operation.call"))
             .await
         }))
     }
 }
-
-/// The JSON adapter of an operation that returns one whole outcome.
-type WholeEntry = TypedFunc<
-    (node_types::NodeContext, String),
-    (Result<node_types::Emission, node_types::NodeError>,),
->;
 
 /// Native initialization for readiness, without running an application handler.
 struct ReadinessCall {
@@ -320,7 +326,7 @@ pub async fn invoke_owned<P: InvocationPolicy>(
 }
 
 /// The intent engine persists the raw result, then finishes its delivery.
-pub(super) async fn invoke_raw<P: InvocationPolicy>(
+pub async fn invoke_raw<P: InvocationPolicy>(
     target: &DispatchTarget,
     request: NativeInvocation<P>,
 ) -> anyhow::Result<NativeOutcome> {
@@ -423,7 +429,8 @@ pub async fn invoke_native<P: InvocationPolicy>(
     invoke_owned(target, request).await?.into_json()
 }
 
-fn context_value(context: node_types::NodeContext) -> Val {
+/// The node context supplied with a typed operation argument.
+pub fn context_value(context: node_types::NodeContext) -> Val {
     fn optional_string(value: Option<String>) -> Val {
         Val::Option(value.map(|value| Box::new(Val::String(value))))
     }

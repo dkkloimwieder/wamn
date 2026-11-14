@@ -41,7 +41,9 @@ use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
 
-use wamn_engine::operation::{invocation_policy, native_call, native_workload, next_scope};
+use wamn_engine::operation::{
+    invocation_policy, native_call, native_workload, next_scope, node_types,
+};
 use wamn_engine::warm_reuse::WarmReuse;
 
 mod native_policy;
@@ -79,7 +81,7 @@ use invocation_policy::ApplicationHost;
 use native_call::prepare_native;
 use native_policy::{NATIVE_POLICY_ID, NativePolicyResources, new_native_policy};
 pub use native_policy::{NativeFacts, NativePolicy};
-use native_workload::{NativeApplication, NativeComponent, NativeEntry};
+use native_workload::{NativeApplication, NativeComponent};
 use native_workload::{NativeWorkloadSpec, load_native_application};
 
 /// Keep at most two verified artifact fetches in flight per release load.
@@ -458,37 +460,7 @@ impl OperationHost {
         components: Arc<[AdmittedComponent]>,
     ) -> anyhow::Result<ReleasedApplication> {
         validate_released_components(&self.release, &components, None)?;
-        // The composed entry runs its members, so the host loads the entry
-        // and not their own components. One compile then serves the HTTP
-        // entry and every call here.
-        let recorded = self.release.manifest().composed_entry.as_ref();
-        let (members, own): (Vec<_>, Vec<_>) = components.iter().cloned().partition(|fact| {
-            recorded.is_some_and(|entry| {
-                entry.members.iter().any(|member| {
-                    member.package_id == fact.target.package_id
-                        && member.component == fact.component
-                        && member.digest == fact.component_digest
-                })
-            })
-        });
-        let entry = match recorded {
-            Some(recorded) if !members.is_empty() => {
-                let entry = self
-                    .source
-                    .pull_entry(&recorded.reference)
-                    .instrument(tracing::info_span!(
-                        "wamn.component.pull",
-                        wamn.composed_entry = true
-                    ))
-                    .await?;
-                Some(NativeEntry {
-                    members,
-                    bytes: entry.bytes,
-                    digest: entry.digest,
-                })
-            }
-            _ => None,
-        };
+        let own = components.iter().cloned().collect::<Vec<_>>();
         let pulls = own.into_iter().map(|fact| {
             let source = Arc::clone(&self.source);
             async move {
@@ -508,14 +480,9 @@ impl OperationHost {
             native.push(component?);
         }
         drop(pulls);
-        let application = self.load_application(native, entry).await?;
-        let entry_members = application
-            .workload
-            .entry
-            .as_ref()
-            .map_or(0, |(_, members)| members.len());
+        let application = self.load_application(native).await?;
         anyhow::ensure!(
-            components.len() == application.workload.facts_by_component_id.len() + entry_members,
+            components.len() == application.workload.facts_by_component_id.len(),
             "native-release-component-closure-mismatch"
         );
         Ok(ReleasedApplication {
@@ -530,11 +497,9 @@ impl OperationHost {
     pub async fn load_application(
         &self,
         components: Vec<NativeComponent>,
-        entry: Option<NativeEntry>,
     ) -> anyhow::Result<Arc<NativeApplication<NativePolicy>>> {
         let policy = new_native_policy(
             &components,
-            entry.as_ref(),
             NativePolicyResources {
                 files: self.files.get().cloned(),
                 integrations: self.integrations.get().cloned(),
@@ -580,7 +545,6 @@ impl OperationHost {
                 namespace: self.project.clone(),
                 name: self.owner_prefix.clone(),
                 components,
-                entry,
                 warm_reuse: self.warm_reuse.clone(),
                 local_resources: wash_runtime::types::LocalResources::default(),
                 host_interfaces,
@@ -759,37 +723,6 @@ fn prepare_statement_members(
 ///
 /// # Errors
 ///
-/// Refuses an entry whose record names imports the release does not bind.
-fn prepare_entry_members(
-    instances: &BTreeMap<String, String>,
-    composing: &ServingComponent,
-) -> anyhow::Result<PreparedStatementMembers> {
-    if !composing.statement_instances.is_empty() {
-        return prepare_statement_members(instances, composing);
-    }
-    anyhow::ensure!(
-        instances
-            .values()
-            .all(|digest| digest == composing.descriptor.component_digest.as_str()),
-        "statement-instances-unreleased: the entry imports {:?} for another member",
-        instances.keys().collect::<Vec<_>>()
-    );
-    let statements = composing
-        .descriptor
-        .operations
-        .values()
-        .flat_map(|fact| fact.statements.clone())
-        .collect();
-    Ok(WamnPostgres::prepare_statement_members(
-        instances.keys().map(|instance| {
-            (
-                instance.clone(),
-                WamnPostgres::prepare_statement_set(lower_statement_set(&statements), false),
-            )
-        }),
-    ))
-}
-
 fn lower_statement_set(
     statements: &BTreeMap<String, wamn_catalog::ComponentSqlStatement>,
 ) -> VerifiedStatementSet {
@@ -815,3 +748,97 @@ fn lower_statement_set(
 
 #[cfg(test)]
 mod tests;
+
+#[async_trait::async_trait]
+impl wamn_runtime::plugins::wamn_postgres::OperationInvoker for OperationHost {
+    async fn invoke(
+        &self,
+        authority: Arc<wamn_runtime::invocation::AuthorizedInvocation>,
+        operation: String,
+        context: node_types::NodeContext,
+        input: String,
+    ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+        let components = self.release_components().await?;
+        let application = self.released_application(&components).await?;
+        let fact = components
+            .iter()
+            .find(|fact| fact.operations.contains_key(&operation))
+            .context("operation is outside the release")?;
+        let id = application
+            .workload
+            .component_id(fact)
+            .context("operation component is not loaded")?;
+        let target = application.dispatch_target(id)?;
+        let acquisition = NodeAcquisition {
+            identity: self
+                .postgres
+                .session_identity(authority.id())
+                .context("invocation was revoked")?,
+            invocation: self
+                .postgres
+                .invocation(authority.id())
+                .context("invocation has no application")?,
+            causation: None,
+            platform: None,
+        };
+        let deadline = tokio::time::Instant::now()
+            + Duration::from_millis(bounded_node_deadline_ms(context.deadline_ms));
+        native_call::invoke_raw(
+            target,
+            native_call::NativeInvocation {
+                operation,
+                context,
+                input: native_call::NativeInput::Encoded(input),
+                deadline,
+                facts: native_policy::NativeFacts::authorized(acquisition, authority),
+                application: Arc::clone(&application),
+            },
+        )
+        .await?
+        .into_json()
+    }
+
+    async fn sign_result(
+        &self,
+        authority: Arc<wamn_runtime::invocation::AuthorizedInvocation>,
+        operation: String,
+        payload: String,
+    ) -> anyhow::Result<String> {
+        use wamn_engine::operation::InvocationPolicy as _;
+        let components = self.release_components().await?;
+        let application = self.released_application(&components).await?;
+        let fact = components
+            .iter()
+            .find(|fact| fact.operations.contains_key(&operation))
+            .context("operation is outside the release")?;
+        let id = application
+            .workload
+            .component_id(fact)
+            .context("operation component is not loaded")?;
+        let acquisition = NodeAcquisition {
+            identity: self.identity(
+                &self.release.target().project_env_key,
+                Some(self.release_identity()),
+            ),
+            invocation: self
+                .postgres
+                .invocation(authority.id())
+                .context("signing authority was revoked")?,
+            causation: None,
+            platform: None,
+        };
+        let facts = NativeFacts::authorized(acquisition, authority);
+        let outcome = native_call::NativeOutcome::Json(Ok(node_types::Emission {
+            payload,
+            port: None,
+        }));
+        let result = application
+            .policy
+            .finish_result(id, &operation, &facts, outcome)
+            .await?
+            .into_json()?;
+        result
+            .map(|emission| emission.payload)
+            .map_err(|error| anyhow::anyhow!("result signing refused: {error:?}"))
+    }
+}

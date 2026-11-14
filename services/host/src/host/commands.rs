@@ -196,6 +196,10 @@ impl HostCommandHandler for Commands {
                         Some(operations.release_identity()),
                     ),
                 )?;
+                let invoker: Arc<dyn wamn_runtime::plugins::wamn_postgres::OperationInvoker> =
+                    Arc::clone(operations) as Arc<_>;
+                self.postgres
+                    .bind_operation_invoker(&workload_id, Arc::downgrade(&invoker))?;
                 pending = Some(PendingStart {
                     postgres: &self.postgres,
                     workload: &workload_id,

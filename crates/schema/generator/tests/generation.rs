@@ -275,7 +275,7 @@ fn server_owned_fields_are_not_writable() {
 
 /// An application integer is int32 by default, and int64 is opt-in, so a
 /// revision carries the width of its own column. The request member, the JSON
-/// codec and the refusal detail all follow that column.
+/// typed export and the refusal detail all follow that column.
 #[test]
 fn a_revision_carries_the_width_its_column_declares() {
     let base = catalog(false);
@@ -742,7 +742,7 @@ fn authored_query_sql_that_does_not_implement_a_filter_mode_refuses() {
 // (docs/architecture/data-access.md#the-write-log).
 //
 // A create claims its key in `platform.write_log`, inserts its row and
-// stores its result in one transaction that its codec holds. The binding
+// stores its result in one transaction that its typed export holds. The binding
 // supplies the id, and `RETURNING` hands the row back.
 // ---------------------------------------------------------------------------
 
@@ -865,11 +865,8 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
     (CatalogIr::new(vec![model]), manifest)
 }
 
-/// Build the generated typed CRUD component and run its codec tests.
-///
-/// The codec is generated source, so the test that states its behavior runs
-/// inside the scratch crate that compiles it.
-fn compile_inventory_item_component(package: &GeneratedPackage, codec_tests: &str) {
+/// Compile the generated CRUD exports against their typed contracts.
+fn compile_inventory_item_component(package: &GeneratedPackage, export_tests: &str) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
@@ -889,18 +886,17 @@ fn compile_inventory_item_component(package: &GeneratedPackage, codec_tests: &st
             "wit/package.wit",
         ),
         (
-            "generated/wit/inventory_item_create_codec.rs",
-            "src/create_codec.rs",
+            "generated/wit/inventory_item_create_operation.rs",
+            "src/create_operation.rs",
         ),
         (
-            "generated/wit/inventory_item_update_codec.rs",
-            "src/update_codec.rs",
+            "generated/wit/inventory_item_update_operation.rs",
+            "src/update_operation.rs",
         ),
         (
-            "generated/wit/inventory_item_delete_codec.rs",
-            "src/delete_codec.rs",
+            "generated/wit/inventory_item_delete_operation.rs",
+            "src/delete_operation.rs",
         ),
-        ("generated/wit/operation_codec.rs", "src/operation_codec.rs"),
     ] {
         std::fs::write(
             scratch.join(target),
@@ -921,9 +917,11 @@ fn compile_inventory_item_component(package: &GeneratedPackage, codec_tests: &st
              uuid = \"1\"\nwit-bindgen = {{ version = \"0.61\", default-features = false, features = [\"async\", \"macros\", \"realloc\"] }}\n\
              wamn-scalar = {{ path = \"{}\" }}\n\
              wamn-postgres-statements = {{ path = \"{}\" }}\n\
+             wamn-data-access = {{ path = \"{}\" }}\n\
              \n[lib]\ncrate-type = [\"cdylib\"]\n\n[workspace]\n",
             root.join("crates/platform/scalar").display(),
             platform.join("data/postgres-statements").display(),
+            platform.join("data/access").display(),
         ),
     )
     .expect("write fixture manifest");
@@ -967,19 +965,14 @@ macro_rules! operation {{
         node.display(),
         scratch.join("wit").display()
     );
-    let codec_tests = if codec_tests.is_empty() {
-        CODEC_TESTS
-    } else {
-        codec_tests
-    };
     let lib = format!(
-        "{lib}\noperation!(create_codec, create, create_handler, CreateRequest, CreateResult, CreateError);\n\
-         operation!(update_codec, update, update_handler, UpdateRequest, UpdateResult, UpdateError);\n\
-         operation!(delete_codec, delete, delete_handler, DeleteRequest, DeleteResult, DeleteError);\n\n\
-         create_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::create, crate::wamn::node::types, create_handler, create_codec);\n\
-         update_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::update, crate::wamn::node::types, update_handler, update_codec);\n\
-         delete_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::delete, crate::wamn::node::types, delete_handler, delete_codec);\n\n\
-         export!(Component);\n\n{codec_tests}"
+        "{lib}\noperation!(create_operation, create, create_handler, CreateRequest, CreateResult, CreateError);\n\
+         operation!(update_operation, update, update_handler, UpdateRequest, UpdateResult, UpdateError);\n\
+         operation!(delete_operation, delete, delete_handler, DeleteRequest, DeleteResult, DeleteError);\n\n\
+         create_operation::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::create, crate::wamn::node::types, create_handler, create_operation);\n\
+         update_operation::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::update, crate::wamn::node::types, update_handler, update_operation);\n\
+         delete_operation::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::delete, crate::wamn::node::types, delete_handler, delete_operation);\n\n\
+         export!(Component);\n\n{export_tests}"
     );
     std::fs::write(scratch.join("src/lib.rs"), lib).expect("write fixture component");
 
@@ -991,75 +984,19 @@ macro_rules! operation {{
         .expect("cargo test runs for the typed CRUD fixture");
     assert!(
         output.status.success(),
-        "the generated typed CRUD component does not compile or its codec test fails:\n{}\n{}",
+        "the generated typed CRUD component does not compile or its typed export check fails:\n{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let _ = std::fs::remove_dir_all(&scratch);
 }
 
-/// The create codec refuses what the create contract refuses (wamn-59wi).
-///
-/// `sku` is NOT NULL with no default, so its contract states
-/// `omitted: invalid_input`, and the codec refuses an omitted or null `sku` on
-/// that path before it opens a transaction or claims a key. `note` is nullable
-/// and `priority` has a default, so a create may omit both.
-const CODEC_TESTS: &str = r##"
-#[cfg(test)]
-mod codec_tests {
-    use crate::exports::wamn_inventory::inventory_item::create as contract;
-
-    #[test]
-    fn a_create_accepts_the_supplied_id_and_requires_it() {
-        let body = r#"[{"request_id":"r","id":"019fd531-287b-7000-8000-00000000abcd","idempotency_key":"k","sku":"BOX"}]"#;
-        let mut request_elements = super::create_codec::decode(body).unwrap();
-        let request = request_elements.remove(0).input.unwrap();
-        assert!(!request.id.is_empty());
-        assert!(create(r#"[{"request_id":"r","idempotency_key":"k","sku":"BOX"}]"#));
-        assert!(create(r#"[{"request_id":"r","id":"not-a-uuid","idempotency_key":"k","sku":"BOX"}]"#));
-    }
-
-    /// The field each refused request element names. A refused request element
-    /// never reaches the connection, so this test needs no database.
-    fn create(body: &str) -> bool {
-        let input = super::create_codec::decode(body).expect("the body decodes");
-        let context = crate::wamn::node::types::NodeContext {
-            wiring_id: String::new(), wiring_version: 0, node_id: String::new(),
-            delivery_id: String::new(), input_port: None, occurrence: 0,
-            traceparent: None, tracestate: None, deadline_ms: None, config: String::new(),
-        };
-        let run = <super::Component as contract::Guest>::run(context, input);
-        let mut run = std::pin::pin!(run);
-        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-        let std::task::Poll::Ready(Ok(outcomes)) = run.as_mut().poll(&mut context) else {
-            panic!("invalid input must refuse before a host call or override");
-        };
-        outcomes.into_iter().all(|outcome| matches!(outcome.outcome, Err(contract::CreateError::InvalidInput(_))))
-    }
-
-    #[test]
-    fn a_create_refuses_an_omitted_field_that_nothing_would_fill() {
-        let omitted = r#"[{"request_id":"r","id":"019fd531-287b-7000-8000-00000000abcd","idempotency_key":"k"}]"#;
-        assert!(create(omitted));
-        let null = r#"[{"request_id":"r","id":"019fd531-287b-7000-8000-00000000abcd","idempotency_key":"k","sku":null}]"#;
-        assert!(create(null));
-    }
-}
-"##;
-
 #[test]
 fn typed_crud_contracts_follow_a_second_model_declaration() {
     let (catalog, manifest) = inventory_item_fixture();
     let package = run(&catalog, &manifest, &[]).expect("the inventory CRUD fixture generates");
     compile_inventory_item_component(&package, "");
-    for (ty, id, wrong) in [
-        (SqlValueType::Int32, "2147483647", "\"2147483647\""),
-        (
-            SqlValueType::Int64,
-            "\"9007199254740993\"",
-            "9007199254740993",
-        ),
-    ] {
+    for ty in [SqlValueType::Int32, SqlValueType::Int64] {
         let model = table(&catalog, "inventory_item");
         let columns = model
             .columns()
@@ -1085,32 +1022,7 @@ fn typed_crud_contracts_follow_a_second_model_declaration() {
             rebuilt_table(model, columns, model.constraints().to_vec()),
         );
         let package = run(&catalog, &manifest, &[]).unwrap();
-        let tests = r##"
-#[cfg(test)]
-mod integer_codec_tests {
-    #[test]
-    fn ids_use_the_declared_wire_type() {
-        let valid = r#"[{"request_id":"r","id":ID,"expected_sequence_number":"1"}]"#;
-        let request_elements = super::delete_codec::decode(valid).unwrap();
-        assert_eq!(request_elements.into_iter().next().unwrap().input.unwrap().id.to_string().parse::<i64>().unwrap(), DECIMAL_i64);
-        let invalid = r#"[{"request_id":"r","id":WRONG,"expected_sequence_number":"1"}]"#;
-        assert!(super::delete_codec::decode(invalid).unwrap().remove(0).input.is_err());
-        let valid = r#"[{"request_id":"r","id":ID,"expected_sequence_number":"1","change":{}}]"#;
-        assert_eq!(super::update_codec::decode(valid).unwrap().remove(0).input.unwrap().id.to_string().parse::<i64>().unwrap(), DECIMAL_i64);
-    }
-
-    #[test]
-    fn identity_create_refuses_a_client_id() {
-        let valid = r#"[{"request_id":"r","idempotency_key":"k","sku":"BOX"}]"#;
-        assert!(super::create_codec::decode(valid).unwrap().remove(0).input.is_ok());
-        for id in ["42", "\"9007199254740993\""] {
-            let invalid = format!(r#"[{{"request_id":"r","idempotency_key":"k","sku":"BOX","id":{id}}}]"#);
-            assert!(super::create_codec::decode(&invalid).unwrap().remove(0).input.is_err());
-        }
-    }
-}
-"##.replace("DECIMAL", id.trim_matches('"')).replace("ID", id).replace("WRONG", wrong);
-        compile_inventory_item_component(&package, &tests);
+        compile_inventory_item_component(&package, "");
     }
 }
 

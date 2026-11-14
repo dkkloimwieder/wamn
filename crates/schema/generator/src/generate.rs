@@ -7,9 +7,9 @@ mod operations;
 pub(crate) mod publication;
 mod routes;
 mod rust;
+mod typed_exports;
 mod validation;
 mod wit;
-mod wit_adapters;
 use operations::{emit_custom_operation, emit_model, required_schema_contract};
 use validation::{authored_sql_map, validate};
 
@@ -744,7 +744,7 @@ fn operation_constraints<'a>(
             action != CrudAction::Update
                 || update_can_violate(constraint.constraint_type(), &operation.writable_fields)
         })
-        // The codec refuses a value shorter than its minimum first, so the
+        // The typed export refuses a value shorter than its minimum first, so the
         // CHECK that guards it is never the answer.
         .filter(|constraint| !guards_min_length(constraint, model))
         .collect()
@@ -1216,7 +1216,7 @@ pub(crate) fn insert_bytes(
 
 /// A create cannot omit a NOT NULL column that has no default, because
 /// nothing would fill it. Its input contract states `omitted: invalid_input`,
-/// and its codec refuses the omission on that path.
+/// and its typed export refuses the omission on that path.
 fn omission_refused(column: &Column) -> bool {
     !column.nullable() && column.default().is_none() && column.generation().is_none()
 }

@@ -12,11 +12,11 @@ fn detail(error: &AccessError, key: &str) -> Option<String> {
 /// The engine's per request element intent is its replay guard.
 mod read {
     use crate::exports::edge_samples::sample::read as contract;
-    mod codec {
+    mod operation {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/edge_samples/wit/sample_read_codec.rs"
+            "/../../target/wamn/edge_samples/wit/sample_read_operation.rs"
         ));
     }
 
@@ -37,24 +37,24 @@ mod read {
             captured_at: request.captured_at,
         })
     }
-    codec::export_operation!(
+    operation::export_operation!(
         crate::Component,
         contract,
         crate::wamn::node::types,
         (),
         handle,
-        codec
+        operation
     );
 }
 
 mod record {
     use super::{detail, sample};
     use crate::exports::edge_samples::sample::record as contract;
-    mod codec {
+    mod operation {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/edge_samples/wit/sample_record_codec.rs"
+            "/../../target/wamn/edge_samples/wit/sample_record_operation.rs"
         ));
     }
 
@@ -71,13 +71,15 @@ mod record {
         )
         .await
         .map(|sample_id| contract::RecordResult { sample_id })
-        .map_err(|error| codec::map_error(error.error_type().literal(), |key| detail(&error, key)))
+        .map_err(|error| {
+            operation::map_error(error.error_type().literal(), |key| detail(&error, key))
+        })
     }
-    codec::export_operation!(
+    operation::export_operation!(
         crate::Component,
         contract,
         crate::wamn::node::types,
         handle,
-        codec
+        operation
     );
 }

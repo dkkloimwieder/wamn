@@ -2,7 +2,7 @@
 //!
 //! Each model with generated operations gets `generated/data/<model>.rs`, with
 //! one `pub async fn` for each operation. A function takes the request values
-//! the operation's codec already validated, parses each into its one spelling,
+//! the typed export already validated, parses each into its one spelling,
 //! runs the generated statement, and answers the contract's row or refusal.
 //! The shared data support owns the refusal type. The package gets one
 //! `generated/data/mod.rs` that the data crate includes.
@@ -208,7 +208,7 @@ fn statement_error(action: CrudAction, constraints_expression: &str) -> String {
     )
 }
 
-/// The data layer receives integers already parsed by the codec.
+/// The data layer receives integers already parsed by the operation.
 fn key_request(
     table: &super::operations::ModelShape<'_>,
 ) -> (&'static str, &'static str, &'static str, &'static str) {
@@ -544,7 +544,7 @@ fn emit_query(
     let id_type = table.key;
 
     // The request: one member for each filter, the search, the sort, the
-    // cursor, and the limit the codec filled.
+    // cursor, and the limit the operation filled.
     let mut members = String::new();
     let mut binds = String::new();
     let mut arguments = Vec::new();
@@ -646,7 +646,7 @@ fn emit_query(
     }
     writeln!(
         source,
-        "/// The `{model_name}.query` request, after its codec filled the limit.\n\
+        "/// The `{model_name}.query` request, after its operation filled the limit.\n\
          #[derive(Clone, Debug, Default, Eq, PartialEq)]\n\
          pub struct QueryInput {{\n\
          {members}\
@@ -660,7 +660,7 @@ fn emit_query(
          }}\n\n\
          /// `{model_name}.query`: one keyset page in the requested sort.\n\
          ///\n/// The contract's order holds: the sort and the cursor first, then the\n\
-         /// statement. The codec validated the limit.\n\
+         /// statement. The operation validated the limit.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
          pub async fn query(connection: &mut Connection, input: QueryInput) -> Result<Page<{row_type}>, Error> {{\n\
          let sort = match (input.sort_field.as_deref(), input.sort_direction.as_deref()) {{\n\
@@ -758,7 +758,7 @@ fn emit_feed(
          let cursor = feed::id::encode::<{id_type}>(MODEL, &feed::id::Cursor {{ transaction, after: None }}).map_err(|Invalid| Error::internal())?;\n\
          Ok((cursor, page))\n\
          }}\n\n\
-         /// The feed part of a `{model_name}.query` request, after its codec\n\
+         /// The feed part of a `{model_name}.query` request, after its operation\n\
          /// filled the limit.\n\
          #[derive(Clone, Debug, Default, Eq, PartialEq)]\n\
          pub struct FeedInput {{\n\

@@ -6,7 +6,7 @@
     (export "sql-value" (type $sql-value (eq $sql-value')))
     (type $column' (record (field "name" string) (field "type-name" string)))
     (export "column" (type $column (eq $column')))
-    (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value))) (field "wal-position" (option string))))
+    (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value)))))
     (export "row-set" (type $row-set (eq $row-set')))
     (type $pg-error' (variant (case "serialization-failure") (case "connection-unavailable")
       (case "statement-timeout") (case "row-limit-exceeded" u64) (case "unique-violation" string)
@@ -19,8 +19,7 @@
   (alias export $types "row-set" (type $row-set))
   (alias export $types "pg-error" (type $pg-error))
   (import "wamn:postgres/statements@0.4.0" (instance $statements
-    (type $want-wal' (enum "current"))
-    (export "want-wal-position" (type $want-wal (eq $want-wal')))
+
     (type $contract-part' (enum "binds" "columns"))
     (export "contract-part" (type $contract-part (eq $contract-part')))
     (type $value-shape' (record (field "count" u32) (field "types" (list string))))
@@ -36,10 +35,10 @@
       (result (result (own $transaction) (error $statement-error)))))
     (export "begin" (func async
       (result (result (own $transaction) (error $statement-error)))))
-    (export "run" (func async (param "statement" string) (param "binds" (list $sql-value)) (param "wal" (option $want-wal))
+    (export "run" (func async (param "statement" string) (param "binds" (list $sql-value))
       (result (result $row-set (error $statement-error)))))
-    (export "run-stream" (func async (param "statement" string) (param "binds" (list $sql-value)) (param "wal" (option $want-wal))
-      (result (result (tuple (list $column) (option string) (stream (list $sql-value))
+    (export "run-stream" (func async (param "statement" string) (param "binds" (list $sql-value))
+      (result (result (tuple (list $column) (stream (list $sql-value))
         (future (result (error $statement-error)))) (error $statement-error)))))
     (export "[method]transaction.run" (func async (param "self" (borrow $transaction))
       (param "statement" string) (param "binds" (list $sql-value))
@@ -110,7 +109,7 @@
     (import "host" "begin" (func $begin (param i32 i32 i32 i32 i32 i32 i32 i32 i32)))
     (import "host" "authorize" (func $authorize (param i32 i32 i32 i32 i32)))
     (import "host" "finish-read" (func $finish-read (param i32)))
-    (import "host" "read" (func $read (param i32 i32 i32 i32 i32 i32 i32)))
+    (import "host" "read" (func $read (param i32 i32 i32 i32 i32)))
     (import "host" "commit" (func $commit (param i32 i32 i32)))
     (import "host" "rollback" (func $rollback (param i32)))
     (import "host" "wal" (func $wal (param i32)))
@@ -182,7 +181,7 @@
         i32.const 64 i32.load8_u if unreachable end
         ;; A bound read operation cannot run the update statement.
         i32.const 576 i32.const 10 i32.const 0 i32.const 0
-        i32.const 0 i32.const 0 i32.const 192 call $read
+        i32.const 192 call $read
         i32.const 192 i32.load8_u i32.const 1 i32.ne if unreachable end
         i32.const 200 i32.load8_u if unreachable end
         i32.const 212 i32.load i32.const 10 i32.ne if unreachable end
@@ -227,7 +226,7 @@
         i32.const 128 call $transaction
         i32.const 128 i32.load8_u i32.eqz if unreachable end
         i32.const 672 i32.const 8 i32.const 0 i32.const 0
-        i32.const 0 i32.const 0 i32.const 192 call $read
+        i32.const 192 call $read
         i32.const 192 i32.load8_u if unreachable end
         i32.const 64 call $finish-read
         i32.const 64 i32.load8_u if unreachable end

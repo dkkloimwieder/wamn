@@ -1460,7 +1460,7 @@ fn validate_command_idempotence(
             ManifestErrorType::InvalidOperation,
             format!(
                 "command {operation_name} must declare idempotent_by as exactly one of three. \
-                 \"claim\": the generated codec claims the key of a non-null text \
+                 \"claim\": the generated export claims the key of a non-null text \
                  value.idempotency_key input in the write log, and a repeat answers the stored \
                  result. {{\"state\": {{\"guards\"}}}}: for a command that mints no \
                  identity, so insert no row, and map each guarded relation to \
@@ -2608,7 +2608,7 @@ pub struct ModelDeclaration {
     #[serde(default)]
     pub enum_fields: BTreeMap<String, Vec<String>>,
     /// The fewest characters a text column holds after a trim, keyed by
-    /// column name. The generated codec refuses a shorter value on its field,
+    /// column name. The generated export refuses a shorter value on its field,
     /// and the table carries the matching CHECK as the database guard.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub min_lengths: BTreeMap<String, u32>,
@@ -3051,18 +3051,6 @@ pub fn rust_type_identifier(value: &str) -> String {
             }
         })
         .collect()
-}
-
-/// A field of a generated serde struct: the Rust spelling, renamed to the
-/// authored name when the two differ.
-pub(crate) fn serde_field(value: &str) -> Option<String> {
-    rust_identifier(value).map(|rust| {
-        if rust == value {
-            rust
-        } else {
-            format!("#[serde(rename = {value:?})] {rust}")
-        }
-    })
 }
 
 /// Refuse a client package name that a package manifest cannot carry.
