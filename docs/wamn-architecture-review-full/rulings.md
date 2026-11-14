@@ -129,3 +129,9 @@ W31. Environment configuration storage (owner, 2026-11-14, revises W19). The fie
 W32. Migration versions (owner, 2026-11-14, revises W10). Authored and generated history migrations share one version sequence. An author takes the highest version across `migrations/` and `history/` plus one. The build refuses a duplicate version and a new version below the highest existing one.
 
 W33. Dev package tags (owner, 2026-11-14, revises W25). A dev tag (`-dev.h<12 hex>`) expires 7 days after publication unless a release pins it. A new prune step in the retention task deletes expired dev tags from the registry.
+
+W34. S13 runs as six serial lanes after S12-C: S13-B (tooling and the guest workspace), S13-C (tests beside their owners), S13-D (one owner for Postgres test setup), S13-E (test selection from stated needs), S13-F (forbidden test machinery) and S13-G (the layout move and the architecture docs, last). Decisions on the plan questions:
+- P23: publication is still split between `package_artifact.rs::push_package` and `publish_release.rs::publish_release`. One lane, S13-P, consolidates it into `wamn-publish` beside S13-B, before S13-G.
+- S13-B converts the no-std guests to standard WASI only where the existing interface checks pass. If a requirement stays open, the workspace stays and S13-B reports it.
+- The SQLx-command fixture stays until its transport contract has another owner.
+- `guest_workspace_closure.rs` stops checking directory containment. Dependency ownership rules replace it.
