@@ -5,6 +5,7 @@ use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
+use wamn_package_artifact::http_client::HttpClient;
 
 pub const CALLER: &str = "a0000000-0000-4000-8000-0000000000c4";
 pub const CONNECTION: &str = "a0000000-0000-4000-8000-000000000041";
@@ -521,14 +522,13 @@ impl Minio {
             "prefix":"generation-one/","cdn_host":self.cdn_origin})
     }
 
-    pub fn client(&self) -> anyhow::Result<reqwest::Client> {
+    pub fn client(&self) -> anyhow::Result<HttpClient> {
         let address: std::net::SocketAddr = self.endpoint.trim_start_matches("http://").parse()?;
-        Ok(reqwest::Client::builder()
-            .no_proxy()
+        HttpClient::builder()
             .resolve("files-a.localhost", address)
             .resolve("files-b.localhost", address)
             .timeout(std::time::Duration::from_secs(10))
-            .build()?)
+            .build()
     }
 
     pub async fn mc(&self, args: &[&str], input: &[u8]) -> anyhow::Result<String> {

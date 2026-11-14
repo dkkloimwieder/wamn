@@ -240,9 +240,13 @@ impl Fixture {
             wamn_environment::environment::document::Integration { version: 2 },
         );
         for application in self.document.applications.values_mut() {
-            application
-                .connections
-                .insert("registers".into(), name.into());
+            application.connections.insert(
+                "registers".into(),
+                wamn_registry::configuration::ConnectionReference {
+                    name: name.into(),
+                    version: None,
+                },
+            );
         }
         self.release = loaded_release(&self.document, "reader")?;
         self.document

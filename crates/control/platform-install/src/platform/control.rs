@@ -11,6 +11,7 @@ use wamn_release_control::release_chart::Target;
 use super::artifact_plan::SelectedChart;
 use super::document::{ClusterDocument, Provider};
 
+use wamn_package_artifact::http_client::{HttpClient, Redirects};
 use wamn_registry::name::REGISTRY_PULL;
 
 /// Wait until every control host observes the environment's administration login change.
@@ -252,21 +253,20 @@ pub async fn probe(target: &Target, document: &ClusterDocument) -> anyhow::Resul
     );
     let forward =
         wamn_kubernetes::forward::port_forward(target, &document.org, &service, 80).await?;
-    let response = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
+    let response = HttpClient::builder()
+        .redirects(Redirects::None)
         .timeout(std::time::Duration::from_secs(5))
         .build()?
         .get(format!(
             "http://127.0.0.1:{}/wamn_control/control/mine",
             forward.port
         ))
-        .header(reqwest::header::HOST, &document.route_hosts.control)
+        .header(hyper::header::HOST, &document.route_hosts.control)
         .send()
         .await
         .context("probe the unauthenticated control route")?;
     anyhow::ensure!(
-        response.status() == reqwest::StatusCode::UNAUTHORIZED,
+        response.status() == hyper::StatusCode::UNAUTHORIZED,
         "the unauthenticated control route returned {}; expected 401",
         response.status()
     );

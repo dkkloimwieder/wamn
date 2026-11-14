@@ -1,11 +1,12 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
+use wamn_package_artifact::http_client::HttpClient;
 
 pub struct Routes {
     pub endpoint: String,
     pub host: String,
     pub bearer: String,
-    pub client: reqwest::Client,
+    pub client: HttpClient,
 }
 
 impl Routes {

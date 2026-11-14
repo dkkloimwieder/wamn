@@ -8,6 +8,7 @@ use serde::Serialize;
 use zeroize::Zeroizing;
 
 use crate::IdentityServiceError;
+use wamn_package_artifact::http_client::{HttpClient, Redirects};
 
 /// Validated sender and API credential for invitation delivery.
 #[derive(Clone)]
@@ -182,7 +183,7 @@ async fn record(
 #[derive(Debug)]
 pub(super) struct ResendMailer {
     config: ResendConfig,
-    client: reqwest::Client,
+    client: HttpClient,
     #[cfg(any(test, feature = "test-util"))]
     endpoint: Option<String>,
 }
@@ -201,7 +202,7 @@ impl ResendMailer {
         if let Some(endpoint) = std::env::var_os("WAMN_TEST_RESEND_ENDPOINT") {
             let refused = || IdentityServiceError::new("test Resend endpoint refused");
             let endpoint = endpoint.into_string().map_err(|_| refused())?;
-            let url = reqwest::Url::parse(&endpoint).map_err(|_| refused())?;
+            let url = url::Url::parse(&endpoint).map_err(|_| refused())?;
             if url.scheme() != "http"
                 || url.host_str() != Some("127.0.0.1")
                 || url.path() != "/emails"
@@ -215,11 +216,9 @@ impl ResendMailer {
             }
             return Ok(Self::fixture(endpoint));
         }
-        let client = reqwest::Client::builder()
+        let client = HttpClient::builder()
             .https_only(true)
-            .no_proxy()
-            .retry(reqwest::retry::never())
-            .redirect(reqwest::redirect::Policy::none())
+            .redirects(Redirects::None)
             .timeout(Duration::from_secs(5))
             .build()
             .map_err(|_| IdentityServiceError::new("Resend client initialization failed"))?;
@@ -239,10 +238,8 @@ impl ResendMailer {
                 "WAMN <fixture@example.invalid>".into(),
             )
             .unwrap(),
-            client: reqwest::Client::builder()
-                .no_proxy()
-                .retry(reqwest::retry::never())
-                .redirect(reqwest::redirect::Policy::none())
+            client: HttpClient::builder()
+                .redirects(Redirects::None)
                 .timeout(Duration::from_secs(2))
                 .build()
                 .unwrap(),
@@ -487,10 +484,8 @@ mod tests {
             let mail = ResendMailer {
                 endpoint: None,
                 config,
-                client: reqwest::Client::builder()
-                    .no_proxy()
-                    .retry(reqwest::retry::never())
-                    .redirect(reqwest::redirect::Policy::none())
+                client: HttpClient::builder()
+                    .redirects(Redirects::None)
                     .timeout(Duration::from_secs(2))
                     .build()
                     .unwrap(),

@@ -1078,9 +1078,8 @@ async fn live_begin_with_identity_sets_the_guest_set_without_a_project_env_key_i
 
 /// Rows a component sees for `sql` on the production one-shot path.
 async fn visible_rows(pg: &WamnPostgres, component: &str, sql: &str) -> usize {
-    match pg.one_shot(component, sql, &[], true).await {
-        Ok(OneShotResult::Rows(rows)) => rows.rows.len(),
-        Ok(OneShotResult::Count(_)) => unreachable!("one_shot(want_rows) returns rows"),
+    match pg.one_shot(component, sql, &[]).await {
+        Ok(rows) => rows.rows.len(),
         Err(e) => panic!("one_shot {sql:?} failed: {e:?}"),
     }
 }
@@ -1341,7 +1340,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_identity(pool: sql
         "SELECT set_config('app.role', 'admin', true)",
         &format!("SELECT set_config('app.user_id', '{U2}', true)"),
     ] {
-        let refused = pg.one_shot(COMPONENT, attempt, &[], false).await;
+        let refused = pg.one_shot(COMPONENT, attempt, &[]).await;
         assert!(
             matches!(refused, Err(PgError::QueryError(_))),
             "the guest surface must refuse {attempt:?}"
@@ -1720,7 +1719,7 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     // belonging to another project_env_key, which is the failure this design exists
     // to make impossible.
     let refused = pg
-        .one_shot(scope_b, "SELECT id FROM dispositions", &[], true)
+        .one_shot(scope_b, "SELECT id FROM dispositions", &[])
         .await
         .err()
         .expect("an project_env_key this host holds no credential for cannot query");
@@ -1742,7 +1741,7 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     pg.revoke_session_identity(scope_a);
     assert_eq!(pg.session_identity(scope_a), None);
     let unbound = pg
-        .one_shot(scope_a, "SELECT id FROM dispositions", &[], true)
+        .one_shot(scope_a, "SELECT id FROM dispositions", &[])
         .await
         .err()
         .expect("an unbound identity scope cannot query at all");

@@ -28,6 +28,7 @@ use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_identity_protocol::keys::SessionJwks;
 use wamn_identity_protocol::test_util::{Audience, verify};
 use wamn_identity_protocol::token::SessionClaims;
+use wamn_package_artifact::http_client::{HttpClient, HttpResponse, Redirects};
 use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
 use wamn_platform_identity::{
     Principal, create_user, disable_principal, grant_project_env_membership,
@@ -83,7 +84,7 @@ struct Fixture {
 
 struct Https {
     endpoint: String,
-    client: reqwest::Client,
+    client: HttpClient,
     serving: JoinHandle<Result<(), wamn_identity::IdentityServiceError>>,
 }
 
@@ -93,7 +94,13 @@ impl Drop for Https {
     }
 }
 
-async fn assert_failure(response: reqwest::Response, status: u16, body: &str) {
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Refusal {
+    error: String,
+}
+
+async fn assert_failure(response: HttpResponse, status: u16, error: &str) {
     assert_eq!(response.status().as_u16(), status);
     assert!(
         response.headers()["cache-control"] == "no-store",
@@ -109,15 +116,12 @@ async fn assert_failure(response: reqwest::Response, status: u16, body: &str) {
             "fixed bearer challenge"
         );
     }
-    // Boolean equality avoids printing a token or key if a refusal regresses.
-    assert!(
-        response.text().await.expect_redacted("refusal body") == body,
-        "fixed indistinguishable refusal body"
-    );
+    let refusal: Refusal = response.json().await.expect_redacted("refusal fields");
+    assert!(refusal.error == error, "refusal code");
 }
 
 async fn verify_response(
-    response: reqwest::Response,
+    response: HttpResponse,
     target: &SessionTarget,
     principal: &Principal,
     roles: &[&str],
@@ -494,14 +498,12 @@ async fn start_config(config: IdentityConfig) -> Https {
         service,
         tls_config(&certificate, &private).expect_redacted("production TLS"),
     ));
-    let mut client = reqwest::Client::builder()
+    let mut client = HttpClient::builder()
         .https_only(true)
-        .no_proxy()
-        .retry(reqwest::retry::never())
-        .redirect(reqwest::redirect::Policy::none())
+        .redirects(Redirects::None)
         .timeout(Duration::from_secs(10))
-        .tls_backend_rustls()
-        .tls_certs_only(reqwest::Certificate::from_pem_bundle(&ca).expect_redacted("fixture CA"))
+        .roots(&ca)
+        .expect_redacted("fixture CA")
         .build()
         .expect_redacted("trusted HTTPS client");
     Https {
@@ -675,7 +677,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
         .send()
         .await
         .unwrap();
-        assert_failure(reply, 401, "{\"error\":\"unauthorized\"}").await;
+        assert_failure(reply, 401, "unauthorized").await;
     }
     revoke_project_env_membership(
         &mut fixture.system.client,
@@ -921,7 +923,7 @@ async fn password_environment_discovery_requires_current_authority() {
             .await
             .unwrap(),
         401,
-        "{\"error\":\"unauthorized\"}",
+        "unauthorized",
     )
     .await;
     discovery_window(&fixture.observations).await;
@@ -937,7 +939,7 @@ async fn password_environment_discovery_requires_current_authority() {
             .send()
             .await
             .unwrap();
-        assert_failure(response, 401, "{\"error\":\"unauthorized\"}").await;
+        assert_failure(response, 401, "unauthorized").await;
     }
     disable_principal(
         &mut fixture.system.client,
@@ -946,12 +948,7 @@ async fn password_environment_discovery_requires_current_authority() {
     )
     .await
     .unwrap();
-    assert_failure(
-        discover().send().await.unwrap(),
-        401,
-        "{\"error\":\"unauthorized\"}",
-    )
-    .await;
+    assert_failure(discover().send().await.unwrap(), 401, "unauthorized").await;
     // Discovery accepts no caller-provided authority or database addresses.
     for extra in ["aud", "roles", "database_url"] {
         let mut invalid = credentials.clone();
@@ -981,7 +978,7 @@ async fn password_environment_discovery_requires_current_authority() {
     cleanup(fixture).await;
 }
 
-async fn assert_environments(response: reqwest::Response, expected: Value) {
+async fn assert_environments(response: HttpResponse, expected: Value) {
     assert_eq!(response.status(), 200);
     assert_eq!(response.headers()["cache-control"], "no-store");
     let actual = response

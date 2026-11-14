@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_environment::environment::document::{EnvironmentDocument, SchemaMode};
 use wamn_environment::platform::document::Provider;
+use wamn_package_artifact::http_client::HttpClient;
 
 use super::{POLL_LIMIT, ProcessGroup, Run, execute, get, kubectl, success};
 
@@ -51,7 +52,7 @@ struct Journey<'a> {
     token: &'a str,
     control_url: &'a str,
     control_token: &'a str,
-    client: &'a reqwest::Client,
+    client: &'a HttpClient,
     edge: &'a str,
 }
 
@@ -325,14 +326,10 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     let mut pem = secret(&operator, "tls.crt")?;
     pem.extend(secret(&operator, "tls.key")?);
     let identity_host = format!("identity.{}.svc.cluster.local", run.document.org);
-    let identity_client = reqwest::Client::builder()
-        .no_proxy()
+    let identity_client = HttpClient::builder()
         .timeout(Duration::from_secs(30))
-        .add_root_certificate(reqwest::Certificate::from_pem(&secret(
-            &identity_tls,
-            "ca.crt",
-        )?)?)
-        .identity(reqwest::Identity::from_pem(&pem)?)
+        .extra_roots(&secret(&identity_tls, "ca.crt")?)?
+        .identity_pem(&pem)?
         .resolve(&identity_host, ([127, 0, 0, 1], identity.port).into())
         .build()?;
     let endpoint = format!("https://{identity_host}:{}", identity.port);
@@ -411,8 +408,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         }
     }))?)?;
     std::fs::write(&file, document.to_kcl())?;
-    let client = reqwest::Client::builder()
-        .no_proxy()
+    let client = HttpClient::builder()
         .timeout(Duration::from_secs(30))
         .resolve(&alpha_host, ([127, 0, 0, 1], edge.port).into())
         .resolve(&beta_host, ([127, 0, 0, 1], edge.port).into())
@@ -447,9 +443,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     let operations = async {
         let create = identity_client.post(format!("{control_url}/wamn_control/project/create"));
         let create = match run.document.provider {
-            Provider::Kind => {
-                create.header(reqwest::header::HOST, &run.document.route_hosts.control)
-            }
+            Provider::Kind => create.header(hyper::header::HOST, &run.document.route_hosts.control),
             Provider::Gcp => create,
         };
         let created: Value = create

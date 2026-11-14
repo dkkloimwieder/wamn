@@ -19,6 +19,7 @@ use wamn_environment::platform::{
     document::{ClusterDocument, Provider},
     provider,
 };
+use wamn_package_artifact::http_client::{HttpClient, Redirects};
 use wamn_release_control::release_chart::Target;
 
 #[path = "../../environment/tests/support/platform_images.rs"]
@@ -167,23 +168,23 @@ async fn control_operations_gke() -> anyhow::Result<()> {
             disposable(&run).await?;
             deploy(&run, "gke-platform-deploy").await?;
             ready(&run, "gke-platform-status").await?;
-            let response = reqwest::Client::builder()
+            let response = HttpClient::builder()
                 .https_only(true)
-                .redirect(reqwest::redirect::Policy::none())
+                .redirects(Redirects::None)
                 .timeout(Duration::from_secs(30))
                 .build()?
                 .get(format!("https://{}/", run.document.route_hosts.control))
                 .send()
                 .await?;
             ensure!(
-                response.status() == reqwest::StatusCode::OK,
+                response.status() == hyper::StatusCode::OK,
                 "public UI route returned {}",
                 response.status()
             );
             ensure!(
                 response
                     .headers()
-                    .get(reqwest::header::CONTENT_TYPE)
+                    .get(hyper::header::CONTENT_TYPE)
                     .and_then(|value| value.to_str().ok())
                     .is_some_and(|value| value.starts_with("text/html")),
                 "public route did not serve an HTML document"
@@ -677,7 +678,7 @@ async fn database_state(run: &Run) -> anyhow::Result<Value> {
 // runs receive the same password from the caller, not from a completion file.
 async fn owner_session(
     run: &Run,
-    client: &reqwest::Client,
+    client: &HttpClient,
     endpoint: &str,
     password: &str,
     enroll: bool,
@@ -695,7 +696,7 @@ async fn owner_session(
 
 async fn password_session(
     run: &Run,
-    client: &reqwest::Client,
+    client: &HttpClient,
     endpoint: &str,
     email: &str,
     password: &str,
@@ -757,11 +758,10 @@ async fn sign_in(run: &Run, password: &str, enroll: bool) -> anyhow::Result<()> 
     let ca = base64::engine::general_purpose::STANDARD
         .decode(tls["data"]["ca.crt"].as_str().context("identity CA")?)?;
     let host = "identity.identity.svc.cluster.local";
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
+    let client = HttpClient::builder()
+        .redirects(Redirects::None)
         .timeout(Duration::from_secs(15))
-        .add_root_certificate(reqwest::Certificate::from_pem(&ca)?)
+        .extra_roots(&ca)?
         .resolve(host, SocketAddr::from((Ipv4Addr::LOCALHOST, forward.port)))
         .build()?;
     let endpoint = format!("https://{host}:{}", forward.port);
@@ -792,10 +792,10 @@ async fn sign_in(run: &Run, password: &str, enroll: bool) -> anyhow::Result<()> 
     let request = || {
         client
             .get(&url)
-            .header(reqwest::header::HOST, &run.document.route_hosts.control)
+            .header(hyper::header::HOST, &run.document.route_hosts.control)
     };
     ensure!(
-        request().send().await?.status() == reqwest::StatusCode::UNAUTHORIZED,
+        request().send().await?.status() == hyper::StatusCode::UNAUTHORIZED,
         "control must refuse an unauthenticated query with 401"
     );
     let response = request().bearer_auth(token).send().await?;

@@ -316,7 +316,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         .push_manifest_raw(
             &native_repository.reference,
             manifest,
-            reqwest::header::HeaderValue::from_static("application/vnd.oci.image.manifest.v1+json"),
+            hyper::header::HeaderValue::from_static("application/vnd.oci.image.manifest.v1+json"),
         )
         .await?;
     sqlx::raw_sql("INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES('native-meter','native',false); INSERT INTO registry.integration_type_auth(integration_type,auth_type) VALUES('native-meter','none')").execute(&mut admin).await.map(drop)?;

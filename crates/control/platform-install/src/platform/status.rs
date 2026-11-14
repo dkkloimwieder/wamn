@@ -15,6 +15,7 @@ use wamn_release_control::release_chart::Target;
 use super::document::{ClusterDocument, Provider, UpgradeTarget};
 use super::{artifact_plan, resources};
 use wamn_kubernetes::kubectl;
+use wamn_package_artifact::http_client::{HttpClient, Redirects};
 
 /// A current observation, never a persisted deployment record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -509,8 +510,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
     }
     if document.provider == Provider::Kind {
         let result = async {
-            reqwest::Client::builder()
-                .no_proxy()
+            HttpClient::builder()
                 .timeout(Duration::from_secs(5))
                 .build()?
                 .get(format!(
@@ -519,6 +519,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
                 ))
                 .send()
                 .await
+                .map_err(anyhow::Error::from)
         }
         .await;
         observations.push(observation("local registry", match result {
@@ -1108,10 +1109,9 @@ async fn probe(
         port,
     )
     .await?;
-    let mut builder = reqwest::Client::builder()
-        .no_proxy()
+    let mut builder = HttpClient::builder()
         .timeout(Duration::from_secs(5))
-        .redirect(reqwest::redirect::Policy::none());
+        .redirects(Redirects::None);
     let identity_host = format!("identity.{}.svc.cluster.local", document.org);
     let url = if identity {
         let Some(tls) = get(target, &document.org, "secret", "identity-tls").await? else {
@@ -1122,9 +1122,7 @@ async fn probe(
             ));
         };
         builder = builder
-            .add_root_certificate(reqwest::Certificate::from_pem(&secret_bytes(
-                &tls, "ca.crt",
-            )?)?)
+            .extra_roots(&secret_bytes(&tls, "ca.crt")?)?
             .resolve(&identity_host, ([127, 0, 0, 1], forward.port).into());
         format!("https://{identity_host}:{}/healthz", forward.port)
     } else {
@@ -1137,7 +1135,7 @@ async fn probe(
         .build()?
         .get(&url)
         .header(
-            reqwest::header::HOST,
+            hyper::header::HOST,
             if identity {
                 &identity_host
             } else {
@@ -1147,9 +1145,9 @@ async fn probe(
         .send()
         .await?;
     let expected = if identity {
-        reqwest::StatusCode::OK
+        hyper::StatusCode::OK
     } else {
-        reqwest::StatusCode::UNAUTHORIZED
+        hyper::StatusCode::UNAUTHORIZED
     };
     let mut result = observation(
         if identity {

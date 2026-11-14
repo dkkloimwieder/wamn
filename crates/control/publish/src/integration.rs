@@ -195,7 +195,7 @@ pub async fn push(
         .push_manifest_raw(
             &repository.reference,
             built.manifest.clone(),
-            reqwest::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
+            hyper::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
         )
         .await?;
     let (manifest, digest) = repository

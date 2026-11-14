@@ -9,14 +9,14 @@ license.workspace = true
 test-util = ["tokio/io-util", "tokio/net", "tokio/rt"]
 
 [dependencies]
+wamn-kubernetes.workspace = true
+tower-service.workspace = true
 http-auth = { version = "0.1.10", default-features = false }
 base64.workspace = true
 url.workspace = true
 wamn-digest.workspace = true
 anyhow = { workspace = true }
 oci-client = { workspace = true }
-# Inspect errors from the upstream OCI transport.
-reqwest = { workspace = true, features = ["rustls"] }
 bytes.workspace = true
 http-body-util.workspace = true
 hyper = { workspace = true, features = ["client", "http1", "http2"] }

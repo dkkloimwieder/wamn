@@ -229,6 +229,24 @@ mod tests {
         let parse =
             |value: Value| EnvironmentDocument::from_json(&serde_json::to_vec(&value).unwrap());
         assert!(parse(configuration()).is_ok());
+        for version in [1, i32::MAX] {
+            let mut input = configuration();
+            input["revocation_seconds"] = json!(3600);
+            input["applications"]["wms"]["revocation_seconds"] = json!(0);
+            input["applications"]["wms"]["connections"]["erp"] =
+                json!(format!("shared-erp@{version}"));
+            let document = parse(input).unwrap();
+            assert_eq!(
+                document.applications["wms"].connections["erp"].version,
+                Some(version)
+            );
+            let restored =
+                EnvironmentDocument::from_json(&document.canonical_json().unwrap()).unwrap();
+            assert_eq!(
+                restored.applications["wms"].connections["erp"].version,
+                Some(version)
+            );
+        }
         for (field, value) in [
             ("release", json!("none")),
             ("route_host", json!("wms.example")),
@@ -237,6 +255,7 @@ mod tests {
             ("image", json!("host")),
             ("target", json!("  ")),
             ("revocation_seconds", json!(-1)),
+            ("revocation_seconds", json!(3601)),
         ] {
             let mut input = configuration();
             input[field] = value;
@@ -253,8 +272,13 @@ mod tests {
             ("previous", json!(null)),
             ("hostname", json!("Invalid Host")),
             ("revocation_seconds", json!(-1)),
+            ("revocation_seconds", json!(3601)),
             ("mode", json!("http")),
             ("connections", json!({"erp":"org:other:erp"})),
+            ("connections", json!({"erp":"shared-erp@0"})),
+            ("connections", json!({"erp":"shared-erp@2147483648"})),
+            ("connections", json!({"erp":"shared-erp@01"})),
+            ("connections", json!({"erp":"shared-erp@1@2"})),
             (
                 "connections",
                 json!({"erp":{"type":"http","definition":{}}}),
@@ -311,7 +335,7 @@ mod tests {
         );
         let mut expected =
             EnvironmentDocument::from_json(&serde_json::to_vec(&configuration())?)?.configuration();
-        expected.revocation_seconds = u64::MAX;
+        expected.revocation_seconds = 3600;
         expected
             .applications
             .get_mut("wms")
@@ -319,8 +343,8 @@ mod tests {
             .revocation_seconds = 0;
         let mut second = expected.applications["wms"].clone();
         second.hostname = "second.example".into();
-        second.revocation_seconds = u64::MAX;
-        second.connections.clear();
+        second.revocation_seconds = 3600;
+        second.connections.get_mut("erp").unwrap().version = Some(1);
         expected.applications.insert("second".into(), second);
         {
             let batches: &[&str] = &[
@@ -455,6 +479,19 @@ mod tests {
         for change in [
             |c: &mut configuration::EnvironmentConfiguration| c.policy = "missing".into(),
             |c: &mut configuration::EnvironmentConfiguration| c.target = "missing".into(),
+            |c: &mut configuration::EnvironmentConfiguration| c.revocation_seconds = 3601,
+            |c: &mut configuration::EnvironmentConfiguration| {
+                c.applications.get_mut("wms").unwrap().revocation_seconds = 3601;
+            },
+            |c: &mut configuration::EnvironmentConfiguration| {
+                c.applications
+                    .get_mut("wms")
+                    .unwrap()
+                    .connections
+                    .get_mut("erp")
+                    .unwrap()
+                    .version = Some(0);
+            },
             |c: &mut configuration::EnvironmentConfiguration| {
                 c.applications.get_mut("wms").unwrap().hostname = "Invalid Host".into()
             },
@@ -478,18 +515,22 @@ mod tests {
                     .clear()
             },
             |c: &mut configuration::EnvironmentConfiguration| {
-                c.applications
-                    .get_mut("wms")
-                    .unwrap()
-                    .connections
-                    .insert("".into(), "shared-erp".into());
+                c.applications.get_mut("wms").unwrap().connections.insert(
+                    "".into(),
+                    configuration::ConnectionReference {
+                        name: "shared-erp".into(),
+                        version: None,
+                    },
+                );
             },
             |c: &mut configuration::EnvironmentConfiguration| {
-                c.applications
-                    .get_mut("wms")
-                    .unwrap()
-                    .connections
-                    .insert("erp".into(), "org:other:erp".into());
+                c.applications.get_mut("wms").unwrap().connections.insert(
+                    "erp".into(),
+                    configuration::ConnectionReference {
+                        name: "org:other:erp".into(),
+                        version: None,
+                    },
+                );
             },
             |c: &mut configuration::EnvironmentConfiguration| {
                 c.integrations.get_mut("shared-erp").unwrap().version = 0
@@ -519,9 +560,12 @@ mod tests {
         // SQL exercises constraints that the Rust input types cannot express.
         for statement in [
             "UPDATE registry.environment_projects SET revocation_seconds=-1 WHERE org='acme'",
-            "UPDATE registry.environment_projects SET revocation_seconds=18446744073709551616 WHERE org='acme'",
+            "UPDATE registry.environment_projects SET revocation_seconds=3601 WHERE org='acme'",
             "UPDATE registry.environment_projects SET schema_mode='unknown' WHERE org='acme'",
             "UPDATE registry.environment_applications SET revocation_seconds=NULL WHERE org='acme'",
+            "UPDATE registry.environment_applications SET revocation_seconds=-1 WHERE org='acme'",
+            "UPDATE registry.environment_applications SET revocation_seconds=3601 WHERE org='acme'",
+            "UPDATE registry.environment_application_connections SET connection_name='shared-erp@1' WHERE org='acme'",
             "UPDATE registry.environment_applications SET client_web=NULL WHERE org='acme'",
             "UPDATE registry.environment_applications SET project='missing' WHERE org='acme'",
             "UPDATE registry.environment_application_connections SET application='missing' WHERE org='acme'",

@@ -615,7 +615,7 @@ async fn push_artifact(repository: &Repository, packed: &PackedPackage) -> anyho
         .push_manifest_raw(
             &repository.reference,
             packed.manifest.clone(),
-            reqwest::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
+            hyper::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
         )
         .await
         .with_context(|| format!("push package artifact {}", repository.reference))?;

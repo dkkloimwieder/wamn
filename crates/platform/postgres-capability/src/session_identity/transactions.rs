@@ -7,15 +7,11 @@ use wamn_event_wire::Causation;
 use wamn_identity_protocol::AuthorityClass;
 
 use super::super::pool::ProjectPool;
-use super::super::resources::{
-    StatementConnectionGuard, run_execute, run_query, run_verified_query,
-};
+use super::super::resources::{StatementConnectionGuard, run_query, run_verified_query};
 use super::super::statements::VerifiedStatement;
 use super::super::types::map_pg_error;
 use super::super::{PgError, RowSet, SqlValue, StatementError};
-use super::{
-    OneShotResult, WamnPostgres, refuse_unattributed_statement, validate_session_identity,
-};
+use super::{WamnPostgres, refuse_unattributed_statement, validate_session_identity};
 
 pub(in super::super) fn prepare_causation(run: &Causation) -> (String, String) {
     let statement = "SELECT pg_logical_emit_message(true, 'wamn.causation', $1::text)".to_owned();
@@ -336,24 +332,8 @@ impl WamnPostgres {
         component_id: &str,
         sql: &str,
         params: &[SqlValue],
-        want_rows: bool,
-    ) -> Result<OneShotResult, PgError> {
+    ) -> Result<RowSet, PgError> {
         let project = self.project_for(component_id);
-        self.one_shot_for_project(component_id, &project, sql, params, want_rows)
-            .await
-    }
-
-    /// Execute one statement using an explicitly selected named-import
-    /// project. Named `wamn:postgres` interfaces must not fall back to the
-    /// component's single `wamn.project` identity.
-    pub(in super::super) async fn one_shot_for_project(
-        &self,
-        component_id: &str,
-        project: &str,
-        sql: &str,
-        params: &[SqlValue],
-        want_rows: bool,
-    ) -> Result<OneShotResult, PgError> {
         let project_env_key = self.require_project_env_key(component_id)?;
         let schema = self.schema_for(component_id);
         let runner = self.runner_for(component_id);
@@ -362,7 +342,7 @@ impl WamnPostgres {
         let operation = self.operation_for(component_id);
         let application = self.application_for(component_id);
         let run = self.current_run_for(component_id);
-        let (mut conn, pp) = self.checkout_dynamic(project, &project_env_key).await?;
+        let (mut conn, pp) = self.checkout_dynamic(&project, &project_env_key).await?;
         if let Err(e) = self
             .begin_with_identity(
                 &mut conn,
@@ -384,15 +364,7 @@ impl WamnPostgres {
             self.destroy(conn);
             return Err(e);
         }
-        let result = if want_rows {
-            run_query(&mut conn, sql, params, pp.row_limit)
-                .await
-                .map(OneShotResult::Rows)
-        } else {
-            run_execute(&mut conn, sql, params)
-                .await
-                .map(OneShotResult::Count)
-        };
+        let result = run_query(&mut conn, sql, params, pp.row_limit).await;
         match result {
             Ok(v) => match finish_transaction(&mut conn, "COMMIT").await {
                 Ok(()) => Ok(v),

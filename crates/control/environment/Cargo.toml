@@ -41,7 +41,6 @@ base64 = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 hex = { workspace = true }
 oci-client = { workspace = true }
-reqwest = { workspace = true, features = ["rustls"] }
 ring = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -70,6 +69,7 @@ wamn-compiler = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 wamn-publish = { workspace = true }
 wamn-release-control = { workspace = true }
+hyper = { workspace = true }
 
 [dev-dependencies]
 wamn-workflow.workspace = true

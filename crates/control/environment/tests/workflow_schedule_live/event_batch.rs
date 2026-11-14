@@ -2,10 +2,10 @@
 
 use super::*;
 use sqlx::Row as _;
-#[tokio::test(flavor = "multi_thread")]
-async fn fanout_is_atomic_idempotent_and_records_the_history_actor() {
+#[sqlx::test(migrations = false)]
+async fn fanout_is_atomic_idempotent_and_records_the_history_actor(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = fixture().await;
+    let mut fixture = fixture(&pool).await;
     fixture.grant_workflow_user("reader").await;
     fixture.grant_workflow_user("admin").await;
     let txid = changed_order(&mut fixture).await;

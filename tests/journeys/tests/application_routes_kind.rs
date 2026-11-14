@@ -94,7 +94,7 @@ async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()
         ]))
         .send()
         .await?;
-    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.status(), hyper::StatusCode::OK);
     let answer: Value = response.json().await?;
     assert_eq!(answer.as_array().unwrap().len(), 3);
     for (index, request_id) in [(0, "sibling-before"), (2, "sibling-after")] {
@@ -127,11 +127,14 @@ async fn health_head_needs_no_credential() -> anyhow::Result<()> {
     let paths = &application.routes;
     let response = paths
         .client
-        .head(format!("{}/api/health", paths.endpoint))
+        .request(
+            hyper::Method::HEAD,
+            format!("{}/api/health", paths.endpoint),
+        )
         .header("Host", &paths.host)
         .send()
         .await?;
-    assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_eq!(response.status(), hyper::StatusCode::NO_CONTENT);
     assert_eq!(response.headers()["cache-control"], "no-store");
     assert!(response.bytes().await?.is_empty());
     application.remove().await?;
@@ -265,7 +268,7 @@ async fn post(paths: &Routes, path: &str, body: &Value) -> anyhow::Result<Value>
     let status = response.status();
     let answer = response.json().await?;
     anyhow::ensure!(
-        status == reqwest::StatusCode::OK,
+        status == hyper::StatusCode::OK,
         "{path} answered {status}: {answer}"
     );
     Ok(answer)

@@ -7,6 +7,7 @@ use sqlx::Row as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wamn_control_provision::PlatformComponent;
+use wamn_package_artifact::http_client::{HttpClient, Redirects};
 use wamn_platform_identity::{PrincipalType, authenticate_pat};
 use wamn_postgres::connect;
 
@@ -206,12 +207,12 @@ async fn development_identity_survives_schema_reset() {
         Value,
     ) = panic!("wamn-eulfr.12.8: native identity ownership was removed; use installed identity");
     let mut admin = connect(&system_url).await.ok().expect("system connection");
-    let http = reqwest::Client::builder()
+    let http = HttpClient::builder()
         .https_only(true)
-        .no_proxy()
         .timeout(std::time::Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .tls_certs_only(reqwest::Certificate::from_pem_bundle(&ca).unwrap())
+        .redirects(Redirects::None)
+        .roots(&ca)
+        .unwrap()
         .build()
         .unwrap();
     let actor = PlatformComponent::Provisioning.principal_id().to_string();
@@ -256,7 +257,7 @@ async fn development_identity_survives_schema_reset() {
     let enrolled = http.post(format!("{endpoint}/password/enroll"))
         .json(&json!({"principal_id":user.to_string().as_str(), "invitation":invitation.secret(), "password":PASSWORD}))
         .send().await.ok().expect("HTTPS enrollment");
-    assert_eq!(enrolled.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_eq!(enrolled.status(), hyper::StatusCode::NO_CONTENT);
     let login = || {
         http.post(format!("{endpoint}/password/session"))
             .json(&json!({"email":DEVELOPER_EMAIL, "password":PASSWORD, "aud":target["audience"]}))
@@ -266,7 +267,7 @@ async fn development_identity_survives_schema_reset() {
         .await
         .ok()
         .expect("password login before reset");
-    assert_eq!(first.status(), reqwest::StatusCode::OK);
+    assert_eq!(first.status(), hyper::StatusCode::OK);
     let keys: Value = http
         .get(format!("{endpoint}/.well-known/jwks.json"))
         .send()
@@ -304,7 +305,7 @@ async fn development_identity_survives_schema_reset() {
         .await
         .ok()
         .expect("password login after reset");
-    assert_eq!(second.status(), reqwest::StatusCode::OK);
+    assert_eq!(second.status(), hyper::StatusCode::OK);
     let keys_after: Value = http
         .get(format!("{endpoint}/.well-known/jwks.json"))
         .send()

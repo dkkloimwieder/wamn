@@ -67,16 +67,9 @@ async fn document(
     project: &str,
     env: &str,
 ) -> anyhow::Result<serde_json::Value> {
-    Ok(
-        sqlx::query(wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONNECTION_PROJECTION_DOCUMENT)
-            .bind(org)
-            .bind(project)
-            .bind(env)
-            .fetch_one(&mut **system)
-            .await
-            .context("read connection projection")?
-            .get(0),
-    )
+    wamn_registry::connections::projection(system, org, project, env)
+        .await
+        .context("read connection projection")
 }
 
 fn rows_from_document(document: &serde_json::Value) -> anyhow::Result<PlatformConfiguration> {

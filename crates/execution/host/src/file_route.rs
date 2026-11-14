@@ -1165,6 +1165,7 @@ mod tests {
         AuthRejection, AuthenticationRequest, RouteAuthenticator, unauthorized,
     };
     use wamn_engine::release_manifest::ReleaseTarget;
+    use wamn_package_artifact::http_client::HttpClient;
     use wamn_postgres_capability::WamnPostgresConfig;
 
     fn release() -> Arc<LoadedRelease> {
@@ -1477,7 +1478,11 @@ mod tests {
             Arc::new(FlowHttpRouting::new(Arc::default())),
             Some(Arc::new(Reader)),
         ));
-        let response = reqwest::get(format!("http://{address}/_wamn/residency"))
+        let response = HttpClient::builder()
+            .build()
+            .unwrap()
+            .get(format!("http://{address}/_wamn/residency"))
+            .send()
             .await
             .unwrap();
         assert!(response.status().is_success());
@@ -1508,7 +1513,7 @@ mod tests {
             routing,
             None,
         ));
-        let client = reqwest::Client::new();
+        let client = HttpClient::builder().build().expect("HTTP client");
         for (authorization, status) in [(None, 401), (Some("Bearer session"), 403)] {
             let mut request = client
                 .post(format!(

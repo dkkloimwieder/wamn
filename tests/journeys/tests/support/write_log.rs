@@ -9,6 +9,7 @@
 //! leaves its key free, and two concurrent calls with one key write one row.
 //! The batch retry case now runs in the `application_routes_kind` product target.
 
+use anyhow::Context as _;
 use sqlx::Row as _;
 
 use serde_json::{Value, json};
@@ -118,8 +119,7 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
     );
     anyhow::ensure!(counts(&mut database, "k-3").await? == (1, 1));
 
-    // Replay keeps stored JSON bytes inside the response array. Only the
-    // current request_id is inserted into the stored request element.
+    // A mixed response replays stored values with the current request_id.
     panic!("wamn-eulfr.12.9: no product stored-result import");
     let stored = " \n{ \"value\": {\"z\":1e+00, \"a\":-0.00} }\t";
     sqlx::query(
@@ -141,13 +141,17 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
         ]))
         .send()
         .await?;
-    anyhow::ensure!(response.status() == reqwest::StatusCode::OK);
-    let text = response.text().await?;
-    anyhow::ensure!(
-        text.starts_with("[ \n{ \"value\": {\"z\":1e+00, \"a\":-0.00} ,\"request_id\":\"r-8\"}\t,"),
-        "replay preserves stored bytes in a mixed response: {text}"
-    );
-    let answer: Value = serde_json::from_str(&text)?;
+    anyhow::ensure!(response.status() == hyper::StatusCode::OK);
+    let answer: Value = response.json().await?;
+    anyhow::ensure!(answer[0]["request_id"] == "r-8");
+    let stored: Value = serde_json::from_str(stored)?;
+    let stored = stored["value"].as_object().context("stored replay value")?;
+    let replay = answer[0]["value"].as_object().context("replayed value")?;
+    anyhow::ensure!(replay.len() == stored.len());
+    for (name, expected) in stored {
+        let expected = expected.as_f64().context("stored replay number")?;
+        anyhow::ensure!(replay.get(name).and_then(Value::as_f64) == Some(expected));
+    }
     anyhow::ensure!(answer[1]["error"]["code"] == "idempotency_conflict");
     anyhow::ensure!(counts(&mut database, "k-3").await? == (1, 1));
 

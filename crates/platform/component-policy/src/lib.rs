@@ -277,13 +277,7 @@ pub const AMBIENT_CLI_INTERFACES: [&str; 10] = [
 
 /// Interfaces an application component may not import, whatever its grant,
 /// matched on the import's interface instance type at every version.
-///
-/// `wamn:postgres/client` runs raw SQL outside the admitted statements, so it
-/// would step around each member's own statements instance
-/// (docs/architecture/capabilities.md#import-admission). Platform components
-/// keep it: they are admitted by [`analyze`], which this list does not reach.
-pub const APPLICATION_DENIED_INTERFACES: [&str; 2] =
-    ["wamn:postgres/client", "wamn:integration/bound"];
+pub const APPLICATION_DENIED_INTERFACES: [&str; 1] = ["wamn:integration/bound"];
 
 /// Whether an application component may not import this interface instance type.
 fn is_denied_to_applications(import_name: &str) -> bool {
@@ -852,11 +846,9 @@ mod tests {
         assert_eq!(error.imports(), ["sql-0"]);
     }
 
-    /// The one deny row: an application component may not import raw SQL,
-    /// at any version and under any label, even with the `wamn:postgres`
-    /// grant. Its statements import still passes.
+    /// Applications may import dynamic queries with the Postgres grant.
     #[test]
-    fn an_application_component_is_refused_client() {
+    fn an_application_component_may_import_client_with_a_postgres_grant() {
         let granted = BTreeSet::from(["wamn:postgres".to_string()]);
         for client in [
             instance_type("wamn:postgres/client@0.1.0", None),
@@ -865,10 +857,8 @@ mod tests {
         ] {
             let imports =
                 ComponentImports::new([STATEMENTS_INTERFACE.to_string(), client.to_string()]);
-            let error = analyze_project(&imports, &granted, "application")
-                .expect_err("an application component must not import client");
-            assert_eq!(error.error_type(), ProjectImportErrorType::UnadmittedImport);
-            assert_eq!(error.imports(), [client]);
+            assert!(analyze_project(&imports, &granted, "application").is_ok());
+            assert!(analyze_project(&imports, &BTreeSet::new(), "application").is_err());
         }
         let statements = ComponentImports::new([STATEMENTS_INTERFACE.to_string()]);
         assert!(analyze_project(&statements, &granted, "application").is_ok());

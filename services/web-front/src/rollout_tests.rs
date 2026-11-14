@@ -78,21 +78,20 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
                     .serve_connection(TokioIo::new(stream), service).await.unwrap();
             }
         });
-        let connector = hyper_rustls::HttpsConnectorBuilder::new()
-            .with_tls_config(rustls::ClientConfig::builder_with_provider(Arc::new(
+        let connector = http_transport::tls_connector(rustls::ClientConfig::builder_with_provider(Arc::new(
                 rustls::crypto::aws_lc_rs::default_provider()))
                 .with_safe_default_protocol_versions().unwrap()
-                .with_root_certificates(rustls::RootCertStore::empty()).with_no_client_auth())
-            .https_or_http().enable_http1().build();
+                .with_root_certificates(rustls::RootCertStore::empty()).with_no_client_auth(),
+                HttpConnector::new(), Schemes::HttpAndHttps, Protocols::Http1);
         let releases = Releases {
             api: wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
-                Client::builder(TokioExecutor::new()).build(connector), endpoint, String::new(), "hosts".into()),
+                http_transport::client(connector, |_| {}), endpoint, String::new(), "hosts".into()),
         };
         let web = Web { store: None };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let edge = listener.local_addr().unwrap();
         tasks.spawn(async move {
-            let proxy = Client::builder(TokioExecutor::new()).build(hyper_rustls::HttpsConnectorBuilder::new().with_provider_and_native_roots(rustls::crypto::aws_lc_rs::default_provider()).unwrap().https_or_http().enable_http1().build());
+            let proxy = http_transport::client(native_connector().unwrap(), |_| {});
             let (stream, _) = listener.accept().await.unwrap();
             let service = service_fn(|request| async {
                 Ok::<_, Infallible>(respond(&web, &releases, &proxy, "https://identity.example", "127.0.0.1".parse().unwrap(), 0, request).await.unwrap())
@@ -100,7 +99,7 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
             hyper::server::conn::http1::Builder::new()
                 .serve_connection(TokioIo::new(stream), service).await.unwrap();
         });
-        let client: Client<HttpConnector, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
+        let client: Client<HttpConnector, Full<Bytes>> = http_transport::http_client();
         for (index, (ingress, _, _)) in backends.iter().enumerate() {
             if index > 0 {
                 *selected.write().await = ingress.addr();

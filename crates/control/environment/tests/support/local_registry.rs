@@ -3,6 +3,7 @@
 
 use std::process::Command;
 use std::time::Duration;
+use wamn_package_artifact::http_client::HttpClient;
 
 /// A `registry:2` container, removed on drop.
 pub struct LocalRegistry {
@@ -55,7 +56,11 @@ impl LocalRegistry {
     pub async fn ready(&self) {
         let url = format!("http://{}/v2/", self.address);
         for _ in 0..100 {
-            if reqwest::get(&url)
+            if HttpClient::builder()
+                .build()
+                .expect("registry HTTP client")
+                .get(&url)
+                .send()
                 .await
                 .is_ok_and(|response| response.status().is_success())
             {

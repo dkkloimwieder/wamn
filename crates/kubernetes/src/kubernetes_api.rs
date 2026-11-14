@@ -1,14 +1,14 @@
 //! The shared Kubernetes HTTP client with a rotating ServiceAccount token.
 
-use crate::{Error, failure};
+use crate::{
+    Error, failure,
+    http_transport::{self, Protocols, Schemes},
+};
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Method, Request, StatusCode};
 use hyper_rustls::HttpsConnector;
-use hyper_util::{
-    client::legacy::{Client, connect::HttpConnector},
-    rt::TokioExecutor,
-};
+use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use rustls::pki_types::{CertificateDer, pem::PemObject as _};
 use serde_json::Value;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -87,13 +87,14 @@ impl KubernetesApi {
         .map_err(|e| failure("build client", "k8s", e))?
         .with_root_certificates(roots)
         .with_no_client_auth();
-        let connector = hyper_rustls::HttpsConnectorBuilder::new()
-            .with_tls_config(tls)
-            .https_only()
-            .enable_http1()
-            .build();
+        let connector = http_transport::tls_connector(
+            tls,
+            HttpConnector::new(),
+            Schemes::HttpsOnly,
+            Protocols::Http1,
+        );
         Ok(Self {
-            http: Client::builder(TokioExecutor::new()).build(connector),
+            http: http_transport::client(connector, |_| {}),
             base: format!("https://{host}:{port}"),
             token: Token::File(format!("{SERVICE_ACCOUNT}/token").into()),
             namespace: namespace.trim().into(),

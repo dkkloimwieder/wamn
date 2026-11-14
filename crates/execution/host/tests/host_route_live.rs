@@ -19,6 +19,7 @@ use wamn_engine::flow_http_routing::{AuthenticatedCaller, FlowHttpRouting};
 use wamn_engine::native_routes::{DeliveryError, DeliveryOutcome, DeliveryRequest, Source};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
+use wamn_package_artifact::http_client::HttpClient;
 
 #[path = "../../../platform/postgres-capability/tests/support/session_fixture.rs"]
 #[expect(
@@ -1099,7 +1100,9 @@ async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> 
     let mut session = claims();
     session["roles"] = json!(["admin"]);
     let token = signed(&header(), &session);
-    let direct: Value = reqwest::Client::new()
+    let direct: Value = HttpClient::builder()
+        .build()
+        .expect("HTTP client")
         .post(format!("{host_url}/wamn_control/user_role/revoke"))
         .bearer_auth(&token)
         .json(
