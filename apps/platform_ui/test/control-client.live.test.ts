@@ -3,7 +3,7 @@
  * The application administration routes through their generated client
  * (docs/plan/platform-ui.md §4.6).
  *
- * `control_client_live` in `tests/integration` serves the routes over HTTP
+ * `control_client_live` in `crates/execution/host/tests` serves the routes over HTTP
  * and runs this file with the endpoint and two session tokens. Without them
  * it skips.
  */

@@ -159,11 +159,7 @@ async fn snapshot(journey: &Journey<'_>, target: &UpgradeTarget) -> anyhow::Resu
         .collect();
     ensure!(!pods.is_empty(), "{target:?} has no pods");
     let values = release_values(journey, namespace, &name).await?;
-    let releases = wamn_test_infrastructure::release_chart::helm_releases(
-        &run.document.cluster_name,
-        &run.directory,
-    )
-    .await?;
+    let releases = helm_releases(&run.document.cluster_name, &run.directory).await?;
     let release = releases
         .iter()
         .find(|row| row["name"] == name.as_ref() && row["namespace"] == namespace)
@@ -393,4 +389,33 @@ pub(super) async fn exercise(
     update(journey, "restore-control", &control, &control_chart).await?;
     update(journey, "restore-identity", &identity, &identity_chart).await?;
     Ok(())
+}
+
+/// Every Helm release in every namespace, in every state. Helm 4 has no
+/// `--all`, so each state is named.
+async fn helm_releases(cluster: &str, work: &Path) -> anyhow::Result<Vec<Value>> {
+    let output = super::success(
+        tokio::process::Command::new("helm")
+            .arg("list")
+            .arg("--kubeconfig")
+            .arg(work.join("kubeconfig"))
+            .args([
+                "--kube-context",
+                &format!("kind-{cluster}"),
+                "--all-namespaces",
+                "--deployed",
+                "--failed",
+                "--pending",
+                "--superseded",
+                "--uninstalling",
+                "--uninstalled",
+                "-o",
+                "json",
+            ]),
+    )
+    .await?;
+    let Value::Array(releases) = serde_json::from_slice(&output.stdout)? else {
+        anyhow::bail!("Helm returns a release array");
+    };
+    Ok(releases)
 }

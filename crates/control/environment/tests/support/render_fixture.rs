@@ -5,17 +5,20 @@ use std::path::Path;
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
 use wamn_release_control::release_chart::{self, ImageSet};
-use wamn_test_infrastructure::rendering::kubernetes_documents;
+#[path = "render_values.rs"]
+mod render_values;
+#[expect(
+    unused_imports,
+    reason = "Chart tests share these inputs through this fixture."
+)]
+pub use render_values::{EventIdentity, HostValuesInput, RenderedHostValues};
+use render_values::{host_defaults, kubernetes_documents};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 pub const NAMESPACE: &str = "wamn-system";
 /// Render a case's host values through apply, with the case's platform inputs.
-pub fn host_values(
-    input: &wamn_test_infrastructure::rendering::HostValuesInput,
-    schema: &str,
-) -> anyhow::Result<wamn_test_infrastructure::rendering::RenderedHostValues> {
+pub fn host_values(input: &HostValuesInput, schema: &str) -> anyhow::Result<RenderedHostValues> {
     use serde_json::json;
-    use wamn_test_infrastructure::rendering::{RenderedHostValues, host_defaults};
 
     let document = wamn_environment::environment::document::EnvironmentDocument::from_json(
         &serde_json::to_vec(&json!({
@@ -108,7 +111,7 @@ pub fn host_values(
     overlay["global"] = values["global"].clone();
     let mut overlay = serde_yaml::to_string(&overlay)?;
     if let Some(secret) = &input.object_store_secret_name {
-        overlay = wamn_test_infrastructure::rendering::object_store_overlay(&overlay, secret)?;
+        overlay = render_values::object_store_overlay(&overlay, secret)?;
     }
     Ok(RenderedHostValues {
         base: serde_yaml::to_string(&base)?,

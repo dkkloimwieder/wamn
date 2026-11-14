@@ -13,6 +13,8 @@ name = "wamn-test-postgres"
 path = "postgres-run.rs"
 
 [dependencies]
+hmac = { workspace = true }
+sha2 = { workspace = true }
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
 wamn-broker = { workspace = true }
@@ -34,7 +36,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
-wamn-catalog = { workspace = true }
 wamn-compiler = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "process", "signal", "time"] }
 url = { workspace = true }
@@ -42,3 +43,7 @@ wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "http-fixture"
+path = "http-fixture/server.rs"

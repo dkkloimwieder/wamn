@@ -47,7 +47,7 @@ wamn-control-provision = { workspace = true, features = ["ops"] }
 wamn-registry = { workspace = true }
 wamn-cdc-reader = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-integration-tests = { workspace = true }
+wamn-test-application = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wamn-run-state = { workspace = true }

@@ -3,7 +3,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use sqlx::Row as _;
 use std::time::Duration;
-use wamn_integration_tests::product_application::Application;
+use wamn_test_application::Application;
 const ORDER: &str = "00000000-0000-0000-0000-000000000304";
 const LINE: &str = "00000000-0000-0000-0000-000000000504";
 const IDEMPOTENCY_KEY: &str = "queue-recovery";

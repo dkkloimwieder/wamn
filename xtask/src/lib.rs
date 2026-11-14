@@ -6,6 +6,7 @@ mod bench_data;
 mod netsuite;
 mod platform;
 mod process;
+mod repo_policy;
 mod selection;
 mod submodule_pins;
 mod tasks;

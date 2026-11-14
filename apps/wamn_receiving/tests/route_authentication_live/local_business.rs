@@ -8,7 +8,7 @@ use std::fs;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_integration_tests::product_application::Application;
+use wamn_test_application::Application;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 const INSPECTION: &str = "command/record_receipt/record_inspection.sql";

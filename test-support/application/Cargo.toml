@@ -1,0 +1,23 @@
+[package]
+name = "wamn-test-application"
+description = "Product deployment fixtures shared by application interface tests."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls"] }
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
+tokio = { workspace = true, features = ["process"] }
+uuid = { workspace = true, features = ["v4"] }
+wamn-catalog.workspace = true
+wamn-control-provision.workspace = true
+wamn-environment.workspace = true
+wamn-kubernetes.workspace = true
+wamn-postgres.workspace = true
+wamn-test-infrastructure.workspace = true
+
+[lints]
+workspace = true

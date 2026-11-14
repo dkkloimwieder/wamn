@@ -219,8 +219,11 @@ cargo test --manifest-path apps/Cargo.toml --locked --offline \
 
 The application READMEs identify additional tests and binary owners.
 Use `cargo xtask repo-lint dry-run` to see its exact commands without executing them.
-`cargo xtask repo-lint run` runs formatting and Clippy across all three workspaces.
-It then runs dependency boundaries and `repo-policy` for file-location conventions and version identities.
+`cargo xtask repo-lint run` runs formatting and Clippy across both workspaces.
+It then runs dependency boundaries, cargo-deny, and the policy checks in xtask.
+Interface tests live beside their owning crates. `tests/journeys` owns tests that cross services.
+`wamn-test-application` supplies the shared product deployment fixture.
+`wamn-test-infrastructure` owns the HTTP fixture server and collector rendering.
 It reports each command and returns a nonzero status if any command fails.
 The full schema files own fresh platform installations.
 
@@ -563,7 +566,7 @@ The environment directory contains `environment.k` for one application.
 The platform browser reads invitation mail from the installed identity service's outbox.
 Receiving browser assertions still require the fixed business dataset. The product has no import route for that dataset.
 
-`wamn-integration-tests --test application_routes_kind` tests batch retry, independent batch outcomes, health requests, read limits, sequence bindings, and overlay actor stamps through deployed routes.
+`wamn-journey-tests --test application_routes_kind` tests batch retry, independent batch outcomes, health requests, read limits, sequence bindings, and overlay actor stamps through deployed routes.
 It uses `WAMN_CTL_BIN` for the product binary and the publication inputs from the development procedure.
 Supply the cluster, environment directory, browser base URL, and `WAMN_SYSTEM_ADMIN_URL` named in its prerequisite list.
 The test creates its own environment through control and uses SQL only to observe results.

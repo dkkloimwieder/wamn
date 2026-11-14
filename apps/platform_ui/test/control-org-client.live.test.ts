@@ -3,7 +3,7 @@
  * The org and project routes of the control serving root through their
  * generated client (docs/plan/platform-ui.md §4.4 and §4.5).
  *
- * `control_client_live` in `tests/integration` serves the routes over HTTP
+ * `control_client_live` in `crates/execution/host/tests` serves the routes over HTTP
  * and runs this file with the endpoint, two session tokens and the user ids.
  * Without them it skips.
  */

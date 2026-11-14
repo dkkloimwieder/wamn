@@ -157,12 +157,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrayvec"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
-
-[[package]]
 name = "asn1-rs"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -509,30 +503,6 @@ name = "borrow-or-share"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
-
-[[package]]
-name = "borsh"
-version = "1.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "553c5d846a6ba5150c65e3b1b8ec073bcf1abc20f9b7220de384a4443ea4e20a"
-dependencies = [
- "borsh-derive",
- "bytes",
- "cfg_aliases",
-]
-
-[[package]]
-name = "borsh-derive"
-version = "1.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12cdfe656708a01f89b451a7d36466e6fe6c414de0aa18fc54f864f6f9ca9f56"
-dependencies = [
- "once_cell",
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 3.0.6",
-]
 
 [[package]]
 name = "bumpalo"
@@ -3338,15 +3308,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro-crate"
-version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
-dependencies = [
- "toml_edit",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3883,23 +3844,6 @@ dependencies = [
  "libc",
  "untrusted 0.9.0",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "rust_decimal"
-version = "1.43.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7653272e75dcac41dc199fbea6f5797633994fafd339943c06c9af16bf29cd3a"
-dependencies = [
- "arrayvec",
- "borsh",
- "bytes",
- "num-traits",
- "rand 0.8.8",
- "rand 0.9.5",
- "serde",
- "serde_json",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -4505,7 +4449,6 @@ dependencies = [
  "log",
  "memchr",
  "percent-encoding",
- "rust_decimal",
  "rustls",
  "serde",
  "serde_json",
@@ -4579,7 +4522,6 @@ dependencies = [
  "generic-array",
  "log",
  "percent-encoding",
- "rust_decimal",
  "serde",
  "sha1",
  "sha2 0.11.0",
@@ -4616,7 +4558,6 @@ dependencies = [
  "memchr",
  "num-bigint",
  "rand 0.10.3",
- "rust_decimal",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -5044,18 +4985,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "toml_edit"
-version = "0.25.15+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1340ea94a5856333492c9064b02c778b191dd2c853778d9609debdcdfea3a614"
-dependencies = [
- "indexmap",
- "toml_datetime 1.1.1+spec-1.1.0",
- "toml_parser",
- "winnow 1.0.4",
-]
-
-[[package]]
 name = "toml_parser"
 version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5475,12 +5404,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "bytes",
+ "futures-util",
  "hex",
  "hmac 0.13.0",
  "http-route",
  "hyper",
  "rcgen",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
@@ -5489,6 +5421,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
  "wamn-authentication",
@@ -5499,12 +5432,14 @@ dependencies = [
  "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
+ "wamn-environment",
  "wamn-identity-protocol",
  "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-postgres-capability",
  "wamn-registry",
+ "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wat",
 ]
@@ -5752,44 +5687,6 @@ name = "wamn-component-policy"
 version = "0.1.0"
 dependencies = [
  "serde_json",
-]
-
-[[package]]
-name = "wamn-conformance-tests"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "hex",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2 0.11.0",
- "sqlx",
- "syn 3.0.6",
- "tokio",
- "url",
- "wamn-build",
- "wamn-catalog",
- "wamn-compiler",
- "wamn-component-policy",
- "wamn-connections",
- "wamn-control-provision",
- "wamn-digest",
- "wamn-engine",
- "wamn-environment",
- "wamn-execution-host",
- "wamn-fixture-package",
- "wamn-registry",
- "wamn-release-control",
- "wamn-run-state",
- "wamn-test-infrastructure",
- "wamn-test-postgres",
- "wash-runtime",
- "wasm-encoder 0.261.0",
- "wasmparser 0.261.0",
- "wat",
- "wit-parser 0.254.2",
 ]
 
 [[package]]
@@ -6058,6 +5955,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "url",
  "wamn-catalog",
  "wamn-component-policy",
  "wamn-digest",
@@ -6204,6 +6102,7 @@ dependencies = [
  "base64 0.22.1",
  "boon",
  "bytes",
+ "chrono",
  "futures-util",
  "hex",
  "http-body-util",
@@ -6238,6 +6137,7 @@ dependencies = [
  "wamn-capability-authority",
  "wamn-catalog",
  "wamn-compiler",
+ "wamn-component-artifact",
  "wamn-component-composer",
  "wamn-connections",
  "wamn-control-provision",
@@ -6259,8 +6159,10 @@ dependencies = [
  "wamn-registry",
  "wamn-release-control",
  "wamn-scalar",
+ "wamn-test-application",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
+ "wamn-workflow",
  "wash-runtime",
  "wasmparser 0.261.0",
  "wasmtime-wasi-http",
@@ -6456,74 +6358,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-integration-tests"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "base64 0.22.1",
- "bytes",
- "chrono",
- "futures-util",
- "hex",
- "hmac 0.13.0",
- "http-body-util",
- "hyper",
- "hyper-util",
- "libc",
- "oci-client",
- "opentelemetry",
- "opentelemetry_sdk",
- "rcgen",
- "reqwest",
- "ring",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "tokio",
- "tokio-rustls",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "url",
- "uuid",
- "wamn-authentication",
- "wamn-blobstore",
- "wamn-broker",
- "wamn-catalog",
- "wamn-compiler",
- "wamn-component-artifact",
- "wamn-component-composer",
- "wamn-component-policy",
- "wamn-connections",
- "wamn-control-provision",
- "wamn-digest",
- "wamn-engine",
- "wamn-environment",
- "wamn-event-wire",
- "wamn-execution-host",
- "wamn-http-capability",
- "wamn-identity-protocol",
- "wamn-kubernetes",
- "wamn-package-artifact",
- "wamn-package-control",
- "wamn-platform-identity",
- "wamn-postgres",
- "wamn-postgres-capability",
- "wamn-registry",
- "wamn-release-control",
- "wamn-run-state",
- "wamn-test-infrastructure",
- "wamn-test-postgres",
- "wamn-workflow",
- "wash-runtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
-]
-
-[[package]]
 name = "wamn-integrations"
 version = "0.1.0"
 dependencies = [
@@ -6543,6 +6377,20 @@ dependencies = [
  "wamn-postgres-capability",
  "wash-runtime",
  "wasmtime",
+]
+
+[[package]]
+name = "wamn-journey-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "uuid",
+ "wamn-test-application",
+ "wamn-test-postgres",
 ]
 
 [[package]]
@@ -6697,8 +6545,11 @@ dependencies = [
  "wamn-broker",
  "wamn-catalog",
  "wamn-compiler",
+ "wamn-connections",
  "wamn-control-provision",
  "wamn-digest",
+ "wamn-environment",
+ "wamn-fixture-package",
  "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-kubernetes",
@@ -6707,6 +6558,7 @@ dependencies = [
  "wamn-postgres",
  "wamn-registry",
  "wamn-release-control",
+ "wamn-test-infrastructure",
  "wamn-test-postgres",
 ]
 
@@ -6817,7 +6669,6 @@ dependencies = [
  "wamn-environment",
  "wamn-event-wire",
  "wamn-identity-protocol",
- "wamn-integration-tests",
  "wamn-kubernetes",
  "wamn-package-control",
  "wamn-platform-identity",
@@ -6828,6 +6679,7 @@ dependencies = [
  "wamn-release-control",
  "wamn-run-state",
  "wamn-schema-introspection",
+ "wamn-test-application",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wamn-workflow",
@@ -6935,6 +6787,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-test-application"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "uuid",
+ "wamn-catalog",
+ "wamn-control-provision",
+ "wamn-environment",
+ "wamn-kubernetes",
+ "wamn-postgres",
+ "wamn-test-infrastructure",
+]
+
+[[package]]
 name = "wamn-test-infrastructure"
 version = "0.1.0"
 dependencies = [
@@ -6943,6 +6813,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "hex",
+ "hmac 0.13.0",
  "rcgen",
  "ring",
  "rustix 1.1.5",
@@ -6950,12 +6821,12 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.11.0",
  "sqlx",
  "tokio",
  "url",
  "uuid",
  "wamn-broker",
- "wamn-catalog",
  "wamn-compiler",
  "wamn-control-provision",
  "wamn-digest",
@@ -7031,13 +6902,13 @@ dependencies = [
  "wamn-event-wire",
  "wamn-identity-client",
  "wamn-identity-protocol",
- "wamn-integration-tests",
  "wamn-kubernetes",
  "wamn-package-control",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-registry",
  "wamn-release-control",
+ "wamn-test-application",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
 ]
@@ -8193,9 +8064,6 @@ name = "winnow"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "winx"
@@ -8444,6 +8312,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-compiler",
  "wamn-component-composer",
+ "wamn-component-policy",
  "wamn-digest",
  "wamn-environment",
  "wamn-kubernetes",

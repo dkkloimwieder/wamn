@@ -26,7 +26,7 @@ Start with the [documentation index](docs/README.md) or the [architecture overvi
 | [crates](crates/) | Platform libraries, grouped by responsibility |
 | [web](web/README.md) | Browser runtime, wfe packages, shared Vite tooling, and the sync read-shape bench |
 | [tools](tools/) | Repository scripts, lint, benchmark and journey runners, and installers |
-| [tests](tests/) | Conformance and integration test owners |
+| [tests](tests/) | Cross-service journeys and test selection |
 | [test-support](test-support/) | Shared test functions, fixtures, and infrastructure |
 | [deploy](deploy/) | Infrastructure, platform manifests, test Jobs, and SQL |
 | [docs](docs/README.md) | Architecture, operations, testing methods, and plans |

@@ -40,6 +40,12 @@ wamn-postgres-capability = { workspace = true }
 wamn-registry = { workspace = true }
 
 [dev-dependencies]
+base64 = { workspace = true }
+futures-util = { workspace = true }
+ring = { workspace = true }
+tracing-subscriber = { workspace = true }
+wamn-environment = { workspace = true, features = ["ops", "test-util"] }
+wamn-test-infrastructure = { workspace = true }
 http-route = { path = "../../../apps/platform/ingress/http-route" }
 hyper = { workspace = true, features = ["server"] }
 rcgen = { workspace = true }

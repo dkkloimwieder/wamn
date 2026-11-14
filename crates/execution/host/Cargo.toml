@@ -55,6 +55,10 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
+chrono = { workspace = true, features = ["std", "clock"] }
+wamn-test-application = { workspace = true }
+wamn-component-artifact = { workspace = true, features = ["test-util"] }
+wamn-workflow = { workspace = true }
 opentelemetry-appender-tracing.workspace = true
 hyper-rustls = { workspace = true, features = ["http1"] }
 wamn-compiler = { workspace = true }
@@ -64,9 +68,9 @@ reqwest = { workspace = true, features = ["json"] }
 serde_yaml = { workspace = true }
 # `wamn_catalog::fixture_graph` is conditioned behind `test-util`.
 wamn-catalog = { workspace = true, features = ["test-util"] }
-wamn-package-control = { workspace = true }
+wamn-package-control = { workspace = true, features = ["test-util"] }
 wamn-release-control = { workspace = true }
-wamn-environment = { workspace = true }
+wamn-environment = { workspace = true, features = ["ops", "test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-capability-authority = { workspace = true, features = ["test-util"] }
 wamn-connections = { workspace = true, features = ["test-util"] }

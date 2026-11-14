@@ -282,7 +282,7 @@ The entry writes the page as one JSON body.
 The entry bounds a page by the declared contract maximum, usually 100, and by the platform ceiling.
 The generated typed export validates the remaining input.
 The memory of a read is bounded by the statement's declared limit and the platform ceiling.
-The test `a_read_of_100000_rows_refuses_at_the_ceiling` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) shows the refusal.
+The test `a_read_of_100000_rows_refuses_at_the_ceiling` in [`route_interface_live`](../../crates/execution/host/tests/route_interface_live.rs) shows the refusal.
 The route component invokes the application through the host converter.
 The typed query returns its page. The host retains the read's WAL position for a list ETag.
 Platform endpoints use native handlers. Workflows and edge calls use the shared operation entry.

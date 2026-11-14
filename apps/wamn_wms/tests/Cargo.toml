@@ -26,7 +26,7 @@ serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["process", "net", "time", "rt", "macros", "io-util", "signal"] }
 uuid = { workspace = true, features = ["v7"] }
 wamn-catalog = { workspace = true }
-wamn-integration-tests = { workspace = true }
+wamn-test-application = { workspace = true }
 
 wamn-package-control = { workspace = true, features = ["test-util"] }
 wamn-release-control = { workspace = true }

@@ -3,7 +3,7 @@ use anyhow::{Context as _, ensure};
 use futures_util::StreamExt as _;
 use std::time::Duration;
 use tokio::time::{Instant, sleep, timeout};
-use wamn_integration_tests::product_application::Application;
+use wamn_test_application::Application;
 const OUTAGE: Duration = Duration::from_secs(30);
 const RECOVERY_BUDGET: Duration = Duration::from_secs(60);
 

@@ -4,7 +4,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use sqlx::Row as _;
 use std::path::Path;
-use wamn_integration_tests::product_application::Application;
+use wamn_test_application::Application;
 
 const PREREQUISITES: &str = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL";
 

@@ -3,7 +3,7 @@
 //! and a host that serves it to session callers
 //! (docs/architecture/execution.md#host-run-routes).
 //!
-//! `host_route_live` and `tests/integration`'s `control_client_live` include
+//! `host_route_live` and `crates/execution/host/tests`'s `control_client_live` include
 //! it beside the shared session fixture, as `session_fixture`.
 
 use sqlx::PgConnection as Client;

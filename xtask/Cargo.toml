@@ -15,6 +15,7 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
+wamn-component-policy.workspace = true
 wamn-catalog.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }

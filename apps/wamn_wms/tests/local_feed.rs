@@ -13,7 +13,7 @@ use std::process::Stdio;
 
 use anyhow::Context as _;
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
-use wamn_integration_tests::product_application::Application;
+use wamn_test_application::Application;
 
 use crate::business_fixture::{LOCATION_A_ID, PACKAGING_ID};
 

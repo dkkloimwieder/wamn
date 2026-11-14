@@ -1,0 +1,19 @@
+[package]
+name = "wamn-journey-tests"
+description = "Cross-service tests through product deployment commands."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dev-dependencies]
+reqwest = { workspace = true, features = ["json", "rustls"] }
+anyhow.workspace = true
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+uuid = { workspace = true, features = ["v7"] }
+wamn-test-application.workspace = true
+wamn-test-postgres.workspace = true
+
+[lints]
+workspace = true

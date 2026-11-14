@@ -400,7 +400,7 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
             if !(unknown
                 || full.contains(&index)
                 || dependents.contains(&package.id)
-                || policy_tests_changed && package.name.as_str() == "wamn-conformance-tests")
+                || policy_tests_changed && package.name.as_str() == "xtask")
             {
                 continue;
             }

@@ -1,0 +1,11 @@
+# These libraries must share one resolved type identity.
+[bans]
+multiple-versions = "allow"
+multiple-versions-include-dev = true
+deny = [
+    { crate = "async-nats", deny-multiple-versions = true },
+    { crate = "wasmtime", deny-multiple-versions = true },
+    { crate = "wasmtime-wasi", deny-multiple-versions = true },
+    { crate = "wasmtime-wasi-http", deny-multiple-versions = true },
+    { crate = "wasmtime-wasi-io", deny-multiple-versions = true },
+]

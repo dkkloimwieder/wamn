@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Stdio;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 mod release_bindings;
-use wamn_integration_tests::product_application::Application;
+use wamn_test_application::Application;
 
 const LOCATION_A_ID: &str = "00000000-0000-0000-0000-000000000201";
 const LOCATION_B_ID: &str = "00000000-0000-0000-0000-000000000202";

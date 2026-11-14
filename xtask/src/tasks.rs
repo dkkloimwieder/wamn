@@ -130,21 +130,12 @@ pub async fn lint(root: &Path, mode: Mode) -> anyhow::Result<()> {
     } else {
         println!("cargo xtask repo-lint-dependencies");
     }
-    let mut policy = Command::new("cargo");
-    policy
-        .current_dir(root)
-        .args([
-            "run",
-            "--locked",
-            "--quiet",
-            "-p",
-            "wamn-conformance-tests",
-            "--bin",
-            "repo-policy",
-            "--",
-        ])
-        .arg(root);
-    if let Err(error) = step(&mut policy, mode).await {
+    if matches!(mode, Mode::Run) {
+        failures.extend(crate::repo_policy::diagnostics(root));
+    }
+    let mut deny = Command::new("cargo");
+    deny.current_dir(root).args(["deny", "check", "bans"]);
+    if let Err(error) = step(&mut deny, mode).await {
         failures.push(format!("{error:#}"));
     }
     ensure!(failures.is_empty(), "{}", failures.join("\n"));

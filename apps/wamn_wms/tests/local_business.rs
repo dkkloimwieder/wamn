@@ -4,7 +4,7 @@ use sqlx::Row as _;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use wamn_integration_tests::product_application::Application;
+use wamn_test_application::Application;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn operations_and_replay() -> anyhow::Result<()> {

@@ -34,3 +34,7 @@ Tooling tests were removed with the old scripts. Check tasks by using their comm
 The `wamn-build` library under `xtask/build` owns guest compilation and package orchestration.
 The CLI and dev loop call that library. The compiler returns generated artifacts and build facts.
 Platform builds publish palette components once and write their artifact pins and declarations to `palette.json` beside the chart.
+
+`cargo xtask repo-lint` runs repository policy checks directly in xtask.
+`deny.toml` keeps the single-version rules for Wasmtime and async-nats.
+The command also runs `cargo deny check bans`, which needs cargo-deny on `PATH`.

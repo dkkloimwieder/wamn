@@ -5,7 +5,7 @@
 //! It also builds the project databases of the two environments, with the
 //! administration logins that the control host reads from its mounted Secret.
 //!
-//! `control_route_live` and `tests/integration`'s `control_client_live` include it.
+//! `control_route_live` and `crates/execution/host/tests`'s `control_client_live` include it.
 
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
