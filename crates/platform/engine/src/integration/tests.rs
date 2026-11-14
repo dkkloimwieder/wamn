@@ -85,6 +85,7 @@ fn socket_integration(ip: std::net::Ipv4Addr, delta: i32) -> anyhow::Result<Vec<
 }
 
 #[test]
+#[ignore = "requires: runtime"]
 fn integration_byte_admission_refuses_postgres_blobstore_and_other_effects() -> anyhow::Result<()> {
     let engine = crate::build_engine(&[])?;
     for interface in [
@@ -111,6 +112,7 @@ fn integration_byte_admission_refuses_postgres_blobstore_and_other_effects() -> 
 }
 
 #[test]
+#[ignore = "requires: runtime"]
 fn integration_byte_admission_refuses_missing_health_and_wrong_signature() -> anyhow::Result<()> {
     let engine = crate::build_engine(&[])?;
     let empty = wat::parse_str("(component)")?;
@@ -291,6 +293,7 @@ fn server(
 }
 
 #[tokio::test]
+#[ignore = "requires: network, runtime"]
 async fn a_successful_export_cannot_retain_writes_after_invocation_cancellation()
 -> anyhow::Result<()> {
     let (listener, ip) = private_listener().await?;
@@ -357,6 +360,7 @@ async fn a_successful_export_cannot_retain_writes_after_invocation_cancellation(
 }
 
 #[tokio::test]
+#[ignore = "requires: network, runtime"]
 async fn cancelling_an_integration_retires_its_pending_socket_writes() -> anyhow::Result<()> {
     let (listener, ip) = private_listener().await?;
     let port = listener.local_addr()?.port();
@@ -404,6 +408,7 @@ async fn cancelling_an_integration_retires_its_pending_socket_writes() -> anyhow
 }
 
 #[tokio::test]
+#[ignore = "requires: network, runtime"]
 async fn enforced_integration_reaches_bound_private_address_and_never_opens_unbound_connection()
 -> anyhow::Result<()> {
     // The application engine keeps its production Count default.
@@ -584,6 +589,7 @@ async fn application(
 
 #[cfg(feature = "wasm_component_model_implements")]
 #[tokio::test]
+#[ignore = "requires: network, runtime"]
 async fn application_calls_production_integration_imports_in_a_separate_store() -> anyhow::Result<()>
 {
     let (listener, ip) = private_listener().await?;
@@ -624,6 +630,7 @@ async fn application_calls_production_integration_imports_in_a_separate_store() 
 
 #[cfg(feature = "wasm_component_model_implements")]
 #[tokio::test]
+#[ignore = "requires: network, runtime"]
 async fn application_routes_two_named_integrations_and_refuses_unbound() -> anyhow::Result<()> {
     let (modbus_listener, ip) = private_listener().await?;
     let modbus_port = modbus_listener.local_addr()?.port();
@@ -687,6 +694,7 @@ async fn application_routes_two_named_integrations_and_refuses_unbound() -> anyh
 
 #[cfg(feature = "wasm_component_model_implements")]
 #[tokio::test]
+#[ignore = "requires: runtime"]
 async fn an_undeclared_name_refuses_before_dispatch() -> anyhow::Result<()> {
     let integration = Arc::new(
         Integration::load(

@@ -25,7 +25,6 @@ hex = { workspace = true }
 oci-client = { workspace = true }
 wamn-component-policy.workspace = true
 object_store = { workspace = true, features = ["gcp"] }
-reqwest = { workspace = true, features = ["rustls"] }
 ring = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -46,6 +45,7 @@ wamn-compiler = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 wamn-fixture-package = { workspace = true, optional = true }
 wamn-test-infrastructure = { workspace = true, optional = true }
+hyper = { workspace = true }
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["macros"] }

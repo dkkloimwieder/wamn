@@ -108,11 +108,8 @@ async fn assert_postgres_read(fixture: &mut Fixture, facts: &ConnectionFacts, id
 }
 
 #[sqlx::test(migrations = false)]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_committed_write_serves_the_new_generation_after_the_delete(pool: sqlx::PgPool) {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
     let (_server, mut client) = nats().await;
     let memory = Arc::new(ConnectionMemory::default());
@@ -148,11 +145,8 @@ async fn a_committed_write_serves_the_new_generation_after_the_delete(pool: sqlx
 }
 
 #[sqlx::test(migrations = false)]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires(pool: sqlx::PgPool) {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
     let (_server, mut client) = nats().await;
     let ttl = Duration::from_secs(1);
@@ -176,11 +170,8 @@ async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires(pool
 }
 
 #[sqlx::test(migrations = false)]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_stopped_broker_reads_each_generation_without_keeping_a_fact(pool: sqlx::PgPool) {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
     let (server, mut client) = nats().await;
     let memory = Arc::new(ConnectionMemory::default());

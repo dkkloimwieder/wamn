@@ -311,11 +311,8 @@ pub(super) async fn provision_environment_host(
     document: &EnvironmentDocument,
 ) -> anyhow::Result<()> {
     let mut system = connect(&platform.system_database_url).await?;
-    let policy_name: String =
-        sqlx::query_scalar("SELECT policy_name FROM registry.environments WHERE org=$1 AND env=$2")
-            .bind(&document.org)
-            .bind(&document.env)
-            .fetch_one(&mut system)
+    let policy_name =
+        wamn_registry::deployment::environment_policy(&mut system, &document.org, &document.env)
             .await?;
     let policy = super::analyse::read_policy(&mut system, &document.org, &policy_name).await?;
     let events = platform
@@ -346,8 +343,8 @@ pub(super) async fn provision_environment_host(
         platform.insecure_registry,
         installed.as_ref(),
     )?;
-    let projects: Vec<String> = sqlx::query_scalar("SELECT project FROM registry.environment_projects WHERE org=$1 AND env=$2 ORDER BY project")
-        .bind(&document.org).bind(&document.env).fetch_all(&mut system).await?;
+    let projects =
+        wamn_registry::deployment::projects(&mut system, &document.org, &document.env).await?;
     configure_projects(
         &mut desired,
         document,

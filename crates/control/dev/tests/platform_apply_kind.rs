@@ -1,7 +1,7 @@
 //! The platform journey uses the product CLI and observes its deployed owners.
 
 use std::net::{Ipv4Addr, SocketAddr};
-use std::os::unix::fs::{DirBuilderExt as _, symlink};
+use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 use std::time::{Duration, Instant};
@@ -19,6 +19,7 @@ use wamn_environment::platform::{
     document::{ClusterDocument, Provider},
     provider,
 };
+use wamn_package_artifact::http_client::{HttpClient, Redirects};
 use wamn_release_control::release_chart::Target;
 
 #[path = "../../environment/tests/support/platform_images.rs"]
@@ -71,73 +72,53 @@ impl Drop for Run {
 // The cluster document is the one target input authorized by wamn-alrvy.18.
 // The namespace annotation records consent to use the platform as disposable.
 #[tokio::test]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD, bin:docker, bin:kind, bin:helm, bin:kubectl, bin:openssl, bin:script, env:WAMN_KCL, bin:git, bin:cargo, bin:rustc, input:control-binaries"]
 async fn connection_and_caller_kind() -> anyhow::Result<()> {
     panic!("wamn-eulfr.12.10: no product deployment of an HTTP request observer");
     focused(application_deploy::Case::ConnectionAndCaller).await
 }
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD, input:control-binaries"]
 async fn application_recovery_kind() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD",
-    );
     focused(application_deploy::Case::Recovery).await
 }
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD, input:control-binaries"]
 async fn platform_upgrade_kind() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD",
-    );
     focused(application_deploy::Case::PlatformUpgrade).await
 }
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD, input:control-binaries"]
 async fn platform_schema_kind() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD",
-    );
     focused(application_deploy::Case::PlatformSchema).await
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
+#[ignore = "requires: cluster, bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script, input:control-binaries"]
 async fn same_name_reset_kind() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script",
-    );
     focused(application_deploy::Case::Reset).await
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl"]
+#[ignore = "requires: cluster, bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, input:control-binaries"]
 async fn platform_install_recovery_kind() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl",
-    );
     fresh(false).await
 }
 
 /// Fresh-platform acceptance includes installation, recovery, application recovery, and reset.
 #[tokio::test]
-#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
+#[ignore = "requires: cluster, bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script, input:control-binaries"]
 async fn platform_apply_kind() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script",
-    );
     fresh(true).await
 }
 
 /// DEP6 acceptance uses one fresh platform and a 45-minute setup-to-cleanup bound.
 #[tokio::test]
-#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
+#[ignore = "requires: cluster, bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script, env:WAMN_KCL, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_REGISTRY_AUTH_FILE, input:control-binaries"]
 async fn control_operations_kind() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script",
-    );
     tokio::time::timeout(Duration::from_mins(45), async {
         let (repository, binary, kcl) = inputs()?;
         let chart = platform_images::source_chart(&repository, &repository)?;
@@ -165,11 +146,8 @@ async fn control_operations_kind() -> anyhow::Result<()> {
 
 /// DEP7 uses the declared GKE cluster and leaves infrastructure teardown to its owner.
 #[tokio::test]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD, env:WAMN_KCL, env:CLOUDSDK_CONFIG, env:DATABASE_URL, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_REGISTRY_AUTH_FILE, bin:gcloud, bin:gke-gcloud-auth-plugin, bin:kubectl, bin:helm, bin:openssl, bin:script"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD, env:WAMN_KCL, env:CLOUDSDK_CONFIG, env:DATABASE_URL, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_REGISTRY_AUTH_FILE, bin:gcloud, bin:gke-gcloud-auth-plugin, bin:kubectl, bin:helm, bin:openssl, bin:script, input:control-binaries"]
 async fn control_operations_gke() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD, env:WAMN_KCL, env:CLOUDSDK_CONFIG, env:DATABASE_URL, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_REGISTRY_AUTH_FILE, bin:gcloud, bin:gke-gcloud-auth-plugin, bin:kubectl, bin:helm, bin:openssl, bin:script",
-    );
     let (repository, binary, kcl) = inputs()?;
     let document = ClusterDocument::compile(Path::new(&std::env::var("WAMN_TEST_CLUSTER")?))?;
     ensure!(
@@ -190,23 +168,23 @@ async fn control_operations_gke() -> anyhow::Result<()> {
             disposable(&run).await?;
             deploy(&run, "gke-platform-deploy").await?;
             ready(&run, "gke-platform-status").await?;
-            let response = reqwest::Client::builder()
+            let response = HttpClient::builder()
                 .https_only(true)
-                .redirect(reqwest::redirect::Policy::none())
+                .redirects(Redirects::None)
                 .timeout(Duration::from_secs(30))
                 .build()?
                 .get(format!("https://{}/", run.document.route_hosts.control))
                 .send()
                 .await?;
             ensure!(
-                response.status() == reqwest::StatusCode::OK,
+                response.status() == hyper::StatusCode::OK,
                 "public UI route returned {}",
                 response.status()
             );
             ensure!(
                 response
                     .headers()
-                    .get(reqwest::header::CONTENT_TYPE)
+                    .get(hyper::header::CONTENT_TYPE)
                     .and_then(|value| value.to_str().ok())
                     .is_some_and(|value| value.starts_with("text/html")),
                 "public route did not serve an HTML document"
@@ -247,10 +225,15 @@ fn inputs() -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
         .parent()
         .context("debug directory")?
         .join("wamn");
-    ensure!(
-        binary.is_file() && binary.with_file_name("wamn-ctl").is_file(),
-        "build wamn-ctl --bin wamn --bin wamn-ctl first"
-    );
+    for path in [&binary, &binary.with_file_name("wamn-ctl")] {
+        ensure!(
+            path.metadata().is_ok_and(|metadata| {
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            }),
+            "{} must be executable; build wamn-ctl --bin wamn --bin wamn-ctl first",
+            path.display()
+        );
+    }
     let kcl = PathBuf::from(
         std::env::var_os("WAMN_KCL").context("set WAMN_KCL to the prepared compiler")?,
     )
@@ -695,7 +678,7 @@ async fn database_state(run: &Run) -> anyhow::Result<Value> {
 // runs receive the same password from the caller, not from a completion file.
 async fn owner_session(
     run: &Run,
-    client: &reqwest::Client,
+    client: &HttpClient,
     endpoint: &str,
     password: &str,
     enroll: bool,
@@ -713,7 +696,7 @@ async fn owner_session(
 
 async fn password_session(
     run: &Run,
-    client: &reqwest::Client,
+    client: &HttpClient,
     endpoint: &str,
     email: &str,
     password: &str,
@@ -775,11 +758,10 @@ async fn sign_in(run: &Run, password: &str, enroll: bool) -> anyhow::Result<()> 
     let ca = base64::engine::general_purpose::STANDARD
         .decode(tls["data"]["ca.crt"].as_str().context("identity CA")?)?;
     let host = "identity.identity.svc.cluster.local";
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
+    let client = HttpClient::builder()
+        .redirects(Redirects::None)
         .timeout(Duration::from_secs(15))
-        .add_root_certificate(reqwest::Certificate::from_pem(&ca)?)
+        .extra_roots(&ca)?
         .resolve(host, SocketAddr::from((Ipv4Addr::LOCALHOST, forward.port)))
         .build()?;
     let endpoint = format!("https://{host}:{}", forward.port);
@@ -810,10 +792,10 @@ async fn sign_in(run: &Run, password: &str, enroll: bool) -> anyhow::Result<()> 
     let request = || {
         client
             .get(&url)
-            .header(reqwest::header::HOST, &run.document.route_hosts.control)
+            .header(hyper::header::HOST, &run.document.route_hosts.control)
     };
     ensure!(
-        request().send().await?.status() == reqwest::StatusCode::UNAUTHORIZED,
+        request().send().await?.status() == hyper::StatusCode::UNAUTHORIZED,
         "control must refuse an unauthenticated query with 401"
     );
     let response = request().bearer_auth(token).send().await?;

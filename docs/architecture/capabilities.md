@@ -10,10 +10,12 @@ The code-owned [capability declaration](../../crates/platform/component-policy/s
 It admits package and version pairs.
 A `wamn:*`, `wasmcloud:*` or `wasi:logging` row names an exact version.
 A `wasi:io`, `wasi:clocks` or `wasi:random` row names the family `0.2`.
-The family admits `0.2.N` up to the ceiling, the highest `0.2` patch that the host's Wasmtime links.
-The build reads the ceiling from the WIT of the linked `wasmtime-wasi`.
+The family admits every `0.2.N` patch.
+The host checks whether it implements the imported functions when it loads the component.
 An absent pair refuses, without other version ranges, normalization, or namespace guesses.
-An application component cannot import `wamn:postgres/client`, even with a grant, because it runs raw SQL outside the admitted statements.
+An application component may import `wamn:postgres/client@0.4.0` with the Postgres grant.
+This interface offers only `query`. Each call uses the SELECT-only `wamn_query` login in a read-only transaction.
+The host holds no query state between calls. Applications use keyset paging when they need several pages.
 The platform's own native workloads use their separate publication authority.
 
 | Package | Version | Security class |
@@ -75,6 +77,8 @@ The environment database holds a projection of each integration and connection.
 A package declares each connection name, WIT interfaces, and access mode in `wamn.k`.
 Install refuses a declared interface that the component does not import.
 An environment document maps these names to integrations and selects each integration version.
+A connection reference uses `name` or `name@version`.
+The registry stores the name and optional positive integer version in separate columns.
 Several declared names can use the same integration.
 Apply refuses missing or inactive connections and versions that do not export every required interface.
 Interface versions follow component-model compatibility rules.

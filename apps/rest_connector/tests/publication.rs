@@ -9,6 +9,7 @@ use wamn_catalog::{ComponentPackageCoordinate, PackageCoordinate, WiringDocument
 use wamn_publish::publish_release::{PublishReleaseRequest, assemble_release};
 
 #[sqlx::test(migrations = false)]
+#[ignore = "requires: input:rest-connector"]
 async fn both_applications_publish_with_exact_dependencies_and_private_state(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {

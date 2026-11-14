@@ -113,6 +113,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires: network"]
     async fn native_probes_answer_while_ingress_is_saturated_and_after_it_recovers() {
         use std::net::SocketAddr;
         use std::sync::Arc;

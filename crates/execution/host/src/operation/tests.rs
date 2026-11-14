@@ -4,6 +4,7 @@ use super::*;
 use wamn_engine::native_routes::{OperationRefusalType, authorize_registered_operation};
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_custom_read_refuses_a_caller_without_its_grant() {
     let tokens = wamn_control_provision::operation_grants::operation_grant_tokens(
         &wamn_fixture_package::manifest_bytes(),

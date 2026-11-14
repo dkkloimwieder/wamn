@@ -16,6 +16,7 @@ use wamn_component_artifact::component_artifact_source::{
 };
 use wamn_digest::bytes_sha256;
 use wamn_engine::artifact_source::ArtifactSource as _;
+use wamn_package_artifact::http_client::HttpClient;
 use wamn_package_artifact::registry_credentials::read_registry_credentials;
 use wamn_package_artifact::{Repository, pull_package};
 use wamn_publish::package_artifact::{
@@ -125,6 +126,7 @@ impl Drop for Fixture {
 }
 
 #[tokio::test]
+#[ignore = "requires: bin:docker, input:publication-applications"]
 async fn push_repeat_fetch_and_refusals() {
     let fixture = Fixture::start("receiving").await;
     let package = apps().join("wamn_receiving");
@@ -193,6 +195,7 @@ async fn push_repeat_fetch_and_refusals() {
 /// pushes anything: a tag that holds another digest refuses, names both
 /// digests and leaves no new component in the registry (R11).
 #[tokio::test]
+#[ignore = "requires: bin:docker, input:publication-applications"]
 async fn a_tag_that_holds_another_digest_refuses_before_any_push() {
     use wamn_compiler::build_record;
 
@@ -215,7 +218,7 @@ async fn a_tag_that_holds_another_digest_refuses_before_any_push() {
         .push_manifest_raw(
             &receiving_tag.reference,
             wms_manifest,
-            reqwest::header::HeaderValue::from_static(oci_client::manifest::OCI_IMAGE_MEDIA_TYPE),
+            hyper::header::HeaderValue::from_static(oci_client::manifest::OCI_IMAGE_MEDIA_TYPE),
         )
         .await
         .expect("put the WMS manifest under the Receiving tag");
@@ -254,15 +257,19 @@ async fn a_tag_that_holds_another_digest_refuses_before_any_push() {
 
 /// The tags of the component repository, sorted.
 async fn component_tags(fixture: &Fixture) -> Vec<String> {
-    let listed: serde_json::Value = reqwest::get(format!(
-        "http://{}/v2/wamn/components/tags/list",
-        fixture.local.address
-    ))
-    .await
-    .expect("list the component tags")
-    .json()
-    .await
-    .expect("decode the component tags");
+    let listed: serde_json::Value = HttpClient::builder()
+        .build()
+        .expect("registry HTTP client")
+        .get(format!(
+            "http://{}/v2/wamn/components/tags/list",
+            fixture.local.address
+        ))
+        .send()
+        .await
+        .expect("list the component tags")
+        .json()
+        .await
+        .expect("decode the component tags");
     let mut tags: Vec<String> = listed["tags"]
         .as_array()
         .expect("the registry lists tags")

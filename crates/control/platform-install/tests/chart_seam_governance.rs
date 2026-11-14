@@ -156,7 +156,6 @@ fn host_container(deployment: &Value) -> &Value {
 fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
     use std::os::unix::fs::PermissionsExt as _;
 
-    wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
     let (objects, name) = render_host_objects(&repository_root());
     let deployment = rendered_object(&objects, DEPLOYMENT, &name, "platform");
     let pod = &deployment["spec"]["template"]["spec"];

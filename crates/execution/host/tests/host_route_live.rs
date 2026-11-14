@@ -19,6 +19,7 @@ use wamn_engine::flow_http_routing::{AuthenticatedCaller, FlowHttpRouting};
 use wamn_engine::native_routes::{DeliveryError, DeliveryOutcome, DeliveryRequest, Source};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
+use wamn_package_artifact::http_client::HttpClient;
 
 #[path = "../../../platform/postgres-capability/tests/support/session_fixture.rs"]
 #[expect(
@@ -96,6 +97,7 @@ async fn outcome(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres"]
 async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("host_route").await?;
@@ -301,6 +303,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
 /// grants nothing, and every write is stamped with the caller and the
 /// route's sealed operation id.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres"]
 async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()> {
     let mut host = application_host("application_route").await?;
     let ApplicationHost {
@@ -589,6 +592,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
 /// and the set then runs in an operation transaction under the caller, logged
 /// in the write log by its request id.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres"]
 async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
     let mut host = application_host("number_counter_set").await?;
     let ApplicationHost {
@@ -981,6 +985,7 @@ fn four_file_operations_require_an_explicit_application_grant() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres"]
 async fn a_session_without_file_grants_cannot_call_any_file_operation() -> anyhow::Result<()> {
     let mut host = application_host("file_route_grants").await?;
     let mut member = claims();
@@ -1020,12 +1025,9 @@ async fn a_session_without_file_grants_cannot_call_any_file_operation() -> anyho
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: env:WAMN_SESSION_EXCHANGE_CTL_BIN"]
+#[ignore = "requires: postgres, env:WAMN_SESSION_EXCHANGE_CTL_BIN"]
 async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_SESSION_EXCHANGE_CTL_BIN",
-    );
     let mut host = application_host("cli_admin_revoke").await?;
     sqlx::query("INSERT INTO identity.project_roles VALUES($1::text::uuid,$2,$3,'project-admin')")
         .bind(&host.first)
@@ -1098,7 +1100,9 @@ async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> 
     let mut session = claims();
     session["roles"] = json!(["admin"]);
     let token = signed(&header(), &session);
-    let direct: Value = reqwest::Client::new()
+    let direct: Value = HttpClient::builder()
+        .build()
+        .expect("HTTP client")
         .post(format!("{host_url}/wamn_control/user_role/revoke"))
         .bearer_auth(&token)
         .json(

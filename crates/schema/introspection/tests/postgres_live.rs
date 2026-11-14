@@ -62,6 +62,7 @@ async fn selected_columns_fit_the_action(pool: sqlx::PgPool) {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn selected_column_and_constraint_refusals_remain() {
     for (definition, expected) in [
         (

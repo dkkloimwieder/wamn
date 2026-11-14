@@ -957,6 +957,7 @@ async fn invocation_deadline_after_response_headers_keeps_response_lost() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn fresh_and_cached_bearer_use_basic_form_authentication_without_guest_secrets() {
     use base64::Engine as _;
 
@@ -1000,6 +1001,7 @@ async fn fresh_and_cached_bearer_use_basic_form_authentication_without_guest_sec
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn token_endpoint_can_equal_the_bound_base_without_adding_a_query() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(vec![token(1, Some(3600))], vec![200]).await;
@@ -1016,6 +1018,7 @@ async fn token_endpoint_can_equal_the_bound_base_without_adding_a_query() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn short_or_absent_expiry_never_caches_across_requests_and_empty_scopes_omit_scope() {
     let _lock = wamn_test_postgres::lock();
     for expiry in [None, Some(0), Some(59), Some(60)] {
@@ -1036,6 +1039,7 @@ async fn short_or_absent_expiry_never_caches_across_requests_and_empty_scopes_om
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn clock_seam_expires_cached_token_at_the_sixty_second_margin() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(
@@ -1066,6 +1070,7 @@ async fn clock_seam_expires_cached_token_at_the_sixty_second_margin() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn cache_separates_project_connection_and_active_generation() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(
@@ -1116,6 +1121,7 @@ async fn cache_separates_project_connection_and_active_generation() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn refused_token_never_dispatches_api_or_exposes_error_body() {
     for status in [400, 401, 302, 500] {
         let _lock = wamn_test_postgres::lock();
@@ -1134,6 +1140,7 @@ async fn refused_token_never_dispatches_api_or_exposes_error_body() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn api_401_fetches_once_more_and_returns_the_second_response() {
     for second in [200, 401] {
         let _lock = wamn_test_postgres::lock();
@@ -1165,6 +1172,7 @@ async fn api_401_fetches_once_more_and_returns_the_second_response() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn api_403_with_an_unchanged_fact_does_not_retry_oauth2() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(vec![token(1, Some(3600))], vec![403]).await;
@@ -1177,6 +1185,7 @@ async fn api_403_with_an_unchanged_fact_does_not_retry_oauth2() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn failed_refresh_returns_credential_unavailable_without_another_api_request() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(
@@ -1197,6 +1206,7 @@ async fn failed_refresh_returns_credential_unavailable_without_another_api_reque
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn token_url_outside_binding_or_ambiguous_path_refuses_before_dispatch() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(vec![], vec![]).await;
@@ -1264,6 +1274,7 @@ fn malformed_credentials_and_parameters_refuse() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn malformed_token_response_refuses_without_leaking_its_body() {
     for body in [
         format!("{CLIENT_ID} {CLIENT_SECRET}"),
@@ -1285,6 +1296,7 @@ async fn malformed_token_response_refuses_without_leaking_its_body() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn two_hosts_refresh_one_due_row_once() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(
@@ -1334,6 +1346,7 @@ async fn two_hosts_refresh_one_due_row_once() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn provider_failure_is_shared_for_thirty_seconds_with_or_without_a_row() {
     let _lock = wamn_test_postgres::lock();
     for existing in [false, true] {
@@ -1398,6 +1411,7 @@ async fn provider_failure_is_shared_for_thirty_seconds_with_or_without_a_row() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn credential_rotation_waits_for_refresh_and_removes_the_old_token() {
     use base64::Engine as _;
 
@@ -1520,6 +1534,7 @@ async fn credential_rotation_waits_for_refresh_and_removes_the_old_token() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn authorization_code_requires_a_row_and_keeps_or_replaces_the_refresh_token() {
     let _lock = wamn_test_postgres::lock();
     let mut renewed = serde_json::from_str::<serde_json::Value>(&token(3, Some(3600)).1).unwrap();
@@ -1744,6 +1759,7 @@ impl Fixture {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
     use base64::Engine as _;
     let _lock = wamn_test_postgres::lock();
@@ -1879,11 +1895,13 @@ async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn jwt_ps256_locked_fetch_and_401_retry() {
     jwt_round_trip("PS256", Some(",")).await;
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn authorization_code_expired_provider_error_and_new_generation_refuse_without_writes() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(vec![], vec![]).await;
@@ -2102,6 +2120,7 @@ async fn token_authority_health_allows_secret_and_jwt_and_refuses_other_origins(
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn token_authority_client_credentials_fetch_and_refresh_refuse_other_origins() {
     let _lock = wamn_test_postgres::lock();
     for allowed in [true, false] {
@@ -2139,6 +2158,7 @@ async fn token_authority_client_credentials_fetch_and_refresh_refuse_other_origi
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn token_authority_authorization_code_exchange_and_refresh_refuse_other_origins() {
     use base64::Engine as _;
     use sha2::{Digest as _, Sha256};

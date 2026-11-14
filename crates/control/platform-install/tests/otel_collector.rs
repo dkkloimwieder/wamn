@@ -26,7 +26,6 @@ fn find<'a>(documents: &'a [Value], type_: &str, name: &str) -> &'a Value {
 #[test]
 #[ignore = "requires: bin:helm, bin:docker"]
 fn the_collector_configuration_passes_the_pinned_image_validate() {
-    wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm, bin:docker");
     let manifest =
         wamn_test_infrastructure::collector::deployed_collector(&repository_root()).unwrap();
     let image =

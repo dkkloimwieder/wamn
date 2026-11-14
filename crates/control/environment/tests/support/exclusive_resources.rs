@@ -240,9 +240,13 @@ impl Fixture {
             wamn_environment::environment::document::Integration { version: 2 },
         );
         for application in self.document.applications.values_mut() {
-            application
-                .connections
-                .insert("registers".into(), name.into());
+            application.connections.insert(
+                "registers".into(),
+                wamn_registry::configuration::ConnectionReference {
+                    name: name.into(),
+                    version: None,
+                },
+            );
         }
         self.release = loaded_release(&self.document, "reader")?;
         self.document
@@ -338,11 +342,8 @@ async fn read(imports: &IntegrationImports, interface: &str) -> anyhow::Result<(
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:docker, bin:rustc"]
+#[ignore = "requires: nats, postgres, bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:docker, bin:rustc"]
 async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:docker, bin:rustc",
-    );
     let _lock = wamn_test_postgres::lock();
     let condition = Arc::new(tokio::sync::Semaphore::new(1));
     let (authority, requests, server) =

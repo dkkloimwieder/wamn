@@ -70,13 +70,10 @@ async fn ready(address: SocketAddr) -> anyhow::Result<()> {
 }
 
 #[sqlx::test(migrations = false)]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let database = wamn_test_postgres::url(&pool);
     let mut admin = wamn_postgres::connect(database.as_str()).await?;
 

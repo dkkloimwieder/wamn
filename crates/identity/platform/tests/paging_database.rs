@@ -5,6 +5,7 @@ use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_platform_identity::{control, create_or_reuse_user, org};
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn sql_pages_keep_order_filter_and_current_authority() {
     let server = wamn_test_postgres::start(&[]).expect("start disposable PostgreSQL");
     let mut database = server.database("postgres").unwrap();

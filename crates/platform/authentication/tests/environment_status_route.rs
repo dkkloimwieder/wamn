@@ -92,6 +92,7 @@ async fn admitted(route: &FlowHttpRouting) -> Result<bool, (u16, String)> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres"]
 async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("environment_status").await?;

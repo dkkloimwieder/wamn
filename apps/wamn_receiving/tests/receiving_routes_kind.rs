@@ -4,24 +4,22 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use sqlx::Row as _;
 use std::path::Path;
+use wamn_package_artifact::http_client::HttpClient;
 use wamn_test_application::Application;
 
-const PREREQUISITES: &str = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL";
-
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .context("Receiving source")?;
     let application = Application::prepare(source).await?;
     let result = async {
         let mut client = application.observer().await?;
-        let http = reqwest::Client::new();
+        let http = HttpClient::builder().build().expect("HTTP client");
         let supplier = uuid::Uuid::now_v7().to_string();
         let created = http.post(format!("{}/supplier/create", application.routes.endpoint))
-            .header(reqwest::header::HOST, &application.routes.host)
+            .header(hyper::header::HOST, &application.routes.host)
             .bearer_auth(&application.routes.bearer)
             .json(&json!([{"request_id":"supplier","id":supplier,"idempotency_key":"supplier","name":"SUPPLIER-950"}]))
             .send().await?;
@@ -32,7 +30,7 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
         for key in ["numbered-1", "numbered-2"] {
             let response = http
                 .post(format!("{}/purchase_order/create", application.routes.endpoint))
-                .header(reqwest::header::HOST, &application.routes.host)
+                .header(hyper::header::HOST, &application.routes.host)
                 .bearer_auth(&application.routes.bearer)
                 .json(
                     &json!([{"request_id": key, "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": key, "supplier_id": supplier}]),
@@ -82,7 +80,7 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
         ] {
             let response = http
                 .post(format!("{}/purchase_order/create", application.routes.endpoint))
-                .header(reqwest::header::HOST, &application.routes.host)
+                .header(hyper::header::HOST, &application.routes.host)
                 .bearer_auth(&application.routes.bearer)
                 .json(&json!([{
                     "request_id": format!("supplied-{field}"),
@@ -95,7 +93,7 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
             let status = response.status();
             let body: Value = response.json().await?;
             ensure!(
-                status == reqwest::StatusCode::OK
+                status == hyper::StatusCode::OK
                     && body[0]["error"]
                         == json!({"code": "invalid_input", "detail": {"field": "input"}}),
                 "the route accepted caller-supplied {field}: {status} {body}"
@@ -116,9 +114,8 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
 mod development_assertions;
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn product_dev_command_applies_packages_and_cleans_up() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .context("Receiving source")?;

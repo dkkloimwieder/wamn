@@ -16,6 +16,7 @@ use wamn_control_provision::sql::revoke_public_connect_base_grants_sql;
 use wamn_identity::cli::Cli;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks};
+use wamn_package_artifact::http_client::{HttpClient, Redirects};
 use wamn_platform_identity::session_keys::publish_session_key;
 
 const ISSUER: &str = "https://identity.service.internal";
@@ -69,6 +70,7 @@ fn cli_and_validated_configuration_debug_do_not_disclose_database_credentials() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires: postgres"]
 async fn identity_https_has_only_public_jwks_and_health() {
     let mut postgres = wamn_test_postgres::start(&[]).expect("start the test PostgreSQL server");
     let mut system = postgres
@@ -188,9 +190,7 @@ async fn identity_https_has_only_public_jwks_and_health() {
     );
     let plaintext = format!("http://{address}/healthz");
     assert!(
-        reqwest::Client::builder()
-            .no_proxy()
-            .retry(reqwest::retry::never())
+        HttpClient::builder()
             .timeout(Duration::from_secs(5))
             .build()
             .expect("plaintext control")
@@ -423,15 +423,13 @@ fn public_key(value: &Value) -> PublicSessionKey {
     serde_json::from_value(value.clone()).expect("strict public JWK shape")
 }
 
-fn https_client(ca: &[u8]) -> reqwest::Client {
-    reqwest::Client::builder()
+fn https_client(ca: &[u8]) -> HttpClient {
+    HttpClient::builder()
         .https_only(true)
-        .no_proxy()
-        .retry(reqwest::retry::never())
-        .redirect(reqwest::redirect::Policy::none())
+        .redirects(Redirects::None)
         .timeout(Duration::from_secs(5))
-        .tls_backend_rustls()
-        .tls_certs_only(reqwest::Certificate::from_pem_bundle(ca).expect("fixture CA"))
+        .roots(ca)
+        .expect("fixture CA")
         .build()
         .expect("trusted HTTPS client")
 }

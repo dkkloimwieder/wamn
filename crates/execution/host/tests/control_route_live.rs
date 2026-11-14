@@ -270,6 +270,7 @@ async fn grants(admin: &mut Client, principal: &str) -> Vec<String> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres"]
 async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_org_routes").await?;
@@ -528,6 +529,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres"]
 async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_project_routes").await?;
@@ -815,6 +817,7 @@ async fn application_rows(target: &mut Client, principal: &str) -> Vec<String> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres"]
 async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_application_rows").await?;
@@ -992,6 +995,7 @@ async fn statuses(admin: &mut Client, billing: &mut Client, shop: &mut Client) -
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres"]
 async fn status_routes_mirror_the_status_into_each_environment_leaves_first() -> anyhow::Result<()>
 {
     let mut postgres = wamn_test_postgres::start(&[])?;
@@ -1215,6 +1219,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres"]
 async fn project_create_writes_a_project_that_every_org_admin_administers() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_project_create").await?;
@@ -1388,6 +1393,7 @@ impl wamn_execution_host::environment_status::StatusSource for FixedStatus {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres"]
 async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("control_status_counts").await?;
@@ -1635,9 +1641,8 @@ async fn assert_definer_grantees(client: &mut Client) -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: postgres, nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("connection_routes").await?;
     let mut admin = connect(database.url()).await?;
@@ -1975,10 +1980,9 @@ mod oauth_authorization;
 
 #[cfg(feature = "test-util")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: postgres, nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
     use wamn_execution_host::ProjectionPause;
-    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let mut postgres = wamn_test_postgres::start(&[])?;
     let mut database = postgres.create_database("grant_projection_order").await?;
     let mut admin = connect(database.url()).await?;

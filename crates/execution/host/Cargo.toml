@@ -44,7 +44,6 @@ tracing = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "net"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-reqwest = { workspace = true, features = ["rustls"] }
 bytes = { workspace = true }
 boon.workspace = true
 http-body-util = { workspace = true }
@@ -65,7 +64,6 @@ hyper-rustls = { workspace = true, features = ["http1"] }
 wamn-compiler = { workspace = true }
 wamn-package-artifact = { workspace = true }
 object_store = { workspace = true }
-reqwest = { workspace = true, features = ["json"] }
 serde_yaml = { workspace = true }
 # `wamn_catalog::fixture_graph` is conditioned behind `test-util`.
 wamn-catalog = { workspace = true, features = ["test-util"] }

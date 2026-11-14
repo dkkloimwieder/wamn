@@ -4,14 +4,14 @@ use super::*;
 use base64::Engine as _;
 use http_body_util::{BodyExt as _, Full};
 use sha2::{Digest as _, Sha256};
+use wamn_package_artifact::http_client::HttpClient;
 use wash_runtime::host::http::{
     HostHandler as _, Ingress, IngressRoute, NormalizedPathPrefix, RouteScope, ServiceHttpJob,
 };
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: postgres, nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let _lock = wamn_test_postgres::lock();
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres
@@ -203,7 +203,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     );
     assert!(row.get::<bool, _>("recent"));
     assert_ne!(row.get::<Vec<u8>, _>("code_verifier").len(), 43);
-    let client = reqwest::Client::new();
+    let client = HttpClient::builder().build().expect("HTTP client");
     let callback_url = format!("{}?state={state}&code=accepted-code", oauth.redirect_uri());
     assert_eq!(client.post(&callback_url).send().await?.status(), 405);
     let refused = client

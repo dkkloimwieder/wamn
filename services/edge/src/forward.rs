@@ -35,12 +35,12 @@ use hyper::header::{AUTHORIZATION, CONTENT_TYPE};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::rt::TokioExecutor;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::pem::PemObject as _;
 use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+use wamn_kubernetes::http_transport::{self, Protocols, Schemes};
 
 use crate::config::ForwardConfig;
 use crate::samples::{Sample, SampleStore};
@@ -137,7 +137,7 @@ pub fn start(
         config.url
     );
     let forwarder = Forwarder {
-        client: Client::builder(TokioExecutor::new()).build(connector(config)?),
+        client: http_transport::client(connector(config)?, |_| {}),
         url,
         authorization: format!("Bearer {}", read_token(&config.token_file)?),
         key_field: config.key_field.clone(),
@@ -207,11 +207,12 @@ fn connector(config: &ForwardConfig) -> anyhow::Result<HttpsConnector<HttpConnec
     .context("select the TLS versions")?
     .with_root_certificates(roots)
     .with_no_client_auth();
-    Ok(hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(tls)
-        .https_only()
-        .enable_http1()
-        .build())
+    Ok(http_transport::tls_connector(
+        tls,
+        HttpConnector::new(),
+        Schemes::HttpsOnly,
+        Protocols::Http1,
+    ))
 }
 
 async fn run(

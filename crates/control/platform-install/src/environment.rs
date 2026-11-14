@@ -61,25 +61,22 @@ pub async fn connection(
     registry: &str,
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<wamn_postgres::ConnectionConfig> {
-    use sqlx::Row as _;
     let mut client = wamn_postgres::connect(registry).await?;
-    let row = sqlx::query("SELECT ep.instance_suffix, o.placement_type, o.pool_cluster, e.policy_name FROM registry.environment_projects ep JOIN registry.orgs o ON o.id=ep.org JOIN registry.environments e USING(org,env) WHERE ep.org=$1 AND ep.project=$2 AND ep.env=$3")
-        .bind(&triple.org).bind(&triple.project).bind(triple.env.as_str()).fetch_one(&mut client).await?;
-    let instance: String = row.try_get(0)?;
-    let placement: String = row.try_get(1)?;
-    let pool: Option<String> = row.try_get(2)?;
-    let policy_name: String = row.try_get(3)?;
+    let placement = wamn_registry::deployment::database_placement(&mut client, triple).await?;
     let policy = sqlx::query(sqlx::AssertSqlSafe(
         wamn_registry::sql::select_env_policy_sql(),
     ))
     .bind(&triple.org)
-    .bind(&policy_name)
+    .bind(&placement.policy_name)
     .fetch_one(&mut client)
     .await?;
     let policy = wamn_release_control::env_policies::env_policy_from_row(&policy)?;
-    let placement = match placement.as_str() {
+    let instance = placement.instance_suffix;
+    let placement = match placement.placement_type.as_str() {
         "pooled" => wamn_control_provision::Placement::Pooled {
-            pool: pool.context("registered pool is absent")?,
+            pool: placement
+                .pool_cluster
+                .context("registered pool is absent")?,
         },
         "dedicated" => wamn_control_provision::Placement::Dedicated,
         _ => anyhow::bail!("unknown org placement"),
@@ -112,8 +109,9 @@ pub async fn capture_connection(
 ) -> anyhow::Result<String> {
     let mut config = connection(registry, triple).await?;
     let mut client = wamn_postgres::connect(registry).await?;
-    let instance: String = sqlx::query_scalar("SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3")
-        .bind(&triple.org).bind(&triple.project).bind(triple.env.as_str()).fetch_one(&mut client).await?;
+    let instance = wamn_registry::deployment::instance_suffix(&mut client, triple)
+        .await?
+        .context("project deployment is absent")?;
     config.username = wamn_control_provision::cdc_object_name(
         &triple.org,
         &triple.project,

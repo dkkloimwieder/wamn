@@ -141,11 +141,8 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
 }
 
 #[test]
-#[ignore = "requires: env:WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, env:WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM"]
+#[ignore = "requires: env:WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, env:WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM, input:fixture"]
 fn base_and_overlay_project_admitted_routes() {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, env:WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM",
-    );
     let inputs = packages();
     let (admitted_digests, components) = admit_components(&inputs);
 

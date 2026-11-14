@@ -332,6 +332,7 @@ async fn continuity(client: &mut sqlx::PgConnection) -> anyhow::Result<SqlContin
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn activation_preserves_sql_other_applications_and_running_release() -> anyhow::Result<()> {
     let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
     let scratch = ScratchRoot::create()?;
@@ -594,7 +595,10 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         let row = sqlx::query(
             "SELECT value FROM platform.setting WHERE target_type=$1 AND target_id=$2 AND key='revocation-seconds'",
         ).bind(target_type).bind(target_id).fetch_one(&mut observer).await?;
-        assert_eq!(row.get::<serde_json::Value, _>(0).as_u64(), Some(seconds));
+        assert_eq!(
+            row.get::<serde_json::Value, _>(0).as_u64(),
+            Some(u64::from(seconds))
+        );
     }
     sqlx::raw_sql("INSERT INTO a.data(value) VALUES ('authored'); INSERT INTO b.data(value) VALUES ('other');").execute(&mut observer).await.map(drop)?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
@@ -641,7 +645,13 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .get_mut("a")
         .unwrap()
         .connections
-        .insert("extra".into(), "erp".into());
+        .insert(
+            "extra".into(),
+            wamn_registry::configuration::ConnectionReference {
+                name: "erp".into(),
+                version: None,
+            },
+        );
     let mut candidate = old_package;
     candidate
         .connections
@@ -709,7 +719,13 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .get_mut("a")
         .unwrap()
         .connections
-        .insert("failed".into(), "erp".into());
+        .insert(
+            "failed".into(),
+            wamn_registry::configuration::ConnectionReference {
+                name: "erp".into(),
+                version: None,
+            },
+        );
     let mut failed_packages = candidate_packages.clone();
     let declaration = failed_packages[0].connections["upstream"].clone();
     failed_packages[0]

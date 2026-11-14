@@ -146,7 +146,14 @@ pub fn fixture_document(env: &str, route_host: &str, digest: &str) -> Environmen
                 hostname: route_host.to_owned(),
                 revocation_seconds: 5,
                 client: None,
-                connections: [("labels".to_owned(), format!("labels-{env}"))].into(),
+                connections: [(
+                    "labels".to_owned(),
+                    wamn_registry::configuration::ConnectionReference {
+                        name: format!("labels-{env}"),
+                        version: None,
+                    },
+                )]
+                .into(),
                 packages: std::collections::BTreeSet::from([
                     PACKAGE.to_owned(),
                     "label_fixture".to_owned(),
@@ -465,7 +472,7 @@ pub mod http {
                                 && row["package_id"] == "http_fixture"
                                 && row["mode"] == "write"
                                 && row["integration_name"]
-                                    == document.applications[PACKAGE].connections[*handle]
+                                    == document.applications[PACKAGE].connections[*handle].name
                         })
                 })
     }

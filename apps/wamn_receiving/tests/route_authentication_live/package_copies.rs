@@ -96,7 +96,7 @@ pub(super) async fn build(root: &Path, names: &[&str], server_url: &str) -> anyh
         "{} is not built; build wamn-ctl --bin wamn first",
         wamn.display()
     );
-    let mut server = reqwest::Url::parse(server_url)?;
+    let mut server = url::Url::parse(server_url)?;
     server.set_path("/postgres");
     let output = Command::new(&wamn)
         .arg("build")

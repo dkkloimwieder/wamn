@@ -27,7 +27,6 @@ members = [
     "platform/data/postgres-statements",
     "platform/data/record-history",
     "platform/fixtures/connection-http-standard",
-    "platform/fixtures/sqlx-command",
 ]
 exclude = [
     "wamn_receiving/tests",
@@ -112,7 +111,6 @@ base64 = "0.22"
 boon = "0.6"
 serde = "1"
 serde_json = "1"
-sqlx-core = { version = "=0.9.0", default-features = false }
 # Released bindings support the async blobstore contract on the pinned compiler.
 wit-bindgen = { version = "0.62.0", default-features = false, features = ["async", "macros", "realloc"] }
 

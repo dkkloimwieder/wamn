@@ -89,28 +89,23 @@ fn retry_reason(mut error: &(dyn Error + 'static)) -> Option<(&'static str, Opti
                 {
                     Some(("http", Some(429)))
                 }
-                OciDistributionError::RequestError(error) => request_retry_reason(error),
+                OciDistributionError::RequestError(error) => {
+                    if error.is_timeout() {
+                        Some(("timeout", None))
+                    } else {
+                        error
+                            .status()
+                            .filter(|status| status.is_server_error() || status.as_u16() == 429)
+                            .map(|status| ("http", Some(status.as_u16())))
+                    }
+                }
                 OciDistributionError::IoError(error) if error.kind() == io::ErrorKind::TimedOut => {
                     Some(("timeout", None))
                 }
                 _ => None,
             };
         }
-        if let Some(error) = error.downcast_ref::<reqwest::Error>() {
-            return request_retry_reason(error);
-        }
         error = error.source()?;
-    }
-}
-
-fn request_retry_reason(error: &reqwest::Error) -> Option<(&'static str, Option<u16>)> {
-    if error.is_timeout() {
-        Some(("timeout", None))
-    } else {
-        error
-            .status()
-            .filter(|status| status.is_server_error() || status.as_u16() == 429)
-            .map(|status| ("http", Some(status.as_u16())))
     }
 }
 

@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use wamn_package_artifact::http_client::{HttpClient, Redirects};
 use wamn_postgres::connect;
 use wamn_test_application::Application;
 
@@ -16,6 +17,7 @@ const CODE_BEFORE: &str = "read::location_list(connection)";
 const CODE_AFTER: &str = "async { let mut rows = read::location_list(connection).await?; for row in &mut rows { row.location_code.push_str(\"-edited\"); } Ok::<_, crate::data::AccessError>(rows) }";
 
 #[tokio::test]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn local_watch_preserves_data_and_refuses_bad_sql() -> anyhow::Result<()> {
     let application: Application =
         panic!("wamn-eulfr.12.9: no product location and order-line import");
@@ -29,7 +31,7 @@ async fn local_watch_preserves_data_and_refuses_bad_sql() -> anyhow::Result<()> 
         let token = &application.routes.bearer;
         let denied = http_client()?.get(format!("{}/location/list", first.url))
             .header("Host", &first.host).send().await?;
-        ensure!(denied.status() == reqwest::StatusCode::UNAUTHORIZED, "the local route must require authentication");
+        ensure!(denied.status() == hyper::StatusCode::UNAUTHORIZED, "the local route must require authentication");
         first.locations(token, &["DOCK-1", "DOCK-2"]).await?;
         let updated = first.request(token, "/purchase_order/update", json!([{
             "request_id":"local-update", "id":"00000000-0000-0000-0000-000000000301",
@@ -93,12 +95,11 @@ async fn require_revision(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn http_client() -> anyhow::Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
+fn http_client() -> anyhow::Result<HttpClient> {
+    HttpClient::builder()
+        .redirects(Redirects::None)
         .timeout(Duration::from_secs(30))
-        .build()?)
+        .build()
 }
 
 pub(super) struct Served {

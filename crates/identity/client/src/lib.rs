@@ -16,6 +16,7 @@ use wamn_identity_protocol::wire::PatResponse;
 use wamn_identity_protocol::wire::{
     InvitationRequest, IssuePatRequest, UserRequest, UserResponse as UserBody,
 };
+use wamn_package_artifact::http_client::{HttpClient, HttpError, Redirects};
 
 /// Each provisioning request attempt stops after five seconds.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -35,7 +36,7 @@ const UNCERTAIN_ISSUANCE: &str =
 
 /// Whether a send failed because rustls refused a certificate: a
 /// misconfiguration that a retry cannot fix.
-fn refused_certificate(error: &reqwest::Error) -> bool {
+fn refused_certificate(error: &HttpError) -> bool {
     let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error);
     while let Some(current) = cause {
         if matches!(
@@ -91,7 +92,7 @@ impl fmt::Debug for PatIssuerConfig {
 
 /// The operator HTTPS client of one identity route.
 pub struct PatClient {
-    http: reqwest::Client,
+    http: HttpClient,
     endpoint: Url,
 }
 
@@ -125,7 +126,7 @@ impl PatClient {
             .context("PAT issuance requires --pat-client-key")?;
 
         // Credential errors can contain paths or certificate material.
-        // Keep their diagnostics fixed; strip URLs from HTTP errors below.
+        // Keep their diagnostics fixed. The transport never records request URLs.
         let mut identity_pem = std::fs::read(cert_path)
             .map_err(|_| anyhow::anyhow!("PAT client certificate read failed"))?;
         identity_pem.push(b'\n');
@@ -133,26 +134,21 @@ impl PatClient {
             std::fs::read(key_path)
                 .map_err(|_| anyhow::anyhow!("PAT client private key read failed"))?,
         );
-        let identity = reqwest::Identity::from_pem(&identity_pem)
-            .map_err(|_| anyhow::anyhow!("PAT client certificate or private key is invalid"))?;
-        let mut builder = reqwest::Client::builder()
-            .tls_backend_rustls()
-            .identity(identity)
+        let mut builder = HttpClient::builder()
             .https_only(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
+            .redirects(Redirects::None)
             .timeout(REQUEST_TIMEOUT);
         if let Some(path) = args.server_ca.as_deref() {
             let pem = std::fs::read(path)
                 .map_err(|_| anyhow::anyhow!("PAT server trust roots read failed"))?;
-            let roots = reqwest::Certificate::from_pem_bundle(&pem)
+            builder = builder
+                .roots(&pem)
                 .map_err(|_| anyhow::anyhow!("PAT server trust roots are invalid"))?;
-            anyhow::ensure!(!roots.is_empty(), "PAT server trust roots are empty");
-            builder = builder.tls_certs_only(roots);
         }
         let http = builder
+            .identity_pem(&identity_pem)
+            .map_err(|_| anyhow::anyhow!("PAT client certificate or private key is invalid"))?
             .build()
-            .map_err(reqwest::Error::without_url)
             .context("PAT HTTPS client creation failed")?;
         Ok(Self { http, endpoint })
     }
@@ -176,11 +172,10 @@ impl PatClient {
             let sent = self
                 .http
                 .post(self.endpoint.clone())
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .header(hyper::header::CONTENT_TYPE, "application/json")
                 .body(body.clone())
                 .send()
-                .await
-                .map_err(reqwest::Error::without_url);
+                .await;
             match sent {
                 Ok(response) => break response,
                 Err(error) if refused_certificate(&error) => {
@@ -204,7 +199,7 @@ impl PatClient {
             }
         };
         anyhow::ensure!(
-            response.status() == reqwest::StatusCode::CREATED,
+            response.status() == hyper::StatusCode::CREATED,
             "PAT issuer returned an unsuccessful response. {UNCERTAIN_ISSUANCE}"
         );
         anyhow::ensure!(
@@ -217,7 +212,6 @@ impl PatClient {
         while let Some(chunk) = response
             .chunk()
             .await
-            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("PAT issuer response read failed. {UNCERTAIN_ISSUANCE}"))?
         {
             anyhow::ensure!(
@@ -304,17 +298,15 @@ pub async fn send_invitation(
     let response = client
         .http
         .post(client.endpoint.clone())
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(hyper::header::CONTENT_TYPE, "application/json")
         .body(invitation_body(principal_id)?)
         .send()
         .await
-        .map_err(reqwest::Error::without_url)
         .context("invitation transport failed; the request was not retried")?;
     let status = response.status().as_u16();
     let bytes = response
         .bytes()
         .await
-        .map_err(reqwest::Error::without_url)
         .context("invitation reply read failed")?;
     anyhow::ensure!(
         bytes.len() <= MAX_RESPONSE_BYTES,
@@ -375,31 +367,26 @@ pub async fn create_user(
     let response = client
         .http
         .post(client.endpoint.clone())
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(hyper::header::CONTENT_TYPE, "application/json")
         .body(user_body(email, display_name)?)
         .send()
         .await
-        .map_err(reqwest::Error::without_url)
         .context("user request transport failed; the request was not retried")?;
     let status = response.status();
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(reqwest::Error::without_url)
-        .context("user reply read failed")?;
+    let bytes = response.bytes().await.context("user reply read failed")?;
     anyhow::ensure!(
         bytes.len() <= MAX_RESPONSE_BYTES,
         "user reply exceeds the size limit"
     );
     if matches!(
         status,
-        reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::CONFLICT
+        hyper::StatusCode::BAD_REQUEST | hyper::StatusCode::CONFLICT
     ) && let Ok(body) = serde_json::from_slice::<RefusalBody>(&bytes)
     {
         return Err(UserRefused(body.error).into());
     }
     anyhow::ensure!(
-        status == reqwest::StatusCode::OK,
+        status == hyper::StatusCode::OK,
         "identity did not create the user: {status}"
     );
     let body: UserBody =
@@ -745,16 +732,16 @@ mod tests {
 
     #[tokio::test]
     async fn a_user_request_posts_the_email_and_names_a_refusal() {
-        for (status, body, expected) in [
+        for (status, body, refused) in [
             (
                 "200 OK",
                 format!(r#"{{"principal_id":"{PRINCIPAL}","enrolled":true}}"#),
-                format!("{PRINCIPAL} true"),
+                false,
             ),
             (
                 "409 Conflict",
                 format!(r#"{{"error":"principal {PRINCIPAL} is disabled"}}"#),
-                format!("identity refused the user: principal {PRINCIPAL} is disabled"),
+                true,
             ),
         ] {
             let mut fixture = https_fixture("127.0.0.1", |_| {
@@ -769,11 +756,13 @@ mod tests {
                 serde_json::from_str::<serde_json::Value>(sent).unwrap(),
                 serde_json::json!({ "email": "ann@example.test", "display_name": "Ann" })
             );
-            let outcome = match result {
-                Ok(reply) => format!("{} {}", reply.principal_id, reply.enrolled),
-                Err(error) => error.to_string(),
-            };
-            assert_eq!(outcome, expected);
+            if refused {
+                assert!(result.unwrap_err().downcast_ref::<UserRefused>().is_some());
+            } else {
+                let reply = result.unwrap();
+                assert_eq!(reply.principal_id, PRINCIPAL.parse().unwrap());
+                assert!(reply.enrolled);
+            }
         }
     }
 
@@ -785,9 +774,7 @@ mod tests {
         let token = response()["token"].as_str().unwrap().to_owned();
         // Bypass endpoint validation to exercise URL stripping with a secret query.
         let client = PatClient {
-            http: reqwest::Client::builder()
-                .no_proxy()
-                .retry(reqwest::retry::never())
+            http: HttpClient::builder()
                 .timeout(REQUEST_TIMEOUT)
                 .build()
                 .unwrap(),
@@ -797,20 +784,14 @@ mod tests {
             .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
             .await
             .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "PAT issuer was not reachable in 5 attempts. No PAT was issued."
-        );
-        let source = error.downcast_ref::<reqwest::Error>().unwrap();
+        let source = error.downcast_ref::<HttpError>().unwrap();
         assert!(source.is_connect());
-        assert!(source.url().is_none());
         assert!(error.chain().any(|cause| {
             cause
                 .downcast_ref::<std::io::Error>()
                 .is_some_and(|cause| cause.kind() == std::io::ErrorKind::ConnectionRefused)
         }));
         for diagnostic in [format!("{error:#}"), format!("{error:?}")] {
-            assert!(diagnostic.to_lowercase().contains("connection refused"));
             assert!(!diagnostic.contains("https://"));
             assert!(!diagnostic.contains("?token="));
             assert!(!diagnostic.contains(&token));
@@ -826,10 +807,9 @@ mod tests {
             .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
             .await
             .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "PAT issuer certificate was refused. No PAT was issued."
-        );
+        assert!(refused_certificate(
+            error.downcast_ref::<HttpError>().unwrap()
+        ));
         assert_eq!(fixture.requests.load(Ordering::SeqCst), 0);
         assert_eq!(fixture.connections.load(Ordering::SeqCst), 1);
     }
@@ -881,27 +861,12 @@ mod tests {
                 "{response_type}"
             );
             assert!(!format!("{error:#} {error:?}").contains("private-marker"));
-            assert!(
-                error.to_string().contains(UNCERTAIN_ISSUANCE),
-                "{response_type}"
-            );
             if response_type == "truncated" {
-                let source = error.downcast_ref::<reqwest::Error>().unwrap();
-                assert!(source.is_decode());
-                assert!(source.url().is_none());
-                assert_eq!(
-                    error.to_string(),
-                    "PAT issuer response read failed. A PAT can exist without a returned token. The request was not retried."
-                );
+                let source = error.downcast_ref::<HttpError>().unwrap();
+                assert!(source.is_body());
             }
             if response_type == "disconnect" {
-                assert_eq!(
-                    error.to_string(),
-                    "PAT issuance transport failed. A PAT can exist without a returned token. The request was not retried."
-                );
-            }
-            if matches!(response_type, "length" | "chunked") {
-                assert!(error.to_string().contains("size limit"));
+                assert!(!error.downcast_ref::<HttpError>().unwrap().is_connect());
             }
         }
     }

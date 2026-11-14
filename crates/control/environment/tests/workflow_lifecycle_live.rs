@@ -595,14 +595,11 @@ async fn event_authorship_requires_a_captured_application_model(pool: sqlx::PgPo
 
 /// The supplied broker credential needs stream management and event publication.
 #[sqlx::test(migrations = false)]
-#[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
+#[ignore = "requires: nats, env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
 async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool) {
     use std::time::Duration;
     use wamn_broker::EventBroker;
     use wamn_broker::events::{event_consumer_config, source_stream_config};
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
-    );
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture(&pool).await;
     capture_orders(&mut fixture).await;

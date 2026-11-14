@@ -758,6 +758,7 @@ mod declaration_tests {
 
     use super::*;
     #[tokio::test]
+    #[ignore = "requires: runtime"]
     async fn a_new_bound_credential_links_without_compiling_again() -> anyhow::Result<()> {
         let mut resolve = wit_parser::Resolve::new();
         let package = resolve.push_str(

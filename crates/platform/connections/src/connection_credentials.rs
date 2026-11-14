@@ -3,6 +3,7 @@
 //! Secret material never enters guests or stored run facts. An absent reader
 //! is unavailable. A reader with no matching enabled connection returns none.
 
+#[cfg(test)]
 use sqlx::Row as _;
 use std::sync::Arc;
 
@@ -103,17 +104,6 @@ impl ConnectionCredentials {
         Ok(handle)
     }
 
-    async fn material(&self, row: &sqlx::postgres::PgRow) -> anyhow::Result<Option<String>> {
-        if row.get::<Option<&str>, _>(0).is_none() {
-            return Ok(None);
-        }
-        let reference: String = row.get(1);
-        let version: String = row.get(2);
-        Ok(Some(
-            read_secret(&reference, &version, self.store.as_deref()).await?,
-        ))
-    }
-
     pub fn connection_name<'a>(&self, handle: &'a str) -> anyhow::Result<&'a str> {
         let (org, name) =
             wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
@@ -154,29 +144,22 @@ impl ConnectionCredentials {
         id: &uuid::Uuid,
     ) -> anyhow::Result<Option<crate::connection_memory::ConnectionFact>> {
         let (mut client, org) = self.reader().await?;
-        let row = sqlx::query(
-            wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CONNECTION_FACT,
-        )
-        .bind(org)
-        .bind(project)
-        .bind(environment)
-        .bind(id)
-        .fetch_optional(&mut *client)
-        .await
-        .context("read the connection fact")?;
+        let row = wamn_registry::connections::fact(&mut client, org, project, environment, id)
+            .await
+            .context("read the connection fact")?;
         Ok(row.map(|row| crate::connection_memory::ConnectionFact {
-            active_generation: row.get(0),
-            status: if row.get(1) {
+            active_generation: row.active_generation,
+            status: if row.active {
                 crate::connection_memory::ConnectionStatus::Active
             } else {
                 crate::connection_memory::ConnectionStatus::Disabled
             },
-            credential_id: row.get(2),
-            exclusive: row.get(3),
-            target_id: row.get(4),
-            resource_key: row.get(5),
-            target_type: row.get(6),
-            service_principal_id: row.get(7),
+            credential_id: row.credential_id,
+            exclusive: row.exclusive,
+            target_id: row.target_id,
+            resource_key: row.resource_key,
+            target_type: row.target_type,
+            service_principal_id: row.service_principal_id,
         }))
     }
 
@@ -189,25 +172,16 @@ impl ConnectionCredentials {
         generation: i64,
     ) -> anyhow::Result<Option<ConnectionGeneration>> {
         let (mut client, org) = self.reader().await?;
-        let row = sqlx::query(
-            wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CONNECTION_GENERATION,
+        wamn_registry::connections::generation(
+            &mut client,
+            org,
+            project,
+            environment,
+            id,
+            generation,
         )
-        .bind(org)
-        .bind(project)
-        .bind(environment)
-        .bind(id)
-        .bind(generation)
-        .fetch_optional(&mut *client)
         .await
-        .context("read the connection generation")?;
-        Ok(row.map(|row| ConnectionGeneration {
-            name: row.get(0),
-            integration_type: row.get(1),
-            runtime_type: row.get(2),
-            auth_type: row.get(3),
-            external_system: row.get(4),
-            parameters: row.get(5),
-        }))
+        .context("read the connection generation")
     }
 
     /// The secret of one credential of a connection of the environment.
@@ -218,18 +192,24 @@ impl ConnectionCredentials {
         credential: &uuid::Uuid,
     ) -> anyhow::Result<Option<String>> {
         let (mut client, org) = self.reader().await?;
-        let row = sqlx::query(
-            wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CREDENTIAL_SECRET,
+        let reference = wamn_registry::connections::credential(
+            &mut client,
+            org,
+            project,
+            environment,
+            credential,
         )
-        .bind(org)
-        .bind(project)
-        .bind(environment)
-        .bind(credential)
-        .fetch_optional(&mut *client)
         .await
         .context("read the credential reference")?;
-        match row {
-            Some(row) => self.material(&row).await,
+        match reference {
+            Some(reference) => Ok(Some(
+                read_secret(
+                    &reference.reference,
+                    &reference.version,
+                    self.store.as_deref(),
+                )
+                .await?,
+            )),
             None => Ok(None),
         }
     }
@@ -241,18 +221,9 @@ impl ConnectionCredentials {
         environment: &str,
     ) -> anyhow::Result<std::collections::BTreeMap<String, uuid::Uuid>> {
         let (mut client, org) = self.reader().await?;
-        Ok(sqlx::query(
-            wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_ENV_CONNECTIONS,
-        )
-        .bind(org)
-        .bind(project)
-        .bind(environment)
-        .fetch_all(&mut *client)
-        .await
-        .context("read the environment connections")?
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1)))
-        .collect())
+        wamn_registry::connections::environment(&mut client, org, project, environment)
+            .await
+            .context("read the environment connections")
     }
 
     /// One published version of an integration type, or its newest one.
@@ -262,39 +233,13 @@ impl ConnectionCredentials {
         version: Option<i32>,
     ) -> anyhow::Result<Option<IntegrationVersion>> {
         let (mut client, _) = self.reader().await?;
-        let row = sqlx::query(
-            wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_INTEGRATION_VERSION,
-        )
-        .bind(integration_type)
-        .bind(version)
-        .fetch_optional(&mut *client)
-        .await
-        .context("read the integration version")?;
-        Ok(row.map(|row| IntegrationVersion {
-            version: row.get(0),
-            digest: row.get(1),
-        }))
+        wamn_registry::connections::integration_version(&mut client, integration_type, version)
+            .await
+            .context("read the integration version")
     }
 }
 
-/// One generation of a connection. The secret stays apart, under the
-/// credential id.
-#[derive(Clone, Debug)]
-pub struct ConnectionGeneration {
-    pub name: String,
-    pub integration_type: String,
-    pub runtime_type: String,
-    pub auth_type: String,
-    pub external_system: Option<String>,
-    pub parameters: serde_json::Value,
-}
-
-/// One published version of an integration type.
-#[derive(Clone, Debug)]
-pub struct IntegrationVersion {
-    pub version: i32,
-    pub digest: Option<String>,
-}
+pub use wamn_registry::connections::{ConnectionGeneration, IntegrationVersion};
 
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_util;

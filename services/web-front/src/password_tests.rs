@@ -63,13 +63,7 @@ async fn password_proxy_preserves_the_client_address_and_cookie() -> anyhow::Res
     });
     let releases = Releases {
         api: wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
-            Client::builder(TokioExecutor::new()).build(
-                hyper_rustls::HttpsConnectorBuilder::new()
-                    .with_provider_and_native_roots(rustls::crypto::aws_lc_rs::default_provider())?
-                    .https_or_http()
-                    .enable_http1()
-                    .build(),
-            ),
+            http_transport::client(native_connector()?, |_| {}),
             discovery_url,
             String::new(),
             "hosts".into(),
@@ -95,8 +89,7 @@ async fn password_proxy_preserves_the_client_address_and_cookie() -> anyhow::Res
                 .unwrap();
         }
     });
-    let client: Client<HttpConnector, Full<Bytes>> =
-        Client::builder(TokioExecutor::new()).build_http();
+    let client: Client<HttpConnector, Full<Bytes>> = http_transport::http_client();
     for address in [Some("198.51.100.1"), Some("198.51.100.2"), None] {
         let mut request = hyper::Request::builder()
             .uri(&url)

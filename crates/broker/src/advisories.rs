@@ -462,16 +462,14 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_URL"]
+    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_URL"]
     async fn exhausted_delivery_retains_advisory_and_allows_later_messages() -> anyhow::Result<()> {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_URL");
         retained_broker_advisory(DeliveryAdvisoryType::MaxDeliver).await
     }
 
     #[tokio::test]
-    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_URL"]
+    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_URL"]
     async fn terminated_delivery_retains_advisory_after_source_deletion() -> anyhow::Result<()> {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_URL");
         retained_broker_advisory(DeliveryAdvisoryType::Terminated).await
     }
 
@@ -977,9 +975,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn targeted_credentials_allow_delivery_and_monitoring() -> anyhow::Result<()> {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         targeted_broker_behavior(async |fixture| {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];
@@ -1019,9 +1016,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn runtime_credentials_refuse_broker_management() -> anyhow::Result<()> {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         targeted_broker_behavior(async |fixture| {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];
@@ -1134,9 +1130,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn targeted_credentials_refuse_foreign_environments() -> anyhow::Result<()> {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         targeted_broker_behavior(async |fixture| {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];
@@ -1232,10 +1227,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn activation_and_provisioning_refuse_changed_broker_configuration() -> anyhow::Result<()>
     {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         targeted_broker_behavior(async |fixture| {
             let (source, _, consumer, _) = &fixture.declarations[0];
             let managers = &fixture.managers;
@@ -1308,10 +1302,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn interrupted_acknowledgement_redelivers_and_allows_later_messages() -> anyhow::Result<()>
     {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         targeted_broker_behavior(async |fixture| {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];
@@ -1333,9 +1326,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn large_messages_obey_broker_pull_and_ack_limits() -> anyhow::Result<()> {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         targeted_broker_behavior(async |fixture| {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];
@@ -1359,9 +1351,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn source_time_expiry_keeps_retained_advisories() -> anyhow::Result<()> {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         targeted_broker_behavior(async |fixture| {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];

@@ -13,6 +13,7 @@ use wamn_compiler::build::{BuildRequest, generate_package, package_output};
 use wamn_compiler::build_record;
 
 #[tokio::test(flavor = "current_thread")]
+#[ignore = "requires: postgres"]
 async fn concurrent_builds_initialize_history_on_one_server() -> anyhow::Result<()> {
     use std::time::Duration;
 
@@ -437,6 +438,7 @@ async fn authored_feed_refuses_a_key_other_than_the_root_id() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[ignore = "requires: postgres"]
 async fn projection_view_keeps_non_null_and_nullable_declarations() {
     for nullable in [false, true] {
         let mut database_server_database = wamn_test_postgres::start(&[]).unwrap();

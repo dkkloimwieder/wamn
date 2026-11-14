@@ -780,8 +780,8 @@ CREATE TABLE registry.environment_projects (
     secret_namespace text,
     instance_suffix  text NOT NULL,
     -- A NULL revocation bound means configuration is not yet applied.
-    revocation_seconds numeric(20,0)
-        CHECK (revocation_seconds BETWEEN 0 AND 18446744073709551615),
+    revocation_seconds integer
+        CHECK (revocation_seconds BETWEEN 0 AND 3600),
     schema_mode text CHECK (schema_mode IN ('reset', 'migrate')),
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
@@ -809,8 +809,8 @@ CREATE TABLE registry.environment_applications (
     hostname text NOT NULL CHECK (
         char_length(hostname) BETWEEN 1 AND 253
         AND hostname ~ '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'),
-    revocation_seconds numeric(20,0) NOT NULL
-        CHECK (revocation_seconds BETWEEN 0 AND 18446744073709551615),
+    revocation_seconds integer NOT NULL
+        CHECK (revocation_seconds BETWEEN 0 AND 3600),
     client_package text CHECK (client_package <> ''),
     client_web text CHECK (client_web ~ '^sha256:[0-9a-f]{64}$'),
     release_digest text CHECK (release_digest ~ '^sha256:[0-9a-f]{64}$'),
@@ -826,7 +826,8 @@ CREATE TABLE registry.environment_application_connections (
     project text NOT NULL,
     application text NOT NULL,
     alias text NOT NULL CHECK (alias <> ''),
-    connection_name text NOT NULL CHECK (connection_name ~ '^[a-z][a-z0-9_-]{0,62}(@[1-9][0-9]*)?$'),
+    connection_name text NOT NULL CHECK (connection_name ~ '^[a-z][a-z0-9_-]{0,62}$'),
+    connection_version integer CHECK (connection_version > 0),
     PRIMARY KEY (org, env, project, application, alias),
     FOREIGN KEY (org, env, project, application)
         REFERENCES registry.environment_applications (org, env, project, application) ON DELETE CASCADE

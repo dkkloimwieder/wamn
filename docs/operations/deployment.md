@@ -211,8 +211,8 @@ Application rows hold hostnames, revocation bounds, client pins and desired rele
 Other rows hold connection aliases and integration versions. The shared environment owns its target and policy.
 Postgres constrains these values. Package membership comes from the selected release manifest.
 Environment documents contain no release digest or package membership. Old document shapes are refused.
-Set `revocation_seconds` for the project and each application.
-These nonnegative values bound credential revocation delay when an invalidation is lost.
+Set `revocation_seconds` to an integer from 0 to 3600 for the project and each application.
+Each value bounds credential revocation delay when an invalidation is lost.
 Zero disables auth caching. Restart hosts after changing a bound.
 `wamn env apply environment.k` submits the configuration to authenticated control.
 The installer reconciles the database and role declarations. The environment library saves the configuration after provisioning succeeds.

@@ -417,12 +417,9 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
 
 /// The broker must be private to this test run.
 #[sqlx::test(migrations = false)]
-#[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
+#[ignore = "requires: nats, env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
 async fn every_application_grant_write_deletes_exactly_its_auth_keys(pool: sqlx::PgPool) {
     use wamn_broker::auth_changes::auth_bucket;
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
-    );
     let broker = wamn_broker::nats::PlatformNats::from_env()
         .unwrap()
         .connect()

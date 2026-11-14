@@ -232,6 +232,7 @@ fn headers(signature: String) -> Vec<Header> {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn exact_body_signature_delivers_the_same_json_as_none() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::new().await;
@@ -259,6 +260,7 @@ async fn exact_body_signature_delivers_the_same_json_as_none() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn missing_bad_and_malformed_signatures_refuse_before_delivery() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::new().await;
@@ -280,6 +282,7 @@ async fn missing_bad_and_malformed_signatures_refuse_before_delivery() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn missing_credentials_wrong_project_and_bad_secret_shapes_refuse() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::new().await;
@@ -331,7 +334,7 @@ async fn missing_credentials_wrong_project_and_bad_secret_shapes_refuse() {
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: nats, postgres, bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete() {
     use wamn_broker::auth_changes::AuthDrops;
     use wamn_broker::connection_changes::ConnectionDrops;
@@ -340,9 +343,6 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     use wamn_platform_identity::connections::administration;
 
     const PROJECT_ENV_KEY: &str = "acme--dev--host-project";
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
     let (_server, mut client) = nats().await;
     let mut fixture = Fixture::new().await;
@@ -449,6 +449,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn disabling_a_connection_refuses_signature_and_pat_principals() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::new().await;

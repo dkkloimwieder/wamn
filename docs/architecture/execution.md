@@ -758,7 +758,8 @@ A host that reads a fact puts it with the revision of the key from before the re
 The environment host watches each project through that project's event client and keeps its connection facts separate. A fact read for one project never supplies another project's authority.
 The control host serves every project, so it watches every key.
 Each environment document declares the project's `revocation_seconds` and each application's `revocation_seconds`.
-Both values are required nonnegative integers. Zero disables caching.
+Both values are required integers from 0 to 3600 seconds.
+The bound is the longest time a revoked caller stays admitted when a drop is lost. Zero disables caching.
 Release preparation writes these values as `revocation-seconds` rows in `platform.setting` before Helm starts the host.
 Local development writes the same configuration before taking its database template.
 The HTTP admitter reads these rows through its existing read authority.

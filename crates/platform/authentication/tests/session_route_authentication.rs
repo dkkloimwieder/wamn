@@ -288,6 +288,7 @@ fn assert_permission_reads(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres"]
 async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity()
 -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[

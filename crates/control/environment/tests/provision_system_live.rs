@@ -12,6 +12,7 @@ use wamn_environment::provision_system::{
 };
 
 #[sqlx::test(migrations = false)]
+#[ignore = "requires: input:fixture"]
 async fn provision_system_repeats_without_changing_the_platform_domain(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let url = wamn_test_postgres::url(&pool).to_string();
@@ -408,6 +409,7 @@ async fn snapshot(client: &mut sqlx::PgConnection) -> serde_json::Value {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn bootstrap_is_atomic_and_uses_database_facts() {
     let _lock = wamn_test_postgres::lock();
     let mut case_server = wamn_test_postgres::start(&[]).unwrap();

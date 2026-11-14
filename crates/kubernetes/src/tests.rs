@@ -1,14 +1,16 @@
 //! Credential operations through the shared HTTP interface.
 
-use crate::{Store as _, kubernetes::KubernetesStore, kubernetes_api::KubernetesApi};
+use crate::{
+    Store as _,
+    http_transport::{self, Protocols, Schemes},
+    kubernetes::KubernetesStore,
+    kubernetes_api::KubernetesApi,
+};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full};
 use hyper::{Response, service::service_fn};
-use hyper_util::{
-    client::legacy::Client,
-    rt::{TokioExecutor, TokioIo},
-};
+use hyper_util::{client::legacy::connect::HttpConnector, rt::TokioIo};
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
@@ -77,13 +79,14 @@ async fn api(replies: Vec<(u16, Value)>) -> Api {
     .unwrap()
     .with_root_certificates(rustls::RootCertStore::empty())
     .with_no_client_auth();
-    let connector = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(tls)
-        .https_or_http()
-        .enable_http1()
-        .build();
+    let connector = http_transport::tls_connector(
+        tls,
+        HttpConnector::new(),
+        Schemes::HttpAndHttps,
+        Protocols::Http1,
+    );
     let api = KubernetesApi::with_client(
-        Client::builder(TokioExecutor::new()).build(connector),
+        http_transport::client(connector, |_| {}),
         format!("http://{address}"),
         String::new(),
         "hosts".into(),

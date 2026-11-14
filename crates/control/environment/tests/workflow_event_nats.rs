@@ -10,13 +10,10 @@ mod event_batch {
     use wamn_events_capability::WamnJetstreamConfig;
 
     #[sqlx::test(migrations = false)]
-    #[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
+    #[ignore = "requires: nats, env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
     async fn applications_admit_independently_across_upgrade_rollback_and_redelivery(
         pool: sqlx::PgPool,
     ) {
-        wamn_test_postgres::require_ignored_prerequisites(
-            "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
-        );
         let _lock = wamn_test_postgres::lock();
         let mut fixture = fixture(&pool).await;
         fixture.grant_workflow_user("reader").await;
@@ -289,12 +286,9 @@ mod event_batch {
 }
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
+#[ignore = "requires: nats, env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
 async fn reset_discards_only_the_named_environments_backlog() -> anyhow::Result<()> {
     use wamn_broker::events::{advisory_stream_config, source_stream_config};
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
-    );
     let client = wamn_broker::nats::PlatformNats::from_env()?
         .connect()
         .await

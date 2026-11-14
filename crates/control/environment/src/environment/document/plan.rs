@@ -13,7 +13,7 @@ pub struct EnvironmentDocument {
     /// A policy of `registry.env_policies`, by name.
     pub policy: String,
     /// Maximum project credential revocation delay, in seconds.
-    pub revocation_seconds: u64,
+    pub revocation_seconds: u32,
     #[serde(default)]
     pub schema: Schema,
     /// Application name to its selection and membership.
@@ -23,7 +23,9 @@ pub struct EnvironmentDocument {
     pub integrations: BTreeMap<String, Integration>,
 }
 
-pub use wamn_registry::configuration::{Client, Integration, Schema, SchemaMode};
+pub use wamn_registry::configuration::{
+    Client, ConnectionReference, Integration, Schema, SchemaMode,
+};
 
 /// An application's deployment selection and declared membership.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,21 +36,25 @@ pub struct ApplicationSelection {
     pub current: DeclaredRelease,
     pub hostname: String,
     /// Maximum application credential revocation delay, in seconds.
-    pub revocation_seconds: u64,
+    pub revocation_seconds: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,
     /// Transient membership from the verified release manifest.
     #[serde(skip)]
     pub packages: std::collections::BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub connections: BTreeMap<String, String>,
+    pub connections: BTreeMap<String, ConnectionReference>,
 }
 
 impl From<ApplicationSelection> for wamn_catalog::ApplicationDefinition {
     fn from(application: ApplicationSelection) -> Self {
         Self {
             packages: application.packages,
-            connections: application.connections,
+            connections: application
+                .connections
+                .into_iter()
+                .map(|(alias, connection)| (alias, connection.to_string()))
+                .collect(),
         }
     }
 }
@@ -147,7 +153,15 @@ impl EnvironmentDocument {
         wamn_control_provision::validate_project_env(&self.org, &self.project, &self.env)
             .context("the environment coordinate is not valid")?;
         ensure!(!self.policy.is_empty(), "policy is empty");
+        ensure!(
+            self.revocation_seconds <= 3600,
+            "revocation_seconds must be between 0 and 3600"
+        );
         for (name, application) in &self.applications {
+            ensure!(
+                application.revocation_seconds <= 3600,
+                "application {name}: revocation_seconds must be between 0 and 3600"
+            );
             let hostname = &application.hostname;
             ensure!(
                 !hostname.is_empty()
@@ -168,12 +182,11 @@ impl EnvironmentDocument {
         }
         ensure!(!self.target.trim().is_empty(), "target is empty");
         for (application, definition) in &self.applications {
-            for (alias, name) in &definition.connections {
+            for alias in definition.connections.keys() {
                 ensure!(
                     !alias.is_empty(),
                     "application {application} has an empty connection alias"
                 );
-                wamn_catalog::org_credential_handle(&self.org, name).map_err(anyhow::Error::msg)?;
             }
         }
         for (name, integration) in &self.integrations {
@@ -205,7 +218,11 @@ impl EnvironmentDocument {
                     name.clone(),
                     wamn_catalog::ApplicationDefinition {
                         packages: application.packages.clone(),
-                        connections: application.connections.clone(),
+                        connections: application
+                            .connections
+                            .iter()
+                            .map(|(alias, connection)| (alias.clone(), connection.to_string()))
+                            .collect(),
                     },
                 )
             })
@@ -273,7 +290,7 @@ impl EnvironmentDocument {
             let bindings = application
                 .connections
                 .iter()
-                .map(|(alias, name)| format!("{} = {}", quote(alias), quote(name)))
+                .map(|(alias, name)| format!("{} = {}", quote(alias), quote(&name.to_string())))
                 .collect::<Vec<_>>()
                 .join(", ");
             lines.push(format!(

@@ -20,7 +20,7 @@ wamn-registry.workspace = true
 wamn-broker = { workspace = true }
 hex = { workspace = true }
 dotenvy = { workspace = true }
-reqwest = { workspace = true, features = ["rustls", "json"] }
+wamn-package-artifact = { workspace = true }
 sha2 = { workspace = true }
 zeroize = { workspace = true }
 bytes = { workspace = true }
@@ -39,6 +39,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 wamn-control-provision = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["macros", "migrate"] }

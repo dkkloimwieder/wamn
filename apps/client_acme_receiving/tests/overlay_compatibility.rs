@@ -40,6 +40,7 @@ fn required_contract_observation_refuses_changed_consumed_fields_and_constraints
 
 /// Narrow seam test; the paired journey remains the fresh-install test.
 #[tokio::test]
+#[ignore = "requires: postgres, input:client-acme"]
 async fn installed_contract_observer_reads_a_production_install_and_refuses_changed_requirements()
 -> anyhow::Result<()> {
     let mut postgres = production_server().await?;
@@ -162,13 +163,12 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
 /// test-owned workspace, installs fresh with the overlay as built, and the
 /// overlay's required schema is satisfied exactly as on the unchanged base.
 #[sqlx::test(migrations = false)]
-#[ignore = "requires: cargo, rustc"]
+#[ignore = "requires: bin:cargo, bin:rustc, input:client-acme"]
 async fn an_additive_base_change_leaves_the_overlay_unchanged_and_compatible(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {
     // The nullable field the additive base adds.
     const FIELD: &str = "overlay_compatibility_note";
-    wamn_test_postgres::require_prerequisites(&["cargo", "rustc"]);
     let overlay = super::overlay_package_root();
     let overlay_before =
         wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&overlay)?;

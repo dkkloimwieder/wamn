@@ -19,6 +19,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn apply_creates_one_integration_principal_and_grants_declared_dependencies()
 -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();

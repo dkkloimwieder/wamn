@@ -98,7 +98,13 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         .applications
         .get_mut("alpha")
         .context("alpha application")?
-        .connections = BTreeMap::from([("upstream".to_owned(), "upstream".to_owned())]);
+        .connections = BTreeMap::from([(
+        "upstream".to_owned(),
+        wamn_registry::configuration::ConnectionReference {
+            name: "upstream".to_owned(),
+            version: None,
+        },
+    )]);
     std::fs::write(&journey.file, document.to_kcl())?;
     journey
         .apply(

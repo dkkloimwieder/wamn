@@ -49,7 +49,6 @@ wamn-run-state = { workspace = true }
 wamn-scalar = { workspace = true }
 wash-runtime = { workspace = true }
 wasmtime = { workspace = true }
-wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["macros", "migrate"] }

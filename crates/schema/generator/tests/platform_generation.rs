@@ -25,6 +25,7 @@ fn parsed(value: &Value) -> PackageManifest {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn business_error_details_are_closed() {
     let baseline = fixture::manifest();
     let mut platform_detail = baseline.clone();
@@ -48,6 +49,7 @@ fn business_error_details_are_closed() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn state_idempotence_requires_its_exact_shape() {
     for guards in [
         json!({}),
@@ -87,6 +89,7 @@ fn state_idempotence_requires_its_exact_shape() {
 /// engine's per request element intent. A command with SQL still names claim or state
 /// (owner ruling, `wamn-hxow`).
 #[test]
+#[ignore = "requires: input:fixture"]
 fn stateless_idempotence_is_only_for_a_command_without_sql() {
     let mut manifest = fixture::manifest();
     manifest["custom_operations"]["widget.inspect"] = json!({
@@ -132,6 +135,7 @@ fn with_internal_relation() -> serde_json::Value {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn retired_workflows_are_dropped() {
     let mut handler = fixture::manifest();
     let operation = handler["custom_operations"]["widget.archive"]
@@ -211,6 +215,7 @@ fn a_claim_command_declares_no_claim_object() {
 /// A model can say how its rows leave without publishing a route that removes
 /// them: only its command SQL deletes. A delete action still needs its mode.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_delete_mode_needs_no_delete_route() {
     let mut manifest = fixture::manifest();
     manifest["models"]["widget"]["operations"]
@@ -248,6 +253,7 @@ fn names_the_member(error: &wamn_compiler::ManifestError, member: &str) -> bool 
 /// because its key is `labels` would reach an operator as a field path, and
 /// nothing would say why.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn authored_text_is_optional_and_its_key_is_closed() {
     let declared = parsed(&fixture::manifest());
     let widget = &declared.models["widget"];
@@ -364,6 +370,7 @@ fn authored_text_is_optional_and_its_key_is_closed() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn generated_query_display_fields_require_a_returned_field() {
     for field in ["missing", ""] {
         let mut manifest = fixture::manifest();
@@ -390,6 +397,7 @@ fn generated_query_display_fields_require_a_returned_field() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn authored_query_display_fields_require_a_declared_result_field() {
     for field in ["missing", ""] {
         let mut manifest = fixture::manifest();
@@ -424,6 +432,7 @@ fn authored_query_display_fields_require_a_declared_result_field() {
 /// submission itself, so text on it would be a member nothing reads, and
 /// generation refuses it instead of accepting it.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn screen_text_on_the_envelope_bound_refuses_and_names_the_line_bound() {
     let mut misplaced = fixture::manifest();
     misplaced["custom_operations"]["widget.record_batch"]["input"]["envelope"]["label"] =
@@ -438,6 +447,7 @@ fn screen_text_on_the_envelope_bound_refuses_and_names_the_line_bound() {
 
 /// A route member that publish could not serve refuses, and names the member.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_route_member_publish_cannot_serve_refuses() {
     for (member, value) in [
         ("auth_modes", json!(["none"])),
@@ -467,6 +477,7 @@ fn a_route_member_publish_cannot_serve_refuses() {
 /// migration: the refusal names the column and the expression the author
 /// writes (wamn-iowb.4).
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_minimum_length_without_its_check_refuses() {
     let mut manifest = fixture::manifest();
     manifest["models"]["widget"]["min_lengths"] = json!({"code": 1});
@@ -535,6 +546,7 @@ fn derive(manifest: &Value) -> Result<Value, wamn_compiler::ManifestError> {
 
 /// The compiler accepts authored declarations and refuses computed members in input.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn the_compiled_manifest_carries_the_relations_the_statements_reach() {
     let committed = fixture::manifest();
     derive(&without_relations(committed)).expect("derive the authored manifest");
@@ -554,6 +566,7 @@ fn the_compiled_manifest_carries_the_relations_the_statements_reach() {
 /// its SQL reaches and that defines it. One that no reached relation defines
 /// refuses.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_mapped_constraint_lands_on_the_relation_that_defines_it() {
     let mut manifest = without_relations(fixture::manifest());
     let archive = &mut manifest["custom_operations"]["widget.archive"];
@@ -583,6 +596,7 @@ fn a_mapped_constraint_lands_on_the_relation_that_defines_it() {
 /// A model's value sets come from its CHECKs. An authored list narrows one,
 /// and a list that states the CHECK's set again or widens it refuses.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn enum_fields_come_from_the_check_and_an_authored_list_only_narrows() {
     let authored = without_relations(fixture::manifest());
     let compiled = derive(&authored).expect("derive the manifest");
@@ -629,6 +643,7 @@ fn enum_fields_come_from_the_check_and_an_authored_list_only_narrows() {
 /// The stamp columns are server-owned from the table, so an authored list
 /// that names one refuses.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_stated_stamp_column_refuses() {
     let mut authored = without_relations(fixture::manifest());
     authored["models"]["widget"]["server_owned_fields"] = json!(["created_at"]);
@@ -644,6 +659,7 @@ fn a_stated_stamp_column_refuses() {
 /// A model query that its table alone answers is generated: authored SQL for
 /// it refuses. Authored SQL that joins another table stays.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn authored_sql_for_a_query_generation_writes_refuses() {
     let path = "query/widget_query.sql";
     let mut manifest = fixture::manifest();
@@ -693,6 +709,7 @@ fn authored_sql_for_a_query_generation_writes_refuses() {
 /// A screen follows its read through the sync store only when the read has a
 /// feed. The contract carries the field, and the build names a read without one.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_sync_screen_needs_a_feed_on_its_read() {
     let mut manifest = fixture::manifest();
     manifest["custom_operations"]["feed_line.screen"]["sync"] = json!(true);
@@ -717,6 +734,7 @@ fn a_sync_screen_needs_a_feed_on_its_read() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn custom_statement_paths_must_be_unique() {
     let mut document = fixture::manifest();
     let operation = document["custom_operations"]
@@ -736,6 +754,7 @@ fn custom_statement_paths_must_be_unique() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
     let mut overlap = with_internal_relation();
     overlap["internal_relations"][fixture::UNREAD_TABLE]["table"] = json!("widget");

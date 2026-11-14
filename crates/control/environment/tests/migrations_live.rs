@@ -325,6 +325,7 @@ async fn platform_migrations_refuse_administrators_and_use_scope_credentials(
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() -> anyhow::Result<()>
 {
     use wamn_environment::{apply_package, environment::sql::reset::reset_database};

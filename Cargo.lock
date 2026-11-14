@@ -5551,7 +5551,6 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-platform-identity",
  "wamn-registry",
- "wamn-test-postgres",
  "wash-runtime",
  "wasmtime",
  "wat",
@@ -5660,7 +5659,6 @@ dependencies = [
  "wamn-digest",
  "wamn-engine",
  "wamn-package-artifact",
- "wamn-test-postgres",
  "wash-runtime",
  "wasmtime",
  "wasmtime-wasi",
@@ -5787,6 +5785,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "url",
+ "uuid",
  "wamn-catalog",
  "wamn-compiler",
  "wamn-control-provision",
@@ -5812,7 +5811,6 @@ dependencies = [
  "http-body-util",
  "hyper",
  "postgres-protocol",
- "reqwest",
  "rustix 1.1.5",
  "rustls",
  "serde",
@@ -5855,9 +5853,9 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "chrono",
+ "hyper",
  "oci-client",
  "postgres-protocol",
- "reqwest",
  "rustix 1.1.5",
  "serde",
  "serde_json",
@@ -5888,7 +5886,6 @@ dependencies = [
  "wamn-release-control",
  "wamn-run-state",
  "wamn-test-infrastructure",
- "wamn-test-postgres",
  "wit-component 0.254.2",
  "wit-parser 0.254.2",
 ]
@@ -5935,8 +5932,8 @@ dependencies = [
  "wamn-digest",
  "wamn-engine",
  "wamn-identity-protocol",
+ "wamn-kubernetes",
  "wamn-registry",
- "wamn-test-postgres",
  "wash-runtime",
 ]
 
@@ -5983,12 +5980,12 @@ dependencies = [
  "chrono",
  "futures-util",
  "hex",
+ "hyper",
  "object_store",
  "oci-client",
  "pg_query",
  "postgres-protocol",
  "rcgen",
- "reqwest",
  "ring",
  "serde",
  "serde_json",
@@ -6090,7 +6087,6 @@ dependencies = [
  "wamn-postgres-capability",
  "wamn-registry",
  "wamn-run-state",
- "wamn-test-postgres",
  "wash-runtime",
 ]
 
@@ -6118,7 +6114,6 @@ dependencies = [
  "opentelemetry-appender-tracing",
  "opentelemetry_sdk",
  "rcgen",
- "reqwest",
  "ring",
  "rustls",
  "serde",
@@ -6303,7 +6298,6 @@ dependencies = [
  "jsonwebtoken 11.1.0",
  "postgres-protocol",
  "rcgen",
- "reqwest",
  "ring",
  "rustls",
  "serde",
@@ -6319,6 +6313,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-identity-protocol",
+ "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-registry",
@@ -6333,8 +6328,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "hyper",
  "rcgen",
- "reqwest",
  "rustls",
  "serde",
  "serde_json",
@@ -6342,6 +6337,7 @@ dependencies = [
  "tokio-rustls",
  "url",
  "wamn-identity-protocol",
+ "wamn-package-artifact",
 ]
 
 [[package]]
@@ -6390,11 +6386,12 @@ name = "wamn-journey-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "reqwest",
+ "hyper",
  "serde_json",
  "sqlx",
  "tokio",
  "uuid",
+ "wamn-package-artifact",
  "wamn-test-application",
  "wamn-test-postgres",
 ]
@@ -6438,16 +6435,17 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "oci-client",
- "reqwest",
  "rustls",
  "rustls-platform-verifier",
  "serde",
  "serde_json",
  "tokio",
+ "tower-service",
  "tracing",
  "url",
  "wamn-catalog",
  "wamn-digest",
+ "wamn-kubernetes",
 ]
 
 [[package]]
@@ -6491,10 +6489,10 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "hex",
+ "hyper",
  "oci-client",
  "postgres-protocol",
  "rcgen",
- "reqwest",
  "ring",
  "serde",
  "serde_json",
@@ -6591,7 +6589,6 @@ dependencies = [
  "wamn-test-postgres",
  "wash-runtime",
  "wasmtime",
- "wasmtime-wasi",
  "wat",
 ]
 
@@ -6603,11 +6600,11 @@ dependencies = [
  "chrono",
  "futures-util",
  "hex",
+ "hyper",
  "object_store",
  "oci-client",
  "pg_query",
  "postgres-protocol",
- "reqwest",
  "ring",
  "serde",
  "serde_json",
@@ -6653,9 +6650,9 @@ dependencies = [
  "chrono",
  "futures-util",
  "hex",
+ "hyper",
  "pg_walstream",
  "proptest",
- "reqwest",
  "ring",
  "rustix 1.1.5",
  "serde",
@@ -6666,6 +6663,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "wamn-broker",
  "wamn-catalog",
@@ -6679,6 +6677,7 @@ dependencies = [
  "wamn-event-wire",
  "wamn-identity-protocol",
  "wamn-kubernetes",
+ "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-postgres-capability",
@@ -6710,7 +6709,9 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "serde",
+ "serde_json",
  "sqlx",
+ "uuid",
  "wamn-digest",
 ]
 
@@ -6786,7 +6787,6 @@ name = "wamn-test-application"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "reqwest",
  "serde_json",
  "sqlx",
  "tokio",
@@ -6795,7 +6795,9 @@ dependencies = [
  "wamn-control-provision",
  "wamn-environment",
  "wamn-kubernetes",
+ "wamn-package-artifact",
  "wamn-postgres",
+ "wamn-registry",
  "wamn-test-infrastructure",
 ]
 
@@ -6879,9 +6881,9 @@ dependencies = [
  "async-nats",
  "futures-util",
  "hex",
+ "hyper",
  "object_store",
  "pg_walstream",
- "reqwest",
  "ring",
  "serde_json",
  "serde_yaml",
@@ -6899,6 +6901,7 @@ dependencies = [
  "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-kubernetes",
+ "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-publish",
@@ -6906,7 +6909,6 @@ dependencies = [
  "wamn-release-control",
  "wamn-test-application",
  "wamn-test-infrastructure",
- "wamn-test-postgres",
 ]
 
 [[package]]
@@ -8291,14 +8293,15 @@ dependencies = [
  "clap",
  "csv",
  "docker_credential",
+ "hyper",
  "oci-client",
  "regex",
- "reqwest",
  "rustix 1.1.5",
  "serde",
  "serde_json",
  "serde_yaml",
  "sqlx",
+ "syn 3.0.6",
  "tempfile",
  "tokio",
  "toml 1.1.6+spec-1.1.0",
@@ -8317,6 +8320,7 @@ dependencies = [
  "wamn-postgres",
  "wamn-publish",
  "wamn-release-control",
+ "wamn-test-postgres",
  "wash-runtime",
 ]
 

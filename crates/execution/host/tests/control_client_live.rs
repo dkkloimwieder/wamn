@@ -43,6 +43,7 @@ use application_fixture::{ApplicationHost, MEMBER, PROJECT, application_host};
 mod control_fixture;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres, input:web-install, bin:pnpm"]
 async fn application_routes_answer_through_the_generated_client() -> anyhow::Result<()> {
     let mut host = application_host("control_client").await?;
     let ApplicationHost {
@@ -118,6 +119,7 @@ async fn vitest(file: &str, env: &[(&str, String)]) -> anyhow::Result<()> {
 /// application rows need the administration logins, so this test calls the
 /// writes that refuse before them; `control_route_live` covers the rest.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: postgres, input:web-install, bin:pnpm"]
 async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_client").await?;

@@ -4,6 +4,7 @@ use sqlx::Row as _;
 use wamn_platform_identity::{application::ApplicationTarget, environment::fill};
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration()
 -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();

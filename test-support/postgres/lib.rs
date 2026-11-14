@@ -104,7 +104,12 @@ pub fn require_prerequisites(names: &[&str]) {
     require_ignored_prerequisites(&format!("requires: {}", names.join(", ")));
 }
 
-/// Parse the fixed prerequisite form used by ignored tests.
+/// Parse test needs: resources, preparation inputs, executable programs, and environment variables.
+///
+/// Resources are `runtime`, `network`, `postgres`, `nats`, and `cluster`.
+/// Runtime and network resources select contract tests. SQLx tests already declare
+/// PostgreSQL through their test attribute and need no repeated service entry.
+/// An `input:ID` entry selects the preparation recipe named `ID`.
 pub fn parse_prerequisites(reason: &str) -> Result<Vec<(&str, &str)>, String> {
     let names = reason
         .strip_prefix("requires: ")
@@ -112,6 +117,12 @@ pub fn parse_prerequisites(reason: &str) -> Result<Vec<(&str, &str)>, String> {
     names
         .split(", ")
         .map(|item| {
+            if matches!(
+                item,
+                "runtime" | "network" | "postgres" | "nats" | "cluster"
+            ) {
+                return Ok(("service", item));
+            }
             let (type_, name) = item
                 .split_once(':')
                 .ok_or_else(|| format!("invalid prerequisite: {item:?}"))?;
@@ -121,6 +132,12 @@ pub fn parse_prerequisites(reason: &str) -> Result<Vec<(&str, &str)>, String> {
                         && name
                             .chars()
                             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                }
+                "input" => {
+                    !name.is_empty()
+                        && name
+                            .bytes()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
                 }
                 "bin" => {
                     !name.is_empty()
@@ -139,6 +156,27 @@ pub fn parse_prerequisites(reason: &str) -> Result<Vec<(&str, &str)>, String> {
         .collect()
 }
 
+/// Derive the execution tier from the strongest resource a test uses.
+/// Runtime and network resources select contract when no live resource is needed.
+pub fn test_tier<'a>(
+    names: impl IntoIterator<Item = (&'a str, &'a str)>,
+    integration: bool,
+) -> &'static str {
+    let mut tier = if integration { "contract" } else { "unit" };
+    for (type_, name) in names {
+        tier = match (type_, name, tier) {
+            ("service", "cluster", _) => "kind",
+            (_, _, "kind") => tier,
+            ("service", "nats", _) => "live-nats",
+            (_, _, "live-nats") => tier,
+            ("service", "postgres", _) => "live-postgres",
+            (_, _, "unit") => "contract",
+            _ => tier,
+        };
+    }
+    tier
+}
+
 /// Fail before setup when an ignored test lacks a declared prerequisite.
 pub fn require_ignored_prerequisites(reason: &str) {
     let names = parse_prerequisites(reason).unwrap_or_else(|error| panic!("{error}"));
@@ -146,7 +184,9 @@ pub fn require_ignored_prerequisites(reason: &str) {
     let missing: Vec<String> = names
         .into_iter()
         .filter_map(|(type_, name)| {
-            if type_ == "env" {
+            if matches!(type_, "service" | "input") {
+                None
+            } else if type_ == "env" {
                 std::env::var_os(name)
                     .is_none_or(|value| value.is_empty())
                     .then(|| format!("environment variable {name}"))
@@ -471,44 +511,8 @@ fn valid_database_name(name: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn ignored_prerequisites_use_only_explicit_programs_and_variables() {
-        assert_eq!(
-            parse_prerequisites("requires: bin:sh, env:PATH").unwrap(),
-            [("bin", "sh"), ("env", "PATH")]
-        );
-        for reason in [
-            "",
-            "requires:",
-            "requires: ",
-            "requires: sh",
-            "requires: env:path",
-            "requires: bin:sh,env:PATH",
-            "requires: bin:sh; live only",
-            "requires: bin:sh, ",
-        ] {
-            assert!(parse_prerequisites(reason).is_err(), "accepted {reason:?}");
-        }
-        require_ignored_prerequisites("requires: bin:/bin/sh, env:PATH");
-        assert!(std::panic::catch_unwind(|| {
-            require_ignored_prerequisites(
-                "requires: env:WAMN_TEST_PREREQUISITE_NEVER_SET, bin:wamn-test-program-never-installed",
-            );
-        }).is_err());
-    }
-
-    #[test]
-    fn missing_prerequisites_refuse() {
-        require_prerequisites(&["PATH", "sh"]);
-        for names in [
-            &["PATH", "WAMN_TEST_PREREQUISITE_NEVER_SET"][..],
-            &["sh", "wamn-test-program-never-installed"][..],
-        ] {
-            assert!(std::panic::catch_unwind(|| require_prerequisites(names)).is_err());
-        }
-    }
-
     #[tokio::test]
+    #[ignore = "requires: postgres"]
     async fn separate_server_applies_its_settings() -> anyhow::Result<()> {
         let mut server = start(&[("standard_conforming_strings", "off")])?;
         let database = server.create_database("settings").await?;

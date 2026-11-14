@@ -327,7 +327,7 @@ pub async fn push_archive(
                     .push_manifest_raw(
                         &repository.reference,
                         packed.manifest.clone(),
-                        reqwest::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
+                        hyper::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
                     )
                     .await
                     .with_context(|| format!("push web artifact {}", repository.reference))?;

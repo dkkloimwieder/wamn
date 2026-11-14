@@ -490,6 +490,7 @@ async fn oauth_rotation(
 const TOKEN_DELETED: &str = "ASSERT NOT EXISTS(SELECT FROM identity.oauth_token WHERE connection_id='00000000-0000-0000-0000-000000000031');";
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn oauth_client_credentials_secret_rotation_deletes_token() {
     let mut case_server = wamn_test_postgres::start(&[]).unwrap();
     for auth in ["oauth2_client_credentials", "oauth2_client_credentials_jwt"] {
@@ -513,6 +514,7 @@ async fn oauth_client_credentials_secret_rotation_deletes_token() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn oauth_client_credentials_auth_rotation_deletes_token() {
     let mut case_server = wamn_test_postgres::start(&[]).unwrap();
     for auth in ["oauth2_client_credentials", "oauth2_client_credentials_jwt"] {
@@ -536,6 +538,7 @@ async fn oauth_client_credentials_auth_rotation_deletes_token() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn oauth_authorization_code_auth_rotation_deletes_token() {
     let mut case_server = wamn_test_postgres::start(&[]).unwrap();
     for secret_changed in [false, true] {
@@ -566,6 +569,7 @@ async fn oauth_authorization_code_secret_rotation_expires_token(pool: sqlx::PgPo
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn oauth_unchanged_auth_preserves_token_and_discards_pending_authorization() {
     let mut case_server = wamn_test_postgres::start(&[]).unwrap();
     for auth in [
