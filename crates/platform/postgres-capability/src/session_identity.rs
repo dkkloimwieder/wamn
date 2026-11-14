@@ -25,7 +25,7 @@ use super::pool::{
     StaticCredentialProvider, WamnPostgresConfig,
 };
 use super::statements::VerifiedStatement;
-use super::{DEFAULT_PROJECT, PgError, RowSet};
+use super::{DEFAULT_PROJECT, PgError};
 use crate::invocation::Authority;
 
 mod pools;
@@ -1583,11 +1583,6 @@ impl WamnPostgres {
             ))
         })
     }
-}
-
-pub(super) enum OneShotResult {
-    Rows(RowSet),
-    Count(u64),
 }
 
 #[cfg(test)]

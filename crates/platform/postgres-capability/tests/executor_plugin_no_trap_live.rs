@@ -96,7 +96,7 @@ const RET_OK_ERR: u32 = 768;
 
 /// The same address for a returned `result<T, E>` whose maximum case alignment
 /// is 8, so the payload starts at `align_to(1, 8) == 8`. Applies to
-/// `result<u64, pg-error>` — `pg-error` carries a `u64` case
+/// `result<row-set, pg-error>`: `pg-error` carries a `u64` case
 /// (`row-limit-exceeded`), so its alignment is 8.
 const RET_ERR_ALIGN8: u32 = RET_OK_ERR + 8;
 
@@ -219,21 +219,8 @@ fn offline_postgres() -> WamnPostgres {
     .expect("offline postgres plugin builds")
 }
 
-/// `execute` is the smallest `result`-shaped function on the frozen postgres
-/// surface — `query` adds `row-set`/`column` for no extra coverage, and the
-/// transaction resources add none either, since the failure is upstream of any
-/// of them.
-///
-/// The test registers a project first, deliberately: without one the call would
-/// stop at the identity condition (`query-error`) and never exercise the resource
-/// path. With one, the call runs the whole way to credential resolution, which
-/// has nothing to resolve, and comes back `connection-unavailable`.
-///
-/// `result<u64, pg-error>` flattens to 6 core values, so the return is indirect:
-/// the core signature is `(sql ptr, sql len, params ptr, params len, retptr)`.
-/// The params list is EMPTY, which is what keeps the guest from having to encode
-/// a `sql-value` at all; its pointer is still 8-aligned because `sql-value`
-/// carries `s64`/`f64` cases. Data segment: `SELECT 1` at 256 (len 8).
+/// Query reaches credential resolution after the host binds the project.
+/// An absent credential returns a WIT error without trapping the guest.
 fn postgres_guest() -> String {
     format!(
         r#"
@@ -253,6 +240,10 @@ fn postgres_guest() -> String {
       (case "json" string)
       (case "uuid" string)))
     (export "sql-value" (type $sql-value (eq $sql-value')))
+    (type $column' (record (field "name" string) (field "type-name" string)))
+    (export "column" (type $column (eq $column')))
+    (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value)))))
+    (export "row-set" (type $row-set (eq $row-set')))
     (type $pg-error' (variant
       (case "serialization-failure")
       (case "connection-unavailable")
@@ -266,18 +257,20 @@ fn postgres_guest() -> String {
       (case "query-error" (tuple string string))))
     (export "pg-error" (type $pg-error (eq $pg-error')))))
   (alias export $types "sql-value" (type $sql-value))
+  (alias export $types "row-set" (type $row-set))
   (alias export $types "pg-error" (type $pg-error))
   (import "wamn:postgres/client@0.4.0" (instance $client
     (export "sql-value" (type (eq $sql-value)))
     (export "pg-error" (type (eq $pg-error)))
-    (export "execute" (func async
+    (export "row-set" (type (eq $row-set)))
+    (export "query" (func async
       (param "sql" string)
       (param "params" (list $sql-value))
-      (result (result u64 (error $pg-error)))))))
+      (result (result $row-set (error $pg-error)))))))
   (import "verdict" (func $verdict (param "code" u32)))
 {libc}
-  (core func $execute-lowered
-    (canon lower (func $client "execute")
+  (core func $query-lowered
+    (canon lower (func $client "query")
       (memory $libc "memory")
       (realloc (func $libc "realloc"))))
   (core func $verdict-lowered (canon lower (func $verdict)))
@@ -286,7 +279,7 @@ fn postgres_guest() -> String {
   (core module $main
     (import "libc" "memory" (memory 1))
     (import "host" "task-return" (func $task-return))
-    (import "host" "execute" (func $execute (param i32 i32 i32 i32 i32)))
+    (import "host" "query" (func $query (param i32 i32 i32 i32 i32)))
     (import "host" "verdict" (func $verdict (param i32)))
     (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
     (func (export "drive") (result i32)
@@ -297,7 +290,7 @@ fn postgres_guest() -> String {
       i32.const 192
       i32.const 0
       i32.const 768
-      call $execute
+      call $query
       ;; ok/err discriminant, then the pg-error case
       i32.const {ok_err}
       i32.load8_u
@@ -311,7 +304,7 @@ fn postgres_guest() -> String {
     (with "libc" (instance $libc))
     (with "host" (instance
       (export "task-return" (func $task-return))
-      (export "execute" (func $execute-lowered))
+      (export "query" (func $query-lowered))
       (export "verdict" (func $verdict-lowered))))))
   (func (export "drive") async (canon lift (core func $main "drive") async (callback (func $main "callback"))))
 )

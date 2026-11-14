@@ -13,7 +13,9 @@ A `wasi:io`, `wasi:clocks` or `wasi:random` row names the family `0.2`.
 The family admits `0.2.N` up to the ceiling, the highest `0.2` patch that the host's Wasmtime links.
 The build reads the ceiling from the WIT of the linked `wasmtime-wasi`.
 An absent pair refuses, without other version ranges, normalization, or namespace guesses.
-An application component cannot import `wamn:postgres/client`, even with a grant, because it runs raw SQL outside the admitted statements.
+An application component may import `wamn:postgres/client@0.4.0` with the Postgres grant.
+This interface offers only `query`. Each call uses the SELECT-only `wamn_query` login in a read-only transaction.
+The host holds no query state between calls. Applications use keyset paging when they need several pages.
 The platform's own native workloads use their separate publication authority.
 
 | Package | Version | Security class |
