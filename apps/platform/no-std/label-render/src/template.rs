@@ -5,11 +5,6 @@
 //! Template authoring is enabled on demand — an application that needs a fourth
 //! brings it.
 
-extern crate alloc;
-
-use alloc::format;
-use alloc::string::{String, ToString as _};
-use alloc::vec::Vec;
 use core::fmt::Write as _;
 
 use serde_json::Value;
@@ -58,7 +53,7 @@ impl RenderError {
     /// The wire code the guest reports for this refusal.
     #[must_use]
     pub const fn code(&self) -> &'static str {
-        self.type_.code()
+        self.error_type().code()
     }
 }
 

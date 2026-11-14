@@ -1,19 +1,6 @@
 //! Paginated HTTP palette component.
 
-#![no_std]
 #![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
-#[cfg(any(test, feature = "std"))]
-extern crate std;
-
-extern crate alloc;
-
-use alloc::format;
-use alloc::string::{String, ToString as _};
-use alloc::vec::Vec;
-
-#[cfg(not(any(test, feature = "std")))]
-#[path = "../../guest_runtime.rs"]
-mod guest_runtime;
 
 use bindings::exports::wamn::node::async_handler::{Emission, Guest, NodeContext, NodeError};
 use bindings::wamn::connection::http::{ConnectionError, Header, Request, Response};
@@ -36,7 +23,6 @@ mod bindings {
             "import:wamn:connection/http@0.1.0#send",
             "export:wamn:node/async-handler@0.1.0#run",
         ],
-        std_feature,
     });
 }
 
@@ -111,7 +97,7 @@ fn required_string(config: &serde_json::Value, field: &str) -> Result<String, No
     config
         .get(field)
         .and_then(serde_json::Value::as_str)
-        .map(alloc::borrow::ToOwned::to_owned)
+        .map(ToOwned::to_owned)
         .ok_or_else(|| terminal("invalid-config", format!("{field} must be a string")))
 }
 

@@ -11,11 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
-const WORKSPACES: [(&str, &str); 3] = [
-    ("root", "Cargo.toml"),
-    ("apps", "apps/Cargo.toml"),
-    ("no-std", "apps/platform/no-std/Cargo.toml"),
-];
+const WORKSPACES: [(&str, &str); 2] = [("root", "Cargo.toml"), ("apps", "apps/Cargo.toml")];
 
 #[derive(Debug, ClapArgs)]
 pub struct Args {

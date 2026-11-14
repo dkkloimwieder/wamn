@@ -3,9 +3,11 @@
 mod bench;
 mod bench_cloud;
 mod bench_data;
+mod netsuite;
 mod platform;
 mod process;
 mod selection;
+mod submodule_pins;
 mod tasks;
 
 use clap::{Parser, Subcommand};
@@ -21,6 +23,13 @@ pub struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Task {
+    /// Refuse undeclared or backward submodule pins.
+    SubmodulePins {
+        #[arg(default_value = "main")]
+        main_ref: String,
+    },
+    /// Run the two NetSuite operator workflows with private credentials.
+    NetsuiteLive(netsuite::Args),
     /// Install the pinned KCL CLI.
     InstallKcl,
     /// Build complete package artifacts.
@@ -110,6 +119,8 @@ enum Task {
 pub async fn run(args: Args) -> anyhow::Result<()> {
     let root = root();
     match args.command {
+        Task::SubmodulePins { main_ref } => submodule_pins::run(&root, &main_ref),
+        Task::NetsuiteLive(args) => netsuite::run(&args).await,
         Task::InstallKcl => {
             println!("{}", wamn_build::kcl::install(&root).await?.display());
             Ok(())

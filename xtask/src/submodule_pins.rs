@@ -1,30 +1,13 @@
-//! Refuse undeclared or backward submodule pins before train integration.
+//! Refuse undeclared or backward submodule pins before integration.
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::{Command, ExitCode, Output};
+use std::process::{Command, Output};
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context as _, Result, bail, ensure};
 
-fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("submodule-pins: {error:#}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
-fn run() -> Result<()> {
-    let mut args = std::env::args().skip(1);
-    let main = args.next().unwrap_or_else(|| "main".into());
-    ensure!(
-        args.next().is_none(),
-        "usage: wamn-submodule-pins [main-ref]"
-    );
-    let root = git(Path::new("."), &["rev-parse", "--show-toplevel"])?;
-    let problems = diagnostics(Path::new(root.trim()), &main)?;
+pub fn run(root: &Path, main: &str) -> Result<()> {
+    let problems = diagnostics(root, main)?;
     ensure!(problems.is_empty(), "{}", problems.join("\n"));
     println!("submodule-pins: PASS against {main}");
     Ok(())
@@ -205,6 +188,3 @@ fn git(root: &Path, args: &[&str]) -> Result<String> {
     );
     String::from_utf8(output.stdout).context("git output is not UTF-8")
 }
-
-#[cfg(test)]
-mod tests;

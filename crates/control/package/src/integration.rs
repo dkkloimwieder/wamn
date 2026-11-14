@@ -62,12 +62,13 @@ fn source_digest(root: &Path) -> anyhow::Result<String> {
     let mut files = BTreeMap::new();
     source_files(root, root, &mut files)?;
     if let Some(workspace) = root
-        .parent()
-        .filter(|path| path.join("Cargo.toml").is_file())
+        .ancestors()
+        .skip(1)
+        .find(|path| path.join("Cargo.toml").is_file())
     {
         for name in ["Cargo.toml", "Cargo.lock"] {
             files.insert(
-                format!("../{name}"),
+                format!("workspace/{name}"),
                 bytes_sha256(&std::fs::read(workspace.join(name))?),
             );
         }
