@@ -1088,7 +1088,7 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
             .await
             .map(|result| result.rows_affected())?;
         create_widget(&paths, "priority", "after").await?;
-        let pruned = wamn_environment_control::prune_record_history::prune(&mut database).await?;
+        let pruned = wamn_environment::prune_record_history::prune(&mut database).await?;
         anyhow::ensure!(
             pruned
                 .iter()
@@ -1249,7 +1249,7 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
         anyhow::ensure!(value(&empty)?["item"] == json!([]) && value(&empty)?["cursor"].is_string(), "empty snapshot: {empty}");
         sqlx::raw_sql("UPDATE inventory.feed_item SET label = 'pruned' WHERE label = 'new item'; UPDATE inventory.feed_item_history SET changed_at = now() - interval '31 days'").execute(&mut writer).await.map(drop)?;
         sqlx::raw_sql("INSERT INTO inventory.feed_item VALUES ('00000000-0000-4000-8000-000000000014', 'retained')").execute(&mut writer).await.map(drop)?;
-        let pruned = wamn_environment_control::prune_record_history::prune(&mut writer).await?;
+        let pruned = wamn_environment::prune_record_history::prune(&mut writer).await?;
         anyhow::ensure!(pruned.iter().any(|history| history.history == "feed_item_history" && history.removed > 0), "joined history pruning: {pruned:?}");
         let expired = paths.route("/feed_line/screen", &json!([{"feed": {"cursor": cursor}}])).await?;
         refused(&expired, "cursor_expired", &json!({}))?;

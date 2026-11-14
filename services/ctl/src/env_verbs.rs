@@ -2,14 +2,14 @@
 //! (docs/architecture/overview.md#environment-lifecycle). `apply` selects an
 //! application and supports `--dry-run`; `rollback` selects an application; `delete` takes
 //! `--data`. Every other input is a field of the environment document, or a
-//! platform input that [`wamn_environment_control::environment::Platform::from_env`] reads.
+//! platform input that [`wamn_environment::environment::Platform::from_env`] reads.
 
 use std::io::{BufRead as _, IsTerminal as _, Write as _};
 use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
 use clap::{Args, Subcommand};
-use wamn_environment_control::environment::{self, Platform};
+use wamn_environment::environment::{self, Platform};
 use wamn_registry::Triple;
 
 /// One `env` verb.
@@ -34,9 +34,9 @@ pub enum EnvCommand {
     /// Delete one environment. Its database stays on the cluster unless --data.
     Delete(DeleteArgs),
     /// Export the canonical environment document as KCL.
-    Show(FileArgs),
+    Show(CoordinateArgs),
     /// Print the current state of one environment as JSON.
-    Status(FileArgs),
+    Status(CoordinateArgs),
 }
 
 #[derive(Debug, Args)]
@@ -107,11 +107,11 @@ pub struct ConnectionsArgs {
 
 #[derive(Debug, Args)]
 pub struct RollbackArgs {
-    /// The published target release, required when the prior selection is ambiguous.
+    /// The published target release, to select an explicit release.
     #[arg(long)]
     pub release: Option<String>,
-    /// The authored environment.k file.
-    pub file: PathBuf,
+    /// The coordinate, org/env/project.
+    pub coordinate: String,
     /// The application whose previous release to apply.
     #[arg(long)]
     pub application: String,
@@ -128,9 +128,9 @@ pub struct DeleteArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct FileArgs {
-    /// The authored environment.k file.
-    pub file: PathBuf,
+pub struct CoordinateArgs {
+    /// The coordinate, org/env/project.
+    pub coordinate: String,
 }
 
 pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
@@ -140,7 +140,7 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         return host
             .run(
                 "application.rollback",
-                &args.file,
+                &parse_coordinate(&args.coordinate)?,
                 serde_json::json!({"application":args.application, "release":args.release}),
             )
             .await;
@@ -148,7 +148,7 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
     if let EnvCommand::Show(args) = &command {
         print!(
             "{}",
-            environment::show::show(&Platform::from_env()?, &args.file)
+            environment::show::show(&Platform::from_env()?, &parse_coordinate(&args.coordinate)?)
                 .await?
                 .to_kcl()
         );
@@ -169,8 +169,9 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
     };
     match command {
         EnvCommand::Provision(args) => {
-            let document = environment::document::EnvironmentDocument::read_deployed(
-                &platform, &args.file, None,
+            let document = environment::document::EnvironmentDocument::read_serving(
+                &platform,
+                &environment::document::EnvironmentDocument::compile(&args.file)?.triple(),
             )
             .await?;
             let lock = sql_lock(&platform, &document, &args.database, false).await?;
@@ -188,8 +189,9 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             println!("{}", serde_json::to_string(&outcome.database_cr)?);
         }
         EnvCommand::Initialize(args) => {
-            let mut document = environment::document::EnvironmentDocument::read_deployed(
-                &platform, &args.file, None,
+            let mut document = environment::document::EnvironmentDocument::read_serving(
+                &platform,
+                &environment::document::EnvironmentDocument::compile(&args.file)?.triple(),
             )
             .await?;
             if let Some(release) = args.release {
@@ -215,8 +217,9 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             lock.release().await;
         }
         EnvCommand::SchemaApply(args) => {
-            let document = environment::document::EnvironmentDocument::read_deployed(
-                &platform, &args.file, None,
+            let document = environment::document::EnvironmentDocument::read_serving(
+                &platform,
+                &environment::document::EnvironmentDocument::compile(&args.file)?.triple(),
             )
             .await?;
             let lock = sql_lock(&platform, &document, &args.database, true).await?;
@@ -252,8 +255,9 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             }
         }
         EnvCommand::Connections(args) => {
-            let document = environment::document::EnvironmentDocument::read_deployed(
-                &platform, &args.file, None,
+            let document = environment::document::EnvironmentDocument::read_serving(
+                &platform,
+                &environment::document::EnvironmentDocument::compile(&args.file)?.triple(),
             )
             .await?;
             for line in
@@ -265,7 +269,7 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         EnvCommand::Rollback(args) => {
             let analysis = environment::rollback::rollback(
                 &platform,
-                &args.file,
+                &parse_coordinate(&args.coordinate)?,
                 &args.application,
                 args.release.as_deref(),
             )
@@ -294,7 +298,12 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         EnvCommand::Status(args) => {
             let admin_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")
                 .context("set WAMN_SYSTEM_ADMIN_URL for env status")?;
-            let status = environment::status::status(&mut platform, &args.file, &admin_url).await?;
+            let status = environment::status::status(
+                &mut platform,
+                &parse_coordinate(&args.coordinate)?,
+                &admin_url,
+            )
+            .await?;
             println!("{}", serde_json::to_string_pretty(&status)?);
         }
     }
@@ -304,9 +313,11 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
 async fn project_schema(args: &ProjectSchemaArgs, apply: bool) -> anyhow::Result<()> {
     // Substrate SQL uses no application artifact, host or broker inputs.
     let platform = Platform::project_schema_from_env()?;
-    let document =
-        environment::document::EnvironmentDocument::read_deployed(&platform, &args.file, None)
-            .await?;
+    let document = environment::document::EnvironmentDocument::read(
+        &platform,
+        &environment::document::EnvironmentDocument::compile(&args.file)?.triple(),
+    )
+    .await?;
     let expected = serde_json::from_slice(&std::fs::read(&args.database)?)?;
     println!("project SQL image: {}", args.image);
     std::io::stdout().flush()?;
@@ -316,7 +327,7 @@ async fn project_schema(args: &ProjectSchemaArgs, apply: bool) -> anyhow::Result
         environment::sql::ProjectSchemaRequest {
             expected: &expected,
             migration_database_url: &args.migration_database_url,
-            sources: &wamn_environment_control::platform_migrations::embedded_sources(
+            sources: &wamn_environment::platform_migrations::embedded_sources(
                 wamn_control_provision::migrations::MigrationDatabase::Project,
             ),
             apply,
@@ -335,7 +346,7 @@ async fn sql_lock(
     let expected: environment::sql::ExpectedDatabase =
         serde_json::from_slice(&std::fs::read(file)?)?;
     let lock = expected.lock(platform, document, exclusive).await?;
-    wamn_environment_control::provision_project_env::require_connected(
+    wamn_environment::provision_project_env::require_connected(
         &mut *lock.client().await,
         &document.triple(),
     )
@@ -406,8 +417,8 @@ mod tests {
             br#"{
             "org":"acme", "project":"one", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
             "applications": {
-                "first":{"current":"none", "revocation_seconds":5,"hostname":"first.example", "packages":["first"]},
-                "second":{"current":"none", "revocation_seconds":5,"hostname":"second.example", "packages":["second"]}
+                "first":{"revocation_seconds":5,"hostname":"first.example"},
+                "second":{"revocation_seconds":5,"hostname":"second.example"}
             }
         }"#,
         )

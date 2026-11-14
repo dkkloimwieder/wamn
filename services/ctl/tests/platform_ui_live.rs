@@ -13,9 +13,7 @@ use wamn_dev_control::dev::environment::{
     DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, initialize_journey_platform,
     install_journey_platform_base_grants,
 };
-use wamn_environment_control::provision_project_env::{
-    ProvisionProjectEnvRequest, provision_project_env,
-};
+use wamn_environment::provision_project_env::{ProvisionProjectEnvRequest, provision_project_env};
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::{create_or_reuse_user, grant_project_env_membership};
 

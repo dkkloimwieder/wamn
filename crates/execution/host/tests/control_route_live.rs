@@ -1932,7 +1932,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .execute(&mut billing)
         .await
         .map(drop)?;
-    let document = wamn_environment_control::environment::document::EnvironmentDocument::from_json(
+    let document = wamn_environment::environment::document::EnvironmentDocument::from_json(
         &serde_json::to_vec(
             &json!({"org":ORG,"project":"billing","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}),
         )?,
@@ -1948,7 +1948,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         )?
         .path(),
     );
-    let _ = wamn_environment_control::environment::bindings::project_authority(
+    let _ = wamn_environment::environment::bindings::project_authority(
         database.url(),
         billing_url.as_str(),
         &document,
@@ -1958,7 +1958,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .fetch_one(&mut billing)
         .await?
         .get(0);
-    let _ = wamn_environment_control::environment::bindings::project_authority(
+    let _ = wamn_environment::environment::bindings::project_authority(
         database.url(),
         billing_url.as_str(),
         &document,

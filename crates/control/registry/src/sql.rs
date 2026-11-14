@@ -420,7 +420,7 @@ pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_REPLICA_REFUSALS: &str =
     "SELECT type = 'cloud' FROM registry.target WHERE name = $1";
 
 /// crates/control/environment/src/environment/analyse.rs::read_row registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, route_host, policy_name, disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) \
+pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, policy_name, disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) \
               WHERE org = $1 AND project = $2 AND env = $3";
 
 /// crates/control/environment/src/environment/analyse.rs::read_policy registry statement.

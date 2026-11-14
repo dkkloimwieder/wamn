@@ -10,7 +10,7 @@
 use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 pub(crate) use plan::notices;
-pub use plan::{application_refusals, refusals};
+pub use plan::refusals;
 pub(crate) use plan::{newest_successful, project_url};
 use plan::{plan, replica_refusal, sequence_refusals};
 
@@ -40,7 +40,6 @@ pub struct Policy {
 pub struct EnvironmentRow {
     pub disposable: bool,
     pub instance_suffix: String,
-    pub route_host: Option<String>,
     pub policy_name: String,
 }
 
@@ -73,6 +72,7 @@ pub struct ReleaseFacts {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Revision {
     pub number: u32,
+    pub status: String,
     pub chart: String,
     pub values: Value,
 }
@@ -81,6 +81,34 @@ impl Revision {
     /// The release digest the revision installed.
     pub fn manifest_digest(&self) -> Option<&str> {
         self.values["release"]["manifestDigest"].as_str()
+    }
+    /// The web selection written with this release revision.
+    pub fn client(&self) -> anyhow::Result<Option<super::document::Client>> {
+        let host = self.values["routeHost"]
+            .as_str()
+            .context("Helm revision has no route host")?;
+        match (
+            self.values["webClients"][host].as_str(),
+            self.values["webDigests"][host].as_str(),
+        ) {
+            (None, None) => Ok(None),
+            (Some(package), Some(web)) => {
+                wamn_package_artifact::ensure_digest(web)?;
+                Ok(Some(super::document::Client {
+                    package: package.to_owned(),
+                    web: web.to_owned(),
+                }))
+            }
+            _ => anyhow::bail!("Helm revision has an incomplete web client selection"),
+        }
+    }
+
+    fn pin(&self) -> anyhow::Result<(&str, Option<super::document::Client>)> {
+        let digest = self
+            .manifest_digest()
+            .context("Helm revision has no release digest")?;
+        wamn_package_artifact::ensure_digest(digest)?;
+        Ok((digest, self.client()?))
     }
 }
 
@@ -189,14 +217,15 @@ pub async fn analyse(
     document: &EnvironmentDocument,
     application: Option<&str>,
 ) -> anyhow::Result<Analysis> {
-    let selected = select_application(document, application)?;
+    let mut selected = select_application(document, application)?;
     let document = &selected;
     let application = document
         .applications
         .keys()
         .next()
-        .expect("one application");
-    let release_name = application_release_name(document, application)?;
+        .expect("one application")
+        .clone();
+    let release_name = application_release_name(document, &application)?;
     let mut system = connect(&platform.system_database_url).await?;
     let policy = read_policy(&mut system, &document.org, &document.policy).await?;
     let row = read_row(&mut system, document).await?;
@@ -214,24 +243,39 @@ pub async fn analyse(
         }
         None => None,
     };
-    let release = match &document.applications[application].current {
+    let release = match &document.applications[&application].current {
         DeclaredRelease::None => None,
         DeclaredRelease::Digest(declared) => Some(read_release(platform, declared).await?),
     };
-    super::clients::analyse(
-        platform,
-        &document.applications[application],
-        release.as_ref(),
-    )
-    .await?;
+    if let Some(release) = &release {
+        selected
+            .applications
+            .get_mut(&application)
+            .expect("application was selected")
+            .packages = release
+            .manifest
+            .release
+            .packages
+            .iter()
+            .map(|package| package.package_id().to_owned())
+            .collect();
+    }
+    let document = &selected;
+    if release.is_some() {
+        super::clients::analyse(
+            platform,
+            &document.applications[&application],
+            release.as_ref(),
+        )
+        .await?;
+    }
     let revision = read_revision(platform, &release_name).await?;
     let live = read_live_set(platform, &release_name).await?;
     let packages = match &release {
         Some(release) => read_release_packages(platform, &release.manifest).await?,
         None => Vec::new(),
     };
-    let mut binding_system = connect(&platform.system_database_url).await?;
-    let bindings = super::bindings::analyse(&mut binding_system, document, &packages).await?;
+    let bindings = super::bindings::analyse(&mut system, document, &packages).await?;
     let replica_refusals = replica_refusals(
         &mut system,
         document,
@@ -275,7 +319,7 @@ pub async fn analyse(
         bail!("refused:\n- {}", refusals.join("\n- "));
     }
     let plan = plan(document, &authorities);
-    let mut notices = notices(document, application, &authorities);
+    let mut notices = notices(document, &application, &authorities);
     let report = crate::platform_migrations::observe_system(&mut system).await?;
     if !report.warnings.is_empty() {
         notices.push(Notice {
@@ -379,9 +423,8 @@ pub(crate) async fn read_row(
             .context("read the environment row")?
             .map(|row| EnvironmentRow {
                 instance_suffix: row.get(0),
-                route_host: row.get(1),
-                policy_name: row.get(2),
-                disposable: row.get(3),
+                policy_name: row.get(1),
+                disposable: row.get(2),
             }),
     )
 }
@@ -565,32 +608,55 @@ async fn read_revision_in(
     }
 }
 
-/// Read successful selections while the caller holds the application's lifecycle lock.
-pub(super) async fn read_applied_releases(
+/// Choose the rollback revision from Helm's history, including a failed head.
+///
+/// # Errors
+/// Returns an error if history cannot be read or no successful rollback target exists.
+pub async fn rollback_revision(
     platform: &Platform,
     release_name: &str,
-) -> anyhow::Result<super::document::AppliedReleases> {
+) -> anyhow::Result<Revision> {
     let mut history = read_history(&platform.target, release_name).await?;
-    let mut applied = super::document::AppliedReleases::default();
-    while let Some(entry) = newest_successful(&history) {
-        let revision = read_history_revision(&platform.target, release_name, entry).await?;
-        let digest = revision.manifest_digest().with_context(|| {
-            format!(
-                "Helm release {release_name} revision {} has no application release digest",
-                revision.number
-            )
-        })?;
-        if applied.record(digest)? {
-            break;
+    history.sort_unstable_by_key(|entry| std::cmp::Reverse(entry["revision"].as_u64()));
+    let mut revisions = Vec::new();
+    for entry in &history {
+        revisions.push(read_history_revision(&platform.target, release_name, entry).await?);
+        if let Some(target) = rollback_target(&revisions)? {
+            return Ok(target.clone());
         }
-        let number = revision.number;
-        history.retain(|entry| {
-            entry["revision"]
-                .as_u64()
-                .is_some_and(|n| n < u64::from(number))
-        });
     }
-    Ok(applied)
+    anyhow::bail!("application has no successful rollback target")
+}
+
+/// Select rollback from observed revisions. A failed head restores the latest success.
+/// A successful head restores the preceding distinct release and web client pair.
+///
+/// # Errors
+/// Refuses a successful revision with an invalid release or client selection.
+pub fn rollback_target(history: &[Revision]) -> anyhow::Result<Option<&Revision>> {
+    let Some(head) = history.iter().max_by_key(|revision| revision.number) else {
+        return Ok(None);
+    };
+    let successful =
+        |revision: &&Revision| matches!(revision.status.as_str(), "deployed" | "superseded");
+    let candidates = history.iter().filter(successful);
+    if !matches!(head.status.as_str(), "deployed" | "superseded") {
+        let target = candidates.max_by_key(|revision| revision.number);
+        if let Some(target) = target {
+            target.pin()?;
+        }
+        return Ok(target);
+    }
+    let head_pin = head.pin()?;
+    let mut target: Option<&Revision> = None;
+    for revision in candidates {
+        if revision.pin()? != head_pin
+            && target.is_none_or(|target| target.number < revision.number)
+        {
+            target = Some(revision);
+        }
+    }
+    Ok(target)
 }
 
 async fn read_history(
@@ -645,6 +711,10 @@ async fn read_history_revision(
     );
     Ok(Revision {
         number,
+        status: entry["status"]
+            .as_str()
+            .context("Helm revision has no status")?
+            .to_owned(),
         chart: entry["chart"].as_str().unwrap_or_default().to_owned(),
         values: serde_json::from_slice(&output.stdout).context("decode helm values")?,
     })
@@ -828,6 +898,49 @@ mod tests {
     }
 
     #[test]
+    fn rollback_uses_the_failed_head_and_the_web_selection() -> anyhow::Result<()> {
+        let revision = |number, status: &str, code: u8, web: Option<u8>| Revision {
+            number,
+            status: status.to_owned(),
+            chart: String::new(),
+            values: json!({"release":{"manifestDigest":format!("sha256:{code:064x}")},
+                "routeHost":"app.example", "webClients": web.map(|_| json!({"app.example":"app"})).unwrap_or(json!({})),
+                "webDigests":web.map(|web| json!({"app.example":format!("sha256:{web:064x}")})).unwrap_or(json!({}))}),
+        };
+        let mut history = vec![
+            revision(1, "superseded", 1, Some(1)),
+            revision(2, "deployed", 2, Some(2)),
+            revision(3, "failed", 3, Some(3)),
+        ];
+        assert_eq!(
+            rollback_target(&history)?.map(|target| target.number),
+            Some(2)
+        );
+        history.pop();
+        assert_eq!(
+            rollback_target(&history)?.map(|target| target.number),
+            Some(1)
+        );
+        history.push(revision(3, "deployed", 2, Some(4)));
+        assert_eq!(
+            rollback_target(&history)?.map(|target| target.number),
+            Some(2)
+        );
+        history.push(revision(4, "deployed", 2, Some(4)));
+        assert_eq!(
+            rollback_target(&history)?.map(|target| target.number),
+            Some(2)
+        );
+        history.push(revision(5, "failed", 2, Some(4)));
+        assert_eq!(
+            rollback_target(&history)?.map(|target| target.number),
+            Some(4)
+        );
+        assert!(rollback_target(&[revision(1, "failed", 1, None)])?.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn the_live_set_counts_pods_that_are_not_terminated() {
         let pods = json!({"items": [
             {"metadata": {"annotations": {"wamn.release-digest": "sha256:a"}}, "status": {"phase": "Running"}},
@@ -848,50 +961,12 @@ mod tests {
                 (
                     (*name).to_owned(),
                     wamn_catalog::ApplicationDefinition {
-                        connections: std::collections::BTreeMap::new(),
+                        connections: BTreeMap::new(),
                         packages: packages.iter().map(|id| (*id).to_owned()).collect(),
                     },
                 )
             })
             .collect()
-    }
-
-    #[test]
-    fn every_release_package_belongs_to_one_application() {
-        let declared = applications(&[("netsuite", &["netsuite", "wamn_integration"])]);
-        assert!(application_refusals(&declared, ["netsuite", "wamn_integration"]).is_empty());
-    }
-
-    #[test]
-    fn a_release_package_assigned_to_no_application_is_refused() {
-        let declared = applications(&[("netsuite", &["netsuite"])]);
-        assert_eq!(
-            application_refusals(&declared, ["netsuite", "wamn_integration"]),
-            ["package wamn_integration of the release is assigned to no application"]
-        );
-    }
-
-    #[test]
-    fn a_package_assigned_to_two_applications_is_refused() {
-        let declared = applications(&[
-            ("netsuite", &["netsuite", "wamn_integration"]),
-            ("rest", &["wamn_integration"]),
-        ]);
-        assert_eq!(
-            application_refusals(&declared, ["netsuite", "wamn_integration"]),
-            ["package wamn_integration is assigned to the applications netsuite, rest"]
-        );
-    }
-
-    #[test]
-    fn an_assigned_package_missing_from_the_release_is_refused() {
-        let declared = applications(&[("netsuite", &["netsuite", "rest_consumer_fixture"])]);
-        assert_eq!(
-            application_refusals(&declared, ["netsuite"]),
-            [
-                "application netsuite names package rest_consumer_fixture, which the release does not carry"
-            ]
-        );
     }
 
     fn sequences(

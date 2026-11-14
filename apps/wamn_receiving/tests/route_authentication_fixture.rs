@@ -20,7 +20,7 @@ use wamn_dev_control::dev::environment::{
     DevEnvironmentInputs, ENVIRONMENT, ORG, PROJECT, connect, install_journey_platform_base_grants,
     write_dev_config,
 };
-use wamn_environment_control::provision_project_env::read_json;
+use wamn_environment::provision_project_env::read_json;
 use wamn_release_control::delivery::ReleaseIdentity;
 use wamn_test_infrastructure::operations::package_version;
 use wamn_test_infrastructure::scratch::ScratchRoot;

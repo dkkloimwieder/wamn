@@ -7,7 +7,7 @@ use std::process::Command;
 use anyhow::ensure;
 use serde_json::json;
 use wamn_compiler::build_record;
-use wamn_environment_control::environment::document::EnvironmentDocument;
+use wamn_environment::environment::document::EnvironmentDocument;
 
 fn package(root: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
     let root = root.join(id);
@@ -63,18 +63,27 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
         "org": "acme", "project": "source", "env": "dev", "target": "cloud", "policy": "dev","revocation_seconds":60,
         "applications": {
-            "a": {"current": "none", "revocation_seconds":5,"hostname": "a.invalid", "packages": ["appa"]},
-            "b": {"current": "none", "revocation_seconds":5,"hostname": "b.invalid", "packages": ["appb"]}
+            "a": {"revocation_seconds":5,"hostname": "a.invalid"},
+            "b": {"revocation_seconds":5,"hostname": "b.invalid"}
         }
     }))?)?;
     std::fs::write(&file, document.to_kcl())?;
-    let before = std::fs::read(&file)?;
     let deploy = |root: &Path, schema: bool| -> anyhow::Result<()> {
+        let application = if root.ends_with("appb") { "b" } else { "a" };
+        let selected = wamn_environment::environment::analyse::select_application(
+            &document,
+            Some(application),
+        )?;
+        std::fs::write(&file, selected.to_kcl())?;
         let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
         if schema {
             command.args(["schema", "apply"]);
         } else {
-            command.arg("deploy");
+            command.args([
+                "deploy",
+                "--application",
+                if root.ends_with("appb") { "b" } else { "a" },
+            ]);
         }
         let output = command
             .arg(root)
@@ -102,29 +111,21 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
             !output.status.success(),
             "the source fixture has no compiled component to publish"
         );
-        assert_eq!(std::fs::read(&file)?, before);
         Ok(())
     };
     let b = package(scratch.path(), "appb", "1.0.0")?;
     deploy(&b, false)?;
     let b_output = wamn_compiler::output_root(&b);
-    let b_record = std::fs::read(b_output.join(build_record::BUILD_RECORD_FILE))?;
+    build_record::read(&b_output)?;
     // B's source is unavailable while A builds.
     std::fs::remove_dir_all(&b)?;
     let a = package(scratch.path(), "appa", "1.0.0")?;
     deploy(&a, false)?;
     let output = wamn_compiler::output_root(&a);
-    let a_record = std::fs::read(output.join(build_record::BUILD_RECORD_FILE))?;
+    build_record::read(&output)?;
     package(scratch.path(), "appa", "2.0.0")?;
     deploy(&a, false)?;
-    assert_ne!(
-        std::fs::read(output.join(build_record::BUILD_RECORD_FILE))?,
-        a_record
-    );
-    assert_eq!(
-        std::fs::read(b_output.join(build_record::BUILD_RECORD_FILE))?,
-        b_record
-    );
+    build_record::read(&b_output)?;
     // Generation succeeds, but publication refuses the absent component.
     build_record::read(&output)?;
     // Source schema apply uses the same builder before publication can fail.

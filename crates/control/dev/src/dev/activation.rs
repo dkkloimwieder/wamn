@@ -223,7 +223,7 @@ fn spawn_host_process(spec: &HostProcessSpec) -> anyhow::Result<Child> {
         .iter()
         .find(|(name, _)| name == "WAMN_OAUTH_KEY_FILE")
     {
-        wamn_environment_control::platform::oauth::local_key(Path::new(path))?;
+        wamn_environment::platform::oauth::local_key(Path::new(path))?;
     }
     let mut command = Command::new(&spec.program);
     command

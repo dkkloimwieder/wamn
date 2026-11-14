@@ -14,11 +14,11 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use wamn_environment_control::author_workflow::{
+use wamn_environment::author_workflow::{
     AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
 };
-use wamn_environment_control::environment::Platform;
-use wamn_environment_control::workflow_lifecycle::WorkflowVersion;
+use wamn_environment::environment::Platform;
+use wamn_environment::workflow_lifecycle::WorkflowVersion;
 use wamn_workflow::{PostgresWorkflows, Workflows as _};
 
 use crate::env_verbs::parse_coordinate;
@@ -249,8 +249,7 @@ async fn serving_facts(
         return Ok((release.manifest_digest.to_string(), release.applications));
     }
     let platform = Platform::from_env()?;
-    wamn_environment_control::environment::show::serving_application(&platform, triple, application)
-        .await
+    wamn_environment::environment::show::serving_application(&platform, triple, application).await
 }
 
 /// Run one workflow verb and print its result.
@@ -283,14 +282,13 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                     .as_deref()
                     .map_or(WorkflowTrigger::Manual, WorkflowTrigger::Schedule)
             };
-            let document =
-                wamn_environment_control::author_workflow::read_compiled_wiring_document(
-                    &args.compiled_document,
-                )?;
+            let document = wamn_environment::author_workflow::read_compiled_wiring_document(
+                &args.compiled_document,
+            )?;
             let triple = parse_coordinate(&args.coordinate)?;
             let (digest, declared) =
                 serving_facts(&triple, args.dev_root.as_deref(), &args.application).await?;
-            let hash = wamn_environment_control::author_workflow::author_workflow_in_databases(
+            let hash = wamn_environment::author_workflow::author_workflow_in_databases(
                 &args.target.admin_database_url,
                 &AuthorWorkflowRequest {
                     org: &triple.org,
@@ -313,7 +311,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                 (
                     std::env::var("WAMN_CONTROL_DATABASE_URL")
                         .context("set WAMN_CONTROL_DATABASE_URL")?,
-                    wamn_environment_control::environment::event_broker_from_env()?,
+                    wamn_environment::environment::event_broker_from_env()?,
                 )
             } else {
                 let platform = Platform::from_env()?;
@@ -323,7 +321,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             let (digest, declared) =
                 serving_facts(&triple, args.dev_root.as_deref(), &args.version.application).await?;
             let mut client = project(&args.version.target).await?;
-            wamn_environment_control::workflow_lifecycle::enable_workflow(
+            wamn_environment::workflow_lifecycle::enable_workflow(
                 &system_database_url,
                 &triple,
                 &mut client,
@@ -343,7 +341,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             let platform = Platform::from_env()?;
             let triple = parse_coordinate(&args.coordinate)?;
             let mut client = project(&args.target).await?;
-            wamn_environment_control::workflow_lifecycle::disable_workflow(
+            wamn_environment::workflow_lifecycle::disable_workflow(
                 &platform.system_database_url,
                 &triple,
                 &mut client,

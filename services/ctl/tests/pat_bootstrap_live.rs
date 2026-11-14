@@ -342,7 +342,7 @@ async fn development_identity_survives_schema_reset_and_owned_teardown() {
         .create(&files.0)
         .unwrap();
     let mut admin = connect(system.url()).await.ok().expect("system connection");
-    let document = wamn_environment_control::environment::document::EnvironmentDocument::compile(
+    let document = wamn_environment::environment::document::EnvironmentDocument::compile(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/integration/fixtures/local-environments/acme-receiving.k"),
     )
@@ -445,7 +445,7 @@ async fn development_identity_survives_schema_reset_and_owned_teardown() {
     .unwrap()
     .get(0);
 
-    wamn_environment_control::environment::sql::reset::reset_database(
+    wamn_environment::environment::sql::reset::reset_database(
         system.url(),
         &environment.route.database_url,
         &wamn_registry::Triple::new("acme", "dev", "receiving"),

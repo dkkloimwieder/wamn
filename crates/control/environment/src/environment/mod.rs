@@ -9,10 +9,10 @@ pub mod document;
 pub mod drain;
 pub mod ensure;
 pub mod expand;
-pub(crate) mod host_report;
 pub mod lock;
 pub mod operation;
 pub mod readiness;
+pub mod retention;
 pub mod rollback;
 pub mod runtime;
 pub mod show;
@@ -293,10 +293,19 @@ pub async fn dry_run(
     file: &Path,
     application: Option<&str>,
 ) -> anyhow::Result<Analysis> {
-    let document = EnvironmentDocument::read_deployed(platform, file, application).await?;
+    let mut document = EnvironmentDocument::compile(file)?;
     let private = ensure::PrivateDirectory::create()?;
     let mut resolved = platform.clone();
     runtime::resolve_target(&mut resolved, &document, &private.path(".")).await?;
+    let clients: Vec<_> = document
+        .applications
+        .values_mut()
+        .map(|application| application.client.take())
+        .collect();
+    document.resolve_releases(&resolved).await?;
+    for (application, client) in document.applications.values_mut().zip(clients) {
+        application.client = client;
+    }
     analyse::analyse(&resolved, &document, application).await
 }
 
@@ -311,111 +320,13 @@ pub async fn apply(
     file: &Path,
     application: &str,
 ) -> anyhow::Result<Analysis> {
-    EnvironmentDocument::compile(file)?
-        .provision_document(platform)
-        .await?;
-    apply_selection(
-        platform,
-        file,
-        application,
-        document::SelectionChange::Reapply,
-        None,
-    )
-    .await
-}
-
-/// Resolve the published release's application from the document's declared membership.
-pub async fn deploy(platform: &Platform, file: &Path, digest: &str) -> anyhow::Result<Analysis> {
-    deploy_as(platform, file, digest, None).await
-}
-
-async fn deploy_as(
-    platform: &Platform,
-    file: &Path,
-    digest: &str,
-    actor: Option<&str>,
-) -> anyhow::Result<Analysis> {
-    wamn_package_artifact::ensure_digest(digest)?;
-    let document = EnvironmentDocument::read_deployed(platform, file, None).await?;
+    let document = EnvironmentDocument::compile(file)?;
     let mut platform = platform.clone();
-    runtime::resolve_platform(&mut platform, &document.org).await?;
-    let manifest = analyse::pull_release_manifest(&platform, digest).await?;
-    let packages = manifest
-        .release
-        .packages
-        .iter()
-        .map(wamn_catalog::PackageCoordinate::package_id)
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut owners = document
-        .applications
-        .iter()
-        .filter(|(_, selection)| {
-            selection
-                .packages
-                .iter()
-                .map(String::as_str)
-                .collect::<std::collections::BTreeSet<_>>()
-                == packages
-        })
-        .map(|(name, _)| name.as_str());
-    let application = owners
-        .next()
-        .context("published release does not match a declared application")?;
-    anyhow::ensure!(
-        owners.next().is_none(),
-        "published release matches multiple applications"
-    );
-    apply_selection(
-        &platform,
-        file,
-        application,
-        document::SelectionChange::Deploy(digest),
-        actor,
-    )
-    .await
-}
-
-/// Persist and apply one code selection under its application lock.
-async fn apply_selection(
-    platform: &Platform,
-    file: &Path,
-    application: &str,
-    change: document::SelectionChange<'_>,
-    actor: Option<&str>,
-) -> anyhow::Result<Analysis> {
-    let input = EnvironmentDocument::compile(file)?;
-    let mut document;
-    let release_name = analyse::application_release_name(&input, application)?;
-    let private = ensure::PrivateDirectory::create()?;
-    let mut platform = platform.clone();
-    let control = runtime::resolve_platform(&mut platform, &input.org).await?;
-    let lock = lock::LifecycleLock::acquire_application(
+    let control = runtime::resolve_platform(&mut platform, &document.org).await?;
+    lock::LifecycleLock::hold(
         &platform.system_database_url,
-        &input.triple(),
-        application,
-    )
-    .await?;
-    document = EnvironmentDocument::read_target(&platform, &input, Some(application)).await?;
-    let before_selection = document
-        .applications
-        .get(application)
-        .with_context(|| format!("application {application} is not declared"))?;
-    let applied = analyse::read_applied_releases(&platform, &release_name).await?;
-    if let Some(warning) = document::selection_warning(
-        application,
-        &before_selection.current,
-        applied.current.as_deref(),
-    ) {
-        eprintln!("WARN {warning}");
-    }
-    document.select_release(application, change, &applied)?;
-    crate::provision_project_env::registry::require_connected(
-        &mut *lock.client().await,
-        &input.triple(),
-    )
-    .await?;
-    let result = async {
-        if matches!(change, document::SelectionChange::Reapply) {
+        &document.triple(),
+        async |lock| {
             if ensure::resources_in_place(&platform, &document).await? {
                 let cluster = sql::reset::recorded_cluster(&platform, &document).await?;
                 crate::platform::operations::provision(&platform, &document, &cluster).await?;
@@ -431,62 +342,205 @@ async fn apply_selection(
                 ))
                 .await?;
             }
-        }
-        runtime::resolve_application(&mut platform, &document, &private.path("."), &control)
-            .await?;
-        let mut analysis = analyse::analyse(&platform, &document, Some(application)).await?;
-        if let Some(actor) = actor {
-            analysis.actor = actor.to_owned();
-        }
-        let prepared = match &analysis.authorities.release {
-            Some(release) => Some(write::prepare(&platform, &document, &analysis, release).await?),
-            None => None,
-        };
-        let provisioning;
-        let publisher = if let Some(actor) = actor {
-            actor
-        } else {
-            provisioning = wamn_identity_protocol::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string();
-            &provisioning
-        };
-        expand::expand(&platform, &document, &analysis, publisher)
-            .await
-            .context("prepare application control records")?;
-        let document = document.persist_selection(&platform, application).await?;
-        let release_name = &analysis.authorities.release_name;
-        if let Some(prepared) = prepared {
-            let written = write::write(
-                &platform,
-                &analysis,
-                prepared,
-                matches!(change, document::SelectionChange::Rollback(_)),
+            let mut connection = lock.client().await;
+            let mut transaction =
+                crate::provision_project_env::provisioning_transaction(&mut connection).await?;
+            document.save(&mut transaction).await?;
+            transaction.commit().await?;
+            Ok(())
+        },
+    )
+    .await?;
+    apply_selection(
+        &platform,
+        &document.triple(),
+        application,
+        document::ReleaseChange::Configure,
+        None,
+    )
+    .await
+}
+
+/// Deploy a published release to the named application. Membership comes from its manifest.
+pub async fn deploy(
+    platform: &Platform,
+    triple: &wamn_registry::Triple,
+    application: &str,
+    digest: &str,
+) -> anyhow::Result<Analysis> {
+    apply_selection(
+        platform,
+        triple,
+        application,
+        document::ReleaseChange::Deploy(digest),
+        None,
+    )
+    .await
+}
+
+/// Stop one application's Helm release and observe its drain.
+pub async fn stop(
+    platform: &Platform,
+    triple: &wamn_registry::Triple,
+    application: &str,
+) -> anyhow::Result<Analysis> {
+    apply_selection(
+        platform,
+        triple,
+        application,
+        document::ReleaseChange::Stop,
+        None,
+    )
+    .await
+}
+
+/// Apply one application under its lock. Helm alone records the release selection.
+async fn apply_selection(
+    platform: &Platform,
+    triple: &wamn_registry::Triple,
+    application: &str,
+    change: document::ReleaseChange<'_>,
+    actor: Option<&str>,
+) -> anyhow::Result<Analysis> {
+    let private = ensure::PrivateDirectory::create()?;
+    let mut platform = platform.clone();
+    let control = runtime::resolve_platform(&mut platform, &triple.org).await?;
+    let lock = lock::LifecycleLock::acquire_application(
+        &platform.system_database_url,
+        triple,
+        application,
+    )
+    .await?;
+    let result = lock
+        .protect(async {
+            let mut document = EnvironmentDocument::read(&platform, triple).await?;
+            anyhow::ensure!(
+                document.applications.contains_key(application),
+                "application {application} is not declared"
+            );
+            let release_name = analyse::application_release_name(&document, application)?;
+            match change {
+                document::ReleaseChange::Deploy(digest)
+                | document::ReleaseChange::Rollback(Some(digest)) => {
+                    wamn_package_artifact::ensure_digest(digest)?;
+                    document
+                        .applications
+                        .get_mut(application)
+                        .expect("application was declared")
+                        .current = document::DeclaredRelease::Digest(digest.to_owned());
+                }
+                document::ReleaseChange::Rollback(None) => {
+                    let revision = analyse::rollback_revision(&platform, &release_name).await?;
+                    let digest = revision
+                        .manifest_digest()
+                        .context("rollback revision has no release digest")?;
+                    wamn_package_artifact::ensure_digest(digest)?;
+                    document
+                        .applications
+                        .get_mut(application)
+                        .expect("application was declared")
+                        .current = document::DeclaredRelease::Digest(digest.to_owned());
+                    document
+                        .applications
+                        .get_mut(application)
+                        .expect("application was resolved")
+                        .client = revision.client()?;
+                }
+                document::ReleaseChange::Stop => {
+                    document
+                        .applications
+                        .get_mut(application)
+                        .expect("application was declared")
+                        .current = document::DeclaredRelease::None;
+                }
+                document::ReleaseChange::Configure => {
+                    if let Some(revision) = analyse::read_revision(&platform, &release_name).await?
+                    {
+                        let digest = revision
+                            .manifest_digest()
+                            .context("Helm revision has no release digest")?;
+                        document
+                            .applications
+                            .get_mut(application)
+                            .expect("application was declared")
+                            .current = document::DeclaredRelease::Digest(digest.to_owned());
+                    }
+                }
+            }
+            crate::provision_project_env::registry::require_connected(
+                &mut *lock.client().await,
+                triple,
             )
-            .await
-            .context("write the application release chart")?;
-            readiness::wait(&platform, &written)
+            .await?;
+            runtime::resolve_application(&mut platform, &document, &private.path("."), &control)
+                .await?;
+            let mut analysis = analyse::analyse(&platform, &document, Some(application)).await?;
+            if let Some(actor) = actor {
+                analysis.actor = actor.to_owned();
+            }
+            let prepared = match &analysis.authorities.release {
+                Some(release) => {
+                    Some(write::prepare(&platform, &document, &analysis, release).await?)
+                }
+                None => None,
+            };
+            let provisioning;
+            let publisher = if let Some(actor) = actor {
+                actor
+            } else {
+                provisioning = wamn_identity_protocol::PlatformComponent::Provisioning
+                    .principal_id()
+                    .to_string();
+                &provisioning
+            };
+            expand::expand(&platform, &document, &analysis, publisher)
                 .await
-                .context("wait for application readiness")?;
-            analysis
-                .plan
-                .push(format!("wrote a revision of {release_name}"));
-        } else if analyse::release_present(&platform, release_name).await? {
-            release_chart::recover_pending(&platform.target, release_name).await?;
-            release_chart::uninstall(&platform.target, release_name)
+                .context("prepare application control records")?;
+            if let Some(prepared) = prepared {
+                let written = write::write(
+                    &platform,
+                    &analysis,
+                    prepared,
+                    matches!(change, document::ReleaseChange::Rollback(_)),
+                )
                 .await
-                .context("uninstall the application release chart")?;
-            analysis.plan.push(format!("uninstalled {release_name}"));
-        }
-        drain::drain(&platform, &document, &analysis)
-            .await
-            .context("observe application drain")?;
-        stage::retire(&platform, &document, &analysis)
-            .await
-            .context("retire drained application facts")?;
-        Ok(analysis)
-    }
-    .await;
+                .context("write the application release chart")?;
+                readiness::wait(&platform, &written)
+                    .await
+                    .context("wait for application readiness")?;
+                if matches!(change, document::ReleaseChange::Rollback(_)) {
+                    let mut connection = lock.client().await;
+                    let mut transaction =
+                        crate::provision_project_env::provisioning_transaction(&mut connection)
+                            .await?;
+                    anyhow::ensure!(
+                        wamn_registry::configuration::write_client(
+                            &mut transaction,
+                            triple,
+                            application,
+                            document.applications[application].client.as_ref()
+                        )
+                        .await?,
+                        "application configuration disappeared"
+                    );
+                    transaction.commit().await?;
+                }
+                analysis
+                    .plan
+                    .push(format!("wrote a revision of {release_name}"));
+            } else if matches!(change, document::ReleaseChange::Stop)
+                && analyse::release_present(&platform, &release_name).await?
+            {
+                release_chart::recover_pending(&platform.target, &release_name).await?;
+                release_chart::uninstall(&platform.target, &release_name).await?;
+                analysis.plan.push(format!("uninstalled {release_name}"));
+            }
+            drain::drain(&platform, &document, &analysis)
+                .await
+                .context("observe application drain")?;
+            Ok(analysis)
+        })
+        .await;
     lock.release().await;
     result
 }

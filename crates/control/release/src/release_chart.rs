@@ -173,7 +173,6 @@ pub async fn upgrade(
         "--wait".as_ref(),
         "--timeout".as_ref(),
         timeout.as_ref(),
-        "--rollback-on-failure".as_ref(),
         "--history-max".as_ref(),
         "50".as_ref(),
     ])

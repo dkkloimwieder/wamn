@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_environment_control::platform::{
+use wamn_environment::platform::{
     artifact_plan::{self, SelectedChart},
     document::UpgradeTarget,
     status::{self, Category},
@@ -271,7 +271,7 @@ pub(super) async fn exercise(
         journey
             .apply(
                 &format!("install-{app}"),
-                &mut journey.deploy(&artifacts[key]),
+                &mut journey.deploy(app, &artifacts[key]),
             )
             .await?;
     }

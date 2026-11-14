@@ -76,7 +76,7 @@ async fn local_watch_preserves_data_and_refuses_bad_sql() -> anyhow::Result<()> 
         &mut admin,
         root,
         PLATFORM_DOMAIN,
-        &wamn_environment_control::environment::document::EnvironmentDocument::compile(
+        &wamn_environment::environment::document::EnvironmentDocument::compile(
             &root.join("environment.k"),
         )?,
     )

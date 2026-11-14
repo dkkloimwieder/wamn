@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
 use serde_json::{Value, json};
-use wamn_environment_control::environment::document::EnvironmentDocument;
+use wamn_environment::environment::document::EnvironmentDocument;
 
 pub(crate) struct ControlHost {
     url: String,
@@ -28,12 +28,11 @@ impl ControlHost {
     pub(crate) async fn run(
         &self,
         operation: &str,
-        file: &Path,
+        coordinate: &wamn_registry::Triple,
         mut value: Value,
     ) -> anyhow::Result<()> {
-        let document = EnvironmentDocument::compile(file)?;
-        value["project"] = document.project.into();
-        value["env"] = document.env.into();
+        value["project"] = coordinate.project.as_str().into();
+        value["env"] = coordinate.env.as_str().into();
         let client = reqwest::Client::new();
         let started =
             crate::component_verbs::invoke(&client, &self.url, &self.token, operation, &value)

@@ -45,7 +45,7 @@ wamn-engine = { workspace = true }
 wamn-compiler = { workspace = true }
 wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }
-wamn-environment-control = { workspace = true }
+wamn-environment = { workspace = true }
 
 [dev-dependencies]
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
@@ -70,7 +70,7 @@ wamn-event-wire = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-package-control = { workspace = true, features = ["test-util"] }
-wamn-environment-control = { workspace = true, features = ["test-util", "ops"] }
+wamn-environment = { workspace = true, features = ["test-util", "ops"] }
 
 [lints]
 workspace = true

@@ -437,7 +437,7 @@ pub(super) fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProce
     ));
     env.push((
         "WAMN_OAUTH_KEY_FILE".to_owned(),
-        wamn_environment_control::platform::oauth::dev_key(&local.directory)
+        wamn_environment::platform::oauth::dev_key(&local.directory)
             .display()
             .to_string(),
     ));

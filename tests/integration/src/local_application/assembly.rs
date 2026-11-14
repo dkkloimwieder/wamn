@@ -13,7 +13,7 @@ use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_environment_control::apply_package::{ApplyPackageRequest, apply_package};
+use wamn_environment::apply_package::{ApplyPackageRequest, apply_package};
 use wamn_execution_host::{
     OperationHost, OperationHostConfig, RouterDeliveryBridge, RouterReadinessProbe,
     RouterReadinessStatus,
@@ -52,10 +52,9 @@ pub struct LocalPackage<'a> {
 pub(super) async fn assemble(
     input: LocalApplicationConfig<'_>,
 ) -> anyhow::Result<PreparedLocalApplication> {
-    let environment =
-        wamn_environment_control::environment::document::EnvironmentDocument::compile(
-            &input.scratch.join("environment.k"),
-        )?;
+    let environment = wamn_environment::environment::document::EnvironmentDocument::compile(
+        &input.scratch.join("environment.k"),
+    )?;
     let mut system = wamn_postgres::connect(input.system_database_url)
         .await
         .context("connect to the disposable identity database")?;
@@ -128,7 +127,7 @@ pub(super) async fn assemble(
     )
     .await?;
     let run_schema = wamn_postgres::schema::BareSchemaName::new("wamn_run")?;
-    wamn_environment_control::platform_migrations::install_project(&mut project).await?;
+    wamn_environment::platform_migrations::install_project(&mut project).await?;
     sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:local-application',false)").bind(wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string()).execute(&mut project).await.map(|result| result.rows_affected())?;
@@ -191,14 +190,20 @@ pub(super) async fn assemble(
     let mut admissions = Vec::new();
     let mut statement_instances = BTreeMap::new();
     let mut roots = BTreeMap::new();
+    let migration_database_url = wamn_control_provision::test_database::package_migration_input(
+        input.database_url,
+        input.org,
+        input.project,
+        input.environment,
+    )
+    .await?;
     for package in input.packages {
         let applied = apply_package(ApplyPackageRequest {
-            component_source: wamn_environment_control::apply_package::component_source_from_env(
-                None,
-            )
-            .unwrap(),
+            migration_database_url: migration_database_url.clone(),
+            component_source: wamn_environment::apply_package::component_source_from_env(None)
+                .unwrap(),
             changes: wamn_broker::Publisher::default(),
-            package: wamn_environment_control::apply_package::PackageRoot {
+            package: wamn_environment::apply_package::PackageRoot {
                 path: package.root.to_path_buf(),
                 artifact_digest: Some(
                     wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
@@ -411,7 +416,7 @@ pub(super) async fn assemble(
     );
     let flow_http = Component::new(engine.inner(), entry.bytes())?;
     let secret = input.scratch.join("operator-pat.json");
-    wamn_environment_control::provision_project_env::write_secret_json(
+    wamn_environment::provision_project_env::write_secret_json(
         &secret,
         &json!({"stringData":{"token":bearer}}),
     )?;

@@ -614,8 +614,8 @@ mod tests {
         let environment = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
             "org":cluster.org, "project":"fixture", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
             "applications":{
-                "alpha":{"packages":["platform_fixture"],"current":digest,"revocation_seconds":5,"hostname":"alpha.example"},
-                "beta":{"packages":["platform_fixture_overlay"],"current":digest,"revocation_seconds":5,"hostname":"beta.example"},
+                "alpha":{"revocation_seconds":5,"hostname":"alpha.example"},
+                "beta":{"revocation_seconds":5,"hostname":"beta.example"},
             },
         }))?)?;
         let mut manifest: wamn_catalog::ServingManifest = serde_json::from_value(json!({

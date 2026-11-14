@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use wamn_control_provision::{
     cdc_object_name, project_env_database_name, sql, validate_project_env_cdc,
 };
-use wamn_environment_control::capture_gap::{
+use wamn_environment::capture_gap::{
     CloseCaptureGapRequest, RecoverCaptureGapRequest, close_capture_gap, recover_capture_gap,
 };
 use wamn_event_wire::{Envelope, Op, msg_id, stream_subjects, subject};

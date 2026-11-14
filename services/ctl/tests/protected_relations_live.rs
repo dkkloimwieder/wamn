@@ -11,7 +11,7 @@ use wamn_control_provision::identity_role::{
     IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES, grant_identity_issuer_surface_sql,
 };
 use wamn_control_provision::sql;
-use wamn_environment_control::apply_package::{self, ApplyPackageRequest};
+use wamn_environment::apply_package::{self, ApplyPackageRequest};
 use wamn_postgres::schema::BareSchemaName;
 use wamn_test_infrastructure::locked_database;
 
@@ -154,7 +154,7 @@ async fn install_project_database(client: &mut Client, url: &str) {
     .map(drop)
     .expect("remove same-qualified control portable schemas before project install");
     let schema = BareSchemaName::new("wamn_run").expect("canonical run schema name");
-    wamn_environment_control::platform_migrations::install_project(client)
+    wamn_environment::platform_migrations::install_project(client)
         .await
         .expect("install canonical project schemas through reconciler");
 }

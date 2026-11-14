@@ -205,13 +205,10 @@ pub(super) async fn upgrade_release(
     directory: &Path,
 ) -> anyhow::Result<()> {
     let name = entry["name"].as_str().context("service release name")?;
-    let namespace = entry["namespace"].as_str().context("service namespace")?;
     let chart = entry["chart"].as_str().context("service chart")?;
     let values = directory.join(format!("values-{name}.yaml"));
     std::fs::write(&values, serde_yaml::to_string(&entry["values"])?)?;
-    let poller = (namespace == "hosts")
-        .then(|| crate::environment::host_report::Poller::start(target, name));
-    let upgraded = wamn_release_control::release_chart::upgrade(
+    wamn_release_control::release_chart::upgrade(
         target,
         Path::new(chart),
         name,
@@ -219,14 +216,7 @@ pub(super) async fn upgrade_release(
         Duration::from_secs(600),
         "platform service",
     )
-    .await;
-    match poller {
-        Some(poller) => {
-            let report = poller.finish();
-            upgraded.map_err(|error| crate::environment::host_report::attach(&error, &report))
-        }
-        None => upgraded,
-    }
+    .await
 }
 
 /// Require the references rendered by this release before changing any resource.

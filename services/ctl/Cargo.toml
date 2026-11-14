@@ -9,7 +9,7 @@ license.workspace = true
 [features]
 default = []
 ops = [
-    "wamn-environment-control/ops",
+    "wamn-environment/ops",
     "wamn-control-provision/ops",
 ]
 
@@ -69,7 +69,7 @@ wamn-compiler = { workspace = true }
 # The control operations that the verbs call.
 wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }
-wamn-environment-control = { workspace = true }
+wamn-environment = { workspace = true }
 wamn-dev-control = { workspace = true }
 # `wamn inspect` and `wamn diff` read verified package artifacts.
 wamn-package-artifact = { workspace = true }
@@ -92,7 +92,7 @@ wit-parser = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 wamn-fixture-package = { workspace = true }
 postgres-protocol = { workspace = true }
-wamn-environment-control = { workspace = true, features = ["test-util"] }
+wamn-environment = { workspace = true, features = ["test-util"] }
 wamn-dev-control = { workspace = true, features = ["test-util"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }

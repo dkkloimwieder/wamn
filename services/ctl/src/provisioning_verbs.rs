@@ -10,20 +10,18 @@ use clap::{Args, ValueEnum};
 use serde_json::Value;
 use wamn_control_provision::DB_OWNER_ROLE;
 use wamn_control_provision::Template;
-use wamn_environment_control::capture_gap::{
+use wamn_environment::capture_gap::{
     self, CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
-use wamn_environment_control::enable_cdc_project_env::{
+use wamn_environment::enable_cdc_project_env::{
     self, EnableCdcProjectEnvOutcome, EnableCdcProjectEnvRequest,
 };
-use wamn_environment_control::provision_org::{
-    self, OrgRecord, ProvisionOrgRequest, ProvisionedOrg,
-};
-use wamn_environment_control::provision_project_env::{
+use wamn_environment::provision_org::{self, OrgRecord, ProvisionOrgRequest, ProvisionedOrg};
+use wamn_environment::provision_project_env::{
     self, ProvisionProjectEnvOutcome, ProvisionProjectEnvRequest, ensure_secret_path,
     parse_pat_prefix,
 };
-use wamn_environment_control::provision_system::{self, ProvisionSystemRequest};
+use wamn_environment::provision_system::{self, ProvisionSystemRequest};
 use wamn_identity_client::PatIssuerConfig;
 use wamn_registry::Triple;
 

@@ -11,6 +11,6 @@ environment.Environment {
         "wms-labels" = {version = 1}
     }
     applications = {
-        "wamn_wms" = {current = "sha256:05fa8fc12eca4baf25c62dbabb5453a943f9767115241dc2c94c6d23c79b2bd3", revocation_seconds = 5, hostname = "wms.wamn.dev", packages = ["wamn_wms"], connections = {labels = "wms-labels"}}
+        "wamn_wms" = {revocation_seconds = 5, hostname = "wms.wamn.dev", connections = {labels = "wms-labels"}}
     }
 }

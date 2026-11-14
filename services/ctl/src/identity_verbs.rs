@@ -7,8 +7,8 @@ use std::fmt;
 use clap::Args;
 use serde_json::json;
 use std::path::PathBuf;
-use wamn_environment_control::identity_issuer::{IdentityIssuerRequest, provision_identity_issuer};
-use wamn_environment_control::invite::{InviteRequest, invite as run_invite};
+use wamn_environment::identity_issuer::{IdentityIssuerRequest, provision_identity_issuer};
+use wamn_environment::invite::{InviteRequest, invite as run_invite};
 use wamn_platform_identity::org::MemberGrants;
 
 use crate::provisioning_verbs::PatIssuerArgs;
@@ -51,8 +51,8 @@ pub async fn create_api_service(args: ApiServiceArgs) -> anyhow::Result<()> {
     } else {
         wamn_broker::Publisher::default()
     };
-    let principal = wamn_environment_control::api_service::create(
-        &wamn_environment_control::api_service::Request {
+    let principal = wamn_environment::api_service::create(
+        &wamn_environment::api_service::Request {
             org: args.org,
             project: args.project,
             env: args.env,

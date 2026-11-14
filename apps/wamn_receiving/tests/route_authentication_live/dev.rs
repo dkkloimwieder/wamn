@@ -350,7 +350,7 @@ pub(super) async fn assert_dev_command(
         &mut admin,
         root,
         PLATFORM_DOMAIN,
-        &wamn_environment_control::environment::document::EnvironmentDocument::compile(
+        &wamn_environment::environment::document::EnvironmentDocument::compile(
             &root.join("environment.k"),
         )?,
     )

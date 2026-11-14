@@ -1,7 +1,7 @@
 //! Fixture setup through the org connection authority.
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_environment_control::environment::{self, Platform, document::EnvironmentDocument};
+use wamn_environment::environment::{self, Platform, document::EnvironmentDocument};
 
 use sqlx::{Connection as _, Row as _, Statement as _};
 pub async fn bind(

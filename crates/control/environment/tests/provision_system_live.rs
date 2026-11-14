@@ -6,7 +6,7 @@
 use sqlx::Row as _;
 use std::os::unix::fs::PermissionsExt as _;
 
-use wamn_environment_control::provision_system::{
+use wamn_environment::provision_system::{
     ProvisionSystemRequest, SystemState, initialize_system, install_control_store,
     provision_system, system_state,
 };
@@ -127,10 +127,10 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
     .await
     .map(drop)
     .unwrap();
-    let document = wamn_environment_control::environment::document::EnvironmentDocument::from_json(
+    let document = wamn_environment::environment::document::EnvironmentDocument::from_json(
         br#"{"org":"applyprobe","project":"created","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"integrations":{},"applications": {}}"#,
     ).unwrap();
-    let platform = wamn_environment_control::environment::Platform {
+    let platform = wamn_environment::environment::Platform {
         system_database_url: apply_input,
         target: wamn_release_control::release_chart::Target {
             kubeconfig: std::path::PathBuf::new(),
@@ -155,7 +155,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
     };
     let secret_path =
         std::env::temp_dir().join(format!("wamn-env-provision-{}.json", std::process::id()));
-    let recorded = wamn_environment_control::environment::ensure::provision(
+    let recorded = wamn_environment::environment::ensure::provision(
         &platform,
         &document,
         &document.policy,
@@ -174,7 +174,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
             .get::<bool, _>(0),
         "CNPG, not provisioning SQL, creates the database"
     );
-    let retry = wamn_environment_control::environment::ensure::provision(
+    let retry = wamn_environment::environment::ensure::provision(
         &platform,
         &document,
         &document.policy,
@@ -208,7 +208,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
     .unwrap();
     let mut project_apply = url::Url::parse(&platform.system_database_url).unwrap();
     project_apply.set_path(&recorded.database);
-    wamn_environment_control::environment::ensure::ensure_project_database(
+    wamn_environment::environment::ensure::ensure_project_database(
         &platform,
         &document,
         &[],
@@ -217,7 +217,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
     )
     .await
     .expect("project initialization uses separate admin and apply connections");
-    let drops = wamn_environment_control::environment::bindings::project_authority(
+    let drops = wamn_environment::environment::bindings::project_authority(
         &platform.system_database_url,
         project_apply.as_str(),
         &document,
@@ -226,8 +226,8 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
     .expect("the apply login refreshes the projection as the project owner");
     wamn_broker::Publisher::default().publish(drops).await;
     let package = wamn_fixture_package::package_root();
-    wamn_environment_control::apply_package::apply_package(
-        wamn_environment_control::apply_package::ApplyPackageRequest {
+    wamn_environment::apply_package::apply_package(
+        wamn_environment::apply_package::ApplyPackageRequest {
             migration_database_url: wamn_control_provision::test_database::package_migration_input(
                 &wamn_postgres::database_configuration(&url, &recorded.database).unwrap(),
                 &"applyprobe",
@@ -237,7 +237,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
             .await
             .unwrap(),
             component_source: None,
-            package: wamn_environment_control::apply_package::PackageRoot {
+            package: wamn_environment::apply_package::PackageRoot {
                 artifact_digest: Some(
                     wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
                         .unwrap(),
@@ -268,7 +268,7 @@ async fn platform_initialization_runs_sqlx_once_and_explicit_apply_advances_it()
     use sqlx::SqlSafeStr as _;
     use sqlx::migrate::{Migration, MigrationType};
     use wamn_control_provision::migrations::MigrationDatabase;
-    use wamn_environment_control::platform_migrations;
+    use wamn_environment::platform_migrations;
     let url = locked_database::database(wamn_test_postgres::database);
     let mut client = connect(&url).await;
     sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system NOLOGIN NOINHERIT; END IF; END $$;")
@@ -323,7 +323,7 @@ async fn platform_initialization_runs_sqlx_once_and_explicit_apply_advances_it()
     )
     .await
     .unwrap();
-    let observed = wamn_environment_control::platform_migrations::observe(
+    let observed = wamn_environment::platform_migrations::observe(
         &mut client,
         MigrationDatabase::System,
         &sources,

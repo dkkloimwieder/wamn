@@ -11,7 +11,7 @@ use tokio::{
     task::JoinSet,
     time::timeout,
 };
-use wamn_environment_control::environment::lock::LifecycleLock;
+use wamn_environment::environment::lock::LifecycleLock;
 use wamn_registry::Triple;
 
 #[tokio::test]
@@ -151,4 +151,31 @@ async fn acquire(url: &str, triple: &Triple, application: Option<&str>) -> Lifec
         None => LifecycleLock::acquire(url, triple).await,
     }
     .unwrap()
+}
+
+#[tokio::test]
+async fn lock_loss_cancels_the_protected_operation() -> anyhow::Result<()> {
+    let database = wamn_test_postgres::database();
+    let triple = Triple::new("acme", "prod", "wms");
+    let mut observer = wamn_postgres::connect(database.url()).await?;
+    let lock = LifecycleLock::acquire(database.url(), &triple).await?;
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *lock.client().await)
+        .await?;
+    sqlx::query("SELECT pg_terminate_backend($1)")
+        .bind(pid)
+        .execute(&mut observer)
+        .await?;
+    let result = timeout(
+        Duration::from_secs(5),
+        lock.protect(std::future::pending::<anyhow::Result<()>>()),
+    )
+    .await?;
+    assert!(result.is_err());
+    lock.release().await;
+    LifecycleLock::acquire(database.url(), &triple)
+        .await?
+        .release()
+        .await;
+    Ok(())
 }

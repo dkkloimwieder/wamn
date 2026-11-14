@@ -38,11 +38,11 @@ use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wamn_engine::router_delivery::{DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source};
-use wamn_environment_control::author_workflow::{
+use wamn_environment::author_workflow::{
     AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
     author_workflow_in_databases,
 };
-use wamn_environment_control::workflow_lifecycle::{WorkflowVersion, enable_workflow};
+use wamn_environment::workflow_lifecycle::{WorkflowVersion, enable_workflow};
 use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig,
 };
@@ -293,7 +293,7 @@ async fn fixture() -> Fixture {
         .await
         .map(drop)
         .unwrap();
-    wamn_environment_control::platform_migrations::install_project(&mut admin)
+    wamn_environment::platform_migrations::install_project(&mut admin)
         .await
         .expect("install the run plane and the catalog");
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -928,7 +928,7 @@ async fn an_operation_not_in_the_release_refuses_at_author_and_at_admission() {
         .await
         .expect_err("an operation the release does not serve refuses");
     let refusal = refusal
-        .downcast_ref::<wamn_environment_control::author_workflow::AuthorWorkflowError>()
+        .downcast_ref::<wamn_environment::author_workflow::AuthorWorkflowError>()
         .expect("an authorship refusal");
     assert_eq!(refusal.error_type(), AuthorWorkflowErrorType::Condition);
 

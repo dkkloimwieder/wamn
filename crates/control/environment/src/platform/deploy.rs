@@ -160,7 +160,7 @@ pub async fn update(
             }
             None => LifecycleLock::acquire(&forward.input, &coordinate.0).await?,
         };
-        let result = async {
+        let result = lock.protect(async {
             release_chart::recover_pending(&owner, &name).await?;
             let installed = installed_values(&owner, &name).await?;
             anyhow::ensure!(
@@ -172,8 +172,7 @@ pub async fn update(
                 "name":name, "namespace":namespace, "values":values});
             resources::require_inputs(target, &entry).await?;
             resources::upgrade_release(&owner, &entry, directory).await
-        }
-        .await;
+        }).await;
         lock.release().await;
         return result;
     }

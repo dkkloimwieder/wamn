@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 
 use anyhow::Context as _;
 use wamn_catalog::PackageCoordinate;
-use wamn_environment_control::provision_project_env::read_json;
+use wamn_environment::provision_project_env::read_json;
 use wamn_release_control::delivery::ReleaseIdentity;
 
 pub(super) const SCHEMA: &str = "wms";

@@ -11,7 +11,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, Buf
 use wamn_control_provision::WorkloadRoleFamily;
 use wash_runtime::washlet::types::v2;
 
-use wamn_environment_control::provision_project_env::write_secret_json;
+use wamn_environment::provision_project_env::write_secret_json;
 
 /// Refuse missing web bytes before provisioning an environment.
 pub(super) fn preflight(args: &super::up::DevUpRequest) -> anyhow::Result<()> {
@@ -40,7 +40,7 @@ pub(super) async fn start(
 ) -> anyhow::Result<String> {
     let root = &args.root;
     let oauth_key = root.join("oauth.key");
-    wamn_environment_control::platform::oauth::local_key(&oauth_key)?;
+    wamn_environment::platform::oauth::local_key(&oauth_key)?;
     let org = &environment.identity.org;
     let coordinate = super::environment::JourneyTarget {
         org: org.clone(),
@@ -105,7 +105,7 @@ pub(super) async fn start(
         environment.credentials.administration.as_bytes(),
     )?;
     let issuer = &environment.issuer.args;
-    let group = wamn_environment_control::platform::control::host_values(org);
+    let group = wamn_environment::platform::control::host_values(org);
     let group = &group["runtime-operator"]["runtime"]["hostGroups"][0];
     let mut env = serde_json::Map::new();
     let platform: serde_json::Value = serde_yaml::from_str(include_str!(

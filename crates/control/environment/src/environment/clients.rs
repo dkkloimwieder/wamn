@@ -51,7 +51,7 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "org": "test", "project": "wms", "env": "dev",
             "target": "cloud", "policy": "dev","revocation_seconds":60,
-            "applications": {"fixture": {"current": "none", "revocation_seconds":5,"hostname": "wms.example.com", "packages": ["fixture"]}}}))
+            "applications": {"fixture": {"revocation_seconds":5,"hostname": "wms.example.com"}}}))
         .unwrap()
     }
 

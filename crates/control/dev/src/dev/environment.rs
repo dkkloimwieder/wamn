@@ -23,14 +23,14 @@ use crate::identifier::Identifier;
 use anyhow::Context as _;
 
 use wamn_control_provision::sql as provision_sql;
-use wamn_environment_control::provision_project_env::{
+use wamn_environment::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, read_json, secret_annotation, secret_value,
 };
 use wamn_identity_client::PatIssuerConfig;
 
 use crate::dev::activation::DevActivationIdentity;
 use wamn_control_provision::Template;
-use wamn_environment_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
+use wamn_environment::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
 
 /// The deployment-owned inputs a standing development environment needs.
 ///
@@ -109,7 +109,7 @@ pub async fn provision(
     admin: &mut Client,
     root: &Path,
     platform_domain: &str,
-    document: &wamn_environment_control::environment::document::EnvironmentDocument,
+    document: &wamn_environment::environment::document::EnvironmentDocument,
 ) -> anyhow::Result<DevEnvironment> {
     wamn_control_provision::validate_platform_domain(platform_domain)?;
     let identity = dev_activation_identity(document);
@@ -130,7 +130,7 @@ pub async fn provision(
         environment: identity.environment.clone(),
     };
     provision_journey_control(&coordinate, system_url, admin).await?;
-    wamn_environment_control::provision_system::set_platform_domain(admin, platform_domain).await?;
+    wamn_environment::provision_system::set_platform_domain(admin, platform_domain).await?;
     let route_secret = root.join("operator-pat.json");
     let management_secret = root.join("management-author-pat.json");
     let mut args = provisioning_args(
@@ -155,10 +155,8 @@ pub async fn provision(
     ))
     .execute(&mut *tx)
     .await?;
-    wamn_environment_control::environment::document::write_revocation_configuration(
-        &mut tx, document,
-    )
-    .await?;
+    wamn_environment::environment::document::write_revocation_configuration(&mut tx, document)
+        .await?;
     tx.commit().await?;
     drop(project);
     initialize_journey_platform(&coordinate, system_url, &project_url).await?;
@@ -337,7 +335,7 @@ pub async fn reset_control_store(admin: &mut Client) -> anyhow::Result<()> {
     .await
     .map(drop)
     .context("prepare the production control owner")?;
-    wamn_environment_control::provision_system::install_control_store(admin)
+    wamn_environment::provision_system::install_control_store(admin)
         .await
         .map(|_| ())
 }
@@ -500,7 +498,7 @@ pub async fn install_journey_platform_base_grants(
     project: &mut Client,
     platform_domain: &str,
 ) -> anyhow::Result<()> {
-    wamn_environment_control::platform_migrations::install_project(project).await?;
+    wamn_environment::platform_migrations::install_project(project).await?;
     let owner: String = sqlx::query(
         "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
     )
@@ -607,7 +605,7 @@ pub async fn initialize_journey_platform(
     project_url: &str,
 ) -> anyhow::Result<()> {
     let mut project = wamn_postgres::connect(project_url).await?;
-    wamn_environment_control::platform_migrations::install_project(&mut project).await?;
+    wamn_environment::platform_migrations::install_project(&mut project).await?;
     let scope = wamn_control_provision::migrations::MigrationDatabase::Project;
     let (_, database) = wamn_postgres::identity(project_url)?;
     let migration_input = super::credentials::login(
@@ -617,9 +615,9 @@ pub async fn initialize_journey_platform(
         "",
     )
     .await?;
-    wamn_environment_control::platform_migrations::restore_project(
+    wamn_environment::platform_migrations::restore_project(
         &migration_input,
-        &wamn_environment_control::platform_migrations::embedded_sources(scope),
+        &wamn_environment::platform_migrations::embedded_sources(scope),
     )
     .await?;
     let key = wamn_registry::project_env_key(
@@ -644,7 +642,7 @@ pub async fn initialize_journey_platform(
 
 /// The identity declared by the local environment document.
 pub fn dev_activation_identity(
-    document: &wamn_environment_control::environment::document::EnvironmentDocument,
+    document: &wamn_environment::environment::document::EnvironmentDocument,
 ) -> DevActivationIdentity {
     let process = std::process::id();
     let key = wamn_registry::project_env_key(&document.org, &document.project, &document.env);
@@ -732,7 +730,7 @@ mod tests {
     fn activation_uses_the_authored_coordinate() {
         let document = serde_json::from_value(serde_json::json!({
             "org":"other", "project":"stock", "env":"preview", "target":"cloud", "policy":"dev","revocation_seconds":60,
-            "applications": {"stock":{"current": "none", "revocation_seconds":5,"hostname": "stock.localhost", "packages":["inventory", "orders"]}}}))
+            "applications": {"stock":{"revocation_seconds":5,"hostname": "stock.localhost"}}}))
         .unwrap();
         let identity = dev_activation_identity(&document);
         assert_eq!(identity.org, "other");
