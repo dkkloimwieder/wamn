@@ -7,7 +7,9 @@ use std::path::Path;
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 
-use wamn_platform_install::platform::document::{kcl_value, lower, name, token};
+#[cfg(test)]
+use wamn_platform_install::platform::document::kcl_value;
+use wamn_platform_install::platform::document::{lower, name, token};
 
 /// One project document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,12 +228,14 @@ impl ProjectDocument {
     /// # Errors
     ///
     /// Never for a valid document.
+    #[cfg(test)]
     pub fn canonical_json(&self) -> anyhow::Result<Vec<u8>> {
         let value = serde_json::to_value(self).context("encode the project")?;
         Ok(wamn_digest::canonical_json_bytes(&value))
     }
 
     /// The document as a `project.k` file that compiles to this document.
+    #[cfg(test)]
     pub fn to_kcl(&self) -> String {
         let value = serde_json::to_value(self).expect("a project document encodes");
         format!("import project\n\nproject.Project {}\n", kcl_value(&value))

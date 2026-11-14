@@ -122,7 +122,7 @@ pub async fn rotate_session_keys(
     let locked: bool = sqlx::query(sqlx::AssertSqlSafe(
         ("SELECT pg_try_advisory_lock(hashtextextended($1, 0))").to_string(),
     ))
-    .bind(&issuer)
+    .bind(issuer)
     .fetch_one(&mut *client)
     .await
     .map_err(key_database_error)?
@@ -133,12 +133,12 @@ pub async fn rotate_session_keys(
     let result: Result<(), IdentityError> = async {
         let due = sqlx::query(sqlx::AssertSqlSafe(("SELECT s.active_kid::text FROM identity.session_signing_state s \
              JOIN identity.session_keys k ON k.issuer=s.issuer AND k.kid=s.active_kid \
-             WHERE s.issuer=$1 AND k.published_at + ($2::bigint * interval '1 second') <= clock_timestamp()").to_string())).bind(&issuer).bind(&seconds).fetch_optional(&mut *client).await.map_err(key_database_error)?;
+             WHERE s.issuer=$1 AND k.published_at + ($2::bigint * interval '1 second') <= clock_timestamp()").to_string())).bind(issuer).bind(seconds).fetch_optional(&mut *client).await.map_err(key_database_error)?;
         if let Some(due) = due {
             let expected: String = due.get(0);
             let pending = sqlx::query(sqlx::AssertSqlSafe(("SELECT kid::text FROM identity.session_keys WHERE issuer=$1 AND signing_cutoff IS NULL \
                  AND kid IS DISTINCT FROM (SELECT active_kid FROM identity.session_signing_state WHERE issuer=$1) \
-                 ORDER BY published_at DESC LIMIT 1").to_string())).bind(&issuer).fetch_optional(&mut *client).await.map_err(key_database_error)?;
+                 ORDER BY published_at DESC LIMIT 1").to_string())).bind(issuer).fetch_optional(&mut *client).await.map_err(key_database_error)?;
             let kid = if let Some(row) = pending { row.get(0) } else { publish_session_key(client, issuer).await?.kid };
             activate_session_key_if_current(client, issuer, &kid, Some(&expected)).await?;
         }
@@ -148,7 +148,7 @@ pub async fn rotate_session_keys(
     let unlock = sqlx::query(sqlx::AssertSqlSafe(
         ("SELECT pg_advisory_unlock(hashtextextended($1, 0))").to_string(),
     ))
-    .bind(&issuer)
+    .bind(issuer)
     .fetch_one(&mut *client)
     .await
     .map_err(key_database_error);

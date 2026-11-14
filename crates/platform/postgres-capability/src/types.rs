@@ -195,6 +195,10 @@ impl Encode<'_, sqlx::Postgres> for PgParam<'_> {
             SqlValue::Int32(value) => <i32 as Encode<sqlx::Postgres>>::encode_by_ref(value, buffer),
             SqlValue::Int64(value) => <i64 as Encode<sqlx::Postgres>>::encode_by_ref(value, buffer),
             SqlValue::Float64(value) if self.1.is_some_and(|ty| ty.name() == "FLOAT4") => {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "PostgreSQL REAL requires f32 rounding; finite overflow is rejected below"
+                )]
                 let narrowed = *value as f32;
                 if value.is_finite() && !narrowed.is_finite() {
                     return Err("value is outside the PostgreSQL REAL range".into());

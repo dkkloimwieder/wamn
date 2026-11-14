@@ -269,7 +269,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 &wamn_package_artifact::PackageRegistry {
                     artifact_base: format!("{}/{}", reference.registry(), reference.repository()),
                     credentials: None,
-                    registry_auth_file: Default::default(),
+                    registry_auth_file: PathBuf::default(),
                     insecure_registry: loopback(&args.registry),
                     oci_ca_paths: Vec::new(),
                 },
