@@ -622,6 +622,7 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
         root,
         mode: args.mode,
         env: BTreeMap::new(),
+        skipped_missing: false,
     };
     let target =
         std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
@@ -743,7 +744,11 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
     }
     if matches!(args.mode, Mode::Run) && !executed && failed.is_empty() {
         if let Some(name) = &args.name {
-            failed.push(format!("no tests match name filter {name:?}"));
+            failed.push(if runner.skipped_missing {
+                format!("tests matching name filter {name:?} were skipped for missing inputs")
+            } else {
+                format!("no tests match name filter {name:?}")
+            });
         } else if !selected.is_empty() {
             failed.push("no executed test cases for selection".into());
         }
@@ -768,6 +773,7 @@ struct Runner<'a> {
     root: &'a Path,
     mode: Mode,
     env: BTreeMap<String, String>,
+    skipped_missing: bool,
 }
 impl Runner<'_> {
     fn command(&self, program: &str) -> Command {
@@ -832,7 +838,7 @@ impl Runner<'_> {
         command
     }
     async fn suite(
-        &self,
+        &mut self,
         suite: &Suite,
         name: Option<&str>,
         metadata: &[cargo_metadata::Metadata],
@@ -917,7 +923,7 @@ impl Runner<'_> {
     }
 
     async fn native_test(
-        &self,
+        &mut self,
         command: &mut Command,
         target: &Selected,
         md: &cargo_metadata::Metadata,
@@ -937,6 +943,10 @@ impl Runner<'_> {
             println!("{}", tasks::describe(command));
             for (name, case) in &target.cases {
                 if selection.includes(target, name, case) {
+                    if !self.available(target, name, case, selection)? {
+                        self.skipped_missing = true;
+                        continue;
+                    }
                     println!(
                         "  {} {name}{}",
                         case.tier(),
@@ -952,6 +962,7 @@ impl Runner<'_> {
         }
         let text = process::execute(command).await?;
         let mut executed = false;
+        let mut skipped_missing = false;
         let mut failures = Vec::new();
         for message in cargo_metadata::Message::parse_stream(text.as_bytes()) {
             let Ok(cargo_metadata::Message::CompilerArtifact(artifact)) = message else {
@@ -1029,31 +1040,12 @@ impl Runner<'_> {
                     "{name}: ignored test has no readable needs declaration"
                 );
                 let case = target.cases.get(name).unwrap_or(&default);
-                let available = case
-                    .needs
-                    .iter()
-                    .all(|(type_, name)| supplied(self, type_, name));
-                let eligible = selection.includes(target, name, case);
-                let missing = || {
-                    case.needs
-                        .iter()
-                        .filter(|(type_, name)| !supplied(self, type_, name))
-                        .map(|(type_, name)| format!("{type_}:{name}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                if eligible && case.ignored && !available && !selection.explicit {
-                    println!("skipped {} {name}: missing {}", target.package, missing());
-                }
-                if !eligible || (case.ignored && !available && !selection.explicit) {
+                if !selection.includes(target, name, case) {
+                    skip.push(name);
+                } else if !self.available(target, name, case, selection)? {
+                    skipped_missing = true;
                     skip.push(name);
                 } else {
-                    ensure!(
-                        available,
-                        "{} {name}: missing {}",
-                        target.package,
-                        missing()
-                    );
                     database |= case.database;
                     run.push(name);
                 }
@@ -1090,8 +1082,35 @@ impl Runner<'_> {
                 Err(error) => failures.push(format!("{error:#}")),
             }
         }
+        self.skipped_missing |= skipped_missing;
         ensure!(failures.is_empty(), "{}", failures.join("\n"));
         Ok(executed)
+    }
+
+    fn available(
+        &self,
+        target: &Selected,
+        name: &str,
+        case: &Case,
+        selection: &CaseSelection<'_>,
+    ) -> anyhow::Result<bool> {
+        let missing = case
+            .needs
+            .iter()
+            .filter(|(type_, name)| !supplied(self, type_, name))
+            .map(|(type_, name)| format!("{type_}:{name}"))
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            return Ok(true);
+        }
+        let missing = missing.join(", ");
+        ensure!(
+            case.ignored && !selection.explicit,
+            "{} {name}: missing {missing}",
+            target.package
+        );
+        println!("skipped {} {name}: missing {missing}", target.package);
+        Ok(false)
     }
 }
 
