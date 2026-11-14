@@ -1,5 +1,5 @@
 use http_route::{
-    AdapterLimits, Backend, BodyReadError, BodyReader, DeliveryReport, DeliveryRequest, Header,
+    AdapterLimits, Backend, BodyReadError, BodyReader, Header, HttpResponse, OperationRequest,
     ProviderError, RequestHead, RouteDefinition, SchemaInvalid, handle_request,
 };
 use sqlx::Connection as _;
@@ -157,19 +157,21 @@ impl Backend for Adapter {
         Ok(())
     }
 
-    async fn deliver(
+    async fn invoke(
         &mut self,
         _route: &RouteDefinition,
-        request: DeliveryRequest<AuthenticatedCaller>,
-    ) -> DeliveryReport {
+        request: OperationRequest<AuthenticatedCaller>,
+    ) -> HttpResponse {
         if let Some(caller) = &request.caller {
             assert_eq!(caller.credential_type(), CredentialType::Connection);
             assert!(caller.active_role().is_none());
         }
         self.delivered.push(request.payload);
-        DeliveryReport {
-            outcome: Ok(http_route::DeliveryOutcome::Respond("null".into())),
-            etag: None,
+        HttpResponse {
+            status: 200,
+            content_type: "application/json",
+            body: b"null".to_vec(),
+            read: None,
         }
     }
 }

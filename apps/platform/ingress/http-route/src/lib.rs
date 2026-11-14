@@ -26,62 +26,14 @@ pub struct TraceContext {
     pub tracestate: Option<String>,
 }
 
-/// One attachment-originated request to the host-owned router bridge.
+/// One request to the released application operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeliveryRequest<Caller> {
-    pub attachment_id: String,
-    pub delivery_id: String,
+pub struct OperationRequest<Caller> {
     pub payload: String,
     pub caller: Option<Caller>,
     pub trace: Option<TraceContext>,
-    /// The If-None-Match value of a GET, which the host compares with the
-    /// read's ETag.
+    /// The conditional read tag compared by the entry.
     pub if_none_match: Option<String>,
-}
-
-/// Stable router failure classes preserved by the delivery bridge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeliveryFailureType {
-    Terminal,
-    RetryExhausted,
-    InvalidInput,
-}
-
-/// A routed failure with no retired node or flow coordinate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeliveryFailure {
-    pub type_: DeliveryFailureType,
-    pub code: Option<String>,
-    pub message: String,
-}
-
-/// One terminal result from inline router execution.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DeliveryOutcome {
-    Respond(String),
-    Failed(DeliveryFailure),
-    Cancelled,
-    /// The read's ETag matched If-None-Match.
-    NotModified,
-}
-
-/// Host-side delivery refusal before a router outcome exists.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DeliveryError {
-    SourceNotFound,
-    InvalidRequest,
-    InvalidPayload,
-    ExecutionFailed,
-    PermissionDenied { operation: String },
-    FreshCredentialRequired { operation: String },
-}
-
-/// Router result and host deadline changes, including failed deliveries.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeliveryReport {
-    pub outcome: Result<DeliveryOutcome, DeliveryError>,
-    /// The ETag of a read that responded or was not modified.
-    pub etag: Option<String>,
 }
 
 /// A bounded HTTP response produced by the adapter.
@@ -194,7 +146,7 @@ impl std::fmt::Display for SchemaInvalid {
 
 impl std::error::Error for SchemaInvalid {}
 
-/// Incremental request-body source. A read error never reaches the router.
+/// Incremental request-body source. A read error prevents invocation.
 #[expect(
     async_fn_in_trait,
     reason = "the WASI body future stays local to its request task"
@@ -206,7 +158,7 @@ pub trait BodyReader {
 /// All external authority behind the thin adapter.
 ///
 /// Routing returns definitions, authentication applies the selected policy,
-/// and delivery crosses the single host-owned router bridge.
+/// and invocation calls the typed operation through the host.
 #[expect(
     async_fn_in_trait,
     reason = "the guest backend runs on the single-threaded component executor"
@@ -230,11 +182,11 @@ pub trait Backend {
         route: &RouteDefinition,
         payload: &str,
     ) -> Result<(), SchemaInvalid>;
-    async fn deliver(
+    async fn invoke(
         &mut self,
         route: &RouteDefinition,
-        request: DeliveryRequest<Self::AuthenticatedCaller>,
-    ) -> DeliveryReport;
+        request: OperationRequest<Self::AuthenticatedCaller>,
+    ) -> HttpResponse;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -281,7 +233,7 @@ async fn try_handle(
         .routes(&method, &authority)
         .map_err(|_| error_response(503, "routing-provider-failed"))?;
     let mut matched =
-        select_route(routes, &method, &path).map_err(|code| error_response(404, code))?;
+        select_route(routes, &method, path).map_err(|code| error_response(404, code))?;
     let body_limit = usize::try_from(matched.definition.body_limit)
         .unwrap_or(usize::MAX)
         .min(limits.body_bytes);
@@ -322,30 +274,27 @@ async fn try_handle(
                 value
             }
         });
-    let attachment_id = matched.definition.attachment_id.clone();
     let trace = trace_context(&head.headers);
     let if_none_match = (method == "GET")
         .then(|| header_values(&head.headers, "if-none-match").join(", "))
         .filter(|value| !value.is_empty());
-    let delivery_id = String::new();
-    let request = DeliveryRequest {
-        attachment_id,
-        delivery_id,
+    let request = OperationRequest {
         payload,
         caller,
         trace,
         if_none_match,
     };
-    let report = backend.deliver(&matched.definition, request).await;
-    let mut response = match report.outcome {
-        Ok(outcome) => delivery_response(outcome),
-        Err(error) => delivery_error_response(error),
-    };
+    let mut response = backend.invoke(&matched.definition, request).await;
     if matches!(response.status, 200 | 304) {
-        response.read = Some(Box::new(ReadCache {
-            cache_control,
-            etag: report.etag,
-        }));
+        let read = response.read.get_or_insert_with(|| {
+            Box::new(ReadCache {
+                cache_control: None,
+                etag: None,
+            })
+        });
+        read.cache_control = cache_control;
+    } else {
+        response.read = None;
     }
     Ok(response)
 }
@@ -460,76 +409,6 @@ fn rejection_response(rejection: &AuthRejection) -> HttpResponse {
         response.body.clear();
     }
     response
-}
-
-fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
-    match outcome {
-        DeliveryOutcome::Respond(payload) => HttpResponse {
-            read: None,
-            status: 200,
-            content_type: "application/json",
-            body: payload.into_bytes(),
-        },
-        DeliveryOutcome::Failed(failure) => {
-            let status = if failure.type_ == DeliveryFailureType::InvalidInput {
-                400
-            } else {
-                500
-            };
-            detailed_error_response(
-                status,
-                failure
-                    .code
-                    .as_deref()
-                    .unwrap_or(failure_type_code(failure.type_)),
-                Some(&failure.message),
-                None,
-            )
-        }
-        DeliveryOutcome::Cancelled => error_response(503, "execution-cancelled"),
-        DeliveryOutcome::NotModified => HttpResponse {
-            read: None,
-            status: 304,
-            content_type: "application/json",
-            body: Vec::new(),
-        },
-    }
-}
-
-fn delivery_error_response(error: DeliveryError) -> HttpResponse {
-    let (status, code) = match error {
-        DeliveryError::SourceNotFound => (404, "attachment-not-found"),
-        DeliveryError::InvalidRequest => (400, "delivery-invalid-request"),
-        DeliveryError::InvalidPayload => (400, "delivery-invalid-payload"),
-        DeliveryError::ExecutionFailed => (503, "execution-failed"),
-        DeliveryError::PermissionDenied { operation } => {
-            return operation_refusal_response("permission-denied", &operation);
-        }
-        DeliveryError::FreshCredentialRequired { operation } => {
-            return operation_refusal_response("fresh-credential-required", &operation);
-        }
-    };
-    error_response(status, code)
-}
-
-fn operation_refusal_response(code: &str, operation: &str) -> HttpResponse {
-    HttpResponse {
-        read: None,
-        status: 403,
-        content_type: "application/json",
-        body: serde_json::to_vec(&json!({
-            "error": { "code": code, "operation": operation }
-        }))
-        .unwrap_or_default(),
-    }
-}
-
-fn failure_type_code(type_: DeliveryFailureType) -> &'static str {
-    match type_ {
-        DeliveryFailureType::Terminal => "terminal",
-        DeliveryFailureType::RetryExhausted => "retry-exhausted",
-        DeliveryFailureType::InvalidInput => "invalid-input",
-    }
 }
 
 fn detailed_error_response(
