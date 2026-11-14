@@ -16,15 +16,17 @@ use anyhow::Context as _;
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 
-use wamn_control_provision::schema_migrations::MigrationDatabase;
+use sqlx::migrate::Migration;
+use wamn_control_provision::migrations::MigrationDatabase;
 use wamn_control_provision::{CONTROL_BOOTSTRAP_SQL, sql, validate_platform_domain};
-use wamn_schema_control::MigrationSource;
 
 /// Inputs of one `provision-system` run.
 #[derive(Debug)]
 pub struct ProvisionSystemRequest {
     /// Superuser URL of the system database.
     pub system_database_url: String,
+    /// The platform migration login's actual credential for explicit PostgreSQL access.
+    pub migration_database_url: Option<String>,
     /// The email domain of the platform principal rows.
     pub platform_domain: String,
 }
@@ -38,8 +40,19 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
         .context("connect to the system database")?;
 
     let result = async {
+        let migration_input = match request.migration_database_url.as_deref() {
+            Some(input) => input.to_owned(),
+            None => {
+                crate::provision_project_env::workload::provision_platform_migration(
+                    &request.system_database_url,
+                    MigrationDatabase::System,
+                )
+                .await?
+            }
+        };
         initialize_system(
             &mut client,
+            &migration_input,
             &crate::platform_migrations::embedded_sources(MigrationDatabase::System),
         )
         .await?;
@@ -147,8 +160,6 @@ pub enum SystemState {
     Complete,
     /// A control-store schema exists without a baseline record.
     Incomplete,
-    /// The recorded schema belongs to a different artifact.
-    BaselineMismatch { installed: String, expected: String },
 }
 
 impl fmt::Display for SystemState {
@@ -157,10 +168,9 @@ impl fmt::Display for SystemState {
             Self::Absent => formatter.write_str("system initialization absent"),
             Self::Complete => formatter.write_str("system initialization complete"),
             Self::Incomplete => formatter.write_str(
-                "incomplete system initialization: no system baseline record. Restore a verified system database backup, then rerun provision-system. Do not replay bootstrap or reset the database",
+                "incomplete system initialization: no SQLx history. Restore a verified system database backup, then rerun provision-system. Do not replay bootstrap or reset the database",
             ),
-            Self::BaselineMismatch { installed, expected } => write!(formatter,
-                "system schema baseline mismatch: installed {installed}, expected {expected}. Use the matching system schema artifact. Do not replay or reset the system database"),
+
         }
     }
 }
@@ -180,59 +190,32 @@ pub async fn system_state(client: &mut sqlx::PgConnection) -> anyhow::Result<Sys
     if !present {
         return Ok(SystemState::Absent);
     }
-    let baseline: bool =
-        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SYSTEM_STATE_2)
-            .fetch_one(&mut *client)
-            .await
-            .context("look for the system baseline table")?
-            .get(0);
-    if !baseline {
-        return Ok(SystemState::Incomplete);
-    }
-    let Some(row) =
-        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SYSTEM_STATE)
-            .fetch_optional(&mut *client)
-            .await
-            .context("read the system schema baseline")?
-    else {
-        return Ok(SystemState::Incomplete);
-    };
-    let installed: String = row.get(0);
-    let expected = wamn_control_provision::schema_baseline::system_sha256();
-    if installed == expected {
-        Ok(SystemState::Complete)
+    let complete: bool =
+        sqlx::query_scalar("SELECT to_regclass('registry._sqlx_migrations') IS NOT NULL")
+            .fetch_one(client)
+            .await?;
+    Ok(if complete {
+        SystemState::Complete
     } else {
-        Ok(SystemState::BaselineMismatch {
-            installed,
-            expected,
-        })
-    }
+        SystemState::Incomplete
+    })
 }
 
 /// Initialize an empty system database, then run the selected image's migrations.
 /// Existing initialization never runs pending files on platform reapply.
 pub async fn initialize_system(
     admin: &mut Client,
-    sources: &[MigrationSource],
+    migration_input: &str,
+    sources: &[Migration],
 ) -> anyhow::Result<()> {
     if install_control_store(admin).await? {
-        sqlx::raw_sql("SET ROLE wamn_system")
-            .execute(&mut *admin)
-            .await
-            .map(drop)?;
-        let result = crate::platform_migrations::apply_reported(
-            admin,
+        let mut migration = wamn_postgres::connect(migration_input).await?;
+        crate::platform_migrations::apply_reported(
+            &mut migration,
             crate::platform_migrations::MigrationTarget::System,
             sources,
-            None,
         )
-        .await;
-        let reset = sqlx::raw_sql("RESET ROLE")
-            .execute(&mut *admin)
-            .await
-            .map(drop);
-        result?;
-        reset?;
+        .await?;
     }
     Ok(())
 }
@@ -260,7 +243,7 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
                     .context("finish system initialization read")?;
                 return Ok(false);
             }
-            state => anyhow::bail!("{state}"),
+            state @ SystemState::Incomplete => anyhow::bail!("{state}"),
         }
 
         sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -291,9 +274,12 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
                 .map(drop)
                 .context("install the control store")?;
         }
-        wamn_package_control::schema_baseline::record_system(admin)
-            .await
-            .context("record the system schema baseline")?;
+        wamn_control_provision::migration::prepare_history(
+            admin,
+            "registry._sqlx_migrations",
+            "wamn_system",
+        )
+        .await?;
         sqlx::raw_sql("RESET ROLE")
             .execute(&mut *admin)
             .await

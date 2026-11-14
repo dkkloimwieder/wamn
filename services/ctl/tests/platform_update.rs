@@ -552,9 +552,6 @@ fn platform_schema_runs_only_the_selected_ctl_job() -> anyhow::Result<()> {
             .arg(&fixture.chart.0)
             .env("PATH", &fixture.path)
             .env("KUBECONFIG", fixture.bin.join("current-kubeconfig"));
-        if action == "apply" {
-            command.args(["--resolve", resolution]);
-        }
         let output = command.output()?;
         assert!(
             output.status.success(),
@@ -597,9 +594,6 @@ fn platform_schema_runs_only_the_selected_ctl_job() -> anyhow::Result<()> {
         assert_eq!(container["image"], chart.image("ctl")?);
         assert_eq!(container["command"], json!(["/usr/local/bin/wamn-ctl"]));
         let mut expected = vec!["system-schema", action, "--image", chart.image("ctl")?];
-        if action == "apply" {
-            expected.extend(["--resolve", resolution]);
-        }
         assert_eq!(container["args"], json!(expected));
         assert_eq!(
             container["env"],
@@ -650,20 +644,7 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
     let project = postgres.database(&name)?;
     let mut client = wamn_postgres::connect(project.url()).await?;
 
-    wamn_environment_control::reconcile_run_plane::ensure_runtime_roles(&mut client).await?;
-    sqlx::raw_sql("SET ROLE wamn_db_owner")
-        .execute(&mut client)
-        .await
-        .map(drop)?;
-    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .execute(&mut client)
-        .await
-        .map(drop)?;
-    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
-        .execute(&mut client)
-        .await
-        .map(drop)?;
-    wamn_package_control::schema_baseline::record_project(&mut client).await?;
+    wamn_environment_control::platform_migrations::install_project(&mut client).await?;
     let text = r#"{"org":"dep5","project":"fixture","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#;
     let document = EnvironmentDocument::from_json(text.as_bytes())?;
     // The deployed environment ConfigMap is the document authority.
@@ -688,9 +669,6 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
             .env("PATH", &fixture.path)
             .env("KUBECONFIG", fixture.bin.join("current-kubeconfig"))
             .env("WAMN_APPLY_DATABASE_URL", database.url());
-        if action == "apply" {
-            command.args(["--resolve", "migrations/project/0001_probe.sql=retry"]);
-        }
         // The child reads this private PostgreSQL server while the runtime drives its sessions.
         let output = tokio::task::spawn_blocking(move || command.output()).await??;
         assert!(
@@ -738,9 +716,6 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
             "--image",
             chart.image("ctl")?,
         ];
-        if action == "apply" {
-            expected.extend(["--resolve", "migrations/project/0001_probe.sql=retry"]);
-        }
         assert_eq!(container["args"], json!(expected));
         for variable in ["WAMN_SYSTEM_ADMIN_URL", "WAMN_APPLY_DATABASE_URL"] {
             assert!(

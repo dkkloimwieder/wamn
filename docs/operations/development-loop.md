@@ -2,7 +2,7 @@
 
 The local developer loop builds components and loads them from files.
 It keeps the application database for most saved changes.
-In `reset` mode, a changed SQL recipe recreates the recorded disposable database.
+In `reset` mode, schema apply clears application state and reapplies migrations in the existing database.
 Local saves do not publish components or release manifests to a registry.
 [Building](building.md) gives the required build commands.
 
@@ -20,8 +20,7 @@ The loop runs the binary you built, so an older one refuses the manifest with `u
 Use only disposable PostgreSQL 18, one NATS with TLS, and telemetry services.
 The system administrator URL must name `wamn_system` without a query or fragment.
 `wamn dev up` resets its control store, so shared or durable targets are unsuitable.
-An environment template keeps the catalog functions of the standup that created it.
-To take changed catalog SQL, run `wamn dev up` again and get a new template.
+Project initialization installs platform SQL. Later platform changes use platform migrations.
 
 Read the current required arguments from the existing command:
 
@@ -223,11 +222,11 @@ The [local benchmark](benchmark.md#local-run) uses the direct host URL.
 The running loop holds a lease, an exclusive hold on its application database.
 A second loop or reset command cannot take that target while the lease remains active.
 The loop starts from the target that `dev up` stamps.
-After successful introspection, the loop caches the physical fingerprints and catalogs beside its local artifacts.
-The loop compares the physical SQL fingerprint with the installed package records.
-The fingerprint identifies the complete SQL recipe, including generated definitions and their execution owners.
-Code, query, web, and package-version changes preserve rows when the SQL recipe stays unchanged.
-A missing local catalog cache causes another database read, without authorizing a reset.
+The compiler emits authored SQL and generated history migrations into the package output.
+Generated history files also remain in the package source so that released versions retain their original bytes.
+SQLx records applied versions and checksums in each package's own history table.
+Code and browser changes preserve installed SQL.
+An edited or missing applied migration refuses execution.
 The loop reads `schema.mode` from the existing `environment.k` beside `dev.json`.
 An omitted mode selects `reset` only when the registry records the environment as disposable.
 
@@ -240,20 +239,22 @@ The loop prepares no SQLx verifier or metadata.
 The watcher watches package directories, platform guests, shared WIT and local configuration files.
 It skips paths covered by Git ignore rules.
 The build record retains package identity, dependency pins, compiler identity and output digests.
-It has no source fingerprints or freshness checks.
+The build record describes the captured outputs.
 Artifact readers use the captured KCL, SQL and migrations beside the generated files.
-Migrate reuses installed SQL decisions when the physical fingerprint matches.
-Introspect reuses existing catalogs. ACL reuses preparation for the same compiled manifest.
+Migrate uses the recorded SQLx versions and checksums.
+ACL reuses preparation for the same compiled manifest.
 
-In `reset` mode, a changed SQL recipe resets the owned disposable database through its existing template.
-The loop uses `environment::sql::schema::plan` and `Diff::requires_reset`, as deployment does.
-It prepares current generated output before that decision.
-Both paths read package bytes through `apply_package::read_package_root` and execute SQL through the same package owner.
-The local path opens `target_database_url` directly. The deployed path runs that owner in a Kubernetes SQL Job.
-Local source access uses the completed build output and the same SQL executor.
-It refuses a reset when the registry does not authorize data loss or a required schema source is missing.
+In `reset` mode, each schema apply uses the same reset implementation as deployment.
+Both paths use SQLx versions and checksums for migration state.
+Package input reading belongs to package control. Application and reset belong to environment control.
+The local path authenticates as its own restricted migration login.
+`dev up` writes that connection as `migration_database_url` in `dev.json`.
+Schema apply and reset retain this credential.
+The lease excludes another local session or schema command.
 The loop builds the candidate before it stops the previous application for a reset.
-The reset discards all application rows and gives the database a new creation identity.
+Reset clears application rows, catalog state, runs, queued events, and authored workflows.
+It restores migration grants and applies migrations again.
+The database, platform schemas, credentials, and CDC objects remain.
 
 In `migrate` mode, the watcher reports pending SQL and keeps the installed SQL records unchanged.
 It initializes missing packages but never appends migrations to an installed package.
@@ -276,12 +277,13 @@ A changed or missing retained source stops preparation.
 Deployed SQL operations use published artifacts and Kubernetes Jobs.
 An application name selects its configured current release. `--release` selects another published release without selecting its code.
 For local source operations, do not pass `--release`.
-`wamn schema adopt --env "$WAMN_DEV_ENV_DIR/environment.k"` asserts the configured local sources without executing SQL.
-Resolve any uncertain nontransactional file before adoption, as [deployment](deployment.md#nontransactional-sql-repair) describes.
+A file that starts with `-- no-transaction` must support retries after partial execution.
+Inspect and repair partial effects before retrying the same migration.
+See [nontransactional SQL](deployment.md#nontransactional-sql).
 
 Control store rows keyed by a non-empty target instance accumulate only within one `wamn dev up` standup.
 Nothing deletes them one at a time, and the immutability trigger stays unconditional.
-The control store reset of `wamn dev up` is the retention step, outside the recreate path.
+The control store reset of `wamn dev up` is the retention step, outside the application reset.
 A disposable projection made by hand with `wamn-ctl provision-project-env --disposable` against a durable control store has no such bound.
 
 The previous application remains available during candidate preparation until an authorized schema reset requires an interruption.

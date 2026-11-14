@@ -14,6 +14,7 @@ use anyhow::{Context as _, ensure};
 use wamn_broker::Publisher;
 use wamn_compiler::manifest::PackageManifest;
 use wamn_control_provision::sql;
+use wamn_environment_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
 use wamn_environment_control::environment::{
     Platform, document::EnvironmentDocument, ensure::ensure_project_database,
 };
@@ -22,9 +23,7 @@ use wamn_environment_control::provision_project_env::{
     ProvisionProjectEnvRequest, provision_project_env,
 };
 use wamn_environment_control::provision_system::{ProvisionSystemRequest, provision_system};
-use wamn_environment_control::reconcile_run_plane;
 use wamn_identity_client::PatIssuerConfig;
-use wamn_package_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
 use wamn_test_infrastructure::{locked_database, scratch::ScratchRoot};
 
 #[path = "../../environment/tests/support/install_invitation.rs"]
@@ -111,6 +110,14 @@ async fn bootstrap(admin: &mut Client, url: &str) -> anyhow::Result<String> {
 async fn step_4_7_provision(system_url: &str, _work: &Path) -> anyhow::Result<String> {
     // The Job authenticates as postgres. provision-system installs as wamn_system.
     provision_system(&ProvisionSystemRequest {
+        migration_database_url: Some(
+            wamn_control_provision::test_database::platform_migration_input(
+                &system_url,
+                wamn_control_provision::migrations::MigrationDatabase::System,
+            )
+            .await
+            .unwrap(),
+        ),
         system_database_url: system_url.into(),
         platform_domain: DOMAIN.into(),
     })
@@ -183,7 +190,7 @@ async fn provision_project(system_url: &str, admin: &mut Client) -> anyhow::Resu
     Ok(outcome.database)
 }
 
-async fn step_4_11_env_apply_reads_schema_baseline(
+async fn step_4_11_env_apply_reads_initialized_schema(
     platform: &Platform,
     admin: &mut Client,
     system_url: &str,
@@ -191,7 +198,7 @@ async fn step_4_11_env_apply_reads_schema_baseline(
     ensure_project_database(platform, &document(), &[], admin, system_url)
         .await
         .context(
-            "4.11 env_apply_reads_schema_baseline as wamn_apply, then installs the project base grants",
+            "4.11 env_apply_reads_initialized_schema as wamn_apply, then installs the project base grants",
         )?;
     Ok(())
 }
@@ -216,6 +223,14 @@ fn package_fixture(work: &Path) -> anyhow::Result<PackageRoot> {
 
 async fn step_4_13_package_job(project_url: &str, package: &PackageRoot) -> anyhow::Result<()> {
     apply_package(ApplyPackageRequest {
+        migration_database_url: wamn_control_provision::test_database::package_migration_input(
+            &project_url,
+            &ORG,
+            &PROJECT,
+            &ENV,
+        )
+        .await
+        .unwrap(),
         package: package.clone(),
         database_url: project_url.into(),
         component_source: None,
@@ -352,7 +367,7 @@ async fn install_sequence_4_7_through_4_19_1_with_job_roles() -> anyhow::Result<
         .await
         .context("4.11 record and bootstrap the project database")?;
     let platform = platform(&apply_url);
-    step_4_11_env_apply_reads_schema_baseline(&platform, &mut admin, &system_url).await?;
+    step_4_11_env_apply_reads_initialized_schema(&platform, &mut admin, &system_url).await?;
     let project_admin = database_url(&system_url, &database_name)?;
     let project_apply = database_url(&apply_url, &database_name)?;
     let package = package_fixture(work.path())?;
@@ -404,11 +419,7 @@ async fn local_base_grants_run_plane_and_release_cache_as_database_owner() -> an
     wamn_dev_control::dev::environment::install_journey_platform_base_grants(&mut client, DOMAIN)
         .await
         .context("local_base_grants installs the platform schema as the database owner")?;
-    reconcile_run_plane::reconcile(
-        &mut client,
-        &wamn_schema_control::BareSchemaName::new("wamn_run")?,
-        true,
-    )
+    wamn_environment_control::platform_migrations::install_project(&mut client)
     .await
     .context(
         "4.17 local_base_grants_run_plane_as_database_owner without wamn_authority permission denial",

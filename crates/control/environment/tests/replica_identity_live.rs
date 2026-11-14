@@ -3,8 +3,8 @@
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 
+use wamn_catalog::package_schema::ManagedModel;
 use wamn_environment_control::reconcile_replica_identity::reconcile;
-use wamn_schema_control::ManagedModel;
 use wamn_test_infrastructure::locked_database;
 
 async fn connect(url: &str) -> Client {

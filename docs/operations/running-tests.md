@@ -102,14 +102,14 @@ It never downloads or compiles NATS.
 
 Use `--suite ID[,ID]` to run named suites on any tree, including an unchanged tree.
 This selects only those suites and their preparation steps.
-The migration validator and database executor need no application, web, device, or platform preparation:
+The database executor suite needs no application, browser, device, or platform preparation:
 
 ```bash
-cargo xtask test-changes --suite migration-policy
 cargo xtask test-changes --suite package-executor
 ```
 
-These suites run `migration_policy` and `apply_package_live`, respectively.
+This suite runs `wamn-package-control`'s `migrations_live` target.
+It covers SQLx commit and checksum behavior, history write failures, and the restricted migration login.
 A source diff still selects dependent packages and their integration inputs.
 Run the Receiving and WMS proof from the repository root:
 
@@ -531,7 +531,6 @@ Do not infer execution from the aggregate Cargo pass count.
 
 | Existing reference | Current owner and required setup |
 | --- | --- |
-| `[RUN-PLANE-RECONCILE]` | `crates/control/environment/tests/run_plane_live.rs`: covers creation, current no-op, two-plane residency, platform configuration, and current security behavior under the process lock |
 | `[IDENTITY-LIVE]` | Runtime `plugins::wamn_postgres::session_identity::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
 | `[EFFECT-SNAPSHOT]` | `crates/platform/runtime/tests/effect_snapshot_live.rs`: ignored in live-nats, starts its own server with `pg_stat_statements`, and needs the NATS inputs below. It runs the production cluster snapshot as a provisioned HTTP admitter, holds the process lock, and makes sure that a repeated snapshot sends no statement. |
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::session_identity::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
@@ -586,12 +585,12 @@ It tests the removed and kept runs, the refusals, and the grants of the login.
 The development command case tests application rebuilds and owned process cleanup.
 The `identity` preparation step builds the test identity binary with `test-util`.
 The `test-util` feature permits only a loopback mail endpoint with a dummy API key. Production builds do not include this path.
-The focused identity case also covers application database recreation:
+The focused identity case also covers application schema reset:
 
 ```bash
 RESEND_API_KEY=unused-development-fixture RESEND_FROM='WAMN <fixture@example.invalid>' \
   cargo test --locked --offline -p wamn-ctl --test pat_bootstrap_live \
-  development_identity_survives_target_recreation_and_owned_teardown -- --ignored --exact
+  development_identity_survives_schema_reset_and_owned_teardown -- --ignored --exact
 ```
 
 
@@ -623,7 +622,7 @@ WAMN_LOCAL_DEV_EDIT_ROOT="$SOURCE" \
   "$CARGO_TARGET_DIR/debug/examples/delivery_timings" \
   "$SOURCE" "$CARGO_TARGET_DIR" "$WAMN_LOCAL_RESULTS" -- \
   "$WAMN_LOCAL_TEST_BINARY" \
-  route_authentication_live::dev::local_delivery::local_watch_preserves_data_refuses_bad_sql_and_recreates_schema \
+  route_authentication_live::dev::local_delivery::local_watch_preserves_data_and_refuses_bad_sql \
   --exact --ignored --nocapture --test-threads=1
 ```
 
@@ -644,7 +643,7 @@ For direct fixture commands, set the artifact overrides from the table above.
 The case starts its own PostgreSQL server, because the development environment resets the control store of the whole server.
 The case requires authenticated application results after code, SQL, and schema edits.
 It requires retained data after code and query edits.
-In reset mode, a changed physical SQL fingerprint recreates the whole recorded disposable target.
+Reset mode reapplies the schema on every explicit schema apply.
 In migrate mode, the watcher reports pending SQL. Explicit schema apply owns migration effects and records.
 Invalid SQL refuses preparation before replacement.
 Require one executed passing case, successful resource cleanup, and restored source before reporting success.
@@ -685,11 +684,11 @@ The `--data` confirmation requires a terminal (`services/ctl/src/env_verbs.rs:33
 The harness supplies a virtual terminal with `script` and types only the coordinate of the environment that it created.
 Tests do not write control tables or supply a project deletion workaround.
 
-PostgreSQL owns retries and matching adoption in `wamn-package-control`:
-`explicit_sql_advances_across_versions_without_selecting_code` and `adoption_preserves_execution_records_and_never_executes_asserted_files`.
-The first test also asserts that retry preserves migration records, including checksums and outcomes.
-The planner test `reset_identity_uses_the_complete_schema_set_without_code_coordinates` covers matching inputs across both mode transitions.
-These tests replace the SQL Job retry and mode matrix.
+`wamn-package-control/tests/migrations_live.rs` covers SQLx checksums, transaction rollback, retry behavior, and failed history writes.
+It also calls package apply to refuse rebinding an existing relation to another package or entity.
+The same target checks direct migration credentials and refuses administrator sessions for platform migrations.
+`wamn-compiler/tests/build_live.rs::history_changes_append_immutable_versions_and_execute_during_build` covers generated history versioning.
+These live targets require PostgreSQL. Compile them without starting a server with `cargo test -p <package> --test <target> --no-run`.
 Stale-event admission has no test because deployed environments have no workflow authoring operation (`wamn-alrvy.19`).
 Reset still asserts old-event disposal and environment isolation.
 `wamn-alrvy.20` (temporary directory leak) and `wamn-alrvy.22` (uncovered lint requirements) remain open.

@@ -29,9 +29,8 @@ const operationActions = {
     label: "Reset schema",
     route: schema.SCHEMA_RESET_ROUTE,
     effect:
-      "Delete and rebuild the whole environment database. All applications lose their data and stop during reset.",
+      "Stop all applications, clear their data, runs, queued events and authored workflows, then reapply migrations.",
   },
-  adopt: { label: "Adopt schema", route: schema.SCHEMA_ADOPT_ROUTE, effect: "" },
 };
 
 function OperationControls(props: ScreenProps) {
@@ -110,14 +109,8 @@ function OperationControls(props: ScreenProps) {
                       : selected === "diff"
                         ? schema.diff(props.transport, [{ requestId, value: target }], options)
                         : selected === "apply"
-                          ? schema.apply(props.transport, [{ requestId, value: { ...target, resolve: null } }], options)
-                          : selected === "reset"
-                            ? schema.reset(props.transport, [{ requestId, value: config }], options)
-                            : schema.adopt(
-                                props.transport,
-                                [{ requestId, value: { ...config, application: null } }],
-                                options,
-                              )),
+                          ? schema.apply(props.transport, [{ requestId, value: target }], options)
+                          : schema.reset(props.transport, [{ requestId, value: config }], options)),
                 );
                 if (controller.signal.aborted) return;
                 setObserved({ job: result.job, state: "pending", log: "" });

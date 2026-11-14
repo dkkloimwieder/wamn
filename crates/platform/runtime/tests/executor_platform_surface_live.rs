@@ -263,9 +263,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         r#"{{"components":[{{"descriptor":{{"component":"entity","component-digest":"{component_digest}","connections":[{{"requirement-type":"http","store-alias":"a-store"}}],"effects":[],"imports":[],"imports-fingerprint":"{imports_fingerprint}","interface-version":"0.1","operations":{{"create":{{"input-ports":[],"output-ports":[],"parameters":[]}}}}}},"package-id":"{PACKAGE_ID}"}}],"release":{{"packages":[{{"package-id":"{PACKAGE_ID}","package-version":"{PACKAGE_VERSION}"}}]}}}}"#,
     );
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "INSERT INTO catalog.packages \
-               (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) \
-             VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
+            "INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( '{PROJECT_ENV_KEY}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
              INSERT INTO catalog.releases \
                (project_env_key,manifest_digest,canonical_bytes) \
              SELECT '{PROJECT_ENV_KEY}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
@@ -280,9 +278,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
              SELECT '{PROJECT_ENV_KEY}',manifest_digest,'00000000-0000-4000-8000-000000000012',1 FROM catalog.releases; \
              INSERT INTO catalog.connection_binding (project_env_key,manifest_digest,component_digest,package_id,name,connection_id) \
              SELECT '{PROJECT_ENV_KEY}',manifest_digest,'{component_digest}','{PACKAGE_ID}','a-store','00000000-0000-4000-8000-000000000012' FROM catalog.releases; \
-             INSERT INTO wamn_run.environment_policies \
-               (project_env_key,expected_environment) \
-             VALUES ('{PROJECT_ENV_KEY}','{ENVIRONMENT}'); \
              INSERT INTO wamn_run.runs \
                (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,input_json,trigger_source) \

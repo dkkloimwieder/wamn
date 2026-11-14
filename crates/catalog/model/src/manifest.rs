@@ -5,16 +5,6 @@ use std::collections::BTreeMap;
 
 pub const CONTROL_OWNED_RELATION_TABLES: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
 
-/// Only an exact first-line marker opts a migration out of a transaction.
-pub fn migration_is_transactional(bytes: &[u8]) -> bool {
-    bytes.split(|byte| *byte == b'\n').next() != Some(b"-- wamn:no-transaction".as_slice())
-}
-
-/// Refuse multiple statements in files that execute outside a transaction.
-pub fn migration_statement_count_is_safe(bytes: &[u8], count: usize) -> bool {
-    migration_is_transactional(bytes) || count == 1
-}
-
 /// Installation facts projected from a compiled package document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageManifest {

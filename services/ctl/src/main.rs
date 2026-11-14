@@ -113,7 +113,7 @@ enum Command {
 
 #[derive(clap::Args)]
 struct OperationArgs {
-    #[arg(value_parser = ["deploy", "rollback", "diff", "apply", "reset", "adopt"])]
+    #[arg(value_parser = ["deploy", "rollback", "diff", "apply", "reset"])]
     operation: String,
     #[arg(long)]
     org: String,
@@ -125,8 +125,6 @@ struct OperationArgs {
     application: Option<String>,
     #[arg(long)]
     release: Option<String>,
-    #[arg(long)]
-    resolve: Option<wamn_package_control::apply_package::MigrationResolution>,
 }
 
 #[tokio::main]
@@ -156,7 +154,6 @@ async fn main() -> anyhow::Result<()> {
                     env: &args.env,
                     application: args.application.as_deref(),
                     release: args.release.as_deref(),
-                    resolution: args.resolve.as_ref(),
                 },
             )
             .await?;
@@ -220,20 +217,6 @@ mod tests {
             .unwrap();
             assert!(matches!(cli.command, Command::SystemSchema(_)));
         }
-        assert!(
-            Cli::try_parse_from([
-                "wamn-ctl",
-                "system-schema",
-                "apply",
-                "--system-url",
-                "postgres://admin/system",
-                "--image",
-                "registry/ctl@sha256:abc",
-                "--resolve",
-                "migrations/system/0001_probe.sql=applied",
-            ])
-            .is_ok()
-        );
     }
 
     #[test]

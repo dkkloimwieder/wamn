@@ -195,8 +195,6 @@ impl GeneratedPackage {
     }
 }
 
-pub use wamn_schema_control::physical_schema::PHYSICAL_SCHEMA_PATH;
-
 /// The generated file that names the schema an installed package needs.
 pub const REQUIRED_SCHEMA_CONTRACT_PATH: &str = "generated/required-schema-contract.json";
 

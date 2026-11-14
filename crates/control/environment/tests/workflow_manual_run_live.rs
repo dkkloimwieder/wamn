@@ -57,7 +57,6 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
     WamnPostgresConfig,
 };
-use wamn_schema_control::BareSchemaName;
 use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 
 const PROJECT_ENV_KEY: &str = "manual-live--dev--default";
@@ -289,20 +288,14 @@ async fn fixture() -> Fixture {
     let database = wamn_test_postgres::database();
     let url = database.url().to_owned();
     let mut admin = connect(&url).await;
-    let schema = BareSchemaName::new("wamn_run").unwrap();
     sqlx::raw_sql("CREATE SCHEMA application_data")
         .execute(&mut admin)
         .await
         .map(drop)
         .unwrap();
-    wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, true)
+    wamn_environment_control::platform_migrations::install_project(&mut admin)
         .await
         .expect("install the run plane and the catalog");
-    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
-        .execute(&mut admin)
-        .await
-        .map(drop)
-        .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::platform_principals_sql("manual.invalid").unwrap()).to_string(),
     ))
@@ -331,10 +324,7 @@ async fn fixture() -> Fixture {
                ('reader', '{START_REFERENCE}'), \
                ('clerk', '{START_REFERENCE}');
              INSERT INTO platform.environment (status) VALUES ('active');
-             INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) \
-               VALUES ('{PROJECT_ENV_KEY}', '{ENVIRONMENT}');
-             INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
-               VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');
+             INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( '{PROJECT_ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');
              CREATE TABLE application_data.orders (id text PRIMARY KEY, total int NOT NULL, status text NOT NULL);
              INSERT INTO application_data.orders VALUES ('o-1', 1250, 'open'), ('o-2', 300, 'closed');"
         ))).execute(&mut admin).await.map(drop)
@@ -714,8 +704,6 @@ impl Fixture {
                    FROM catalog.releases WHERE project_env_key = $1 \
                  UNION ALL SELECT format('environment %s %s %s', status, created_at, updated_at) \
                    FROM platform.environment \
-                 UNION ALL SELECT format('policy %s', expected_environment) \
-                   FROM wamn_run.environment_policies WHERE project_env_key = $1 \
                  ORDER BY 1",
         )
         .bind(&PROJECT_ENV_KEY)

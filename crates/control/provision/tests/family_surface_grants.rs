@@ -238,7 +238,7 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
         &admin,
         "widen the materializer role out of band",
         &format!(
-            "GRANT SELECT ON TABLE catalog.package_migrations TO {stable}; \
+            "GRANT SELECT ON TABLE catalog.workflows TO {stable}; \
              GRANT SELECT ON TABLE platform.permission TO {stable}; \
              GRANT USAGE ON SCHEMA wamn_run TO {stable}; \
              GRANT SELECT ON TABLE wamn_run.runs TO {stable};"
@@ -258,11 +258,8 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
     run_admin(
         &admin,
         "seed materializer registration inputs",
-        "INSERT INTO catalog.packages \
-           (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) VALUES \
-           ('sha256:' || repeat('c', 64), 't1', 'widgets', '1.0.0', \
-            'sha256:0000000000000000000000000000000000000000000000000000000000000000'), \
-           ('sha256:' || repeat('c', 64), 't2', 'foreign', '1.0.0', \
+        "INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( 't1', 'widgets', '1.0.0', \
+            'sha256:0000000000000000000000000000000000000000000000000000000000000000'), ( 't2', 'foreign', '1.0.0', \
             'sha256:1111111111111111111111111111111111111111111111111111111111111111');",
     );
     let as_materializer = role_url(&admin, &login, GENERATION_PW);
@@ -398,7 +395,6 @@ fn expected_executor_grants() -> Vec<String> {
     for column in ["run_id", "project_env_key"] {
         rows.push(format!("column|wamn_run|run_queue.{column}|INSERT"));
     }
-    rows.push("relation|wamn_run|environment_policies|SELECT".to_owned());
     for relation in [
         "connection_binding",
         "release_connection",
@@ -479,7 +475,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
         &format!(
             "GRANT INSERT ON TABLE wamn_run.runs TO {stable};\n\
              GRANT UPDATE (input_json) ON TABLE wamn_run.runs TO {stable};\n\
-             GRANT SELECT ON TABLE wamn_run.environment_policies TO {stable};\n\
              GRANT SELECT ON TABLE catalog.wiring_tombstones TO {stable};\n\
              GRANT EXECUTE ON FUNCTION \
                wamn_run.guard_event_lineage_immutable() TO {stable};\n"
@@ -521,11 +516,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
     }
     // The catalog relations it must NOT reach at all, and the run-plane
     // relations that belong to other families.
-    for relation in [
-        "catalog.packages",
-        "catalog.package_migrations",
-        "catalog.wiring_tombstones",
-    ] {
+    for relation in ["catalog.packages", "catalog.wiring_tombstones"] {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
             writeln!(
                 probes,
@@ -540,10 +531,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
              'the fence locks the run with SELECT r.*'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.runs', 'INSERT'), \
            'the executor admits only the event run columns, never a whole row'; \
-         ASSERT has_table_privilege(r, 'wamn_run.environment_policies', 'SELECT'), \
-           'the executor can read the environment policy'; \
-         ASSERT NOT has_table_privilege(r, 'wamn_run.environment_policies', 'UPDATE'), \
-           'the executor never changes a policy'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.runs', 'DELETE'), \
            'run history pruning is retention''s'; \
          ASSERT has_table_privilege(r, 'wamn_run.run_queue', 'SELECT'), 'no queue read'; \
@@ -640,12 +627,8 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
         &admin,
         "seed one run the executor may lease",
         &format!(
-            "INSERT INTO catalog.packages \
-               (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
-             VALUES ('sha256:' || repeat('c', 64), 't1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
-             INSERT INTO wamn_run.environment_policies \
-               (project_env_key, expected_environment) \
-             VALUES ('t1', 'dev');\n\
+            "INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( 't1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
+             \n\
              INSERT INTO wamn_run.runs \
                (project_env_key, run_id, package_id, environment, status, \
                 trigger_source, wiring_id, wiring_version, wiring_hash, \
@@ -816,7 +799,6 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     for relation in [
         "wamn_run.runs",
         "wamn_run.run_queue",
-        "wamn_run.environment_policies",
         "catalog.packages",
         "catalog.workflows",
     ] {
@@ -869,8 +851,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
             "BEGIN;\n\
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
                     set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\
-             INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) \
-             VALUES ('sha256:' || repeat('c', 64), 'org-a','orders','1.0.0','{digest}');\n\
+             INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 'org-a','orders','1.0.0','{digest}');\n\
              INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
              VALUES ('org-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}');\n\
              INSERT INTO platform.integration (id,integration_type,name,status) \

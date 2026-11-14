@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use wamn_control_provision::{
     AUDIT_RETENTION_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login,
 };
-use wamn_package_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
+use wamn_environment_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
 use wamn_test_infrastructure::ctl_process;
 use wamn_test_infrastructure::locked_database;
 
@@ -170,9 +170,17 @@ fn write_package(root: &Path) {
 async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     apply_package::apply_package_schema(
         ApplyPackageRequest {
+            migration_database_url: wamn_control_provision::test_database::package_migration_input(
+                &url,
+                &"record-retention-t",
+                &"fixture",
+                &"dev",
+            )
+            .await
+            .unwrap(),
             component_source: apply_package::component_source_from_env(None)?,
             changes: wamn_broker::Publisher::default(),
-            package: wamn_package_control::apply_package::PackageRoot {
+            package: wamn_environment_control::apply_package::PackageRoot {
                 path: package.to_path_buf(),
                 artifact_digest: Some(
                     wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(package)?,

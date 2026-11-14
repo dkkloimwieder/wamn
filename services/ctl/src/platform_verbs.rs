@@ -5,12 +5,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use wamn_control_provision::schema_migrations::MigrationDatabase;
+use wamn_control_provision::migrations::MigrationDatabase;
 use wamn_environment_control::platform::document::{ClusterDocument, UpgradeTarget};
 use wamn_environment_control::platform::pools::Direction;
 use wamn_environment_control::platform::{artifact_plan, deploy, provider, status};
 use wamn_environment_control::platform_migrations;
-use wamn_package_control::migrations::MigrationResolution;
 use wamn_release_control::release_chart::Target;
 
 /// Management verbs also available through the low-level control tool.
@@ -43,7 +42,7 @@ pub enum PlatformSchemaCommand {
     /// Read initialization and migration state without changing SQL.
     Diff(PlatformSchemaArgs),
     /// Apply pending platform SQL without changing service releases.
-    Apply(PlatformSchemaApplyArgs),
+    Apply(PlatformSchemaArgs),
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -104,60 +103,30 @@ impl Args for PlatformSchemaArgs {
     }
 }
 
-#[derive(Debug, Args)]
-pub struct PlatformSchemaApplyArgs {
-    #[command(flatten)]
-    pub selection: PlatformSchemaArgs,
-    /// Resolve one uncertain nontransactional file after inspection.
-    #[arg(long, value_name = "PATH=applied|retry", value_parser = platform_resolution)]
-    pub resolve: Option<MigrationResolution>,
-}
-
-pub(crate) fn platform_resolution(value: &str) -> anyhow::Result<MigrationResolution> {
-    anyhow::ensure!(
-        !value.contains(':'),
-        "resolution must be <path>=applied|retry"
-    );
-    let target = if value.starts_with("migrations/project/") {
-        "project"
-    } else {
-        "system"
-    };
-    format!("{target}:{value}").parse()
-}
-
 /// In-image entry points. Both actions read the same embedded migration bytes.
 #[derive(Debug, Subcommand)]
 pub enum SystemSchemaCommand {
     Diff(SystemSchemaArgs),
-    Apply(SystemSchemaApplyArgs),
+    Apply(SystemSchemaArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct SystemSchemaArgs {
-    /// The system database administrator URL supplied by the Job Secret.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
+    /// The restricted system migration connection supplied by the Job.
+    #[arg(long, hide_env_values = true)]
     pub system_url: String,
     /// The immutable ctl image selected by the prepared chart.
     #[arg(long)]
     pub image: String,
 }
 
-#[derive(Debug, Args)]
-pub struct SystemSchemaApplyArgs {
-    #[command(flatten)]
-    pub database: SystemSchemaArgs,
-    #[arg(long, value_name = "PATH=applied|retry", value_parser = platform_resolution)]
-    pub resolve: Option<MigrationResolution>,
-}
-
 pub async fn run_system_schema(
     command: SystemSchemaCommand,
     mut output: impl Write,
 ) -> anyhow::Result<()> {
-    let (args, apply, resolution) = match &command {
-        SystemSchemaCommand::Diff(args) => (args, false, None),
-        SystemSchemaCommand::Apply(args) => (&args.database, true, args.resolve.as_ref()),
+    let (args, apply) = match &command {
+        SystemSchemaCommand::Diff(args) => (args, false),
+        SystemSchemaCommand::Apply(args) => (args, true),
     };
     writeln!(output, "system SQL image: {}", args.image)?;
     output.flush()?;
@@ -166,17 +135,12 @@ pub async fn run_system_schema(
         .context("connect to the system SQL database")?;
 
     let result = async {
-        sqlx::raw_sql("SET ROLE wamn_system")
-            .execute(&mut client)
-            .await
-            .map(drop)?;
         let sources = platform_migrations::embedded_sources(MigrationDatabase::System);
         platform_migrations::run(
             &mut client,
             platform_migrations::MigrationTarget::System,
             &sources,
             apply,
-            resolution,
             &mut output,
         )
         .await?;
@@ -226,11 +190,9 @@ pub async fn run_product(
             result.and(cleanup)
         }
         ProductPlatformCommand::Schema(command) => {
-            let (args, apply, resolution) = match &command {
-                PlatformSchemaCommand::Diff(args) => (args, false, None),
-                PlatformSchemaCommand::Apply(args) => {
-                    (&args.selection, true, args.resolve.as_ref())
-                }
+            let (args, apply) = match &command {
+                PlatformSchemaCommand::Diff(args) => (args, false),
+                PlatformSchemaCommand::Apply(args) => (args, true),
             };
             let chart = artifact_plan::select(&args.chart)?;
             let target =
@@ -252,7 +214,7 @@ pub async fn run_product(
                 match args.target {
                     PlatformSchemaTarget::System => {
                         let log = wamn_environment_control::platform::system_schema(
-                            &target, &directory, &chart, apply, resolution).await?;
+                            &target, &directory, &chart, apply).await?;
                         writeln!(output, "{log}")?;
                     }
                     PlatformSchemaTarget::Project => {
@@ -263,7 +225,7 @@ pub async fn run_product(
                         writeln!(output, "project SQL environment: {}", document.triple())?;
                         output.flush()?;
                         wamn_environment_control::environment::sql::project_schema_deployed(
-                            &platform, &document, chart.image("ctl")?, apply, resolution, &directory).await?;
+                            &platform, &document, chart.image("ctl")?, apply, &directory).await?;
                     }
                 }
                 output.flush().context("write the platform SQL result")

@@ -10,7 +10,7 @@ use std::path::Path;
 use anyhow::{Context as _, ensure};
 use wamn_compiler::manifest::PackageManifest;
 
-pub(crate) async fn install(
+pub async fn install(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     root: &Path,

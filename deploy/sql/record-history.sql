@@ -300,3 +300,26 @@ GRANT EXECUTE ON FUNCTION wamn_history.create_history_table(text, text, boolean)
 GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.timestamptz_image(timestamptz) TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.log_row_change() TO wamn_db_owner;
+
+-- SQLx writes the duration after commit. Migration identity stays immutable.
+CREATE OR REPLACE FUNCTION wamn_history.guard_sqlx_migration()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'migration-immutable';
+    END IF;
+    IF ROW(NEW.version, NEW.description, NEW.installed_on, NEW.success, NEW.checksum,
+           NEW.created_at, NEW.created_by)
+       IS DISTINCT FROM
+       ROW(OLD.version, OLD.description, OLD.installed_on, OLD.success, OLD.checksum,
+           OLD.created_at, OLD.created_by) THEN
+        RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'migration-immutable';
+    END IF;
+    RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_history.guard_sqlx_migration() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION wamn_history.guard_sqlx_migration() TO wamn_db_owner;

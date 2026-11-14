@@ -386,7 +386,7 @@ async fn queue_writers_stamp_existing_executor_leases() -> anyhow::Result<()> {
     let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
     // Admission already binds the executor in its existing transaction.
-    sqlx::query("INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) VALUES ($1, $2)").bind(&PROJECT_ENV_KEY).bind(&ENVIRONMENT).execute(&mut *admin).await.map(|result| result.rows_affected())?;
+
     let actor = wamn_identity_protocol::PlatformComponent::Executor
         .principal_id()
         .to_string();

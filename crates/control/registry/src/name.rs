@@ -69,16 +69,6 @@ pub const CDC_SECRET_PREFIX: &str = "wamn-cdc-";
 /// Name budget or prefix.
 pub const CDC_OBJECT_PREFIX: &str = "wamn_cdc_";
 
-/// The NOLOGIN owner of one package's SQL objects, independent of its version.
-/// A 40-digit SHA-256 prefix follows the workload role naming convention and
-/// keeps every package identifier within PostgreSQL's 63-byte name limit.
-pub fn package_owner_role(package: &str) -> String {
-    format!(
-        "wamn_package_owner_{}",
-        &hex::encode(sha256(package.as_bytes()))[..40]
-    )
-}
-
 /// The per-project-env database name:
 /// `wamn-db-<org>--<env>--<project>--<instance>`
 /// (wamn-q3n.7).

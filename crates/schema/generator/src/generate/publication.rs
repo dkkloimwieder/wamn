@@ -106,8 +106,8 @@ pub(super) fn emit_package_publication(
             },
             |exposure| exposure.path.clone(),
         );
-        let path = wamn_schema_control::exposure::normalize_http_route(
-            &wamn_schema_control::exposure::HttpRoute {
+        let path = wamn_catalog::exposure::normalize_http_route(
+            &wamn_catalog::exposure::HttpRoute {
                 path,
                 method: "POST".to_owned(),
             },

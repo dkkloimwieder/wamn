@@ -13,7 +13,6 @@ mod cdc;
 mod credentials;
 mod database;
 mod database_grants;
-mod package_owner;
 
 #[doc(inline)]
 use std::fmt::Write as _;
@@ -42,8 +41,6 @@ pub use cdc::{
     ensure_cdc_exclusion_map_sql, ensure_entity_map_sql, ensure_schema_sql,
     grant_replication_access_sql, upsert_cdc_exclusion_map_sql, upsert_entity_map_sql,
 };
-
-pub use package_owner::{ensure_package_owner_role_sql, package_owner_grants_sql};
 
 use crate::name::{APP_ROLE, DB_OWNER_ROLE};
 use crate::workload_role::{
@@ -541,9 +538,8 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 ///   the crash counter, never the FIFO position.
 /// * `runs` and `run_queue` INSERT, column grain over
 ///   [`EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS`] and
-///   [`EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS`], plus `SELECT` on
-///   `environment_policies`: the host admits event and schedule runs
-///   under the declaring release. Schedules carry their application identity.
+///   [`EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS`]. The host admits event and schedule runs
+///   under the declaring release.
 /// * `wamn_authority.project_key(text)`: MEASURED, and not optional. `runs`
 ///   carries the `runs_tkey` EXPRESSION INDEX over that function, and
 ///   PostgreSQL evaluates an index expression while forming the new index entry
@@ -599,7 +595,6 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
          GRANT SELECT, DELETE ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT UPDATE ({queue_update}) ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT INSERT ({queue_insert}) ON TABLE {schema}.\"run_queue\" TO {role}; \
-         GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
          GRANT SELECT (id, type, status, email) ON TABLE platform.\"user\" TO {role};"
     )
     .expect("writing to a String cannot fail");

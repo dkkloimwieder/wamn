@@ -14,8 +14,8 @@ use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate,
     ConnectionTypeDescriptor, RequirementType, WiringDocument, WiringNode, WiringTerminal,
 };
+use wamn_environment_control::apply_package::{self, ApplyPackageRequest};
 use wamn_environment_control::environment::{bindings, document::EnvironmentDocument};
-use wamn_package_control::apply_package::{self, ApplyPackageRequest};
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::connection_memory::ConnectionMemory;
@@ -213,10 +213,18 @@ async fn provision_project(project: &mut Client, project_url: &str) -> Vec<Admit
     }
     wamn_test_infrastructure::fixture_digest::write_build_record(&package);
     apply_package::apply_package(ApplyPackageRequest {
-        component_source: wamn_package_control::apply_package::component_source_from_env(None)
+        migration_database_url: wamn_control_provision::test_database::package_migration_input(
+            &project_url,
+            &"connection-binding-project",
+            &"fixture",
+            &"dev",
+        )
+        .await
+        .unwrap(),
+        component_source: wamn_environment_control::apply_package::component_source_from_env(None)
             .unwrap(),
         changes: wamn_broker::Publisher::default(),
-        package: wamn_package_control::apply_package::PackageRoot {
+        package: wamn_environment_control::apply_package::PackageRoot {
             path: package.clone(),
             artifact_digest: Some(
                 wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
@@ -484,9 +492,7 @@ async fn assert_nested_effect_snapshot(
     const ORIGIN_DIGEST: &str =
         "sha256:4444444444444444444444444444444444444444444444444444444444444444";
     for package_id in [WIRING_PACKAGE, ORIGIN_PACKAGE] {
-        sqlx::query("INSERT INTO catalog.packages \
-                   (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
-                 VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)").bind(&PROJECT_ENV_KEY).bind(&package_id).bind(&PACKAGE_VERSION).bind(&FACT_FINGERPRINT).execute(&mut *project).await.map(|result| result.rows_affected())
+        sqlx::query("INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( $1, $2, $3, $4)").bind(&PROJECT_ENV_KEY).bind(&package_id).bind(&PACKAGE_VERSION).bind(&FACT_FINGERPRINT).execute(&mut *project).await.map(|result| result.rows_affected())
             .expect("seed a separate package coordinate for the snapshot test");
     }
     admit_component(

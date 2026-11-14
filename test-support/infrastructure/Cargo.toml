@@ -36,7 +36,6 @@ serde_yaml = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-catalog = { workspace = true }
 wamn-compiler = { workspace = true }
-wamn-schema-control = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "process", "signal", "time"] }
 url = { workspace = true }
 wamn-test-postgres = { workspace = true }

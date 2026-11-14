@@ -15,6 +15,8 @@ mod error;
 pub mod host_credentials;
 pub mod identity_role;
 pub mod materializer_workload;
+pub mod migration;
+pub mod migrations;
 mod name;
 pub mod operation_grants;
 pub mod org;
@@ -25,8 +27,6 @@ pub mod project_key;
 pub mod readers;
 #[cfg(feature = "ops")]
 pub mod recovery;
-pub mod schema_baseline;
-pub mod schema_migrations;
 pub mod session_target;
 pub mod sql;
 /// Test databases with the system control store minimum.
@@ -45,10 +45,10 @@ pub use name::{
     APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_OWNER_ROLE, DB_PREFIX, GUEST_SECRET_PREFIX,
     INSTANCE_SUFFIX_LEN, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN,
     MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, control_administration_key,
-    control_administration_secret_name, org_workload_secret_name, package_owner_role,
-    project_env_cdc_secret_name, project_env_database_name, project_env_guest_secret_name,
-    project_env_key, project_env_namespace, project_env_secret_name, validate_instance_suffix,
-    validate_project_env, validate_project_env_cdc, validate_project_id, workload_secret_name,
+    control_administration_secret_name, org_workload_secret_name, project_env_cdc_secret_name,
+    project_env_database_name, project_env_guest_secret_name, project_env_key,
+    project_env_namespace, project_env_secret_name, validate_instance_suffix, validate_project_env,
+    validate_project_env_cdc, validate_project_id, workload_secret_name,
 };
 pub use org::{OrgClusters, render_org_cluster_set};
 pub use platform_principals::{
@@ -78,7 +78,6 @@ pub use workload_role::{
 pub const SYSTEM_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/record-history.sql"),
     include_str!("../../../../deploy/sql/system-schema.sql"),
-    include_str!("../../../../deploy/sql/system-schema-baseline.sql"),
 );
 
 /// Targeted connection-reader authority for control database logins.
@@ -96,10 +95,7 @@ pub const CONTROL_BOOTSTRAP_SQL: [&str; 2] = [SYSTEM_SCHEMA_SQL, CONTROL_PORTABL
 /// `deploy/sql/record-history.sql` first. `CATALOG_SCHEMA_SQL` carries that
 /// file, so an applier that applied the catalog schema already holds it
 /// (`wamn-0h0g.9.15`).
-pub const APP_SCHEMA_SQL: &str = concat!(
-    include_str!("../../../../deploy/sql/app-schema.sql"),
-    include_str!("../../../../deploy/sql/app-schema-baseline.sql"),
-);
+pub const APP_SCHEMA_SQL: &str = concat!(include_str!("../../../../deploy/sql/app-schema.sql"),);
 
 mod placement;
 mod template;
@@ -108,3 +104,7 @@ pub use placement::{
     cluster_of,
 };
 pub use template::Template;
+
+/// Project event trigger installed by the authenticated administrator during initialization.
+pub const MIGRATION_PRIVILEGES_SQL: &str =
+    include_str!("../../../../deploy/sql/migration-privileges.sql");

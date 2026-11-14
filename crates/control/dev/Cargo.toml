@@ -42,9 +42,7 @@ wamn-identity-client = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-engine = { workspace = true }
-wamn-schema-control = { workspace = true }
 wamn-compiler = { workspace = true }
-wamn-schema-introspection = { workspace = true }
 wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }
 wamn-environment-control = { workspace = true }

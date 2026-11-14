@@ -27,27 +27,6 @@ pub async fn initialize(
     let project_env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
 
-    // Refuse a changed SQL record, independently of executable versions.
-    let observed = installed(platform, document).await?;
-    let mut changed = Vec::new();
-    for (package, installed) in analysed {
-        let now = observed
-            .get(package)
-            .map(|now| now.physical_schema_fingerprint.as_str());
-        if now != Some(installed.physical_schema_fingerprint.as_str()) {
-            changed.push(format!(
-                "{package}: analysed {}, installed {}",
-                installed.physical_schema_fingerprint,
-                now.unwrap_or("nothing")
-            ));
-        }
-    }
-    ensure!(
-        changed.is_empty(),
-        "the installed packages changed since analysis: {}",
-        changed.join("; ")
-    );
-
     let mut opened = Vec::new();
     for package in &manifest.release.packages {
         let (id, version) = (package.package_id(), package.package_version());
@@ -81,17 +60,21 @@ pub async fn initialize(
             opened[index].take().context("each package applies once")?;
         let applies = !analysed.contains_key(&id);
         if applies {
-            wamn_package_control::apply_package::apply_package(
-                wamn_package_control::apply_package::ApplyPackageRequest {
-                    component_source: platform.component_source()?,
-                    changes: platform.auth_changes().await?,
-                    package: opened.package_root(),
-                    database_url: project_url.to_owned(),
-                    org: document.org.clone(),
-                    project: document.project.clone(),
-                    environment: document.env.clone(),
-                },
-            )
+            crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
+                migration_database_url: wamn_control_provision::migration::configuration(
+                    project_url,
+                    &document.org,
+                    &document.project,
+                    &document.env,
+                )?,
+                component_source: platform.component_source()?,
+                changes: platform.auth_changes().await?,
+                package: opened.package_root(),
+                database_url: project_url.to_owned(),
+                org: document.org.clone(),
+                project: document.project.clone(),
+                environment: document.env.clone(),
+            })
             .await
             .with_context(|| format!("apply package {id}@{version}"))?;
         }
@@ -352,7 +335,7 @@ pub async fn retire(
                 .iter()
                 .all(|package| selection.packages.contains(package.package_id()))
         {
-            let (packages, _) = analyse::read_release_packages(platform, &manifest).await?;
+            let packages = analyse::read_release_packages(platform, &manifest).await?;
             releases.insert(digest, (manifest, packages));
         }
     }

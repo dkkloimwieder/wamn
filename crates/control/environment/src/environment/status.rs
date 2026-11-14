@@ -26,8 +26,8 @@ pub struct Status {
     pub installed: Option<BTreeMap<String, super::analyse::Installed>>,
     pub warnings: Vec<String>,
     pub schema: Option<super::sql::schema::Status>,
-    pub system_schema: Option<wamn_package_control::schema_baseline::SchemaReport>,
-    pub project_schema: Option<wamn_package_control::schema_baseline::SchemaReport>,
+    pub system_schema: Option<crate::migrations::SchemaReport>,
+    pub project_schema: Option<crate::migrations::SchemaReport>,
 }
 
 /// Independently observed state of one application's Helm release and host group.
@@ -77,7 +77,7 @@ pub async fn status(
     let mut warnings = Vec::new();
     let system_schema = match async {
         let mut system = connect(&platform.system_database_url).await?;
-        wamn_package_control::schema_baseline::observe_system(&mut system).await
+        crate::platform_migrations::observe_system(&mut system).await
     }
     .await
     {
@@ -97,7 +97,7 @@ pub async fn status(
         };
         let url = super::analyse::project_url(platform, &document, &row)?;
         let mut project = super::analyse::connect_project(&url).await?;
-        wamn_package_control::schema_baseline::observe_project(&mut project)
+        crate::platform_migrations::observe_project(&mut project)
             .await
             .map(Some)
     }
@@ -122,24 +122,20 @@ pub async fn status(
         }
     };
     let platform: &Platform = platform;
-    let installed = schema
-        .as_ref()
-        .filter(|schema| schema.installed_environment.is_some())
-        .map(|schema| {
-            schema
-                .installed
-                .iter()
-                .map(|(id, source)| {
-                    (
-                        id.clone(),
-                        super::analyse::Installed {
-                            current: source.version.clone(),
-                            physical_schema_fingerprint: source.fingerprint.clone(),
-                        },
-                    )
-                })
-                .collect()
-        });
+    let installed = schema.as_ref().map(|schema| {
+        schema
+            .installed
+            .iter()
+            .map(|(id, source)| {
+                (
+                    id.clone(),
+                    super::analyse::Installed {
+                        current: source.version.clone(),
+                    },
+                )
+            })
+            .collect()
+    });
     let mut applications = BTreeMap::new();
     for (application, selection) in &document.applications {
         let mut warnings = Vec::new();

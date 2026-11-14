@@ -27,63 +27,29 @@ pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
         &std::fs::read(&manifest_path)
             .with_context(|| format!("read {}", manifest_path.display()))?,
     );
-    let migrations = root.join("migrations");
-    let mut names = Vec::new();
-    if migrations.exists() {
-        for entry in std::fs::read_dir(&migrations)
-            .with_context(|| format!("read {}", migrations.display()))?
-        {
-            names.push(
-                entry?
-                    .file_name()
-                    .into_string()
-                    .map_err(|_| anyhow::anyhow!("package migration file name is not UTF-8"))?,
-            );
+    for directory in ["migrations", "history"] {
+        let migrations = root.join(directory);
+        let mut names = Vec::new();
+        if migrations.exists() {
+            for entry in std::fs::read_dir(&migrations)
+                .with_context(|| format!("read {}", migrations.display()))?
+            {
+                names.push(
+                    entry?
+                        .file_name()
+                        .into_string()
+                        .map_err(|_| anyhow::anyhow!("package migration file name is not UTF-8"))?,
+                );
+            }
         }
-    }
-    names.sort_unstable();
-    for name in names {
-        frame(format!("migrations/{name}").as_bytes());
-        let path = migrations.join(&name);
-        frame(&std::fs::read(&path).with_context(|| format!("read {}", path.display()))?);
+        names.sort_unstable();
+        for name in names {
+            frame(format!("{directory}/{name}").as_bytes());
+            let path = migrations.join(&name);
+            frame(&std::fs::read(&path).with_context(|| format!("read {}", path.display()))?);
+        }
     }
     Ok(wamn_digest::format_sha256(&context.finalize()))
-}
-
-/// Write physical SQL for a synthetic package and its declared relation columns.
-pub fn write_physical_schema(
-    root: &Path,
-    columns: std::collections::BTreeMap<
-        String,
-        Vec<wamn_schema_control::physical_schema::RelationColumn>,
-    >,
-) -> anyhow::Result<()> {
-    use wamn_schema_control::physical_schema::{PhysicalSchema, render};
-
-    let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&std::fs::read(
-        wamn_compiler::package_manifest_path(root),
-    )?)?;
-    let mut migrations = Vec::new();
-    for entry in std::fs::read_dir(root.join("migrations"))? {
-        let path = entry?.path();
-        if path.extension().is_some_and(|extension| extension == "sql") {
-            migrations.push(wamn_schema_control::MigrationSource {
-                relative_path: path.strip_prefix(root)?.to_string_lossy().into_owned(),
-                bytes: std::fs::read(path)?,
-            });
-        }
-    }
-    let statements = render(&(&manifest).into(), &migrations, &columns)?;
-    let output = wamn_compiler::output_root(root);
-    std::fs::create_dir_all(&output)?;
-    std::fs::write(
-        output.join("physical-schema.json"),
-        serde_json::to_vec(&PhysicalSchema {
-            columns,
-            statements,
-        })?,
-    )?;
-    Ok(())
 }
 
 /// Record output that a test writes, without compiling a guest.

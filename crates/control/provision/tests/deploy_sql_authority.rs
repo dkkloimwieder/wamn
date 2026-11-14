@@ -409,11 +409,7 @@ fn the_swept_minimum_admits_only_the_connected_guest_on_postgres() {
         &db_url,
         &format!(
             "SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false), set_config('app.operation', 'admin:seed-catalog-fixture', false); \
-             INSERT INTO catalog.packages \
-               (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
-             VALUES \
-               ('sha256:' || repeat('c', 64), 't1', 'platform_fixture', '1.0.0', 'sha256:' || repeat('a', 64)), \
-               ('sha256:' || repeat('c', 64), 't2', 'platform_fixture', '1.0.0', 'sha256:' || repeat('b', 64));\n\
+             INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( 't1', 'platform_fixture', '1.0.0', 'sha256:' || repeat('a', 64)), ( 't2', 'platform_fixture', '1.0.0', 'sha256:' || repeat('b', 64));\n\
              BEGIN;\n\
              SET LOCAL ROLE \"{guest}\";\n\
              SET LOCAL app.project_env_key = 't2';\n\
@@ -595,12 +591,10 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         &format!(
             "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:authority-fixture', false); \
              INSERT INTO catalog.packages \
-               (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
-             SELECT 'sha256:' || repeat('c', 64), t, 'platform_fixture', '1.0.0', {hash} \
+               (project_env_key, package_id, package_version, artifact_digest) \
+             SELECT t, 'platform_fixture', '1.0.0', {hash} \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n\
-             INSERT INTO wamn_run.environment_policies \
-               (project_env_key, expected_environment) \
-             SELECT t, 'dev' FROM unnest(ARRAY['t1', 't2']) AS t;\n\
+             \n\
              INSERT INTO wamn_run.runs \
                (project_env_key, run_id, package_id, environment, \
                 wiring_id, wiring_version, wiring_hash, binding_world_json) \

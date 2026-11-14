@@ -93,15 +93,13 @@ pub(super) fn read_package_manifests(
     let mut contracts = BTreeMap::new();
     for root in roots {
         let path = wamn_compiler::package_manifest_path(root);
-        let directory =
-            wamn_package_control::apply_package::read_package_directory(root).map_err(|error| {
-                PublishManifestError {
-                    source: Some(error.into()),
-                    ..PublishManifestError::new(
-                        PublishManifestErrorType::PackageManifest,
-                        format!("read package directory {}", root.display()),
-                    )
-                }
+        let directory = wamn_package_control::package_source::read_package_directory(root)
+            .map_err(|error| PublishManifestError {
+                source: Some(error.into()),
+                ..PublishManifestError::new(
+                    PublishManifestErrorType::PackageManifest,
+                    format!("read package directory {}", root.display()),
+                )
             })?;
         let manifest =
             wamn_compiler::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
@@ -119,14 +117,6 @@ pub(super) fn read_package_manifests(
                 error,
             )
         })?;
-        wamn_package_control::apply_package::validate_package_migration_policy(root, &directory)
-            .map_err(|error| PublishManifestError {
-                source: Some(error.into()),
-                ..PublishManifestError::new(
-                    PublishManifestErrorType::PackageManifest,
-                    format!("validate package migration policy {}", path.display()),
-                )
-            })?;
         let package_id = manifest.package.id.clone();
         contracts.insert(package_id.clone(), operation_contracts(&manifest)?);
         if manifests.insert(package_id.clone(), manifest).is_some() {
@@ -320,82 +310,6 @@ mod tests {
 
             super::read_package_manifests(&[root]).unwrap();
         }
-    }
-
-    #[test]
-    fn publication_refuses_static_migration_violations_without_a_database() {
-        use super::super::{
-            PublishManifestErrorType, PublishReleaseRequest, assemble_local_release,
-        };
-
-        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
-        let root = scratch.path().join("package");
-        let output = root.join("generated");
-        std::fs::create_dir_all(output.join("publication")).unwrap();
-        std::fs::write(output.join("publication/attachments.json"), b"{}").unwrap();
-        std::fs::create_dir_all(root.join("migrations")).unwrap();
-        std::fs::write(
-            output.join("wamn.json"),
-            include_bytes!("../../../package/tests/fixtures/component_package/generated/wamn.json"),
-        )
-        .unwrap();
-        let request = PublishReleaseRequest {
-            applications: BTreeMap::new(),
-            application: None,
-            org: "publication".into(),
-            project: "fixture".into(),
-            environment: "dev".into(),
-            packages: vec![
-                wamn_catalog::PackageCoordinate::new("source_fixture", "1.0.0").unwrap(),
-            ],
-        };
-        let migration = root.join("migrations/0001_initial.sql");
-        std::fs::write(&migration, "CREATE TABLE inventory.item (id uuid);").unwrap();
-        super::read_package_manifests(std::slice::from_ref(&root)).unwrap();
-        for sql in [
-            "CREATE TABLE inventory.item (id uuid); ALTER TABLE inventory.item DROP COLUMN id;",
-            "CREATE TABLE inventory.item (id uuid); SET ROLE other;",
-            "CREATE TABLE inventory.item (id uuid); UPDATE inventory.other SET id = gen_random_uuid();",
-            "CREATE TABLE inventory.item (id uuid); UPDATE inventory.item SET;",
-        ] {
-            std::fs::write(&migration, sql).unwrap();
-            let error = assemble_local_release(&request, std::slice::from_ref(&root), &[])
-                .expect_err("a known migration violation must refuse before publication");
-            assert_eq!(
-                error
-                    .downcast_ref::<super::PublishManifestError>()
-                    .unwrap()
-                    .error_type(),
-                PublishManifestErrorType::PackageManifest,
-            );
-        }
-
-        std::fs::write(migration, "CREATE TABLE inventory.item (id uuid);").unwrap();
-        let path = output.join("wamn.json");
-        let mut manifest: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        manifest["models"]["item"]["owner"] = "base_fixture".into();
-        manifest["models"]["item"]
-            .as_object_mut()
-            .unwrap()
-            .remove("audit_log");
-        manifest["base_dependencies"] = serde_json::json!({
-            "base": {
-                "package": "base_fixture",
-                "version": "1.0.0",
-                "digest": wamn_package_control::test_support::DIGEST,
-                "operations": ["item.get"],
-            }
-        });
-        std::fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-        let error = assemble_local_release(&request, &[root], &[])
-            .expect_err("publication cannot create another package's table");
-        assert_eq!(
-            error.chain().find_map(|source| source.downcast_ref::<
-                wamn_package_control::apply_package::ApplyPackageError,
-            >()).unwrap_or_else(|| panic!("expected an ownership refusal: {error:#}")).error_type(),
-            wamn_package_control::apply_package::ApplyPackageErrorType::DefinitionOwnerDeclarationMissing,
-        );
     }
 
     fn app(name: &str) -> std::path::PathBuf {

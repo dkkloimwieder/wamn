@@ -147,10 +147,7 @@ Initialize application SQL through the explicit schema operation before the firs
 `POST /wamn_control/schema/diff` and `POST /wamn_control/schema/apply` accept optional `application` and `release` members.
 Without `application`, they process the environment's selected applications.
 An explicit release requires an application.
-Apply also accepts the existing `resolve` migration choice.
 `POST /wamn_control/schema/reset` resets the whole disposable environment.
-`POST /wamn_control/schema/adopt` accepts an optional application.
-Without it, adoption covers the environment.
 These routes expose no system SQL operation.
 
 Each start response returns `job`, the Kubernetes Job name.
@@ -164,7 +161,7 @@ There is no operation history database.
 
 The server selects the image, command, namespace, actor, chart, and credential references.
 Deploy, rollback, and diff use the existing apply, registry, and NATS credentials.
-Apply, reset, and adopt also receive the existing CNPG administrator credential.
+Apply and reset also receive the existing CNPG administrator credential.
 Those SQL Jobs are privileged.
 The ctl image carries the chart templates and deployment resources.
 Platform deployment stores immutable chart values and the image selection in a ConfigMap.
@@ -173,7 +170,7 @@ Environment provisioning creates separate code and SQL ServiceAccounts and names
 
 Set `WAMN_CONTROL_URL` to the deployed control host and `WAMN_TOKEN` to your password session token.
 With that URL, `wamn deploy`, `wamn rollback`, and `wamn-ctl env rollback` use the control routes.
-The published `wamn schema diff`, deployed `schema apply`, `schema reset`, and deployed `schema adopt` commands also use those routes.
+The published `wamn schema diff`, deployed `schema apply`, and `schema reset` commands also use those routes.
 The CLI starts the Job and polls `operation.status`.
 It prints one line when the state changes and prints the log tail once when the Job ends.
 A refused route or failed Job exits nonzero.
@@ -193,7 +190,7 @@ Without `WAMN_CONTROL_URL`, application and schema commands use the trusted path
 Unset that variable explicitly before trusted administration.
 That path uses the selected kubeconfig, database credentials, chart, and broker inputs below.
 Provisioning, `env apply`, internal SQL workers, platform schema commands, and status retain direct access.
-An adjacent `dev.json` keeps local source schema execution and adoption direct.
+An adjacent `dev.json` keeps local source schema execution direct.
 Read-only source schema diff also stays direct.
 GCP coverage and upgrades of persistent system databases remain outside this rebuild.
 
@@ -253,8 +250,8 @@ If observation fails, WAMN retains those facts. Retry the same selection after r
 
 ### Select SQL independently
 
-A schema fingerprint identifies the complete physical SQL, including authored and generated definitions.
-It excludes code versions, release digests, ordinary queries, and web files.
+SQLx migration versions and checksums identify applied SQL.
+Schema diff reports pending files, missing applied files, and checksum mismatches.
 `schema.mode` accepts `reset` and `migrate`.
 If omitted, the mode is `reset` only when `registry.environments.disposable` is true. Otherwise, it is `migrate`.
 An environment name or explicit `reset` mode grants no authority to discard data.
@@ -267,7 +264,6 @@ wamn schema apply sample_app --env environments/dev/environment.k
 wamn schema apply sample_app --env environments/dev/environment.k --release sha256:<release-digest>
 wamn schema diff apps/sample_app --env environments/dev/environment.k
 wamn schema apply apps/sample_app --env environments/dev/environment.k
-wamn schema adopt --env environments/dev/environment.k
 wamn schema reset --env environments/dev/environment.k
 ```
 
@@ -281,69 +277,47 @@ In `migrate`, explicit apply executes pending files in dependency order and pres
 The watcher initializes absent packages but does not advance installed SQL.
 Code deployment preserves installed SQL.
 An ordinary migration file and its completion record commit together.
-`catalog.packages` stores each package's baseline, current fingerprint, version, and artifact source.
-`catalog.package_migrations` stores ordered paths, checksums, outcomes, and completion timestamps across code versions.
-`platform.schema_baseline` records the frozen project initialization digest and its `installed_at` identity.
-Status reports initialization identity, installed files, pending image files, and uncertain `started` files separately from executable selections.
-Status and diff warn when the image lacks recorded files or contains pending files.
-Status reports unreadable state as unknown.
-Status and analysis report initialization digest differences and changed recorded checksums as warnings.
-Operations refuse initialization digest differences, changed recorded checksums, authorization failures, unavailable inputs, and SQL failures.
-An adopted application record does not prove that SQL ran.
-
-`schema adopt` asserts the configured sources without executing SQL or selecting code.
-Matching records remain unchanged. New or changed asserted files receive `adopted` with no `applied_at` timestamp.
-Resolve an uncertain `started` record before adoption.
+`catalog.packages` stores the current package version and artifact source.
+A separate SQLx history table records each package and environment's applied versions and checksums.
+Authored and generated history migrations run through the same SQLx sequence.
+The restricted migration connection keeps its actor binding across commits.
+For an explicit PostgreSQL catalog URL, pass the migration login's actual connection with `wamn-ctl apply-package --migration-database-url`.
+Both connections retain their own password and TLS parameters.
+Kubernetes callers use the managed role's basic-auth Secret.
+A separate trusted connection records package completion and grants.
+SQLx refuses edited or missing applied migrations.
+A failed transactional file rolls back its effects and its history row together.
+Earlier committed files remain applied.
 
 ### Reset target and recovery
 
-If selected physical SQL changes in authorized `reset` mode, schema apply replaces the whole project-environment database.
-Every application in that database loses its data, including stopped applications with retained schemas.
-Manual workflow definitions, queued runs, and other database-local state also disappear.
-An explicit schema reset performs that replacement even when the fingerprints match.
-Neither operation resets `wamn_system` or changes another environment's database.
+Every schema apply in `reset` mode resets application state in the existing project database.
+An explicit schema reset does the same work.
+The registry must authorize data loss by recording the environment as disposable.
+Neither operation resets `wamn_system` or another environment.
 
-Before stopping writers, WAMN resolves every retained schema, permission, and required published artifact.
-Missing sources, omitted installed applications, or conflicting definitions stop preparation before destruction.
-The executing SQL image must contain every recorded project file with its original checksum.
-Resolve any project file with a `started` outcome before reset:
-`wamn platform schema apply --target project --env FILE --chart DIR --resolve <path>=applied|retry`.
-Inspect the file's database effects before choosing its resolution.
-The environment lock excludes application deployment during reset.
-`registry.environment_projects.pending_database` pins the complete inputs and a new initialization identity outside the database being replaced.
-CNPG sets the existing Database to `ensure: absent`, waits, then sets `ensure: present` under the same name and waits again.
-The SQL Job runs initialization SQL, then the pinned applied project files in order through the shared executor.
-Files pending for the image stay pending after reset. Retries retain the pinned initialization identity and applied file set.
-An unavailable or changed file refuses each reset attempt before database replacement.
-Existing owners restore grants, bindings, release caches, and CDC.
-The broker discards only that environment's obsolete events while writers remain stopped.
-WAMN clears the pending record before resuming unchanged application selections.
+Before stopping users, WAMN resolves all retained package artifacts and validates their migration files.
+The lifecycle lock excludes application deployment during reset.
+Reset stops application hosts and event users.
+It drops the objects owned by the migration login and restores that login's grants.
+It clears application catalog state, runs, queued events, and authored workflows.
+It then applies every selected package's migrations in dependency order.
 
-After an interruption, repeat the same reset or schema apply.
-Before the recreated database carries the pinned initialization identity, retry can repeat deletion and creation.
-After that identity exists, retry preserves the recreated database and resumes SQL restoration and cleanup.
-If workload resume fails after the pending record clears, reapply the affected application's release.
-Inspect SQL records and the named failed resource before retrying. Do not clear pending inputs or manually drop application tables.
-Stale-event admission remains untested under `wamn-alrvy.19`.
+Platform-owned schemas, database credentials, CDC publications, and replication slots remain.
+The platform owns application schemas. The migration login owns the objects inside them.
+Schema publications therefore include recreated tables without rebuilding CDC.
+The database keeps its identity.
+After migrations succeed, WAMN resumes the existing application selections.
+If a reset fails, users remain stopped. Repair the failure and repeat the same schema apply with its release.
 
-### Nontransactional SQL repair
+### Nontransactional SQL
 
-A file whose first line is exactly `-- wamn:no-transaction` must contain one standalone statement.
-The checksum includes the marker. WAMN commits `started`, executes outside a transaction, then records `applied` after success.
-This sequence provides neither atomicity nor exactly-once execution.
-An uncertain `started` record blocks silent replay. Inspect the actual database effect first.
-Use the package and relative path in the explicit resolution:
-
-```bash
-wamn schema apply sample_app --env environments/dev/environment.k --resolve sample_pkg:migrations/0002_index.sql=applied
-wamn schema apply sample_app --env environments/dev/environment.k --resolve sample_pkg:migrations/0002_index.sql=retry
-```
-
-`applied` asserts completed execution and skips the statement.
-`retry` permits the same checksummed bytes after manual repair, such as removing an invalid concurrent index.
-Changed bytes refuse resolution. WAMN performs no automatic repair.
-Execution and resolution share session advisory locks across commits, so resolution cannot race a worker that still runs.
-Committed SQL stays after a failed rollout or executable rollback.
+A file that begins with `-- no-transaction` runs outside a transaction.
+SQLx records it after it succeeds.
+A crash before that record causes a retry to execute the file again.
+Inspect and repair partial effects before retrying a failed nontransactional file.
+WAMN has no separate adoption, started, or resolution state.
+Session advisory locks exclude concurrent schema operations across commits.
 
 ## Existing application operations
 
@@ -810,7 +784,7 @@ Use the environment's identity Deployment and require its readiness before issui
 Select the prepared chart explicitly for each platform SQL operation.
 Set `KUBECONFIG` to the target cluster file and select its current context first.
 Without `KUBECONFIG`, the command uses `$HOME/.kube/config`.
-System target reads the administrator basic-auth Secret in the org namespace.
+System target reads its managed migration login's basic-auth Secret in the org namespace.
 Both targets execute SQL in a bounded Job in that namespace.
 
 ```bash
@@ -821,30 +795,11 @@ wamn platform schema apply --target system --chart /prepared/platform
 Both commands run the selected chart's immutable `ctl` image and print its digest.
 Both read the migration bytes embedded in that image.
 Diff writes no SQL state.
-It reports adoption, completed files, pending SQL, checksums, and uncertain `started` files.
-For recognized removals, it warns about columns and known SQL dependencies.
-It also names control and identity code as possible consumers.
-
-If the image lacks recorded files, diff warns and apply refuses.
-Adoption creates an empty migration history for an existing matching initialization.
-Only apply performs adoption and runs pending files.
-
-Each transactional file commits with its history row.
-Apply skips completed files and refuses changed checksums or a different initialization digest.
-A failure reports completed and remaining files.
-Committed SQL stays committed if a later file fails.
-
-A file with the `-- wamn:no-transaction` marker runs outside a transaction.
-If its outcome stays `started`, inspect the database before resolution.
-Use `applied` to record that the statement completed.
-After any manual cleanup, use `retry` to run the same bytes again.
-
-```bash
-wamn platform schema apply --target system --chart /prepared/platform \
-  --resolve migrations/system/0001_example.sql=applied
-wamn platform schema apply --target system --chart /prepared/platform \
-  --resolve migrations/system/0001_example.sql=retry
-```
+It reports installed and pending SQLx versions, checksums, and missing files.
+If the image lacks an applied file, apply refuses.
+Each transactional file commits with its SQLx history row.
+A later failure keeps earlier commits.
+Files that begin with `-- no-transaction` need safe retries after partial execution.
 
 Fresh platform installation initializes an empty system database, then runs every embedded system migration.
 If migration execution stops, resume with `platform schema apply --target system` and the same `--chart`.
@@ -858,18 +813,18 @@ For one environment, select project target and its environment document.
 Project target requires `--env`, and system target refuses it.
 Set `WAMN_APPLY_DATABASE_URL` to the installed system registry before project operations.
 The command reads the environment's recorded database instance and PostgreSQL cluster from that registry.
-The SQL Job uses the existing CNPG administrator and `platform/wamn-apply` credentials.
+The SQL Job uses the scope's own CNPG migration login and basic-auth Secret.
+The platform owner roles stay `NOLOGIN`. Migration logins inherit their privileges through membership.
+Platform migration execution refuses administrator sessions.
 
 ```bash
 wamn platform schema diff --target project --env environments/dev/environment.k --chart /prepared/platform
 wamn platform schema apply --target project --env environments/dev/environment.k --chart /prepared/platform
-wamn platform schema apply --target project --env environments/dev/environment.k --chart /prepared/platform \
-  --resolve migrations/project/0001_example.sql=retry
 ```
 
 The Job holds the environment's exclusive lifecycle lock for the whole operation.
 It waits for an active reset or application schema operation.
-It changes only WAMN substrate SQL and `platform.schema_migration` in that environment's recorded database.
+It changes only WAMN substrate SQL and `platform._sqlx_migrations` in that environment's recorded database.
 Application tables, rows, code selections, Helm releases, and other environments stay unchanged.
 The operation runs no environment provisioning or application activation.
 
@@ -919,6 +874,7 @@ Restart the host to change trust or pool configuration. The replacement process 
 
 Set `WAMN_SYSTEM_ADMIN_URL` to the administrator connection configuration for the ensure phase.
 Run `wamn-ctl provision-system --platform-domain DOMAIN` in the org namespace.
+For explicit PostgreSQL access, also pass the system migration login's connection through `--migration-database-url`.
 It declares the restricted apply login through CloudNativePG and publishes its connection data in the `wamn-apply` ConfigMap.
 Set `WAMN_APPLY_DATABASE_URL` from its `apply.json` entry before `wamn-ctl env apply`.
 The other apply phases use the restricted credential. The SQLx constructor reads its native basic-auth Secret and cluster CA.

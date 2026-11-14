@@ -60,6 +60,43 @@ pub fn seed_org_project_env_sql(org: &str, project: &str, env: &str) -> String {
     )
 }
 
+/// Arrange a restricted package login for a local PostgreSQL fixture.
+pub async fn package_migration_input(
+    input: impl AsRef<str>,
+    org: &str,
+    project: &str,
+    environment: &str,
+) -> anyhow::Result<String> {
+    let input = input.as_ref();
+    let options = wamn_postgres::connect_options(input).await?;
+    let database = options
+        .get_database()
+        .ok_or_else(|| anyhow::anyhow!("fixture database is absent"))?;
+    let key = wamn_registry::project_env_key(org, project, environment);
+    let login = crate::migration::login(&key, database)?;
+    let mut admin = wamn_postgres::connect(input).await?;
+    let role = postgres_protocol::escape::escape_identifier(&login);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {role} LOGIN PASSWORD 'migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT CONNECT ON DATABASE {} TO {role}; GRANT {role} TO wamn_db_owner WITH INHERIT TRUE, SET TRUE",
+        postgres_protocol::escape::escape_literal(&login), postgres_protocol::escape::escape_identifier(database))))
+        .execute(&mut admin).await?;
+    let protected: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT FROM pg_event_trigger WHERE evtname='wamn_migration_privileges')",
+    )
+    .fetch_one(&mut admin)
+    .await?;
+    if !protected {
+        sqlx::raw_sql(crate::MIGRATION_PRIVILEGES_SQL)
+            .execute(&mut admin)
+            .await?;
+    }
+    let mut url = url::Url::parse(input)?;
+    url.set_username(&login)
+        .map_err(|()| anyhow::anyhow!("fixture login"))?;
+    url.set_password(Some("migration-fixture"))
+        .map_err(|()| anyhow::anyhow!("fixture password"))?;
+    Ok(url.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,4 +196,38 @@ pub fn replication_login_sql(role: &str, password: &str) -> String {
         role = escape_identifier(role),
         password = escape_literal(password)
     )
+}
+
+/// Arrange the same restricted platform identity when a fixture supplies PostgreSQL instead of CNPG.
+pub async fn platform_migration_input(
+    input: impl AsRef<str>,
+    scope: crate::migrations::MigrationDatabase,
+) -> anyhow::Result<String> {
+    let input = input.as_ref();
+    let options = wamn_postgres::connect_options(input).await?;
+    let database = options
+        .get_database()
+        .ok_or_else(|| anyhow::anyhow!("fixture database is absent"))?;
+    let role = scope.managed_role(database);
+    let name = postgres_protocol::escape::escape_identifier(&role.name);
+    let mut admin = wamn_postgres::connect(input).await?;
+    match scope {
+        crate::migrations::MigrationDatabase::System => {
+            sqlx::raw_sql(SYSTEM_ROLE_SQL).execute(&mut admin).await?;
+        }
+        crate::migrations::MigrationDatabase::Project => {
+            sqlx::raw_sql(sql::ensure_db_owner_role_sql())
+                .execute(&mut admin)
+                .await?;
+        }
+    }
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {name} LOGIN PASSWORD 'platform-migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT {} TO {name} WITH INHERIT TRUE, SET FALSE; GRANT CONNECT ON DATABASE {} TO {name}",
+        postgres_protocol::escape::escape_literal(&role.name), scope.owner_role(), postgres_protocol::escape::escape_identifier(database))))
+        .execute(&mut admin).await?;
+    let mut url = url::Url::parse(input)?;
+    url.set_username(&role.name)
+        .map_err(|()| anyhow::anyhow!("fixture login"))?;
+    url.set_password(Some("platform-migration-fixture"))
+        .map_err(|()| anyhow::anyhow!("fixture password"))?;
+    Ok(url.into())
 }

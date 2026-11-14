@@ -11,7 +11,7 @@ tempfile.workspace = true
 postgres-protocol = { workspace = true }
 wamn-scalar.workspace = true
 wamn-digest.workspace = true
-wamn-schema-control.workspace = true
+wamn-identity-protocol.workspace = true
 anyhow.workspace = true
 pg_query = "=6.2.1"
 serde = { workspace = true, features = ["derive"] }
@@ -19,7 +19,7 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 toml.workspace = true
 # `Executor::describe` is behind `sqlx-core/offline`, which only `macros` turns on.
-sqlx = { workspace = true, features = ["macros", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+sqlx = { workspace = true, features = ["migrate", "macros", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 url.workspace = true
 wamn-schema-introspection = { workspace = true }
 wamn-catalog = { workspace = true }

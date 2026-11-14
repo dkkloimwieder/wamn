@@ -4,12 +4,11 @@ use super::{
     DevConfigDocument, DevConfigError, DevConfigErrorType, ENVIRONMENT,
     EVENT_MATERIALIZER_DATABASE_URL, EXECUTOR_PLATFORM_DATABASE_URL, GUEST_DATABASE_URL,
     HOST_BINARY, HOST_CONFIG_FILE, HOST_GROUP, HOST_NAME, HTTP_ADMITTER_DATABASE_URL,
-    IDENTITY_DATABASE_URL, LOCAL_ARTIFACTS, LocalArtifacts, NATS_TLS_CA, NATS_TLS_CERT,
-    NATS_TLS_KEY, ORG, OTEL_EXPORTER_OTLP_ENDPOINT, PACKAGE_SOURCES, PLATFORM_DOMAIN,
-    POSTGRES_SYSTEM_DATABASES, PROJECT, PackageSource, PathBuf, ROUTE_HOST, RUNNER,
-    ReachabilityProbe, SCHEDULER_NATS_URL, STREAM_REPLICAS, SYSTEM_DATABASE_URL, SessionIdentity,
-    TARGET_DATABASE_ACL_FILE, TARGET_DATABASE_URL, TARGET_PRIVILEGES_FILE,
-    TARGET_TEMPLATE_DATABASE, Url, Value, WASMTIME_CACHE_DIR,
+    IDENTITY_DATABASE_URL, LOCAL_ARTIFACTS, LocalArtifacts, MIGRATION_DATABASE_URL, NATS_TLS_CA,
+    NATS_TLS_CERT, NATS_TLS_KEY, ORG, OTEL_EXPORTER_OTLP_ENDPOINT, PACKAGE_SOURCES,
+    PLATFORM_DOMAIN, POSTGRES_SYSTEM_DATABASES, PROJECT, PackageSource, PathBuf, ROUTE_HOST,
+    RUNNER, ReachabilityProbe, SCHEDULER_NATS_URL, STREAM_REPLICAS, SYSTEM_DATABASE_URL,
+    SessionIdentity, TARGET_DATABASE_URL, Url, Value, WASMTIME_CACHE_DIR,
 };
 
 /// Language-neutral JSON Schema generated from the strict `dev.json` input type.
@@ -220,9 +219,7 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     })?;
     let DevConfigDocument {
         target_database_url,
-        target_privileges_file,
-        target_template_database,
-        target_database_acl_file,
+        migration_database_url,
         system_database_url,
         identity_database_url,
         connection_database_url,
@@ -258,6 +255,7 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     } = input;
 
     let target_database_url = nonempty_string(target_database_url, TARGET_DATABASE_URL)?;
+    let migration_database_url = nonempty_string(migration_database_url, MIGRATION_DATABASE_URL)?;
     let system_database_url = nonempty_string(system_database_url, SYSTEM_DATABASE_URL)?;
     let identity_database_url = nonempty_string(identity_database_url, IDENTITY_DATABASE_URL)?;
     let guest_database_url = nonempty_string(guest_database_url, GUEST_DATABASE_URL)?;
@@ -318,11 +316,6 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
             ));
         }
     }
-    let target_privileges_file = nonempty_path(target_privileges_file, TARGET_PRIVILEGES_FILE)?;
-    let target_template_database =
-        nonempty_string(target_template_database, TARGET_TEMPLATE_DATABASE)?;
-    let target_database_acl_file =
-        nonempty_path(target_database_acl_file, TARGET_DATABASE_ACL_FILE)?;
     let condition_bearer_token = nonempty_string(condition_bearer_token, CONDITION_BEARER_TOKEN)?;
     let route_host = nonempty_string(route_host, ROUTE_HOST)?;
     wamn_control_provision::validate_platform_domain(&platform_domain).map_err(|source| {
@@ -388,9 +381,7 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
 
     Ok(DevConfig {
         target_database_url,
-        target_privileges_file,
-        target_template_database,
-        target_database_acl_file,
+        migration_database_url,
         system_database_url,
         identity_database_url,
         connection_database_url,

@@ -409,7 +409,7 @@ async fn apply_selection(
         eprintln!("WARN {warning}");
     }
     document.select_release(application, change, &applied)?;
-    crate::provision_project_env::registry::require_no_reset(
+    crate::provision_project_env::registry::require_connected(
         &mut *lock.client().await,
         &input.triple(),
     )

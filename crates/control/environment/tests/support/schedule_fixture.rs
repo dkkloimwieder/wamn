@@ -38,7 +38,6 @@ pub use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ScheduleRunAdmission, ScheduleRunAdmitted, WamnPostgres,
     WamnPostgresConfig,
 };
-pub use wamn_schema_control::BareSchemaName;
 pub use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 
 pub const PROJECT_ENV_KEY: &str = "schedule-live--dev--default";
@@ -181,20 +180,14 @@ pub async fn fixture() -> Fixture {
     let database = wamn_test_postgres::database();
     let url = database.url().to_owned();
     let mut admin = connect(&url).await;
-    let schema = BareSchemaName::new("wamn_run").unwrap();
     sqlx::raw_sql("CREATE SCHEMA application_data")
         .execute(&mut admin)
         .await
         .map(drop)
         .unwrap();
-    wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, true)
+    wamn_environment_control::platform_migrations::install_project(&mut admin)
         .await
         .expect("install the run plane and the catalog");
-    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
-        .execute(&mut admin)
-        .await
-        .map(drop)
-        .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::platform_principals_sql("schedule.invalid").unwrap()).to_string(),
     ))
@@ -222,10 +215,7 @@ pub async fn fixture() -> Fixture {
              INSERT INTO platform.permission (role_name, permission) VALUES \
                ('reader', '{READ_REFERENCE}');
              INSERT INTO platform.environment (status) VALUES ('active');
-             INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) \
-               VALUES ('{PROJECT_ENV_KEY}', '{ENVIRONMENT}');
-             INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
-               VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');"
+             INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( '{PROJECT_ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');"
         ))).execute(&mut admin).await.map(drop)
         .expect("seed the users, roles, permissions and the environment");
 

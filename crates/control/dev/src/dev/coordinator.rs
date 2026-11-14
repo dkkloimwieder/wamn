@@ -5,13 +5,8 @@
 //! activation semantics.
 
 use sqlx::Connection as _;
-#[cfg(test)]
-use wamn_scalar::SqlValueType;
 pub(super) mod plan;
-use plan::{
-    base_digests_stage_error, declaration_stage_error, project_catalog_for_package,
-    require_admitted_identity,
-};
+use plan::{base_digests_stage_error, declaration_stage_error, require_admitted_identity};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -23,8 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
 use wamn_catalog::PackageCoordinate;
-use wamn_compiler::manifest::PackageManifest;
-use wamn_package_control::apply_package::{self, ApplyPackageRequest};
+use wamn_environment_control::apply_package::{self, ApplyPackageRequest};
 use wamn_package_control::component_admission::{
     AdmitComponentRequest, ComponentAdmission, admit_component,
 };
@@ -37,8 +31,6 @@ use wamn_release_control::release_composition::{
     CompositionError, CompositionErrorType, PackageInput, SelectedComponentArtifact,
     select_component_artifacts,
 };
-use wamn_schema_control::BareSchemaName;
-use wamn_schema_introspection::ir::CatalogIr;
 
 use super::activation::{self, DevActivation, DevActivationRequest};
 use super::config::{DevConfig, ResolvedDevPackages, VerifiedBaseComponentDigest};
@@ -179,7 +171,6 @@ impl Error for ProductionDevStageError {
 
 #[derive(Debug)]
 struct PreparedLocalGrants {
-    target: target_database::PreparedConfiguration,
     inputs: Vec<String>,
 }
 
@@ -191,7 +182,6 @@ pub struct ProductionDevStageRunner {
     overlay_root: PathBuf,
     git: GitSource,
     packages: Option<ResolvedDevPackages>,
-    catalogs: BTreeMap<String, CatalogIr>,
     artifacts: Vec<SelectedComponentArtifact>,
     verified_base_digests: Vec<VerifiedBaseComponentDigest>,
     admissions: Vec<ComponentAdmission>,
@@ -230,7 +220,6 @@ impl fmt::Debug for ProductionDevStageRunner {
                 "package_count",
                 &self.package_inputs().map(|inputs| inputs.len()),
             )
-            .field("catalog_count", &self.catalogs.len())
             .field("artifact_count", &self.artifacts.len())
             .field(
                 "verified_base_digest_count",
@@ -268,7 +257,6 @@ impl ProductionDevStageRunner {
             overlay_root,
             git,
             packages: None,
-            catalogs: BTreeMap::new(),
             artifacts: Vec::new(),
             verified_base_digests: Vec::new(),
             admissions: Vec::new(),
@@ -381,22 +369,10 @@ impl ProductionDevStageRunner {
         self.packages = Some(packages);
         let package_inputs = self.package_inputs()?;
 
-        let run_schema = BareSchemaName::new(RUN_SCHEMA)
-            .expect("the repository-owned run schema is a valid bare identifier");
-        wamn_environment_control::verification_policy::project_environment_policy(
-            self.config.system_database_url(),
-            self.config.target_database_url(),
-            &run_schema,
-            &self.config.activation_identity().org,
-            &self.config.activation_identity().project_env_key(),
-            &self.config.activation_identity().environment,
-        )
-        .await
-        .map_err(|source| ProductionDevStageError::owner("project environment policy", source))?;
-
         for package in package_inputs {
             let outcome = Box::pin(apply_package::apply_local_package(
                 ApplyPackageRequest {
+                    migration_database_url: self.config.migration_database_url().to_owned(),
                     changes: wamn_broker::Publisher::new(
                         self.config.nats().connect().await.map_err(|source| {
                             ProductionDevStageError::owner("connect auth changes", source)
@@ -411,7 +387,7 @@ impl ProductionDevStageRunner {
                     project: self.config.activation_identity().project.clone(),
                     environment: self.config.activation_identity().environment.clone(),
                     component_source:
-                        wamn_package_control::apply_package::component_source_from_env(None)
+                        wamn_environment_control::apply_package::component_source_from_env(None)
                             .map_err(|source| {
                                 ProductionDevStageError::owner("component repository", source)
                             })?,
@@ -430,7 +406,7 @@ impl ProductionDevStageRunner {
     }
 
     /// Give the environment's operator service the `admin` role. Applying
-    /// the package wrote the role above, and `reconcile-run-plane` wrote the
+    /// the package wrote the role above, and the identity owner wrote the
     /// service's `user` row when the environment was made.
     async fn grant_operator_admin_role(&self) -> Result<(), ProductionDevStageError> {
         let identity = self.config.activation_identity();
@@ -445,37 +421,6 @@ impl ProductionDevStageRunner {
         )
         .await
         .map_err(|source| ProductionDevStageError::owner("grant the operator role", source))
-    }
-
-    async fn introspect(&mut self) -> Result<(), ProductionDevStageError> {
-        self.clear_after(DevStage::Introspect);
-        let packages = self.package_inputs()?;
-        for package in &packages {
-            let catalog =
-                wamn_compiler::introspect_package(self.config.target_database_url(), &package.root)
-                    .await
-                    .map_err(|source| {
-                        ProductionDevStageError::owner("introspect package", source)
-                    })?;
-            let catalog = project_catalog_for_package(&catalog, &package.manifest, &packages)?;
-            self.catalogs
-                .insert(package.manifest.package.id.clone(), catalog);
-        }
-        // Recorded only after Introspect read every package, so a restarted
-        // session never keeps a target whose Migrate or Introspect did not
-        // finish.
-        target_database::record_target_schema(
-            &self.config,
-            self.target_instance
-                .as_deref()
-                .expect("prepare_run assigned the target instance"),
-            self.prepared_schema_inputs
-                .as_deref()
-                .expect("Migrate recorded the schema inputs"),
-            &self.catalogs,
-        )
-        .map_err(|source| ProductionDevStageError::owner("record the target schema", source))?;
-        Ok(())
     }
 
     async fn prepare_generation(&mut self) -> Result<(), ProductionDevStageError> {
@@ -591,12 +536,7 @@ impl ProductionDevStageRunner {
     async fn acl(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Acl);
         let inputs = build_inputs(&self.package_inputs()?)?;
-        let prepared = PreparedLocalGrants {
-            target: target_database::prepare_configuration(&self.config).map_err(|source| {
-                ProductionDevStageError::owner("prepare local target privileges", source)
-            })?,
-            inputs,
-        };
+        let prepared = PreparedLocalGrants { inputs };
         self.reconcile_local_grants(&prepared, false).await?;
         if prepared.inputs != build_inputs(&self.package_inputs()?)? {
             return Err(ProductionDevStageError::invalid(
@@ -610,18 +550,10 @@ impl ProductionDevStageRunner {
 
     async fn reconcile_local_grants(
         &mut self,
-        prepared: &PreparedLocalGrants,
+        _prepared: &PreparedLocalGrants,
         apply: bool,
     ) -> Result<(), ProductionDevStageError> {
-        self.target_lease
-            .as_mut()
-            .expect("local target lease is held")
-            .reconcile_configuration(&prepared.target, apply)
-            .await
-            .map_err(|source| {
-                ProductionDevStageError::owner("reconcile local target privileges", source)
-            })?;
-        // A recreated local target loses its replica identities.
+        // Reset removes application tables and their replica identities.
         let packages = self
             .package_inputs()?
             .into_iter()
@@ -1072,14 +1004,7 @@ impl ProductionDevStageRunner {
 
     fn clear_after(&mut self, stage: DevStage) {
         match stage {
-            DevStage::Migrate | DevStage::Introspect => {
-                self.catalogs.clear();
-                self.artifacts.clear();
-                self.verified_base_digests.clear();
-                self.admissions.clear();
-                self.release = None;
-            }
-            DevStage::Build | DevStage::Admit => {
+            DevStage::Migrate | DevStage::Build | DevStage::Admit => {
                 self.artifacts.clear();
                 self.verified_base_digests.clear();
                 self.admissions.clear();
@@ -1105,17 +1030,28 @@ fn build_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevS
         .collect()
 }
 
-/// The physical SQL fingerprint of each package for migration and target reuse.
-fn schema_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevStageError> {
-    packages
-        .iter()
-        .map(|package| {
-            wamn_compiler::build_record::physical_schema_fingerprint(&wamn_compiler::output_root(
-                &package.root,
-            ))
-            .map_err(|source| ProductionDevStageError::owner("read the schema inputs", source))
-        })
-        .collect()
+/// Migration input digests used only for watch invalidation.
+async fn schema_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevStageError> {
+    let mut inputs = Vec::new();
+    for package in packages {
+        let migrations = wamn_compiler::migrations::migrator(
+            &wamn_package_control::package_source::migration_root(&package.root),
+        )
+        .await
+        .map_err(|source| ProductionDevStageError::owner("read migration inputs", source))?;
+        for file in migrations
+            .iter()
+            .filter(|file| file.migration_type.is_up_migration())
+        {
+            inputs.push(format!(
+                "{}:{}:{}",
+                package.manifest.package.id,
+                file.version,
+                hex::encode(&file.checksum)
+            ));
+        }
+    }
+    Ok(inputs)
 }
 
 impl DevStageRunner for ProductionDevStageRunner {
@@ -1148,7 +1084,6 @@ impl DevStageRunner for ProductionDevStageRunner {
                 self.prepared_schema_inputs.is_some()
                     && self.prepared_schema_inputs == self.schema_inputs
             }
-            DevStage::Introspect => self.catalogs.len() == self.package_inputs()?.len(),
             DevStage::Acl => self.acl_inputs.is_some() && self.acl_inputs == self.build_inputs,
             _ => false,
         })
@@ -1223,7 +1158,7 @@ impl DevStageRunner for ProductionDevStageRunner {
         // Build in disposable databases before comparing the selected physical SQL.
         self.prepare_generation().await?;
         let inputs = build_inputs(&self.package_inputs()?)?;
-        let schema_inputs = schema_inputs(&packages)?;
+        let schema_inputs = schema_inputs(&packages).await?;
         let roots = packages
             .iter()
             .map(|package| package.root.clone())
@@ -1234,8 +1169,8 @@ impl DevStageRunner for ProductionDevStageRunner {
         for diff in &diffs {
             for (package, change) in &diff.packages {
                 if change.installed.as_ref() != Some(&change.candidate) {
-                    tracing::warn!(%package, mode = ?diff.mode, pending = ?change.pending,
-                        edited = ?change.edited_applied,
+                    tracing::warn!(%package, mode = ?diff.mode, pending = ?change.migrations.pending,
+                        edited = ?change.migrations.warnings,
                         "local schema differs; use wamn schema apply with the source directory and --env for explicit SQL");
                 }
             }
@@ -1243,9 +1178,9 @@ impl DevStageRunner for ProductionDevStageRunner {
         // A configuration-only watch event is a reapply, not a schema-bearing deploy.
         let schema_deploy = self.schema_inputs.as_ref() != Some(&schema_inputs);
         let reset = schema_deploy
-            && diffs
-                .iter()
-                .any(wamn_environment_control::environment::sql::schema::Diff::requires_reset);
+            && diffs.iter().any(|diff| {
+                diff.mode == wamn_environment_control::environment::document::SchemaMode::Reset
+            });
         let matches_installed = diffs.iter().all(|diff| {
             diff.packages
                 .values()
@@ -1264,15 +1199,6 @@ impl DevStageRunner for ProductionDevStageRunner {
             target_database::validate_schema_reset(&self.environment, &roots, &diffs).map_err(
                 |source| ProductionDevStageError::owner("validate local reset inputs", source),
             )?;
-            let reset_inputs = self
-                .target_lease
-                .as_mut()
-                .expect("lease acquired")
-                .prepare_reset(&self.config)
-                .await
-                .map_err(|source| {
-                    ProductionDevStageError::owner("prepare local template reset", source.into())
-                })?;
             // Compile the candidate before interrupting the last working application.
             self.build().await?;
             self.shutdown().await?;
@@ -1282,33 +1208,19 @@ impl DevStageRunner for ProductionDevStageRunner {
                 .target_lease
                 .as_mut()
                 .expect("lease acquired")
-                .recreate_prepared(&self.config, &reset_inputs)
+                .reset(&self.config)
                 .await
                 .map_err(|source| {
-                    ProductionDevStageError::owner("recreate local schema target", source.into())
+                    ProductionDevStageError::owner("reset local schema objects", source.into())
                 })?;
             self.target_instance = Some(instance);
             self.prepared_schema_inputs = None;
-            self.catalogs.clear();
         } else {
             if self.target_instance.as_ref() != Some(&instance)
                 || self.prepared_schema_inputs.as_ref() != Some(&schema_inputs)
                 || !matches_installed
             {
                 self.prepared_schema_inputs = None;
-                self.catalogs.clear();
-                if matches_installed
-                    && let Some((_, recorded, catalogs)) = self
-                        .target_lease
-                        .as_mut()
-                        .expect("lease acquired")
-                        .retained_target(&self.config)
-                        .await
-                    && recorded == schema_inputs
-                {
-                    self.prepared_schema_inputs = Some(schema_inputs.clone());
-                    self.catalogs = catalogs;
-                }
             }
             self.target_instance = Some(instance);
         }
@@ -1320,7 +1232,6 @@ impl DevStageRunner for ProductionDevStageRunner {
     async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
         match stage {
             DevStage::Migrate => self.migrate().await,
-            DevStage::Introspect => self.introspect().await,
             DevStage::Build => self.build().await,
             DevStage::Admit => self.admit().await,
             DevStage::Condition => self.condition().await,
@@ -1622,7 +1533,7 @@ async fn reconcile_local_replica_identity(
     let result = async {
         for root in packages {
             let directory = apply_package::read_package_directory(root)?;
-            let package = wamn_schema_control::plan_package_migrations(&directory, None, &[])
+            let package = wamn_catalog::package_schema::package_metadata(&directory)
                 .context("derive package model mapping")?;
             let package_id = package.coordinate.package_id();
             let plan = wamn_environment_control::reconcile_replica_identity::reconcile(
@@ -1689,10 +1600,6 @@ impl Drop for TemporaryFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_schema_introspection::ir::{
-        Column, ColumnDefault, Constraint, Exclusion, ExclusionAccessMethod, ExclusionElement,
-        ExclusionKey, Table,
-    };
 
     fn package(id: &str, version: &str, component: &str) -> PackageInput {
         let manifest = serde_json::from_value(serde_json::json!({
@@ -1707,227 +1614,6 @@ mod tests {
             root: PathBuf::from(format!("/packages/{id}")),
             manifest,
         }
-    }
-
-    /// A failed stage carries the refusal that stopped it, under its context.
-    ///
-    /// The live run of wamn-ri4b printed "dev-stage-owner-failed while
-    /// introspect package: introspect package schemas" and dropped the
-    /// unsupported-acl refusal underneath it. Both the watch output and the
-    /// read model take this one string, so recovering that cause cost two
-    /// fixture runs (wamn-aij8).
-    #[test]
-    fn a_failed_stage_names_its_whole_cause_chain_after_the_top_context() {
-        let source = anyhow::Error::msg("schema has an explicit ACL")
-            .context("PostgreSQL introspection refused (unsupported-acl) in schema inventory")
-            .context("introspect package schemas");
-
-        let error = ProductionDevStageError::owner("introspect package", source);
-
-        assert_eq!(
-            error.to_string(),
-            "dev-stage-owner-failed while introspect package: introspect package schemas: \
-             PostgreSQL introspection refused (unsupported-acl) in schema inventory: \
-             schema has an explicit ACL"
-        );
-        assert_eq!(
-            ProductionDevStageError::owner("introspect package", anyhow::Error::msg("one line"))
-                .to_string(),
-            "dev-stage-owner-failed while introspect package: one line",
-            "a cause with no context keeps the line it always printed"
-        );
-    }
-
-    #[test]
-    fn package_catalog_projection_keeps_base_contract_additive() {
-        let base = PackageInput {
-            root: PathBuf::from("/fixtures/catalog_base"),
-            manifest: PackageManifest::from_slice(include_bytes!(
-                "../../../environment/tests/support/catalog_base/wamn.json"
-            ))
-            .expect("parse base fixture manifest"),
-        };
-        let mut overlay = PackageInput {
-            root: PathBuf::from("/fixtures/catalog_overlay"),
-            manifest: PackageManifest::from_slice(include_bytes!(
-                "../../../environment/tests/support/catalog_overlay/wamn.json"
-            ))
-            .expect("parse overlay fixture manifest"),
-        };
-        overlay
-            .manifest
-            .models
-            .get_mut("record")
-            .expect("overlay extends the base record")
-            .constraint_owners
-            .insert(
-                "record_review_state_excl".to_owned(),
-                "platform_catalog_overlay".to_owned(),
-            );
-        let base_exclusion = Exclusion::new(
-            "record_maker_id_excl",
-            ExclusionAccessMethod::Gist,
-            vec![ExclusionKey::new(ExclusionElement::column("maker_id"), "=")],
-            ["maker_id"],
-        )
-        .expect("base exclusion");
-        let overlay_exclusion = Exclusion::new(
-            "record_review_state_excl",
-            ExclusionAccessMethod::Gist,
-            vec![ExclusionKey::new(
-                ExclusionElement::column("review_state"),
-                "=",
-            )],
-            ["review_state"],
-        )
-        .expect("overlay exclusion");
-        let catalog = CatalogIr::new(vec![
-            Table::new(
-                "platform_fixture",
-                "record",
-                vec![
-                    Column::new("id", SqlValueType::Uuid, false, None, None),
-                    Column::new("maker_id", SqlValueType::Uuid, false, None, None),
-                    Column::new("created_at", SqlValueType::Timestamptz, false, None, None),
-                    Column::new("created_by", SqlValueType::Uuid, false, None, None),
-                    Column::new("updated_at", SqlValueType::Timestamptz, false, None, None),
-                    Column::new("updated_by", SqlValueType::Uuid, false, None, None),
-                    Column::new(
-                        "review_required",
-                        SqlValueType::Boolean,
-                        false,
-                        Some(ColumnDefault::boolean(false)),
-                        None,
-                    ),
-                    Column::new(
-                        "review_state",
-                        SqlValueType::Text,
-                        false,
-                        Some(ColumnDefault::text("not_required")),
-                        None,
-                    ),
-                ],
-                vec![
-                    Constraint::primary_key("record_id_pkey", ["id"])
-                        .expect("base primary key"),
-                    Constraint::check(
-                        "record_review_state_check",
-                        "review_state = ANY (ARRAY['not_required'::text, 'pending'::text, 'approved'::text])",
-                    )
-                    .expect("overlay quality constraint"),
-                ],
-                Vec::new(),
-            )
-            .with_exclusions(vec![base_exclusion.clone(), overlay_exclusion]),
-            Table::new(
-                "platform_fixture",
-                "inspection",
-                vec![Column::new(
-                    "record_id",
-                    SqlValueType::Uuid,
-                    false,
-                    None,
-                    None,
-                )],
-                vec![
-                    Constraint::primary_key("inspection_record_id_pkey", ["record_id"])
-                        .expect("overlay primary key"),
-                ],
-                Vec::new(),
-            ),
-        ]);
-        let installed = [base.clone(), overlay.clone()];
-
-        let base_catalog = project_catalog_for_package(&catalog, &base.manifest, &installed)
-            .expect("project base");
-        assert_eq!(base_catalog.tables().len(), 1);
-        let base_record = &base_catalog.tables()[0];
-        assert_eq!(base_record.name(), "record");
-        assert_eq!(
-            base_record
-                .columns()
-                .iter()
-                .map(wamn_schema_introspection::ir::Column::name)
-                .collect::<Vec<_>>(),
-            [
-                "created_at",
-                "created_by",
-                "id",
-                "maker_id",
-                "updated_at",
-                "updated_by"
-            ]
-        );
-        assert_eq!(
-            base_record
-                .constraints()
-                .iter()
-                .map(wamn_schema_introspection::ir::Constraint::name)
-                .collect::<Vec<_>>(),
-            ["record_id_pkey"]
-        );
-        assert_eq!(
-            base_record
-                .exclusions()
-                .iter()
-                .map(wamn_schema_introspection::ir::Exclusion::name)
-                .collect::<Vec<_>>(),
-            ["record_maker_id_excl"]
-        );
-
-        let overlay_catalog = project_catalog_for_package(&catalog, &overlay.manifest, &installed)
-            .expect("project overlay");
-        assert_eq!(overlay_catalog.tables().len(), 2);
-        let overlay_record = overlay_catalog
-            .tables()
-            .iter()
-            .find(|table| table.name() == "record")
-            .expect("overlay includes the extended base relation");
-        assert_eq!(overlay_record.columns().len(), 8);
-        assert_eq!(overlay_record.constraints().len(), 2);
-        assert_eq!(overlay_record.exclusions().len(), 2);
-        let clean_base = CatalogIr::new(vec![
-            Table::new(
-                "platform_fixture",
-                "record",
-                vec![
-                    Column::new("id", SqlValueType::Uuid, false, None, None),
-                    Column::new("maker_id", SqlValueType::Uuid, false, None, None),
-                    Column::new("created_at", SqlValueType::Timestamptz, false, None, None),
-                    Column::new("created_by", SqlValueType::Uuid, false, None, None),
-                    Column::new("updated_at", SqlValueType::Timestamptz, false, None, None),
-                    Column::new("updated_by", SqlValueType::Uuid, false, None, None),
-                ],
-                vec![Constraint::primary_key("record_id_pkey", ["id"]).unwrap()],
-                Vec::new(),
-            )
-            .with_exclusions(vec![base_exclusion]),
-        ]);
-        let mut manifest = base.manifest;
-        manifest.models.retain(|name, _| name == "record");
-        manifest.custom_operations.clear();
-        manifest.internal_relations.clear();
-        let model = manifest.models.get_mut("record").unwrap();
-        model.server_owned_fields.clear();
-        model.enum_fields.clear();
-        model
-            .operations
-            .retain(|action, _| *action == wamn_compiler::manifest::CrudAction::Get);
-        let bytes = serde_json::to_vec(&manifest).unwrap();
-        let transactional = wamn_compiler::StatementTransactionality::from_paths(BTreeMap::new());
-        let generate = |catalog| {
-            wamn_compiler::generate(&wamn_compiler::GenerationInput::new(
-                catalog,
-                &bytes,
-                &[],
-                &transactional,
-            ))
-            .unwrap()
-        };
-        let clean = generate(&clean_base);
-        let retained = generate(&base_catalog);
-        assert!(!clean.files().is_empty());
-        assert_eq!(clean.files(), retained.files());
     }
 
     #[test]

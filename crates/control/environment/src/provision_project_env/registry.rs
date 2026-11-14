@@ -252,124 +252,12 @@ pub(super) async fn do_record_project_env(
     Ok(stored)
 }
 
-/// Read the pending database without allocating or changing its identity.
-pub(crate) async fn pending_database(
-    client: &mut sqlx::PgConnection,
-    triple: &Triple,
-) -> anyhow::Result<Option<serde_json::Value>> {
-    let row = sqlx::query(
-        wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_PENDING_DATABASE,
-    )
-    .bind(&triple.org)
-    .bind(&triple.project)
-    .bind(triple.env.as_str())
-    .fetch_optional(&mut *client)
-    .await?
-    .with_context(|| format!("project-env {triple} is not recorded"))?;
-    Ok(row.get(0))
-}
-
-/// Record immutable reset inputs outside the database that CNPG will recreate.
-pub(crate) async fn record_reset(
-    client: &mut sqlx::PgConnection,
-    triple: &Triple,
-    active: &str,
-    inputs: &serde_json::Value,
-) -> anyhow::Result<()> {
-    let mut tx = super::provisioning_transaction(client).await?;
-    let row = sqlx::query(
-        wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_RECORD_RESET_2,
-    )
-    .bind(&triple.org)
-    .bind(&triple.project)
-    .bind(triple.env.as_str())
-    .fetch_optional(&mut *tx)
-    .await?
-    .with_context(|| format!("project-env {triple} is not recorded"))?;
-    anyhow::ensure!(
-        row.get::<bool, _>(1),
-        "project-env {triple} is not disposable"
-    );
-    anyhow::ensure!(
-        row.get::<String, _>(0) == active,
-        "active database changed during preparation"
-    );
-    let pending: Option<serde_json::Value> = row.get(2);
-    if let Some(pending) = pending {
-        anyhow::ensure!(
-            pending["inputs"] == *inputs,
-            "pending database has different immutable inputs"
-        );
-    } else {
-        let identity: String = sqlx::query("SELECT clock_timestamp()::text")
-            .fetch_one(&mut *tx)
-            .await?
-            .get(0);
-        let pending = serde_json::json!({"initialization_identity":identity, "inputs":inputs});
-        sqlx::query(
-            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_RECORD_RESET,
-        )
-        .bind(&triple.org)
-        .bind(&triple.project)
-        .bind(triple.env.as_str())
-        .bind(&pending)
-        .execute(&mut *tx)
-        .await
-        .map(|result| result.rows_affected())?;
-    }
-    tx.commit().await?;
-    Ok(())
-}
-
-/// Complete the reset after SQL, CDC and event disposal, before writers resume.
-pub async fn finish_database(
-    client: &mut sqlx::PgConnection,
-    triple: &Triple,
-    pending: &serde_json::Value,
-) -> anyhow::Result<()> {
-    let mut tx = super::provisioning_transaction(client).await?;
-    let changed = sqlx::query(
-        wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_FINISH_DATABASE,
-    )
-    .bind(&triple.org)
-    .bind(&triple.project)
-    .bind(triple.env.as_str())
-    .bind(pending)
-    .execute(&mut *tx)
-    .await
-    .map(|result| result.rows_affected())?;
-    anyhow::ensure!(
-        changed == 1,
-        "active or pending database changed during reconnect"
-    );
-    tx.commit().await?;
-    Ok(())
-}
-
-/// A partially reconnected environment admits no new deployment or SQL operation.
+/// Require the environment's registry coordinate to exist.
 pub async fn require_connected(
     client: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<()> {
-    require_no_reset(client, triple).await
-}
-
-/// Once reset inputs are pinned, deployment waits for the reset to finish.
-pub(crate) async fn require_no_reset(
-    client: &mut sqlx::PgConnection,
-    triple: &Triple,
-) -> anyhow::Result<()> {
-    let row = sqlx::query(
-        wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_REQUIRE_NO_RESET,
-    )
-    .bind(&triple.org)
-    .bind(&triple.project)
-    .bind(triple.env.as_str())
-    .fetch_optional(&mut *client)
-    .await?;
-    anyhow::ensure!(
-        row.is_none_or(|row| row.get::<bool, _>(0)),
-        "database reset is pending; retry wamn schema reset"
-    );
+    let present: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3)").bind(&triple.org).bind(&triple.project).bind(triple.env.as_str()).fetch_one(client).await?;
+    anyhow::ensure!(present, "project environment is not recorded");
     Ok(())
 }

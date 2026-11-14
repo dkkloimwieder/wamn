@@ -14,7 +14,7 @@ use wamn_control_provision::WorkloadRoleFamily;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::authorize_attachment_for_test;
-use wamn_package_control::apply_package::{self, ApplyPackageRequest};
+use wamn_environment_control::apply_package::{self, ApplyPackageRequest};
 use wamn_platform_identity::{
     PrincipalType, assign_project_role, create_service, create_user, disable_principal, issue_pat,
     operator_subject, resolve_subject, revoke_pat,
@@ -227,10 +227,10 @@ async fn install_project_and_reconcile(
     }
     wamn_test_infrastructure::fixture_digest::write_build_record(&package);
     let args = || ApplyPackageRequest {
-        component_source: wamn_package_control::apply_package::component_source_from_env(None)
+        component_source: wamn_environment_control::apply_package::component_source_from_env(None)
             .unwrap(),
         changes: wamn_broker::Publisher::default(),
-        package: wamn_package_control::apply_package::PackageRoot {
+        package: wamn_environment_control::apply_package::PackageRoot {
             path: package.clone(),
             artifact_digest: Some(
                 wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)

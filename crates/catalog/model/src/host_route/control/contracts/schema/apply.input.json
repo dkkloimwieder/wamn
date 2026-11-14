@@ -29,12 +29,6 @@
       "type": "text",
       "nullable": true,
       "values": []
-    },
-    {
-      "path": "value.resolve",
-      "type": "text",
-      "nullable": true,
-      "values": []
     }
   ]
 }

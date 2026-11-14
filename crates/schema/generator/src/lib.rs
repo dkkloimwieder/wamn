@@ -53,11 +53,14 @@ pub use authoring::{
 };
 pub use generate::{
     AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, OperationDescription,
-    PHYSICAL_SCHEMA_PATH, REQUIRED_SCHEMA_CONTRACT_PATH, StatementTransactionality,
-    derive_manifest, generate,
+    REQUIRED_SCHEMA_CONTRACT_PATH, StatementTransactionality, derive_manifest, generate,
 };
 pub use materialize::{
     introspect_package, materialize_client_consumers, materialize_host_route_client,
 };
 pub use output::{host_route_client_output_root, output_root, package_workspace};
 pub use package_catalog::project_package_catalog;
+
+mod history;
+
+pub mod migrations;

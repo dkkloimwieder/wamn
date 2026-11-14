@@ -437,9 +437,8 @@ describe("environment operation controls", () => {
         const expectedValues: Record<string, unknown> = {
           project: "widgets",
           env: "dev",
-          application: action === "adopt" ? null : "receiving",
+          application: "receiving",
           release: withRelease ? releaseDigest : null,
-          resolve: null,
         };
         expect(write.body[0]!.value).toEqual(
           Object.fromEntries(

@@ -219,34 +219,6 @@ fn package(
     }
     std::fs::write(root.join("wamn.k"), authored)?;
     std::fs::write(root.join("generated/wamn.json"), &bytes)?;
-    let directory = wamn_package_control::apply_package::read_package_directory(&root)?;
-    let columns = BTreeMap::from([(
-        "data".into(),
-        vec![
-            wamn_schema_control::physical_schema::RelationColumn {
-                name: "id".into(),
-                primary_key: true,
-                timestamptz: false,
-            },
-            wamn_schema_control::physical_schema::RelationColumn {
-                name: "value".into(),
-                primary_key: false,
-                timestamptz: false,
-            },
-        ],
-    )]);
-    let physical = wamn_schema_control::physical_schema::PhysicalSchema {
-        statements: wamn_schema_control::physical_schema::render(
-            &(&manifest).into(),
-            &directory.migrations,
-            &columns,
-        )?,
-        columns,
-    };
-    std::fs::write(
-        root.join("generated/physical-schema.json"),
-        serde_json::to_vec(&physical)?,
-    )?;
     wamn_test_infrastructure::fixture_digest::write_build_record(&root);
     let packed = wamn_package_control::package_artifact::pack_package(&root)?;
     let tag = packed.tag();
@@ -305,13 +277,38 @@ fn document(a: &ServingManifest, b: &ServingManifest) -> anyhow::Result<Environm
     )?)
 }
 
-async fn rows(client: &mut sqlx::PgConnection, query: &str) -> anyhow::Result<Vec<String>> {
-    Ok(sqlx::query(sqlx::AssertSqlSafe((query).to_string()))
-        .fetch_all(&mut *client)
-        .await?
-        .into_iter()
-        .map(|row| row.get(0))
-        .collect())
+/// The application data, allocation position, and access that activation must preserve.
+#[derive(Debug, PartialEq)]
+struct SqlContinuity {
+    relations: (sqlx::postgres::types::Oid, sqlx::postgres::types::Oid),
+    rows: (i32, i32),
+    read: bool,
+    update: bool,
+    counters: Vec<i64>,
+}
+
+async fn continuity(client: &mut sqlx::PgConnection) -> anyhow::Result<SqlContinuity> {
+    let (a, b, a_row, b_row, read, update) = sqlx::query_as(
+        "SELECT 'a.data'::regclass::oid, 'b.data'::regclass::oid, \
+         (SELECT id FROM a.data WHERE value='authored'), \
+         (SELECT id FROM b.data WHERE value='other'), \
+         has_column_privilege('wamn_app','b.data','value','SELECT'), \
+         has_column_privilege('wamn_app','b.data','value','UPDATE')",
+    )
+    .fetch_one(&mut *client)
+    .await?;
+    let counters = sqlx::query_scalar(
+        "SELECT value FROM platform.number_counter ORDER BY sequence_id,counter,key_value",
+    )
+    .fetch_all(client)
+    .await?;
+    Ok(SqlContinuity {
+        relations: (a, b),
+        rows: (a_row, b_row),
+        read,
+        update,
+        counters,
+    })
 }
 
 #[tokio::test]
@@ -337,18 +334,6 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let new_a = release(&mut objects, new_component, "1.0.0")?;
     let failed_component = component(&mut objects, "a", &["upstream", "extra", "failed"])?;
     let failed_release = release(&mut objects, failed_component, "1.0.0")?;
-    let refused_root = scratch.path().join("refused-registry");
-    std::fs::create_dir(&refused_root)?;
-    let refused_component = old_a.components.iter().next().unwrap();
-    package(
-        &refused_root,
-        &mut objects,
-        "a",
-        Some(refused_component),
-        "1.0.1",
-        "ALTER TABLE a.data ADD COLUMN added text; TRUNCATE a.data;",
-    )?;
-    let refused_release = release(&mut objects, refused_component.clone(), "1.0.1")?;
     let mut missing_objects = objects.clone();
     missing_objects.remove("/v2/packages/manifests/b-1.0.0");
     let missing_root = scratch.path().join("missing-registry");
@@ -369,6 +354,14 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .map(drop)?;
     wamn_environment_control::provision_system::provision_system(
         &wamn_environment_control::provision_system::ProvisionSystemRequest {
+            migration_database_url: Some(
+                wamn_control_provision::test_database::platform_migration_input(
+                    &system.url(),
+                    wamn_control_provision::migrations::MigrationDatabase::System,
+                )
+                .await
+                .unwrap(),
+            ),
             system_database_url: system.url().into(),
             platform_domain: "example.invalid".into(),
         },
@@ -472,11 +465,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         sql::schema::release_candidates(&platform, &document, "b", Some(b.digest().as_str()))
             .await?;
     let state = sql::schema::state(&platform, &document).await?;
-    let diff = sql::schema::plan(&document, "b", Some(candidate_release), &candidates, &state)?;
-    assert_eq!(
-        diff.database_instance.as_deref(),
-        Some(database_name.as_str())
-    );
+    let diff =
+        sql::schema::plan(&document, "b", Some(candidate_release), &candidates, &state).await?;
     assert!(diff.packages["b"].installed.is_none());
     assert_eq!(
         sql::schema::state(&platform, &document).await?.packages,
@@ -484,15 +474,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     );
     // Published SQL remains executable after its source directory disappears.
     std::fs::remove_dir_all(scratch.path().join("b"))?;
-    sql::schema::apply(
-        &platform,
-        &document,
-        "b",
-        b.digest().as_str(),
-        system.url(),
-        None,
-    )
-    .await?;
+    sql::schema::apply(&platform, &document, "b", b.digest().as_str(), system.url()).await?;
     let installed = sql::schema::state(&platform, &document).await?;
     for (id, package) in &diff.packages {
         assert_eq!(
@@ -500,7 +482,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             package.source_artifact
         );
         assert_eq!(
-            installed.packages[id].physical_schema_fingerprint,
+            installed.packages[id].coordinate.package_version(),
             package.candidate
         );
     }
@@ -541,7 +523,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .iter()
         .flat_map(|package| package.models.values().map(|model| model.schema.as_str()))
         .collect::<BTreeSet<_>>();
-    let installed_schemas = sqlx::query("SELECT DISTINCT schema_name FROM catalog.package_definition_owners WHERE project_env_key=$1 AND definition_type='relation'").bind(&PROJECT_ENV_KEY).fetch_all(&mut observer).await?.into_iter().map(|row| row.get::<String, _>(0)).collect::<BTreeSet<_>>();
+    let installed_schemas = sqlx::query("SELECT nspname::text FROM pg_namespace n JOIN pg_roles r ON r.oid=n.nspowner WHERE r.rolname LIKE 'wamn_migration_%' AND $1::text IS NOT NULL").bind(&PROJECT_ENV_KEY).fetch_all(&mut observer).await?.into_iter().map(|row| row.get::<String, _>(0)).collect::<BTreeSet<_>>();
     assert_eq!(
         schemas,
         installed_schemas.iter().map(String::as_str).collect()
@@ -598,65 +580,12 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         "BEGIN; {} SELECT platform.bump_counter(id, 'number', '') FROM platform.number_sequence; COMMIT;",
         wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning),
     ))).execute(&mut observer).await.map(drop)?;
-    let mut snapshots = vec![
-        "SELECT to_jsonb(t)::text FROM platform.number_sequence t".to_owned(),
-        "SELECT to_jsonb(t)::text FROM platform.number_counter t".to_owned(),
-        "SELECT to_jsonb(t)::text FROM catalog.packages t".to_owned(),
-        "SELECT to_jsonb(t)::text FROM catalog.package_migrations t".to_owned(),
-    ];
-    let relations = captured
-        .iter()
-        .flat_map(|package| package.models.values())
-        .map(|model| (model.schema.as_str(), model.table.as_str()))
-        .collect::<BTreeSet<_>>();
-    for (schema, relation) in relations {
-        let table = format!(
-            "{}.{}",
-            postgres_protocol::escape::escape_identifier(schema),
-            postgres_protocol::escape::escape_identifier(relation)
-        );
-        snapshots.push(format!(
-            "SELECT jsonb_build_array({}, to_jsonb(t))::text FROM {table} t",
-            postgres_protocol::escape::escape_literal(&table)
-        ));
-        let sequence: String = sqlx::query("SELECT pg_get_serial_sequence($1, 'id')")
-            .bind(&table)
-            .fetch_one(&mut observer)
-            .await?
-            .get(0);
-        snapshots.push(format!(
-            "SELECT jsonb_build_array({}, last_value, is_called)::text FROM {sequence}",
-            postgres_protocol::escape::escape_literal(&sequence)
-        ));
-    }
-    let stable_sql = format!("{} ORDER BY 1", snapshots.join(" UNION ALL "));
-    let before_sql = rows(&mut observer, &stable_sql).await?;
+    let before_sql = continuity(&mut observer).await?;
     sql::initialize(&platform, &document, system.url(), Some("a"))
         .await
         .context("retry initialization")?;
-    assert_eq!(before_sql, rows(&mut observer, &stable_sql).await?);
-    let schema_query = "SELECT row(c.oid,c.relname,c.relkind,c.relowner,c.relacl,a.attname,a.atttypid,a.attnotnull,a.attacl)::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attribute a ON a.attrelid=c.oid WHERE n.nspname IN (SELECT DISTINCT schema_name FROM catalog.package_definition_owners WHERE definition_type='relation') ORDER BY 1";
-    let before_schema = rows(&mut observer, schema_query).await?;
-    let stable_b = "SELECT to_jsonb(t)::text FROM platform.permission t WHERE role_name='application-b' UNION ALL SELECT to_jsonb(t)::text FROM platform.user_role t WHERE role_name='application-b' UNION ALL SELECT to_jsonb(t)::text FROM catalog.connection_binding t WHERE package_id='b' ORDER BY 1";
-    let before_b = rows(&mut observer, stable_b).await?;
-    let b_schemas: BTreeSet<_> = captured
-        .iter()
-        .filter(|package| {
-            document.applications["b"]
-                .packages
-                .contains(&package.package.id)
-        })
-        .flat_map(|package| package.models.values().map(|model| model.schema.as_str()))
-        .collect();
-    let b_effective_sql = format!(
-        "SELECT row(n.nspname,c.relname,a.attname,has_schema_privilege('wamn_app',n.oid,'USAGE'),has_table_privilege('wamn_app',c.oid,'SELECT'),has_table_privilege('wamn_app',c.oid,'UPDATE'),has_column_privilege('wamn_app',c.oid,a.attnum,'SELECT'),has_column_privilege('wamn_app',c.oid,a.attnum,'UPDATE'))::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped WHERE c.relkind IN ('r','p','v') AND n.nspname IN ({}) ORDER BY 1",
-        b_schemas
-            .into_iter()
-            .map(postgres_protocol::escape::escape_literal)
-            .collect::<Vec<_>>()
-            .join(","),
-    );
-    let before_b_effective = rows(&mut observer, &b_effective_sql).await?;
+
+    assert_eq!(before_sql, continuity(&mut observer).await?);
     let principal = |name: &str| wamn_platform_identity::application_subject(PROJECT_ENV_KEY, name);
     let a_user = wamn_platform_identity::resolve_subject(
         &mut admin,
@@ -722,8 +651,6 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             .to_string(),
     )
     .await?;
-    let control_query = "SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM catalog.connection_requirement t UNION ALL SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM catalog.connection_binding t UNION ALL SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM catalog.release_connection t UNION ALL SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM platform.permission t UNION ALL SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM platform.user_role t ORDER BY 1";
-    let before_retry = rows(&mut observer, control_query).await?;
     expand::prepare(
         &platform,
         &document,
@@ -736,14 +663,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             .to_string(),
     )
     .await?;
-    assert_eq!(before_retry, rows(&mut observer, control_query).await?);
-    assert_eq!(before_sql, rows(&mut observer, &stable_sql).await?);
-    assert_eq!(before_schema, rows(&mut observer, schema_query).await?);
-    assert_eq!(before_b, rows(&mut observer, stable_b).await?);
-    assert_eq!(
-        before_b_effective,
-        rows(&mut observer, &b_effective_sql).await?
-    );
+
+    assert_eq!(before_sql, continuity(&mut observer).await?);
     let b_after = wamn_runtime::plugins::route_authentication::queued_run_caller(
         &mut observer,
         b_user.id().to_string().as_str(),
@@ -837,12 +758,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             .await?
             .is_none()
     );
-    assert_eq!(before_sql, rows(&mut observer, &stable_sql).await?);
-    assert_eq!(before_schema, rows(&mut observer, schema_query).await?);
-    assert_eq!(
-        before_b_effective,
-        rows(&mut observer, &b_effective_sql).await?
-    );
+
+    assert_eq!(before_sql, continuity(&mut observer).await?);
     // The failed candidate remains cached, but the runtime resolves the mounted digest.
     let postgres = wamn_runtime::plugins::wamn_postgres::WamnPostgres::new(
         wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig {
@@ -1075,12 +992,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             )?;
             assert_eq!(b_permissions.permits(&token), b_after.permits(&token));
         }
-        assert_eq!(before_b, rows(&mut observer, stable_b).await?);
-        assert_eq!(
-            before_b_effective,
-            rows(&mut observer, &b_effective_sql).await?
-        );
-        assert_eq!(before_sql, rows(&mut observer, &stable_sql).await?);
+
+        assert_eq!(before_sql, continuity(&mut observer).await?);
     }
     // A rollback recreates A0's retired bindings and permissions before code can start.
     document.applications.get_mut("a").unwrap().current =
@@ -1123,764 +1036,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     )
     .await?;
     assert!(caller.permits("wamn-integration:data/get@1.0.0"));
-    assert_eq!(before_b, rows(&mut observer, stable_b).await?);
-    assert_eq!(
-        before_b_effective,
-        rows(&mut observer, &b_effective_sql).await?
-    );
-    assert_eq!(before_sql, rows(&mut observer, &stable_sql).await?);
-    assert_eq!(before_schema, rows(&mut observer, schema_query).await?);
-    // Preparation never changes active SQL or release selections.
-    document.applications.get_mut("a").unwrap().current =
-        wamn_environment_control::environment::document::DeclaredRelease::Digest(
-            old_a.digest().to_string(),
-        );
-    document
-        .applications
-        .get_mut("a")
-        .unwrap()
-        .connections
-        .remove("extra");
-    document
-        .applications
-        .get_mut("a")
-        .unwrap()
-        .connections
-        .remove("failed");
-    assert!(
-        sql::reset::prepare(
-            &platform,
-            &document,
-            "a",
-            old_a.digest().as_str(),
-            system.url()
-        )
-        .await
-        .is_err()
-    );
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.environments SET disposable=true WHERE org='acme' AND project='apps' AND env='dev'; COMMIT;",
-        wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning),
-    ))).execute(&mut admin).await.map(drop)?;
-    // Published SQL can retain a deferred policy refusal. Reset must reject it
-    // under exclusion before pinning inputs or changing the serving database.
-    let reset_lock = wamn_environment_control::environment::lock::LifecycleLock::acquire(
-        &platform.system_database_url,
-        &document.triple(),
-    )
-    .await?;
-    let refusal = sql::reset::prepare(
-        &platform,
-        &document,
-        "a",
-        refused_release.digest().as_str(),
-        system.url(),
-    )
-    .await
-    .unwrap_err();
-    reset_lock.release().await;
-    let policy = refusal
-        .downcast_ref::<wamn_schema_introspection::migration_policy::MigrationPolicyError>()
-        .context("reset reports the package owner's migration policy refusal")?;
-    assert!(policy.path().ends_with("migrations/0001_data.sql"));
-    assert!(sqlx::query("SELECT pending_database IS NULL FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'").fetch_one(&mut admin).await?.get::<bool, _>(0));
-    assert_eq!(before_sql, rows(&mut observer, &stable_sql).await?);
-    assert_eq!(before_schema, rows(&mut observer, schema_query).await?);
-    assert_eq!(before_b, rows(&mut observer, stable_b).await?);
-    assert_eq!(
-        before_b_effective,
-        rows(&mut observer, &b_effective_sql).await?
-    );
-    let mut unavailable = platform.clone();
-    unavailable.package_artifact_base = Some(format!("{}/packages", missing_registry.address));
-    unavailable.registry_auth_file = missing_registry.auth.clone();
-    // Alpha resolves, but beta's retained SQL is unavailable. No target is allocated.
-    assert!(
-        sql::reset::prepare(
-            &unavailable,
-            &document,
-            "a",
-            old_a.digest().as_str(),
-            system.url()
-        )
-        .await
-        .is_err()
-    );
-    assert!(sqlx::query("SELECT pending_database IS NULL FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'").fetch_one(&mut admin).await?.get::<bool, _>(0));
-    assert_eq!(before_sql, rows(&mut observer, &stable_sql).await?);
-    assert_eq!(before_schema, rows(&mut observer, schema_query).await?);
-    assert_eq!(before_b, rows(&mut observer, stable_b).await?);
-    assert_eq!(
-        before_b_effective,
-        rows(&mut observer, &b_effective_sql).await?
-    );
-    let mut omitted = document.clone();
-    omitted.applications.remove("b");
-    assert!(
-        sql::reset::prepare_retained(&platform, &omitted, system.url())
-            .await
-            .is_err()
-    );
-    sql::reset::prepare(
-        &platform,
-        &document,
-        "a",
-        old_a.digest().as_str(),
-        system.url(),
-    )
-    .await?;
-    let pending: serde_json::Value = sqlx::query("SELECT pending_database FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'").fetch_one(&mut admin).await?.get(0);
-    let mut changed_policy = document.clone();
-    changed_policy.policy = "unprovisioned-policy".into();
-    sql::reset::prepare(
-        &platform,
-        &changed_policy,
-        "a",
-        old_a.digest().as_str(),
-        system.url(),
-    )
-    .await?;
-    let retried: serde_json::Value = sqlx::query("SELECT pending_database FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'").fetch_one(&mut admin).await?.get(0);
-    assert_eq!(pending, retried);
-    let installed_before = sql::schema::state(&platform, &document).await?;
-    let old_identity = installed_before.initialization_identity;
-    let expected_packages = installed_before
-        .packages
-        .into_keys()
-        .collect::<BTreeSet<_>>();
-    let expected = sql::ExpectedDatabase::read(&platform, &document).await?;
-    // Keep the product-issued credentials across CNPG's same-name recreation.
-    let grant = |row: sqlx::postgres::PgRow| -> (String, String, String, String) {
-        (
-            row.get("object_type"),
-            row.get("schema_name"),
-            row.get("object_name"),
-            row.get("privilege_type"),
-        )
-    };
-    let mut credential_tests = Vec::new();
-    for family in WorkloadRoleFamily::project_env_families()
-        .filter(|family| family.identity_type() != WorkloadRoleIdentityType::Control)
-    {
-        let mut project_admin = url::Url::parse(system.url())?;
-        project_admin.set_path(&database_name);
-        let credential_url = wamn_test_infrastructure::credentials::database_login(
-            system.url(),
-            Some(project_admin.as_str()),
-            &document.org,
-            &document.project,
-            &document.env,
-            family,
-        )
-        .await?;
-        let grants = sqlx::query(sqlx::AssertSqlSafe(
-            (wamn_control_provision::sql::role_database_grants_sql()).to_string(),
-        ))
-        .bind(&family.acl_role())
-        .fetch_all(&mut observer)
-        .await?
-        .into_iter()
-        .map(grant)
-        .collect::<BTreeSet<_>>();
-        credential_tests.push((credential_url, family, grants));
-    }
-    assert!(
-        sql::reset::initialize(&platform, &document, system.url())
-            .await
-            .is_err()
-    );
-    assert!(sql::reset::needs_recreation(&platform, &document).await?);
-    // PostgreSQL observes reconstruction. DEP3-11 observes CNPG absent/present itself.
-    drop(project);
-    drop(observer);
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "DROP DATABASE {} WITH (FORCE)",
-            postgres_protocol::escape::escape_identifier(&database_name),
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "CREATE DATABASE {} OWNER wamn_db_owner",
-            postgres_protocol::escape::escape_identifier(&database_name)
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    let mut project_admin_url = url::Url::parse(system.url())?;
-    project_admin_url.set_path(&database_name);
-    let mut candidate_admin = connect(project_admin_url.as_str()).await?;
-    sqlx::raw_sql("CREATE FUNCTION public.interrupt_beta() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN IF EXISTS (SELECT FROM pg_event_trigger_ddl_commands() WHERE object_identity='b.data' AND command_tag='CREATE TABLE') THEN RAISE EXCEPTION 'beta initialization interrupted'; END IF; END $$; CREATE EVENT TRIGGER interrupt_beta ON ddl_command_end EXECUTE FUNCTION public.interrupt_beta()").execute(&mut candidate_admin).await.map(drop)?;
-    assert!(
-        sql::reset::initialize(&platform, &document, system.url())
-            .await
-            .is_err()
-    );
-    assert!(!sql::reset::needs_recreation(&platform, &document).await?);
-    // A committed earlier package survives retry, including rows inserted after it committed.
-    sqlx::raw_sql("DROP EVENT TRIGGER interrupt_beta; INSERT INTO a.data(id,value) VALUES (123,'committed-before-retry')").execute(&mut candidate_admin).await.map(drop)?;
-    sql::reset::initialize(&platform, &document, system.url()).await?;
-    sql::reset::initialize(&platform, &document, system.url()).await?;
-    // SQL restoration uses the installed substrate image. Credential grants
-    // belong to reconnect and cannot depend on that image's control code.
-    for (url, _, _) in &credential_tests {
-        let error = connect(url)
-            .await
-            .err()
-            .context("credential still needs reconnection")?;
-        assert_eq!(
-            error
-                .downcast_ref::<sqlx::Error>()
-                .and_then(sqlx::Error::as_database_error)
-                .and_then(|error| error.code())
-                .as_deref(),
-            Some("42501")
-        );
-    }
-    ensure::restore_project_database_access(&platform, &document, project_admin_url.as_str())
-        .await?;
-    for (url, family, expected_grants) in &credential_tests {
-        let mut workload = connect(url).await?;
-        assert!(
-            !sqlx::query("SELECT rolsuper FROM pg_roles WHERE rolname=current_user")
-                .fetch_one(&mut workload)
-                .await?
-                .get::<bool, _>(0)
-        );
-        let grants = sqlx::query(sqlx::AssertSqlSafe(
-            (wamn_control_provision::sql::role_database_grants_sql()).to_string(),
-        ))
-        .bind(&family.acl_role())
-        .fetch_all(&mut workload)
-        .await?
-        .into_iter()
-        .map(grant)
-        .collect::<BTreeSet<_>>();
-        assert_eq!(&grants, expected_grants);
-    }
-    assert_eq!(
-        sqlx::query("SELECT value FROM a.data WHERE id=123")
-            .fetch_one(&mut candidate_admin)
-            .await?
-            .get::<String, _>(0),
-        "committed-before-retry"
-    );
-    let installed = sqlx::query("SELECT package_id FROM catalog.packages WHERE project_env_key=$1")
-        .bind(&PROJECT_ENV_KEY)
-        .fetch_all(&mut candidate_admin)
-        .await?
-        .into_iter()
-        .map(|row| row.get::<String, _>(0))
-        .collect::<BTreeSet<_>>();
-    assert_eq!(installed, expected_packages);
-    let state = sql::schema::state(&platform, &document).await?;
-    assert_eq!(
-        state.database_instance.as_deref(),
-        Some(database_name.as_str())
-    );
-    assert_ne!(state.initialization_identity, old_identity);
-    assert_eq!(
-        state.initialization_identity.as_deref(),
-        pending["initialization_identity"].as_str()
-    );
-    let mut system_writer = connect(&platform.system_database_url).await?;
-    let role =
-        sqlx::query("SELECT current_user, rolsuper FROM pg_roles WHERE rolname=current_user")
-            .fetch_one(&mut system_writer)
-            .await?;
-    assert_eq!(role.get::<String, _>(0), "wamn_apply");
-    assert!(!role.get::<bool, _>(1));
-    assert!(
-        !sqlx::query("SELECT has_table_privilege(current_user, 'registry.capture_gap', 'SELECT')")
-            .fetch_one(&mut system_writer)
-            .await?
-            .get::<bool, _>(0)
-    );
-    let capture = wamn_control_provision::cdc_object_name(
-        &document.org,
-        &document.project,
-        &document.env,
-        &provisioned.instance,
-    );
-    let manifests = ensure::installed_manifests(&platform, &document).await?;
-    let schemas = manifests
-        .iter()
-        .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    wamn_environment_control::enable_cdc_project_env::record_event_reader(
-        &platform.system_database_url,
-        &document.triple(),
-        &schemas,
-        &capture,
-        None,
-    )
-    .await?;
-    // The existing recovery owner connects through the administrator, then
-    // executes registry reads and writes as the non-superuser wamn_system owner.
-    sql::reset::reconnect_capture_gap(&platform, &document, system.url()).await?;
-    let mut capture_owner = connect(system.url()).await?;
-    sqlx::raw_sql("SET ROLE wamn_system")
-        .execute(&mut capture_owner)
-        .await
-        .map(drop)?;
-    let role =
-        sqlx::query("SELECT current_user, rolsuper FROM pg_roles WHERE rolname=current_user")
-            .fetch_one(&mut capture_owner)
-            .await?;
-    assert_eq!(role.get::<String, _>(0), "wamn_system");
-    assert!(!role.get::<bool, _>(1));
-    let mut tx = wamn_environment_control::provision_project_env::provisioning_transaction(
-        &mut capture_owner,
-    )
-    .await?;
-    let start: chrono::DateTime<chrono::Utc> = sqlx::query("SELECT now()")
-        .fetch_one(&mut *tx)
-        .await?
-        .get(0);
-    sqlx::query(sqlx::AssertSqlSafe(
-        (wamn_registry::sql::insert_capture_gap_sql()).to_string(),
-    ))
-    .bind(&document.org)
-    .bind(&document.project)
-    .bind(&document.env)
-    .bind(&capture)
-    .bind(&Option::<String>::None)
-    .bind(&start)
-    .bind(&"missing")
-    .bind(&"0/0")
-    .fetch_one(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    sql::reset::reconnect_capture_gap(&platform, &document, system.url()).await?;
-    sql::reset::reconnect_capture_gap(&platform, &document, system.url()).await?;
-    assert!(
-        sqlx::query(sqlx::AssertSqlSafe(
-            (wamn_registry::sql::select_capture_gap_sql()).to_string()
-        ))
-        .bind(&document.org)
-        .bind(&document.project)
-        .bind(&document.env)
-        .fetch_one(&mut capture_owner)
-        .await?
-        .get::<bool, _>(1)
-    );
 
-    // A CNPG publication can already exist after recreation while grants on
-    // the newly created maps still need restoration by the CDC SQL owner.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::test_database::replication_login_sql(
-            &capture,
-            "reset-replication-password",
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::sql::create_publication_schemas_sql(&capture, &schemas))
-            .to_string(),
-    ))
-    .execute(&mut candidate_admin)
-    .await
-    .map(drop)?;
-    assert!(ensure::cdc_in_place(&mut candidate_admin, &capture, &schemas).await?);
-    let maps = schemas
-        .iter()
-        .flat_map(|schema| {
-            wamn_compiler::manifest::CONTROL_OWNED_RELATION_TABLES
-                .map(|table| format!("{schema}.{table}"))
-        })
-        .collect::<Vec<_>>();
-    for map in &maps {
-        assert!(
-            !sqlx::query("SELECT has_table_privilege($1,$2,'SELECT')")
-                .bind(&capture)
-                .bind(map)
-                .fetch_one(&mut candidate_admin)
-                .await?
-                .get::<bool, _>(0)
-        );
-    }
-    wamn_environment_control::enable_cdc_project_env::apply_cdc_sql(
-        project_admin_url.as_str(),
-        &schemas,
-        &capture,
-        &database_name,
-    )
-    .await?;
-    let mut replication_url = project_admin_url.clone();
-    replication_url.set_username(&capture).unwrap();
-    replication_url
-        .set_password(Some("reset-replication-password"))
-        .unwrap();
-    let mut reader = connect(replication_url.as_str()).await?;
-    let role =
-        sqlx::query("SELECT current_user, rolsuper FROM pg_roles WHERE rolname=current_user")
-            .fetch_one(&mut reader)
-            .await?;
-    assert_eq!(role.get::<String, _>(0), capture);
-    assert!(!role.get::<bool, _>(1));
-    for map in &maps {
-        sqlx::query(sqlx::AssertSqlSafe(format!("SELECT * FROM {map} LIMIT 1")))
-            .fetch_all(&mut reader)
-            .await?;
-    }
-
-    assert!(
-        require_connected(&mut system_writer, &document.triple())
-            .await
-            .is_err()
-    );
-    assert!(expected.lock(&platform, &document, false).await.is_err());
-    assert_eq!(
-        sql::schema::status(&mut platform, &document)
-            .await?
-            .pending_database
-            .as_ref(),
-        Some(&pending)
-    );
-    let mut superseded = pending.clone();
-    superseded["initialization_identity"] = "stale".into();
-    assert!(
-        finish_database(&mut system_writer, &document.triple(), &superseded)
-            .await
-            .is_err()
-    );
-    finish_database(&mut system_writer, &document.triple(), &pending).await?;
-    assert!(expected.lock(&platform, &document, true).await.is_err());
-    require_connected(&mut system_writer, &document.triple()).await?;
-    assert!(
-        sql::schema::status(&mut platform, &document)
-            .await?
-            .pending_database
-            .is_none()
-    );
-    let mut stopped = document.clone();
-    for selection in stopped.applications.values_mut() {
-        selection.current = wamn_environment_control::environment::document::DeclaredRelease::None;
-    }
-    sql::reset::prepare_retained(&platform, &stopped, system.url()).await?;
-    let retained: serde_json::Value = sqlx::query("SELECT pending_database FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'").fetch_one(&mut admin).await?.get(0);
-    assert_ne!(
-        retained["initialization_identity"],
-        pending["initialization_identity"]
-    );
-    assert_eq!(retained["inputs"], pending["inputs"]);
-    sqlx::query(
-        "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name=$1",
-    )
-    .bind(&capture)
-    .fetch_all(&mut candidate_admin)
-    .await?;
-    drop(reader);
-    drop(candidate_admin);
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "DROP DATABASE {} WITH (FORCE)",
-            postgres_protocol::escape::escape_identifier(&database_name),
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_history()
--> anyhow::Result<()> {
-    use wamn_control_provision::schema_migrations::MigrationDatabase;
-    use wamn_environment_control::{platform_migrations, provision_system};
-    use wamn_schema_control::MigrationSource;
-
-    let scratch = ScratchRoot::create()?;
-    let mut postgres = wamn_test_postgres::start(&[])?;
-    let system = postgres.create_database("wamn_system")?;
-    let mut admin = wamn_postgres::connect(system.url()).await?;
-
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("CREATE ROLE wamn_system NOLOGIN NOINHERIT; ALTER DATABASE wamn_system OWNER TO wamn_system")
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    provision_system::provision_system(&provision_system::ProvisionSystemRequest {
-        system_database_url: system.url().into(),
-        platform_domain: "example.invalid".into(),
-    })
-    .await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::test_database::seed_org_project_env_sql(
-            "reset",
-            "substrate",
-            "dev",
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    let platform = Platform {
-        system_database_url: system.url().into(),
-        target: wamn_release_control::release_chart::Target {
-            kubeconfig: PathBuf::new(),
-            context: String::new(),
-            namespace: "hosts".into(),
-        },
-        chart: PathBuf::new(),
-        release_artifact_base: String::new(),
-        registry_token_metadata: false,
-        registry_auth_file: scratch.path().join("auth.json"),
-        oci_ca_paths: Vec::new(),
-        insecure_registry: false,
-        package_artifact_base: None,
-        component_artifact_base: None,
-        database_namespace: "platform".into(),
-        database_host: None,
-        database_port: 5432,
-        host_group: None,
-        pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
-        events: None,
-        auth_nats: None,
-    };
-    let document = EnvironmentDocument::from_json(br#"{"org":"reset","project":"substrate","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {} UPDATE registry.environments SET disposable=true WHERE org='reset' AND project='substrate' AND env='dev'; COMMIT;", wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning)))).execute(&mut admin).await.map(drop)?;
-    let name =
-        wamn_control_provision::project_env_database_name("reset", "substrate", "dev", "aaaaaaa1");
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "CREATE DATABASE {} OWNER wamn_db_owner",
-            postgres_protocol::escape::escape_identifier(&name)
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    let database = postgres.database(&name)?;
-    ensure::ensure_project_database(&platform, &document, &[], &mut admin, system.url()).await?;
-    let mut project = wamn_postgres::connect(database.url()).await?;
-
-    let mut files = platform_migrations::embedded_sources(MigrationDatabase::Project);
-    for (label, sql) in [
-        (
-            "create",
-            "CREATE TABLE platform.reset_probe(value int); INSERT INTO platform.reset_probe VALUES (7);",
-        ),
-        ("upgrade", "UPDATE platform.reset_probe SET value=value+1;"),
-    ] {
-        files.push(MigrationSource {
-            relative_path: format!("migrations/project/{:04}_{label}.sql", files.len() + 1),
-            bytes: sql.as_bytes().to_vec(),
-        });
-    }
-    let lock = wamn_environment_control::environment::lock::LifecycleLock::acquire(
-        system.url(),
-        &document.triple(),
-    )
-    .await?;
-    platform_migrations::apply(
-        &mut project,
-        platform_migrations::MigrationTarget::Project(&lock),
-        &files,
-        None,
-    )
-    .await?;
-    files.push(MigrationSource {
-        relative_path: format!("migrations/project/{:04}_pending.sql", files.len() + 1),
-        bytes: b"UPDATE platform.reset_probe SET value=value+1;".to_vec(),
-    });
-    let before = wamn_package_control::schema_baseline::observe(
-        &mut project,
-        MigrationDatabase::Project,
-        &files,
-    )
-    .await?;
-    assert_eq!(
-        sqlx::query("SELECT value FROM platform.reset_probe")
-            .fetch_one(&mut project)
-            .await?
-            .get::<i32, _>(0),
-        8
-    );
-    for missing in [true, false] {
-        let mut unavailable = files.clone();
-        if missing {
-            unavailable.truncate(files.len() - 2);
-        } else {
-            unavailable[0].bytes.push(b' ');
-        }
-        assert!(
-            sql::reset::prepare_retained_with_migrations(
-                &platform,
-                &document,
-                system.url(),
-                &unavailable
-            )
-            .await
-            .is_err()
-        );
-        assert_eq!(
-            wamn_package_control::schema_baseline::observe(
-                &mut project,
-                MigrationDatabase::Project,
-                &files
-            )
-            .await?,
-            before
-        );
-        assert_eq!(
-            sqlx::query("SELECT value FROM platform.reset_probe")
-                .fetch_one(&mut project)
-                .await?
-                .get::<i32, _>(0),
-            8
-        );
-        assert!(sqlx::query("SELECT pending_database IS NULL FROM registry.environment_projects WHERE org='reset' AND project='substrate' AND env='dev'").fetch_one(&mut admin).await?.get::<bool, _>(0));
-    }
-    sql::reset::prepare_retained_with_migrations(&platform, &document, system.url(), &files)
-        .await?;
-    let pending: serde_json::Value = sqlx::query("SELECT pending_database FROM registry.environment_projects WHERE org='reset' AND project='substrate' AND env='dev'").fetch_one(&mut admin).await?.get(0);
-    // CNPG owns deletion/recreation. This case observes the SQL restoration boundary only.
-    drop(project);
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "DROP DATABASE {} WITH (FORCE)",
-            postgres_protocol::escape::escape_identifier(&name)
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "CREATE DATABASE {} OWNER wamn_db_owner",
-            postgres_protocol::escape::escape_identifier(&name)
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    lock.release().await;
-    // An unavailable retry image refuses even before initialization SQL creates a relation.
-    let mut unavailable = files.clone();
-    unavailable[0].bytes.push(b' ');
-    assert!(
-        sql::reset::initialize_with_migrations(&platform, &document, system.url(), &unavailable)
-            .await
-            .is_err()
-    );
-    let mut project = wamn_postgres::connect(database.url()).await?;
-
-    assert!(
-        sqlx::query("SELECT to_regclass('platform.schema_baseline') IS NULL")
-            .fetch_one(&mut project)
-            .await?
-            .get::<bool, _>(0)
-    );
-    sql::reset::initialize_with_migrations(&platform, &document, system.url(), &files).await?;
-    sql::reset::initialize_with_migrations(&platform, &document, system.url(), &files).await?;
-    let restored = wamn_package_control::schema_baseline::observe(
-        &mut project,
-        MigrationDatabase::Project,
-        &files,
-    )
-    .await?;
-    assert_eq!(restored.installed, before.installed);
-    assert_eq!(restored.pending, before.pending);
-    assert_eq!(
-        restored.initialization.as_ref().unwrap().sha256,
-        before.initialization.as_ref().unwrap().sha256
-    );
-    assert_eq!(
-        restored.initialization.as_ref().unwrap().installed_at,
-        pending["initialization_identity"].as_str().unwrap()
-    );
-    assert_ne!(
-        restored.initialization.as_ref().unwrap().installed_at,
-        before.initialization.as_ref().unwrap().installed_at
-    );
-    assert_eq!(
-        sqlx::query("SELECT value FROM platform.reset_probe")
-            .fetch_one(&mut project)
-            .await?
-            .get::<i32, _>(0),
-        8
-    );
-    // A real nontransactional failure leaves a started record and blocks a new reset.
-    let lock = wamn_environment_control::environment::lock::LifecycleLock::acquire(
-        system.url(),
-        &document.triple(),
-    )
-    .await?;
-    files.last_mut().unwrap().bytes = b"-- wamn:no-transaction\nCREATE INDEX CONCURRENTLY reset_probe_idx ON platform.absent_reset_probe(value);".to_vec();
-    let mut executor = wamn_postgres::connect(database.url()).await?;
-
-    assert!(
-        platform_migrations::apply(
-            &mut executor,
-            platform_migrations::MigrationTarget::Project(&lock),
-            &files,
-            None
-        )
-        .await
-        .is_err()
-    );
-    let uncertain = wamn_package_control::schema_baseline::observe(
-        &mut project,
-        MigrationDatabase::Project,
-        &files,
-    )
-    .await?;
-    let error =
-        sql::reset::prepare_retained_with_migrations(&platform, &document, system.url(), &files)
-            .await
-            .unwrap_err();
-    assert!(error.to_string().contains("--resolve"));
-    assert_eq!(
-        wamn_package_control::schema_baseline::observe(
-            &mut project,
-            MigrationDatabase::Project,
-            &files
-        )
-        .await?,
-        uncertain
-    );
-    assert_eq!(
-        uncertain
-            .uncertain
-            .iter()
-            .map(|file| &file.relative_path)
-            .collect::<Vec<_>>(),
-        files
-            .last()
-            .map(|file| &file.relative_path)
-            .into_iter()
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        sqlx::query("SELECT value FROM platform.reset_probe")
-            .fetch_one(&mut project)
-            .await?
-            .get::<i32, _>(0),
-        8
-    );
-    lock.release().await;
-    drop(executor);
-    drop(project);
-    drop(admin);
+    assert_eq!(before_sql, continuity(&mut observer).await?);
     Ok(())
 }

@@ -1,7 +1,9 @@
 //! Install Receiving through the local package applier, without starting a host.
 use anyhow::Context as _;
 use wamn_dev_control::dev::environment::{ENVIRONMENT, PROJECT_ENV_KEY};
-use wamn_package_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_local_package};
+use wamn_environment_control::apply_package::{
+    ApplyPackageRequest, PackageRoot, apply_local_package,
+};
 
 use sqlx::{Connection as _, Row as _, Statement as _};
 #[tokio::main]
@@ -9,6 +11,9 @@ async fn main() -> anyhow::Result<()> {
     let url = std::env::args().nth(1).context("database URL")?;
     let package =
         std::path::PathBuf::from(std::env::args().nth(2).context("Receiving package root")?);
+    let migration_input = std::env::args()
+        .nth(3)
+        .context("restricted migration database URL")?;
     let mut client = wamn_postgres::connect(&url).await?;
 
     // A shared server, such as the GCP minimum, already has both roles.
@@ -61,8 +66,11 @@ async fn main() -> anyhow::Result<()> {
     .map(drop)?;
     apply_local_package(
         ApplyPackageRequest {
-            component_source: wamn_package_control::apply_package::component_source_from_env(None)
-                .unwrap(),
+            migration_database_url: migration_input,
+            component_source: wamn_environment_control::apply_package::component_source_from_env(
+                None,
+            )
+            .unwrap(),
             changes: wamn_broker::Publisher::default(),
             package: PackageRoot {
                 path: package.clone(),

@@ -419,12 +419,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         PLATFORM_DOMAIN,
     )
     .await?;
-    wamn_environment_control::reconcile_run_plane::reconcile(
-        &mut project,
-        &wamn_schema_control::BareSchemaName::new("wamn_run")?,
-        true,
-    )
-    .await?;
+    wamn_environment_control::platform_migrations::install_project(&mut project).await?;
     sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:prekind',false)").bind(&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut project).await.map(|result| result.rows_affected())?;
     sqlx::query("SELECT set_config('app.project_env_key',$1,false)")
         .bind(&project_env_key)
@@ -435,7 +430,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         .execute(&mut project)
         .await
         .map(drop)?;
-    sqlx::query("INSERT INTO wamn_run.environment_policies(project_env_key,expected_environment) VALUES ($1,'http')").bind(&project_env_key).execute(&mut project).await.map(|result| result.rows_affected())?;
+
     let instance: i64 =
         sqlx::query("SELECT oid::bigint FROM pg_database WHERE datname=current_database()")
             .fetch_one(&mut project)
@@ -658,7 +653,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     )?;
     sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)").bind(&project_env_key).bind(&digest).bind(&published.canonical_bytes).execute(&mut project).await.map(|result| result.rows_affected())?;
     for package in &published.manifest.release.packages {
-        sqlx::query("INSERT INTO catalog.packages(physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,$3,$4)").bind(&project_env_key).bind(&package.package_id()).bind(&package.package_version()).bind(&format!("sha256:{}","a".repeat(64))).execute(&mut project).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( $1,$2,$3,$4)").bind(&project_env_key).bind(&package.package_id()).bind(&package.package_version()).bind(&format!("sha256:{}","a".repeat(64))).execute(&mut project).await.map(|result| result.rows_affected())?;
     }
     let mut document = fixture_document("http", "http.orders.example", digest);
     document

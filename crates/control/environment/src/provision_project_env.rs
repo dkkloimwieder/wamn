@@ -54,8 +54,7 @@ pub use pat_secrets::{
     IssuedPatSecret, mint_management_author_pat, parse_pat_prefix, revoke_provisioning_pat,
 };
 pub use registry::{
-    finish_database, read_project_env_instance, read_project_env_policy, require_connected,
-    resolve_cluster,
+    read_project_env_instance, read_project_env_policy, require_connected, resolve_cluster,
 };
 
 #[cfg(test)]

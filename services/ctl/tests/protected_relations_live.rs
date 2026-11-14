@@ -11,9 +11,8 @@ use wamn_control_provision::identity_role::{
     IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES, grant_identity_issuer_surface_sql,
 };
 use wamn_control_provision::sql;
-use wamn_environment_control::reconcile_run_plane;
-use wamn_package_control::apply_package::{self, ApplyPackageRequest};
-use wamn_schema_control::BareSchemaName;
+use wamn_environment_control::apply_package::{self, ApplyPackageRequest};
+use wamn_postgres::schema::BareSchemaName;
 use wamn_test_infrastructure::locked_database;
 
 const SYSTEM_SCHEMA_SQL: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
@@ -155,57 +154,9 @@ async fn install_project_database(client: &mut Client, url: &str) {
     .map(drop)
     .expect("remove same-qualified control portable schemas before project install");
     let schema = BareSchemaName::new("wamn_run").expect("canonical run schema name");
-    reconcile_run_plane::reconcile(client, &schema, true)
+    wamn_environment_control::platform_migrations::install_project(client)
         .await
         .expect("install canonical project schemas through reconciler");
-    sqlx::raw_sql(APP_SCHEMA_SQL)
-        .execute(&mut *client)
-        .await
-        .map(drop)
-        .expect("install canonical application schema");
-    // R55 (wamn-0h0g.12.177). The install above is the FRESH path — the control
-    // schemas were dropped a few lines up, so every convergence arm sits behind a
-    // presence probe that is false. This test reads the reconciled database,
-    // so the reconciler must be shown CONVERGED and not
-    // merely exited-zero: a second pass over the same database plans nothing.
-    let converged = reconcile_run_plane::reconcile(client, &schema, true)
-        .await
-        .expect("second reconcile over the installed project schemas");
-    assert!(
-        converged.is_noop(),
-        "the project install did not converge; the database still requires changes: {:#?}",
-        converged.actions
-    );
-    // …and the post-test named the PROJECT record, on a database that carried
-    // the CONTROL plane's same-qualified schemas moments ago.
-    let mut at_target = converged.at_target.clone();
-    at_target.sort();
-    assert_eq!(
-        at_target,
-        ["environment_policies", "run_queue", "runs",],
-        "the converged postcondition did not name exactly the project run-plane record"
-    );
-
-    apply_package::apply_package(ApplyPackageRequest {
-        component_source: apply_package::component_source_from_env(None)
-            .expect("component repository configuration"),
-        changes: wamn_broker::Publisher::default(),
-        package: wamn_package_control::apply_package::PackageRoot {
-            path: wamn_fixture_package::package_root(),
-            artifact_digest: Some(
-                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
-                    &wamn_fixture_package::package_root(),
-                )
-                .expect("read the fixture package root"),
-            ),
-        },
-        database_url: url.to_string(),
-        org: "protected-relation-audit".into(),
-        project: "fixture".into(),
-        environment: "dev".into(),
-    })
-    .await
-    .expect("apply the package-owned fixture migration stream");
 }
 
 /// Portable relations that live only in the control plane.

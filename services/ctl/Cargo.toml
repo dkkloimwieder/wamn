@@ -64,7 +64,6 @@ rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity
 # implemented by the catalog model; the writer never re-derives that hash.
 wamn-catalog = { workspace = true }
-wamn-schema-control = { workspace = true }
 # `wamn build` calls the two-pass package build.
 wamn-compiler = { workspace = true }
 # The control operations that the verbs call.

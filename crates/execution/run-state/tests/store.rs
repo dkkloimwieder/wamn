@@ -172,13 +172,6 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     .unwrap();
     script.push_str(&ddl);
     script.push('\n');
-    script.push_str(
-        "INSERT INTO wamn_run.environment_policies \
-           (project_env_key, expected_environment) VALUES \
-           ('t1', 'test'), \
-           ('t2', 'test'), \
-           ('t3', 'test');\n",
-    );
     // Seed two projects as the superuser (bypasses RLS): each has one run.
     script.push_str(
         "INSERT INTO wamn_run.runs (\
@@ -311,26 +304,6 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         wamn_run_state::sql::prune_terminal_runs_sql()
     )
     .unwrap();
-    // The environment policy minimum: the App generation reads its own project's
-    // row only and cannot write one.
-    writeln!(
-        script,
-        "BEGIN;\n\
-         SET LOCAL ROLE {app_role};\n\
-         DO $$ BEGIN\n\
-           ASSERT (SELECT count(*) FROM wamn_run.environment_policies) = 1,\n\
-             'the App generation reads only its own environment policy';\n\
-           ASSERT (SELECT project_env_key FROM wamn_run.environment_policies) = 't1',\n\
-             'the App generation reads its own project''s policy';\n\
-           BEGIN\n\
-             INSERT INTO wamn_run.environment_policies\n\
-               (project_env_key, expected_environment) VALUES ('t4', 'test');\n\
-             ASSERT false, 'the App generation must not write an environment policy';\n\
-           EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n\
-         END $$;\n\
-         COMMIT;"
-    )
-    .expect("writing to a String cannot fail");
     // Terminal run history remains deletable.
     script.push_str(
         "UPDATE wamn_run.runs SET status='completed' \
@@ -538,32 +511,6 @@ DO $$ BEGIN
     'wamn_app must not write runs';
 END $$;
 
--- The environment policy relation: one row per project, forced row security,
--- a platform policy that reads every row, and an index on the project key.
-DO $$ BEGIN
-  BEGIN
-    INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment)
-      VALUES ('t1', 'test');
-    ASSERT false, 'a second environment policy for one project must be refused';
-  EXCEPTION WHEN unique_violation THEN NULL; END;
-  ASSERT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class
-           WHERE oid = 'wamn_run.environment_policies'::regclass),
-    'environment_policies forces row security';
-  ASSERT EXISTS (
-    SELECT FROM pg_index
-     WHERE indrelid = 'wamn_run.environment_policies'::regclass
-       AND pg_get_indexdef(indexrelid) LIKE '%project_key(project_env_key)%'
-  ), 'environment_policies indexes its project key';
-  ASSERT EXISTS (
-    SELECT FROM pg_policy
-     WHERE polrelid = 'wamn_run.environment_policies'::regclass
-       AND polpermissive AND polcmd = 'r'
-       AND polroles = ARRAY['wamn_platform'::regrole::oid]
-       AND pg_get_expr(polqual, polrelid) = 'true'
-  ), 'the platform family reads every environment policy';
-END $$;
-
--- Read installed columns, rather than the source declaration.
 DO $$
 DECLARE relation regclass; required text[]; column_name text;
 BEGIN

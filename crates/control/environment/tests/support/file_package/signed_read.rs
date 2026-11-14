@@ -65,13 +65,6 @@ pub(super) fn signed_read_fixture(project_env_key: &str) -> anyhow::Result<Signe
             std::fs::write(path, file.bytes())?;
         }
     }
-    wamn_test_infrastructure::fixture_digest::write_physical_schema(
-        &package,
-        serde_json::from_value(json!({"document": [
-            {"name": "id", "primary_key": true, "timestamptz": false},
-            {"name": "file_id", "primary_key": false, "timestamptz": false}
-        ]}))?,
-    )?;
     let declaration = wamn_package_control::component_declaration::render_palette_declaration(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
             "../../control/environment/tests/support/file_package/publication/components/signed-read.json.in",

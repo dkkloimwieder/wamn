@@ -17,24 +17,17 @@ use super::super::{
     environment::seed_receiving_business_rows, identity, repository_root, required_journey_path,
     write_dev_config,
 };
-use super::{DEV_COMMAND_TIMEOUT, DevJourneyInputs, current_database_acl};
+use super::{DEV_COMMAND_TIMEOUT, DevJourneyInputs};
 
 const CODE: &str = "apps/wamn_receiving/component/src/reads.rs";
 const SQL: &str = "apps/wamn_receiving/query/location.sql";
-const MANIFEST: &str = "apps/wamn_receiving/wamn.k";
 const MIGRATIONS: &str = "apps/wamn_receiving/migrations";
-const APPENDED: &str = "apps/wamn_receiving/migrations/0002_location_note.sql";
-const APPENDED_SQL: &[u8] = b"ALTER TABLE receiving.location ADD COLUMN note text;\n";
 const CODE_BEFORE: &str = "read::location_list(connection)";
 const CODE_AFTER: &str = "async { let mut rows = read::location_list(connection).await?; for row in &mut rows { row.location_code.push_str(\"-edited\"); } Ok::<_, crate::data::AccessError>(rows) }";
-const MANIFEST_BEFORE: &str = "table = \"location\"\n            owner = \"wamn_receiving\"\n            server_owned_fields = []";
-const MANIFEST_AFTER: &str = "table = \"location\"\n            owner = \"wamn_receiving\"\n            server_owned_fields = [\"note\"]";
-const APPENDED_EDIT: &[u8] =
-    b"ALTER TABLE receiving.location ADD COLUMN note text;\n-- edited after apply\n";
 
 #[tokio::test]
 #[ignore = "requires: env:WAMN_LOCAL_DEV_EDIT_ROOT, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:jq"]
-async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> anyhow::Result<()> {
+async fn local_watch_preserves_data_and_refuses_bad_sql() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_LOCAL_DEV_EDIT_ROOT, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:jq",
     );
@@ -88,7 +81,6 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         )?,
     )
     .await?;
-    let system_acl = current_database_acl(&mut admin).await?;
     let provisioning = inputs.environment.nats.connect().await?;
     let target = wamn_registry::Triple::new(
         &environment.identity.org,
@@ -107,7 +99,6 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     let config = write_dev_config(
         root,
         &system_url,
-        &environment.template,
         &environment.route,
         &environment.credentials,
         &inputs.environment,
@@ -134,13 +125,13 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
 
         original.replace(CODE, CODE_BEFORE, CODE_AFTER)?;
         let code = watch.served().await?;
-        code.retained(&first, &["migrate", "introspect", "acl"])?;
+        code.retained(&first, &["migrate", "acl"])?;
         code.locations(token, &["DOCK-1-edited", "DOCK-2-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
         original.replace(SQL, "location.location_code ASC", "location.location_code DESC")?;
         let sql = watch.served().await?;
-        sql.retained(&code, &["migrate", "introspect"])?;
+        sql.retained(&code, &["migrate"])?;
         sql.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
@@ -151,7 +142,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         require_revision(&environment.route.database_url).await?;
         fs::write(repository.join(SQL), valid_sql)?;
         let repaired = watch.served().await?;
-        repaired.retained(&sql, &["migrate", "introspect"])?;
+        repaired.retained(&sql, &["migrate"])?;
         repaired.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
 
         let valid_code = fs::read(repository.join(CODE))?;
@@ -166,27 +157,6 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         compiled.retained(&repaired, &[])?;
         compiled.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
 
-        fs::write(repository.join(APPENDED), APPENDED_SQL)?;
-        let appended = watch.served().await?;
-        appended.retained(&compiled, &[])?;
-        ensure!(!appended.skipped.contains("migrate"), "an appended migration must reach the kept target");
-        ensure!(location_note(&environment.route.database_url).await?, "the kept target lacks the appended column");
-        appended.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
-        require_revision(&environment.route.database_url).await?;
-
-        original.replace(MANIFEST, MANIFEST_BEFORE, MANIFEST_AFTER)?;
-        let declared = watch.served().await?;
-        declared.retained(&appended, &[])?;
-        declared.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
-        require_revision(&environment.route.database_url).await?;
-
-        fs::write(repository.join(APPENDED), APPENDED_EDIT)?;
-        let reset = watch.served().await?;
-        ensure!(reset.instance != first.instance && !reset.skipped.contains("migrate"), "an edited applied migration must create a new target instance: instance {} after {}, skipped {:?}", reset.instance, first.instance, reset.skipped);
-        reset.locations(token, &[]).await?;
-        ensure!(location_note(&environment.route.database_url).await?, "the recreated target lacks the appended migration");
-        require_local_facts(root, &environment.route.database_url).await?;
-        ensure!(current_database_acl(&mut admin).await? == system_acl, "the local loop changed the system database ACL");
         Ok::<_, anyhow::Error>(())
     }.await;
     let stopped = watch.stop().await;
@@ -225,12 +195,6 @@ async fn require_revision(url: &str) -> anyhow::Result<()> {
         "a compatible save lost or replayed the authenticated mutation"
     );
     Ok(())
-}
-
-async fn location_note(url: &str) -> anyhow::Result<bool> {
-    let mut client = connect(url).await?;
-    let present: bool = sqlx::query("SELECT count(*) = 1 FROM information_schema.columns WHERE table_schema = 'receiving' AND table_name = 'location' AND column_name = 'note'").fetch_one(&mut client).await?.get(0);
-    Ok(present)
 }
 
 async fn require_local_facts(root: &Path, target_url: &str) -> anyhow::Result<()> {
@@ -593,7 +557,7 @@ impl SavedSource {
     fn capture(repository: &Path) -> anyhow::Result<Self> {
         let mut files = BTreeMap::new();
         let mut directories = BTreeMap::new();
-        for relative in [CODE, SQL, MANIFEST] {
+        for relative in [CODE, SQL] {
             capture_file(repository, &repository.join(relative), &mut files)?;
         }
         let mut outputs = Vec::new();

@@ -1,4 +1,4 @@
-//! The reset worker restores the pinned database inputs.
+//! Development identity and PAT bootstrapping through the product.
 
 use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
@@ -301,12 +301,12 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
     clippy::ok_expect,
     reason = "do not print credential-bearing upstream errors in fixture assertions"
 )]
-async fn development_identity_survives_target_recreation_and_owned_teardown() {
+async fn development_identity_survives_schema_reset_and_owned_teardown() {
     const PASSWORD: &str = "owned-development-identity-fixture-password";
     use serde_json::{Value, json};
     use wamn_dev_control::dev::environment::{
-        DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, provision,
-        reconcile_journey_run_plane,
+        DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, initialize_journey_platform,
+        provision,
     };
     use wamn_platform_identity::{
         assign_project_role, create_or_reuse_user, grant_project_env_membership,
@@ -394,7 +394,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     .await
     .ok()
     .expect("assign the existing application role");
-    reconcile_journey_run_plane(
+    initialize_journey_platform(
         &JourneyTarget::receiving(),
         system.url(),
         &environment.route.database_url,
@@ -427,7 +427,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         .send()
         .await
         .ok()
-        .expect("password login before recreation");
+        .expect("password login before reset");
     assert_eq!(first.status(), reqwest::StatusCode::OK);
     let keys: Value = http
         .get(format!("{endpoint}/.well-known/jwks.json"))
@@ -445,52 +445,19 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     .unwrap()
     .get(0);
 
-    // Exercise the destructive database boundary used by structural rebuilds.
-    // Identity remains outside that database and its role reader reconnects.
-    let database =
-        wamn_dev_control::dev::target_database::database_name(&environment.route.database_url)
-            .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "DROP DATABASE {} WITH (FORCE);",
-            postgres_protocol::escape::escape_identifier(&database.clone())
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "CREATE DATABASE {} TEMPLATE {}",
-            postgres_protocol::escape::escape_identifier(&database),
-            postgres_protocol::escape::escape_identifier(&environment.template.clone())
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&std::fs::read_to_string(files.0.join("database-acl.sql")).unwrap()).to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .unwrap();
-    reconcile_journey_run_plane(
-        &JourneyTarget::receiving(),
+    wamn_environment_control::environment::sql::reset::reset_database(
         system.url(),
         &environment.route.database_url,
+        &wamn_registry::Triple::new("acme", "dev", "receiving"),
     )
     .await
-    .ok()
-    .expect("restore application membership after recreation");
+    .unwrap();
     assert_application_role(&environment.route.database_url, user.to_string().as_str()).await;
     let second = login()
         .send()
         .await
         .ok()
-        .expect("password login after recreation");
+        .expect("password login after reset");
     assert_eq!(second.status(), reqwest::StatusCode::OK);
     let keys_after: Value = http
         .get(format!("{endpoint}/.well-known/jwks.json"))
@@ -500,10 +467,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         .json()
         .await
         .unwrap();
-    assert_eq!(
-        keys, keys_after,
-        "application recreation changed signing keys"
-    );
+    assert_eq!(keys, keys_after, "application reset changed signing keys");
     let pats_after: i64 = sqlx::query(sqlx::AssertSqlSafe(
         ("SELECT count(*) FROM identity.pats").to_string(),
     ))
@@ -555,140 +519,4 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
             .is_err()
     );
     drop(password_admin);
-}
-
-#[tokio::test]
-async fn reset_worker_restores_a_recreated_database() -> anyhow::Result<()> {
-    use wamn_environment_control::environment::{
-        Platform,
-        document::EnvironmentDocument,
-        ensure,
-        sql::{self, ExpectedDatabase},
-    };
-
-    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
-    let mut postgres = wamn_test_postgres::start(&[])?;
-    let system = postgres.create_database("wamn_system")?;
-    let mut admin = wamn_postgres::connect(system.url()).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("CREATE ROLE wamn_system NOLOGIN NOINHERIT; ALTER DATABASE wamn_system OWNER TO wamn_system")
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    wamn_environment_control::provision_system::provision_system(
-        &wamn_environment_control::provision_system::ProvisionSystemRequest {
-            system_database_url: system.url().into(),
-            platform_domain: "example.invalid".into(),
-        },
-    )
-    .await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.environments SET disposable=true; COMMIT;",
-        wamn_control_provision::test_database::seed_org_project_env_sql("acme", "apps", "dev"),
-    ))).execute(&mut admin).await.map(drop)?;
-    let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
-    let instance = wamn_environment_control::provision_project_env::read_project_env_instance(
-        system.url(),
-        &document.triple(),
-    )
-    .await?;
-    let name = wamn_control_provision::project_env_database_name("acme", "apps", "dev", &instance);
-    let apply_input = wamn_test_infrastructure::credentials::apply_login(system.url()).await?;
-    let platform = Platform {
-        system_database_url: apply_input,
-        target: wamn_release_control::release_chart::Target {
-            kubeconfig: PathBuf::new(),
-            context: String::new(),
-            namespace: "hosts".into(),
-        },
-        chart: PathBuf::new(),
-        release_artifact_base: "registry.invalid/releases".into(),
-        registry_token_metadata: false,
-        registry_auth_file: scratch.path().join("registry.json"),
-        oci_ca_paths: Vec::new(),
-        insecure_registry: false,
-        package_artifact_base: None,
-        component_artifact_base: None,
-        database_namespace: "platform".into(),
-        database_host: None,
-        database_port: 5432,
-        host_group: None,
-        pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
-        events: None,
-        auth_nats: None,
-    };
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "CREATE DATABASE {} OWNER wamn_db_owner",
-            postgres_protocol::escape::escape_identifier(&name)
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    ensure::ensure_project_database(&platform, &document, &[], &mut admin, system.url()).await?;
-    sql::reset::prepare_retained(&platform, &document, system.url()).await?;
-    let expected_database = ExpectedDatabase::read(&platform, &document).await?;
-    let file = scratch.path().join("environment.json");
-    let expected = scratch.path().join("database.json");
-    std::fs::write(&file, document.canonical_json()?)?;
-    std::fs::write(&expected, serde_json::to_vec(&expected_database)?)?;
-    // CNPG supplies an empty database; the SQL worker must restore its pinned inputs.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "DROP DATABASE {} WITH (FORCE)",
-            postgres_protocol::escape::escape_identifier(&name),
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "CREATE DATABASE {} OWNER wamn_db_owner",
-            postgres_protocol::escape::escape_identifier(&name)
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
-    let nats = start_platform_nats(&scratch.path().join("nats"));
-    wamn_broker::kv_memory::create_buckets(&nats.client.connect(&nats.url).await?).await?;
-    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_wamn-ctl"))
-        .args(["env", "reset"])
-        .arg(&file)
-        .arg(&expected)
-        .env("WAMN_APPLY_DATABASE_URL", &platform.system_database_url)
-        .env("WAMN_SYSTEM_ADMIN_URL", system.url())
-        .env(
-            "WAMN_RELEASE_ARTIFACT_BASE",
-            &platform.release_artifact_base,
-        )
-        .env("WAMN_REGISTRY_AUTH_FILE", &platform.registry_auth_file)
-        .env("WAMN_NATS_URL", &nats.url)
-        .env("WAMN_NATS_TLS_CA", &nats.client.ca)
-        .env("WAMN_NATS_TLS_CERT", &nats.client.cert)
-        .env("WAMN_NATS_TLS_KEY", &nats.client.key)
-        .env_remove("WAMN_RELEASE_HOST_GROUP")
-        .stdin(Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await?;
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let state = sql::schema::state(&platform, &document).await?;
-    assert_eq!(
-        state.initialization_identity.as_deref(),
-        expected_database.pending.as_deref(),
-        "the worker must restore the pending initialization before reconnect"
-    );
-    Ok(())
 }

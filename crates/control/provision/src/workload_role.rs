@@ -93,6 +93,7 @@ pub enum WorkloadRoleFamily {
     ServiceReader,
     App,
     Query,
+    Migration,
     Retention,
     ExecutorPlatform,
     HttpAdmitter,
@@ -113,10 +114,11 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::ServiceReader,
         Self::App,
         Self::Query,
+        Self::Migration,
         Self::Retention,
         Self::ExecutorPlatform,
         Self::HttpAdmitter,
@@ -136,6 +138,7 @@ impl WorkloadRoleFamily {
             Self::ServiceReader => SERVICE_READER_ROLE,
             Self::App => APP_ROLE,
             Self::Query => "wamn_query",
+            Self::Migration => crate::migration::OWNER_ROLE,
             Self::Retention => RETENTION_ROLE,
             Self::ExecutorPlatform => EXECUTOR_PLATFORM_ROLE,
             Self::HttpAdmitter => HTTP_ADMITTER_ROLE,
@@ -153,6 +156,7 @@ impl WorkloadRoleFamily {
     /// Prefix of the role identity digest, within the PostgreSQL name limit.
     pub const fn login_prefix(self) -> &'static str {
         match self {
+            Self::Migration => crate::migration::LOGIN_PREFIX,
             Self::ExecutorPlatform => EXECUTOR_PLATFORM_LOGIN_PREFIX,
             Self::EventMaterializer => EVENT_MATERIALIZER_LOGIN_PREFIX,
             Self::SessionRoleReader => SESSION_ROLE_READER_LOGIN_PREFIX,
@@ -163,7 +167,7 @@ impl WorkloadRoleFamily {
     /// Exact identity class used to derive login identities.
     pub const fn identity_type(self) -> WorkloadRoleIdentityType {
         match self {
-            Self::App | Self::Query | Self::Retention | Self::AuditRetention => {
+            Self::App | Self::Query | Self::Migration | Self::Retention | Self::AuditRetention => {
                 WorkloadRoleIdentityType::ProjectEnvKey
             }
             Self::ServiceReader
@@ -227,11 +231,13 @@ impl WorkloadRoleFamily {
     /// cross-project on the relations it holds grants on; the project predicate it
     /// keeps in its own statements is what re-narrows it.
     pub const fn is_platform_grain(self) -> bool {
-        !matches!(self, Self::App | Self::Query | Self::AuditRetention)
-            && !matches!(
-                self.identity_type(),
-                WorkloadRoleIdentityType::Control | WorkloadRoleIdentityType::Org
-            )
+        !matches!(
+            self,
+            Self::App | Self::Query | Self::Migration | Self::AuditRetention
+        ) && !matches!(
+            self.identity_type(),
+            WorkloadRoleIdentityType::Control | WorkloadRoleIdentityType::Org
+        )
     }
 
     /// The family's operator-facing name, in the hyphenated convention.
@@ -296,6 +302,7 @@ impl WorkloadRoleFamily {
         match self {
             Self::ServiceReader => b"wamn.service-reader.identity.v0.1",
             Self::App | Self::Query => b"wamn.app.identity.v0.1",
+            Self::Migration => b"wamn.migration.identity.v0.1",
             Self::Retention => b"wamn.run-retention.identity.v0.1",
             Self::ExecutorPlatform => b"wamn.executor-platform.identity.v0.1",
             Self::HttpAdmitter => b"wamn.http-admitter.identity.v0.1",

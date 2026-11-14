@@ -5535,6 +5535,7 @@ dependencies = [
 name = "wamn-catalog"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "boon",
  "croner",
  "proptest",
@@ -5603,11 +5604,11 @@ dependencies = [
  "wamn-catalog",
  "wamn-digest",
  "wamn-fixture-package",
+ "wamn-identity-protocol",
  "wamn-number-pattern",
  "wamn-postgres",
  "wamn-record-history",
  "wamn-scalar",
- "wamn-schema-control",
  "wamn-schema-introspection",
  "wamn-test-postgres",
  "wit-parser 0.254.2",
@@ -5700,7 +5701,6 @@ dependencies = [
  "wamn-record-history",
  "wamn-registry",
  "wamn-run-state",
- "wamn-schema-control",
  "wamn-test-postgres",
 ]
 
@@ -5740,7 +5740,6 @@ dependencies = [
  "wamn-registry",
  "wamn-release-control",
  "wamn-runtime",
- "wamn-schema-control",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wamn-workflow",
@@ -5798,8 +5797,6 @@ dependencies = [
  "wamn-run-state",
  "wamn-runtime",
  "wamn-scalar",
- "wamn-schema-control",
- "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -5937,7 +5934,6 @@ dependencies = [
  "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
- "wamn-schema-control",
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
@@ -6213,7 +6209,6 @@ dependencies = [
  "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
- "wamn-schema-control",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wamn-workflow",
@@ -6309,7 +6304,6 @@ dependencies = [
  "wamn-record-history",
  "wamn-registry",
  "wamn-runtime",
- "wamn-schema-control",
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
@@ -6357,6 +6351,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "postgres-protocol",
  "serde",
  "serde_json",
  "sqlx",
@@ -6412,7 +6407,6 @@ dependencies = [
  "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
- "wamn-schema-control",
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
@@ -6467,7 +6461,6 @@ dependencies = [
  "wamn-record-history",
  "wamn-registry",
  "wamn-runtime",
- "wamn-schema-control",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -6574,7 +6567,6 @@ dependencies = [
  "wamn-run-state",
  "wamn-runtime",
  "wamn-scalar",
- "wamn-schema-control",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -6590,20 +6582,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "serde",
-]
-
-[[package]]
-name = "wamn-schema-control"
-version = "0.1.0"
-dependencies = [
- "pg_query",
- "postgres-protocol",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "wamn-catalog",
- "wamn-digest",
- "wamn-record-history",
 ]
 
 [[package]]
@@ -6659,7 +6637,6 @@ dependencies = [
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-registry",
- "wamn-schema-control",
  "wamn-test-postgres",
 ]
 
@@ -6773,7 +6750,6 @@ dependencies = [
  "wamn-router",
  "wamn-run-state",
  "wamn-runtime",
- "wamn-schema-control",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",

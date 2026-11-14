@@ -19,6 +19,7 @@ license.workspace = true
 test-util = ["dep:wamn-test-postgres"]
 
 [dependencies]
+anyhow.workspace = true
 wamn-scalar.workspace = true
 wamn-digest.workspace = true
 wamn-record-history = { workspace = true }
