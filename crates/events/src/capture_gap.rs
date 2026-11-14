@@ -78,7 +78,7 @@ pub struct ClosedCaptureGap {
 pub async fn recover_capture_gap(
     args: &RecoverCaptureGapRequest,
     instance: &str,
-    stop_reader: impl AsyncFnOnce() -> anyhow::Result<()>,
+    target: &wamn_kubernetes::Target,
 ) -> anyhow::Result<RecoveredCaptureGap> {
     validate_project_env_cdc(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("cdc names: {e}"))?;
@@ -161,9 +161,15 @@ pub async fn recover_capture_gap(
     };
     let start_at = last.map_or(registered_at, |(_, at)| at);
 
-    // Validate the recovery before stopping a healthy reader. The callback must
-    // stop the Deployment before a repaired slot can become visible to it.
-    stop_reader().await?;
+    // Refusals leave a healthy Deployment running. Stop it before the repaired
+    // slot can become visible to a restarting reader.
+    crate::lifecycle::stop_reader(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
+        &triple,
+    )
+    .await?;
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(sql::drop_replication_slot_sql(&slot)))
         .execute(&mut admin)
@@ -213,23 +219,8 @@ pub async fn recover_capture_gap(
     })
 }
 
-/// Set `resync_at` on the newest gap row of one registration.
+/// Close the newest gap, retaining its original resynchronization time on retry.
 pub async fn close_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<ClosedCaptureGap> {
-    close_gap(args, false)
-        .await?
-        .context("capture gap was not closed")
-}
-
-/// Close an open gap after database reconstruction, retaining an already closed or absent gap.
-pub async fn close_open_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<()> {
-    close_gap(args, true).await?;
-    Ok(())
-}
-
-async fn close_gap(
-    args: &CloseCaptureGapRequest,
-    optional: bool,
-) -> anyhow::Result<Option<ClosedCaptureGap>> {
     let triple = Triple::new(&args.org, args.env.as_str(), &args.project);
     let mut system = connect_system(&args.system_database_url).await?;
     let env = triple.env.as_str();
@@ -244,22 +235,13 @@ async fn close_gap(
     .await
     .context("read the newest registry.capture_gap row")?;
     let Some(newest) = newest else {
-        if optional {
-            return Ok(None);
-        }
         bail!("{triple} has no capture gap row");
     };
     let created_at: DateTime<Utc> = newest.get(0);
     let slot: String = newest.get(1);
-    let closed: bool = newest.get(2);
-    if closed {
-        if optional {
-            return Ok(None);
-        }
-        bail!("the newest capture gap row of {triple} already has resync_at");
-    }
-    let resync_at: DateTime<Utc> =
-        sqlx::query(sqlx::AssertSqlSafe((close_capture_gap_sql()).to_string()))
+    let resync_at = match newest.get::<Option<DateTime<Utc>>, _>(2) {
+        Some(recorded) => recorded,
+        None => sqlx::query(sqlx::AssertSqlSafe(close_capture_gap_sql().to_string()))
             .bind(&triple.org)
             .bind(&triple.project)
             .bind(env)
@@ -267,17 +249,18 @@ async fn close_gap(
             .fetch_one(&mut *transaction)
             .await
             .context("set resync_at")?
-            .get(0);
+            .get(0),
+    };
     transaction
         .commit()
         .await
         .context("commit the close transaction")?;
-    Ok(Some(ClosedCaptureGap {
+    Ok(ClosedCaptureGap {
         triple,
         slot,
         created_at,
         resync_at,
-    }))
+    })
 }
 
 /// The LSN and `commit_ts` of the newest CDC event on the source stream. `None`

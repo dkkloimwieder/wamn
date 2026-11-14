@@ -246,3 +246,36 @@ pub async fn wait_reader_stopped(
     .context("wait for the old CDC reader to stop")??;
     Ok(())
 }
+
+/// Start the reader and wait until its Deployment is ready.
+pub async fn start_reader(
+    kubeconfig: &std::path::Path,
+    context: &str,
+    namespace: &str,
+    triple: &Triple,
+) -> anyhow::Result<()> {
+    use wamn_kubernetes::kubectl::kubectl;
+    let name = project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
+    kubectl(
+        kubeconfig,
+        context,
+        namespace,
+        &["scale", "deployment", &name, "--replicas=1"],
+        None,
+    )
+    .await?;
+    kubectl(
+        kubeconfig,
+        context,
+        namespace,
+        &[
+            "rollout",
+            "status",
+            &format!("deployment/{name}"),
+            "--timeout=120s",
+        ],
+        None,
+    )
+    .await?;
+    Ok(())
+}

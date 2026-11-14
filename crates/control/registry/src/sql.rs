@@ -190,10 +190,9 @@ pub fn insert_capture_gap_sql() -> &'static str {
 }
 
 /// Lock the newest capture gap of one registration (`wamn-59z6`). Params: `$1`
-/// org, `$2` project, `$3` env. Columns: `created_at`, `slot`, and whether
-/// `resync_at` is set.
+/// org, `$2` project, `$3` env. Columns: `created_at`, `slot`, and `resync_at`.
 pub fn lock_newest_capture_gap_sql() -> &'static str {
-    "SELECT created_at, slot, resync_at IS NOT NULL \
+    "SELECT created_at, slot, resync_at \
      FROM registry.capture_gap \
      WHERE org = $1 AND project = $2 AND env = $3 \
      ORDER BY created_at DESC LIMIT 1 FOR UPDATE"
@@ -205,17 +204,6 @@ pub fn close_capture_gap_sql() -> &'static str {
     "UPDATE registry.capture_gap SET resync_at = now() \
      WHERE org = $1 AND project = $2 AND env = $3 AND created_at = $4 \
      RETURNING resync_at"
-}
-
-/// Read one project-env's CDC reader registration — what the reader service
-/// (l5i9.10) streams by. Params: `$1` org, `$2` project, `$3` env. Columns:
-/// `publication, slot, stream, replication_secret_name,
-/// replication_secret_namespace, enabled, schema`.
-pub fn select_event_reader_sql() -> &'static str {
-    "SELECT publication, slot, stream, \
-            replication_secret_name, replication_secret_namespace, enabled, schema \
-     FROM registry.event_readers \
-     WHERE org = $1 AND project = $2 AND env = $3"
 }
 
 /// Delete every connection of one environment, with no reference refusal, and

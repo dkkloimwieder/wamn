@@ -892,7 +892,7 @@ CREATE TRIGGER project_envs_retire_instance
 -- Event readers — the CDC capture registrations (D19 v3, wamn-l5i9.9). One row
 -- per project-env with CDC enabled: the publication + failover replication slot
 -- the reader streams from (the `wamn_cdc_…` Postgres objects the
--- enable-cdc-project-env overlay provisions), the JetStream stream envelopes
+-- environment provisioning creates), the JetStream stream envelopes
 -- land in (one stream per organization, project, and environment), and a
 -- REFERENCE to the reader's
 -- replication-credential Secret (`wamn-cdc-<org>--<project>--<env>`).
@@ -903,13 +903,13 @@ CREATE TRIGGER project_envs_retire_instance
 -- never here. Keyed by the identity triple; FK to the project-env it captures
 -- through the same project-env identity, so a de-provisioned env (or a deleted
 -- org, cascading through project_envs) drops its registration. The reader
--- service (l5i9.10) reads its row to learn what to stream.
+-- configuration comes from a mounted JSON file. Control uses this registration
+-- to locate the source stream and slot during recovery.
 --
--- `schema` is the application schema that the publication covers. The reader
--- refuses a registration without one, and a publication of another schema
--- (wamn-0h0g.19.21). It is nullable because a system database from before
--- migration 0002 holds registrations without it, and enable-cdc-project-env
--- writes it on its next run.
+-- `schema` records the application schemas covered by the publication.
+-- Environment provisioning owns that declaration. The reader does not read
+-- registrations or compare the publication shape. Control stops the reader
+-- for capture recovery and restarts it after resynchronization.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.event_readers (
     org                          text NOT NULL,

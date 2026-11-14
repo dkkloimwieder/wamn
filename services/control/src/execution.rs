@@ -82,8 +82,8 @@ impl wamn_execution_host::ControlExecution for Execution {
                 let request: Request = serde_json::from_str(payload)?;
                 if operation == "capture_gap.close" {
                     let closed = wamn_environment::environment::capture_gap::close(
-                        &self.platform,
-                        &wamn_environment::capture_gap::CloseCaptureGapRequest {
+                        &self.platform.target,
+                        &wamn_environment::environment::capture_gap::CloseCaptureGapRequest {
                             org: self.org.clone(),
                             project: request.project,
                             env: request.env,
@@ -121,8 +121,8 @@ impl wamn_execution_host::ControlExecution for Execution {
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("event observer configuration is absent"))?;
                 let gap = wamn_environment::environment::capture_gap::recover(
-                    &self.platform,
-                    &wamn_environment::capture_gap::RecoverCaptureGapRequest {
+                    &self.platform.target,
+                    &wamn_environment::environment::capture_gap::RecoverCaptureGapRequest {
                         org: self.org.clone(),
                         project: request.project,
                         env: request.env,

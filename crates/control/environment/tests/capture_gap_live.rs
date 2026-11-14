@@ -2,17 +2,15 @@
 //! docs/operations/gcp.md#57-cdc-slot-lost).
 //!
 //! The test starts its own PostgreSQL 18 server with `wal_level=logical`.
+//! Supply a Kubernetes target through `KUBECONFIG` and a stamped `WAMN_RELEASE_CHART`.
 //! Configure a private JetStream-enabled TLS broker through `WAMN_NATS_URL`,
 //! `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT`, and `WAMN_NATS_TLS_KEY`.
 //! It records a missing slot, an invalidated slot, and a stream with no CDC event.
-//! It drives every refusal except the active slot, which needs a streaming reader.
+//! It checks refusal state and retries Deployment restart without changing the gap time.
 
-use sqlx::{Connection as _, Row as _};
-
-use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _};
-use sqlx::{Connection as _, Row as _};
-use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
+use serde_json::{Value, json};
+use sqlx::{PgConnection as Client, Row as _};
+use wamn_kubernetes::{Target, kubectl};
 
 use async_nats::jetstream;
 use chrono::{DateTime, Utc};
@@ -20,8 +18,8 @@ use chrono::{DateTime, Utc};
 use wamn_control_provision::{
     cdc_object_name, project_env_database_name, sql, validate_project_env_cdc,
 };
-use wamn_environment::capture_gap::{
-    CloseCaptureGapRequest, RecoverCaptureGapRequest, close_capture_gap, recover_capture_gap,
+use wamn_environment::environment::capture_gap::{
+    CloseCaptureGapRequest, RecoverCaptureGapRequest, close, recover,
 };
 use wamn_event_wire::{Envelope, Op, msg_id, stream_subjects, subject};
 use wamn_registry::sql::{
@@ -29,7 +27,6 @@ use wamn_registry::sql::{
     upsert_project_env_with_policy_sql, upsert_project_sql,
 };
 
-const ORG: &str = "cg0";
 const PROJECT: &str = "app";
 const ENV: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
@@ -65,26 +62,54 @@ async fn publish(js: &jetstream::Context, subject: String, id: &str, body: Vec<u
         .expect("publish ack");
 }
 
-fn refusal(result: anyhow::Result<impl std::fmt::Debug>) -> String {
-    format!("{:#}", result.expect_err("the verb must refuse"))
+async fn deployment(target: &Target, name: &str) -> Value {
+    kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
+        "deployment",
+        name,
+    )
+    .await
+    .unwrap()
+    .expect("reader Deployment")
+}
+
+async fn gap_times(system: &mut Client) -> Vec<(DateTime<Utc>, Option<DateTime<Utc>>)> {
+    sqlx::query_as("SELECT created_at, resync_at FROM registry.capture_gap ORDER BY created_at")
+        .fetch_all(system)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
+#[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY, env:KUBECONFIG, env:WAMN_RELEASE_CHART"]
 async fn recover_and_close_record_each_capture_gap() {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
+        "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY, env:KUBECONFIG, env:WAMN_RELEASE_CHART",
     );
+    let org = format!("cg{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+    let kubeconfig = std::path::PathBuf::from(std::env::var_os("KUBECONFIG").unwrap());
+    let target = Target {
+        context: kubectl::current_context(&kubeconfig).unwrap(),
+        kubeconfig,
+        namespace: org.clone(),
+    };
+    let chart = std::path::PathBuf::from(std::env::var_os("WAMN_RELEASE_CHART").unwrap());
+    let image = wamn_release_control::release_chart::image_set(&chart)
+        .await
+        .unwrap()
+        .host;
     let nats = wamn_broker::nats::PlatformNats::from_env().unwrap();
-    validate_project_env_cdc(ORG, PROJECT, ENV).expect("valid names");
+    validate_project_env_cdc(&org, PROJECT, ENV).expect("valid names");
     let postgres = wamn_test_postgres::start(&[("wal_level", "logical")])
         .expect("start a PostgreSQL 18 server with wal_level=logical");
-    let mut database = project_env_database_name(ORG, PROJECT, ENV, INSTANCE);
-    let slot = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let stream = wamn_event_wire::stream_name(ORG, PROJECT, ENV);
+    let database = project_env_database_name(&org, PROJECT, ENV, INSTANCE);
+    let slot = cdc_object_name(&org, PROJECT, ENV, INSTANCE);
+    let stream = wamn_event_wire::stream_name(&org, PROJECT, ENV);
     let super_url = postgres.database("postgres").unwrap().url().to_owned();
     let system_url = postgres.database(SYSTEM_DB).unwrap().url().to_owned();
-    let admin_url = postgres.database(&mut database).unwrap().url().to_owned();
+    let admin_url = postgres.database(&database).unwrap().url().to_owned();
 
     let mut server = connect(&super_url).await;
     // CREATE DATABASE refuses a transaction block, so each statement runs alone.
@@ -113,7 +138,7 @@ async fn recover_and_close_record_each_capture_gap() {
         .map(drop)
         .unwrap();
     sqlx::query(sqlx::AssertSqlSafe((upsert_org_sql()).to_string()))
-        .bind(&ORG)
+        .bind(&org)
         .bind(&"pooled")
         .bind(&"wamn-pg")
         .execute(&mut system)
@@ -121,14 +146,14 @@ async fn recover_and_close_record_each_capture_gap() {
         .map(|result| result.rows_affected())
         .expect("org row");
     sqlx::query(sqlx::AssertSqlSafe((upsert_project_sql()).to_string()))
-        .bind(&ORG)
+        .bind(&org)
         .bind(&PROJECT)
         .execute(&mut system)
         .await
         .map(|result| result.rows_affected())
         .expect("project row");
     sqlx::query(sqlx::AssertSqlSafe((stamp_env_policy_sql()).to_string()))
-        .bind(&ORG)
+        .bind(&org)
         .bind(&ENV)
         .bind(&r#"{"type":"pool"}"#)
         .bind(&0i32)
@@ -148,7 +173,7 @@ async fn recover_and_close_record_each_capture_gap() {
     sqlx::query(sqlx::AssertSqlSafe(
         (upsert_project_env_with_policy_sql()).to_string(),
     ))
-    .bind(&ORG)
+    .bind(&org)
     .bind(&PROJECT)
     .bind(&ENV)
     .bind(&"wamn-db-cg0--dev--app")
@@ -162,7 +187,7 @@ async fn recover_and_close_record_each_capture_gap() {
     .map(|result| result.rows_affected())
     .expect("project-env row");
     sqlx::query(sqlx::AssertSqlSafe((upsert_event_reader_sql()).to_string()))
-        .bind(&ORG)
+        .bind(&org)
         .bind(&PROJECT)
         .bind(&ENV)
         .bind(&slot)
@@ -206,7 +231,7 @@ async fn recover_and_close_record_each_capture_gap() {
     let _ = js.delete_stream(&stream).await;
     js.create_stream(jetstream::stream::Config {
         name: stream.clone(),
-        subjects: vec![stream_subjects(ORG, PROJECT, ENV)],
+        subjects: vec![stream_subjects(&org, PROJECT, ENV)],
         ..Default::default()
     })
     .await
@@ -232,7 +257,7 @@ async fn recover_and_close_record_each_capture_gap() {
     };
     publish(
         &js,
-        subject(ORG, PROJECT, ENV, "widget", Op::Insert),
+        subject(&org, PROJECT, ENV, "widget", Op::Insert),
         &msg_id(
             PROJECT,
             ENV,
@@ -248,41 +273,81 @@ async fn recover_and_close_record_each_capture_gap() {
     .await;
     publish(
         &js,
-        subject(ORG, PROJECT, ENV, "widget", Op::Update),
+        subject(&org, PROJECT, ENV, "widget", Op::Update),
         "derived:00ff",
         b"{}".to_vec(),
     )
     .await;
 
-    let directory = tempfile_directory();
-    let password_file = directory.join("observer-password");
-    std::fs::write(&password_file, "observer").unwrap();
-    std::fs::set_permissions(&password_file, std::fs::Permissions::from_mode(0o600)).unwrap();
-    let recover = |admin: &str| RecoverCaptureGapRequest {
-        org: ORG.to_owned(),
+    let recovery_request = |admin: &str| RecoverCaptureGapRequest {
+        org: org.clone(),
         project: PROJECT.to_owned(),
         env: ENV.to_owned(),
         system_database_url: system_url.clone(),
         admin_database_url: admin.to_owned(),
         nats: nats.clone(),
     };
-    let close = CloseCaptureGapRequest {
-        org: ORG.to_owned(),
+    let close_request = CloseCaptureGapRequest {
+        org: org.clone(),
         project: PROJECT.to_owned(),
         env: ENV.to_owned(),
         system_database_url: system_url.clone(),
     };
 
-    // Refusals before any gap.
-    let message = refusal(close_capture_gap(&close).await);
-    assert!(message.contains("has no capture gap row"), "{message}");
-    let message = refusal(recover_capture_gap(&recover(&admin_url)).await);
-    assert!(message.contains("is healthy"), "{message}");
-    let message = refusal(recover_capture_gap(&recover(&system_url)).await);
+    let triple = wamn_registry::Triple::new(&org, ENV, PROJECT);
+    let name = wamn_control_provision::project_env_cdc_secret_name(&org, PROJECT, ENV);
+    kubectl::apply(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
+        &json!({"apiVersion":"v1", "kind":"Namespace", "metadata":{"name":org}}),
+    )
+    .await
+    .unwrap();
+    let mut reader = wamn_events::lifecycle::reader_deployment(&triple, &target.namespace, &image);
+    // An idle process exposes Deployment stop/start independently of WAL streaming.
+    reader["spec"]["template"]["spec"] = json!({
+        "automountServiceAccountToken": false,
+        "containers":[{"name":"reader", "image":image, "command":["sleep", "infinity"]}]
+    });
+    kubectl::apply(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
+        &reader,
+    )
+    .await
+    .unwrap();
+    wamn_events::lifecycle::start_reader(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
+        &triple,
+    )
+    .await
+    .unwrap();
+
+    // Refusals preserve the slot, gap records and running Deployment.
+    let before_slot = slot_state(&mut project_db, &slot).await;
+    let before_gaps = gap_times(&mut system).await;
+    assert!(close(&target, &close_request).await.is_err());
+    assert_eq!(gap_times(&mut system).await, before_gaps);
+    assert_eq!(slot_state(&mut project_db, &slot).await, before_slot);
     assert!(
-        message.contains("not the project-env database"),
-        "{message}"
+        recover(&target, &recovery_request(&admin_url))
+            .await
+            .is_err()
     );
+    assert_eq!(gap_times(&mut system).await, before_gaps);
+    assert_eq!(slot_state(&mut project_db, &slot).await, before_slot);
+    assert!(
+        recover(&target, &recovery_request(&system_url))
+            .await
+            .is_err()
+    );
+    assert_eq!(gap_times(&mut system).await, before_gaps);
+    assert_eq!(slot_state(&mut project_db, &slot).await, before_slot);
+    assert_eq!(deployment(&target, &name).await["spec"]["replicas"], 1);
 
     // A missing slot: the start is the CDC event, and the derived event is skipped.
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -292,7 +357,7 @@ async fn recover_and_close_record_each_capture_gap() {
     .await
     .map(drop)
     .expect("lose the slot");
-    let row = recover_capture_gap(&recover(&admin_url))
+    let row = recover(&target, &recovery_request(&admin_url))
         .await
         .expect("recover a missing slot");
     assert_eq!(row.reason, "missing");
@@ -322,13 +387,67 @@ async fn recover_and_close_record_each_capture_gap() {
             true
         )
     );
-    let triple = wamn_registry::Triple::new(ORG, ENV, PROJECT);
+    assert_eq!(deployment(&target, &name).await["spec"]["replicas"], 0);
+    let selector = reader["spec"]["selector"]["matchLabels"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(label, value)| format!("{label}={}", value.as_str().unwrap()))
+        .collect::<Vec<_>>()
+        .join(",");
+    let pods: Value = serde_json::from_str(
+        &kubectl::kubectl(
+            &target.kubeconfig,
+            &target.context,
+            &target.namespace,
+            &["get", "pods", "-l", &selector, "-o", "json"],
+            None,
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(pods["items"].as_array().unwrap().is_empty());
     assert!(
         wamn_events::capture_gap::require_resynchronized(&system_url, &triple)
             .await
             .is_err()
     );
-    let closed = close_capture_gap(&close).await.expect("close the gap");
+    // A real scaling failure occurs after resynchronization commits.
+    kubectl::kubectl(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
+        &["delete", "deployment", &name, "--wait=true"],
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(close(&target, &close_request).await.is_err());
+    let recorded = gap_times(&mut system).await;
+    let resync_at = recorded
+        .last()
+        .unwrap()
+        .1
+        .expect("resynchronization committed");
+    reader["spec"]["replicas"] = 0.into();
+    kubectl::apply(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
+        &reader,
+    )
+    .await
+    .unwrap();
+    let closed = close(&target, &close_request)
+        .await
+        .expect("retry the reader restart");
+    assert_eq!(closed.resync_at, resync_at);
+    assert_eq!(gap_times(&mut system).await, recorded);
+    assert_eq!(
+        deployment(&target, &name).await["status"]["readyReplicas"],
+        1
+    );
     wamn_events::capture_gap::require_resynchronized(&system_url, &triple)
         .await
         .unwrap();
@@ -344,8 +463,9 @@ async fn recover_and_close_record_each_capture_gap() {
     )
     .await;
     assert_eq!(closed.created_at, row.created_at);
-    let message = refusal(close_capture_gap(&close).await);
-    assert!(message.contains("already has resync_at"), "{message}");
+    let retried = close(&target, &close_request).await.unwrap();
+    assert_eq!(retried.resync_at, resync_at);
+    assert_eq!(gap_times(&mut system).await, recorded);
 
     // An invalidated slot: the start is its confirmed position.
     for statement in [
@@ -384,7 +504,7 @@ async fn recover_and_close_record_each_capture_gap() {
         }
     }
     let (lost_confirmed, lost_reason) = lost.expect("the slot was never invalidated");
-    let row = recover_capture_gap(&recover(&admin_url))
+    let row = recover(&target, &recovery_request(&admin_url))
         .await
         .expect("recover an invalidated slot");
     assert_eq!(row.reason, lost_reason);
@@ -400,7 +520,7 @@ async fn recover_and_close_record_each_capture_gap() {
             .map(drop)
             .expect("restore the slot limit");
     }
-    close_capture_gap(&close)
+    close(&target, &close_request)
         .await
         .expect("close the second gap");
 
@@ -413,7 +533,7 @@ async fn recover_and_close_record_each_capture_gap() {
         .expect("purge the stream");
     publish(
         &js,
-        subject(ORG, PROJECT, ENV, "widget", Op::Delete),
+        subject(&org, PROJECT, ENV, "widget", Op::Delete),
         "derived:0100",
         b"{}".to_vec(),
     )
@@ -425,7 +545,7 @@ async fn recover_and_close_record_each_capture_gap() {
     .await
     .map(drop)
     .expect("lose the slot");
-    let row = recover_capture_gap(&recover(&admin_url))
+    let row = recover(&target, &recovery_request(&admin_url))
         .await
         .expect("recover with no CDC event");
     assert_eq!(row.reason, "missing");
@@ -446,16 +566,13 @@ async fn recover_and_close_record_each_capture_gap() {
     .await
     .map(drop)
     .expect("drop the slot");
-    std::fs::remove_file(&password_file).unwrap();
-    std::fs::remove_dir(&directory).unwrap();
-}
-
-fn tempfile_directory() -> std::path::PathBuf {
-    let directory =
-        std::env::temp_dir().join(format!("wamn-capture-gap-live-{}", std::process::id()));
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&directory)
-        .expect("private test directory");
-    directory
+    kubectl::kubectl(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
+        &["delete", "namespace", &target.namespace, "--wait=true"],
+        None,
+    )
+    .await
+    .unwrap();
 }

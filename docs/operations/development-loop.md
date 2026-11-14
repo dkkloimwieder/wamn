@@ -67,12 +67,13 @@ The certificate maps to a user with every permission: the host, the reader, and 
 Declare `--stream-replicas` and `--dup-window-secs` explicitly.
 Supply `--cdc-reader-binary` with the built `wamn-cdc-reader`.
 
-The command runs `enable-cdc-project-env`, which is the verb that the cluster runs.
-The verb provisions the event streams with the application consumers of the packages, and it records the reader registration.
+Environment provisioning creates the publication, slot and event streams with the application consumers.
+It records the reader registration for control-owned recovery.
 The deployed CDC reader uses its replication login and broker certificate.
 Its mounted JSON configuration names the publication and slot.
 The PostgreSQL server must run with `wal_level=logical`.
-At each activation, the loop applies the CDC SQL of the verb to the target and starts `wamn-cdc-reader`.
+Environment provisioning mounts the reader configuration and starts its Deployment.
+Control stops that Deployment for capture recovery and restarts it after resynchronization.
 The reader logs to `cdc-reader.log` in the environment directory, and the loop waits until it streams.
 The loop stops the reader before it replaces the target, and the target lease drops the replication slot before the drop.
 

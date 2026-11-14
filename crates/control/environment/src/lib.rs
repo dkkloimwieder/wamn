@@ -2,7 +2,6 @@
 
 pub mod api_service;
 pub mod apply_package;
-pub mod capture_gap;
 #[cfg(feature = "ops")]
 pub mod create_user;
 pub mod env_policies;

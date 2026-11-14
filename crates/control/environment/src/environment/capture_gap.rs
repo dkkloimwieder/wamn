@@ -1,71 +1,48 @@
-//! Keep the deployed reader stopped until operator resynchronization finishes.
-use super::{Platform, document::EnvironmentDocument, ensure, lock::LifecycleLock, runtime};
-use crate::capture_gap::{
+//! Stop capture for recovery and retry reader restart after resynchronization.
+use super::lock::LifecycleLock;
+pub use wamn_events::capture_gap::{
     CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
+use wamn_kubernetes::Target;
 
+/// Recover a lost slot while stopping its Deployment under the environment lock.
 pub async fn recover(
-    platform: &Platform,
+    target: &Target,
     args: &RecoverCaptureGapRequest,
 ) -> anyhow::Result<RecoveredCaptureGap> {
+    anyhow::ensure!(
+        target.namespace == args.org,
+        "reader must run in the org namespace"
+    );
     let triple = wamn_registry::Triple::new(&args.org, args.env.as_str(), &args.project);
-    let mut platform = platform.clone();
-    let document = EnvironmentDocument::read_serving(&platform, &triple).await?;
-    let private = ensure::PrivateDirectory::create()?;
-    runtime::resolve_target(&mut platform, &document, &private.path(".")).await?;
-    LifecycleLock::hold(&platform.system_database_url, &triple, async |_| {
+    LifecycleLock::hold(&args.system_database_url, &triple, async |_| {
         let instance = crate::provision_project_env::read_project_env_instance(
-            &platform.system_database_url,
+            &args.system_database_url,
             &triple,
         )
         .await?;
-        wamn_events::capture_gap::recover_capture_gap(args, &instance, async || {
-            wamn_events::lifecycle::stop_reader(
-                &platform.target.kubeconfig,
-                &platform.target.context,
-                &platform.target.namespace,
-                &triple,
-            )
-            .await
-        })
-        .await
+        wamn_events::capture_gap::recover_capture_gap(args, &instance, target).await
     })
     .await
 }
 
+/// Record resynchronization and retry restarting the reader without changing its time.
 pub async fn close(
-    platform: &Platform,
+    target: &Target,
     args: &CloseCaptureGapRequest,
 ) -> anyhow::Result<ClosedCaptureGap> {
+    anyhow::ensure!(
+        target.namespace == args.org,
+        "reader must run in the org namespace"
+    );
     let triple = wamn_registry::Triple::new(&args.org, args.env.as_str(), &args.project);
-    let mut platform = platform.clone();
-    let document = EnvironmentDocument::read_serving(&platform, &triple).await?;
-    let private = ensure::PrivateDirectory::create()?;
-    runtime::resolve_target(&mut platform, &document, &private.path(".")).await?;
-    LifecycleLock::hold(&platform.system_database_url, &triple, async |_| {
-        let closed = crate::capture_gap::close_capture_gap(args).await?;
-        let name = wamn_control_provision::project_env_cdc_secret_name(
-            &triple.org,
-            &triple.project,
-            &triple.env,
-        );
-        ensure::kubectl(
-            &platform,
-            &platform.target.namespace,
-            &["scale", "deployment", &name, "--replicas=1"],
-            None,
-        )
-        .await?;
-        ensure::kubectl(
-            &platform,
-            &platform.target.namespace,
-            &[
-                "rollout",
-                "status",
-                &format!("deployment/{name}"),
-                "--timeout=120s",
-            ],
-            None,
+    LifecycleLock::hold(&args.system_database_url, &triple, async |_| {
+        let closed = wamn_events::capture_gap::close_capture_gap(args).await?;
+        wamn_events::lifecycle::start_reader(
+            &target.kubeconfig,
+            &target.context,
+            &target.namespace,
+            &triple,
         )
         .await?;
         Ok(closed)
