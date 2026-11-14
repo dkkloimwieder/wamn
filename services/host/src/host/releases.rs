@@ -22,7 +22,7 @@ use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::wasi_logging::TracingLogger;
 
-type ReleaseKey = String;
+type ReleaseKey = (String, String);
 
 pub(super) struct Resources {
     pub engine: Arc<Engine>,
@@ -66,7 +66,8 @@ pub(super) struct Releases {
     api: KubernetesApi,
     resident: RwLock<BTreeMap<ReleaseKey, Arc<ResidentRelease>>>,
     selections: RwLock<BTreeMap<String, Selection>>,
-    loading: Mutex<()>,
+    loading: std::sync::Mutex<BTreeMap<ReleaseKey, Arc<Mutex<()>>>>,
+    bytes: std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::OnceCell<Arc<[u8]>>>>>,
 }
 
 impl Releases {
@@ -76,7 +77,8 @@ impl Releases {
             api,
             resident: RwLock::default(),
             selections: RwLock::default(),
-            loading: Mutex::new(()),
+            loading: std::sync::Mutex::default(),
+            bytes: std::sync::Mutex::default(),
         }
     }
 
@@ -103,45 +105,58 @@ impl Releases {
             .selections
             .read()
             .expect("release selections lock poisoned");
-        let (_, selection) = selections
+        let (application, selection) = selections
             .iter()
             .find(|(_, selection)| selection.host == host)?;
         let resident = self
             .resident
             .read()
             .expect("resident releases lock poisoned");
-        Some(Arc::clone(&resident.get(&selection.digest)?.files))
+        Some(Arc::clone(
+            &resident
+                .get(&(application.clone(), selection.digest.clone()))?
+                .files,
+        ))
     }
 
     async fn load(&self, application: &str, digest: &str) -> anyhow::Result<Arc<ResidentRelease>> {
-        let _loading = self.loading.lock().await;
+        let key = (application.to_owned(), digest.to_owned());
+        let loading = {
+            let mut loading = self
+                .loading
+                .lock()
+                .expect("release preparations lock poisoned");
+            Arc::clone(loading.entry(key.clone()).or_default())
+        };
+        let _loading = loading.lock().await;
         if let Some(resident) = self
             .resident
             .read()
             .expect("resident releases lock poisoned")
-            .get(digest)
+            .get(&key)
         {
-            anyhow::ensure!(
-                resident
-                    .operations
-                    .release
-                    .target()
-                    .applications
-                    .contains_key(application),
-                "application is outside the loaded deployment"
-            );
             return Ok(Arc::clone(resident));
         }
         let r = &self.resources;
-        let bytes = r
-            .postgres
-            .release_bytes(&r.configuration.project, &r.target.project_env_key, digest)
+        let cached = {
+            let mut bytes = self.bytes.lock().expect("release bytes lock poisoned");
+            Arc::clone(bytes.entry(digest.to_owned()).or_default())
+        };
+        let bytes = cached
+            .get_or_try_init(|| async {
+                let bytes = r
+                    .postgres
+                    .release_bytes(&r.configuration.project, &r.target.project_env_key, digest)
+                    .await?;
+                let (manifest, _) = ServingManifest::from_canonical_bytes(&bytes)?;
+                anyhow::ensure!(
+                    manifest.digest().as_str() == digest,
+                    "release catalog digest mismatch"
+                );
+                anyhow::Ok(Arc::<[u8]>::from(bytes))
+            })
             .await?;
-        let (manifest, _) = ServingManifest::from_canonical_bytes(&bytes)?;
-        anyhow::ensure!(
-            manifest.digest().as_str() == digest,
-            "release catalog digest mismatch"
-        );
+        let (manifest, _) = ServingManifest::from_canonical_bytes(bytes)?;
         let packages = manifest
             .release
             .packages
@@ -240,7 +255,7 @@ impl Releases {
         self.resident
             .write()
             .expect("resident releases lock poisoned")
-            .insert(digest.to_owned(), Arc::clone(&resident));
+            .insert(key, Arc::clone(&resident));
         Ok(resident)
     }
 
@@ -313,7 +328,7 @@ impl Releases {
         Ok(selected)
     }
 
-    async fn refresh(&self) -> anyhow::Result<()> {
+    async fn refresh(&self) -> anyhow::Result<BTreeMap<ReleaseKey, Vec<String>>> {
         let r = &self.resources;
         let pins = r
             .postgres
@@ -330,14 +345,13 @@ impl Releases {
                 BTreeMap::new()
             }
         };
-        let needed: BTreeSet<_> = selected
+        let mut needed: BTreeMap<ReleaseKey, Vec<String>> = selected
             .iter()
-            .map(|(application, (digest, _))| (application.as_str(), digest.as_str()))
-            .chain(
-                pins.iter()
-                    .map(|(application, digest, _)| (application.as_str(), digest.as_str())),
-            )
+            .map(|(application, (digest, _))| ((application.clone(), digest.clone()), Vec::new()))
             .collect();
+        for (application, digest, run) in pins {
+            needed.entry((application, digest)).or_default().push(run);
+        }
         {
             let mut selections = self
                 .selections
@@ -371,36 +385,11 @@ impl Releases {
                 selection.host.clone_from(host);
             }
         }
-        for (application, digest) in &needed {
-            match self.load(application, digest).await {
-                Ok(resident) => {
-                    if selected
-                        .get(*application)
-                        .is_some_and(|(current, _)| current.as_str() == *digest)
-                    {
-                        self.selections
-                            .read()
-                            .expect("release selections lock poisoned")[*application]
-                            .release
-                            .send_replace(Some(Arc::clone(&resident.operations.release)));
-                    }
-                }
-                Err(error) => {
-                    let runs: Vec<_> = pins
-                        .iter()
-                        .filter(|(app, pin, _)| app == *application && pin == *digest)
-                        .map(|(_, _, run)| run.as_str())
-                        .collect();
-                    tracing::warn!(%application, %digest, ?runs, error = %format_args!("{error:#}"), "release preparation failed; other releases remain available");
-                }
-            }
-        }
-        let needed_digests: BTreeSet<_> = needed.iter().map(|(_, digest)| *digest).collect();
         self.resident
             .write()
             .expect("resident releases lock poisoned")
             .retain(|key, resident| {
-                let keep = needed_digests.contains(key.as_str())
+                let keep = needed.contains_key(key)
                     || Arc::strong_count(resident) > 1
                     || r.postgres.release_in_use(&resident.operations.release);
                 if !keep {
@@ -408,11 +397,37 @@ impl Releases {
                 }
                 keep
             });
-        Ok(())
+        self.loading
+            .lock()
+            .expect("release preparations lock poisoned")
+            .retain(|key, lock| needed.contains_key(key) || Arc::strong_count(lock) > 1);
+        self.bytes
+            .lock()
+            .expect("release bytes lock poisoned")
+            .retain(|digest, cell| {
+                needed.keys().any(|(_, needed)| needed == digest)
+                    || self
+                        .resident
+                        .read()
+                        .expect("resident releases lock poisoned")
+                        .keys()
+                        .any(|(_, loaded)| loaded == digest)
+                    || Arc::strong_count(cell) > 1
+            });
+        Ok(needed)
     }
 
     /// Reconcile residency while each release drains its own queue independently.
-    pub async fn serve(&self, mut stopping: watch::Receiver<bool>) -> anyhow::Result<()> {
+    pub async fn serve(
+        self: &Arc<Self>,
+        mut stopping: watch::Receiver<bool>,
+    ) -> anyhow::Result<()> {
+        let mut preparations =
+            tokio::task::JoinSet::<(ReleaseKey, anyhow::Result<Arc<ResidentRelease>>)>::new();
+        let mut preparing = BTreeSet::new();
+        let mut needed = BTreeMap::<ReleaseKey, Vec<String>>::new();
+        let mut collectors = tokio::task::JoinSet::new();
+        let mut collector_tasks = BTreeSet::new();
         let mut queues = tokio::task::JoinSet::new();
         let mut queue_tasks = BTreeSet::new();
         let mut admissions = tokio::task::JoinSet::new();
@@ -423,15 +438,48 @@ impl Releases {
             tokio::select! {
                 biased;
                 _ = stopping.changed() => break,
-                _ = ticks.tick() => {},
-            }
-            let refreshed = tokio::select! {
-                biased;
-                _ = stopping.changed() => break,
-                refreshed = self.refresh() => refreshed,
-            };
-            if let Err(error) = refreshed {
-                tracing::warn!(error = %format_args!("{error:#}"), "release reconciliation failed");
+                Some(prepared) = preparations.join_next(), if !preparations.is_empty() => {
+                    let (key, result) = prepared?;
+                    preparing.remove(&key);
+                    match result {
+                        Ok(resident) => {
+                            let selections = self.selections.read().expect("release selections lock poisoned");
+                            if let Some(selection) = selections.get(&key.0).filter(|selection| selection.digest == key.1) {
+                                selection.release.send_replace(Some(Arc::clone(&resident.operations.release)));
+                            }
+                        }
+                        Err(error) => {
+                            let runs = needed.get(&key);
+                            tracing::warn!(application = %key.0, digest = %key.1, ?runs, error = %format_args!("{error:#}"), "release preparation failed; other releases remain available");
+                        }
+                    }
+                }
+                _ = ticks.tick() => {
+                    let refreshed = tokio::select! {
+                        biased;
+                        _ = stopping.changed() => break,
+                        refreshed = self.refresh() => refreshed,
+                    };
+                    match refreshed {
+                        Ok(refreshed) => needed = refreshed,
+                        Err(error) => tracing::warn!(error = %format_args!("{error:#}"), "release reconciliation failed"),
+                    }
+                    for key in needed.keys() {
+                        let loaded = self.resident.read().expect("resident releases lock poisoned").get(key).map(Arc::clone);
+                        if let Some(resident) = loaded {
+                            if let Some(selection) = self.selections.read().expect("release selections lock poisoned").get(&key.0).filter(|selection| selection.digest == key.1) {
+                                selection.release.send_replace(Some(Arc::clone(&resident.operations.release)));
+                            }
+                        } else if preparing.insert(key.clone()) {
+                            let releases = Arc::clone(self);
+                            let key = key.clone();
+                            preparations.spawn(async move {
+                                let result = releases.load(&key.0, &key.1).await;
+                                (key, result)
+                            });
+                        }
+                    }
+                }
             }
             for (key, resident) in self
                 .resident
@@ -445,6 +493,15 @@ impl Releases {
                     let key = key.clone();
                     queues.spawn(async move { (key, queue.serve(stopping).await) });
                 }
+                if collector_tasks.insert(key.clone()) {
+                    let files = Arc::clone(&resident.files);
+                    let stopped = resident.stop.subscribe();
+                    let key = key.clone();
+                    collectors.spawn(async move {
+                        collect_files(files, stopped).await;
+                        key
+                    });
+                }
             }
             while let Some(result) = queues.try_join_next() {
                 match result {
@@ -455,6 +512,14 @@ impl Releases {
                         }
                     }
                     Err(error) => tracing::warn!(%error, "release queue task failed"),
+                }
+            }
+            while let Some(result) = collectors.try_join_next() {
+                match result {
+                    Ok(key) => {
+                        collector_tasks.remove(&key);
+                    }
+                    Err(error) => tracing::warn!(%error, "file collector task failed"),
                 }
             }
             for (application, selection) in self
@@ -502,7 +567,9 @@ impl Releases {
                 ));
             }
         }
+        preparations.shutdown().await;
         admissions.shutdown().await;
+        collectors.shutdown().await;
         for resident in self
             .resident
             .read()
@@ -515,5 +582,27 @@ impl Releases {
             result?.1?;
         }
         Ok(())
+    }
+}
+
+async fn collect_files(
+    files: Arc<wamn_execution_host::file_route::FileRoutes>,
+    mut stopped: watch::Receiver<bool>,
+) {
+    let mut ticks = tokio::time::interval(wamn_execution_host::file_collector::COLLECTION_INTERVAL);
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            biased;
+            _ = stopped.changed() => return,
+            _ = ticks.tick() => {},
+        }
+        tokio::select! {
+            biased;
+            _ = stopped.changed() => return,
+            collected = files.collect_orphan_files() => {
+                if let Err(error) = collected { tracing::warn!(%error, "host file orphan collection failed"); }
+            }
+        }
     }
 }

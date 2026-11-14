@@ -336,7 +336,10 @@ After restart, it also reads unfinished runs and loads their original catalog ma
 It verifies each digest before preparing that release.
 A failed preparation refuses that release and reports its pinned runs. Other release queues continue.
 Release preparation does not control process readiness.
-Each project deployment and digest has one loaded release.
+Each project deployment, application, and digest has one execution owner.
+Applications can select identical release bytes. They share verified bytes and compiled code, while each keeps its own execution authority.
+The host prepares releases independently and starts each ready queue immediately.
+Each resident release runs file orphan collection. Unloading stops its collector, and host shutdown cancels and joins every collector.
 A release stays resident while selected, while an unfinished run pins it, or while a workload or invocation retains it.
 Native dispatch reuses compiled component bytes. Untrusted components receive a fresh store, which holds guest memory and resources, for each call.
 The deployment owner can select reviewed component digests for native warm-instance reuse.
@@ -401,6 +404,7 @@ The host runs guest memory in count mode and raw-socket egress in enforce mode (
 Guest memory count mode records growth past the budget and allows it. Socket enforce mode blocks traffic refused by policy.
 The host flags `--guest-memory-mode` and `--socket-egress` each accept count or enforce.
 Each linear memory keeps its 256 MiB ceiling.
+A combined per-instance store limit awaits the owner’s enforcement decision. The native runtime keeps the store hook private.
 Existing route and queue admission limits and deployment memory limits remain independent.
 Wasmtime's pooling allocator remains enabled under its separate resource limits.
 The release chart sets how many bytes each allocator slot keeps resident after use.

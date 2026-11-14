@@ -420,8 +420,8 @@ SELECT namespace.nspname::text AS schema_name,
        catalog_index.indislive AS is_live,
        catalog_index.indnatts AS attribute_count,
        catalog_index.indnkeyatts AS key_count,
-       catalog_index.indkey::smallint[] AS column_numbers,
-       catalog_index.indoption::smallint[] AS key_options,
+       ARRAY(SELECT unnest(catalog_index.indkey::smallint[])) AS column_numbers,
+       ARRAY(SELECT unnest(catalog_index.indoption::smallint[])) AS key_options,
        ARRAY(
            SELECT operator_class.opcdefault
              FROM unnest(catalog_index.indclass::oid[]) WITH ORDINALITY

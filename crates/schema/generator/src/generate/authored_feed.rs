@@ -163,6 +163,7 @@ fn emit_data(
     let row_fields = result
         .fields
         .iter()
+        .filter(|field| field.path != "row_version")
         .fold(String::new(), |mut fields, field| {
             write!(
                 fields,
@@ -223,6 +224,7 @@ fn emit_data(
     let members = result
         .fields
         .iter()
+        .filter(|field| field.path != "row_version")
         .map(|field| {
             let name = member(&field.path);
             if field.nullable {

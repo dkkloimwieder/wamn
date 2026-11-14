@@ -405,44 +405,6 @@ impl FlowHttpRouting {
 fn carries_http_route(type_: AttachmentType) -> bool {
     matches!(type_, AttachmentType::Http | AttachmentType::Studio)
 }
-/// Return whether a serving release requires PAT-backed route authentication.
-///
-/// Only externally selectable HTTP route types participate. An internal or
-/// cron attachment carrying an otherwise identical document cannot make the
-/// host acquire route-authentication credentials it will never use.
-pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
-    manifest
-        .every_served_attachment()
-        .filter(|(_, attachment)| carries_http_route(attachment.attachment_type()))
-        .any(|(_, attachment)| {
-            attachment
-                .definition()
-                .get("route")
-                .and_then(|r| r.get("path"))
-                .and_then(Value::as_str)
-                .is_some()
-                && parse_attachment_auth_policy(attachment.auth_policy())
-                    .is_some_and(AttachmentAuthPolicy::allows_pat)
-        })
-}
-
-/// Return whether the release contains an externally selectable session route.
-pub fn requires_session_route_authentication(manifest: &ServingManifest) -> bool {
-    manifest
-        .every_served_attachment()
-        .filter(|(_, attachment)| carries_http_route(attachment.attachment_type()))
-        .any(|(_, attachment)| {
-            attachment
-                .definition()
-                .get("route")
-                .and_then(|r| r.get("path"))
-                .and_then(Value::as_str)
-                .is_some()
-                && parse_attachment_auth_policy(attachment.auth_policy())
-                    .is_some_and(AttachmentAuthPolicy::allows_session)
-        })
-}
-
 #[derive(Clone, Copy)]
 pub enum RouteCredential<'a> {
     /// A session token. `csrf` is `Some` when the token came by the session

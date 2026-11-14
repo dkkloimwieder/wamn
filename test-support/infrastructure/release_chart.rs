@@ -130,13 +130,6 @@ pub async fn hosts_ready(
             && containers[0]["image"] == image,
         "host Deployment hostgroup-{name} is not ready with {replicas} replicas of {image}"
     );
-    // R1: the release is the manifest digest in the host's arguments.
-    ensure!(
-        array_at(&containers[0], "/args")?
-            .iter()
-            .any(|argument| argument == &json!(format!("--release-manifest-digest={digest}"))),
-        "the host arguments do not carry the release manifest digest"
-    );
     let pods = command_json(kubectl(cluster, work).args([
         "-n",
         namespace,

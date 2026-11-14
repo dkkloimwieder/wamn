@@ -167,7 +167,6 @@ mod event_batch {
                 wamn_workflow::event_admission::admit_event_batch(
                     &fixture.postgres,
                     PROJECT,
-                    APP,
                     loaded,
                     &admission,
                 )

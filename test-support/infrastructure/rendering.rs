@@ -376,16 +376,6 @@ pub fn render_host_values(
         "--environment",
         &input.event.environment,
     )?;
-    replace_arg(
-        &mut group.extra_args,
-        "--release-artifact-base",
-        &input.release_artifact_base,
-    )?;
-    replace_arg(
-        &mut group.extra_args,
-        "--release-manifest-digest",
-        &input.manifest_digest,
-    )?;
     ensure!(
         !group
             .extra_args

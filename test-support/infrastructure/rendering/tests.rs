@@ -131,8 +131,6 @@ __CREDENTIALS_MOUNT__
         - "/runtime-cert/ca.crt"
       extraArgs:
         - "--environment=dev"
-        - "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases"
-        - "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000"
       resources:
         requests:
           memory: "256Mi"
@@ -386,18 +384,6 @@ fn host_values_refuse_missing_and_duplicate_owned_fields() {
         .to_string()
         .contains("exactly one")
     );
-    for argument in ["--release-artifact-base", "--release-manifest-digest"] {
-        let mut document = original.clone();
-        document.runtime.host_groups[0]
-            .extra_args
-            .retain(|arg| !arg.starts_with(argument));
-        assert!(
-            render_host_values(&BASE, &serde_yaml::to_string(&document).unwrap(), &input)
-                .unwrap_err()
-                .to_string()
-                .contains(argument)
-        );
-    }
 }
 
 #[test]
