@@ -2,14 +2,14 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ .Release.Name }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ (default .Release.Name .Values.name) }}
+  namespace: {{ (default .Release.Namespace .Values.namespace) }}
 spec:
   tls:
     - secretName: {{ required "Set tlsSecret to the ingress serving certificate." .Values.tlsSecret | quote }}
   defaultBackend:
     service:
-      name: {{ .Release.Name }}
+      name: {{ (default .Release.Name .Values.name) }}
       port:
         name: http
 {{- end }}

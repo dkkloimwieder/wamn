@@ -36,20 +36,6 @@ pub enum ProvisionError {
         /// Why it was rejected (a stable, human-readable reason).
         reason: &'static str,
     },
-    /// A **pooled** org has no dedicated clusters to render (D18): it shares the
-    /// pool cluster, so `provision-org` records only its registry row and emits no
-    /// `Cluster` CRs. Only a `dedicated` org owns clusters (`<org>-<owner(env)>`).
-    OrgIsPooled {
-        /// The shared pool the org is placed on.
-        pool: String,
-    },
-    /// A recovery-domain owner env names no [`EnvPolicy`](crate::EnvPolicy)
-    /// in the policy set — the cluster cannot be sized. A malformed registry
-    /// (validate() flags it as `unknown-env`/`unknown-shared-with-target`).
-    UnknownEnvPolicy {
-        /// The owner env slug with no policy.
-        name: String,
-    },
     /// An assembled per-project-env name exceeds the Postgres identifier /
     /// DNS-1123 label limit. Either `wamn-db-<org>--<project>--<env>--<instance>`
     /// (wamn-q3n.7, bounded by `MAX_DB_NAME_LEN`) or the namespace stem
@@ -70,14 +56,6 @@ pub enum ProvisionError {
         /// The triple named on both sides.
         triple: String,
     },
-    /// A recovery whose target cluster is the **source** cluster. A recovery CR
-    /// applied under the source's own name would target the live cluster instead
-    /// of creating a restore beside it, so the restore is named separately
-    /// (`<org>-<owner>-restore`) and the source is left untouched.
-    RecoveryIntoSourceCluster {
-        /// The source cluster named on both sides.
-        cluster: String,
-    },
 }
 
 impl fmt::Display for ProvisionError {
@@ -95,15 +73,6 @@ impl fmt::Display for ProvisionError {
                 value,
                 reason,
             } => write!(f, "invalid {component} {value:?}: {reason}"),
-            ProvisionError::OrgIsPooled { pool } => write!(
-                f,
-                "org is pooled on {pool:?}: it has no dedicated clusters to render \
-                 (only registry placement is recorded)"
-            ),
-            ProvisionError::UnknownEnvPolicy { name } => write!(
-                f,
-                "recovery-domain owner env {name:?} names no env policy — cannot size its cluster"
-            ),
             ProvisionError::NameTooLong { name, max } => write!(
                 f,
                 "provisioned name {name:?} is {} bytes, over the {max}-byte limit: \
@@ -114,11 +83,6 @@ impl fmt::Display for ProvisionError {
                 f,
                 "src and dst are both {triple}: a self-copy is only meaningful as a move \
                  (re-run with --cutover to re-home the identity onto a different cluster)"
-            ),
-            ProvisionError::RecoveryIntoSourceCluster { cluster } => write!(
-                f,
-                "recovery target {cluster:?} is the source cluster: name the restore \
-                 separately (for example {cluster}-restore), so the live cluster is untouched"
             ),
         }
     }

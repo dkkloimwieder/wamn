@@ -1,0 +1,43 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: identity-operator-selfsigned
+  namespace: {{ .Values.org }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: identity-operator-ca
+  namespace: {{ .Values.org }}
+spec:
+  isCA: true
+  commonName: identity-operator-ca
+  secretName: identity-operator-ca
+  issuerRef:
+    kind: Issuer
+    name: identity-operator-selfsigned
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: identity-operator
+  namespace: {{ .Values.org }}
+spec:
+  ca:
+    secretName: identity-operator-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: operator-{{ .Values.org }}
+  namespace: {{ .Values.org }}
+spec:
+  commonName: operator-{{ .Values.org }}
+  secretName: operator-{{ .Values.org }}
+  usages:
+    - client auth
+  issuerRef:
+    kind: Issuer
+    name: identity-operator

@@ -1,0 +1,134 @@
+opentelemetry-collector:
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http: null
+      jaeger: null
+      prometheus: null
+      zipkin: null
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 1500
+        spike_limit_mib: 400
+      resource:
+        attributes:
+        - key: wamn.cluster
+          value: ${env:CLUSTER}
+          action: upsert
+      batch:
+        timeout: 60s
+        send_batch_size: 50000
+        send_batch_max_size: 100000
+    exporters:
+      google_cloud_storage/traces:
+        bucket:
+          name: ${env:BUCKET}
+          project_id: ${env:PROJECT}
+          region: ${env:REGION}
+          reuse_if_exists: true
+          compression: gzip
+          file_prefix: traces
+          partition:
+            prefix: traces
+            format: year=%Y/month=%m/day=%d/hour=%H
+        sending_queue:
+          enabled: true
+          storage: file_storage
+          queue_size: 100
+      google_cloud_storage/logs:
+        bucket:
+          name: ${env:BUCKET}
+          project_id: ${env:PROJECT}
+          region: ${env:REGION}
+          reuse_if_exists: true
+          compression: gzip
+          file_prefix: logs
+          partition:
+            prefix: logs
+            format: year=%Y/month=%m/day=%d/hour=%H
+        sending_queue:
+          enabled: true
+          storage: file_storage
+          queue_size: 100
+      nop: {}
+      debug: null
+    extensions:
+      file_storage:
+        directory: /var/lib/otelcol/queue
+        create_directory: true
+    service:
+      extensions:
+      - file_storage
+      - health_check
+      pipelines:
+        traces:
+          receivers:
+          - otlp
+          processors:
+          - memory_limiter
+          - resource
+          - batch
+          exporters:
+          - google_cloud_storage/traces
+        logs:
+          receivers:
+          - otlp
+          processors:
+          - memory_limiter
+          - resource
+          - batch
+          exporters:
+          - google_cloud_storage/logs
+        metrics:
+          receivers:
+          - otlp
+          processors:
+          - memory_limiter
+          exporters:
+          - nop
+  rollout:
+    strategy: Recreate
+  serviceAccount:
+    name: otel-collector
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+      - ALL
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 2Gi
+  extraVolumes:
+  - name: queue
+    persistentVolumeClaim:
+      claimName: otel-collector-queue
+  extraVolumeMounts:
+  - name: queue
+    mountPath: /var/lib/otelcol/queue
+  extraManifests:
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: otel-collector-queue
+      namespace: platform
+    spec:
+      storageClassName: standard
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi

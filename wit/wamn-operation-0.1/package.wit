@@ -11,8 +11,6 @@ interface operation {
   type sealed-operation-id = string;
 
   variant refusal {
-    uncertain,
-    resolved(string),
     conflict,
     unknown-operation,
     grant-denied,

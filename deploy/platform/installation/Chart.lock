@@ -1,0 +1,24 @@
+dependencies:
+- name: runtime-operator
+  repository: oci://ghcr.io/wasmcloud/charts
+  version: 2.11.0
+- name: nats
+  repository: https://nats-io.github.io/k8s/helm/charts
+  version: 2.15.2
+- name: plugin-barman-cloud
+  repository: https://cloudnative-pg.github.io/charts
+  version: 0.7.0
+- name: opentelemetry-collector
+  repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+  version: 0.178.3
+- name: wamn-identity
+  repository: file://../identity
+  version: 0.1.0
+- name: wamn-edge
+  repository: file://../edge
+  version: 0.1.0
+- name: release
+  repository: file://../release
+  version: 0.1.143
+digest: sha256:6fc17ac6460878218730e36446d6f4de2a620eed573b6ed1f626915728e24479
+generated: "2026-11-13T20:58:14.055710687-05:00"

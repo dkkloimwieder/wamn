@@ -196,11 +196,10 @@ pub async fn enable_cdc_project_env(
     // Render the artifacts the runbook applies.
 
     let cdc_sql = cdc_sql_bundle(&args.schemas, &cdc_name, &db_name);
-    let publication = wamn_control_provision::database::render_project_env_publication(
+    let publication = wamn_platform_install::environment::publication_values(
         &triple,
         &instance,
         &cluster,
-        &args.cluster_namespace,
         &cdc_name,
         &args.schemas,
     );
@@ -241,6 +240,7 @@ pub async fn enable_cdc_project_env(
     })
     .await?;
     crate::provision_project_env::workload::reconcile(
+        system_url,
         &kubeconfig,
         "",
         &args.org,

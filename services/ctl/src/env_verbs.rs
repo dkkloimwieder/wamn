@@ -186,7 +186,7 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             )
             .await?;
             lock.release().await;
-            println!("{}", serde_json::to_string(&outcome.database_cr)?);
+            println!("{}", serde_json::to_string(&outcome.database_values)?);
         }
         EnvCommand::Initialize(args) => {
             let mut document = environment::document::EnvironmentDocument::read_serving(

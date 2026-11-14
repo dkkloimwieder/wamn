@@ -1451,6 +1451,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status().as_u16(), 404);
         assert!(response.bytes().await.unwrap().is_empty());
+        task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
     }
 

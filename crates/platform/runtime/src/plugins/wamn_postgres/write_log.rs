@@ -1,4 +1,4 @@
-//! The write log, `platform.write_log`, as the engine's intent store
+//! Concrete operation claims and outcomes in `platform.write_log`.
 //! (`docs/history/host-transaction.md` 4.2 and 4.3).
 //!
 //! An operation with SQL claims its key in its request element transaction, so the claim
@@ -14,15 +14,8 @@
 //! result text without parsing it.
 
 use sqlx::Row as _;
-use std::sync::Arc;
-
-use async_trait::async_trait;
 use sqlx::postgres::PgRow as Row;
-use wamn_run_state::IntentStore;
-use wamn_run_state::intent_store::{
-    Begun, Intent, IntentId, StoreError, StoreErrorType, StoredOutcome, UncertainIntent,
-};
-use wamn_run_state::operator_action::OperatorActionBasis;
+use std::sync::Arc;
 
 use super::operation_transaction::OperationTransaction;
 use super::resources::{StatementConnectionGuard, take_conn};
@@ -80,44 +73,12 @@ const RELEASE_SQL: &str = "DELETE FROM platform.write_log \
      WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
      RETURNING idempotency_key";
 
-/// The two-step claims that never finished, oldest first.
-const UNCERTAIN_SQL: &str = "SELECT operation, idempotency_key FROM platform.write_log \
-     WHERE result IS NULL ORDER BY created_at, operation, idempotency_key LIMIT $1::bigint";
-
 /// The write log operation of one operation: the operation without its
 /// `@version`.
 fn log_operation(operation: &str) -> &str {
     operation
         .split_once('@')
         .map_or(operation, |(operation, _)| operation)
-}
-
-/// The intent id of one claim: its log operation and its key.
-fn intent_id(operation: &str, key: &str) -> IntentId {
-    IntentId(format!("{operation}#{key}"))
-}
-
-/// The log operation and the key that an intent id names. An operation id
-/// has no `#`, so the first one ends it.
-fn claim_of<'a>(
-    operation: &'static str,
-    id: &'a IntentId,
-) -> Result<(&'a str, &'a str), StoreError> {
-    id.0.split_once('#').ok_or_else(|| {
-        StoreError::new(
-            StoreErrorType::Contract,
-            operation,
-            format!("intent id {:?} is not a write log claim", id.0),
-        )
-    })
-}
-
-fn storage(operation: &'static str) -> impl Fn(PgError) -> StoreError {
-    move |error| StoreError::new(StoreErrorType::Storage, operation, format!("{error:?}"))
-}
-
-fn contract(operation: &'static str, detail: String) -> StoreError {
-    StoreError::new(StoreErrorType::Contract, operation, detail)
 }
 
 /// Claim opaque request bytes on either the operation transaction or an autocommit connection.
@@ -181,39 +142,6 @@ fn unfinished(age_seconds: f64) -> Claim {
     } else {
         Claim::InProgress
     }
-}
-
-async fn begin_with<F, Fut>(
-    intent: &Intent<'_>,
-    result: Option<&str>,
-    run: F,
-) -> Result<Begun, StoreError>
-where
-    F: Fn(&'static str, Vec<SqlValue>) -> Fut,
-    Fut: Future<Output = Result<Vec<Row>, PgError>>,
-{
-    let claim = claim_with(
-        intent.operation,
-        intent.idempotency_key,
-        intent.input_hash.as_bytes().to_vec(),
-        result,
-        run,
-    )
-    .await
-    .map_err(storage("begin"))?
-    .ok_or_else(|| contract("begin", "the write log claim has no row".to_owned()))?;
-    let id = intent_id(log_operation(intent.operation), intent.idempotency_key);
-    Ok(match claim {
-        Claim::New => Begun::New(id),
-        Claim::Conflict => Begun::Conflict(id),
-        Claim::InProgress => Begun::InProgress(id),
-        Claim::OutcomeUnknown => Begun::OutcomeUnknown(id),
-        Claim::Finished(result) => {
-            Begun::Finished(StoredOutcome(serde_json::from_str(&result).map_err(
-                |error| contract("begin", format!("stored result is not JSON: {error}")),
-            )?))
-        }
-    })
 }
 
 /// Return whether completing the claim changed an open record.
@@ -328,59 +256,6 @@ pub enum Claim {
     Conflict,
 }
 
-/// The claim of an operation with SQL, inside its request element transaction.
-///
-/// The claim commits with the work, so nothing here is ever uncertain, and a
-/// refused request element frees its key when the owner rolls the transaction back.
-#[async_trait]
-impl IntentStore for OperationTransaction {
-    async fn begin(&self, intent: &Intent<'_>) -> Result<Begun, StoreError> {
-        begin_with(intent, self.known_result.as_deref(), |sql, params| {
-            self.log_statement(sql, params)
-        })
-        .await
-    }
-
-    /// Stage the guest result for the owner's finish-and-commit pipeline.
-    async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError> {
-        if self.known_result.is_some() {
-            return Ok(());
-        }
-        let (operation, key) = claim_of("finish", id)?;
-        let result = serde_json::to_string(&outcome.0)
-            .map_err(|error| contract("finish", format!("encode outcome: {error}")))?;
-        let mut finish = self
-            .finish
-            .lock()
-            .expect("request element finish lock poisoned");
-        if finish.is_some() {
-            return Err(contract(
-                "finish",
-                "the request element already has a pending finish".to_owned(),
-            ));
-        }
-        *finish = Some([operation.to_owned(), key.to_owned(), result]);
-        Ok(())
-    }
-
-    /// The owner's rollback undoes the claim.
-    async fn release(&self, _id: &IntentId) -> Result<(), StoreError> {
-        Ok(())
-    }
-
-    /// A claim in a transaction commits with its result, so none is open.
-    async fn uncertain(&self, _limit: u32) -> Result<Vec<UncertainIntent>, StoreError> {
-        Ok(Vec::new())
-    }
-
-    async fn resolve(&self, id: &IntentId, _basis: OperatorActionBasis) -> Result<(), StoreError> {
-        Err(contract(
-            "resolve",
-            format!("claim {} is not uncertain", id.0),
-        ))
-    }
-}
-
 /// The two-step claims of operations without SQL, in the write log of one
 /// project database, each statement on a connection of its own.
 #[derive(Debug, Clone)]
@@ -489,86 +364,6 @@ impl WriteLogStore {
                 Err(super::types::map_pg_error(&error))
             }
         }
-    }
-}
-
-#[async_trait]
-impl IntentStore for WriteLogStore {
-    async fn begin(&self, intent: &Intent<'_>) -> Result<Begun, StoreError> {
-        if intent.partition != self.project_env_key {
-            return Err(contract(
-                "begin",
-                format!(
-                    "the write log of {} holds no key of {}",
-                    self.project_env_key, intent.partition
-                ),
-            ));
-        }
-        begin_with(intent, None, |sql, params| self.statement(sql, params)).await
-    }
-
-    async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError> {
-        let (operation, key) = claim_of("finish", id)?;
-        let result = serde_json::to_string(&outcome.0)
-            .map_err(|error| contract("finish", format!("encode outcome: {error}")))?;
-        let changed = self
-            .complete_claim(operation, key, result)
-            .await
-            .map_err(storage("finish"))?;
-        if changed {
-            Ok(())
-        } else {
-            Err(contract("finish", format!("claim {} is not open", id.0)))
-        }
-    }
-
-    async fn release(&self, id: &IntentId) -> Result<(), StoreError> {
-        let (operation, key) = claim_of("release", id)?;
-        let changed = self
-            .release_open_claim(operation, key)
-            .await
-            .map_err(storage("release"))?;
-        if changed {
-            Ok(())
-        } else {
-            Err(contract("release", format!("claim {} is not open", id.0)))
-        }
-    }
-
-    async fn uncertain(&self, limit: u32) -> Result<Vec<UncertainIntent>, StoreError> {
-        let rows = self
-            .statement(UNCERTAIN_SQL, vec![SqlValue::Int64(i64::from(limit))])
-            .await
-            .map_err(storage("uncertain"))?;
-        Ok(rows
-            .iter()
-            .map(|row| {
-                let operation: String = row.get(0);
-                let key: String = row.get(1);
-                UncertainIntent {
-                    id: intent_id(&operation, &key),
-                    partition: self.project_env_key.clone(),
-                    // The write log keeps neither: its key is the operation.
-                    release: String::new(),
-                    package: operation
-                        .split_once(':')
-                        .map_or_else(String::new, |(package, _)| package.to_owned()),
-                    operation,
-                    idempotency_key: key,
-                }
-            })
-            .collect())
-    }
-
-    /// The write log has no operator resolution. The client sends a new key.
-    async fn resolve(&self, id: &IntentId, _basis: OperatorActionBasis) -> Result<(), StoreError> {
-        Err(contract(
-            "resolve",
-            format!(
-                "the write log resolves no claim, and {} stays uncertain",
-                id.0
-            ),
-        ))
     }
 }
 

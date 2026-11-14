@@ -8,8 +8,8 @@ use tokio::time::Instant;
 use wamn_catalog::{AdmittedComponent, ServingComponent};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_scope::INVOCATION_SCOPES_ID;
+use wamn_engine::native_routes::{OperationRefusal, OperationRefusalType};
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
 use wamn_runtime::invocation::{AuthorizedInvocation, InvocationRequest, PrincipalVerification};
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
 use wamn_runtime::plugins::wamn_blobstore::plugin::{
@@ -17,8 +17,8 @@ use wamn_runtime::plugins::wamn_blobstore::plugin::{
 };
 use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
-    OperationTransaction, PreparedStatementMembers, PreparedStatementSet, UnprovisionedPrincipal,
-    WAMN_POSTGRES_ID, WamnPostgres,
+    PreparedStatementMembers, PreparedStatementSet, UnprovisionedPrincipal, WAMN_POSTGRES_ID,
+    WamnPostgres,
 };
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -245,7 +245,6 @@ impl NativePolicy {
 impl InvocationPolicy for NativePolicy {
     type Facts = NativeFacts;
     type Authority = Arc<AuthorizedInvocation>;
-    type Transaction = OperationTransaction;
 
     async fn prepare(
         &self,
@@ -330,54 +329,6 @@ impl InvocationPolicy for NativePolicy {
         facts.authority.as_ref().map(|authority| authority.id())
     }
 
-    async fn admit_and_open_transaction(
-        &self,
-        component_id: &str,
-        operation: &str,
-        facts: &NativeFacts,
-    ) -> anyhow::Result<Option<OperationTransaction>> {
-        let component = self.admit(component_id, operation, facts)?;
-        if !component.fact.operations[operation].host_transaction {
-            return Ok(None);
-        }
-        let scope = facts
-            .authority
-            .as_ref()
-            .context("invocation is not prepared")?
-            .id();
-        let postgres = &self.resources.postgres;
-        postgres.revoke_operation_transaction(scope);
-        let transaction = postgres
-            .begin_operation_transaction(scope)
-            .await
-            .map_err(|error| anyhow::anyhow!("begin operation transaction: {error:?}"))?;
-        let transaction = if self
-            .resources
-            .release
-            .manifest()
-            .routes
-            .iter()
-            .any(|route| {
-                route.operation == operation && route.type_ == wamn_catalog::OperationType::Delete
-            }) {
-            transaction.with_known_result(
-                wamn_runtime::plugins::wamn_postgres::write_log::DELETED_RESULT.to_owned(),
-            )
-        } else {
-            transaction
-        };
-        postgres.bind_operation_transaction(scope, &transaction)?;
-        Ok(Some(transaction))
-    }
-
-    fn transaction_facts(
-        &self,
-        facts: &NativeFacts,
-        _transaction: &OperationTransaction,
-    ) -> NativeFacts {
-        facts.clone()
-    }
-
     /// Borrow the prepared authority after native initialization.
     fn activate(
         &self,
@@ -430,6 +381,64 @@ impl InvocationPolicy for NativePolicy {
             Ok(Arc::clone(authority))
         })();
         std::future::ready(result)
+    }
+
+    async fn invoke(
+        &self,
+        component_id: &str,
+        target: &wash_runtime::engine::dispatch::DispatchTarget,
+        request: NativeInvocation<Self>,
+    ) -> anyhow::Result<super::native_call::NativeOutcome> {
+        let component = self.admit(component_id, &request.operation, &request.facts)?;
+        let route = self.resources.release.manifest().route(
+            &component.fact.target.package_id,
+            &component.fact.component,
+            &request.operation,
+        );
+        // HTTP already owns the claim. Palette and event-handler exports have no write envelope.
+        if !matches!(
+            request.facts.acquisition.invocation.entry,
+            wamn_runtime::plugins::connection_http::InvocationEntry::Wiring(_)
+        ) || route.is_none_or(|route| {
+            route.type_.is_read() || route.type_ == wamn_catalog::OperationType::EventHandler
+        }) {
+            return super::native_call::invoke_raw(target, request).await;
+        }
+        let route = route.expect("a workflow write has a released route");
+        let super::native_call::NativeInput::Encoded(input) = &request.input else {
+            anyhow::bail!("workflow input is not JSON");
+        };
+        let input: serde_json::Value = serde_json::from_str(input)?;
+        let authority = request
+            .facts
+            .authority
+            .as_ref()
+            .context("invocation is not prepared")?;
+        let outcome = self
+            .resources
+            .postgres
+            .invoke_node(
+                authority,
+                &request.operation,
+                route,
+                component.fact.operations[&request.operation].host_transaction,
+                &input,
+                |input| {
+                    super::native_call::invoke_raw(
+                        target,
+                        NativeInvocation {
+                            operation: request.operation.clone(),
+                            context: request.context.clone(),
+                            input: super::native_call::NativeInput::Encoded(input),
+                            deadline: request.deadline,
+                            facts: request.facts.clone(),
+                            application: Arc::clone(&request.application),
+                        },
+                    )
+                },
+            )
+            .await?;
+        Ok(super::native_call::NativeOutcome::Json(outcome))
     }
 
     async fn finish_result(
@@ -526,9 +535,6 @@ impl NativePolicy {
         if interfaces.contains("wamn", "flow-http-routing", &["routing"]) {
             wamn_engine::flow_http_routing::add_to_linker(linker)?;
         }
-        if interfaces.contains("wamn", "router-delivery", &["delivery"]) {
-            wamn_engine::router_delivery::add_to_linker(linker)?;
-        }
         self.resources
             .logging
             .add_linker_entries(linker, &interfaces)?;
@@ -598,7 +604,6 @@ impl HostPlugin for NativePolicy {
         // The route layer of a composed entry imports these. A call enters an
         // operation export, never the HTTP handler, so none reaches them.
         imports.insert(WitInterface::from("wamn:flow-http-routing/routing@0.1.0"));
-        imports.insert(WitInterface::from("wamn:router-delivery/delivery@0.4.0"));
         let mut exports = HashSet::new();
         for entry in self.components.values().flat_map(|served| served.iter()) {
             for name in entry.fact.operations.keys() {

@@ -38,7 +38,7 @@ cargo xtask dev-collector "$WAMN_DEV_ENV_DIR"
 docker compose -f "$WAMN_DEV_ENV_DIR/local-artifacts/otel/compose.json" up --pull never --detach
 ```
 
-The renderer reads `deploy/platform/otel-collector.yaml` and its GCP values at run time.
+The renderer reads the platform chart and its GCP collector values at run time.
 It preserves the receivers, processors, and image digest.
 The host uses the deployed sampler: sampled parents and 10% of new traces. The collector does not sample traces.
 It replaces the GCS exporters with OTLP JSON file exporters under `<dev-root>/local-artifacts/otel/`.
@@ -82,7 +82,8 @@ The binding names no server, so it uses the host's data connection and its certi
 `host_config_file` in `dev.json` names the file, and the loop passes it to the host as `--user-config`.
 
 The loop runs the platform materializer as a second workload beside the release, as the cluster does.
-At each activation, the loop renders `deploy/platform/materializer.example.yaml` with `render_materializer`, the renderer of the cluster files.
+At each activation, the loop renders the materializer through `deploy/platform/environment`.
+The same chart owns the deployed workload.
 The rendering uses the deployed fetch and sweep intervals of `wamn-control-provision`.
 The loop writes the result with the local component bytes to `materializer.json` in the local output directory.
 The materializer does not enter the local admission facts, the release manifest, or the preload.
@@ -96,7 +97,7 @@ Keep that file across host restarts so that stored OAuth tokens stay readable.
 
 The command starts identity, the org control host, and a local web server, then writes private `dev.json` and exits.
 The control host uses `wamn-host host --control`. Its component configuration references the org control login and its native basic-auth Secret.
-The host serves control HTTP endpoints natively. `deploy/platform/control-service.yaml` exposes that host through a Service.
+The host serves control HTTP endpoints natively. The platform Helm chart exposes that host through `deploy/platform/release/templates/control.yaml`.
 The administration directory holds the patch from the normal administration credential operation.
 No application release runs in the control host.
 

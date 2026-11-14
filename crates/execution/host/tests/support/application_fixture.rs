@@ -354,7 +354,6 @@ pub(super) async fn application_host_with_release(
             identity: Some((reader().await?, ORG.to_owned())),
             changes: Publisher::default(),
         },
-        None,
     );
     let administration_url = login(admin_url, &administration)?;
     Ok((

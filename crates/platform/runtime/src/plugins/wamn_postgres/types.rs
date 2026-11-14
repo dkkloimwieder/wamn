@@ -167,16 +167,16 @@ impl Encode<'_, sqlx::Postgres> for PgParam<'_> {
         }
         Some(match self.0 {
             SqlValue::Null => Self::type_info(),
-            SqlValue::Boolean(_) => bool::type_info(),
-            SqlValue::Int32(_) => i32::type_info(),
-            SqlValue::Int64(_) => i64::type_info(),
-            SqlValue::Float64(_) => f64::type_info(),
+            SqlValue::Boolean(_) => <bool as Type<sqlx::Postgres>>::type_info(),
+            SqlValue::Int32(_) => <i32 as Type<sqlx::Postgres>>::type_info(),
+            SqlValue::Int64(_) => <i64 as Type<sqlx::Postgres>>::type_info(),
+            SqlValue::Float64(_) => <f64 as Type<sqlx::Postgres>>::type_info(),
             SqlValue::Bytes(_) => <Vec<u8> as Type<sqlx::Postgres>>::type_info(),
             SqlValue::Text(_) => <String as Type<sqlx::Postgres>>::type_info(),
             SqlValue::Numeric(_) => BigDecimal::type_info(),
-            SqlValue::Timestamptz(_) => DateTime::<Utc>::type_info(),
-            SqlValue::Json(_) => Json::<serde_json::Value>::type_info(),
-            SqlValue::Uuid(_) => uuid::Uuid::type_info(),
+            SqlValue::Timestamptz(_) => <DateTime<Utc> as Type<sqlx::Postgres>>::type_info(),
+            SqlValue::Json(_) => <Json<serde_json::Value> as Type<sqlx::Postgres>>::type_info(),
+            SqlValue::Uuid(_) => <uuid::Uuid as Type<sqlx::Postgres>>::type_info(),
         })
     }
 
@@ -186,20 +186,24 @@ impl Encode<'_, sqlx::Postgres> for PgParam<'_> {
     ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         match self.0 {
             SqlValue::Null => Ok(sqlx::encode::IsNull::Yes),
-            SqlValue::Boolean(value) => value.encode_by_ref(buffer),
-            SqlValue::Int32(value) if self.1.is_some_and(|ty| ty.name() == "INT2") => {
-                i16::try_from(*value)?.encode_by_ref(buffer)
+            SqlValue::Boolean(value) => {
+                <bool as Encode<sqlx::Postgres>>::encode_by_ref(value, buffer)
             }
-            SqlValue::Int32(value) => value.encode_by_ref(buffer),
-            SqlValue::Int64(value) => value.encode_by_ref(buffer),
+            SqlValue::Int32(value) if self.1.is_some_and(|ty| ty.name() == "INT2") => {
+                <i16 as Encode<sqlx::Postgres>>::encode_by_ref(&i16::try_from(*value)?, buffer)
+            }
+            SqlValue::Int32(value) => <i32 as Encode<sqlx::Postgres>>::encode_by_ref(value, buffer),
+            SqlValue::Int64(value) => <i64 as Encode<sqlx::Postgres>>::encode_by_ref(value, buffer),
             SqlValue::Float64(value) if self.1.is_some_and(|ty| ty.name() == "FLOAT4") => {
                 let narrowed = *value as f32;
                 if value.is_finite() && !narrowed.is_finite() {
                     return Err("value is outside the PostgreSQL REAL range".into());
                 }
-                narrowed.encode_by_ref(buffer)
+                <f32 as Encode<sqlx::Postgres>>::encode_by_ref(&narrowed, buffer)
             }
-            SqlValue::Float64(value) => value.encode_by_ref(buffer),
+            SqlValue::Float64(value) => {
+                <f64 as Encode<sqlx::Postgres>>::encode_by_ref(value, buffer)
+            }
             SqlValue::Bytes(value) => {
                 <Vec<u8> as Encode<sqlx::Postgres>>::encode_by_ref(value, buffer)
             }
@@ -220,12 +224,24 @@ impl Encode<'_, sqlx::Postgres> for PgParam<'_> {
                     value.parse::<BigDecimal>()?.encode_by_ref(buffer)
                 }
             }
-            SqlValue::Timestamptz(value) => value.parse::<DateTime<Utc>>()?.encode_by_ref(buffer),
-            SqlValue::Json(value) => Json(
-                serde_json::from_str::<Box<serde_json::value::RawValue>>(value)?,
-            )
-            .encode_by_ref(buffer),
-            SqlValue::Uuid(value) => value.parse::<uuid::Uuid>()?.encode_by_ref(buffer),
+            SqlValue::Timestamptz(value) => {
+                <DateTime<Utc> as Encode<sqlx::Postgres>>::encode_by_ref(
+                    &value.parse::<DateTime<Utc>>()?,
+                    buffer,
+                )
+            }
+            SqlValue::Json(value) => {
+                <Json<Box<serde_json::value::RawValue>> as Encode<sqlx::Postgres>>::encode_by_ref(
+                    &Json(serde_json::from_str::<Box<serde_json::value::RawValue>>(
+                        value,
+                    )?),
+                    buffer,
+                )
+            }
+            SqlValue::Uuid(value) => <uuid::Uuid as Encode<sqlx::Postgres>>::encode_by_ref(
+                &value.parse::<uuid::Uuid>()?,
+                buffer,
+            ),
         }
     }
 }

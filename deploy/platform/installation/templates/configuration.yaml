@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wamn-platform
+  namespace: {{ .Values.org }}
+data:
+  configuration.json: {{ .Values.configuration | toJson | quote }}
+  chart: {{ .Values.platform.chart | quote }}

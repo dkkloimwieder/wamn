@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wamn-host-settings
+  namespace: {{ .Values.org }}
+data:
+{{- range $name, $value := .Values.hostEnvironment }}
+  {{ $name }}: {{ $value | quote }}
+{{- end }}

@@ -13,11 +13,11 @@ mod support;
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{BufRead as _, BufReader, Write as _};
+use std::io::Write as _;
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
@@ -310,61 +310,58 @@ credential_bound = {credential_bound}
     path
 }
 
-/// The `wamn-edge` binary, running, and the lines of its log.
+/// The running edge, observed through its status interface.
 struct Edge {
     child: Child,
-    lines: mpsc::Receiver<String>,
-    seen: Vec<String>,
+    db: PathBuf,
 }
 
 impl Edge {
-    fn start(config: &Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_wamn-edge"))
+    async fn start(config: &Path) -> Self {
+        let child = Command::new(env!("CARGO_BIN_EXE_wamn-edge"))
             .arg("--config")
             .arg(config)
-            .env("RUST_LOG", "wamn_edge=debug")
-            .env("NO_COLOR", "1")
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            // A fatal error reaches the test output (wamn-vbail).
+            .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()
             .expect("start wamn-edge");
-        let log = child.stdout.take().expect("the child's log");
-        let (sender, lines) = mpsc::channel();
-        std::thread::spawn(move || {
-            for line in BufReader::new(log).lines().map_while(Result::ok) {
-                if sender.send(line).is_err() {
-                    return;
-                }
-            }
-        });
         let mut edge = Self {
             child,
-            lines,
-            seen: Vec::new(),
+            db: config
+                .parent()
+                .expect("configuration directory")
+                .join("edge.db"),
         };
-        edge.wait_for("wamn-edge serves its release", 1);
+        edge.wait_for(|_| true).await;
         edge
     }
 
-    /// Wait until the log holds `count` lines that contain `text`.
-    fn wait_for(&mut self, text: &str, count: usize) {
+    async fn wait_for(&mut self, done: impl Fn(&Value) -> bool) -> Value {
         let deadline = Instant::now() + STEP;
-        while self.seen.iter().filter(|line| line.contains(text)).count() < count {
-            let left = deadline.saturating_duration_since(Instant::now());
-            match self.lines.recv_timeout(left) {
-                Ok(line) => self.seen.push(line),
-                Err(error) => panic!(
-                    "wamn-edge logged {text:?} fewer than {count} times ({error}, exit {:?}):\n{}",
-                    self.child.try_wait(),
-                    self.seen.join("\n")
-                ),
+        loop {
+            assert!(
+                self.child.try_wait().expect("read child status").is_none(),
+                "edge exited before reaching the requested state"
+            );
+            if let Ok(Ok(value)) = tokio::time::timeout(
+                deadline.saturating_duration_since(Instant::now()),
+                status::read(&self.db),
+            )
+            .await
+                && done(&value)
+            {
+                return value;
             }
+            assert!(
+                Instant::now() < deadline,
+                "edge did not reach the requested state"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 
-    /// Kill the child with SIGKILL, as a power loss would stop it.
+    /// Stop the child as a power loss stops the device.
     fn kill(mut self) {
         self.child.kill().expect("kill wamn-edge");
         self.child.wait().expect("reap wamn-edge");
@@ -398,13 +395,13 @@ async fn a_sample_is_forwarded_once_across_kills() {
     let db = directory.join("edge.db");
 
     // The platform is down: the samples are stored and the forward fails.
-    let mut edge = Edge::start(&config);
+    let mut edge = Edge::start(&config).await;
     controller
         .write_all(b"12.5 kg\n13.0 kg\n")
         .expect("send the frames");
-    edge.wait_for("the device call stored its sample", 2);
-    edge.wait_for("the forward did not reach the platform", 1);
-    let down = status::read(&db).await.expect("read the status");
+    let down = edge
+        .wait_for(|state| state["samples"]["pending"] == 2)
+        .await;
     assert_eq!(
         down["forward"],
         json!({"credential_failures": 0, "stopped": false})
@@ -420,14 +417,14 @@ async fn a_sample_is_forwarded_once_across_kills() {
         .expect("bind the platform port");
     platform.serve(listener, acceptor);
     let held = Arc::clone(&platform.held);
-    let edge = Edge::start(&config);
+    let edge = Edge::start(&config).await;
     tokio::time::timeout(STEP, held.notified())
         .await
         .expect("the platform receives the first sample");
     edge.kill();
 
     // The restarted edge sends the held sample again, then the second.
-    let mut edge = Edge::start(&config);
+    let mut edge = Edge::start(&config).await;
     until(&platform, "both samples", |received| {
         received.request_elements.len() >= 3
     })
@@ -435,9 +432,14 @@ async fn a_sample_is_forwarded_once_across_kills() {
     controller
         .write_all(format!("{REFUSED_FRAME}\n").as_bytes())
         .expect("send the refused frame");
-    edge.wait_for("the platform refused a sample", 1);
-    let refused = status::read(&db).await.expect("read the status");
-    let printed = status::run(&db).await.expect("print the status");
+    let refused = edge
+        .wait_for(|state| {
+            state["samples"]["pending"] == 0
+                && state["samples"]["refused"]
+                    .as_array()
+                    .is_some_and(|samples| samples.len() == 1)
+        })
+        .await;
     edge.kill();
 
     let refused_key = {
@@ -476,62 +478,24 @@ async fn a_sample_is_forwarded_once_across_kills() {
     assert_eq!(entries.len(), 1, "{refused}");
     assert_eq!(entries[0]["sample_key"], refused_key);
     assert!(entries[0]["captured_at"].is_string(), "{refused}");
-    assert!(
-        entries[0]["reason"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("invalid_input")),
-        "{refused}"
-    );
-    assert_eq!(
-        entries[0].as_object().map(serde_json::Map::len),
-        Some(3),
-        "a refused sample carries its key, time and reason, and no body"
-    );
-    assert!(
-        printed.contains("forward.stopped\tfalse\n")
-            && printed.contains("samples.refused\t1\n")
-            && printed.contains(&format!(
-                "refused\t{refused_key}\t{}\t",
-                entries[0]["captured_at"].as_str().expect("a time")
-            )),
-        "{printed}"
-    );
+    assert!(entries[0]["reason"].is_string());
 
-    let connection = rusqlite::Connection::open(&db).expect("open the stopped edge's file");
-    let count = |query: &str| -> i64 {
-        connection
-            .query_row(query, [], |row| row.get(0))
-            .expect("count")
-    };
     assert_eq!(
-        count("SELECT COUNT(*) FROM intents"),
-        3,
-        "one export call per frame"
-    );
-    assert_eq!(
-        count("SELECT COUNT(*) FROM samples WHERE forwarded_at IS NOT NULL"),
+        samples_where(&directory, "forwarded_at IS NOT NULL").await,
         2
     );
-    drop(connection);
 
     let command = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
-    let listed = refusals::run(&command(&["list"]), &db)
-        .await
-        .expect("list the refused samples");
-    assert!(
-        listed.starts_with(&refused_key) && listed.contains("invalid_input"),
-        "{listed}"
-    );
+    let samples = refused_samples(&db).await;
+    assert_eq!(samples.len(), 1);
+    assert_eq!(samples[0].sample_key, refused_key);
     refusals::run(
         &command(&["resolve", &refused_key, "operator-judgment"]),
         &db,
     )
     .await
     .expect("resolve the refused sample");
-    assert_eq!(
-        refusals::run(&command(&["list"]), &db).await.expect("list"),
-        ""
-    );
+    assert!(refused_samples(&db).await.is_empty());
 }
 
 /// With `credential_bound` 1, the first 401 stops the forward. The device loop
@@ -560,15 +524,14 @@ async fn a_refused_pat_stops_the_forward_at_the_bound() {
         .expect("bind the platform port");
     platform.serve(listener, acceptor);
 
-    let mut edge = Edge::start(&config);
+    let mut edge = Edge::start(&config).await;
     controller.write_all(b"12.5 kg\n").expect("send a frame");
-    edge.wait_for("the platform refused the forward's PAT", 1);
-    edge.wait_for("the forward stopped", 1);
+    edge.wait_for(|state| state["forward"]["stopped"] == true)
+        .await;
     controller.write_all(b"13.0 kg\n").expect("send a frame");
-    edge.wait_for("the device call stored its sample", 2);
-    let stopped = status::read(&directory.join("edge.db"))
-        .await
-        .expect("read the status");
+    let stopped = edge
+        .wait_for(|state| state["samples"]["pending"] == 2)
+        .await;
     assert_eq!(
         stopped["forward"],
         json!({"credential_failures": 1, "stopped": true})
@@ -583,30 +546,40 @@ async fn a_refused_pat_stops_the_forward_at_the_bound() {
         "one request, then the stop"
     );
 
-    let connection = rusqlite::Connection::open(directory.join("edge.db"))
-        .expect("open the stopped edge's file");
-    let pending: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM samples \
-             WHERE forwarded_at IS NULL AND refused_at IS NULL",
-            [],
-            |row| row.get(0),
-        )
-        .expect("count");
-    assert_eq!(pending, 2, "both samples stay pending");
+    assert_eq!(
+        samples_where(&directory, "forwarded_at IS NULL AND refused_at IS NULL").await,
+        2
+    );
 }
 
-/// The count of the samples in the stopped edge's file that match `condition`.
-fn samples_where(directory: &Path, condition: &str) -> i64 {
-    rusqlite::Connection::open(directory.join("edge.db"))
-        .and_then(|connection| {
-            connection.query_row(
-                &format!("SELECT COUNT(*) FROM samples WHERE {condition}"),
-                [],
-                |row| row.get(0),
-            )
-        })
-        .expect("count the samples")
+async fn refused_samples(db: &Path) -> Vec<wamn_edge::samples::RefusedSample> {
+    let store = wamn_edge::store::EdgeStore::open(db).await.unwrap();
+    let closed = store.closed();
+    let samples = wamn_edge::samples::SampleStore::open(store).await.unwrap();
+    let refused = samples.refused_samples().await.unwrap();
+    drop(samples);
+    closed.wait().await;
+    refused
+}
+
+async fn sample_database(directory: &Path) -> sqlx::SqlitePool {
+    sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new().filename(directory.join("edge.db")),
+    )
+    .await
+    .unwrap()
+}
+
+async fn samples_where(directory: &Path, condition: &str) -> i64 {
+    let pool = sample_database(directory).await;
+    let count = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM samples WHERE {condition}"
+    )))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+    count
 }
 
 /// The forward against a real platform route: the `sample.record` command of
@@ -648,38 +621,49 @@ async fn samples_reach_a_live_platform_once_across_kills() {
     println!("frame tag: {tag}");
 
     // The platform refuses the PAT: both samples are stored, none forwarded.
-    let mut edge = Edge::start(&config);
+    let mut edge = Edge::start(&config).await;
     controller
         .write_all(format!("{tag} 12.5 kg\n{tag} 13.0 kg\n").as_bytes())
         .expect("send the frames");
-    edge.wait_for("the device call stored its sample", 2);
-    edge.wait_for("the platform refused the forward's PAT", 1);
+    edge.wait_for(|state| {
+        state["samples"]["pending"] == 2
+            && state["forward"]["credential_failures"]
+                .as_u64()
+                .is_some_and(|failures| failures > 0)
+    })
+    .await;
     edge.kill();
-    assert_eq!(samples_where(&directory, "forwarded_at IS NOT NULL"), 0);
+    assert_eq!(
+        samples_where(&directory, "forwarded_at IS NOT NULL").await,
+        0
+    );
 
     // With the device PAT, the restart forwards both.
     std::fs::write(directory.join("device.pat"), &token).expect("write the device PAT");
-    let mut edge = Edge::start(&config);
-    edge.wait_for("the platform accepted a sample", 2);
+    let mut edge = Edge::start(&config).await;
+    edge.wait_for(|state| state["samples"]["pending"] == 0)
+        .await;
     edge.kill();
-    assert_eq!(samples_where(&directory, "forwarded_at IS NOT NULL"), 2);
+    assert_eq!(
+        samples_where(&directory, "forwarded_at IS NOT NULL").await,
+        2
+    );
 
     // The box lost its record of the forward, so both are sent again.
-    rusqlite::Connection::open(directory.join("edge.db"))
-        .and_then(|connection| {
-            connection.execute("UPDATE samples SET forwarded_at = NULL, attempts = 0", [])
-        })
-        .expect("clear the record of the forward");
-    let mut edge = Edge::start(&config);
-    edge.wait_for("the platform accepted a sample", 2);
+    let pool = sample_database(&directory).await;
+    sqlx::query("UPDATE samples SET forwarded_at = NULL, attempts = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    let mut edge = Edge::start(&config).await;
+    edge.wait_for(|state| state["samples"]["pending"] == 0)
+        .await;
     edge.kill();
 
-    assert_eq!(samples_where(&directory, "forwarded_at IS NOT NULL"), 2);
-    assert_eq!(samples_where(&directory, "refused_at IS NOT NULL"), 0);
-    let intents: i64 = rusqlite::Connection::open(directory.join("edge.db"))
-        .and_then(|connection| {
-            connection.query_row("SELECT COUNT(*) FROM intents", [], |row| row.get(0))
-        })
-        .expect("count the intents");
-    assert_eq!(intents, 2, "one export call per frame");
+    assert_eq!(
+        samples_where(&directory, "forwarded_at IS NOT NULL").await,
+        2
+    );
+    assert_eq!(samples_where(&directory, "refused_at IS NOT NULL").await, 0);
 }

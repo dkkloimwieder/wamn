@@ -1,0 +1,6 @@
+dependencies:
+- name: runtime-operator
+  repository: oci://ghcr.io/wasmcloud/charts
+  version: 2.11.0
+digest: sha256:7ece8b269920fbeb948845740d716a2d4cc6358f0e65c0d22128ecb70ec30405
+generated: "2026-10-21T23:44:52.292918978-04:00"

@@ -558,11 +558,6 @@ pub async fn invoke(
             bytes,
         }])
         .await?;
-    let intents = host.call_intents(component, OPERATION)?;
-    eprintln!(
-        "consumer host transaction declared=true, intent context present={}",
-        intents.is_some()
-    );
     let mut admin = wamn_postgres::connect(database.url()).await?;
 
     let source_id = source(&mut admin, "rest-fixture").await?.to_string();
@@ -584,7 +579,7 @@ pub async fn invoke(
     )
     .await?;
     let caller = run_caller(&mut admin, &workflow_host, &run, ROLE).await?;
-    wamn_engine::router_delivery::authorize_registered_operation(Some(&caller), Some(OPERATION))?;
+    wamn_engine::native_routes::authorize_registered_operation(Some(&caller), Some(OPERATION))?;
     let finish_operation = "rest-connector:sync/finish@0.1.1";
     let connector = admissions
         .iter()
@@ -630,7 +625,6 @@ pub async fn invoke(
             };
             json!([{"request_id":request, "value":{"external_system_id":source_id,"idempotency_key":key, "items":[{"key":"native-item", "name":name}]}}])
         };
-        let intents = host.call_intents(component, operation)?;
         let call = OperationCall {
             closure: OperationClosure::Candidate(application),
             component,
@@ -673,14 +667,7 @@ pub async fn invoke(
                 Some(caller.clone()),
             ),
         };
-        let result = invoke_operation(
-            &host,
-            call,
-            intents
-                .as_ref()
-                .map(wamn_execution_host::CallIntents::context),
-        )
-        .await?;
+        let result = invoke_operation(&host, call).await?;
         if finishing {
             assert!(
                 result.is_err(),

@@ -2,10 +2,8 @@
 //!
 //! A host route keeps the route table, credentials, CSRF treatment and
 //! operation grant of any route, but the host serves it with a fixed handler
-//! instead of a component. [`HostRouteDelivery`] serves the host routes of
-//! the loaded release and passes every other delivery to the release's
-//! [`RouteDelivery`], the router delivery bridge. The control serving root
-//! has no component, so a control host has no bridge behind it.
+//! instead of a component. [`HostRouteDelivery`] serves the native platform
+//! routes of the loaded release.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -15,11 +13,11 @@ use serde_json::{Value, json};
 use wamn_broker::Publisher;
 use wamn_catalog::{HostAttachment, HostHandler};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
-use wamn_engine::release_manifest::LoadedRelease;
-use wamn_engine::router_delivery::{
-    DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, RouteDelivery, Source,
-    SourceRef, resolve_authorized_host_route,
+use wamn_engine::native_routes::{
+    DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
+    resolve_authorized_host_route,
 };
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_client::PatIssuerConfig;
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::control::{control_projects_page, is_org_admin, org_projects_page};
@@ -85,7 +83,6 @@ pub struct HostRouteDelivery {
     registry_token_metadata: bool,
     operation_jobs: Option<wamn_kubernetes::kubernetes_api::KubernetesApi>,
     handlers: HostRouteHandlers,
-    next: Option<Arc<dyn RouteDelivery>>,
     files: Option<Arc<crate::file_route::FileRoutes>>,
     connection_health: Option<Arc<wamn_runtime::connection_health::ConnectionHealth>>,
     oauth: Option<Arc<wamn_runtime::oauth_authorization::Authorization>>,
@@ -96,18 +93,13 @@ impl fmt::Debug for HostRouteDelivery {
         formatter
             .debug_struct("HostRouteDelivery")
             .field("release", &self.release.release())
-            .field("next", &self.next.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl HostRouteDelivery {
-    /// `next` serves every delivery that is not a host route.
-    pub fn new(
-        release: Arc<LoadedRelease>,
-        handlers: HostRouteHandlers,
-        next: Option<Arc<dyn RouteDelivery>>,
-    ) -> Self {
+    /// Serve the native platform routes of the loaded release.
+    pub fn new(release: Arc<LoadedRelease>, handlers: HostRouteHandlers) -> Self {
         Self {
             release,
             handlers,
@@ -115,7 +107,6 @@ impl HostRouteDelivery {
             registry_token_metadata: false,
             #[cfg(feature = "test-util")]
             projection_pause: None,
-            next,
             files: None,
             connection_health: None,
             oauth: None,
@@ -403,26 +394,20 @@ fn report(outcome: Result<DeliveryOutcome, DeliveryError>) -> DeliveryReport {
     }
 }
 
-#[async_trait::async_trait]
-impl RouteDelivery for HostRouteDelivery {
-    async fn deliver(
+impl HostRouteDelivery {
+    pub async fn deliver(
         &self,
         request: DeliveryRequest,
         caller: Option<AuthenticatedCaller>,
     ) -> DeliveryReport {
         let resolved = match &request.source {
-            Source::Attachment(id) => resolve_authorized_host_route(
-                self.release.manifest(),
-                SourceRef::Attachment(id),
-                caller.as_ref(),
-            ),
+            Source::Attachment(id) => {
+                resolve_authorized_host_route(self.release.manifest(), id, caller.as_ref())
+            }
             Source::Registration(_) => None,
         };
         let Some(resolved) = resolved else {
-            return match &self.next {
-                Some(next) => next.deliver(request, caller).await,
-                None => report(Err(DeliveryError::SourceNotFound)),
-            };
+            return report(Err(DeliveryError::SourceNotFound));
         };
         let attachment = match resolved {
             Ok(attachment) => attachment,
@@ -444,9 +429,9 @@ impl RouteDelivery for HostRouteDelivery {
                 request_element.insert("request_id".to_owned(), json!(request_id));
             }
             request_element.insert(member.to_owned(), value);
-            report(Ok(DeliveryOutcome::Respond(
-                Value::Array(vec![Value::Object(request_element)]).to_string(),
-            )))
+            report(Ok(
+                Value::Array(vec![Value::Object(request_element)]).to_string()
+            ))
         };
         match self
             .handle(
@@ -591,7 +576,7 @@ impl HostRouteDelivery {
             )
             .await;
         match report.outcome {
-            Ok(DeliveryOutcome::Respond(body)) => match serde_json::from_str(&body) {
+            Ok(body) => match serde_json::from_str(&body) {
                 Ok(body) => answer(200, body),
                 Err(_) => answer(503, json!({"error":{"code":"execution-failed"}})),
             },

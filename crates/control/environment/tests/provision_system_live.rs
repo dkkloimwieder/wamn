@@ -138,6 +138,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
             namespace: "hosts".into(),
         },
         chart: std::path::PathBuf::new(),
+        chart_download: None,
         release_artifact_base: String::new(),
         registry_token_metadata: false,
         registry_auth_file: std::path::PathBuf::new(),

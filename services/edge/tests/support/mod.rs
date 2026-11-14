@@ -21,7 +21,6 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use serde_json::json;
 use wamn_catalog::edge_bundle::BUNDLE_FILE_NAME;
-use wamn_catalog::{RELEASE_MANIFEST_FILE_NAME, ServingManifest};
 use wamn_dev_control::dev::edge_bundle::{EdgeTarget, write_package};
 use wamn_digest::bytes_sha256;
 use wamn_edge::config::{
@@ -172,16 +171,6 @@ fn run(command: &mut Command) -> Vec<u8> {
         String::from_utf8_lossy(&output.stderr)
     );
     output.stdout
-}
-
-/// The digest of the release in the bundle at `directory`, as intents name it.
-pub fn release(directory: &Path) -> String {
-    let bytes =
-        std::fs::read(directory.join(RELEASE_MANIFEST_FILE_NAME)).expect("read the manifest");
-    ServingManifest::from_canonical_bytes(&bytes)
-        .expect("the bundle manifest is canonical")
-        .1
-        .to_string()
 }
 
 /// The configuration of the edge over the bundle in `directory`, with no

@@ -14,11 +14,11 @@ pub mod identity_issuer;
 pub mod invite;
 pub mod migrations;
 pub mod org_connection;
-pub mod platform;
+pub use wamn_platform_install::platform;
 pub mod platform_migrations;
-pub mod provision_org;
+pub use wamn_platform_install::provision_org;
 pub mod provision_project_env;
-pub mod provision_system;
+pub use wamn_platform_install::provision_system;
 #[cfg(feature = "ops")]
 pub mod prune_record_history;
 #[cfg(feature = "ops")]

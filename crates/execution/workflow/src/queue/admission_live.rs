@@ -334,7 +334,6 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
                 identity: None,
                 changes: wamn_broker::Publisher::default(),
             },
-            None,
         ),
     };
     let request = StartInput {
@@ -392,9 +391,7 @@ impl std::ops::Deref for WorkflowsFixture {
 
 impl WorkflowsFixture {
     async fn start(&self, request: &StartInput) -> anyhow::Result<String> {
-        use wamn_engine::router_delivery::{
-            DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source,
-        };
+        use wamn_engine::native_routes::{DeliveryRequest, Source};
         let attachment = wamn_catalog::HostRouteSet::Application
             .attachments()
             .find(|(_, attachment)| attachment.reference == "wamn-control:workflow/start")
@@ -432,7 +429,7 @@ impl WorkflowsFixture {
                 Some(caller),
             )
             .await;
-        let Ok(DeliveryOutcome::Respond(body)) = report.outcome else {
+        let Ok(body) = report.outcome else {
             anyhow::bail!("workflow.start failed: {:?}", report.outcome);
         };
         let body: serde_json::Value = serde_json::from_str(&body)?;

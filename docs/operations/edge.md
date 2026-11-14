@@ -33,15 +33,13 @@ A process on the box can also read the JSON answer. With the run-state path of `
 curl --unix-socket /var/lib/wamn-edge/status.sock http://localhost/status
 ```
 
-## Resolve refused samples and uncertain intents
+## Resolve refused samples
 
 Stop the edge first, because a running edge holds the run-state file.
 
 ```bash
 wamn-edge --config <path> samples list
 wamn-edge --config <path> samples resolve <sample_key> <basis>
-wamn-edge --config <path> intents list
-wamn-edge --config <path> intents resolve <id> <basis>
 ```
 
 `<basis>` is `external-evidence`, `counterparty-confirmation` or `operator-judgment`.

@@ -61,6 +61,7 @@ pub async fn provision_identity_issuer(
         .map(PathBuf::from)
         .unwrap_or_default();
     super::provision_project_env::workload::reconcile(
+        &args.system_database_url,
         &kubeconfig,
         "",
         &args.namespace,

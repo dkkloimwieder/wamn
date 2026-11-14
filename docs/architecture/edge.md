@@ -1,5 +1,16 @@
 # Edge
 
+## Operation storage
+
+HTTP and device calls enter the same operation boundary. The boundary authorizes the caller before it claims a key or runs application code.
+The edge owns its SQLx SQLite file. One connection holds the file exclusively, with WAL and full synchronization. The pool does not retire idle or old connections. A process file lock preserves ownership while a failed connection is replaced. Each replacement takes the SQLite lock before it serves work.
+Claims use the partition, stable operation reference and caller key. The partition holds the organization ID.
+A completed key returns its stored result. A changed input under that key is a conflict.
+An unfinished claim returns `in-progress` for 30 seconds, then `outcome-unknown`. Unfinished claims expire after 30 days.
+The device stores each sample and its completed outcome in one transaction. A refused device call stores no sample.
+The edge refuses the old generic intent database shape.
+Operators resolve refused samples through a local decision type. There is no intent listing or resolution command.
+
 ## Status
 
 A running edge reports its status on a local socket.

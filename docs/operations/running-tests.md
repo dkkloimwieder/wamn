@@ -34,7 +34,7 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
 - Any `Cargo.toml` or `Cargo.lock` also runs `cargo xtask compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it.
-- Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies. Changes to `wit/wamn-router-delivery-0.4/`, materializer WASI WIT select root and apps.
+- Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies. Changes to materializer WASI WIT select root and apps.
 - A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
 - A path that no package owns and no rule names selects every applicable workspace and suite.
 - Documentation-only changes select nothing, including quality, and exit successfully.
@@ -678,7 +678,7 @@ Platform recovery publishes no applications.
 After a body succeeds, `wamn-ctl env delete <org/env/project> --data` deletes its environment, database, and roles.
 Reset and platform schema cases also delete their isolation environments after all assertions succeed.
 Failed bodies retain their resources and logs.
-Project deletion has no command or control route (`services/ctl/src/project_verbs.rs:10`, `crates/catalog/model/src/host_route.rs:192`).
+Project deletion has no command or control route (`xtask/src/platform_project_commands.rs::ProjectCommand`, `crates/catalog/model/src/host_route.rs:192`).
 The `--data` confirmation requires a terminal (`services/ctl/src/env_verbs.rs:338`).
 The harness supplies a virtual terminal with `script` and types only the coordinate of the environment that it created.
 Tests do not write control tables or supply a project deletion workaround.
@@ -956,7 +956,7 @@ They enforce sessions, operation grants, file ownership, private exposure, and r
 Signed URL tests call `FileRoutes::signed_url`, then require 403 after expiry and a 900-second lifetime cap.
 The package fixture also declares a public projection with a three-second signed read result.
 The test generates its contracts and admits its Wasm component through the production package admission path.
-It invokes that operation through `RouterDeliveryBridge` as a session caller that holds only the operation grant.
+It invokes that operation through the shared operation entry as a session caller that holds only the operation grant.
 The returned URL serves the private bytes, then returns 403 after expiry. Direct `file.get` returns 403.
 This test needs no external host, guest build, NATS server, or additional environment variables.
 Run that case alone with the exports above, Docker, and the PostgreSQL binaries:

@@ -4,8 +4,7 @@
 //!
 //! This crate owns the transactionally coupled `runs`, `run_queue`, lease,
 //! timer, and terminal lifecycle. It contains decisions, parameterized SQL,
-//! and the storage traits: [`RunStore`] for the queued-run lifecycle and
-//! [`IntentStore`] for the per-call intent record. Postgres, clocks, and
+//! and [`RunStore`] for the queued-run lifecycle. Postgres, clocks, and
 //! database calls remain adapter effects.
 //!
 //! This crate's default graph is **pure**: no DB, no wasm, no clock. The
@@ -29,16 +28,9 @@
 /// The closed authority a trusted caller selects its credential under.
 pub mod authority_class;
 /// The two reusable credential-generation slots.
-/// The intent store case set that every store runs.
-#[cfg(feature = "test-util")]
-pub mod intent_cases;
-/// The per-call intent record as a storage trait.
-pub mod intent_store;
 /// RUN-* as plain `fn require_invariants(state)` functions, for the pure decision tests to
 /// call after every step.
 pub mod invariants;
-/// Evidence basis for operator resolution of intents.
-pub mod operator_action;
 /// The framed identity digest and the guest-SQL project key.
 #[cfg(feature = "project-key")]
 pub mod project_identity;
@@ -55,7 +47,6 @@ mod status;
 pub mod transitions;
 
 pub use authority_class::AuthorityClass;
-pub use intent_store::IntentStore;
 #[cfg(feature = "project-key")]
 pub use project_identity::app_identity_hash;
 pub use run_store::RunStore;

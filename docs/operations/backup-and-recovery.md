@@ -2,11 +2,11 @@
 
 This page covers the backup of an org Postgres cluster and its recovery.
 Backup and recovery run through CloudNativePG and its Barman Cloud plugin.
-The platform renders the manifests and the operator applies them.
+The org Helm chart owns the cluster and its backup resources.
 
 ## What the platform backs up
 
-`provision-org` renders one cluster for each recovery domain of an org.
+`provision-org` prepares chart values for one cluster for each recovery domain of an org.
 Each backed cluster carries the Barman Cloud plugin as its WAL archiver.
 The plugin ships every WAL segment to `s3://wamn-backups/wal/<cluster>` in the shared object store.
 A `ScheduledBackup` takes a base backup at the cadence of the env policy.
@@ -27,44 +27,38 @@ It restores a base backup and then replays WAL up to the point you name.
 The restore always lands in a new cluster, and the source cluster is untouched.
 The new cluster holds every database and every role the source held at that instant.
 
-## Render the recovery manifests
+## Prepare recovery values
 
-Run the command with the same `--template` that `provision-org` was run with.
-The template supplies the env policy that sizes the restored cluster.
+Run the recovery command with the org's template and recovery domain.
+It writes values for a separate org chart release. It reads no database and applies nothing.
 
 ```bash
 wamn-ctl-ops recover-org-cluster \
   --org acme --template standard --owner prod \
   --at 2026-09-16T14:31:00Z \
-  --emit-object-store /tmp/restore-store.json \
-  --emit-cluster /tmp/restore-cluster.json \
-  --emit-scheduled-backup /tmp/restore-backup.json
+  --emit-cluster restore-values.json
 ```
 
-`--owner` names the recovery domain, so the source cluster is `<org>-<owner>`.
-`--at` is an RFC3339 timestamp, and the replay stops there.
-If you omit `--at`, the replay applies every archived WAL segment.
-`--target` names the new cluster, and the default is `<org>-<owner>-restore`.
-The command refuses a target equal to the source.
-Such a manifest addresses the live cluster instead of a new one.
+`--owner` names the source recovery domain.
+`--at` stops replay at an RFC3339 timestamp. Omit it to replay all archived WAL.
+`--target` names the restored cluster. Its default is `<org>-<owner>-restore`.
+The command refuses the source name and shared clusters.
+Check the policy values against the org's registered policy before installation.
+Keep backup credentials in the existing Kubernetes Secret named by `backup.secret`.
 
-The command reads no database and applies nothing.
-Read the rendered `Cluster` before you apply it, and compare its `storage` and `instances` with the source.
-If the org customized its policy after provisioning, edit the rendered values to match the source.
+## Install the recovery release
 
-## Apply the recovery manifests
-
-1. Apply the `ObjectStore` of the restored cluster.
-2. Apply the recovery `Cluster`.
-3. Wait for the cluster to report ready.
-4. Apply the `ScheduledBackup` of the restored cluster.
+Use the org chart from the platform's selected, published chart.
+Install it in the org namespace under a separate release name.
+The source org release keeps its existing clusters and roles.
 
 ```bash
-kubectl -n wamn-system apply -f /tmp/restore-store.json
-kubectl -n wamn-system apply -f /tmp/restore-cluster.json
-kubectl -n wamn-system wait --for=condition=Ready cluster/acme-prod-restore --timeout=30m
-kubectl -n wamn-system apply -f /tmp/restore-backup.json
+helm upgrade --install recovery-acme-prod /selected-chart/platform/org \
+  --namespace acme --values restore-values.json --wait --timeout 30m
+kubectl -n acme wait --for=condition=Ready cluster/acme-prod-restore --timeout=30m
 ```
+
+Helm owns the restored Cluster, ObjectStore, and ScheduledBackup together.
 
 The restored cluster archives WAL to its own store, under the prefix of its own name.
 It can never write into the stream it was restored from.
@@ -73,14 +67,14 @@ Its `externalClusters` entry names the source store, and that entry is a read pa
 To watch the restore, read the cluster status and the operator logs.
 
 ```bash
-kubectl -n wamn-system get cluster acme-prod-restore -o wide
-kubectl -n wamn-system logs -l cnpg.io/cluster=acme-prod-restore -c postgres --tail=50
+kubectl -n acme get cluster acme-prod-restore -o wide
+kubectl -n acme logs -l cnpg.io/cluster=acme-prod-restore -c postgres --tail=50
 ```
 
 ## Connect to the restored cluster
 
 The restored cluster carries the role names and passwords of the source.
-Its read-write service is `<target>-rw.wamn-system.svc:5432`.
+Its read-write service is `<target>-rw.<org>.svc:5432`.
 CloudNativePG creates the Secret `<target>-superuser` with a usable admin URI.
 
 Application workloads still address the source cluster.
@@ -91,14 +85,14 @@ Nothing points at the restored cluster until you change a target yourself.
 CloudNativePG restores a whole cluster, so there is no command that restores one database.
 To recover one database or one table, restore the cluster and then copy the rows out.
 
-1. Render and apply the recovery with `--at` set to the instant before the loss.
+1. Prepare and install the recovery with `--at` set to the instant before the loss.
 2. Read the superuser URI from the Secret `<target>-superuser`.
 3. Copy the wanted database or table out of the restored cluster.
 4. Load it into the live database under a new name, then move the rows.
 5. When the copy is complete, delete the restored cluster.
 
 ```bash
-kubectl -n wamn-system get secret acme-prod-restore-superuser -o jsonpath='{.data.uri}' | base64 -d
+kubectl -n acme get secret acme-prod-restore-superuser -o jsonpath='{.data.uri}' | base64 -d
 pg_dump "<restored-superuser-uri>" --table=receiving.receipts --data-only --format=custom --file=/tmp/receipts.dump
 pg_restore --dbname="<live-superuser-uri>" --data-only /tmp/receipts.dump
 ```
@@ -120,9 +114,7 @@ Change the workload targets to the new cluster, then delete the source cluster.
 If the restore was only an inspection, delete it and its resources.
 
 ```bash
-kubectl -n wamn-system delete scheduledbackup acme-prod-restore-backup
-kubectl -n wamn-system delete cluster acme-prod-restore
-kubectl -n wamn-system delete objectstore acme-prod-restore-store
+helm uninstall recovery-acme-prod --namespace acme
 ```
 
 The objects under `s3://wamn-backups/wal/acme-prod-restore` remain after the delete.

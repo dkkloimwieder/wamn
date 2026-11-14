@@ -11,7 +11,7 @@ use super::{DB_OWNER_ROLE, escape_identifier};
 /// to hold title; nothing connects as it, so it is deliberately outside the
 /// credential-rotation machinery. Ownership is conferred declaratively by the
 /// `Database` CR's `spec.owner`
-/// ([`render_project_env_database`](crate::render_project_env_database)).
+/// (the environment Helm chart).
 ///
 /// **Apply this to the target cluster BEFORE any `Database` CR naming it** —
 /// CNPG maps `spec.owner` to `CREATE DATABASE … OWNER` / `ALTER DATABASE …

@@ -9,8 +9,8 @@ use wamn_catalog::{ComponentSqlField, ComponentSqlStatement};
 use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::InvocationTrace;
+use wamn_engine::native_routes::DeliveryClass;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_engine::router_delivery::DeliveryClass;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTable};
 
@@ -31,7 +31,7 @@ pub(super) struct OperationMetrics {
 
 impl Default for OperationMetrics {
     fn default() -> Self {
-        let meter = opentelemetry::global::meter(wamn_engine::router_delivery::ROUTER_DELIVERY_ID);
+        let meter = opentelemetry::global::meter(wamn_engine::native_routes::OPERATION_METRICS_ID);
         Self {
             attempts: meter.u64_counter("wamn.router.delivery.attempts").build(),
             errors: meter.u64_counter("wamn.router.delivery.errors").build(),
@@ -664,18 +664,7 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
         let Some(mut open) = current.take() else {
             return Ok(Err(Refusal::NotBegun));
         };
-        let committed = if let Some(transaction) = open.transaction() {
-            transaction.finish_opaque(&open.operation, &open.key, result);
-            transaction.commit().await.map_err(|error| match error {
-                PgCommitFailure::RolledBack(error) => Refusal::Postgres(error),
-                PgCommitFailure::Uncertain(_) => Refusal::OutcomeUnknown,
-            })
-        } else {
-            open.store()
-                .complete(&open.operation, &open.key, result)
-                .await
-                .map_err(Refusal::Postgres)
-        };
+        let committed = complete_operation(&open, result).await;
         open.postgres.operation_metrics.record(
             &open.source,
             if committed.is_ok() {
@@ -762,14 +751,9 @@ async fn enter<T: 'static + Send>(
         .await;
     if !matches!(&result, Ok((Some(open), _)) if !open.settled) {
         let class = match &result {
-            Ok(_)
-            | Err(
-                Refusal::Conflict
-                | Refusal::InProgress
-                | Refusal::OutcomeUnknown
-                | Refusal::Uncertain
-                | Refusal::Resolved(_),
-            ) => DeliveryClass::Delivered,
+            Ok(_) | Err(Refusal::Conflict | Refusal::InProgress | Refusal::OutcomeUnknown) => {
+                DeliveryClass::Delivered
+            }
             Err(Refusal::GrantDenied | Refusal::InvalidCaller) => DeliveryClass::PermissionDenied,
             Err(_) => DeliveryClass::ExecutionFailed,
         };
@@ -900,7 +884,7 @@ async fn begin(
     .await
     .map_err(|error| {
         if error
-            .downcast_ref::<wamn_engine::router_delivery::OperationRefusal>()
+            .downcast_ref::<wamn_engine::native_routes::OperationRefusal>()
             .is_some()
         {
             Refusal::GrantDenied
@@ -921,37 +905,15 @@ async fn begin(
         open.settled = false;
         return Ok((Some(open), Begun::New(delivery)));
     }
-    let claim = if admitted.transaction {
-        let mut transaction = postgres
-            .begin_operation_transaction(open.scope())
-            .await
-            .map_err(Refusal::Postgres)?;
-        if facts.release.manifest().routes.iter().any(|route| {
+    let claim = claim_operation(
+        &open,
+        admitted.transaction,
+        facts.release.manifest().routes.iter().any(|route| {
             route.operation == open.operation && route.type_ == wamn_catalog::OperationType::Delete
-        }) {
-            transaction =
-                transaction.with_known_result(super::write_log::DELETED_RESULT.to_owned());
-        }
-        let claim = transaction
-            .begin_opaque(&open.operation, &open.key, request)
-            .await
-            .map_err(Refusal::Postgres)?;
-        if matches!(claim, Claim::New) {
-            postgres
-                .bind_operation_transaction(open.scope(), &transaction)
-                .map_err(|error| {
-                    binding_error(OperationErrorType::Transaction, open.scope(), error)
-                })?;
-        } else {
-            transaction.rollback().await.map_err(Refusal::Postgres)?;
-        }
-        claim
-    } else {
-        open.store()
-            .claim(&open.operation, &open.key, request)
-            .await
-            .map_err(Refusal::Postgres)?
-    };
+        }),
+        request,
+    )
+    .await?;
     match claim {
         Claim::New => {
             open.settled = false;
@@ -969,3 +931,236 @@ async fn begin(
 
 #[cfg(test)]
 mod tests;
+
+async fn claim_operation(
+    open: &OpenOperation,
+    transacted: bool,
+    delete: bool,
+    request: Vec<u8>,
+) -> Result<Claim, Refusal> {
+    Ok(if transacted {
+        let mut transaction = open
+            .postgres
+            .begin_operation_transaction(open.scope())
+            .await
+            .map_err(Refusal::Postgres)?;
+        if delete {
+            transaction =
+                transaction.with_known_result(super::write_log::DELETED_RESULT.to_owned());
+        }
+        let claim = transaction
+            .begin_opaque(&open.operation, &open.key, request)
+            .await
+            .map_err(Refusal::Postgres)?;
+        if matches!(claim, Claim::New) {
+            open.postgres
+                .bind_operation_transaction(open.scope(), &transaction)
+                .map_err(|error| {
+                    binding_error(OperationErrorType::Transaction, open.scope(), error)
+                })?;
+        } else {
+            transaction.rollback().await.map_err(Refusal::Postgres)?;
+        }
+        claim
+    } else {
+        open.store()
+            .claim(&open.operation, &open.key, request)
+            .await
+            .map_err(Refusal::Postgres)?
+    })
+}
+
+async fn complete_operation(open: &OpenOperation, result: String) -> Result<(), Refusal> {
+    if let Some(transaction) = open.transaction() {
+        transaction.finish_opaque(&open.operation, &open.key, result);
+        transaction.commit().await.map_err(|error| match error {
+            PgCommitFailure::RolledBack(error) => Refusal::Postgres(error),
+            PgCommitFailure::Uncertain(_) => Refusal::OutcomeUnknown,
+        })
+    } else {
+        open.store()
+            .complete(&open.operation, &open.key, result)
+            .await
+            .map_err(Refusal::Postgres)
+    }
+}
+
+/// Workflow nodes borrow the same concrete claim and transaction owner as HTTP.
+impl WamnPostgres {
+    pub async fn invoke_node<F, Fut>(
+        self: &Arc<Self>,
+        authority: &Arc<AuthorizedInvocation>,
+        operation: &str,
+        route: &wamn_catalog::ServingRoute,
+        transacted: bool,
+        input: &serde_json::Value,
+        mut invoke: F,
+    ) -> anyhow::Result<
+        Result<
+            wamn_engine::operation::node_types::Emission,
+            wamn_engine::operation::node_types::NodeError,
+        >,
+    >
+    where
+        F: FnMut(String) -> Fut + Send,
+        Fut: Future<Output = anyhow::Result<wamn_engine::operation::native_call::NativeOutcome>>
+            + Send,
+    {
+        use serde_json::{Value, json};
+        use wamn_engine::operation::node_types;
+        let parsed = (|| {
+            let elements = input
+                .as_array()
+                .context("operation input is not a request element list")?;
+            let mut keys = std::collections::HashSet::new();
+            let mut requests = Vec::with_capacity(elements.len());
+            for element in elements {
+                let id = element["request_id"]
+                    .as_str()
+                    .context("request element has no request_id")?;
+                let key = route
+                    .idempotency
+                    .as_deref()
+                    .map_or(Some(id), |field| {
+                        field
+                            .split('.')
+                            .try_fold(element, |value, field| value.get(field))
+                            .and_then(Value::as_str)
+                    })
+                    .context("request element has no caller key")?;
+                anyhow::ensure!(keys.insert(key), "caller key repeats within one operation");
+                let mut body = element.clone();
+                body.as_object_mut()
+                    .context("request element is not an object")?
+                    .remove("request_id");
+                if let Some(field) = &route.idempotency {
+                    let segments = field.split('.').collect::<Vec<_>>();
+                    if let Some((last, parents)) = segments.split_last()
+                        && let Some(Value::Object(parent)) = parents
+                            .iter()
+                            .try_fold(&mut body, |value, name| value.get_mut(*name))
+                    {
+                        parent.remove(*last);
+                    }
+                }
+                requests.push((element, id, key, wamn_digest::canonical_json_sha256(&body)));
+            }
+            Ok::<_, anyhow::Error>((elements, requests))
+        })();
+        let (elements, requests) = match parsed {
+            Ok(requests) => requests,
+            Err(error) => {
+                return Ok(Err(node_types::NodeError::InvalidInput(
+                    node_types::ErrorDetail {
+                        code: Some("invalid_input".into()),
+                        message: error.to_string(),
+                    },
+                )));
+            }
+        };
+        let mut answers = Vec::with_capacity(elements.len());
+        let mut port = None;
+        for (element, id, key, hash) in requests {
+            self.revoke_operation_transaction(authority.id());
+            let open = OpenOperation {
+                postgres: Arc::clone(self),
+                authority: Arc::clone(authority),
+                operation: operation.into(),
+                key: key.into(),
+                write: true,
+                source: operation.into(),
+                settled: true,
+            };
+            let claim = claim_operation(
+                &open,
+                transacted,
+                route.type_ == wamn_catalog::OperationType::Delete,
+                hash.into_bytes(),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("operation claim refused: {error:?}"))?;
+            let refusal = |code: &str| json!({"error":{"code":code}});
+            let body = match claim {
+                Claim::Finished(result) => serde_json::from_str(&result)?,
+                Claim::InProgress => refusal("in-progress"),
+                Claim::OutcomeUnknown => refusal("outcome-unknown"),
+                Claim::Conflict => refusal("idempotency_conflict"),
+                Claim::New => {
+                    let outcome = invoke(serde_json::to_string(&json!([element]))?)
+                        .await?
+                        .into_json()?;
+                    match outcome {
+                        Err(node_types::NodeError::Cancelled) => {
+                            if let Some(transaction) = open.transaction() {
+                                transaction.rollback().await?;
+                            }
+                            self.revoke_operation_transaction(authority.id());
+                            return Ok(Err(node_types::NodeError::Cancelled));
+                        }
+                        Err(error) => {
+                            if let Some(transaction) = open.transaction() {
+                                transaction.rollback().await?;
+                            } else {
+                                open.store().release_claim(operation, key).await?;
+                            }
+                            if elements.len() == 1 {
+                                return Ok(Err(error));
+                            }
+                            let detail = match &error {
+                                node_types::NodeError::Retryable(detail)
+                                | node_types::NodeError::Terminal(detail)
+                                | node_types::NodeError::InvalidInput(detail) => detail,
+                                node_types::NodeError::RateLimited(detail) => &detail.detail,
+                                node_types::NodeError::Cancelled => return Ok(Err(error)),
+                            };
+                            json!({"error":{"code":detail.code,"message":detail.message}})
+                        }
+                        Ok(emission) => {
+                            port = emission.port.or(port);
+                            let results: Vec<Value> = serde_json::from_str(&emission.payload)?;
+                            let mut result = results
+                                .into_iter()
+                                .find(|result| result["request_id"].as_str() == Some(id))
+                                .context("operation returned no correlated result")?;
+                            result
+                                .as_object_mut()
+                                .context("operation result is not an object")?
+                                .remove("request_id");
+                            if result.get("error").is_some() {
+                                if let Some(transaction) = open.transaction() {
+                                    transaction.rollback().await?;
+                                } else {
+                                    open.store().release_claim(operation, key).await?;
+                                }
+                                result
+                            } else {
+                                match complete_operation(&open, serde_json::to_string(&result)?)
+                                    .await
+                                {
+                                    Ok(()) => result,
+                                    Err(Refusal::OutcomeUnknown) => refusal("outcome-unknown"),
+                                    Err(error) => {
+                                        return Err(anyhow::anyhow!(
+                                            "operation completion refused: {error:?}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+            self.revoke_operation_transaction(authority.id());
+            let mut answer = body;
+            answer
+                .as_object_mut()
+                .context("stored operation result is not an object")?
+                .insert("request_id".into(), Value::from(id));
+            answers.push(answer);
+        }
+        Ok(Ok(node_types::Emission {
+            payload: serde_json::to_string(&answers)?,
+            port,
+        }))
+    }
+}

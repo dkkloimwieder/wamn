@@ -1,7 +1,7 @@
 use wamn_runtime::plugins::connection_http::WiringPosition;
 
 use super::*;
-use wamn_engine::router_delivery::{OperationRefusalType, authorize_registered_operation};
+use wamn_engine::native_routes::{OperationRefusalType, authorize_registered_operation};
 
 #[test]
 fn a_custom_read_refuses_a_caller_without_its_grant() {

@@ -1,0 +1,124 @@
+{{- range .Values.clusters }}
+{{- $backup := ne (index .policy "backup-cadence") "" }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    wamn.org: {{ $.Values.org | quote }}
+    wamn.recovery-domain: {{ .policy.name | quote }}
+  {{- if eq .policy.hibernation "eligible" }}
+  annotations:
+    cnpg.io/hibernation: "off"
+  {{- end }}
+spec:
+  instances: {{ .policy.instances }}
+  {{- if hasKey . "enablePDB" }}
+  enablePDB: {{ .enablePDB }}
+  {{- end }}
+  imageName: {{ .policy.image | quote }}
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: true
+  resources:
+    requests:
+      cpu: {{ .policy.cpu | quote }}
+      memory: {{ .policy.memory | quote }}
+  storage:
+    size: {{ .policy.storage | quote }}
+    {{- if .storageClass }}
+    storageClass: {{ .storageClass | quote }}
+    {{- end }}
+  managed:
+    roles: {{ index $.Values.managedRoles .name | default list | toJson }}
+  postgresql:
+    pg_hba: [hostssl all all all scram-sha-256]
+    parameters:
+      max_slot_wal_keep_size: {{ (dig "parameters" "max_slot_wal_keep_size" "1GB" .) | default "1GB" | quote }}
+      {{- range $name, $value := .parameters }}
+      {{- if ne $name "max_slot_wal_keep_size" }}
+      {{ $name }}: {{ $value | quote }}
+      {{- end }}
+      {{- end }}
+      {{- if ge (int .policy.instances) 2 }}
+      sync_replication_slots: "on"
+      hot_standby_feedback: "on"
+      logical_decoding_work_mem: 16MB
+      {{- end }}
+  {{- if .affinity }}
+  affinity: {{ .affinity | toJson }}
+  {{- else if ge (int .policy.instances) 2 }}
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: preferred
+  {{- end }}
+  {{- if ge (int .policy.instances) 2 }}
+  replicationSlots:
+    highAvailability:
+      enabled: true
+      synchronizeLogicalDecoding: true
+  {{- end }}
+  {{- if .recovery }}
+  {{- if eq .name .recovery.source }}
+  {{- fail "Recovery must use a different cluster name." }}
+  {{- end }}
+  bootstrap:
+    recovery:
+      source: {{ .recovery.source }}
+      {{- if .recovery.targetTime }}
+      recoveryTarget:
+        targetTime: {{ .recovery.targetTime | quote }}
+      {{- end }}
+  externalClusters:
+    - name: {{ .recovery.source }}
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: {{ .recovery.source }}-store
+          serverName: {{ .recovery.source }}
+  {{- else }}
+  bootstrap:
+    initdb:
+      database: {{ .database | default "app" }}
+      owner: {{ .owner | default "wamn_db_owner" }}
+      postInitSQL:
+        - {{ printf "ALTER ROLE %s NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS" (.owner | default "wamn_db_owner") | quote }}
+  {{- end }}
+  {{- if $backup }}
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ .name }}-store
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: {{ .name }}-store
+  namespace: {{ $.Release.Namespace }}
+spec:
+  retentionPolicy: {{ (index .policy "wal-retention") | quote }}
+  configuration:
+    destinationPath: {{ printf "s3://%s/wal/%s" $.Values.backup.bucket .name | quote }}
+    endpointURL: {{ $.Values.backup.endpoint | quote }}
+    s3Credentials:
+      accessKeyId: {name: {{ $.Values.backup.secret }}, key: ACCESS_KEY_ID}
+      secretAccessKey: {name: {{ $.Values.backup.secret }}, key: ACCESS_SECRET_KEY}
+    wal: {compression: gzip}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ .name }}-backup
+  namespace: {{ $.Release.Namespace }}
+spec:
+  schedule: {{ (index .policy "backup-cadence") | quote }}
+  immediate: true
+  backupOwnerReference: self
+  cluster: {name: {{ .name }}}
+  method: plugin
+  pluginConfiguration: {name: barman-cloud.cloudnative-pg.io}
+  {{- end }}
+{{- end }}

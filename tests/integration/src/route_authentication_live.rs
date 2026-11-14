@@ -12,8 +12,8 @@ use sqlx::PgConnection as Client;
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::WorkloadRoleFamily;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
+use wamn_engine::native_routes::authorize_registered_operation;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_engine::router_delivery::authorize_attachment_for_test;
 use wamn_environment::apply_package::{self, ApplyPackageRequest};
 use wamn_platform_identity::{
     PrincipalType, assign_project_role, create_service, create_user, disable_principal, issue_pat,
@@ -374,8 +374,12 @@ async fn invoke(
         .authenticate_authorization_for_test(ATTACHMENT_ID, authorization)
         .await
         .map_err(|(status, code)| Refusal::Authentication(status, code))?;
-    authorize_attachment_for_test(loaded_release, ATTACHMENT_ID, caller.as_ref())
-        .map_err(Refusal::Permission)?;
+    let operation = loaded_release
+        .manifest()
+        .attachment(ATTACHMENT_ID)
+        .expect("released attachment");
+    authorize_registered_operation(caller.as_ref(), operation.registered_operation())
+        .map_err(|error| Refusal::Permission(error.operation().into()))?;
     *router_admissions += 1;
     Ok(())
 }

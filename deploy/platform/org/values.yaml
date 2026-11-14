@@ -1,0 +1,7 @@
+org: ""
+clusters: []
+managedRoles: {}
+backup:
+  endpoint: http://minio.wamn-system.svc:9000
+  bucket: wamn-backups
+  secret: wamn-object-store

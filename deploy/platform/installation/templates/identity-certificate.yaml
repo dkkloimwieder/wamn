@@ -1,0 +1,12 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: identity
+  namespace: {{ .Values.org }}
+spec:
+  secretName: identity-tls
+  dnsNames:
+    - identity.{{ .Values.org }}.svc.cluster.local
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca

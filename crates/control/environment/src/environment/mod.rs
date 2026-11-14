@@ -42,6 +42,8 @@ pub struct Platform {
     pub target: release_chart::Target,
     /// A stamped release chart directory.
     pub chart: PathBuf,
+    /// Keep fetched chart files alive for this operation.
+    pub chart_download: Option<std::sync::Arc<crate::platform::artifact_plan::SelectedChart>>,
     /// `<registry>/<repository>` of release manifest artifacts.
     pub release_artifact_base: String,
     pub registry_auth_file: PathBuf,
@@ -164,6 +166,7 @@ impl Platform {
             insecure_registry,
             system_database_url: variable(database_variable)?,
             chart,
+            chart_download: None,
             release_artifact_base: if project_schema {
                 String::new()
             } else {
@@ -329,7 +332,26 @@ pub async fn apply(
         async |lock| {
             if ensure::resources_in_place(&platform, &document).await? {
                 let cluster = sql::reset::recorded_cluster(&platform, &document).await?;
-                crate::platform::operations::provision(&platform, &document, &cluster).await?;
+                let triple = document.triple();
+                let instance = crate::provision_project_env::read_project_env_instance(
+                    &platform.system_database_url,
+                    &triple,
+                )
+                .await?;
+                let database = wamn_control_provision::project_env_database_name(
+                    &document.org,
+                    &document.project,
+                    &document.env,
+                    &instance,
+                );
+                crate::platform::operations::provision(
+                    &platform.target,
+                    &platform.chart,
+                    &triple,
+                    &cluster,
+                    &database,
+                )
+                .await?;
             } else {
                 let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL")
                     .context("set WAMN_SYSTEM_ADMIN_URL for environment provisioning")?;

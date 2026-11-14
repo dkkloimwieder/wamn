@@ -647,7 +647,7 @@ mod tests {
                 matches!(
                     parse::<WorkflowStartRequest>(&named.to_string()),
                     Err(Refusal::Delivery(
-                        wamn_engine::router_delivery::DeliveryError::InvalidPayload
+                        wamn_engine::native_routes::DeliveryError::InvalidPayload
                     ))
                 ),
                 "a start naming {member} refuses"

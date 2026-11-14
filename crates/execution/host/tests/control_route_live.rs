@@ -28,10 +28,8 @@ use tokio_rustls::TlsAcceptor;
 use wamn_catalog::HostRouteSet;
 use wamn_control_provision::PlatformComponent;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
+use wamn_engine::native_routes::{DeliveryError, DeliveryRequest, Source};
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_engine::router_delivery::{
-    DeliveryError, DeliveryOutcome, DeliveryRequest, RouteDelivery, Source,
-};
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_identity_client::PatIssuerConfig;
 use wamn_identity_protocol::PrincipalId;
@@ -228,7 +226,7 @@ async fn call(
         )
         .await;
     match report.outcome {
-        Ok(DeliveryOutcome::Respond(body)) => {
+        Ok(body) => {
             let [request_element]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
             match request_element.get("error") {
                 Some(error) => Err(refused(
@@ -328,7 +326,6 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
             org: ORG.to_owned(),
             changes: Publisher::default(),
         },
-        None,
     );
 
     // Every org route refuses a caller without org-admin.
@@ -586,7 +583,6 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             org: ORG.to_owned(),
             changes: Publisher::default(),
         },
-        None,
     );
     let member = |principal: &str, env: &str| json!({"project": "billing", "env": env, "principal_id": principal});
     let project_admin = |principal: &str| json!({"project": "billing", "principal_id": principal});
@@ -861,7 +857,6 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
             org: ORG.to_owned(),
             changes: Publisher::default(),
         },
-        None,
     );
     let ann_payload = json!({"principal_id": ann});
     let billing_admin = json!({"project": "billing", "principal_id": ann});
@@ -1044,7 +1039,6 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
             org: ORG.to_owned(),
             changes: Publisher::default(),
         },
-        None,
     );
     let billing_dev = json!({"project": "billing", "env": "dev"});
     let shop_project = json!({"project": "shop"});
@@ -1283,7 +1277,6 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
             org: ORG.to_owned(),
             changes: Publisher::default(),
         },
-        None,
     );
 
     // Only an org admin creates a project, and the id is a project slug.
@@ -1457,7 +1450,6 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
             org: ORG.to_owned(),
             changes: Publisher::default(),
         },
-        None,
     );
     let payload = json!({"project": "billing", "env": "dev"});
     let expected = json!({"digest": "sha256:live", "rollout": {"replicas": 1}, "workloads": [], "live": [],
@@ -1710,7 +1702,6 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             org: ORG.to_owned(),
             changes: Publisher::new(nats),
         },
-        None,
     );
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {} UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning)))).execute(&mut admin).await.map(drop)?;
     let external = json!({"project":"billing","name":"erp"});
@@ -2027,7 +2018,6 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
                 org: ORG.to_owned(),
                 changes: changes.clone(),
             },
-            None,
         ))
     };
     let second = delivery().await?;

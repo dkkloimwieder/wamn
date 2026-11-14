@@ -159,7 +159,7 @@ pub struct SessionConfig {
     pub keys: PathBuf,
     /// The session issuer that signs the keys.
     pub issuer: String,
-    /// The organization a session must name. It also partitions every intent.
+    /// The organization a session must name. It also partitions every operation claim.
     pub org: String,
     /// The project-environment identity a session must name.
     pub audience: String,
@@ -169,7 +169,7 @@ pub struct SessionConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StoreConfig {
-    /// The SQLite file of intents and samples.
+    /// The SQLite file of operation claims and samples.
     pub db: PathBuf,
 }
 

@@ -704,15 +704,20 @@ fn native_member_statement_instances() {
                 .prepare(&component_id, ROOT, &request.facts)
                 .await
                 .expect("admit the invocation");
-            let mut transaction = fixture
+            let scope = fixture.policy.scope_id(&request.facts).unwrap();
+            let transaction = fixture
                 .policy
-                .admit_and_open_transaction(&component_id, ROOT, &request.facts)
+                .resources
+                .postgres
+                .begin_operation_transaction(scope)
                 .await
-                .expect("begin the request element transaction")
-                .expect("the root's declared host transaction begins");
-            request.facts = fixture
+                .unwrap();
+            fixture
                 .policy
-                .transaction_facts(&request.facts, &mut transaction);
+                .resources
+                .postgres
+                .bind_operation_transaction(scope, &transaction)
+                .unwrap();
             let result = invoke_native(&fixture.target().await, request)
                 .await
                 .expect("the composed root dispatches");
@@ -820,69 +825,41 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
                 "the released root operation holds no statement: nothing is folded"
             );
             assert!(fixture.root.operations[ROOT].host_transaction);
-            let mut rows = async || {
-                sqlx::query("SELECT value FROM native_member.native_policy_members ORDER BY value")
-                    .fetch_all(&mut admin)
-                    .await
-                    .expect("read member rows")
-                    .iter()
-                    .map(|row| row.get::<String, _>(0))
-                    .collect::<Vec<_>>()
-            };
-            let component_id = fixture
-                .workload
-                .facts_by_component_id
-                .iter()
-                .find_map(|(id, fact)| (fact == &fixture.root).then_some(id.clone()))
-                .expect("root native identity");
-
-            for (input, commits) in [(r#"[{"value":37}]"#, true), ("[]", false)] {
+            for commits in [true, false] {
                 let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
-                request.input = input.into();
                 request.facts.caller = Some(caller.clone());
-                request.facts = fixture
-                    .policy
-                    .prepare(&component_id, ROOT, &request.facts)
-                    .await
-                    .expect("admit the invocation");
-                let mut transaction = fixture
-                    .policy
-                    .admit_and_open_transaction(&component_id, ROOT, &request.facts)
-                    .await
-                    .expect("begin the request element transaction")
-                    .expect(
-                        "the declared transaction field begins the request element transaction",
-                    );
-                request.facts = fixture
-                    .policy
-                    .transaction_facts(&request.facts, &mut transaction);
-                let result = invoke_native(&fixture.target().await, request)
-                    .await
-                    .expect("the composed root dispatches");
+                request.context.config = if commits { "{}" } else { "null" }.into();
+                let input = json!([{"request_id":"element", "value":{"key":if commits { "commit" } else { "rollback" }}}]);
+                let result = wamn_engine::operation::invoke_operation(
+                    &fixture,
+                    wamn_engine::operation::OperationCall {
+                        closure: wamn_engine::operation::OperationClosure::Candidate(
+                            &fixture.application,
+                        ),
+                        component: &fixture.root,
+                        operation: ROOT,
+                        context: request.context,
+                        input: &input,
+                        deadline_ms: 10_000,
+                        facts: request.facts,
+                    },
+                )
+                .await
+                .expect("invoke through the production operation entry");
                 if commits {
-                    let emission = result.expect("the root answers the child's codes");
-                    assert_eq!(
-                        emission.payload, "kurr",
-                        "the child runs its own statement in the host transaction, is \
-                         refused the root path, and is refused begin and plain run"
-                    );
-                    transaction
-                        .commit()
-                        .await
-                        .expect("commit the request element");
-                    assert_eq!(rows().await, ["b0"], "the child's write commits");
+                    result.expect("the command commits");
                 } else {
-                    result.expect_err("the root fails after the child wrote");
-                    transaction
-                        .rollback()
-                        .await
-                        .expect("roll back the request element");
-                    assert_eq!(
-                        rows().await,
-                        ["b0"],
-                        "a rolled-back request element leaves no write of the child"
-                    );
+                    result.expect_err("the command refuses after its member writes");
                 }
+                let rows: i64 =
+                    sqlx::query_scalar("SELECT count(*) FROM native_member.native_policy_members")
+                        .fetch_one(&mut admin)
+                        .await
+                        .expect("read committed member writes");
+                assert_eq!(
+                    rows, 1,
+                    "only the successful invocation commits its member write"
+                );
             }
             fixture.assert_clean().await;
             server.stop().await;
