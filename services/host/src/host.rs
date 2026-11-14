@@ -706,13 +706,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             )?
         },
     );
-    let credentials = Arc::new(projects::Credentials::default());
-    let postgres = Arc::new(WamnPostgres::with_provider(
-        Arc::clone(&credentials) as Arc<_>
-    ));
+    let projects = Arc::new(projects::Projects::default());
+    let credentials = Arc::new(projects::Credentials(Arc::clone(&projects)));
+    let postgres = Arc::new(WamnPostgres::with_provider(credentials));
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
-    let authentication = Arc::new(projects::Authentication::default());
+    let authentication = Arc::new(projects::Authentication(Arc::clone(&projects)));
     let source = if args.projects.is_some() {
         let artifact_base = args
             .component_artifact_base
@@ -754,8 +753,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let releases = source.map(|source| {
         Arc::new(projects::Environment::new(
             Arc::clone(&args),
-            credentials,
-            Arc::clone(&authentication),
+            projects,
             Arc::clone(&engine),
             Arc::clone(&postgres),
             http_transport,

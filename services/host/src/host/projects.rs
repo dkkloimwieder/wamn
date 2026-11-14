@@ -37,8 +37,46 @@ use wamn_postgres_capability::{
 use wamn_registry::{Triple, environment_nats_user, project_env_key};
 use wash_runtime::plugin;
 
+#[derive(Debug)]
+pub(super) struct StatePoisoned(pub(super) &'static str);
+
+impl std::fmt::Display for StatePoisoned {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} lock poisoned", self.0)
+    }
+}
+
+impl std::error::Error for StatePoisoned {}
+
 #[derive(Default)]
-pub(super) struct Credentials(RwLock<StaticCredentialProvider>);
+struct Project {
+    credentials: StaticCredentialProvider,
+    authentication: Option<(String, Arc<PlatformRouteAuthenticator>)>,
+    releases: Option<Arc<releases::Releases>>,
+}
+
+#[derive(Default)]
+pub(super) struct Projects(RwLock<BTreeMap<String, Arc<RwLock<Project>>>>);
+
+impl Projects {
+    fn entries(&self) -> std::sync::RwLockReadGuard<'_, BTreeMap<String, Arc<RwLock<Project>>>> {
+        // The index contains independent, fully constructed handles. Insertion
+        // cannot corrupt other entries; project data changes under its own lock.
+        self.0.read().unwrap_or_else(|error| error.into_inner())
+    }
+
+    fn get(&self, project: &str) -> Option<Arc<RwLock<Project>>> {
+        self.entries().get(project).map(Arc::clone)
+    }
+
+    fn entry(&self, project: &str) -> Arc<RwLock<Project>> {
+        // As with reads, recovery exposes only intact handles, never project data.
+        let mut projects = self.0.write().unwrap_or_else(|error| error.into_inner());
+        Arc::clone(projects.entry(project.to_owned()).or_default())
+    }
+}
+
+pub(super) struct Credentials(pub(super) Arc<Projects>);
 impl CredentialProvider for Credentials {
     fn resolve(
         &self,
@@ -46,43 +84,58 @@ impl CredentialProvider for Credentials {
         class: AuthorityClass,
         project_env_key: Option<&str>,
     ) -> anyhow::Result<Option<ResolvedCredential>> {
-        self.0
+        let Some(state) = self.0.get(project) else {
+            return Ok(None);
+        };
+        state
             .read()
-            .expect("project credentials lock poisoned")
+            .map_err(|_| StatePoisoned("project credentials"))?
+            .credentials
             .resolve(project, class, project_env_key)
     }
 }
 
-#[derive(Default, Debug)]
-pub(super) struct Authentication(RwLock<HashMap<String, Arc<PlatformRouteAuthenticator>>>);
+pub(super) struct Authentication(pub(super) Arc<Projects>);
+impl std::fmt::Debug for Authentication {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Authentication").finish_non_exhaustive()
+    }
+}
 #[async_trait::async_trait]
 impl RouteAuthenticator for Authentication {
     async fn authenticate(
         &self,
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let authenticator = self
+        let coordinate =
+            wamn_registry::name::parse_project_env_key(&request.target.project_env_key)
+                .ok_or_else(authentication_unavailable)?;
+        let state = self
             .0
-            .read()
-            .expect("project authenticators lock poisoned")
-            .get(&request.target.project_env_key)
-            .map(Arc::clone)
+            .get(&coordinate.project)
             .ok_or_else(authentication_unavailable)?;
+        let authenticator = {
+            let state = state.read().map_err(|_| authentication_unavailable())?;
+            let (_, authenticator) = state
+                .authentication
+                .as_ref()
+                .filter(|(key, _)| key == &request.target.project_env_key)
+                .ok_or_else(authentication_unavailable)?;
+            Arc::clone(authenticator)
+        };
         authenticator.authenticate(request).await
     }
 }
 
 pub(super) struct Environment {
     pub args: Arc<HostArgs>,
-    pub credentials: Arc<Credentials>,
-    pub authentication: Arc<Authentication>,
     pub engine: Arc<wash_runtime::engine::Engine>,
     pub postgres: Arc<WamnPostgres>,
     pub transport: Arc<HttpTransport>,
     pub logging: Arc<plugin::wasi_logging::TracingLogger>,
     pub source: Arc<dyn ArtifactSource>,
     pub router_owner: String,
-    projects: RwLock<BTreeMap<String, Arc<releases::Releases>>>,
+    projects: Arc<Projects>,
     bytes: releases::ManifestCache,
 }
 impl std::fmt::Debug for Environment {
@@ -101,8 +154,7 @@ impl Environment {
     )]
     pub fn new(
         args: Arc<HostArgs>,
-        credentials: Arc<Credentials>,
-        authentication: Arc<Authentication>,
+        projects: Arc<Projects>,
         engine: Arc<wash_runtime::engine::Engine>,
         postgres: Arc<WamnPostgres>,
         transport: Arc<HttpTransport>,
@@ -112,15 +164,13 @@ impl Environment {
     ) -> Self {
         Self {
             args,
-            credentials,
-            authentication,
+            projects,
             engine,
             postgres,
             transport,
             logging,
             source,
             router_owner,
-            projects: RwLock::default(),
             bytes: Arc::default(),
         }
     }
@@ -159,22 +209,48 @@ impl Environment {
                 && self.declared()?.contains(&coordinate.project),
             "workload belongs to another environment"
         );
-        let project = self
+        let state = self
             .projects
-            .read()
-            .expect("projects lock poisoned")
             .get(&coordinate.project)
+            .context("workload project is not ready")?;
+        let project = state
+            .read()
+            .map_err(|_| StatePoisoned("project releases"))?
+            .releases
+            .as_ref()
             .map(Arc::clone)
             .context("workload project is not ready")?;
         project.for_workload(annotations).await
     }
 
-    pub fn files(&self, host: &str) -> Option<Arc<wamn_execution_host::file_route::FileRoutes>> {
-        self.projects
-            .read()
-            .expect("projects lock poisoned")
-            .values()
-            .find_map(|project| project.files(host))
+    pub fn files(
+        &self,
+        host: &str,
+    ) -> anyhow::Result<Option<Arc<wamn_execution_host::file_route::FileRoutes>>> {
+        let mut unavailable = None;
+        for (project, state) in self.projects.entries().iter() {
+            let files = (|| -> anyhow::Result<_> {
+                let state = state
+                    .read()
+                    .map_err(|_| StatePoisoned("project releases"))?;
+                match &state.releases {
+                    Some(releases) => releases.files(host),
+                    None => Ok(None),
+                }
+            })();
+            match files {
+                Ok(Some(files)) => return Ok(Some(files)),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%project, %error, "project file routes unavailable");
+                    unavailable = Some(error);
+                }
+            }
+        }
+        match unavailable {
+            Some(error) => Err(error),
+            None => Ok(None),
+        }
     }
 
     async fn prepare(&self, project: &str) -> anyhow::Result<Arc<releases::Releases>> {
@@ -236,10 +312,11 @@ impl Environment {
             );
         }
         let cfg = WamnPostgresConfig::from_env();
-        self.credentials
-            .0
+        let project_state = self.projects.entry(project);
+        project_state
             .write()
-            .expect("project credentials lock poisoned")
+            .map_err(|_| StatePoisoned("project credentials"))?
+            .credentials
             .insert(
                 project.to_owned(),
                 ProjectConfig {
@@ -384,11 +461,11 @@ impl Environment {
             api,
             Arc::clone(&self.bytes),
         ));
-        self.authentication
-            .0
+        let mut state = project_state
             .write()
-            .expect("project authenticators lock poisoned")
-            .insert(key, authenticator);
+            .map_err(|_| StatePoisoned("project resources"))?;
+        state.authentication = Some((key, authenticator));
+        state.releases = Some(Arc::clone(&manager));
         Ok(manager)
     }
 
@@ -414,7 +491,6 @@ impl Environment {
                                     if !self.declared().is_ok_and(|declared|declared.contains(&project)) {manager.pause_admission();}
                                     let (stop, stopped) = watch::channel(false);
                                     stops.insert(project.clone(), stop);
-                                    self.projects.write().expect("projects lock poisoned").insert(project.clone(), Arc::clone(&manager));
                                     managers.spawn(async move { (project, manager.serve(stopped).await) });
                                 }
                                 Err(error) => tracing::warn!(%project, error = %format_args!("{error:#}"), "project preparation failed; other projects remain available"),
@@ -425,16 +501,28 @@ impl Environment {
                 }
                 Some(result) = managers.join_next(), if !managers.is_empty() => {
                     if let Ok((project, result)) = result {
-                        self.projects.write().expect("projects lock poisoned").remove(&project);
+                        if let Some(state) = self.projects.get(&project) {
+                            match state.write().map_err(|_| StatePoisoned("project releases")) {
+                                Ok(mut state) => state.releases = None,
+                                Err(error) => tracing::warn!(%project, %error, "project removal failed"),
+                            }
+                        }
                         stops.remove(&project);
                         tracing::warn!(%project, ?result, "project execution stopped");
                     }
                 }
                 _ = ticks.tick() => {
                     let declared = match self.declared() { Ok(declared) => declared, Err(error) => {tracing::warn!(%error, "project projection unavailable"); continue;} };
-                    self.bytes.lock().expect("release bytes lock poisoned").retain(|_, cell| Arc::strong_count(cell) > 1 || cell.get().is_some_and(|bytes| Arc::strong_count(bytes) > 1));
-                    for (project, manager) in self.projects.read().expect("projects lock poisoned").iter() {
-                        if !declared.contains(project) {manager.pause_admission();}
+                    // Cache entries initialize independently; interrupted eviction
+                    // only retains extra reusable bytes and cannot corrupt a cell.
+                    self.bytes.lock().unwrap_or_else(|error| error.into_inner()).retain(|_, cell| Arc::strong_count(cell) > 1 || cell.get().is_some_and(|bytes| Arc::strong_count(bytes) > 1));
+                    for (project, state) in self.projects.entries().iter() {
+                        match state.read().map_err(|_| StatePoisoned("project releases")) {
+                            Ok(state) => if !declared.contains(project) {
+                                if let Some(manager) = &state.releases {manager.pause_admission();}
+                            },
+                            Err(error) => tracing::warn!(%project, %error, "project admission update failed"),
+                        }
                     }
                     for project in declared {
                         if !stops.contains_key(&project) && initializing.insert(project.clone()) {
@@ -463,16 +551,22 @@ impl wamn_execution_host::file_route::ResidencyReader for Environment {
         };
         let mut projects: BTreeMap<_, _> = self
             .projects
-            .read()
-            .expect("projects lock poisoned")
+            .entries()
             .iter()
-            .map(|(name, manager)| (name.clone(), Arc::clone(manager)))
+            .map(|(name, state)| (name.clone(), Arc::clone(state)))
             .collect();
         declared.extend(projects.keys().cloned());
         let mut report = Residency::new();
         let mut reads = tokio::task::JoinSet::new();
         for project in declared {
-            if let Some(manager) = projects.remove(&project) {
+            let manager = match projects.remove(&project) {
+                Some(state) => state
+                    .read()
+                    .map(|state| state.releases.as_ref().map(Arc::clone))
+                    .map_err(|_| StatePoisoned("project releases")),
+                None => Ok(None),
+            };
+            if let Ok(Some(manager)) = manager {
                 reads.spawn(async move {
                     let state = match manager.residency().await {
                         Ok(releases) => ProjectResidency {
@@ -490,7 +584,10 @@ impl wamn_execution_host::file_route::ResidencyReader for Environment {
                 report.insert(
                     project,
                     ProjectResidency {
-                        error: Some("project is not ready".into()),
+                        error: Some(match manager {
+                            Err(error) => error.to_string(),
+                            _ => "project is not ready".into(),
+                        }),
                         ..ProjectResidency::default()
                     },
                 );
@@ -522,5 +619,84 @@ impl wamn_engine::flow_http_routing::EnvironmentStatus for Environment {
         self.postgres
             .environment_inactive(&coordinate.project, key)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn poisoned_project_keeps_other_project_usable() {
+        let projects = Arc::new(Projects::default());
+        let broken = projects.entry("broken");
+        projects
+            .entry("healthy")
+            .write()
+            .unwrap()
+            .credentials
+            .insert(
+                "healthy".into(),
+                ProjectConfig {
+                    credentials: wamn_postgres_capability::ClassCredentials::default().with_class(
+                        AuthorityClass::ExecutorPlatform,
+                        "postgres://executor:secret@localhost/healthy",
+                    ),
+                    guest_pool_max_size: 1,
+                    platform_pool_max_size: 1,
+                    wait_timeout_ms: 1000,
+                    statement_timeout_ms: 1000,
+                    row_limit: 1,
+                },
+            );
+        let credentials = Arc::new(Credentials(Arc::clone(&projects)));
+        std::thread::scope(|scope| {
+            let failed = scope.spawn(|| {
+                let _index = projects.0.write().unwrap();
+                let _project = broken.write().unwrap();
+                panic!("interrupt project update");
+            });
+            assert!(failed.join().is_err());
+        });
+
+        let error = credentials
+            .resolve("broken", AuthorityClass::ExecutorPlatform, None)
+            .expect_err("poisoned credentials must refuse resolution");
+        assert!(error.is::<StatePoisoned>());
+        assert!(
+            credentials
+                .resolve("healthy", AuthorityClass::ExecutorPlatform, None)
+                .unwrap()
+                .is_some()
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(wamn_execution_host::file_route::serve_selected(
+            listener,
+            move |project| {
+                credentials
+                    .resolve(project, AuthorityClass::ExecutorPlatform, None)
+                    .map(|_| None)
+            },
+            Arc::new(wamn_engine::flow_http_routing::FlowHttpRouting::new(
+                Arc::default(),
+            )),
+            None,
+        ));
+        let client = wamn_package_artifact::http_client::HttpClient::builder()
+            .build()
+            .unwrap();
+        for (host, status) in [("broken", 503), ("healthy", 404)] {
+            let response = client
+                .get(format!("http://{address}/api/orders/files"))
+                .header("Host", host)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status().as_u16(), status);
+        }
+        task.abort();
+        let _ = task.await;
     }
 }
