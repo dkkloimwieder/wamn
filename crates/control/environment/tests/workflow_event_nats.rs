@@ -85,7 +85,16 @@ mod event_batch {
             (43, fixture.release.as_ref()),
         ] {
             let body = envelope("insert", txid, lsn);
-            let id = wamn_event_wire::msg_id(PROJECT, ENVIRONMENT, lsn);
+            let id = wamn_event_wire::msg_id(
+                PROJECT,
+                ENVIRONMENT,
+                &wamn_event_wire::CdcIdentity {
+                    system_id: 1,
+                    timeline: 1,
+                    commit_lsn: lsn,
+                    row_ordinal: 0,
+                },
+            );
             let mut headers = async_nats::HeaderMap::new();
             headers.insert(async_nats::header::NATS_MESSAGE_ID, id.as_str());
             let sequence = broker
@@ -110,7 +119,7 @@ mod event_batch {
             )
             .await
             .unwrap();
-            let delivery = format!("event:{sequence}:{id}");
+            let delivery = format!("event:{id}");
             expected.insert(
                 ("billing".to_owned(), delivery.clone()),
                 billing.release().manifest_digest.as_str().to_owned(),
@@ -216,6 +225,20 @@ mod event_batch {
                 .await
                 .unwrap();
             }
+            // A later stream sequence still names the original admitted event.
+            // A host with another release must retain its run.
+            let replay = EventBatchAdmission {
+                sequence: sequence + 1000,
+                ..admission
+            };
+            wamn_workflow::event_admission::admit_event_batch(
+                &fixture.postgres,
+                PROJECT,
+                &upgraded,
+                &replay,
+            )
+            .await
+            .unwrap();
             expected.insert((APP.to_owned(), delivery), expected_digest);
             let rows =
                 sqlx::query("SELECT package_id, invoked_by, manifest_digest FROM wamn_run.runs")

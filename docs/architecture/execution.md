@@ -507,8 +507,18 @@ Workflow reads trigger rows and admits all matching workflows for one message th
 Admission resolves each graph against the serving release and freezes its node digests.
 The native broker transport acknowledges the message after that transaction commits.
 
-The workflow identity and delivery id form the idempotency key, so redelivery creates no second run.
-A trigger matches only stream sequences greater than its `enable_sequence`.
+The workflow identity and source event identity form the run key.
+CDC identity contains the Postgres system identifier, the timeline containing the commit LSN,
+the commit LSN, and the row ordinal within that transaction.
+The reader assigns zero-based ordinals before filtering relations, including excluded rows.
+The broker message id uses that same coordinate. Derived events retain their logical identity.
+A replay retains the original run and release while its run row exists. Pruning ends this protection.
+The stream sequence only decides whether an event follows the trigger's `enable_sequence`.
+
+The reader loads publication and slot names from one JSON configuration file.
+Provisioning owns the publication, slot and stream declarations.
+The reader holds its replication login and broker certificate. It reads no control registration.
+Reset stops the reader before discarding its backlog and broker events. Publication takes no system lock.
 
 Each event run executes as the workflow user with its execution role, or `admin` for a callerless invoker.
 The run records the delivery id in `invoked_by`.

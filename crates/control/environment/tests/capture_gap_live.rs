@@ -220,7 +220,12 @@ async fn recover_and_close_record_each_capture_gap() {
         package_id: "app".to_owned(),
         entity: "widget".to_owned(),
         table: "widgets".to_owned(),
-        lsn: cdc_lsn,
+        identity: wamn_event_wire::CdcIdentity {
+            system_id: 1,
+            timeline: 1,
+            commit_lsn: cdc_lsn,
+            row_ordinal: 0,
+        },
         txid: 7,
         commit_ts,
         causation: None,
@@ -228,7 +233,16 @@ async fn recover_and_close_record_each_capture_gap() {
     publish(
         &js,
         subject(ORG, PROJECT, ENV, "widget", Op::Insert),
-        &msg_id(PROJECT, ENV, cdc_lsn),
+        &msg_id(
+            PROJECT,
+            ENV,
+            &wamn_event_wire::CdcIdentity {
+                system_id: 1,
+                timeline: 1,
+                commit_lsn: cdc_lsn,
+                row_ordinal: 0,
+            },
+        ),
         serde_json::to_vec(&wamn_event_wire::SourceEvent::Cdc(envelope)).unwrap(),
     )
     .await;
@@ -308,7 +322,16 @@ async fn recover_and_close_record_each_capture_gap() {
             true
         )
     );
+    let triple = wamn_registry::Triple::new(ORG, ENV, PROJECT);
+    assert!(
+        wamn_events::capture_gap::require_resynchronized(&system_url, &triple)
+            .await
+            .is_err()
+    );
     let closed = close_capture_gap(&close).await.expect("close the gap");
+    wamn_events::capture_gap::require_resynchronized(&system_url, &triple)
+        .await
+        .unwrap();
     let actor = wamn_control_provision::PlatformComponent::Provisioning
         .principal_id()
         .to_string();

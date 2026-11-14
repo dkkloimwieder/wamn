@@ -1,19 +1,21 @@
 [package]
 name = "wamn-cdc-reader"
-description = "wamn CDC event reader service (l5i9.10, D19 v3 §4, SR9): walsender session → envelopes → the EVT_ JetStream stream, LSN advances only on ack — its own deployment artifact, no runtime linked (E7 owns its placement/ownership model)"
+description = "PostgreSQL change capture with acknowledgement before slot advance."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-events.workspace = true
 url.workspace = true
 tempfile.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
 anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive", "env"] }
+clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["time", "io-util", "net", "rt-multi-thread", "macros", "signal", "sync"] }
+wamn-catalog.workspace = true
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
@@ -26,23 +28,15 @@ chrono = { workspace = true, features = ["std"] }
 futures-util = { workspace = true }
 # The CDC replication session uses the pinned fork for typed keepalive events.
 pg_walstream = { workspace = true }
-# The draft envelope/subject/Nats-Msg-Id wire contract.
+# The event records and source identity contract.
 wamn-event-wire = { workspace = true }
 # Canonical PostgreSQL identifier quoting shared with the guest-safe planners.
 postgres-protocol = { workspace = true }
-# registry.event_readers registration lookup.
-wamn-registry = { workspace = true }
-# The targeted registry-reader credential contract (wamn-0h0g.12.116): the pure,
-# pre-I/O refusal of a WAMN_SYSTEM_URL that is not this project-env's own
-# read-only generation. A pure text/hashing edge — no DB, K8s, clock or tokio.
-# The `event_reader_live` condition also provisions its fixture env (publication and
-# slot) through the same crate's builders.
-wamn-control-provision = { workspace = true }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+wamn-registry.workspace = true
 wamn-control-provision = { workspace = true, features = ["test-util"] }
-wamn-catalog = { workspace = true }
 wamn-test-postgres = { workspace = true }

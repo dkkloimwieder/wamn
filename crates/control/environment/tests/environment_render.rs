@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Instant;
 use wamn_control_provision::WorkloadRoleFamily;
-use wamn_environment::enable_cdc_project_env::reader_deployment;
 use wamn_environment::environment::document::EnvironmentDocument;
 use wamn_registry::Triple;
 #[path = "support/release_documents.rs"]
@@ -461,12 +460,7 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
     let roles = wamn_control_provision::host_credentials::HOST_CREDENTIALS
         .iter()
         .map(|credential| credential.family)
-        .filter(|family| {
-            !matches!(
-                family,
-                WorkloadRoleFamily::App | WorkloadRoleFamily::RegistryReader
-            )
-        })
+        .filter(|family| !matches!(family, WorkloadRoleFamily::App))
         .map(|family| HostRoleSecret {
             family,
             name: wamn_control_provision::workload_secret_name(family, "acme", project, "dev"),
@@ -620,49 +614,4 @@ async fn unavailable_registry_configuration_refuses_lifecycle_operations() -> an
             .is_err()
     );
     Ok(())
-}
-
-#[test]
-fn reader_uses_the_environments_owned_credentials() {
-    let target = Triple::new("acme", "dev", "apps");
-    let image = format!("registry/host@sha256:{}", "a".repeat(64));
-    let first = reader_deployment(&target, "hosts", &image, 1, 120);
-    let pod = &first["spec"]["template"]["spec"];
-    assert_eq!(pod["containers"][0]["image"], image);
-    let variables = pod["containers"][0]["env"].as_array().unwrap();
-    for (variable, secret) in [
-        (
-            "WAMN_CDC_URL",
-            wamn_control_provision::project_env_cdc_secret_name(
-                &target.org,
-                &target.project,
-                &target.env,
-            ),
-        ),
-        (
-            "WAMN_SYSTEM_URL",
-            wamn_control_provision::workload_secret_name(
-                wamn_control_provision::WorkloadRoleFamily::RegistryReader,
-                &target.org,
-                &target.project,
-                &target.env,
-            ),
-        ),
-    ] {
-        let binding = variables
-            .iter()
-            .find(|entry| entry["name"] == variable)
-            .unwrap();
-        assert_eq!(binding["valueFrom"]["secretKeyRef"]["name"], secret);
-        assert!(binding.get("value").is_none());
-    }
-    let other = reader_deployment(
-        &Triple::new("acme", "other", "apps"),
-        "hosts",
-        &image,
-        1,
-        120,
-    );
-    assert_ne!(first["metadata"]["name"], other["metadata"]["name"]);
-    assert_ne!(first["spec"]["selector"], other["spec"]["selector"]);
 }

@@ -561,6 +561,8 @@ pub(crate) async fn ensure_cdc_inputs(
         return ensure_streams(platform, document, &manifests).await;
     }
     let triple = document.triple();
+    wamn_events::capture_gap::require_resynchronized(&platform.system_database_url, &triple)
+        .await?;
     let instance = read_project_env_instance(&platform.system_database_url, &triple).await?;
     let cdc_name = wamn_control_provision::cdc_object_name(
         &document.org,
@@ -630,7 +632,7 @@ pub(crate) async fn ensure_cdc_inputs(
     } else {
         admin_url.clone()
     };
-    crate::enable_cdc_project_env::apply_cdc_sql(
+    wamn_events::lifecycle::apply_cdc_sql(
         admin_url.as_str(),
         &capture,
         &schemas,
@@ -643,7 +645,7 @@ pub(crate) async fn ensure_cdc_inputs(
     }
     ensure_streams(platform, document, &manifests).await?;
     let namespace = platform.target.namespace.as_str();
-    crate::enable_cdc_project_env::record_event_reader(
+    wamn_events::lifecycle::record_event_reader(
         &platform.system_database_url,
         &triple,
         &schemas,
@@ -652,20 +654,24 @@ pub(crate) async fn ensure_cdc_inputs(
     )
     .await
     .context("record the CDC reader")?;
-    let events = platform
-        .events
-        .as_ref()
-        .context("environment event broker")?;
     let image = wamn_release_control::release_chart::image_set(&platform.chart)
         .await?
         .host;
-    let deployment = crate::enable_cdc_project_env::reader_deployment(
+    let configuration = wamn_events::lifecycle::reader_configuration(
         &triple,
-        namespace,
-        &image,
-        events.stream_replicas,
-        events.dup_window_secs,
+        &cdc_name,
+        crate::platform::identity::NATS_URL,
     );
+    let config_name = wamn_control_provision::project_env_cdc_secret_name(
+        &triple.org,
+        &triple.project,
+        &triple.env,
+    );
+    wamn_kubernetes::kubectl::apply(&platform.target.kubeconfig, &platform.target.context,
+        namespace, &serde_json::json!({"apiVersion":"v1","kind":"ConfigMap",
+            "metadata":{"name":config_name,"namespace":namespace},
+            "data":{"connection.json":capture,"reader.json":serde_json::to_string(&configuration)?}})).await?;
+    let deployment = wamn_events::lifecycle::reader_deployment(&triple, namespace, &image);
     wamn_kubernetes::kubectl::apply(
         &platform.target.kubeconfig,
         &platform.target.context,

@@ -640,13 +640,6 @@ pub fn grant_executor_history_reads_sql() -> String {
 /// across all three and granted inside exactly one.
 pub const SYSTEM_PLANE_SCHEMAS: [&str; 3] = ["identity", "provisioning", "registry"];
 
-/// The two relations the CDC reader's `SELECT`s touch.
-///
-/// `services/cdc-reader` runs `wamn_registry::sql::select_event_reader_sql`
-/// and `select_capture_gap_sql` over `WAMN_SYSTEM_URL` and nothing else, so this
-/// is its whole authority (`wamn-59z6`: the reader reads its gap row).
-pub const REGISTRY_READER_RELATIONS: [&str; 2] = ["event_readers", "capture_gap"];
-
 /// The relations the management and user route identity reads touch.
 ///
 /// `SELECT_PAT_BY_PREFIX_SQL` joins `pats` to `principals`; `SELECT_PROJECT_ROLES_SQL`
@@ -711,19 +704,6 @@ fn grant_system_reader_surface_sql(
         .expect("writing to a String cannot fail");
     }
     sql
-}
-
-/// Converge `wamn_registry_reader` to its exact CDC-registration read surface.
-///
-/// `SELECT` on `registry.event_readers` and `registry.capture_gap`. The role is refused on `identity.*`
-/// by the same batch that grants it here, which is why the CDC reader's
-/// credential cannot be reused to read or forge identity.
-pub fn grant_registry_reader_surface_sql() -> String {
-    grant_system_reader_surface_sql(
-        WorkloadRoleFamily::RegistryReader,
-        "registry",
-        &REGISTRY_READER_RELATIONS,
-    )
 }
 
 /// Converge `wamn_identity_reader` to its exact identity read surface.
@@ -903,7 +883,6 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
         }
         WorkloadRoleFamily::HttpAdmitter => Some(grant_http_admitter_surface_sql("wamn_run")),
         WorkloadRoleFamily::SessionRoleReader => Some(grant_session_role_reader_surface_sql()),
-        WorkloadRoleFamily::RegistryReader => Some(grant_registry_reader_surface_sql()),
         WorkloadRoleFamily::IdentityReader => Some(grant_identity_reader_surface_sql()),
         WorkloadRoleFamily::ConnectionReader => Some(grant_connection_reader_surface_sql()),
         WorkloadRoleFamily::Administration => Some(grant_administration_surface_sql("wamn_run")),

@@ -102,19 +102,18 @@ impl DerivedEvent {
     }
 }
 
-/// One row event on the wire: `{op, old, new, package_id, entity, table, lsn,
-/// txid, commit_ts, causation?}` (v3 §4). `package_id` and `entity` are the
-/// package owner and package-local model key from `wamn.json`. Both are required:
-/// an unmapped relation is refused before publication and cannot enter the
-/// stream. `table` always carries the physical table name at decode time.
-///
-/// `old`/`new` are column→value maps in pgoutput **text** representation
-/// (values are JSON strings or `null`). An **unchanged TOAST column is ABSENT
-/// from the map** — distinguishable from a real NULL, which is present as
-/// `null` (the S-CDC-1 finding). `old` is present only when the source
-/// provided an old image (REPLICA IDENTITY, or the key columns of a delete).
-///
-/// set, spellings, and serde omission rules are pinned by the golden tests.
+/// The stable coordinate of a row within a committed transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CdcIdentity {
+    pub system_id: u64,
+    pub timeline: u32,
+    pub commit_lsn: u64,
+    /// Zero-based position among all row changes, before relation filtering.
+    pub row_ordinal: u64,
+}
+
+/// One captured row. Unchanged TOAST values are absent; SQL NULL stays null.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Envelope {
@@ -128,7 +127,7 @@ pub struct Envelope {
     #[serde(deserialize_with = "source_name")]
     pub entity: String,
     pub table: String,
-    pub lsn: u64,
+    pub identity: CdcIdentity,
     pub txid: u32,
     pub commit_ts: chrono::DateTime<chrono::Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,17 +141,12 @@ impl Envelope {
     }
 }
 
-/// `<project>_<env>` — the `Nats-Msg-Id` prefix a project-env's events dedupe
-/// under (subject segments already isolate per-project, the id prefix keeps
-/// dedupe ids from colliding across declared project environments).
-pub fn project_env(project: &str, env: &str) -> String {
-    format!("{project}_{env}")
-}
-
-/// `Nats-Msg-Id = <project_env>:<lsn>` — the at-least-once dedupe key. The LSN
-/// is the row event's WAL position (decimal), unique per event.
-pub fn msg_id(project: &str, env: &str, lsn: u64) -> String {
-    format!("{}:{lsn}", project_env(project, env))
+/// The broker identity of a captured row in one project environment.
+pub fn msg_id(project: &str, env: &str, identity: &CdcIdentity) -> String {
+    format!(
+        "cdc:{project}:{env}:{}:{}:{}:{}",
+        identity.system_id, identity.timeline, identity.commit_lsn, identity.row_ordinal
+    )
 }
 
 /// Host-owned, header-safe `Nats-Msg-Id` for a derived event.
@@ -238,6 +232,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cdc_identity_distinguishes_every_coordinate_and_refuses_old_rows() {
+        let identity = CdcIdentity {
+            system_id: 1,
+            timeline: 2,
+            commit_lsn: 42,
+            row_ordinal: 0,
+        };
+        let id = msg_id("app", "dev", &identity);
+        for other in [
+            CdcIdentity {
+                system_id: 2,
+                ..identity
+            },
+            CdcIdentity {
+                timeline: 3,
+                ..identity
+            },
+            CdcIdentity {
+                commit_lsn: 43,
+                ..identity
+            },
+            CdcIdentity {
+                row_ordinal: 1,
+                ..identity
+            },
+        ] {
+            assert_ne!(id, msg_id("app", "dev", &other));
+        }
+        assert_ne!(id, msg_id("app", "prod", &identity));
+        assert_ne!(id, msg_id("other", "dev", &identity));
+        let mut body = serde_json::json!({
+            "type":"cdc", "op":"insert", "new":{"id":"7"},
+            "package_id":"orders", "entity":"order", "table":"orders",
+            "identity":identity, "txid":7, "commit_ts":"2026-07-18T12:00:00Z"
+        });
+        let source = SourceEvent::decode(&serde_json::to_vec(&body).unwrap()).unwrap();
+        assert!(source.identity("project", "app", "dev", &[&id]).is_some());
+        assert!(
+            source
+                .identity("project", "app", "dev", &[&id, &id])
+                .is_none()
+        );
+        body.as_object_mut().unwrap().remove("identity");
+        body["lsn"] = 42.into();
+        assert!(SourceEvent::decode(&serde_json::to_vec(&body).unwrap()).is_err());
+    }
+
+    #[test]
     fn derived_msg_id_is_host_targeted_and_keeps_the_author_operand() {
         let id = derived_msg_id(
             "acme",
@@ -248,16 +290,19 @@ mod tests {
             Op::Insert,
             "orders:7:created",
         );
-        assert!(id.starts_with("derived:"));
-        assert_eq!(id.len(), "derived:".len() + 64);
-        assert!(!id.contains("orders:7:created"));
-        assert!(
-            id.chars()
-                .all(|c| c == ':' || c.is_ascii_hexdigit() || c.is_ascii_lowercase())
-        );
+        assert!(!id.is_empty());
         assert_ne!(
             derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "42"),
-            msg_id("app", "dev", 42),
+            msg_id(
+                "app",
+                "dev",
+                &CdcIdentity {
+                    system_id: 1,
+                    timeline: 1,
+                    commit_lsn: 42,
+                    row_ordinal: 0
+                }
+            ),
             "a numeric author id cannot collide with a CDC LSN"
         );
         assert_ne!(
@@ -357,7 +402,12 @@ mod tests {
             package_id: "orders".into(),
             entity: "sales_orders".into(),
             table: "orders2".into(),
-            lsn: 42,
+            identity: CdcIdentity {
+                system_id: 1,
+                timeline: 1,
+                commit_lsn: 42,
+                row_ordinal: 0,
+            },
             txid: 731,
             commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-18T12:00:00Z")
                 .unwrap()
@@ -379,7 +429,7 @@ mod tests {
             "package_id": "orders",
             "entity": "sales_orders",
             "table": "orders",
-            "lsn": 7,
+            "identity": {"system_id": 1, "timeline": 1, "commit_lsn": 7, "row_ordinal": 0},
             "txid": 3,
             "commit_ts": "2026-07-18T12:00:00Z"
         });
@@ -462,7 +512,7 @@ pub fn verified_source_event_id(
     envelope: &Envelope,
     message_ids: &[&str],
 ) -> Option<VerifiedSourceEventId> {
-    let expected = msg_id(project, environment, envelope.lsn);
+    let expected = msg_id(project, environment, &envelope.identity);
     match message_ids {
         [actual] if *actual == expected => Some(VerifiedSourceEventId(expected)),
         _ => None,

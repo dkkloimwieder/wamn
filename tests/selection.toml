@@ -13,8 +13,8 @@ targets = [
   { workspace="root", package="wamn-catalog", target="lib:wamn_catalog", tier="contract" },
   { workspace="root", package="wamn-catalog", target="test:record_history", tier="live-postgres" },
   { workspace="root", package="wamn-catalog", target="test:serving_manifest_digest", tier="contract" },
-  { workspace="root", package="wamn-cdc-reader", target="bin:wamn-cdc-reader", tier="live-nats" },
-  { workspace="root", package="wamn-cdc-reader", target="lib:wamn_cdc_reader", tier="live-nats" },
+  { workspace="root", package="wamn-cdc-reader", target="bin:wamn-cdc-reader", tier="unit" },
+  { workspace="root", package="wamn-cdc-reader", target="lib:wamn_cdc_reader", tier="unit" },
   { workspace="root", package="wamn-cdc-reader", target="test:event_reader_live", tier="live-nats" },
   { workspace="root", package="wamn-component-composer", target="lib:wamn_component_composer", tier="contract" },
   { workspace="root", package="wamn-component-policy", target="lib:wamn_component_policy", tier="contract" },
@@ -209,7 +209,8 @@ targets = [
   { workspace="apps", package="rest-consumer-fixture", target="cdylib:rest_consumer_fixture", tier="contract" },
   { workspace="apps", package="sqlx-command", target="cdylib:sqlx_command", tier="contract" },
   { workspace="apps", package="wamn-data-access", target="lib:wamn_data_access", tier="contract" },
-  { workspace="apps", package="wamn-event-wire", target="lib:wamn_event_wire", tier="contract" },
+  { workspace="root", package="wamn-events", target="lib:wamn_events", tier="unit" },
+  { workspace="root", package="wamn-event-wire", target="lib:wamn_event_wire", tier="contract" },
   { workspace="apps", package="wamn-integration", target="cdylib:wamn_integration", tier="contract" },
   { workspace="apps", package="wamn-postgres-statements", target="lib:wamn_postgres_statements", tier="contract" },
   { workspace="apps", package="wamn-record-history", target="lib:wamn_record_history", tier="contract" },
@@ -238,7 +239,6 @@ root_features = ["wamn-environment/ops"]
   WAMN_DEV_ENV_NATS_TLS_KEY = "Credential or trust file for the operator-selected external service."
   WAMN_DIGEST_REPRO_A = "Artifacts from the first independently built checkout for comparison."
   WAMN_DIGEST_REPRO_B = "Artifacts from the second independently built checkout for comparison."
-  WAMN_E1_NATS_URL = "Address of the operator-selected external service or artifact registry."
   WAMN_EDGE_LIVE_CA_FILE = "Credential or trust file for the operator-selected external service."
   WAMN_EDGE_LIVE_TOKEN_FILE = "Credential or trust file for the operator-selected external service."
   WAMN_EDGE_LIVE_URL = "Address of the operator-selected external service or artifact registry."

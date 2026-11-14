@@ -100,7 +100,7 @@ mod tests {
         let source = SourceEvent::decode(
             &serde_json::to_vec(&json!({
                 "type": "cdc", "op": "update", "package_id": "orders", "entity": "order", "table": "orders",
-                "lsn": 42, "txid": 7, "commit_ts": "2026-10-25T00:00:00Z",
+                "identity": {"system_id": 1, "timeline": 1, "commit_lsn": 42, "row_ordinal": 0}, "txid": 7, "commit_ts": "2026-10-25T00:00:00Z",
                 "old": {"status": "draft"}, "new": {"status": "open"}
             }))
             .unwrap(),

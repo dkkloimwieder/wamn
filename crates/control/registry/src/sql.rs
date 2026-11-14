@@ -395,10 +395,6 @@ pub fn control_provision_src_sql_grant_connection_reader_surface_sql(role: &str)
     )
 }
 
-/// crates/control/environment/src/enable_cdc_project_env.rs::pause_event_reader registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_ENABLE_CDC_PROJECT_ENV_PAUSE_EVENT_READER: &str =
-    "UPDATE registry.event_readers SET enabled=false WHERE org=$1 AND project=$2 AND env=$3";
-
 /// crates/control/environment/src/provision_system.rs::set_platform_domain registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN: &str =
     "UPDATE registry.meta SET platform_domain = $1 WHERE platform_domain IS DISTINCT FROM $1";

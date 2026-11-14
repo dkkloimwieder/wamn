@@ -5561,6 +5561,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-event-wire",
+ "wamn-events",
  "wamn-postgres",
  "wamn-registry",
  "wamn-test-postgres",
@@ -5943,6 +5944,7 @@ dependencies = [
  "wamn-digest",
  "wamn-engine",
  "wamn-event-wire",
+ "wamn-events",
  "wamn-execution-host",
  "wamn-fixture-package",
  "wamn-identity-client",
@@ -5975,6 +5977,27 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "wamn-registry",
+]
+
+[[package]]
+name = "wamn-events"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "chrono",
+ "postgres-protocol",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "wamn-broker",
+ "wamn-catalog",
+ "wamn-control-provision",
+ "wamn-event-wire",
+ "wamn-kubernetes",
+ "wamn-postgres",
  "wamn-registry",
 ]
 

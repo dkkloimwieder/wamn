@@ -17,8 +17,6 @@ pub use wamn_identity_protocol::authority_class::EXECUTOR_PLATFORM_ROLE;
 const EXECUTOR_PLATFORM_LOGIN_PREFIX: &str = "wamn_exec_platform";
 /// Stable NOLOGIN role used by callable-HTTP admission logins.
 pub use wamn_identity_protocol::authority_class::HTTP_ADMITTER_ROLE;
-/// Stable NOLOGIN role used by control-registry reader logins.
-pub const REGISTRY_READER_ROLE: &str = "wamn_registry_reader";
 /// Stable NOLOGIN role used by control-identity reader logins.
 pub const IDENTITY_READER_ROLE: &str = "wamn_identity_reader";
 /// Host-only reader of connection generations and credentials.
@@ -62,18 +60,6 @@ pub(crate) const IDENTITY_HASH_HEX_LEN: usize = 40;
 /// guest-sql, already mapped to [`WorkloadRoleFamily::App`]. Only the families
 /// land here; keying credential selection by authority class is
 /// `wamn-0h0g.22.8`.
-/// `wamn-0h0g.13.63` is the fourth deliberate expansion, from ten to twelve,
-/// admitting the two CONTROL-identity-bound reader families the T1 system database's
-/// two purported read-only consumers need. Identity follows the RESOURCE PLANE,
-/// not the consumer's home, so both are [`WorkloadRoleIdentityType::Control`] and
-/// neither may reuse the project-environment-identity-bound
-/// [`WorkloadRoleFamily::ServiceReader`]. TWO families, not one, because the
-/// two grant sets are disjoint and must stay so: `wamn-0h0g.12.116`'s consumer
-/// reads `registry.event_readers` and `wamn-0h0g.12.67`'s reads
-/// `identity.pats`, `identity.principals`, `identity.project_env_memberships`
-/// and `identity.project_roles` — one
-/// family for both is how one role gets widened to the union. Only the
-/// families land here; the grants, Secrets and consumers are those two beads.
 /// `wamn-ctc8.15.2` adds a dedicated project-environment session role reader;
 /// it carries no runtime authority class and no operation-permission read.
 /// `wamn-emtx.13` adds the project-identity-bound audit retention family, which removes
@@ -92,7 +78,6 @@ pub enum WorkloadRoleFamily {
     Retention,
     ExecutorPlatform,
     HttpAdmitter,
-    RegistryReader,
     IdentityReader,
     SessionRoleReader,
     AuditRetention,
@@ -108,7 +93,7 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 13] = [
         Self::ServiceReader,
         Self::App,
         Self::Query,
@@ -116,7 +101,6 @@ impl WorkloadRoleFamily {
         Self::Retention,
         Self::ExecutorPlatform,
         Self::HttpAdmitter,
-        Self::RegistryReader,
         Self::IdentityReader,
         Self::SessionRoleReader,
         Self::AuditRetention,
@@ -135,7 +119,6 @@ impl WorkloadRoleFamily {
             Self::Retention => RETENTION_ROLE,
             Self::ExecutorPlatform => AuthorityClass::ExecutorPlatform.acl_role(),
             Self::HttpAdmitter => AuthorityClass::CallableHttp.acl_role(),
-            Self::RegistryReader => REGISTRY_READER_ROLE,
             Self::IdentityReader => IDENTITY_READER_ROLE,
             Self::ConnectionReader => CONNECTION_READER_ROLE,
             Self::SessionRoleReader => SESSION_ROLE_READER_ROLE,
@@ -168,9 +151,7 @@ impl WorkloadRoleFamily {
             | Self::Administration => WorkloadRoleIdentityType::ProjectEnvironment,
             // Identity follows the RESOURCE PLANE, not the consumer's home: these
             // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
-            Self::RegistryReader | Self::IdentityReader | Self::ConnectionReader => {
-                WorkloadRoleIdentityType::Control
-            }
+            Self::IdentityReader | Self::ConnectionReader => WorkloadRoleIdentityType::Control,
             // One credential per org on the control database; `provision-org`
             // mints it (owner ruling of 2026-09-30 on `wamn-a40n.2`).
             Self::Control => WorkloadRoleIdentityType::Org,
@@ -295,7 +276,6 @@ impl WorkloadRoleFamily {
             Self::Retention => b"wamn.run-retention.identity.v0.1",
             Self::ExecutorPlatform => b"wamn.executor-platform.identity.v0.1",
             Self::HttpAdmitter => b"wamn.http-admitter.identity.v0.1",
-            Self::RegistryReader => b"wamn.registry-reader.identity.v0.1",
             Self::IdentityReader => b"wamn.identity-reader.identity.v0.1",
             Self::ConnectionReader => b"wamn.connection-reader.identity.v0.1",
             Self::SessionRoleReader => b"wamn.session-role-reader.identity.v0.1",

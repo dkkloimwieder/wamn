@@ -449,11 +449,20 @@ async fn event_run(
     jetstream: &WamnJetstream,
 ) -> anyhow::Result<()> {
     let liveness = Liveness::new(Duration::from_secs(90));
-    let envelope = json!({"op": "insert", "new": {"id": "m-2", "value": 7},
-        "package_id": "automation", "entity": "movement", "table": "movement", "lsn": 7,
+    let envelope = json!({"type":"cdc", "op": "insert", "new": {"id": "m-2", "value": 7},
+        "package_id": "automation", "entity": "movement", "table": "movement", "identity": {"system_id": 1, "timeline": 1, "commit_lsn": 7, "row_ordinal": 0},
         "txid": 1, "commit_ts": "2026-10-25T00:00:00Z"})
     .to_string();
-    let source_id = wamn_event_wire::msg_id(&target.project, "test", 7);
+    let source_id = wamn_event_wire::msg_id(
+        &target.project,
+        "test",
+        &wamn_event_wire::CdcIdentity {
+            system_id: 1,
+            timeline: 1,
+            commit_lsn: 7,
+            row_ordinal: 0,
+        },
+    );
     let mut admission = EventBatchAdmission {
         source_package: "automation",
         entity: "movement",
@@ -463,6 +472,7 @@ async fn event_run(
     };
     crate::event_admission::admit_event_batch(postgres, &target.project, release, &admission)
         .await?;
+    admission.sequence += 100;
     crate::event_admission::admit_event_batch(postgres, &target.project, release, &admission)
         .await?;
     let runs = sqlx::query("SELECT run_id FROM wamn_run.runs WHERE trigger_source = 'event'")
@@ -517,6 +527,27 @@ async fn event_run(
         workflows.park(&run).await.unwrap_err().error_type(),
         WorkflowErrorType::NotParkable
     );
+    // A later broker sequence still names the completed run until retention removes it.
+    admission.envelope = &envelope;
+    admission.sequence += 100;
+    crate::event_admission::admit_event_batch(postgres, &target.project, release, &admission)
+        .await?;
+    let retained: String =
+        sqlx::query_scalar("SELECT run_id FROM wamn_run.runs WHERE trigger_source='event'")
+            .fetch_one(&mut *admin)
+            .await?;
+    assert_eq!(retained, run);
+    sqlx::raw_sql("SET search_path = wamn_run, pg_catalog")
+        .execute(&mut *admin)
+        .await?;
+    wamn_run_state::persistence::prune_terminal_runs(admin, &target.project_env_key, 0).await?;
+    crate::event_admission::admit_event_batch(postgres, &target.project, release, &admission)
+        .await?;
+    let replayed: String =
+        sqlx::query_scalar("SELECT run_id FROM wamn_run.runs WHERE trigger_source='event'")
+            .fetch_one(&mut *admin)
+            .await?;
+    assert_ne!(replayed, run, "pruning ends the deduplication horizon");
     Ok(())
 }
 

@@ -69,7 +69,8 @@ Supply `--cdc-reader-binary` with the built `wamn-cdc-reader`.
 
 The command runs `enable-cdc-project-env`, which is the verb that the cluster runs.
 The verb provisions the event streams with the application consumers of the packages, and it records the reader registration.
-The command applies the replication role, prepares a registry-reader login, and writes `cdc_reader` into `dev.json`.
+The deployed CDC reader uses its replication login and broker certificate.
+Its mounted JSON configuration names the publication and slot.
 The PostgreSQL server must run with `wal_level=logical`.
 At each activation, the loop applies the CDC SQL of the verb to the target and starts `wamn-cdc-reader`.
 The reader logs to `cdc-reader.log` in the environment directory, and the loop waits until it streams.

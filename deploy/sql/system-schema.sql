@@ -933,8 +933,8 @@ CREATE TABLE registry.event_readers (
 -- Capture gaps (wamn-59z6, docs/operations/gcp.md#57-cdc-slot-lost): one row
 -- per lost slot of a CDC reader registration. `wamn-ctl recover-capture-gap`
 -- writes it, and `wamn-ctl close-capture-gap` sets `resync_at`. The reader
--- captures only while the newest row of its registration has `resync_at` set,
--- or no row exists. `slot` keeps the lost slot's name. A null `start_lsn`
+-- exits on a lost slot. Control stops its Deployment before recovery and
+-- restarts it after the operator closes the gap. `slot` keeps the lost slot's name. A null `start_lsn`
 -- means "from registration": the source stream held no event. `created_at` is
 -- the time of the recovery verb.
 -- ---------------------------------------------------------------------------

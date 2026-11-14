@@ -200,7 +200,7 @@ mod tests {
             "package_id": "cat",
             "entity": "receipts",
             "table": "receipts",
-            "lsn": 42,
+            "identity": {"system_id": 1, "timeline": 1, "commit_lsn": 42, "row_ordinal": 0},
             "txid": 7,
             "commit_ts": "2026-08-15T12:00:00Z"
         }))
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn source_identity_requires_one_exact_header() {
         let envelope = envelope();
-        let expected = wamn_event_wire::msg_id("app", "dev", envelope.lsn);
+        let expected = wamn_event_wire::msg_id("app", "dev", &envelope.identity);
         assert_eq!(
             verified_source_event_id("app", "dev", &envelope, &[&expected])
                 .unwrap()

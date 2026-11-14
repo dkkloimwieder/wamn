@@ -232,7 +232,7 @@ pub async fn reset_deployed(
             .await?;
             ensure!(replication, "reset requires the capture login");
             stop_users(&platform, &document).await?;
-            crate::enable_cdc_project_env::discard_backlog(
+            discard_backlog(
                 &platform.system_database_url,
                 &credentials.capture,
                 &document.triple(),
@@ -256,7 +256,13 @@ pub async fn reset_deployed(
 }
 
 async fn stop_users(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<()> {
-    crate::enable_cdc_project_env::stop_reader(platform, &document.triple()).await?;
+    wamn_events::lifecycle::stop_reader(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        &platform.target.namespace,
+        &document.triple(),
+    )
+    .await?;
     let shared = ensure::environment_host_name(&document.org, &document.project, &document.env)?;
     let mut groups = std::collections::BTreeSet::from([shared]);
     for application in document.applications.keys() {
@@ -370,4 +376,20 @@ pub fn stop_values(values: &mut Value) -> anyhow::Result<()> {
         group["replicas"] = 0.into();
     }
     Ok(())
+}
+
+async fn discard_backlog(
+    system_url: &str,
+    admin_url: &str,
+    triple: &wamn_registry::Triple,
+) -> anyhow::Result<()> {
+    let instance =
+        crate::provision_project_env::read_project_env_instance(system_url, triple).await?;
+    let slot = wamn_control_provision::cdc_object_name(
+        &triple.org,
+        &triple.project,
+        &triple.env,
+        &instance,
+    );
+    wamn_events::lifecycle::discard_backlog(admin_url, &slot).await
 }

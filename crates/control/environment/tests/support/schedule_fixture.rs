@@ -605,7 +605,7 @@ pub fn envelope(op: &str, txid: i64, lsn: u64) -> String {
     let row = json!({"id": "7", "at": "2026-10-25 10:00:00+00", "status": "open"});
     let mut value = json!({
         "op": op, "package_id": APPLICATION, "entity": "order", "table": "orders",
-        "type": "cdc", "lsn": lsn, "txid": txid, "commit_ts": "2026-10-25T10:00:00Z",
+        "type": "cdc", "identity": {"system_id": 1, "timeline": 1, "commit_lsn": lsn, "row_ordinal": 0}, "txid": txid, "commit_ts": "2026-10-25T10:00:00Z",
         "causation": {"run": "source-run", "root": "root-run", "depth": 2}
     });
     value[if op == "delete" { "old" } else { "new" }] = row;
@@ -627,7 +627,16 @@ pub async fn admit(
             entity: "order",
             envelope,
             sequence,
-            source_event_id: &wamn_event_wire::msg_id(PROJECT, ENVIRONMENT, lsn),
+            source_event_id: &wamn_event_wire::msg_id(
+                PROJECT,
+                ENVIRONMENT,
+                &wamn_event_wire::CdcIdentity {
+                    system_id: 1,
+                    timeline: 1,
+                    commit_lsn: lsn,
+                    row_ordinal: 0,
+                },
+            ),
         },
     )
     .await

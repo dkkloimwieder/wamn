@@ -90,7 +90,7 @@ pub async fn admit_event_batch(
                 .transpose()
                 .map_err(|error| ProductionLeaseError::invalid("decode event depth", error))?;
             let principal = workflow_user_id().to_string();
-            let delivery = format!("event:{}:{}", admission.sequence, admission.source_event_id);
+            let delivery = format!("event:{}", admission.source_event_id);
             for (row, event, input) in matches {
                 let key = serde_json::json!([
                     "event",

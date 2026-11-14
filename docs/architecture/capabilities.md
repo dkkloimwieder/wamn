@@ -271,7 +271,7 @@ The [components page](components.md#shared-label-renderer) describes its composi
 
 ## Events
 
-PostgreSQL change capture publishes the [event contract](../../apps/platform/events/wire/src/lib.rs).
+PostgreSQL change capture publishes the [event contract](../../crates/events/wire/src/lib.rs).
 The wire owner decodes records and verifies their source identity.
 Records carry `"type": "cdc"` or `"type": "derived"` and use underscore field names.
 Subjects use `evt.<org>.<env>.<project>.<entity>.<op>`.

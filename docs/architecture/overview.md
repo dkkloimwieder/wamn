@@ -32,6 +32,8 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-registry` | Org, environment and project coordinates, resource names, and registry SQL |
 | `wamn-control-provision` | Provisioning SQL and credential roles |
 | `wamn-broker` | NATS connections, streams, shared memory buckets, and authorization |
+| `wamn-event-wire` | Tagged event records and stable source identity |
+| `wamn-events` | CDC configuration, reader lifecycle and capture recovery |
 | `wamn-kubernetes` | Kubernetes HTTP client, Secrets, Job execution, and command runners |
 | `wamn-catalog` | Component, wiring, and release facts |
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |

@@ -24,6 +24,7 @@ name = "rest_connector_publication"
 path = "../../../apps/rest_connector/tests/publication.rs"
 
 [dependencies]
+wamn-events.workspace = true
 wamn-platform-install.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }

@@ -54,7 +54,6 @@ async fn credential_secrets(
                 match credential.family {
                     WorkloadRoleFamily::IdentityReader => SystemReader::Identity,
                     WorkloadRoleFamily::ConnectionReader => SystemReader::Connection,
-                    WorkloadRoleFamily::RegistryReader => SystemReader::Registry,
                     _ => unreachable!("control credential family"),
                 },
                 ORG,
