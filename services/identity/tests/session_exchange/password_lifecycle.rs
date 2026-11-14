@@ -3,6 +3,7 @@
 use super::*;
 use sha2::{Digest as _, Sha256};
 use sqlx::{Connection as _, Row as _, Statement as _};
+use std::collections::BTreeMap;
 use wamn_package_artifact::http_client::HttpRequest;
 use wamn_platform_identity::password::{
     Password, enroll_password, issue_invitation, password_work,
@@ -749,10 +750,10 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
     cleanup(fixture).await;
 }
 
-const COOKIES: [(&str, &str, &str); 3] = [
-    ("__Host-wamn-session", "/", "; HttpOnly"),
-    ("__Host-wamn-csrf", "/", ""),
-    ("__Secure-wamn-renewal", "/password", "; HttpOnly"),
+const COOKIES: [(&str, &str, bool); 3] = [
+    ("__Host-wamn-session", "/", true),
+    ("__Host-wamn-csrf", "/", false),
+    ("__Secure-wamn-renewal", "/password", true),
 ];
 
 fn set_cookies(response: &HttpResponse) -> Vec<String> {
@@ -764,7 +765,61 @@ fn set_cookies(response: &HttpResponse) -> Vec<String> {
         .collect()
 }
 
-/// Tests the exact reply of a cookie session and returns the session, CSRF and renewal values.
+struct Cookie<'a> {
+    value: &'a str,
+    attributes: BTreeMap<String, Option<&'a str>>,
+}
+
+impl Cookie<'_> {
+    fn attribute(&self, name: &str) -> Option<&str> {
+        self.attributes.get(name).copied().flatten()
+    }
+}
+
+fn parse_cookies(lines: &[String]) -> BTreeMap<&str, Cookie<'_>> {
+    lines
+        .iter()
+        .map(|line| {
+            let mut parts = line.split(';').map(str::trim);
+            let (name, value) = parts
+                .next()
+                .and_then(|pair| pair.split_once('='))
+                .expect_redacted("cookie name and value");
+            let (name, value) = (name.trim(), value.trim());
+            let attributes = parts
+                .map(|attribute| {
+                    let (name, value) = attribute
+                        .split_once('=')
+                        .map_or((attribute, None), |(name, value)| {
+                            (name.trim(), Some(value.trim()))
+                        });
+                    (name.to_ascii_lowercase(), value)
+                })
+                .collect();
+            (name, Cookie { value, attributes })
+        })
+        .collect()
+}
+
+fn assert_cookie_attributes(cookie: &Cookie<'_>, path: &str, http_only: bool) -> i64 {
+    assert!(cookie.attribute("path") == Some(path));
+    assert!(cookie.attributes.contains_key("secure"));
+    assert_eq!(cookie.attributes.contains_key("httponly"), http_only);
+    assert!(
+        cookie
+            .attribute("samesite")
+            .is_some_and(|value| value.eq_ignore_ascii_case("Strict"))
+    );
+    assert!(!cookie.attributes.contains_key("domain"));
+    let age = cookie
+        .attribute("max-age")
+        .expect_redacted("cookie Max-Age");
+    let digits = age.strip_prefix('-').unwrap_or(age);
+    assert!(!digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()));
+    age.parse().expect_redacted("cookie Max-Age")
+}
+
+/// Check cookie fields and return the session, CSRF and renewal values.
 async fn cookie_body(response: HttpResponse, started: i64) -> (Value, [String; 3]) {
     assert_eq!(response.status(), 200);
     assert_eq!(response.headers()["cache-control"], "no-store");
@@ -778,28 +833,18 @@ async fn cookie_body(response: HttpResponse, started: i64) -> (Value, [String; 3
         result["expires_at"].as_i64().unwrap(),
         result["login_expires_at"].as_i64().unwrap(),
     ];
-    assert_eq!(lines.len(), 3);
+    assert_eq!(lines.len(), COOKIES.len());
+    let cookies = parse_cookies(&lines);
     let mut values = [String::new(), String::new(), String::new()];
-    for (index, line) in lines.iter().enumerate() {
-        let (name, path, http_only) = COOKIES[index];
-        let (pair, attributes) = line.split_once("; ").expect_redacted("cookie attributes");
-        let value = pair
-            .strip_prefix(name)
-            .and_then(|rest| rest.strip_prefix('='))
-            .expect_redacted("cookie name");
-        let age: i64 = attributes
-            .strip_prefix(&format!("Path={path}; Max-Age="))
-            .and_then(|rest| rest.split(';').next())
-            .and_then(|age| age.parse().ok())
-            .expect_redacted("cookie Max-Age");
-        assert_eq!(
-            attributes,
-            format!("Path={path}; Max-Age={age}{http_only}; Secure; SameSite=Strict")
-        );
+    for (index, (name, path, http_only)) in COOKIES.into_iter().enumerate() {
+        let cookie = cookies.get(name).expect_redacted("session cookie");
+        let age = assert_cookie_attributes(cookie, path, http_only);
         assert!(age > 0 && deadlines[index] - returned <= age && age <= deadlines[index] - started);
         // No token or CSRF value ever appears in a cookie-mode body.
-        assert!(!value.is_empty() && !String::from_utf8_lossy(&bytes).contains(value));
-        value.clone_into(&mut values[index]);
+        assert!(
+            !cookie.value.is_empty() && !String::from_utf8_lossy(&bytes).contains(cookie.value)
+        );
+        cookie.value.clone_into(&mut values[index]);
     }
     assert!(values[2].starts_with("wamn_renew_"));
     (result, values)
@@ -807,13 +852,14 @@ async fn cookie_body(response: HttpResponse, started: i64) -> (Value, [String; 3
 
 fn assert_cleared(response: &HttpResponse) {
     assert_eq!(response.status(), 204);
-    let expected: Vec<String> = COOKIES
-        .iter()
-        .map(|(name, path, http_only)| {
-            format!("{name}=; Path={path}; Max-Age=0{http_only}; Secure; SameSite=Strict")
-        })
-        .collect();
-    assert_eq!(set_cookies(response), expected);
+    let lines = set_cookies(response);
+    assert_eq!(lines.len(), COOKIES.len());
+    let cookies = parse_cookies(&lines);
+    for (name, path, http_only) in COOKIES {
+        let cookie = cookies.get(name).expect_redacted("cleared cookie");
+        assert!(cookie.value.is_empty());
+        assert_eq!(assert_cookie_attributes(cookie, path, http_only), 0);
+    }
 }
 
 /// The session cookie verifies and its csrf JWT claim is the SHA-256 hex of the CSRF cookie.
