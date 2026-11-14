@@ -35,6 +35,21 @@ fn response(body: &Value) -> Response {
         body: body.to_string().into_bytes(),
     }
 }
+
+#[test]
+fn has_more_true_continues_after_a_short_page() {
+    let (result, _) = run(
+        &config(
+            &json!({"style":"offset", "limit":"limit", "offset":"offset", "has-more":"/hasMore"}),
+        ),
+        vec![
+            response(&json!({"items":[1], "hasMore":true})),
+            response(&json!({"items":[2,3], "hasMore":false})),
+        ],
+    );
+    assert_eq!(result.unwrap(), vec![json!(1), json!(2), json!(3)]);
+}
+
 #[test]
 fn absolute_links_are_terminal() {
     for target in [

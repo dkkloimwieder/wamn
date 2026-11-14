@@ -162,11 +162,35 @@ mod tests {
             ("packaging", serde_json::json!({})),
             (
                 "packaging",
+                serde_json::json!({"packaging_id": "PAL-000042"}),
+            ),
+            (
+                "packaging",
                 serde_json::json!({"packaging_id": "^XA", "location_id": "LOC"}),
             ),
             (
                 "packaging",
                 serde_json::json!({"packaging_id": "~JA", "location_id": "LOC"}),
+            ),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": "PAL^XZ", "location_id": "LOC"}),
+            ),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": "PAL~JA", "location_id": "LOC"}),
+            ),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": 42, "location_id": "LOC"}),
+            ),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": "", "location_id": "LOC"}),
+            ),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": null, "location_id": "LOC"}),
             ),
         ] {
             let NodeError::InvalidInput(_) = run(template, &fields) else {

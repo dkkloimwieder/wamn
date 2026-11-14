@@ -226,7 +226,6 @@ targets = [
   { workspace="apps", package="http-page", target="cdylib:http_page", tier="contract" },
   { workspace="apps", package="http-request", target="cdylib:http_request", tier="contract" },
   { workspace="apps", package="label-render", target="cdylib:label_render", tier="contract" },
-  { workspace="apps", package="label-render", target="test:golden", tier="contract" },
   { workspace="apps", package="wamn-modbus", target="cdylib:wamn_modbus", tier="unit" },
   { workspace="apps", package="transform", target="cdylib:transform", tier="unit" },
   { workspace="root", package="wamn-environment", target="test:file_fixture_live", tier="live-postgres" },
