@@ -157,6 +157,43 @@ impl ConnectionHttp {
         component_id: &str,
         request: &Request,
     ) -> Result<Response, ConnectionError> {
+        let execution = self
+            .postgres
+            .scopes
+            .execution(component_id)
+            .ok_or(ConnectionError::AttestationInvalid)?;
+        let scoped = Self {
+            postgres: Arc::clone(&self.postgres),
+            transport: Arc::new(
+                self.transport
+                    .for_invocation(component_id, execution.clone()),
+            ),
+            allowed_hosts: Arc::clone(&self.allowed_hosts),
+        };
+        let interrupted = || {
+            Err(if tokio::time::Instant::now() >= execution.deadline() {
+                ConnectionError::Timeout
+            } else {
+                ConnectionError::Transport("connection-cancelled".into())
+            })
+        };
+        if !execution.is_active() {
+            return interrupted();
+        }
+        // The transport must observe interruption first, so it can translate
+        // a lost response body using the phase it already observed.
+        tokio::select! {
+            biased;
+            result = Box::pin(scoped.send_active(component_id, request)) => result,
+            _ = execution.run(std::future::pending::<()>()) => interrupted(),
+        }
+    }
+
+    async fn send_active(
+        &self,
+        component_id: &str,
+        request: &Request,
+    ) -> Result<Response, ConnectionError> {
         let context =
             wamn_postgres_capability::invocation::context(&self.postgres.scopes, component_id)
                 .map_err(|_| ConnectionError::AttestationInvalid)?;

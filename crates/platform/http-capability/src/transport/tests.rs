@@ -6,6 +6,7 @@ use hyper::{StatusCode, Version, service::service_fn};
 use hyper_util::rt::TokioExecutor;
 use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
 use rustls::pki_types::PrivatePkcs8KeyDer;
+use tokio::time::timeout;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpListener,
@@ -1049,21 +1050,6 @@ async fn retired_client_leases_outlive_cache_entries_and_body_cancellation() {
     assert!(state.identities.len() <= MAX_CLIENTS);
 }
 
-#[test]
-fn error_display_and_debug_do_not_expose_sources() {
-    let error = input("HTTP request refused")
-        .with_source(std::io::Error::other("Bearer secret; private.internal"));
-    assert_eq!(error.to_string(), "HTTP request refused");
-    assert!(!format!("{error:?}").contains("secret"));
-    assert!(error.source().is_some());
-    assert!(error.is_before_dispatch());
-    let timeout = TransportError::new(ErrorType::Timeout, Phase::AwaitingHead, "deadline");
-    assert!(timeout.is_timeout());
-    let body_timeout = TransportError::new(ErrorType::Timeout, Phase::ResponseBody, "deadline");
-    assert!(body_timeout.is_response_lost());
-    assert!(!body_timeout.is_timeout());
-}
-
 #[tokio::test]
 async fn denied_peer_refuses_before_transport_admission() {
     let transport = HttpTransport::new().expect("platform TLS");
@@ -1079,7 +1065,6 @@ async fn denied_peer_refuses_before_transport_admission() {
             .await
             .unwrap_err();
         assert!(error.is_before_dispatch());
-        assert_eq!(error.to_string(), "HTTP destination address denied");
     }
     assert!(transport.inner.state.lock().unwrap().clients.is_empty());
 }

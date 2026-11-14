@@ -27,12 +27,14 @@ use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
     sync::{OwnedSemaphorePermit, Semaphore},
-    time::{Instant, timeout, timeout_at},
+    time::{Instant, timeout_at},
 };
 use tokio_rustls::TlsConnector;
 use tower_service::Service;
 
 use wamn_capability_authority::connection_authority::{AuthorityDecision, HttpScheme, TlsIdentity};
+use wamn_engine::engine::MAX_HOST_CALL_DURATION as REQUEST_TIMEOUT;
+use wamn_engine::invocation_scope::InvocationExecution;
 
 use super::network_policy;
 
@@ -47,7 +49,6 @@ const MAX_CONNECTION_SOCKETS: usize = 8;
 const MAX_CONNECTION_REQUESTS: usize = 8;
 const MAX_IDLE_SOCKETS: usize = 2;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 type BoxError = Box<dyn StdError + Send + Sync>;
 type HttpClient = Client<PinnedConnector, Full<Bytes>>;
@@ -75,6 +76,7 @@ pub(crate) struct ClientIdentity {
 #[derive(Clone)]
 pub struct HttpTransport {
     inner: Arc<Inner>,
+    invocation: Option<(Box<str>, InvocationExecution)>,
 }
 
 impl fmt::Debug for HttpTransport {
@@ -101,6 +103,7 @@ struct State {
 struct ClientKey {
     identity: ClientIdentity,
     target: Target,
+    invocation: Option<Box<str>>,
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -125,6 +128,7 @@ struct ClientLife {
     // Connection tasks, connecting futures, and actual sockets retain this lease.
     _permit: OwnedSemaphorePermit,
     quota: Arc<ConnectionQuota>,
+    execution: Option<InvocationExecution>,
 }
 
 impl HttpTransport {
@@ -153,7 +157,22 @@ impl HttpTransport {
                 requests: Arc::new(Semaphore::new(MAX_REQUESTS)),
                 tls: Arc::new(tls),
             }),
+            invocation: None,
         }
+    }
+
+    pub(crate) fn for_invocation(&self, scope: &str, execution: InvocationExecution) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            invocation: Some((scope.into(), execution)),
+        }
+    }
+
+    fn deadline(&self) -> Instant {
+        let deadline = Instant::now() + REQUEST_TIMEOUT;
+        self.invocation.as_ref().map_or(deadline, |(_, execution)| {
+            deadline.min(execution.deadline())
+        })
     }
 
     pub(crate) async fn execute(
@@ -162,7 +181,7 @@ impl HttpTransport {
         decision: &AuthorityDecision,
         mut request: Request<&[u8]>,
     ) -> Result<Response<Bytes>, TransportError> {
-        let deadline = Instant::now() + REQUEST_TIMEOUT;
+        let deadline = self.deadline();
         let target = target(decision, request.uri())?;
         if request.body().len() > MAX_BODY_BYTES {
             return Err(input("HTTP request body limit exceeded"));
@@ -185,7 +204,7 @@ impl HttpTransport {
         // Admission precedes the only owned request-body copy.
         let request = request.map(|body| Full::new(Bytes::copy_from_slice(body)));
         let mut phase = Phase::AwaitingHead;
-        let result = timeout_at(deadline, async {
+        let send = timeout_at(deadline, async {
             let response = http.request(request).await.map_err(head_error)?;
             phase = Phase::ResponseBody;
             let (parts, body) = response.into_parts();
@@ -205,11 +224,15 @@ impl HttpTransport {
                 }
             }
             Ok(Response::from_parts(parts, bytes.freeze()))
-        })
-        .await;
+        });
+        let result = match &self.invocation {
+            Some((_, execution)) => execution.run(send).await,
+            None => Some(send.await),
+        };
         match result {
-            Ok(result) => result,
-            Err(error) => Err(TransportError::new(
+            Some(Ok(result)) => result,
+            None => Err(self.interrupted(phase)),
+            Some(Err(error)) => Err(TransportError::new(
                 ErrorType::Timeout,
                 phase,
                 "HTTP transport deadline exceeded",
@@ -224,7 +247,7 @@ impl HttpTransport {
         decision: &AuthorityDecision,
         mut request: Request<&[u8]>,
     ) -> Result<Response<Bytes>, TransportError> {
-        let deadline = Instant::now() + REQUEST_TIMEOUT;
+        let deadline = self.deadline();
         let target = target(decision, request.uri())?;
         if request.body().len() > MAX_BODY_BYTES {
             return Err(input("HTTP request body limit exceeded"));
@@ -244,6 +267,10 @@ impl HttpTransport {
                 sockets: Arc::new(Semaphore::new(1)),
                 requests: Arc::new(Semaphore::new(1)),
             }),
+            execution: self
+                .invocation
+                .as_ref()
+                .map(|(_, execution)| execution.clone()),
         });
         let endpoint = PinnedConnector {
             target,
@@ -263,7 +290,7 @@ impl HttpTransport {
             .build(endpoint);
         let request = request.map(|body| Full::new(Bytes::copy_from_slice(body)));
         let mut phase = Phase::AwaitingHead;
-        let result = timeout_at(deadline, async {
+        let send = timeout_at(deadline, async {
             let response = http.request(request).await.map_err(head_error)?;
             phase = Phase::ResponseBody;
             let (parts, body) = response.into_parts();
@@ -283,17 +310,37 @@ impl HttpTransport {
                 }
             }
             Ok(Response::from_parts(parts, bytes.freeze()))
-        })
-        .await;
+        });
+        let result = match &self.invocation {
+            Some((_, execution)) => execution.run(send).await,
+            None => Some(send.await),
+        };
         match result {
-            Ok(result) => result,
-            Err(error) => Err(TransportError::new(
+            Some(Ok(result)) => result,
+            None => Err(self.interrupted(phase)),
+            Some(Err(error)) => Err(TransportError::new(
                 ErrorType::Timeout,
                 phase,
                 "HTTP transport deadline exceeded",
             )
             .with_source(error)),
         }
+    }
+
+    fn interrupted(&self, phase: Phase) -> TransportError {
+        let expired = self
+            .invocation
+            .as_ref()
+            .is_some_and(|(_, execution)| Instant::now() >= execution.deadline());
+        TransportError::new(
+            if expired {
+                ErrorType::Timeout
+            } else {
+                ErrorType::Transport
+            },
+            phase,
+            "HTTP request ended",
+        )
     }
 
     fn client(
@@ -307,10 +354,19 @@ impl HttpTransport {
             .lock()
             .map_err(|_| input("HTTP transport state unavailable"))?;
         let now = Instant::now();
-        state
-            .clients
-            .retain(|_, client| now.duration_since(client.used) < IDLE_TIMEOUT);
-        let key = ClientKey { identity, target };
+        state.clients.retain(|_, client| {
+            now.duration_since(client.used) < IDLE_TIMEOUT
+                && client
+                    .life
+                    .execution
+                    .as_ref()
+                    .is_none_or(InvocationExecution::is_active)
+        });
+        let key = ClientKey {
+            identity,
+            target,
+            invocation: self.invocation.as_ref().map(|(scope, _)| scope.clone()),
+        };
         if let Some(client) = state.clients.get_mut(&key) {
             client.used = now;
             return Ok((client.http.clone(), Arc::clone(&client.life)));
@@ -347,6 +403,10 @@ impl HttpTransport {
         let life = Arc::new(ClientLife {
             _permit: permit,
             quota,
+            execution: self
+                .invocation
+                .as_ref()
+                .map(|(_, execution)| execution.clone()),
         });
         let connector = PinnedConnector {
             target: key.target.clone(),
@@ -557,8 +617,11 @@ where
     fn execute(&self, future: F) {
         let life = Arc::clone(&self.life);
         tokio::spawn(async move {
-            let _life = life;
-            future.await
+            if let Some(execution) = &life.execution {
+                let _ = execution.run(future).await;
+            } else {
+                future.await;
+            }
         });
     }
 }
@@ -596,9 +659,12 @@ impl Service<Uri> for PinnedConnector {
                 &connector.life.quota.sockets,
                 "HTTP connection socket capacity exhausted",
             )?;
-            // Hyper may retain a connecting future after its caller is cancelled.
-            // It keeps both leases and a bounded lifetime of its own.
-            let connected = timeout(REQUEST_TIMEOUT, async {
+            // Hyper can retain a connecting future. Its deadline still belongs to the invocation.
+            let deadline = connector.life.execution.as_ref().map_or(
+                Instant::now() + REQUEST_TIMEOUT,
+                InvocationExecution::deadline,
+            );
+            let connected = timeout_at(deadline, async {
                 let tcp = TcpStream::connect(connector.target.peer)
                     .await
                     .map_err(|error| {

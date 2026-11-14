@@ -231,7 +231,11 @@ Requests share bounded client, socket, and concurrent-request capacity.
 
 The transport bounds request and response bodies to eight MiB.
 It bounds headers to 100 entries and 32 KiB.
-One request has a 30-second deadline.
+Each HTTP request ends at the earlier of its 30-second limit and the invocation deadline.
+OAuth token requests use the same deadline.
+Generic integration exports also share that deadline, including time spent waiting for an integration instance.
+Dropping the invocation cancels its HTTP requests, connection tasks and blob storage effects.
+HTTP clients pool connections within one invocation. Requests still share host and connection capacity limits.
 The host preserves the distinction between refusal before dispatch and a lost response after dispatch.
 An idempotency key alone creates no remote same-result guarantee.
 

@@ -316,6 +316,18 @@ async fn unfinished_claims_have_a_call_bound_and_accept_late_completion(pool: sq
     .unwrap();
     assert!(matches!(
         store.claim(OPERATION, "late", vec![1]).await.unwrap(),
+        super::Claim::InProgress
+    ));
+    let bound =
+        (wamn_engine::engine::MAX_HOST_CALL_DURATION + super::CLAIM_CLOCK_SKEW).as_secs() + 1;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "UPDATE platform.write_log SET created_at = clock_timestamp() - interval '{bound} seconds'"
+    )))
+    .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+    .await
+    .unwrap();
+    assert!(matches!(
+        store.claim(OPERATION, "late", vec![1]).await.unwrap(),
         super::Claim::OutcomeUnknown
     ));
     store

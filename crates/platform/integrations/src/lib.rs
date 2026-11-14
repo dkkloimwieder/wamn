@@ -134,6 +134,7 @@ impl ConnectionDispatch for ComponentReads {
             .context("wasm version has no digest")?;
         if let Some(linked) = state.linked.get(&key)
             && linked.digest == digest
+            && !linked.instance.retired().await
         {
             return Ok(Some(linked.instance));
         }

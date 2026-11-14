@@ -97,10 +97,12 @@ struct NativeCall<P: InvocationPolicy> {
 struct ActiveScope<'a> {
     accessor: &'a Accessor<SharedCtx>,
     component_id: Arc<str>,
+    execution: crate::invocation_scope::InvocationExecution,
 }
 
 impl Drop for ActiveScope<'_> {
     fn drop(&mut self) {
+        self.execution.cancel();
         self.accessor.with(|mut access| {
             access.get().active_ctx.component_id = Arc::clone(&self.component_id);
         });
@@ -115,6 +117,7 @@ struct CloseScope<P: InvocationPolicy> {
 }
 impl<P: InvocationPolicy> Drop for CloseScope<P> {
     fn drop(&mut self) {
+        self.scope.execution.cancel();
         if !self.completed {
             self.scope.close();
         }
@@ -172,6 +175,7 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                 let active_scope = ActiveScope {
                     accessor,
                     component_id,
+                    execution: scope.execution.clone(),
                 };
                 // Declared after active_scope, so authority is revoked before the
                 // native component identity is restored, including cancellation.
@@ -185,6 +189,17 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                         Arc::clone(&failure),
                     )
                     .await?;
+                accessor.with(|mut access| {
+                    if let Ok(scopes) = access
+                        .get()
+                        .active_ctx
+                        .try_get_plugin::<crate::invocation_scope::InvocationScopes>(
+                        crate::invocation_scope::INVOCATION_SCOPES_ID,
+                    ) {
+                        scopes.set_execution(&scope.id, scope.execution.clone())?;
+                    }
+                    Ok::<_, anyhow::Error>(())
+                })?;
                 let run = accessor.with(|mut access| {
                     let handler = instance
                         .get_export_index(&mut access, None, &request.operation)
@@ -218,11 +233,13 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                     Ok(input) => {
                         let arguments = [context_value(request.context), input];
                         let mut results = [Val::Bool(false)];
-                        tokio::select! {
-                        biased;
-                        () = scope.cancelled() => anyhow::bail!("native invocation was cancelled"),
-                        result = run.call_concurrent(accessor, &arguments, &mut results) => result,
-                    }.map_err(anyhow::Error::from).context("typed operation trapped")?;
+                        scope
+                            .execution
+                            .run(run.call_concurrent(accessor, &arguments, &mut results))
+                            .await
+                            .context("native invocation ended")?
+                            .map_err(anyhow::Error::from)
+                            .context("typed operation trapped")?;
                         if encoded {
                             NativeOutcome::Json(super::json::emission(&results[0])?)
                         } else {
@@ -367,8 +384,8 @@ async fn invoke<P: InvocationPolicy>(
         .map(Box::<str>::from);
     let retains_authority = retained.is_some();
     let scope = Arc::new(match retained {
-        Some(id) => InvocationScope::with_id(Arc::clone(&request.application.policy), id),
-        None => InvocationScope::new(Arc::clone(&request.application.policy)),
+        Some(id) => InvocationScope::with_id(Arc::clone(&request.application.policy), id, deadline),
+        None => InvocationScope::new(Arc::clone(&request.application.policy), deadline),
     });
     let mut close = CloseScope {
         scope: Arc::clone(&scope),

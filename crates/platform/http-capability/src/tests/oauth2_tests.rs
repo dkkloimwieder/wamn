@@ -180,7 +180,9 @@ impl Fixture {
                         }),
                     )
                     .await
-                    .unwrap();
+                    .unwrap_or_else(|error| {
+                        assert!(error.is_incomplete_message(), "HTTP server failed: {error}");
+                    });
             }
         });
         let key = tempfile::NamedTempFile::new().unwrap();
@@ -374,11 +376,12 @@ impl Fixture {
                 .await
                 .map(drop)
                 .unwrap();
-            sqlx::raw_sql("CREATE SCHEMA wamn_run")
-                .execute(&mut admin)
-                .await
-                .map(drop)
-                .unwrap();
+            for sql in [
+                include_str!("../../../../../deploy/sql/run-state.sql"),
+                include_str!("../../../../../deploy/sql/run-queue.sql"),
+            ] {
+                sqlx::raw_sql(sql).execute(&mut admin).await.unwrap();
+            }
             let role = format!(
                 "oauth2_{}_{}",
                 database.path().trim_start_matches('/'),
@@ -402,10 +405,44 @@ impl Fixture {
             authority
                 .set_password(Some("oauth2-test-password"))
                 .unwrap();
+            let mut database_name = database.path().trim_start_matches('/').to_owned();
+            let guest_role = format!(
+                "wamn_app_{}",
+                wamn_identity_protocol::app_identity_hash(&project_env_key, &mut database_name)
+            );
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                wamn_control_provision::test_database::login_sql(
+                    wamn_control_provision::WorkloadRoleFamily::App,
+                    &database_name,
+                    &guest_role,
+                    "oauth2-test-password",
+                ),
+            ))
+            .execute(&mut admin)
+            .await
+            .unwrap();
+            let mut guest = authority.clone();
+            guest.set_username(&guest_role).unwrap();
+            let executor_role = format!("oauth2_executor_{}", uuid::Uuid::new_v4().simple());
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                wamn_control_provision::test_database::login_sql(
+                    wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform,
+                    &database_name,
+                    &executor_role,
+                    "oauth2-test-password",
+                ),
+            ))
+            .execute(&mut admin)
+            .await
+            .unwrap();
+            let mut executor = authority.clone();
+            executor.set_username(&executor_role).unwrap();
             projects.insert(
                 project.to_owned(),
                 ProjectConfig {
                     credentials: ClassCredentials::default()
+                        .with_class(AuthorityClass::GuestSql, guest)
+                        .with_class(AuthorityClass::ExecutorPlatform, executor)
                         .with_class(AuthorityClass::CallableHttp, authority),
                     guest_pool_max_size: 1,
                     platform_pool_max_size: 1,
@@ -566,6 +603,19 @@ impl Fixture {
     }
 
     async fn send(&self, plugin: &TestHttp, handle: &str) -> Result<Response, ConnectionError> {
+        // Each standalone fixture send represents a fresh invocation.
+        let invocation = plugin.postgres.invocation(&plugin.scope).unwrap();
+        plugin.postgres.scopes.revoke(&plugin.scope);
+        wamn_postgres_capability::invocation::bind_test_context(
+            &plugin.postgres,
+            &plugin.scope,
+            Arc::clone(&plugin.facts),
+            Arc::clone(&plugin.release),
+        );
+        plugin
+            .postgres
+            .bind_invocation(&plugin.scope, invocation)
+            .unwrap();
         let request = Request {
             requirement: handle.into(),
             path_and_query: "/api".into(),
@@ -670,6 +720,80 @@ fn token(number: u8, expires_in: Option<u64>) -> (u16, String) {
         value["expires_in"] = seconds.into();
     }
     (200, value.to_string())
+}
+
+#[tokio::test]
+async fn claimed_requests_stop_at_the_invocation_deadline_or_cancellation() {
+    use wamn_engine::invocation_scope::InvocationExecution;
+    use wamn_postgres_capability::write_log::{Claim, WriteLogStore};
+
+    let _lock = wamn_test_postgres::lock();
+    for cancel in [false, true] {
+        let mut fixture = Fixture::start(vec![token(1, Some(3600))], vec![200]).await;
+        let plugin = fixture.plugin(&fixture.parameters()).await;
+        wamn_postgres_capability::connection_binding::resolve(
+            &plugin.postgres,
+            &plugin.scope,
+            "handle",
+        )
+        .await
+        .expect("admit the request before measuring its remaining time");
+        let store = WriteLogStore::new(
+            Arc::clone(&plugin.postgres),
+            "project-a".into(),
+            "acme--dev--project-a".into(),
+        );
+        let operation = plugin.postgres.invocation(&plugin.scope).unwrap().operation;
+        assert!(matches!(
+            store.claim(&operation, "bounded", vec![1]).await.unwrap(),
+            Claim::New
+        ));
+        let execution = InvocationExecution::new(
+            tokio::time::Instant::now()
+                + std::time::Duration::from_secs(if cancel { 30 } else { 10 }),
+        );
+        plugin
+            .postgres
+            .scopes
+            .set_execution(&plugin.scope, execution)
+            .unwrap();
+        let (resume, arrived) = fixture.pause_token();
+        let request = Request {
+            requirement: "handle".into(),
+            path_and_query: "/api".into(),
+            ..effect_request(Vec::new())
+        };
+        let send = plugin.send(&plugin.scope, &request);
+        tokio::pin!(send);
+        tokio::select! {
+            result = &mut send => panic!("request ended before reaching the provider: {result:?}"),
+            result = arrived => result.unwrap(),
+        }
+        assert!(matches!(
+            store.claim(&operation, "bounded", vec![1]).await.unwrap(),
+            Claim::InProgress
+        ));
+        if cancel {
+            plugin.postgres.scopes.revoke(&plugin.scope);
+        }
+        let result = tokio::time::timeout(std::time::Duration::from_secs(12), &mut send)
+            .await
+            .unwrap();
+        if cancel {
+            assert!(matches!(result, Err(ConnectionError::Transport(_))));
+        } else {
+            assert!(matches!(result, Err(ConnectionError::Timeout)));
+        }
+        assert!(matches!(
+            store.claim(&operation, "bounded", vec![1]).await.unwrap(),
+            Claim::InProgress
+        ));
+        assert!(matches!(
+            plugin.send(&plugin.scope, &request).await,
+            Err(ConnectionError::Timeout | ConnectionError::AttestationInvalid)
+        ));
+        let _ = resume.send(());
+    }
 }
 
 #[tokio::test]

@@ -243,7 +243,7 @@ struct IntegrationStore {
 
 /// One integration instance and one store, shared by its application calls.
 pub struct Integration {
-    inner: Mutex<IntegrationStore>,
+    inner: Mutex<Option<IntegrationStore>>,
     digest: String,
 }
 
@@ -355,11 +355,18 @@ impl Integration {
         self.inner
             .lock()
             .await
+            .as_ref()
+            .expect("integration store was retired")
             .store
             .data()
             .active_ctx
             .store_id
             .to_string()
+    }
+
+    /// A canceled call discards the store and all of its socket resources.
+    pub async fn retired(&self) -> bool {
+        self.inner.lock().await.is_none()
     }
 
     /// Call one typed export with values that carry no store-owned resources.
@@ -369,7 +376,10 @@ impl Integration {
         function: &str,
         parameters: &[Val],
     ) -> anyhow::Result<Vec<Val>> {
-        let mut inner = self.inner.lock().await;
+        let mut slot = self.inner.lock().await;
+        // Own the store across the await. Cancellation drops its resource table
+        // (and aborts pending socket writes) before the dispatch releases its lease.
+        let mut inner = slot.take().context("integration store was retired")?;
         inner.store.set_epoch_deadline(1);
         let instance = inner.instance;
         let export = instance
@@ -382,14 +392,18 @@ impl Integration {
             .get_func(&mut inner.store, function)
             .context("integration export is not a function")?;
         let mut results = vec![Val::Bool(false); function.ty(&inner.store).results().len()];
-        tokio::time::timeout(crate::engine::MAX_HOST_CALL_DURATION, async {
+        let result = tokio::time::timeout(crate::engine::MAX_HOST_CALL_DURATION, async {
             function
                 .call_async(&mut inner.store, parameters, &mut results)
                 .await?;
             Ok::<_, anyhow::Error>(results)
         })
         .await
-        .context("integration call timed out")?
+        .context("integration call timed out")?;
+        if result.is_ok() {
+            *slot = Some(inner);
+        }
+        result
     }
 
     /// Test the remote service through the version's required health export.
@@ -448,12 +462,12 @@ impl PreparedIntegration {
         .await
         .context("integration startup timed out")??;
         Ok(Integration {
-            inner: Mutex::new(IntegrationStore {
+            inner: Mutex::new(Some(IntegrationStore {
                 store,
                 instance,
                 _workload: workload,
                 _egress: egress,
-            }),
+            })),
             digest,
         })
     }
@@ -599,20 +613,31 @@ impl IntegrationImports {
                                 let interface = interface.clone();
                                 let name = name.clone();
                                 Box::new(async move {
-                                    let values = dispatch
-                                        .call_scoped(
-                                            scopes
-                                                .as_deref()
-                                                .map(|scopes| (scopes, scope.as_ref())),
-                                            &label,
-                                            &interface,
-                                            &name,
-                                            parameters,
-                                        )
-                                        .await
-                                        .and_then(|values| {
-                                            values.with_context(|| format!("unavailable: {label}"))
-                                        });
+                                    let call = dispatch.call_scoped(
+                                        scopes.as_deref().map(|scopes| (scopes, scope.as_ref())),
+                                        &label,
+                                        &interface,
+                                        &name,
+                                        parameters,
+                                    );
+                                    let values = match &scopes {
+                                        Some(scopes) => match scopes.execution(&scope) {
+                                            Some(execution) => {
+                                                execution.run(call).await.unwrap_or_else(|| {
+                                                    Err(anyhow::anyhow!(
+                                                        "integration invocation ended"
+                                                    ))
+                                                })
+                                            }
+                                            None => {
+                                                Err(anyhow::anyhow!("invocation scope was revoked"))
+                                            }
+                                        },
+                                        None => call.await,
+                                    }
+                                    .and_then(|values| {
+                                        values.with_context(|| format!("unavailable: {label}"))
+                                    });
                                     let values = match values {
                                         Ok(values) => values,
                                         Err(error) => {

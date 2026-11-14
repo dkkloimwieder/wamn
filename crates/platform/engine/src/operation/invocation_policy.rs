@@ -90,43 +90,28 @@ pub trait ApplicationHost {
 pub struct InvocationScope<P: InvocationPolicy> {
     pub id: Box<str>,
     pub closed: Mutex<bool>,
-    cancelled: tokio::sync::Notify,
     policy: Arc<P>,
+    pub execution: crate::invocation_scope::InvocationExecution,
 }
 
 impl<P: InvocationPolicy> InvocationScope<P> {
-    pub fn new(policy: Arc<P>) -> Self {
-        Self {
-            id: super::next_scope("native-invocation"),
-            closed: Mutex::new(false),
-            cancelled: tokio::sync::Notify::new(),
-            policy,
-        }
+    pub fn new(policy: Arc<P>, deadline: tokio::time::Instant) -> Self {
+        Self::with_id(policy, super::next_scope("native-invocation"), deadline)
     }
 
-    pub fn with_id(policy: Arc<P>, id: Box<str>) -> Self {
+    pub fn with_id(policy: Arc<P>, id: Box<str>, deadline: tokio::time::Instant) -> Self {
         Self {
             id,
             closed: Mutex::new(false),
-            cancelled: tokio::sync::Notify::new(),
             policy,
-        }
-    }
-
-    pub async fn cancelled(&self) {
-        loop {
-            let notified = self.cancelled.notified();
-            if *self.closed.lock().expect("invocation scope lock poisoned") {
-                return;
-            }
-            notified.await;
+            execution: crate::invocation_scope::InvocationExecution::new(deadline),
         }
     }
 
     pub fn close(&self) {
+        self.execution.cancel();
         let mut closed = self.closed.lock().expect("invocation scope lock poisoned");
         *closed = true;
         self.policy.revoke(&self.id);
-        self.cancelled.notify_waiters();
     }
 }

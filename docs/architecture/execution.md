@@ -296,7 +296,10 @@ Its claims are unique by partition, stable operation reference and caller key. T
 The device and HTTP paths use the same admission, claim, dispatch and completion functions.
 Device completion stores its sample and outcome in one transaction.
 A changed request under the same key is a conflict. A finished key returns its stored outcome.
-An unfinished claim answers `in-progress` for 30 seconds, then `outcome-unknown`.
+An unfinished cloud write-log claim answers `in-progress` for 35 seconds, then `outcome-unknown`.
+This includes the 30-second maximum call duration and five seconds for clock skew.
+The edge uses a 30-second bound on its own clock.
+Connection requests share the invocation deadline and stop when the invocation ends.
 A late completion records its result, and the next retry returns it.
 Unfinished claims expire after 30 days, far above the maximum call duration.
 The client checks the external system before sending a new key.

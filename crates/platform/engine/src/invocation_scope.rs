@@ -4,6 +4,9 @@ use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
+use tokio::sync::watch;
+use tokio::time::Instant;
+
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wit::WitWorld;
 
@@ -28,6 +31,58 @@ impl InvocationAuthority for ReleaseScope {
 struct Record {
     trace: InvocationTrace,
     authority: Box<dyn InvocationAuthority>,
+    execution: InvocationExecution,
+}
+
+impl Drop for Record {
+    fn drop(&mut self) {
+        self.execution.cancel();
+    }
+}
+
+/// The absolute time limit and cancellation signal shared by a call's host work.
+#[derive(Debug, Clone)]
+pub struct InvocationExecution {
+    deadline: Instant,
+    cancelled: watch::Sender<bool>,
+}
+
+impl InvocationExecution {
+    pub fn new(deadline: Instant) -> Self {
+        Self {
+            deadline,
+            cancelled: watch::channel(false).0,
+        }
+    }
+
+    pub fn deadline(&self) -> Instant {
+        self.deadline
+    }
+
+    pub fn is_active(&self) -> bool {
+        !*self.cancelled.borrow() && Instant::now() < self.deadline
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.send_replace(true);
+    }
+
+    /// Drop host work before polling it once the invocation ends.
+    pub async fn run<F: Future>(&self, work: F) -> Option<F::Output> {
+        let mut cancelled = self.cancelled.subscribe();
+        tokio::select! {
+            biased;
+            _ = cancelled.wait_for(|cancelled| *cancelled) => None,
+            () = tokio::time::sleep_until(self.deadline) => None,
+            output = work => Some(output),
+        }
+    }
+}
+
+impl Default for InvocationExecution {
+    fn default() -> Self {
+        Self::new(Instant::now() + crate::engine::MAX_HOST_CALL_DURATION)
+    }
 }
 
 /// One registry shared by the host capability readers.
@@ -80,6 +135,7 @@ impl InvocationScopes {
         let record = records.entry(scope.to_owned()).or_insert_with(|| Record {
             trace: InvocationTrace::capture(),
             authority: Box::<T>::default(),
+            execution: InvocationExecution::default(),
         });
         update(
             (record.authority.as_mut() as &mut dyn Any)
@@ -122,6 +178,7 @@ impl InvocationScopes {
             Record {
                 trace,
                 authority: Box::new(authority),
+                execution: InvocationExecution::default(),
             },
         );
         Ok(ScopeLifetime {
@@ -173,6 +230,33 @@ impl InvocationScopes {
             .expect("invocation scopes lock poisoned")
             .get(scope)
             .map(|record| record.trace.clone())
+    }
+
+    pub fn execution(&self, scope: &str) -> Option<InvocationExecution> {
+        self.records
+            .read()
+            .expect("invocation scopes lock poisoned")
+            .get(scope)
+            .map(|record| record.execution.clone())
+    }
+
+    /// Bind native dispatch to the authority record that its host calls read.
+    pub fn set_execution(
+        &self,
+        scope: &str,
+        mut execution: InvocationExecution,
+    ) -> anyhow::Result<()> {
+        let mut records = self
+            .records
+            .write()
+            .expect("invocation scopes lock poisoned");
+        let record = records
+            .get_mut(scope)
+            .ok_or_else(|| anyhow::anyhow!("invocation scope was revoked"))?;
+        execution.deadline = execution.deadline.min(record.execution.deadline());
+        record.execution.cancel();
+        record.execution = execution;
+        Ok(())
     }
 
     pub fn revoke(&self, scope: &str) {

@@ -337,8 +337,9 @@ An external-only claim command omits `transaction: explicit_per_input`.
 The compiler refuses an operation that declares an external connection and also does SQL work or begins a host transaction. Split that work into separate operations. SQL operations and external connection operations can share a component.
 Each call resolves only the external connections declared by its executing operation. This uses the invocation authority; it does not inspect transaction state at run time.
 A begun claim has a null `result` until it finishes.
-An unfinished claim answers `in-progress` until its age exceeds `MAX_HOST_CALL_DURATION`, which is 30 seconds.
+An unfinished claim answers `in-progress` until its age exceeds `MAX_HOST_CALL_DURATION` plus five seconds for clock skew, or 35 seconds in total.
 After that boundary it answers `outcome-unknown`. A late completion can still record its result.
+Connection requests end at the invocation deadline. Dropping the invocation cancels its host work.
 A commit whose answer is lost also leaves its outcome unknown.
 
 A refused item leaves no row, so its key is free again, and a later different request under that key does its work.
@@ -407,7 +408,7 @@ A read writes no causation message, so it does not invalidate a list tag.
 
 The interface returns typed refusals for conflicts, unknown operations, denied grants, invalid callers and invalid lifecycle calls.
 PostgreSQL failures carry `postgres(pg-error)`.
-Unfinished claims return `in-progress` until the maximum call duration, then `outcome-unknown`.
+Unfinished claims return `in-progress` until the maximum call duration plus five seconds for clock skew, then `outcome-unknown`.
 An unread commit answer also returns `outcome-unknown`.
 The interface has no operator resolution state.
 

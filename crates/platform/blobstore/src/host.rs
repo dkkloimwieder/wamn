@@ -425,7 +425,17 @@ where
                 .and_then(|invocation| invocation.effects);
             let mut observed = EffectOutcomeGuard::new(&span, evidence);
             let started = std::time::Instant::now();
-            let outcome = effect.instrument(span).await;
+            let execution = plugin
+                .postgres
+                .scopes
+                .execution(&component_id)
+                .ok_or_else(|| {
+                    wash_runtime::wasmtime::Error::msg("invocation scope was revoked")
+                })?;
+            let outcome = execution
+                .run(effect.instrument(span))
+                .await
+                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("blobstore invocation ended"))?;
             let record_duration = |project: &str| {
                 wamn_capability_authority::effect_span::record_effect_ms(
                     &wamn_capability_authority::effect_span::BLOBSTORE_DURATION_MS,
