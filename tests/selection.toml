@@ -25,7 +25,6 @@ targets = [
   { workspace="root", package="wamn-conformance-tests", target="test:capability_registry", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:chart_seam_governance", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:component_export_index", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:guest_workspace_closure", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:otel_collector", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:palette_declarations", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:test_tiers", tier="contract" },
@@ -196,7 +195,6 @@ targets = [
   { workspace="root", package="wamn-schema-introspection", target="test:postgres_live", tier="live-postgres" },
   { workspace="root", package="wamn-schema-introspection", target="test:provenance_live", tier="live-postgres" },
   { workspace="root", package="wamn-identity-protocol", target="test:file_keys", tier="contract" },
-  { workspace="root", package="wamn-submodule-pins", target="bin:wamn-submodule-pins", tier="contract" },
   { workspace="root", package="wamn-test-infrastructure", target="bin:wamn-test-postgres", tier="live-postgres" },
   { workspace="root", package="wamn-test-infrastructure", target="lib:wamn_test_infrastructure", tier="live-postgres" },
   { workspace="root", package="wamn-test-postgres", target="lib:wamn_test_postgres", tier="live-postgres" },
@@ -225,12 +223,11 @@ targets = [
   { workspace="apps", package="wamn-postgres-statements", target="lib:wamn_postgres_statements", tier="contract" },
   { workspace="apps", package="wamn-record-history", target="lib:wamn_record_history", tier="contract" },
   { workspace="apps", package="wamn-record-history", target="test:fold", tier="contract" },
-  { workspace="no-std", package="http-page", target="cdylib:http_page", tier="contract" },
-  { workspace="no-std", package="http-request", target="cdylib:http_request", tier="contract" },
-  { workspace="no-std", package="label-render", target="cdylib:label_render", tier="contract" },
-  { workspace="no-std", package="label-render", target="test:golden", tier="contract" },
-  { workspace="no-std", package="wamn-modbus", target="cdylib:wamn_modbus", tier="unit" },
-  { workspace="no-std", package="transform", target="cdylib:transform", tier="unit" },
+  { workspace="apps", package="http-page", target="cdylib:http_page", tier="contract" },
+  { workspace="apps", package="http-request", target="cdylib:http_request", tier="contract" },
+  { workspace="apps", package="label-render", target="cdylib:label_render", tier="contract" },
+  { workspace="apps", package="wamn-modbus", target="cdylib:wamn_modbus", tier="unit" },
+  { workspace="apps", package="transform", target="cdylib:transform", tier="unit" },
   { workspace="root", package="wamn-environment", target="test:file_fixture_live", tier="live-postgres" },
 ]
 documentation = ['^docs/', '^\.beads/', '^[^/]+\.md$']
@@ -247,8 +244,6 @@ root_features = ["wamn-environment/ops"]
   WAMN_DEV_ENV_NATS_TLS_CA = "Credential or trust file for the operator-selected external service."
   WAMN_DEV_ENV_NATS_TLS_CERT = "Credential or trust file for the operator-selected external service."
   WAMN_DEV_ENV_NATS_TLS_KEY = "Credential or trust file for the operator-selected external service."
-  WAMN_DIGEST_REPRO_A = "Artifacts from the first independently built checkout for comparison."
-  WAMN_DIGEST_REPRO_B = "Artifacts from the second independently built checkout for comparison."
   WAMN_EDGE_LIVE_CA_FILE = "Credential or trust file for the operator-selected external service."
   WAMN_EDGE_LIVE_TOKEN_FILE = "Credential or trust file for the operator-selected external service."
   WAMN_EDGE_LIVE_URL = "Address of the operator-selected external service or artifact registry."
@@ -282,7 +277,7 @@ root_features = ["wamn-environment/ops"]
 [[rules]]
 # Bindgen reads shared WIT outside Cargo dependency edges.
 inputs = ['^wit/(wamn-(connection|flow-http-routing|integration|node|operation-0\.1|postgres-0\.4)|wasmcloud-blobstore)/', '^crates/platform/capability-authority/wit/deps/']
-workspaces = ["root", "apps", "no-std"]
+workspaces = ["root", "apps"]
 
 [[rules]]
 # Host and guest bindings read these shared interfaces.
@@ -386,9 +381,9 @@ id = "workflow-guests"
 outputs = {}
 commands = [
   ["mkdir", "-p", "{target}/wasm32-wasip2/debug"],
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/platform/no-std/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "transform"],
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/platform/no-std/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "http-request"],
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/platform/no-std/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "http-page"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "transform"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "http-request"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "http-page"],
 ]
 
 [[preparation]]

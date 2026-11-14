@@ -6922,14 +6922,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-submodule-pins"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "tempfile",
-]
-
-[[package]]
 name = "wamn-test-infrastructure"
 version = "0.1.0"
 dependencies = [

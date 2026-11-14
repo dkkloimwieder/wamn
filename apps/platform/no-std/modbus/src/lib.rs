@@ -1,14 +1,6 @@
 //! Bound Modbus TCP register operations and gateway health.
 
-#![cfg_attr(target_arch = "wasm32", no_std)]
 #![cfg_attr(target_arch = "wasm32", expect(unsafe_code, reason = "wit-bindgen"))]
-extern crate alloc;
-#[cfg(target_arch = "wasm32")]
-use alloc::vec::Vec;
-
-#[cfg(target_arch = "wasm32")]
-#[path = "../../guest_runtime.rs"]
-mod guest_runtime;
 
 #[cfg(target_arch = "wasm32")]
 #[expect(
@@ -16,12 +8,10 @@ mod guest_runtime;
     reason = "wit-bindgen emits Vec::from_raw_parts with equal length and capacity"
 )]
 mod component {
-    use alloc::{format, string::String, vec::Vec};
     wit_bindgen::generate!({
         path: ["../../../../wit/wamn-integration", "wit"],
         world: "wamn:modbus/client@1.0.0",
         generate_all,
-        std_feature,
     });
 
     use exports::wamn::modbus::{read, write};

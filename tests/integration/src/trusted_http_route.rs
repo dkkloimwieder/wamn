@@ -253,11 +253,8 @@ async fn build_with_credentials(
 ) -> anyhow::Result<TrustedHttpRoute> {
     let component_bytes = std::fs::read(&options.component_wasm).with_context(|| {
         format!(
-            "read component bytes {} — build it with a SEPARATE cargo invocation \
-             (`cargo build -p http-request --target wasm32-wasip2` inside \
-             apps/platform/no-std/, which is a separate workspace because sharing one \
-             invocation with std components unifies serde_json/std into the \
-             no_std guest and fails with E0152 — wamn-0h0g.11.56)",
+            "read component bytes {}: build with cargo build --manifest-path apps/Cargo.toml \
+             -p http-request --target wasm32-wasip2",
             options.component_wasm.display()
         )
     })?;

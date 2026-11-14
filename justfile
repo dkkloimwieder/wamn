@@ -35,3 +35,9 @@ cranelift *args:
 
 bench *args:
     cargo xtask bench "$@"
+
+submodule-pins *args:
+    cargo xtask submodule-pins "$@"
+
+netsuite-live *args:
+    cargo xtask netsuite-live "$@"

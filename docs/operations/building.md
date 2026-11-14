@@ -5,7 +5,7 @@ The native toolchain is Rust 1.99.0 with Clippy, rustfmt, and `wasm32-wasip2`.
 Native builds require system compiler tools and `protoc`.
 The web workspace uses Node 24.21.0 LTS and pnpm 12.9.1.
 TypeScript 7 compiles the web packages. The TypeScript 6 compatibility package supplies the API that ESLint requires.
-The guest workspaces are `apps/Cargo.toml` and `apps/platform/no-std/Cargo.toml`.
+The guest workspace is `apps/Cargo.toml`.
 [Components](../architecture/components.md) defines artifact and interface boundaries.
 
 Before a lane or test run, prepare the checkout once from its repository root:
@@ -173,6 +173,12 @@ With `--stamp-only`, the command reads the published UI without a local bundle.
 ## Repository tasks and tools
 
 `cargo xtask --help` lists repository tasks. The `justfile` calls those commands.
+`cargo xtask submodule-pins [main-ref]` refuses undeclared or backward submodule pins.
+It compares `HEAD` with the selected reference, which defaults to `main`.
+A pointer change must name the submodule and say `bump` or `pin` in its commit subject.
+A backward change must also say `revert`.
+Initialize the submodules and fetch their history before this check.
+`cargo xtask netsuite-live` runs the two [NetSuite operator workflows](../../apps/netsuite/README.md#owner-run-live-calls).
 [mise.toml](../../mise.toml) pins Helm, KCL, OpenTofu, and wash with download checksums.
 Run `mise install` to install them, then activate mise or use `mise exec -- <command>`.
 The pins retain the Linux x86_64 artifacts used by the former installers.
@@ -413,21 +419,8 @@ These changes make Cargo rebuild more:
 
 ## Guest artifact comparisons
 
-Use two clean worktrees at the same commit to test checkout independence.
-Give each worktree its own target and empty `RUSTC_WRAPPER`.
-Run `wamn build` of every package in each worktree.
-Then pass their `wasm32-wasip2/release` directories of the Cargo target to the existing comparison:
-
-```bash
-WAMN_DIGEST_REPRO_A="$GUEST_REPRO_FIRST_ARTIFACTS" \
-WAMN_DIGEST_REPRO_B="$GUEST_REPRO_SECOND_ARTIFACTS" \
-  cargo test --locked --offline -p wamn-conformance-tests --test guest_workspace_closure \
-  one_commit_built_in_two_checkouts_yields_identical_guest_digests \
-  -- --include-ignored --exact --nocapture
-```
-
-The comparison uses one Cargo home, so it does not test the Cargo home mapping.
-To test it, build one guest with a second `CARGO_HOME` path and compare its digest.
-
-Inspect the comparison output before changing digest pins.
-Use these comparisons when guest dependencies, selected features, workspace membership, or build flags change.
+Use two clean worktrees at the same commit to inspect checkout independence.
+Give each worktree its own Cargo target directory.
+Build the same guest separately in each worktree through the shared component builder.
+Compare the artifact digests with `sha256sum`.
+To inspect the Cargo home mapping, repeat the build with a second `CARGO_HOME` path.

@@ -22,7 +22,7 @@ The [naming contract](naming.md) defines operation spelling, and [data access](d
 The repository root owns the native Cargo workspace, including native application tests.
 `apps/Cargo.toml` owns the guest workspace.
 `apps/platform/` holds shared guests and guest libraries.
-The separate `apps/platform/no-std/` workspace isolates its dependency features.
+The guests under `apps/platform/no-std/` use standard WASI in that same workspace.
 Cargo owns membership, dependencies, features, and targets. Application manifests own component declarations.
 
 ## Control and publication

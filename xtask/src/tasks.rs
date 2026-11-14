@@ -57,11 +57,7 @@ pub async fn step(command: &mut Command, mode: Mode) -> anyhow::Result<()> {
 
 pub async fn lint(root: &Path, mode: Mode) -> anyhow::Result<()> {
     let mut failures = Vec::new();
-    for manifest in [
-        "Cargo.toml",
-        "apps/Cargo.toml",
-        "apps/platform/no-std/Cargo.toml",
-    ] {
+    for manifest in ["Cargo.toml", "apps/Cargo.toml"] {
         let mut format = Command::new("cargo");
         format.current_dir(root).args([
             "fmt",
@@ -110,10 +106,7 @@ pub async fn lint(root: &Path, mode: Mode) -> anyhow::Result<()> {
                     None,
                 ),
             ],
-            _ => &[
-                (&["--workspace"], Some("-C panic=abort")),
-                (&["--workspace", "--target", "wasm32-wasip2"], None),
-            ],
+            _ => unreachable!("known Cargo workspace"),
         };
         for (args, flags) in variants {
             let mut command = Command::new("cargo");

@@ -72,11 +72,7 @@ fn policy(root: &Path) -> Value {
 fn real_metadata_has_exactly_one_tier_per_executable_target() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut targets = BTreeSet::new();
-    for (workspace, manifest) in [
-        ("root", "Cargo.toml"),
-        ("apps", "apps/Cargo.toml"),
-        ("no-std", "apps/platform/no-std/Cargo.toml"),
-    ] {
+    for (workspace, manifest) in [("root", "Cargo.toml"), ("apps", "apps/Cargo.toml")] {
         let output = Command::new(env!("CARGO"))
             .current_dir(&root)
             .args([
@@ -359,11 +355,7 @@ fn ignored_tests_name_prerequisites_and_never_act_as_child_helpers() {
     }
     assert_eq!(exclusions.len(), 0, "no test is excluded");
     let mut errors = Vec::new();
-    for (workspace, manifest) in [
-        ("root", "Cargo.toml"),
-        ("apps", "apps/Cargo.toml"),
-        ("no-std", "apps/platform/no-std/Cargo.toml"),
-    ] {
+    for (workspace, manifest) in [("root", "Cargo.toml"), ("apps", "apps/Cargo.toml")] {
         let output = Command::new(env!("CARGO"))
             .current_dir(&root)
             .args([

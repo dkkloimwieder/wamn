@@ -2,12 +2,12 @@
 resolver = "2"
 # Application guests live in their package homes. Shared guest code and test
 # fixtures live under platform/.
-#
-# The `no_std` palette guests are NOT members: Cargo feature unification is
-# additive-only, and members here reach `serde_json/std`, which collides with a
-# guest-supplied `#[panic_handler]`. They live in the second workspace at
-# `platform/no-std/`, whose manifest carries the full reason (wamn-0h0g.11.56).
 members = [
+    "platform/no-std/http-page",
+    "platform/no-std/http-request",
+    "platform/no-std/label-render",
+    "platform/no-std/modbus",
+    "platform/no-std/transform",
     "modbus_reader/component",
     "client_acme_receiving/component",
     "edge_device/component",
@@ -30,7 +30,6 @@ members = [
     "platform/fixtures/sqlx-command",
 ]
 exclude = [
-    "platform/no-std",
     "wamn_receiving/tests",
     "wamn_wms/tests",
 ]
@@ -115,7 +114,6 @@ serde = "1"
 serde_json = "1"
 sqlx-core = { version = "=0.9.0", default-features = false }
 # Released bindings support the async blobstore contract on the pinned compiler.
-# The no_std workspace uses the same release without the async feature.
 wit-bindgen = { version = "0.62.0", default-features = false, features = ["async", "macros", "realloc"] }
 
 # Guest-owned path identities are independent of the native workspace contract.

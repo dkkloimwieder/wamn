@@ -29,10 +29,9 @@ COPY apps ./apps
 COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests
-# xtask and tools/submodule-pins are workspace members, so Cargo needs
-# their manifests to load the workspace.
+# xtask is a workspace member, so Cargo needs
+# its manifest to load the workspace.
 COPY xtask ./xtask
-COPY tools/submodule-pins ./tools/submodule-pins
 # The copied .cargo/config.toml selects clang/mold, limits build jobs, and
 # enables offline SQLx. It sets no rustc-wrapper, so this stage and
 # component-toolchain need no wrapper binary. Local Cargo uses kache through

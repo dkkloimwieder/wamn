@@ -212,8 +212,8 @@ TMPDIR=/var/tmp RUSTC_WRAPPER='' cargo test --locked --offline \
 
 ## Owner-run live calls
 
-Run `tools/netsuite/live.sh` with the credentials JSON from step 1.
-The script creates or updates the integration and connection through the same commands as the setup above.
+Run `cargo xtask netsuite-live` with the credentials JSON from step 1.
+The command creates or updates the integration and connection through the same commands as the setup above.
 It calls `record.get` and `suiteql.query` once each, then waits for their results.
 It never prints the private key and is never a test target.
 It uses only `rest_webservices` because these calls use SuiteTalk.
@@ -222,16 +222,18 @@ Publish all seven wirings with the package.
 Enable the manual workflows `record_get` and `suiteql_query` in the target application.
 Set `WAMN_CONTROL_URL` and `WAMN_TOKEN` as above.
 Set `WAMN_PG_ADMIN_URL` to the deployed project admin database URL.
-The script needs `jq`, `psql`, and `wamn-ctl` on `PATH`.
+The command needs `wamn` on `PATH` and connects to Postgres directly.
 If the CLI is elsewhere, set `WAMN_CTL` to its path.
+A relative private key path resolves from the current directory.
+The command creates a private temporary directory and removes it when it returns.
 Put a query with a final `ORDER BY id` clause in `/private/netsuite/query.sql`.
 
 ```sh
-tools/netsuite/live.sh /private/netsuite/credentials.json wms dev netsuite \
+cargo xtask netsuite-live /private/netsuite/credentials.json wms dev netsuite \
   'https://<application-host>' 42 /private/netsuite/query.sql
 ```
 
-`wamn-ctl workflow start` starts a workflow through the host and prints its run id.
+`wamn workflow start` starts a workflow through the host and prints its run id.
 It takes `--host-url`, `--token` (or `WAMN_TOKEN`), `--workflow-id`, `--idempotency-key` and `--input`.
 A repeated start with the same key and input answers the first run.
 Read the result of a run from `wamn_run.runs` in the project database.

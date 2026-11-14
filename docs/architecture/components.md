@@ -105,7 +105,7 @@ The composer refuses application imports of `wamn:operation` and application exp
 
 ## Guest build identity
 
-`apps/Cargo.toml` and `apps/platform/no-std/Cargo.toml` own guest membership and feature resolution.
+`apps/Cargo.toml` owns guest membership and feature resolution.
 The build tool selects guests from Cargo metadata and application declarations.
 Each guest receives its own Cargo invocation.
 Combining unrelated guests can change dependency features and therefore compiled bytes.
@@ -113,7 +113,10 @@ Combining unrelated guests can change dependency features and therefore compiled
 Standard-library guests target `wasm32-wasip2`.
 The build preserves their WASI imports, and admission applies the ordinary capability policy.
 The host supplies an empty application environment. Guest bytes are never rewritten.
-Existing `no_std` guests keep their separate workspace.
+The palette and Modbus guests use standard WASI at their existing paths.
+Shared crates can live outside the guest directory.
+Each dependency inherits its governed identity from its workspace.
+Directory containment does not define dependency ownership.
 The operations pages own build commands and artifact comparisons.
 
 ## Shared label renderer
