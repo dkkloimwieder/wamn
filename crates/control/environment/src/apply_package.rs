@@ -11,7 +11,6 @@ use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 
 mod entity_maps;
 mod error;
-mod local_target;
 mod migration;
 mod operation_grants;
 mod package_version;
@@ -22,7 +21,6 @@ pub use error::{
     APPLY_PACKAGE_REFUSAL, ApplyPackageError, ApplyPackageErrorType,
     PACKAGE_ARTIFACT_REQUIRED_REFUSAL,
 };
-pub use local_target::{manifest_digest, record_manifest};
 pub use package_version::{
     LOCK_PACKAGE_SQL, load_applied_package, read_applied_package, read_package_migrations,
 };
@@ -155,47 +153,16 @@ pub(crate) async fn prepare_package(root: &PackageRoot) -> anyhow::Result<Prepar
 
 /// Initialize an absent package. Existing packages retain their installed SQL.
 pub async fn apply_package(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
-    apply_request(request, None, false).await
+    apply_request(request, false).await
 }
 
 /// Explicitly advance package SQL without selecting or caching executable releases.
 pub async fn apply_package_schema(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
-    apply_request(request, None, true).await
-}
-
-/// Initialize missing local SQL without advancing an installed schema from the watcher.
-pub async fn apply_local_package(
-    request: ApplyPackageRequest,
-    environment: &str,
-) -> anyhow::Result<ApplyOutcome> {
-    require_local_package(request, environment, false).await
-}
-
-/// Explicitly apply local SQL without publishing or activating application code.
-pub async fn apply_local_package_schema(
-    request: ApplyPackageRequest,
-    environment: &str,
-) -> anyhow::Result<ApplyOutcome> {
-    require_local_package(request, environment, true).await
-}
-
-async fn require_local_package(
-    request: ApplyPackageRequest,
-    environment: &str,
-    advance_schema: bool,
-) -> anyhow::Result<ApplyOutcome> {
-    wamn_runtime::local_application::require_local_target(
-        &request.database_url,
-        &request.project_env_key(),
-        environment,
-    )
-    .await?;
-    apply_request(request, Some(environment), advance_schema).await
+    apply_request(request, true).await
 }
 
 async fn apply_request(
     request: ApplyPackageRequest,
-    local_environment: Option<&str>,
     advance_schema: bool,
 ) -> anyhow::Result<ApplyOutcome> {
     ensure!(
@@ -205,7 +172,7 @@ async fn apply_request(
         "org, project and environment must not be empty"
     );
     let mut package = prepare_package(&request.package).await?;
-    if local_environment.is_none() && package.directory.artifact_digest.is_none() {
+    if package.directory.artifact_digest.is_none() {
         return Err(ApplyPackageError::artifact_required(&format!(
             "{}@{}",
             package.manifest.package.id, package.manifest.package.version
@@ -225,7 +192,6 @@ async fn apply_request(
         &request.database_url,
         &request.project_env_key(),
         package,
-        local_environment,
         advance_schema,
     )
     .await;
@@ -242,7 +208,6 @@ async fn apply(
     catalog_input: &str,
     project_env_key: &str,
     package: PreparedPackage,
-    local_environment: Option<&str>,
     advance_schema: bool,
 ) -> anyhow::Result<ApplyOutcome> {
     let plan = package_metadata(&package.directory)?;
@@ -287,28 +252,13 @@ async fn apply(
     )
     .await?;
     let mut tx = migration::begin(client, project_env_key).await?;
-    let mut local_comment = match local_environment {
-        Some(environment) => Some(
-            wamn_runtime::local_application::read_local_target_comment(
-                &mut tx,
-                project_env_key,
-                environment,
-            )
-            .await?,
-        ),
-        None => None,
-    };
-    let artifact_digest = if local_comment.is_some() {
-        None
-    } else {
-        Some(
-            package
-                .directory
-                .artifact_digest
-                .as_deref()
-                .ok_or_else(|| ApplyPackageError::artifact_required(&coordinate))?,
-        )
-    };
+    let artifact_digest = Some(
+        package
+            .directory
+            .artifact_digest
+            .as_deref()
+            .ok_or_else(|| ApplyPackageError::artifact_required(&coordinate))?,
+    );
     let applied = load_applied_package(&mut tx, project_env_key, &package_id).await?;
     if !advance_schema && let Some(installed) = &applied {
         wamn_catalog::package_schema::validate_package_schema_source(
@@ -385,15 +335,6 @@ async fn apply(
     if applied.is_none() {
         changed |=
             operation_grants::ensure_admin_role(&mut tx, project_env_key, &mut drops).await?;
-    }
-    if let Some(comment) = local_comment.as_mut() {
-        changed |= local_target::record_manifest(
-            &mut tx,
-            comment,
-            &coordinate,
-            &local_target::manifest_digest(&package.directory),
-        )
-        .await?;
     }
     tx.commit().await?;
     drop(executor);

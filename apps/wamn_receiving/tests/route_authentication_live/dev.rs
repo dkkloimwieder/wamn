@@ -18,7 +18,7 @@ impl DevJourneyInputs {
         let inputs = Self {
             wamn_binary: required_journey_path("WAMN_RECEIVING_DEV_BIN")?,
             environment: DevEnvironmentInputs {
-                local_artifacts: wamn_dev_control::dev::config::LocalArtifacts {
+                local_artifacts: wamn_dev::dev::config::LocalArtifacts {
                     directory: PathBuf::new(),
                     flow_http_component: required_journey_path("WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")?
                         .canonicalize()
@@ -345,7 +345,7 @@ pub(super) async fn assert_dev_command(
             "/../../../tests/integration/fixtures/local-environments/acme-receiving.k"
         )),
     )?;
-    let environment = wamn_dev_control::dev::environment::provision(
+    let environment = wamn_dev::dev::environment::provision(
         system_url,
         &mut admin,
         root,

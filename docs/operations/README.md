@@ -2,7 +2,7 @@
 
 These pages contain current commands and their prerequisites. Start with the development loop for an edit, then select building, tests, or deployment. Architecture owns behavior, and testing owns the meaning of results.
 
-- [development-loop.md](development-loop.md): edit, build, activate, and run the operator interface.
+- [development-loop.md](development-loop.md): watch source, publish artifacts, and deploy on `kind`.
 - [building.md](building.md): pinned toolchains, native programs, guests, and artifact comparisons.
 - [running-tests.md](running-tests.md): test selection, database isolation, generation, results, and cleanup.
 - [cluster-tests.md](cluster-tests.md): disposable Receiving, WMS, and native cluster runs.
@@ -11,7 +11,7 @@ These pages contain current commands and their prerequisites. Start with the dev
 - [gcp.md](gcp.md): the Google Cloud deployment in project `wamn-dev`, step by step.
 - [backup-and-recovery.md](backup-and-recovery.md): cluster backup, point-in-time recovery, and one-table recovery.
 - [observability.md](observability.md): the trace bucket layout and the DuckDB queries of one hour.
-- [benchmark.md](benchmark.md): the local run, and the current tier 2, local, and PostgreSQL minimum baselines.
+- [benchmark.md](benchmark.md): development measurements and current tier 2 and PostgreSQL baselines.
 - [delivery.md](delivery.md): release publication, selection, and deployment.
 - [edge.md](edge.md): serve the edge box, read its status, and resolve refused samples.
 - [queued-automation.md](queued-automation.md): start, park, release, and list queued workflow runs.

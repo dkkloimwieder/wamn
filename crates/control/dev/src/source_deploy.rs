@@ -11,48 +11,19 @@ use wamn_compiler::{
     build::{default_output_root, package_output},
     build_record,
 };
-use wamn_environment::environment::{Platform, document::EnvironmentDocument};
+use wamn_environment::environment::document::EnvironmentDocument;
 use wamn_package_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_release_control::publish_release::{
     EntryPublicationInputs, PublishReleaseRequest, publish_release,
 };
 
-use crate::dev::config::read_package_manifest;
-
-/// Build the selected closure and publish through the application release owner.
-/// The build uses private databases. This operation never writes the environment file.
-pub async fn publish(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    root: &Path,
-    database_url: &str,
-) -> anyhow::Result<(String, ManifestDigest)> {
-    let source = build(document, root, database_url).await?;
-    let mut platform = platform.clone();
-    wamn_environment::environment::runtime::resolve_platform(&mut platform, &document.org).await?;
-    let registry = PackageRegistry {
-        artifact_base: platform
-            .package_artifact_base
-            .as_ref()
-            .context("set WAMN_PACKAGE_ARTIFACT_BASE for source deployment")?
-            .to_owned(),
-        credentials: None,
-        registry_auth_file: platform.registry_auth_file.clone(),
-        insecure_registry: platform.insecure_registry,
-        oci_ca_paths: platform.oci_ca_paths.clone(),
+fn read_package_manifest(root: &Path) -> anyhow::Result<PackageManifest> {
+    let bytes = if wamn_compiler::is_authored(root) {
+        wamn_compiler::compile_manifest(root)?
+    } else {
+        std::fs::read(wamn_compiler::package_manifest_path(root))?
     };
-    let component_artifact_base = platform
-        .component_artifact_base
-        .as_deref()
-        .context("set WAMN_COMPONENT_ARTIFACT_BASE for source deployment")?;
-    publish_built(
-        document,
-        source,
-        registry,
-        component_artifact_base,
-        &platform.release_artifact_base,
-    )
-    .await
+    Ok(PackageManifest::from_slice(&bytes)?)
 }
 
 /// Build and publish source without deployment or target-database credentials.
@@ -61,7 +32,41 @@ pub async fn publish_from_env(
     root: &Path,
     database_url: &str,
 ) -> anyhow::Result<(String, ManifestDigest)> {
-    let source = build(document, root, database_url).await?;
+    publish_source_from_env(document, build(document, root, database_url).await?).await
+}
+
+/// Publish the selected source closure's existing build output without rebuilding.
+/// Package publication verifies the build records before it pushes artifacts.
+pub async fn publish_built_from_env(
+    document: &EnvironmentDocument,
+    root: &Path,
+) -> anyhow::Result<(String, ManifestDigest)> {
+    let (application, roots) = sources(document, root)?;
+    let packages = roots
+        .iter()
+        .map(|root| {
+            let manifest = read_package_manifest(root)?;
+            Ok(PackageCoordinate::new(
+                manifest.package.id,
+                manifest.package.version,
+            )?)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    publish_source_from_env(
+        document,
+        SourceBuild {
+            application,
+            roots,
+            packages,
+        },
+    )
+    .await
+}
+
+async fn publish_source_from_env(
+    document: &EnvironmentDocument,
+    source: SourceBuild,
+) -> anyhow::Result<(String, ManifestDigest)> {
     let variable = |name: &str| {
         std::env::var(name).with_context(|| format!("set {name} for source publication"))
     };

@@ -5,7 +5,7 @@ Choose an [output directory](running-tests.md#capture-a-run) and follow the [cle
 
 DEP2-02 removes the Receiving, WMS, RC, and combined identity/session cluster runners.
 [Removed coverage](running-tests.md#removed-application-cluster-coverage) records the historical combinations without replacements.
-[Native application tests](running-tests.md#local-application-business-tests) retain the business fixtures.
+[Application business tests](running-tests.md#local-application-business-tests) retain their assertions and require product deployment fixtures.
 
 ### Deployed queue recovery on wamn-dev
 

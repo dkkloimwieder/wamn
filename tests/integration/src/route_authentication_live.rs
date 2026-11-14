@@ -27,7 +27,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 
 use crate::fixture_membership::{self, MembershipRequest};
-use wamn_dev_control::dev::environment::{
+use wamn_dev::dev::environment::{
     ENVIRONMENT, JourneyTarget, ORG, PROJECT, PROJECT_ENV_KEY, connect, provision_route,
     reset_control_store,
 };
@@ -602,7 +602,7 @@ async fn assert_user_environment_membership(
     .execute(&mut other_project)
     .await
     .map(drop)?;
-    wamn_dev_control::dev::environment::install_journey_platform_base_grants(
+    wamn_dev::dev::environment::install_journey_platform_base_grants(
         &mut other_project,
         "example.test",
     )
@@ -906,7 +906,7 @@ async fn production_operator_authentication_and_operation_authorization() {
 }
 
 async fn production_operator_authentication(root: &Path) {
-    wamn_dev_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
+    wamn_dev::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
     // Provisioning changes roles and database grants of the whole server, so
     // the test starts its own.
     let mut server =

@@ -12,7 +12,8 @@ use rustix::process::{Pid, Signal, kill_process_group};
 use serde::Deserialize as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_dev_control::owned_command;
+#[path = "support/owned_command.rs"]
+mod owned_command;
 use wamn_environment::platform::{
     artifact_plan,
     document::{ClusterDocument, Provider},
@@ -66,6 +67,15 @@ impl Drop for Run {
 
 // The cluster document is the one target input authorized by wamn-alrvy.18.
 // The namespace annotation records consent to use the platform as disposable.
+#[tokio::test]
+#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD"]
+async fn connection_and_caller_kind() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD",
+    );
+    focused(application_deploy::Case::ConnectionAndCaller).await
+}
+
 #[tokio::test]
 #[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD"]
 async fn application_recovery_kind() -> anyhow::Result<()> {
@@ -261,9 +271,11 @@ async fn focused(case: application_deploy::Case) -> anyhow::Result<()> {
         document.provider == Provider::Kind
             || !matches!(
                 case,
-                application_deploy::Case::Reset | application_deploy::Case::PlatformSchema
+                application_deploy::Case::Reset
+                    | application_deploy::Case::PlatformSchema
+                    | application_deploy::Case::ConnectionAndCaller
             ),
-        "this case requires type for its additional isolated environment"
+        "this case requires an installed development cluster from the kind tool"
     );
     let mut run = prepare(&repository, Path::new(""), &binary, &kcl, Some(document))?;
     run.target.context =

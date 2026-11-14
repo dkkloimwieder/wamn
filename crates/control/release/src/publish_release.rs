@@ -10,7 +10,6 @@
 //! Postgres row: `apply` step 2 writes `catalog.releases` where it installs (R1
 //! (3), R2, §10.2).
 
-use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 pub(super) mod plan;
 pub use plan::{
@@ -264,14 +263,6 @@ impl PublishReleaseRequest {
     }
 }
 
-/// Provisioned target required only by local development.
-#[derive(Debug)]
-pub struct LocalReleaseTarget<'a> {
-    pub database_url: &'a str,
-    pub control_database_url: &'a str,
-    pub run_schema: &'a str,
-}
-
 /// Publish one effective release from the package artifacts in
 /// `registry`: push its manifest to `release_artifact_base` with the
 /// credential and trust roots of `registry` (§8.1), and return its manifest
@@ -288,42 +279,6 @@ pub async fn publish_release(
             .await?
             .digest,
     )
-}
-
-/// Assemble a candidate only in a provisioned disposable target, without publication.
-///
-/// The packages are the directories `package_roots`, and the components their
-/// in-process admissions: the dev loop pushes nothing and reads no registry.
-pub async fn publish_local(
-    args: PublishReleaseRequest,
-    target: LocalReleaseTarget<'_>,
-    package_roots: &[PathBuf],
-    admissions: &[wamn_package_control::component_admission::ComponentAdmission],
-    palette: &[crate::palette::PaletteComponent],
-) -> anyhow::Result<(
-    PublishedRelease,
-    wamn_runtime::local_application::LocalApplicationFacts,
-)> {
-    wamn_runtime::local_application::require_local_target(
-        target.database_url,
-        &args.project_env_key(),
-        &args.environment,
-    )
-    .await?;
-    ensure!(
-        read_environment_disposable(target.control_database_url, &args.org, &args.environment)
-            .await?,
-        "local candidates require a provisioned disposable environment"
-    );
-    let mut client = wamn_postgres::connect(target.database_url).await?;
-
-    sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
-        .bind(args.project_env_key())
-        .fetch_one(&mut client)
-        .await?;
-    let assembled = assemble_local_release(&args, package_roots, admissions, palette)?;
-    drop(client);
-    Ok((assembled.published, assembled.facts))
 }
 
 /// Built application bytes with the platform route layer, not yet selected for serving.
@@ -535,24 +490,21 @@ fn covering_application<'a>(
     }
 }
 
-/// A local release assembled from its package files and admitted components.
+/// An unpublished release assembled for an edge bundle.
 #[derive(Debug)]
-pub struct AssembledLocalRelease {
+pub struct AssembledRelease {
     pub published: PublishedRelease,
-    pub facts: wamn_runtime::local_application::LocalApplicationFacts,
+    pub components: Vec<AdmittedComponent>,
 }
 
-/// Assemble the manifest and local facts of a local release from the package
-/// directories `package_roots` and admitted components, as [`publish_local`]
-/// does. Each component's descriptor comes from
-/// its admission. It reads no database.
-pub fn assemble_local_release(
+/// Assemble an edge release from package directories and admitted components.
+/// This operation reads no database and publishes no artifacts.
+pub fn assemble_release(
     args: &PublishReleaseRequest,
     package_roots: &[PathBuf],
     admissions: &[wamn_package_control::component_admission::ComponentAdmission],
     palette: &[crate::palette::PaletteComponent],
-) -> anyhow::Result<AssembledLocalRelease> {
-    use wamn_runtime::local_application::LocalApplicationFacts;
+) -> anyhow::Result<AssembledRelease> {
     let (attachment_paths, _) = package_files(package_roots);
     let authored = read_package_attachments(&attachment_paths)?;
     let (package_manifests, route_contracts) = read_package_manifests(package_roots)?;
@@ -640,29 +592,13 @@ pub fn assemble_local_release(
             .iter()
             .map(|component| component.facts.component.clone()),
     );
-    let requirements = admissions
-        .iter()
-        .flat_map(|admission| admission.requirements().iter())
-        .filter(|requirement| {
-            manifest.components.iter().any(|component| {
-                component.descriptor.component_digest.as_str() == requirement.component_digest()
-            })
-        })
-        .cloned()
-        .collect();
-    let facts = LocalApplicationFacts {
-        manifest_digest: digest.clone(),
-        components,
-        requirements,
-        bindings: Vec::new(),
-    };
-    Ok(AssembledLocalRelease {
+    Ok(AssembledRelease {
         published: PublishedRelease {
             manifest,
             digest,
             canonical_bytes,
         },
-        facts,
+        components,
     })
 }
 
@@ -767,42 +703,6 @@ async fn publish_candidate(
     )
     .await?;
     Ok(published)
-}
-
-/// Read the environment's lifecycle setting from its registry row.
-async fn read_environment_disposable(
-    control_database_url: &str,
-    org: &str,
-    env: &str,
-) -> anyhow::Result<bool> {
-    on_control_plane(control_database_url, async |control| {
-        Ok(sqlx::query(wamn_registry::sql::ENVIRONMENT_DISPOSABLE)
-            .bind(org)
-            .bind(env)
-            .fetch_one(&mut *control)
-            .await?
-            .get(0))
-    })
-    .await
-}
-
-pub(crate) async fn on_control_plane<F, T>(
-    control_database_url: &str,
-    write: F,
-) -> anyhow::Result<T>
-where
-    F: AsyncFnOnce(&mut Client) -> anyhow::Result<T>,
-{
-    let mut control = wamn_postgres::connect(control_database_url)
-        .await
-        .context("connect to the control database")?;
-
-    let outcome = write(&mut control).await;
-    drop(control);
-    match outcome {
-        Ok(outcome) => Ok(outcome),
-        Err(error) => Err(error),
-    }
 }
 
 pub fn publish_release_with_package_manifests(

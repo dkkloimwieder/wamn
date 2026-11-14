@@ -42,7 +42,7 @@ url = { workspace = true }
 wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }
 wamn-environment = { workspace = true, features = ["ops"] }
-wamn-dev-control = { workspace = true }
+wamn-dev = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["ops", "test-util"] }
 wamn-registry = { workspace = true }
 wamn-catalog = { workspace = true }
@@ -75,7 +75,7 @@ wamn-test-postgres = { workspace = true }
 wamn-package-control = { workspace = true, features = ["test-util"] }
 wamn-release-control = { workspace = true }
 wamn-environment = { workspace = true, features = ["test-util"] }
-wamn-dev-control = { workspace = true, features = ["test-util"] }
+wamn-dev.workspace = true
 
 [lints]
 workspace = true

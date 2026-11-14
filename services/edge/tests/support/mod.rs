@@ -21,7 +21,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use serde_json::json;
 use wamn_catalog::edge_bundle::BUNDLE_FILE_NAME;
-use wamn_dev_control::dev::edge_bundle::{EdgeTarget, write_package};
+use wamn_dev::dev::edge_bundle::{EdgeTarget, write_package};
 use wamn_digest::bytes_sha256;
 use wamn_edge::config::{
     EdgeConfig, HttpConfig, ReleaseConfig, SessionConfig, StoreConfig, TargetConfig,

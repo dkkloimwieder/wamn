@@ -6,7 +6,6 @@ pub use wamn_test_infrastructure::ctl_process;
 
 #[cfg(test)]
 mod control_client_live;
-pub mod local_application;
 #[cfg(test)]
 mod route_authentication_live;
 #[cfg(test)]

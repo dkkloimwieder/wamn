@@ -60,7 +60,7 @@ cargo build --locked --offline -p wamn-host -p wamn-control -p wamn-ctl -p wamn-
 `wamn` owns the developer commands.
 `wamn-control` serves authenticated org control routes and runs authorized operation Jobs.
 `wamn-ctl` runs internal bootstrap steps.
-The local identity issuer needs `wamn-identity` beside the CLI or at the explicit `WAMN_IDENTITY_BINARY` path.
+Development uses the identity service installed on `kind`. The CLI needs no identity process beside it.
 
 [`wamn build`](#wamn-build) compiles the components of each package it builds.
 Each guest gets its own Cargo invocation, with the release profile, for `wasm32-wasip2`.

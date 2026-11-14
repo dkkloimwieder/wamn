@@ -39,7 +39,6 @@ wamn-component-composer.workspace = true
 wamn-release-control.workspace = true
 wamn-environment.workspace = true
 wamn-platform-install.workspace = true
-wamn-dev-control.workspace = true
 wamn-package-control.workspace = true
 wamn-package-artifact.workspace = true
 wash-runtime = { workspace = true, features = ["oci"] }

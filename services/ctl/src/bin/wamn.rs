@@ -7,7 +7,7 @@ mod help_env_tests;
 #[cfg(target_os = "linux")]
 use anyhow::Context as _;
 #[cfg(target_os = "linux")]
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 
 #[cfg(target_os = "linux")]
 #[derive(Debug, Parser)]
@@ -58,54 +58,20 @@ enum Command {
     Platform(wamn_ctl::platform_verbs::ProductPlatformCommand),
     /// Build packages: generate every output from wamn.k into target/wamn.
     Build(wamn_ctl::build_verbs::BuildArgs),
+    /// Publish existing source build output without rebuilding.
+    Publish(wamn_ctl::dev::command::PublishArgs),
     /// Copy a generated default into application source.
     Eject(wamn_ctl::build_verbs::EjectArgs),
     /// Build or publish a wasm connector.
     Integration(wamn_ctl::integration_verbs::IntegrationArgs),
-    /// Run the package development loop, or stand up the environment it needs.
-    #[command(args_conflicts_with_subcommands = true)]
-    Dev(Box<DevArgs>),
+    /// Watch source and deploy through the development platform.
+    Dev(wamn_ctl::dev::command::DevCommandArgs),
     /// Build, push, or upload a web client.
     Web(wamn_ctl::web::WebArgs),
     /// Print layer 0, the canonical wamn.json, of a pushed package artifact.
     Inspect(wamn_ctl::artifact_verbs::InspectArgs),
     /// Print where layer 0 of two pushed package artifacts differs.
     Diff(wamn_ctl::artifact_verbs::DiffArgs),
-}
-
-/// `wamn dev` either runs the loop from its own flags or takes `up` and stands
-/// the environment up. The two are exclusive: `up` MINTS the configuration the
-/// bare form's `--config` reads, so one invocation is never both.
-///
-/// The loop's inputs are flattened as an `Option` group rather than negated by
-/// the subcommand. `subcommand_negates_reqs` is the setting that reads like the
-/// right one, and it does not work here — measured on clap 4.6.6, it leaves
-/// `--config` required under `wamn dev up`, whether the requirement is
-/// flattened in or declared directly. The `Option` group is what actually holds
-/// both halves of the rule: `wamn dev` with no subcommand still refuses without
-/// `--config`, and a partly-given loop invocation still names the flag it
-/// lacks.
-#[cfg(target_os = "linux")]
-#[derive(Debug, Args)]
-struct DevArgs {
-    #[command(subcommand)]
-    environment: Option<DevEnvironmentCommand>,
-
-    #[command(flatten)]
-    run: Option<wamn_ctl::dev::command::DevCommandArgs>,
-}
-
-#[cfg(target_os = "linux")]
-#[derive(Debug, Subcommand)]
-enum DevEnvironmentCommand {
-    /// Stand up the disposable environment the loop runs against, and hold it.
-    Up(Box<wamn_ctl::dev::up::DevUpArgs>),
-    /// Stop the identity process owned by this development environment.
-    Down(wamn_ctl::dev::up::DevDownArgs),
-    /// Reset this environment's idle disposable application target.
-    Reset(wamn_ctl::dev::target_database::DevResetArgs),
-    /// Write the edge release bundle of the release that the loop published.
-    EdgeBundle(wamn_ctl::dev::edge_bundle::DevEdgeBundleArgs),
 }
 
 #[cfg(target_os = "linux")]
@@ -156,24 +122,12 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Eject(args) => wamn_ctl::build_verbs::eject(args),
         Command::Build(args) => wamn_ctl::build_verbs::run(args).await,
+        Command::Publish(args) => wamn_ctl::dev::command::publish(args).await,
         Command::Integration(args) => wamn_ctl::integration_verbs::run(args).await,
         Command::Web(args) => wamn_ctl::web::run(args).await,
         Command::Inspect(args) => wamn_ctl::artifact_verbs::inspect(args).await,
         Command::Diff(args) => wamn_ctl::artifact_verbs::diff(args).await,
-        Command::Dev(dev) => match dev.environment {
-            Some(DevEnvironmentCommand::Up(args)) => wamn_ctl::dev::up::run(*args).await,
-            Some(DevEnvironmentCommand::Down(args)) => wamn_ctl::dev::up::down(args).await,
-            Some(DevEnvironmentCommand::Reset(args)) => {
-                wamn_ctl::dev::target_database::reset(args).await
-            }
-            Some(DevEnvironmentCommand::EdgeBundle(args)) => wamn_ctl::dev::edge_bundle::run(&args),
-            None => {
-                let run = dev
-                    .run
-                    .context("wamn dev needs --config and --overlay-root, or the up subcommand")?;
-                wamn_ctl::dev::command::run(run).await
-            }
-        },
+        Command::Dev(args) => wamn_ctl::dev::command::run(args).await,
     }
 }
 
@@ -340,15 +294,6 @@ mod tests {
                     .is_ok()
             );
         }
-    }
-
-    #[test]
-    fn reset_parses_without_run_inputs() {
-        let reset =
-            Cli::try_parse_from(["wamn", "dev", "reset", "--config", "/tmp/dev.json"]).unwrap();
-        assert!(
-            matches!(reset.command, Command::Dev(dev) if matches!(dev.environment, Some(DevEnvironmentCommand::Reset(_))))
-        );
     }
 }
 

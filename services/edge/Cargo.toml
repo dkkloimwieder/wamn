@@ -59,7 +59,7 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
 # behind `test-util`. Never add this feature to the normal dependency.
 wamn-catalog = { workspace = true, features = ["test-util"] }
 # The tests write the edge_device bundle with the dev loop's bundle writer.
-wamn-dev-control = { workspace = true }
+wamn-dev = { workspace = true }
 # The route test signs sessions with a file key.
 base64 = { workspace = true }
 ring = { workspace = true }

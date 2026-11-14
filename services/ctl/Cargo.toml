@@ -47,7 +47,7 @@ wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }
 wamn-environment = { workspace = true }
 wamn-platform-install.workspace = true
-wamn-dev-control = { workspace = true }
+wamn-dev = { workspace = true }
 # `wamn inspect` and `wamn diff` read verified package artifacts.
 wamn-package-artifact = { workspace = true }
 # The pure provisioning SQL builders + identifier naming + credential Secret
@@ -69,7 +69,7 @@ async-nats = { workspace = true, features = ["jetstream"] }
 wamn-fixture-package = { workspace = true }
 postgres-protocol = { workspace = true }
 wamn-environment = { workspace = true, features = ["test-util"] }
-wamn-dev-control = { workspace = true, features = ["test-util"] }
+wamn-dev.workspace = true
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-platform-identity = { workspace = true, features = ["test-util"] }

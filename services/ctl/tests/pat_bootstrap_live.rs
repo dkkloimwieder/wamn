@@ -8,7 +8,7 @@ use sqlx::Row as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wamn_control_provision::PlatformComponent;
-use wamn_dev_control::dev::environment::{
+use wamn_dev::dev::environment::{
     JourneyTarget, connect, provision_journey_control, provision_route,
 };
 use wamn_platform_identity::{PrincipalType, authenticate_pat};
@@ -94,7 +94,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_IDENTITY_BINARY, env:WAMN_NATIVE_C_NATS_BIN",
     );
-    wamn_dev_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
+    wamn_dev::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     database
@@ -301,7 +301,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
 async fn development_identity_survives_schema_reset_and_owned_teardown() {
     const PASSWORD: &str = "owned-development-identity-fixture-password";
     use serde_json::{Value, json};
-    use wamn_dev_control::dev::environment::{
+    use wamn_dev::dev::environment::{
         DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, initialize_journey_platform,
         provision,
     };
@@ -503,7 +503,7 @@ async fn development_identity_survives_schema_reset_and_owned_teardown() {
     wrong_owner["started"] = "not-the-owned-process".into();
     std::fs::write(&record_path, serde_json::to_vec(&wrong_owner).unwrap()).unwrap();
     assert!(
-        wamn_dev_control::dev::pat_issuer::stop_environment(&files.0)
+        wamn_dev::dev::pat_issuer::stop_environment(&files.0)
             .await
             .is_err()
     );
@@ -514,7 +514,7 @@ async fn development_identity_survives_schema_reset_and_owned_teardown() {
     foreign.kill().await.unwrap();
     foreign.wait().await.unwrap();
     std::fs::write(record_path, record).unwrap();
-    wamn_dev_control::dev::pat_issuer::stop_environment(&files.0)
+    wamn_dev::dev::pat_issuer::stop_environment(&files.0)
         .await
         .unwrap_or_else(|error| panic!("owned teardown failed: {error}"));
     assert!(

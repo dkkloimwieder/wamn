@@ -242,17 +242,10 @@ The expected value of the test must not come from the code under test.
 
 ## Local application business tests
 
-Receiving command histories and WMS operation/replay assertions use real components, the HTTP shell, production authorization, and disposable PostgreSQL.
-The fixture starts the pinned route component separately from the application and binds authority from the release manifest.
-They share the in-process runtime setup in `tests/integration/src/local_application.rs`.
-The fixture starts a private NATS with TLS and replicates the host auth cache from its `wamn-auth` bucket.
-Select `receiving-business,wms-local` with the runner described above.
-The Receiving suite runs `route_authentication_live::local_business::*` in its library target.
-The WMS suite runs `local_*` in its library target, including its browser cases.
-The runner prepares application components, the pinned HTTP guest, and the prebuilt NATS executable before either suite.
-These cases need no registry, cluster, test binary, or container image.
-The WMS browser cases also need Node and Chrome on `PATH`.
-The `sync-bench` step installs web dependencies offline and builds the screen after WMS application generation.
+Receiving and WMS retain their business assertions.
+The in-process application assembler is removed.
+These scenarios need a product deployment fixture on the development cluster before they can run.
+The native host and private provisioning fixtures no longer supply their prerequisites.
 
 The publish composition, edge bundle, release digest, and control-client cases use the same prepared HTTP guest.
 Their preparation rows supply the edge component and application packages when selected.
@@ -264,7 +257,7 @@ Each test binary builds the edge release bundle of [`apps/edge_device`](../../ap
 The `edge` preparation step supplies its application component.
 The HTTP guest must match its pin.
 The bundle writer stores the route guest separately. The edge invocation switch follows in S7-D.
-The dev loop's bundle writer admits the component and writes the bundle, with no session.
+The package bundle writer admits the component and writes the bundle without a development session.
 The tests sign their own sessions.
 The device test writes scale frames into a pseudo-terminal pair, which is its virtual serial port.
 The forward test runs the `wamn-edge` binary as a child, kills it with SIGKILL twice, and serves an HTTPS platform with its own certificate authority.
@@ -274,10 +267,8 @@ cargo test --locked --offline -p wamn-edge --test route --test device --test for
 ```
 
 The test `samples_reach_a_live_platform_once_across_kills` forwards to a real platform: the `sample.record` route of [`apps/edge_samples`](../../apps/edge_samples/README.md) on a [developer session](development-loop.md).
-Start the session with `--package` and `--overlay-root` set to `apps/edge_samples`.
-The host serves plain HTTP, and the forward accepts only HTTPS, so put a TLS proxy in front of the served route address.
-The proxy must set the `Host` header to the route host that the session prints.
-Write the token of `operator-pat.json` in the environment directory to a file with mode 0600.
+Deploy `apps/edge_samples` through the product development command.
+Use its HTTPS application address. Write the caller token to a file with mode 0600.
 Then run the test with the proxy address and the certificate authority of the proxy:
 
 ```bash
@@ -294,32 +285,19 @@ Count the rows of that tag in `edge_samples.sample` of the session's target data
 The SQLx transaction case uses the `sqlx-command` preparation step.
 It commits and rolls back commands under the current PostgreSQL role.
 
-## Prekind render and native host tests
+## Deployed connection and caller tests
 
-These cases use the environment release chart without a cluster.
-The render cases need Helm 4 on `PATH`.
-The `native-host` suite also needs PostgreSQL 18 and a prebuilt NATS executable.
-Its preparation rows build the host, HTTP guest, edge package, and HTTP workflow guests.
-The runner starts a private PostgreSQL database for application generation.
-
-The case resolves rendered Secrets through the production credential provisioner and starts private PostgreSQL and NATS servers.
-It starts the debug host with rendered arguments and local component files.
-It also sends an upload to the separate file listener and requires the answer of the native file handler.
-This release serves no application host routes, so the native handler refuses the request.
-It requires readiness, the rendered HTTP workload, and a completed manual HTTP workflow with the expected response.
-Its old `respond` terminal must fail with `respond-without-caller` after the successful workflow.
-That failure proves that rendering alone cannot establish workflow success.
-The case prints its elapsed time and removes its temporary databases, processes, and component files.
-
-Run the environment render cases by their full names:
+`connection_and_caller_kind` uses an installed disposable platform.
+It publishes fixture source and deploys it through authenticated control routes.
+It requires an HTTP connection to reach an installed upstream service.
+A manual workflow that ends in `respond` must refuse with `respond-without-caller`.
+The test observes the final run state in the deployed database.
 
 ```bash
-for name in prekind_environment_renders prekind_rejects_old_missing_conn_reader \
-  prekind_receiving_pat_renders prekind_wms_pat_renders; do
-  cargo test --locked --offline -p wamn-environment --test environment_render \
-    "$name" -- --exact --nocapture --test-threads=1 || exit "$?"
-done
+cargo test -p wamn-dev --test platform_apply_kind connection_and_caller_kind -- --ignored --exact --nocapture
 ```
+
+Use the same cluster document and prepared artifacts as the other focused platform tests.
 
 ## Test-database isolation
 
@@ -389,7 +367,7 @@ Paused-time scheduling decisions live in `wamn-workflow --test schedule_decision
 Admission authority stays in `wamn-run-state --test admission_live`.
 Schedule storage stays in `wamn-environment --test workflow_schedule_live`.
 Broker acknowledgement lives in `wamn-environment --test workflow_event_nats`.
-The native host case lives in `wamn-dev-control --test native_host` and takes live-nats.
+The connection and caller case lives in `wamn-dev --test platform_apply_kind` and requires an installed development cluster.
 
 ## Ignored tests
 
@@ -573,74 +551,11 @@ cargo test --locked --offline -p wamn-environment --features ops --test prune_te
 
 The cases assert retained runs, credential refusals and database grants.
 
-### Development identity lifecycle
+### Development on kind
 
-The development command case tests application rebuilds and owned process cleanup.
-The `identity` preparation step builds the test identity binary with `test-util`.
-The `test-util` feature permits only a loopback mail endpoint with a dummy API key. Production builds do not include this path.
-The focused identity case also covers application schema reset:
-
-```bash
-RESEND_API_KEY=unused-development-fixture RESEND_FROM='WAMN <fixture@example.invalid>' \
-  cargo test --locked --offline -p wamn-ctl --test pat_bootstrap_live \
-  development_identity_survives_schema_reset_and_owned_teardown -- --ignored --exact
-```
-
-
-### Local saved-edit acceptance
-
-Use a clean linked worktree reserved for this test.
-Set `SOURCE` to its absolute path.
-Export `CARGO_TARGET_DIR` with the path to its separate absolute build directory.
-The case changes authored files, observes the running application, and restores the saved source.
-Run this case alone.
-The fixture requires PostgreSQL 18 binaries, Docker, and the existing development service images.
-The case also requires `jq` on `PATH`.
-
-Use the preparation rows for the native programs, application packages, HTTP guest, and materializer.
-From the disposable worktree, build its fixture example and list its test executable:
-
-```bash
-cd "$SOURCE"
-cargo build --locked --offline -p wamn-receiving-tests --example delivery_timings
-cargo test --locked --offline -p wamn-receiving-tests --lib --no-run
-```
-
-Set `WAMN_LOCAL_TEST_BINARY` to the absolute executable path printed by the last command.
-Set `WAMN_LOCAL_RESULTS` to an unused private directory outside the worktree.
-Run the exact case through the owned fixture:
-
-```bash
-WAMN_LOCAL_DEV_EDIT_ROOT="$SOURCE" \
-  "$CARGO_TARGET_DIR/debug/examples/delivery_timings" \
-  "$SOURCE" "$CARGO_TARGET_DIR" "$WAMN_LOCAL_RESULTS" -- \
-  "$WAMN_LOCAL_TEST_BINARY" \
-  route_authentication_live::dev::local_delivery::local_watch_preserves_data_and_refuses_bad_sql \
-  --exact --ignored --nocapture --test-threads=1
-```
-
-The fixture starts Compose services on assigned loopback ports.
-If you put `--wms` before `--`, the fixture also starts MinIO and makes the `labels` bucket.
-It then sets `WAMN_DEV_ENV_CREDENTIALS_FILE` to a mode 0600 file with the MinIO credential under the handle `labels-store`.
-It sets `WAMN_RECEIVING_DEV_MINIO_ENDPOINT` to the MinIO address.
-The fixture's NATS admits the materializer consumers of the packages that the command gives `wamn dev up`.
-These are `wamn_receiving` and `client_acme_receiving`, or `wamn_wms` with `--wms`.
-The fixture sets the CDC reader binary and the event publisher credential for `wamn dev up`.
-It also sets the event materializer credential, which the broker targets to the source stream.
-It sets `WAMN_DEV_ENV_ROOT` to `delivery-timings/env` in the target directory, which survives runs, so the compile cache survives too.
-Before the command starts, the fixture counts the files under `dev-wasmtime-cache/modules` in that root, without the `.stats` files.
-It writes the count to `cache-state.json` in the results directory, so that you can read a cold run as cold.
-`wamn-test-postgres` starts its server with `wal_level=logical`.
-It supplies the service coordinates that the case declares.
-For direct fixture commands, set the artifact overrides from the table above.
-The case starts its own PostgreSQL server, because the development environment resets the control store of the whole server.
-The case requires authenticated application results after code, SQL, and schema edits.
-It requires retained data after code and query edits.
-Reset mode reapplies the schema on every explicit schema apply.
-In migrate mode, the watcher reports pending SQL. Explicit schema apply owns migration effects and records.
-Invalid SQL refuses preparation before replacement.
-Require one executed passing case, successful resource cleanup, and restored source before reporting success.
-This correctness case does not report performance measurements.
+The development loop uses the installed identity and control services.
+[Development loop](development-loop.md) gives the source publication and deployment commands.
+The focused connection and caller test above uses this product path.
 
 ### Platform and environment apply on kind
 
@@ -753,14 +668,14 @@ Run focused application recovery against that platform:
 
 ```bash
 WAMN_TEST_CLUSTER=/var/tmp/wamn-kind-dep3/cluster.k \
-  cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind application_recovery_kind -- --ignored --exact --nocapture
+  cargo test --locked --offline -p wamn-dev --test platform_apply_kind application_recovery_kind -- --ignored --exact --nocapture
 ```
 
 Select `same_name_reset_kind` in the same command for reset and CDC tests.
 Run fresh-platform acceptance with the prepared chart selected by `WAMN_RELEASE_CHART`:
 
 ```bash
-cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind platform_apply_kind -- --ignored --exact --nocapture
+cargo test --locked --offline -p wamn-dev --test platform_apply_kind platform_apply_kind -- --ignored --exact --nocapture
 ```
 
 DEP6's bounded case uses one fresh platform, trusted product commands for its first environment,
@@ -775,7 +690,7 @@ The test enforces a 45-minute limit that includes setup and successful cleanup.
 Run it with this command:
 
 ```bash
-cargo test --locked -p wamn-dev-control --test platform_apply_kind \
+cargo test --locked -p wamn-dev --test platform_apply_kind \
   control_operations_kind -- --ignored --exact --nocapture
 ```
 
@@ -875,7 +790,7 @@ After setup and cleanup pass, obtain approval for this exact command:
 
 ```bash
 CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-target/dep4 \
-  cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind platform_upgrade_kind -- --ignored --exact --nocapture
+  cargo test --locked --offline -p wamn-dev --test platform_apply_kind platform_upgrade_kind -- --ignored --exact --nocapture
 ```
 
 Supply `WAMN_TEST_CLUSTER`, `WAMN_TEST_OWNER_PASSWORD`, `WAMN_KCL`, and the publication inputs from the preceding instructions.
@@ -900,7 +815,7 @@ DEP2-13 supplies focused coverage through product deployment commands.
 Native application, identity, session, socket, and trace tests remain.
 Shared business fixtures, registry transport, and image archive tests remain.
 Surviving render cases call the product renderer.
-The database tests in `install_sequence_live.rs` retain restricted SQL roles, package grants, and invitation refusal coverage.
+The native installation sequence test is removed with the private development provisioner.
 
 ### Environment deployment coverage
 
@@ -908,7 +823,7 @@ The focused tests above split the DEP2-13 application journey by contract.
 Fresh-platform acceptance calls those same bodies and keeps platform recovery separate from schema tests.
 DEP2-09 already removed `environment_reapply.rs`, its synthetic chart, and its direct Helm write and interruption helpers.
 The old connector, file, drain, deletion, and schedule combinations have no replacement in this epic.
-Product rendering tests and the retained native host, file fixture, and database tests remain at their existing tiers.
+Product rendering, file fixture, and database tests remain at their existing tiers.
 
 ### Files on PostgreSQL and MinIO
 
@@ -1115,150 +1030,10 @@ pnpm --filter @wamn/platform-ui test
 pnpm --filter @wamn/platform-ui build
 ```
 
-### Local platform sign-in
+### Platform sign-in and application screens
 
-Local fixtures that run `wamn dev` must write an authored `environment.k` beside `dev.json`.
-The examples in `tests/integration/fixtures/local-environments` declare application names separately from package IDs.
-The loop refuses a missing file before it connects to services.
-
-`local_control_projects_and_membership` runs the built platform UI in headless Chrome.
-It starts `wamn dev up` on disposable services through the existing `delivery_timings` fixture.
-
-The test uses platform verbs to enroll the org admin.
-The admin opens the Users table controls and selects Invite user.
-The invitation form returns to Users after submission and shows the delivery result.
-The test reads the invitation code from the [local mail file](development-loop.md#wamn-dev-environment-developer-session) and passes it to the browser.
-The second user sets a password on the platform UI invite page and signs in.
-The admin deactivates and reactivates the user, then grants and revokes org-admin.
-Each write must update the Users screen, including after a reload.
-
-The fixture grants the admin membership in `receiving/dev`, requires both audiences, and chooses Control.
-Control opens the single held project directly, or Projects when the viewer holds several projects. The shell root carries `data-ui`.
-The fixture runs `wamn dev --config <root>/dev.json --overlay-root apps/wamn_receiving --hold` to install and start the Receiving release.
-The browser opens the Projects table controls and selects Create project.
-The form returns to Projects after submission.
-The browser opens the new `browser-project` from the table.
-The fixture then calls `provision_project_env` and `reconcile_journey_run_plane` to prepare `browser-project/dev` on the disposable PostgreSQL server.
-Local development uses explicit database role URLs in its private control configuration. It has no connection credential store. A local host connection call returns `no credential store in local mode` until S10 moves development into the cluster.
-
-The browser opens separate membership forms from the User and Project table toolbars.
-Each form returns to its owning table after submission.
-Record actions beside the title grant and revoke project-admin access.
-Membership rows provide the Revoke membership action.
-The User screen targets every write to the principal in its address.
-Each write must update the screen.
-The second user opens its single project directly and can return to the organization. Addresses for `receiving`, Users, and User show no page.
-The project-admin session uses the project names from `control.mine` and never calls `project.list`.
-Project inactivation and activation must each show only the opposite action, including after a page reload.
-
-The browser opens `receiving/dev` from the Environments table for the project.
-It reads the runtime status and release profile, then toggles the state and reloads the page.
-It follows the environment pane to Workloads, Live releases, Operations, and Roles, then reloads each table screen.
-It expands workload conditions and the Operations reference tables, searches context choices, returns to a parent, and opens environment Members.
-If identity limits session renewals, the browser waits for its `Retry-After` period before it reloads the same address.
-The test prints its elapsed time and fails if it exceeds 15 minutes.
-
-The browser uses a 1400 by 900 viewport and saves one PNG for each screen in `<results>/platform-ui-screenshots/`.
-The Rust test and browser print that directory.
-Identity files are `sign-in.png`, `invite.png`, `recover.png`, `reset.png`, `no-access.png`, and `audience-choice.png`.
-Administration files are `control-layout.png`, `projects.png`, `project.png`, `environment.png`, `users.png`, and `user.png`.
-Splash files are `environment-splash.png` and `control-splash.png`.
-The browser compares their tile values with fixture status responses and requires one status read per environment.
-Form files are `create-project.png`, `invite-user.png`, `project-grant-membership.png`, `member-grant-membership.png`, and `user-grant-membership.png`.
-Access table files are `project-environments.png`, `project-members.png`, `member-memberships.png`, `user-projects.png`, and `user-memberships.png`.
-Environment table files are `environment-workloads.png`, `environment-live-releases.png`, `environment-operations.png`, and `environment-roles.png`.
-Expanded reference files are `workload-conditions.png` and `operation-references.png`.
-Context files are `environment-switcher.png` and `environment-members.png`.
-The other files are `receiving-layout.png` and `not-found.png`.
-Recovery and reset captures show their entry forms. The reset capture includes the missing-code message.
-The test retains these files after service cleanup.
-For the WFE review, copy the PNG files from the printed directory to `/var/tmp/wamn-wfe-ui-report/` and attach them to the report.
-
-Use the preparation rows for the native programs, application components, and platform UI.
-Build the fixture and test before the timed run:
-
-```bash
-TMPDIR=/var/tmp cargo build --offline -p wamn-receiving-tests --example delivery_timings
-TMPDIR=/var/tmp cargo test --offline -p wamn-ctl --test platform_ui_live --no-run
-```
-
-The fixture needs Docker and its local service images, PostgreSQL 18 binaries, and Chrome.
-It uses the Playwright installation in `web/shell`, so run `pnpm install` at the repository root first.
-`CARGO_TARGET_DIR` must name the directory of the built native programs.
-Run this command from the repository root:
-
-```bash
-export TMPDIR=/var/tmp
-results="$(mktemp -d /var/tmp/wamn-platform-ui-XXXXXX)/run"
-"$CARGO_TARGET_DIR/debug/examples/delivery_timings" "$PWD" "$CARGO_TARGET_DIR" "$results" -- \
-  cargo test --offline -p wamn-ctl --test platform_ui_live \
-  local_control_projects_and_membership -- --ignored --exact --nocapture
-```
-
-The test uses a fixed fixture password and sends no email.
-Its PostgreSQL server and the fixture's containers stop after the test.
-`dev down` stops the owned web server, control host, and identity service.
-The results directory keeps `platform-ui-env/control-web.log` for failure diagnosis.
-
-### Local Receiving screens
-
-`local_receiving_screens` drives the Receiving web app through real local services.
-It uses the same prerequisites, component variables, and `delivery_timings` fixture as [Local platform sign-in](#local-platform-sign-in).
-Build Receiving and the platform UI before the run.
-The test seeds 26 purchase orders, one line per order, one supplier, one item, and one location in its disposable database.
-It signs in, follows record links, pages the orders, changes a supplier, and records a receipt.
-The receipt goes through the sync receipt panel, and the browser waits until the status line shows "Pending: 0. Refused: 0."
-It also creates a supplier and uses the form cancel action.
-The browser requires table-header actions, full-panel tables, literal uppercase breadcrumbs, and forms that return to their tables.
-
-Build the test without starting services:
-
-```bash
-TMPDIR=/var/tmp cargo test --offline -p wamn-ctl --test receiving_ui_live --no-run
-```
-
-For direct fixture commands, set the artifact overrides from the table above.
-Run from the repository root:
-
-```bash
-export TMPDIR=/var/tmp
-results="$(mktemp -d /var/tmp/wamn-receiving-ui-XXXXXX)/run"
-"$CARGO_TARGET_DIR/debug/examples/delivery_timings" "$PWD" "$CARGO_TARGET_DIR" "$results" -- \
-  cargo test --offline -p wamn-ctl --test receiving_ui_live \
-  local_receiving_screens -- --ignored --exact --nocapture
-```
-
-The browser saves 1400 by 900 screenshots in `<results>/receiving-screenshots/`.
-The files are `sign-in.png`, `audiences.png`, `purchase-orders.png`, `purchase-order.png`, `change-supplier.png`, `purchase-order-history.png`, and `receiving.png`.
-It also saves `record-receipt.png`, `receipts.png`, `receipt.png`, `create-supplier.png`, `suppliers.png`, and `locations.png`.
-The test prints the directory and retains it after service cleanup.
-The service log stays at `<results>/receiving-ui-env/control-web.log`.
-
-### Local Receiving sync
-
-`local_receiving_sync` runs five browser tests against the Receiving sync screens.
-It uses the same build steps, variables, and fixture as [Local Receiving screens](#local-receiving-screens).
-The tests are:
-
-1. A 30 second network drop: the screens make no page read and no navigation.
-2. A second browser records a receipt, and the first browser shows the new remaining quantity within one poll.
-3. The browser reopens offline with a saved session, shows "Offline, sign in to upload.", and replays the receipt when the network returns.
-4. Eight network flaps with three receipts: each receipt uploads once.
-5. A refused receipt goes to the "Not uploaded" region, and a corrected copy uploads.
-
-Run from the repository root:
-
-```bash
-export TMPDIR=/var/tmp
-results="$(mktemp -d /var/tmp/wamn-receiving-sync-XXXXXX)/run"
-"$CARGO_TARGET_DIR/debug/examples/delivery_timings" "$PWD" "$CARGO_TARGET_DIR" "$results" -- \
-  cargo test --offline -p wamn-ctl --test receiving_ui_live \
-  local_receiving_sync -- --ignored --exact --nocapture
-```
-
-The test prints "CASE n PASS" for each test and then "PASS: Receiving sync tests".
-Failure screenshots go to `<results>/receiving-sync-screenshots/`.
-The service log stays at `<results>/receiving-sync-env/control-web.log`.
+Browser sessions use the installed web, identity, and control services.
+Use the [development loop](development-loop.md) to publish and deploy an application before opening its screens.
 
 ### Generated descriptions
 

@@ -274,7 +274,7 @@ An application name selects its latest successful Helm release. `--release` sele
 A source diff requires current build output and performs no publication or mutation.
 A deployed source apply builds and publishes first, then executes those immutable bytes through the same SQL Job.
 `schema publish` prints the application release digest without installing SQL or selecting code.
-For adjacent `dev.json` and a source directory, diff and apply use the local connection described in [development loop](development-loop.md).
+Development uses the same control routes for schema diff and apply. See [development loop](development-loop.md).
 
 In `migrate`, explicit apply executes pending files in dependency order and preserves existing rows.
 The watcher initializes absent packages but does not advance installed SQL.
@@ -418,7 +418,7 @@ wamn connection get --file /private/target.json
 
 Register its `redirect_uri` with the provider.
 The deployed control host uses `https://<route_hosts.control>/oauth/callback`.
-The local control host uses its local public URL with `/oauth/callback`.
+Development uses the installed control service and its public `/oauth/callback` URL.
 Start authorization:
 
 ```bash
@@ -549,7 +549,7 @@ Pass the environment document’s `client.web` digest and the registry inputs.
 The uploader reads the package id and client name from `web.json`.
 It writes `clients/<package>/<web digest hex>/` and skips all writes when the index already exists.
 That page owns the command, required inputs, destination paths, output, and errors.
-The shell reads `/config.json` before sign-in. The local dev server answers it from `dev.json`.
+The shell reads `/config.json` from the installed web service before sign-in.
 The bucket must allow reads without credentials.
 Edge deployment remains outside the local platform milestone.
 

@@ -493,7 +493,7 @@ Run these steps in order:
 5. Run this exact case:
 
    ```bash
-   cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind \
+   cargo test --locked --offline -p wamn-dev --test platform_apply_kind \
      control_operations_gke -- --ignored --exact --nocapture
    ```
 
@@ -640,7 +640,7 @@ A true gap has one of three causes: a slot limit passed, a slot dropped by hand,
 
 ### 5.8 Benchmark
 
-For a local host benchmark, use the [local run](benchmark.md#local-run).
+For development measurements, use the [development procedure](development-loop.md#measure-one-change).
 
 The tier 2 benchmark runs from `wamn-bench-client` in project `wamn-dev`, zone `us-central1-a`.
 The Receiving host runs alone on pool `bench`, and PostgreSQL runs alone on pool `pg`.

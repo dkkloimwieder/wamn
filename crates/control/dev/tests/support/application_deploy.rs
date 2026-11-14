@@ -19,6 +19,9 @@ use wamn_environment::platform::document::Provider;
 
 use super::{POLL_LIMIT, ProcessGroup, Run, execute, get, kubectl, success};
 
+#[path = "connection_and_caller.rs"]
+mod connection_and_caller;
+
 #[path = "control_operations.rs"]
 mod control_operations;
 
@@ -35,6 +38,7 @@ pub(super) enum Case {
     PlatformUpgrade,
     PlatformSchema,
     ControlOperations,
+    ConnectionAndCaller,
 }
 
 struct Journey<'a> {
@@ -68,7 +72,7 @@ impl Journey<'_> {
             .env_remove("WAMN_DATABASE_PORT")
             .env_remove("WAMN_IDENTITY_URL")
             .env_remove("WAMN_NATS_TLS_SERVER_NAME")
-            .env("WAMN_DATABASE_NAMESPACE", "platform")
+            .env("WAMN_DATABASE_NAMESPACE", &self.run.document.org)
             .env("WAMN_RELEASE_NAMESPACE", "hosts")
             .envs(self.variables)
             .env("WAMN_CONTROL_URL", self.control_url)
@@ -174,13 +178,17 @@ impl Journey<'_> {
     }
 
     async fn publish(&self, app: &str, version: &str, root: &Path) -> anyhow::Result<String> {
+        let mut document = EnvironmentDocument::compile(&self.file)?;
+        document.applications.retain(|name, _| name == app);
+        let file = self.run.directory.join(format!("publish-{app}.k"));
+        std::fs::write(&file, document.to_kcl())?;
         let output = self
             .run(
                 &format!("publish-{app}-{version}"),
                 self.command(&["schema", "publish"])
                     .arg(root)
                     .arg("--env")
-                    .arg(&self.file),
+                    .arg(&file),
             )
             .await?;
         ensure!(
@@ -274,21 +282,29 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     let beta_host = format!("beta-{}.{domain}", &id[..12]);
     let isolated_host = format!("isolated-{}.{domain}", &id[..12]);
     let sources = sources(&run.repository, &run.checkout, &id, cases).await?;
-    let postgres =
-        wamn_kubernetes::forward::port_forward(&run.target, "platform", "service/wamn-pg-rw", 5432)
-            .await?;
-    let nats =
-        wamn_kubernetes::forward::port_forward(&run.target, "platform", "service/wamn-nats", 4222)
-            .await?;
-    let identity =
-        wamn_kubernetes::forward::port_forward(&run.target, "identity", "service/identity", 443)
-            .await?;
+    let postgres = wamn_kubernetes::forward::port_forward(
+        &run.target,
+        &run.document.org,
+        "service/wamn-pg-rw",
+        5432,
+    )
+    .await?;
+    let identity = wamn_kubernetes::forward::port_forward(
+        &run.target,
+        &run.document.org,
+        "service/identity",
+        443,
+    )
+    .await?;
     let control = match run.document.provider {
         Provider::Kind => Some(
             wamn_kubernetes::forward::port_forward(
                 &run.target,
-                "hosts",
-                &format!("service/c-{}-http", run.document.org),
+                &run.document.org,
+                &format!(
+                    "service/{}-http",
+                    wamn_registry::name::control_resource(&run.document.org)
+                ),
                 80,
             )
             .await?,
@@ -298,17 +314,17 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     let edge =
         wamn_kubernetes::forward::port_forward(&run.target, "hosts", "service/wamn-edge", 80)
             .await?;
-    let identity_tls = get(run, "identity", "secret", "identity-tls").await?;
+    let identity_tls = get(run, &run.document.org, "secret", "identity-tls").await?;
     let operator = get(
         run,
-        "identity",
+        &run.document.org,
         "secret",
         &format!("operator-{}", run.document.org),
     )
     .await?;
     let mut pem = secret(&operator, "tls.crt")?;
     pem.extend(secret(&operator, "tls.key")?);
-    let identity_host = "identity.identity.svc.cluster.local";
+    let identity_host = format!("identity.{}.svc.cluster.local", run.document.org);
     let identity_client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(30))
@@ -317,12 +333,10 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
             "ca.crt",
         )?)?)
         .identity(reqwest::Identity::from_pem(&pem)?)
-        .resolve(identity_host, ([127, 0, 0, 1], identity.port).into())
+        .resolve(&identity_host, ([127, 0, 0, 1], identity.port).into())
         .build()?;
     let endpoint = format!("https://{identity_host}:{}", identity.port);
-    let apply = get(run, "platform", "secret", "wamn-apply").await?;
-    let mut admin = get(run, "platform", "secret", "wamn-pg-superuser").await?;
-    let apply_url = forwarded(&String::from_utf8(secret(&apply, "url")?)?, postgres.port)?;
+    let mut admin = get(run, &run.document.org, "secret", "wamn-pg-superuser").await?;
     let mut admin_url = url::Url::parse(&format!(
         "postgresql://postgres@127.0.0.1:{}/wamn_system",
         postgres.port
@@ -330,15 +344,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     admin_url
         .set_password(Some(&String::from_utf8(secret(&mut admin, "password")?)?))
         .map_err(|()| anyhow::anyhow!("administrator password"))?;
-    let mut variables = BTreeMap::from([
-        ("WAMN_APPLY_DATABASE_URL".into(), apply_url.clone()),
-        ("WAMN_CONTROL_DATABASE_URL".into(), apply_url),
-        ("WAMN_SYSTEM_ADMIN_URL".into(), admin_url.to_string()),
-        (
-            "WAMN_NATS_URL".into(),
-            format!("tls://127.0.0.1:{}", nats.port),
-        ),
-    ]);
+    let mut variables = BTreeMap::from([("WAMN_SYSTEM_ADMIN_URL".into(), admin_url.to_string())]);
     for (name, repository) in [
         ("WAMN_PACKAGE_ARTIFACT_BASE", "packages"),
         ("WAMN_COMPONENT_ARTIFACT_BASE", "components"),
@@ -359,16 +365,6 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
             name.into(),
             std::env::var(name).with_context(|| format!("set {name}"))?,
         );
-    }
-    let certificate = get(run, "platform", "secret", "wamn-ctl-nats").await?;
-    for (name, key) in [
-        ("WAMN_NATS_TLS_CA", "ca.crt"),
-        ("WAMN_NATS_TLS_CERT", "tls.crt"),
-        ("WAMN_NATS_TLS_KEY", "tls.key"),
-    ] {
-        let path = run.directory.join(key);
-        std::fs::write(&path, secret(&certificate, key)?)?;
-        variables.insert(name.into(), path.to_string_lossy().into_owned());
     }
     let mut system = wamn_postgres::connect(&variables["WAMN_SYSTEM_ADMIN_URL"]).await?;
     sqlx::raw_sql("SET default_transaction_read_only = on")
@@ -484,6 +480,9 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
                         password,
                     )
                     .await
+                }
+                Case::ConnectionAndCaller => {
+                    connection_and_caller::exercise(&journey, &artifacts["a0"]).await
                 }
                 Case::Reset => reset(&journey, &artifacts).await,
                 Case::Recovery => application_recovery(&journey, &artifacts).await,
@@ -1096,14 +1095,6 @@ fn secret(object: &Value, key: &str) -> anyhow::Result<Vec<u8>> {
     )?)
 }
 
-fn forwarded(value: &str, port: u16) -> anyhow::Result<String> {
-    let mut url = url::Url::parse(value)?;
-    url.set_host(Some("127.0.0.1"))?;
-    url.set_port(Some(port))
-        .map_err(|()| anyhow::anyhow!("database port"))?;
-    Ok(url.to_string())
-}
-
 async fn sources(
     repository: &Path,
     checkout: &Path,
@@ -1156,6 +1147,11 @@ async fn sources(
                 &format!("routes = {{path_prefix = \"/{app}\", "),
             )
             .replace("path = \"/", &format!("path = \"/{app}/"));
+        let text = if cases.contains(&Case::ConnectionAndCaller) && app == "alpha" {
+            text.replace("connections = {}", "connections = {upstream = {interface = \"wamn:connection/http@0.1.0\", mode = \"read\"}}")
+        } else {
+            text
+        };
         std::fs::write(manifest, text)?;
         let query = root.join("query/widget_list.sql");
         std::fs::write(

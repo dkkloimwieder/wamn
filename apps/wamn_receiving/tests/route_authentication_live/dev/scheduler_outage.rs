@@ -153,7 +153,7 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
             "/../../../tests/integration/fixtures/local-environments/acme-receiving.k"
         )),
     )?;
-    let environment = wamn_dev_control::dev::environment::provision(
+    let environment = wamn_dev::dev::environment::provision(
         &system_url,
         &mut admin,
         root,

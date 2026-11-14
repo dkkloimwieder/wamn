@@ -71,7 +71,7 @@ async fn local_watch_preserves_data_and_refuses_bad_sql() -> anyhow::Result<()> 
             "/../../../tests/integration/fixtures/local-environments/acme-receiving.k"
         )),
     )?;
-    let environment = wamn_dev_control::dev::environment::provision(
+    let environment = wamn_dev::dev::environment::provision(
         &system_url,
         &mut admin,
         root,

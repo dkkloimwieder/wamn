@@ -240,7 +240,7 @@ wamn-package-control = { path = "crates/control/package", version = "0.1.0" }
 wamn-release-control = { path = "crates/control/release", version = "0.1.0" }
 wamn-platform-install = { path = "crates/control/platform-install", version = "0.1.0" }
 wamn-environment = { path = "crates/control/environment", version = "0.1.0" }
-wamn-dev-control = { path = "crates/control/dev", version = "0.1.0" }
+wamn-dev = { path = "crates/control/dev", version = "0.1.0" }
 wamn-control-provision = { path = "crates/control/provision", version = "0.1.0" }
 wamn-registry = { path = "crates/control/registry", version = "0.1.0" }
 wamn-event-reg = { path = "apps/platform/events/registration", version = "0.1.0" }

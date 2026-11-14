@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use wamn_catalog::edge_bundle::{BUNDLE_FILE_NAME, EdgeBundle, INGRESS_FILE_NAME};
-use wamn_dev_control::dev::edge_bundle::{EdgeTarget, write_package};
+use wamn_dev::dev::edge_bundle::{EdgeTarget, write_package};
 use wamn_digest::bytes_sha256;
 
 fn repository() -> PathBuf {

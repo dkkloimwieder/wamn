@@ -101,7 +101,7 @@ pub(crate) async fn publish(
 ) -> anyhow::Result<(String, wamn_catalog::ManifestDigest)> {
     let database_url =
         std::env::var("DATABASE_URL").context("set DATABASE_URL for disposable build databases")?;
-    wamn_dev_control::source_deploy::publish_from_env(document, package, &database_url).await
+    wamn_dev::source_deploy::publish_from_env(document, package, &database_url).await
 }
 
 /// Parse the existing org/env/project CLI coordinate.

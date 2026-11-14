@@ -574,8 +574,8 @@ Two packages of one application can declare one sequence name only with one defa
 If the patterns differ, env apply refuses before it writes anything, and the refusal names the application, the sequence, and the two packages.
 The `applications` map of `environment.k` decides which packages form one application.
 The test reads only the package declarations, so a row with an edited pattern does not refuse.
-`wamn dev` reads the `environment.k` beside `dev.json` and creates the same rows.
-If the file is missing, `wamn dev` refuses and names the path that it expects.
+`wamn dev --config environment.k` deploys through the same control routes.
+Environment apply creates the number sequence rows.
 
 ### Setting a counter
 
@@ -1224,7 +1224,7 @@ Control logins can read hierarchy rows and write their declared identity and lif
 
 See [integration and connection schema](../plan/integration-schema.md).
 
-Environment apply and local activation read connection projections through targeted system functions.
+Environment apply reads connection projections through targeted system functions.
 They do not add table grants to the control or administration roles.
 
 ### Record provenance

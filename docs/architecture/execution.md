@@ -855,7 +855,7 @@ Calls return `unauthorized` until a callback stores the first token.
 Candidate `connection.test` continues to refuse this authentication type.
 
 The public control origin serves `GET /oauth/callback` without a session.
-`WAMN_CONTROL_PUBLIC_ORIGIN` supplies that origin, from `route_hosts.control` on deployed targets and the local control URL during development.
+The control configuration supplies that origin from `route_hosts.control`, including during development on `kind`.
 The host appends `/oauth/callback` to that origin.
 `connection.authorize` stores 32 random bytes as base64url state and an encrypted PKCE verifier for ten minutes.
 PKCE binds the authorization code to the verifier through a SHA-256 challenge.

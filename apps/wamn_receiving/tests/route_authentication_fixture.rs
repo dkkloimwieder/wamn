@@ -8,15 +8,15 @@ use std::time::Duration;
 use anyhow::Context;
 use sqlx::PgConnection as Client;
 use tokio::process::Command;
-use wamn_dev_control::dev::watch::GitSource;
-use wamn_dev_control::git_source::GitSourceState;
+use wamn_dev::dev::watch::GitSource;
+use wamn_dev::dev::watch::GitSourceState;
 
 use environment::{
     journey_package_root, overlay_package_root, package_root, repository_root, required_journey,
     required_journey_path, verify_journey_operation_grants,
 };
 use routes::copy_package;
-use wamn_dev_control::dev::environment::{
+use wamn_dev::dev::environment::{
     DevEnvironmentInputs, ENVIRONMENT, ORG, PROJECT, connect, install_journey_platform_base_grants,
     write_dev_config,
 };

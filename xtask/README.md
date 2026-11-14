@@ -17,7 +17,6 @@ Run `cargo xtask --help` from the repository root. The `justfile` calls these co
 | `lane-start` | `cargo xtask lane-start` |
 | `cargo-cranelift` | `cargo xtask cranelift` |
 | `wamn-bench` | `cargo xtask bench` |
-| `bench/local.sh` | `cargo xtask bench-local` |
 | `bench/tier.sh` | `cargo xtask bench-tier` |
 | `bench/pg-minimum/gcp.sh` | `cargo xtask bench-pg-minimum` |
 | Package builds | `cargo xtask build-package`, `cargo xtask host-route-clients`, `cargo xtask install-kcl`, `cargo xtask guest-rustflags` |

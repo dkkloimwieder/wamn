@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::process::Command;
 use wamn_control_provision::{PlatformComponent, WorkloadRoleFamily};
-use wamn_dev_control::dev::environment::{
+use wamn_dev::dev::environment::{
     DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, initialize_journey_platform,
     install_journey_platform_base_grants,
 };

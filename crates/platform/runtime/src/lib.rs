@@ -14,7 +14,6 @@ pub mod connection_health;
 pub mod connection_memory;
 pub mod integrations;
 mod kv_memory;
-pub mod local_application;
 pub mod plugins;
 mod registry_transport;
 pub mod release_manifest_artifact;

@@ -3,7 +3,6 @@
 mod bench;
 mod bench_cloud;
 mod bench_data;
-mod bench_local;
 mod platform;
 mod process;
 mod selection;
@@ -45,8 +44,6 @@ enum Task {
     Platform(platform::CloudCommand),
     /// Run the deployed application benchmark.
     Bench(bench::Args),
-    /// Measure a disposable local development deployment.
-    BenchLocal(bench_local::Args),
     /// Measure the deployed benchmark tier.
     BenchTier(bench_cloud::TierArgs),
     /// Measure PostgreSQL replays on the selected cloud deployment.
@@ -148,7 +145,6 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         Task::Project(command) => platform::project(command),
         Task::Platform(command) => platform::cloud(command).await,
         Task::Bench(args) => bench::run(args).await,
-        Task::BenchLocal(args) => bench_local::run(&root, &args).await,
         Task::BenchTier(args) => bench_cloud::tier(&root, &args).await,
         Task::BenchPgMinimum(args) => bench_cloud::pg(&root, &args).await,
         Task::BenchResult {

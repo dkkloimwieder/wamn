@@ -1,9 +1,6 @@
-//! Whole-worktree Git source state for the callers that qualify a revision.
+//! Git source state for the development watcher.
 //!
-//! One reader answers both questions the delivery and development owners ask of
-//! a checkout: which commit is at `HEAD`, and does the worktree hold anything
-//! the commit does not. `git status --porcelain=v2` answers both from the same
-//! process, so the two cannot disagree about which revision was observed.
+//! The reader reports `HEAD` and worktree cleanliness from one Git status call.
 
 pub(super) mod plan;
 use plan::{one_output_line, trim_ascii};

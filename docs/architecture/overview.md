@@ -39,7 +39,7 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-release-control` | Release publication and charts |
 | `wamn-environment` | Environment provisioning, package application, and schema lifecycle |
 | `wamn-platform-install` | Helm installation, platform configuration, and explicit bootstrap Jobs |
-| `wamn-dev-control` | Development orchestration and process supervision |
+| `wamn-dev` | Source publication and watched product deployment |
 | `wamn-ctl` | Command-line client of the four control crates |
 
 The CLI and test support call each control crate directly.
@@ -69,7 +69,6 @@ Cloud project, node pool, and OpenTofu tools live in xtask.
 
 The other control crates live under `crates/control/{package,release,environment,dev}`.
 They run the `git`, `docker`, `kubectl`, and `cargo` processes that their work needs.
-`wamn-dev-control::owned_command` owns the child process groups.
 The environment crate owns history retention. Its library interfaces enforce the retention login and coordinate.
 [Native control](control.md) owns the org control service and its operation worker.
 
@@ -79,9 +78,10 @@ It holds the clap argument definitions, the printed output, and the exit codes.
 Each verb parses its arguments, calls its owner, and prints the result.
 The `<area>_verbs.rs` modules hold that surface.
 The development commands in `services/ctl/src/dev/` own argument parsing, output, and process signals.
-`wamn-dev-control::dev` owns the watcher, session orchestration, environment setup, target reset, and child-process supervision.
-Clients request cooperative shutdown through the session control handle.
-The engine finishes active work and cleans up its owned processes.
+`wamn-dev::dev` owns the source watcher and serial development passes.
+The CLI uses the same build, publication, and authenticated deploy operations for every pass.
+Development uses an installed `kind` platform.
+The watcher stops after its active deployment finishes. The deployed release stays available.
 
 `apply-package` applies package SQL through SQLx `Migrator`.
 Authored and generated history migrations share each package's version sequence.
@@ -324,7 +324,7 @@ The driver coordinates graph decisions. The engine owns dispatch and workload lo
 The workflow crate owns durable queue leases and settlement through `RunStore`.
 The [capability owners](capabilities.md) supply database, HTTP, object storage, and event access without guest credentials.
 
-The developer host also loads unpublished components and admitted facts from local files.
+Development publishes the same artifacts and deploys through the same control routes as other environments.
 It requires the expected file digests and a database marker tied to the `project_env_key`, environment, and physical database creation.
 Local facts supply released wiring, connection requirements, and binding selections without changing the frozen catalog records.
 The normal runtime still owns project authority, run leases, credential generations, and effects.

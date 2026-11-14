@@ -2,7 +2,7 @@
 //!
 //! The adapter decides whether a change touches package-owned inputs or explicit
 //! component source roots. It deliberately does not coalesce events or execute
-//! stages; [`super::run_watch`] remains the sole orchestration owner.
+//! deployment work; [`super::run`] owns each development pass.
 
 pub(super) mod plan;
 
@@ -18,16 +18,18 @@ use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 
-use crate::git_source;
+use super::git_source;
 use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
 use tokio::io::AsyncWriteExt as _;
 use tokio::io::unix::AsyncFd;
 use tokio::process::Command;
 use wamn_compiler::build_record::is_input_path;
 
-pub use crate::git_source::{GitSourceError, GitSourceErrorType, GitSourceSnapshot};
+pub use super::git_source::{
+    GitSourceError, GitSourceErrorType, GitSourceSnapshot, GitSourceState,
+};
 
-use super::{DevInvalidation, DevInvalidationSource, DevStage};
+use super::{DevInvalidation, DevInvalidationSource};
 
 const INOTIFY_BUFFER_BYTES: usize = 64 * 1024;
 
@@ -359,7 +361,7 @@ impl FilesystemInvalidationSource {
     }
 
     /// Watch explicitly configured local files, including files outside Git.
-    pub(super) fn replace_configuration_files(
+    pub fn replace_configuration_files(
         &mut self,
         files: impl IntoIterator<Item = PathBuf>,
     ) -> Result<(), FilesystemInvalidationError> {
@@ -527,24 +529,19 @@ impl FilesystemInvalidationSource {
                     event_mask = change.events.bits(),
                     "development filesystem queue overflow requires rerun"
                 );
-                DevInvalidation::Rerun {
-                    from: DevStage::Migrate,
-                }
+                DevInvalidation::Rerun
             } else if vanished_directories.contains(&index) {
                 DevInvalidation::Ignore
             } else if let Some(path) = change.path {
                 // Path classification decides only relevance. Every relevant
-                // change reruns from Migrate, and each stage's input digest
-                // decides what a run does not have to redo.
+                // change rebuilds and publishes through the product deployment path.
                 if self.roots.is_input(&path) {
                     tracing::debug!(
                         path = %path.display(),
                         event_mask = change.events.bits(),
                         "development filesystem input requires rerun"
                     );
-                    DevInvalidation::Rerun {
-                        from: DevStage::Migrate,
-                    }
+                    DevInvalidation::Rerun
                 } else {
                     DevInvalidation::Ignore
                 }
@@ -681,8 +678,8 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
+    use super::git_source::GitSourceState;
     use super::*;
-    use crate::git_source::GitSourceState;
 
     static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -759,13 +756,44 @@ mod tests {
         events
     }
 
-    fn has_rerun(events: &[DevInvalidation], expected_stage: DevStage) -> bool {
-        events.iter().any(|event| {
-            matches!(
-                event,
-                DevInvalidation::Rerun { from } if *from == expected_stage
-            )
-        })
+    fn has_rerun(events: &[DevInvalidation]) -> bool {
+        events.contains(&DevInvalidation::Rerun)
+    }
+
+    #[tokio::test]
+    async fn a_watch_failure_retries_the_next_edit_and_shutdown_waits_for_the_active_pass()
+    -> anyhow::Result<()> {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let root = repository.package();
+        let git = GitSource::discover(&repository.root).await?;
+        let source = FilesystemInvalidationSource::new([root.clone()], [], git).await?;
+        let (shutdown, receiver) = tokio::sync::watch::channel(false);
+        let mut passes = 0;
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            super::super::run(Some(source), receiver, || {
+                passes += 1;
+                let pass = passes;
+                let root = &root;
+                let shutdown = &shutdown;
+                async move {
+                    if pass == 1 {
+                        fs::write(root.join("query/widget_list.sql"), "SELECT 2")?;
+                        anyhow::bail!("publication refused");
+                    }
+                    shutdown.send_replace(true);
+                    tokio::task::yield_now().await;
+                    Ok(())
+                }
+            }),
+        )
+        .await??;
+        assert_eq!(
+            passes, 2,
+            "a queued edit retries the failed pass before shutdown"
+        );
+        Ok(())
     }
 
     #[tokio::test]
@@ -800,7 +828,7 @@ mod tests {
         for input in inputs {
             fs::write(root.join(input), "edited").expect("edit application source");
             assert!(
-                has_rerun(&next_batch(&mut source).await, DevStage::Migrate),
+                has_rerun(&next_batch(&mut source).await),
                 "{input} must start a rebuild"
             );
         }
@@ -858,20 +886,14 @@ mod tests {
             .expect("configuration replacement arrived")
             .expect("read configuration replacement")
             .expect("watch remains open");
-        assert!(has_rerun(
-            &collect_batch(first, &mut source),
-            DevStage::Migrate
-        ));
+        assert!(has_rerun(&collect_batch(first, &mut source)));
         fs::remove_file(&privilege).expect("remove configured file");
         let first = tokio::time::timeout(Duration::from_secs(2), source.next())
             .await
             .expect("configuration removal arrived")
             .expect("read configuration removal")
             .expect("watch remains open");
-        assert!(has_rerun(
-            &collect_batch(first, &mut source),
-            DevStage::Migrate
-        ));
+        assert!(has_rerun(&collect_batch(first, &mut source)));
     }
 
     #[tokio::test]
@@ -901,10 +923,7 @@ mod tests {
             .expect("Cargo directory event arrived")
             .expect("read directory event")
             .expect("watch remains open");
-        assert!(has_rerun(
-            &collect_batch(first, &mut source),
-            DevStage::Migrate
-        ));
+        assert!(has_rerun(&collect_batch(first, &mut source)));
         assert!(
             source
                 .watched_directories
@@ -917,10 +936,7 @@ mod tests {
             .expect("configuration event arrived")
             .expect("read configuration event")
             .expect("watch remains open");
-        assert!(has_rerun(
-            &collect_batch(first, &mut source),
-            DevStage::Migrate
-        ));
+        assert!(has_rerun(&collect_batch(first, &mut source)));
         assert!(
             !source
                 .roots
@@ -940,12 +956,12 @@ mod tests {
     #[tokio::test]
     async fn git_snapshot_refuses_an_initial_repository() {
         let repository = TempRepository::new();
-        let error = crate::git_source::read_status(&repository.root)
+        let error = super::git_source::read_status(&repository.root)
             .await
             .unwrap_err();
         assert_eq!(
             error.error_type(),
-            crate::git_source::GitSourceErrorType::Inspect
+            super::git_source::GitSourceErrorType::Inspect
         );
         assert!(error.to_string().contains("committed HEAD"));
     }
@@ -982,7 +998,7 @@ mod tests {
         fs::remove_file(untracked).expect("remove untracked file");
     }
 
-    /// The Build stage writes inside a component build root, so a watch that
+    /// The build writes inside a component build root, so a watch that
     /// descended into that output invalidated on its own artifacts and reran
     /// with no edit until it was stopped (wamn-10yt.55). Both orders matter:
     /// the output root can already exist when the session starts, and the
@@ -1135,7 +1151,7 @@ mod tests {
         fs::rename(&authored, repository.component().join("ignored"))
             .expect("move watched source into ignored output");
         assert!(
-            has_rerun(&next_batch(&mut source).await, DevStage::Migrate),
+            has_rerun(&next_batch(&mut source).await),
             "a watched source moved into output still disappeared from the build"
         );
 
@@ -1145,14 +1161,14 @@ mod tests {
         )
         .expect("move watched source into watched but ignored generated output");
         assert!(
-            has_rerun(&next_batch(&mut source).await, DevStage::Migrate),
+            has_rerun(&next_batch(&mut source).await),
             "registering the moved inode must not erase its previous source ownership"
         );
 
         fs::remove_file(repository.component().join("src/lib.rs"))
             .expect("delete another tracked source");
         assert!(
-            has_rerun(&next_batch(&mut source).await, DevStage::Migrate),
+            has_rerun(&next_batch(&mut source).await),
             "ordinary source deletion must still invalidate"
         );
 
@@ -1161,7 +1177,7 @@ mod tests {
         fs::write(new_source.join("lib.rs"), "pub fn new_source() {}")
             .expect("write new source with no move into ignored output");
         assert!(
-            has_rerun(&next_batch(&mut source).await, DevStage::Migrate),
+            has_rerun(&next_batch(&mut source).await),
             "a target prefix alone must never hide authored source"
         );
     }
@@ -1200,10 +1216,7 @@ mod tests {
             .expect("authored SQL event arrived")
             .expect("read authored SQL event")
             .expect("source remains open");
-        assert!(has_rerun(
-            &collect_batch(first, &mut source),
-            DevStage::Migrate
-        ));
+        assert!(has_rerun(&collect_batch(first, &mut source)));
 
         fs::write(
             repository.component().join("src/lib.rs"),
@@ -1215,9 +1228,6 @@ mod tests {
             .expect("component event arrived")
             .expect("read component event")
             .expect("source remains open");
-        assert!(has_rerun(
-            &collect_batch(first, &mut source),
-            DevStage::Migrate
-        ));
+        assert!(has_rerun(&collect_batch(first, &mut source)));
     }
 }
