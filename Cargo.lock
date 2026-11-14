@@ -6706,7 +6706,9 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "serde",
+ "serde_json",
  "sqlx",
+ "uuid",
  "wamn-digest",
 ]
 
@@ -6792,6 +6794,7 @@ dependencies = [
  "wamn-environment",
  "wamn-kubernetes",
  "wamn-postgres",
+ "wamn-registry",
  "wamn-test-infrastructure",
 ]
 

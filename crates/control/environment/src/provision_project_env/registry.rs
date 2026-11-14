@@ -2,7 +2,6 @@
 
 use anyhow::Context as _;
 use ring::rand::SecureRandom as _;
-use sqlx::Row as _;
 
 use super::{
     INSTANCE_SUFFIX_LEN, Org, Placement, SystemRandom, Triple, cluster_of, read_env_policy,
@@ -70,20 +69,16 @@ pub(crate) async fn resolve_cluster_on(
     org: &str,
     env: &str,
 ) -> anyhow::Result<String> {
-    let row = sqlx::query(sqlx::AssertSqlSafe(
-        (wamn_registry::sql::select_org_placement_sql()).to_string(),
-    ))
-    .bind(org)
-    .fetch_optional(&mut *client)
-    .await
-    .context("read org placement")?
-    .with_context(|| {
-        format!(
-            "org {org:?} is not registered: run provision-org before provisioning a project-env"
-        )
-    })?;
-    let placement_type: String = row.get("placement_type");
-    let pool: Option<String> = row.get("pool_cluster");
+    let row = wamn_registry::deployment::org_placement(client, org)
+        .await
+        .context("read org placement")?
+        .with_context(|| {
+            format!(
+                "org {org:?} is not registered: run provision-org before provisioning a project-env"
+            )
+        })?;
+    let placement_type = row.placement_type;
+    let pool = row.pool_cluster;
     let placement = match placement_type.as_str() {
         "pooled" => Placement::Pooled {
             pool: pool.context("pooled org row is missing its pool_cluster")?,
@@ -117,18 +112,10 @@ pub async fn read_project_env_instance(
         .context("system db connect")?;
 
     let result = async {
-        let env = triple.env.as_str();
-        let row = sqlx::query(sqlx::AssertSqlSafe(
-            wamn_registry::sql::select_project_env_sql(),
-        ))
-        .bind(&triple.org)
-        .bind(&triple.project)
-        .bind(env)
-        .fetch_optional(&mut client)
-        .await
-        .context("read registry.environment_projects row")?
-        .with_context(|| format!("project-env {triple} is not recorded"))?;
-        let stored: String = row.get("instance_suffix");
+        let stored = wamn_registry::deployment::instance_suffix(&mut client, triple)
+            .await
+            .context("read project deployment")?
+            .with_context(|| format!("project-env {triple} is not recorded"))?;
         validate_instance_suffix(&stored)
             .map_err(|error| anyhow::anyhow!("registry instance suffix: {error}"))?;
         Ok(stored)
@@ -146,11 +133,9 @@ pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyho
         .context("system db connect")?;
 
     let result = async {
-        let env = triple.env.as_str();
-        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_READ_PROJECT_ENV_POLICY).bind(&triple.org).bind(&triple.project).bind(env).fetch_optional(&mut client)
+        wamn_registry::deployment::project_policy(&mut client, triple)
             .await
-            .context("read the policy name of registry.environment_projects")?
-            .map(|row| row.get::<String, _>(0))
+            .context("read the project deployment policy")?
             .with_context(|| format!("project-env {triple} is not recorded"))
     }
     .await;
@@ -206,36 +191,27 @@ pub(super) async fn do_record_project_env(
     disposable: Option<bool>,
 ) -> anyhow::Result<String> {
     let mut transaction = super::provisioning_transaction(client).await?;
-    sqlx::query(sqlx::AssertSqlSafe(
-        (wamn_registry::sql::upsert_project_sql()).to_string(),
-    ))
-    .bind(&triple.org)
-    .bind(&triple.project)
-    .execute(&mut *transaction)
-    .await
-    .map(|result| result.rows_affected())
-    .context("upsert registry.projects row")?;
-    let env = triple.env.as_str();
-    let target_id: String = sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_DO_RECORD_PROJECT_ENV).bind(target).fetch_optional(&mut *transaction)
+    wamn_registry::deployment::record_project(&mut transaction, &triple.org, &triple.project)
         .await
-        .context("read the registry.target row")?
-        .with_context(|| format!("target {target:?} is not in registry.target"))?
-        .get(0);
-    let row = sqlx::query(sqlx::AssertSqlSafe(
-        (wamn_registry::sql::upsert_project_env_with_policy_sql()).to_string(),
-    ))
-    .bind(&triple.org)
-    .bind(&triple.project)
-    .bind(env)
-    .bind(secret_name)
-    .bind(secret_namespace)
-    .bind(minted)
-    .bind(disposable)
-    .bind(policy.unwrap_or(env))
-    .bind(&target_id)
-    .fetch_one(&mut *transaction)
+        .context("record project")?;
+    let target_id = wamn_registry::deployment::target_id(&mut transaction, target)
+        .await
+        .context("read deployment target")?
+        .with_context(|| format!("target {target:?} is not registered"))?;
+    let stored = wamn_registry::deployment::record(
+        &mut transaction,
+        &wamn_registry::deployment::Registration {
+            triple,
+            secret_name,
+            secret_namespace,
+            instance_suffix: minted,
+            disposable,
+            policy: policy.unwrap_or(triple.env.as_str()),
+            target_id: &target_id,
+        },
+    )
     .await
-    .context("upsert registry.environment_projects row")?;
+    .context("record project deployment")?;
     transaction
         .commit()
         .await
@@ -246,7 +222,6 @@ pub(super) async fn do_record_project_env(
     // re-minting would orphan every resource the old suffix named. The registry
     // is a trust boundary, so the value is re-validated before any name derives
     // from it.
-    let stored: String = row.get(0);
     validate_instance_suffix(&stored)
         .map_err(|error| anyhow::anyhow!("registry instance suffix: {error}"))?;
     Ok(stored)
@@ -257,7 +232,7 @@ pub async fn require_connected(
     client: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<()> {
-    let present: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3)").bind(&triple.org).bind(&triple.project).bind(triple.env.as_str()).fetch_one(client).await?;
+    let present = wamn_registry::deployment::exists(client, triple).await?;
     anyhow::ensure!(present, "project environment is not recorded");
     Ok(())
 }

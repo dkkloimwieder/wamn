@@ -1,6 +1,7 @@
 //! Typed applied settings and desired releases. Helm owns deployment history.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Connection as _, Row as _};
@@ -16,7 +17,7 @@ pub struct EnvironmentConfiguration {
     pub env: String,
     pub target: String,
     pub policy: String,
-    pub revocation_seconds: u64,
+    pub revocation_seconds: u32,
     #[serde(default)]
     pub schema: Schema,
     pub applications: BTreeMap<String, ApplicationConfiguration>,
@@ -32,11 +33,68 @@ pub struct ApplicationConfiguration {
     #[serde(skip)]
     pub release: Option<String>,
     pub hostname: String,
-    pub revocation_seconds: u64,
+    pub revocation_seconds: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub connections: BTreeMap<String, String>,
+    pub connections: BTreeMap<String, ConnectionReference>,
+}
+
+/// A connection name and the optional version named by the document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionReference {
+    pub name: String,
+    pub version: Option<i32>,
+}
+
+impl fmt::Display for ConnectionReference {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.name)?;
+        if let Some(version) = self.version {
+            write!(formatter, "@{version}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Serialize for ConnectionReference {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for ConnectionReference {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        let mut text = String::deserialize(deserializer)?;
+        let (name, version) = match text.split_once('@') {
+            Some((name, version)) => {
+                if version.starts_with('0') || !version.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err(D::Error::custom(
+                        "connection version must be a positive integer",
+                    ));
+                }
+                let version = version.parse::<i32>().map_err(D::Error::custom)?;
+                (name, Some(version))
+            }
+            None => (text.as_str(), None),
+        };
+        if name.is_empty()
+            || name.len() > 63
+            || !name.as_bytes()[0].is_ascii_lowercase()
+            || !name.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
+            })
+        {
+            return Err(D::Error::custom("invalid connection name"));
+        }
+        let name_length = name.len();
+        text.truncate(name_length);
+        Ok(Self {
+            name: text,
+            version,
+        })
+    }
 }
 
 /// Schema behavior; an omitted mode follows the stored disposable designation.
@@ -80,13 +138,13 @@ pub async fn read(
 ) -> Result<Option<EnvironmentConfiguration>, sqlx::Error> {
     // One statement gives every child the same snapshot, including concurrent client writes.
     let rows = sqlx::query(
-        "SELECT t.name AS target, e.policy_name, p.revocation_seconds::text AS project_seconds, p.schema_mode, c.* \
+        "SELECT t.name AS target, e.policy_name, p.revocation_seconds AS project_seconds, p.schema_mode, c.* \
          FROM registry.environment_projects p JOIN registry.environments e USING (org,env) \
          JOIN registry.target t ON t.id=e.target_id LEFT JOIN LATERAL ( \
-           SELECT 1 AS record_type, application AS name, hostname AS value, revocation_seconds::text AS seconds, \
+           SELECT 1 AS record_type, application AS name, hostname AS value, revocation_seconds AS seconds, \
              client_package, client_web, release_digest, NULL::text AS alias, NULL::integer AS version \
            FROM registry.environment_applications WHERE org=p.org AND env=p.env AND project=p.project \
-           UNION ALL SELECT 2, application, connection_name, NULL, NULL, NULL, NULL, alias, NULL \
+           UNION ALL SELECT 2, application, connection_name, NULL, NULL, NULL, NULL, alias, connection_version \
            FROM registry.environment_application_connections WHERE org=p.org AND env=p.env AND project=p.project \
            UNION ALL SELECT 3, name, NULL, NULL, NULL, NULL, NULL, NULL, version \
            FROM registry.environment_integrations WHERE org=p.org AND env=p.env AND project=p.project \
@@ -145,7 +203,13 @@ pub async fn read(
                     .get_mut(application)
                     .expect("connection references a stored application")
                     .connections
-                    .insert(row.try_get("alias")?, row.try_get("value")?);
+                    .insert(
+                        row.try_get("alias")?,
+                        ConnectionReference {
+                            name: row.try_get("value")?,
+                            version: row.try_get("version")?,
+                        },
+                    );
             }
             Some(3) => {
                 configuration.integrations.insert(
@@ -161,13 +225,15 @@ pub async fn read(
     Ok(Some(configuration))
 }
 
-fn seconds(row: &sqlx::postgres::PgRow, column: &str) -> Result<u64, sqlx::Error> {
-    row.try_get::<&str, _>(column)?
-        .parse()
-        .map_err(|error| sqlx::Error::ColumnDecode {
-            index: column.to_owned(),
-            source: Box::new(error),
-        })
+fn seconds(row: &sqlx::postgres::PgRow, column: &str) -> Result<u32, sqlx::Error> {
+    u32::try_from(row.try_get::<i32, _>(column)?).map_err(|error| sqlx::Error::ColumnDecode {
+        index: column.to_owned(),
+        source: Box::new(error),
+    })
+}
+
+fn database_seconds(seconds: u32) -> Result<i32, sqlx::Error> {
+    i32::try_from(seconds).map_err(|error| sqlx::Error::InvalidArgument(error.to_string()))
 }
 
 /// Refuse a policy that would move an established environment to another cluster.
@@ -221,11 +287,16 @@ pub async fn write(
         SchemaMode::Migrate => "migrate",
     });
     let updated = sqlx::query(
-        "UPDATE registry.environment_projects SET revocation_seconds=$4::text::numeric, schema_mode=$5 \
+        "UPDATE registry.environment_projects SET revocation_seconds=$4, schema_mode=$5 \
          WHERE org=$1 AND env=$2 AND project=$3",
     )
-    .bind(&c.org).bind(&c.env).bind(&c.project).bind(c.revocation_seconds.to_string()).bind(mode)
-    .execute(&mut *transaction).await?;
+    .bind(&c.org)
+    .bind(&c.env)
+    .bind(&c.project)
+    .bind(database_seconds(c.revocation_seconds)?)
+    .bind(mode)
+    .execute(&mut *transaction)
+    .await?;
     if updated.rows_affected() == 0 {
         transaction.rollback().await?;
         return Ok(false);
@@ -246,22 +317,22 @@ pub async fn write(
         sqlx::query(
             "INSERT INTO registry.environment_applications \
              (org,env,project,application,hostname,revocation_seconds,client_package,client_web) \
-             VALUES ($1,$2,$3,$4,$5,$6::text::numeric,$7,$8) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) \
              ON CONFLICT (org,env,project,application) DO UPDATE SET hostname=EXCLUDED.hostname, \
              revocation_seconds=EXCLUDED.revocation_seconds, client_package=EXCLUDED.client_package, client_web=EXCLUDED.client_web",
         )
         .bind(&c.org).bind(&c.env).bind(&c.project).bind(name).bind(&application.hostname)
-        .bind(application.revocation_seconds.to_string())
+        .bind(database_seconds(application.revocation_seconds)?)
         .bind(application.client.as_ref().map(|client| &client.package))
         .bind(application.client.as_ref().map(|client| &client.web))
         .execute(&mut *transaction).await?;
-        for (alias, connection_name) in &application.connections {
+        for (alias, connection) in &application.connections {
             sqlx::query(
-                "INSERT INTO registry.environment_application_connections (org,env,project,application,alias,connection_name) \
-                 VALUES ($1,$2,$3,$4,$5,$6)",
+                "INSERT INTO registry.environment_application_connections (org,env,project,application,alias,connection_name,connection_version) \
+                 VALUES ($1,$2,$3,$4,$5,$6,$7)",
             )
             .bind(&c.org).bind(&c.env).bind(&c.project).bind(name)
-            .bind(alias).bind(connection_name).execute(&mut *transaction).await?;
+            .bind(alias).bind(&connection.name).bind(connection.version).execute(&mut *transaction).await?;
         }
     }
     sqlx::query(

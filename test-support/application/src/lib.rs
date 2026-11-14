@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use sqlx::Row as _;
 use wamn_environment::environment::document::{DeclaredRelease, EnvironmentDocument};
 use wamn_environment::platform::{document::ClusterDocument, document::Provider, provider};
 use wamn_test_infrastructure::scratch::ScratchRoot;
@@ -188,9 +187,10 @@ impl Application {
             .execute(&mut system)
             .await
             .map(drop)?;
-        let suffix: String = sqlx::query("SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3")
-            .bind(&self.document.org).bind(&self.document.project).bind(&self.document.env)
-            .fetch_one(&mut system).await?.get(0);
+        let suffix =
+            wamn_registry::deployment::instance_suffix(&mut system, &self.document.triple())
+                .await?
+                .context("project deployment is absent")?;
         Ok(suffix)
     }
 

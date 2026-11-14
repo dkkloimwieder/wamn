@@ -1,7 +1,10 @@
 //! Registry coordinates, resource names, and system database statements.
 
 pub mod configuration;
+pub mod connections;
+pub mod deployment;
 pub mod identifiers;
+pub mod migrations;
 pub mod name;
 pub mod sql;
 mod types;

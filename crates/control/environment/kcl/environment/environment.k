@@ -12,7 +12,7 @@ schema Application:
     connections: {str:str} = {}
 
     check:
-        revocation_seconds >= 0, "revocation_seconds must be nonnegative"
+        0 <= revocation_seconds <= 3600, "revocation_seconds must be between 0 and 3600"
 
 schema Integration:
     version: int
@@ -37,6 +37,6 @@ schema Environment:
     _invalid_client = [name for name, app in applications if app.client != Undefined and app.client != None and not regex.match(app.client.web, r"^sha256:[0-9a-f]{64}$")]
 
     check:
-        revocation_seconds >= 0, "revocation_seconds must be nonnegative"
+        0 <= revocation_seconds <= 3600, "revocation_seconds must be between 0 and 3600"
         len(_invalid_client) == 0, "invalid client web digest for applications ${_invalid_client}"
         len(target) > 0, "target is required"

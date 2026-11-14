@@ -15,7 +15,7 @@ pub async fn observe(
     sources: &[Migration],
 ) -> anyhow::Result<crate::migrations::SchemaReport> {
     let table = match database {
-        MigrationDatabase::System => "registry._sqlx_migrations",
+        MigrationDatabase::System => wamn_registry::migrations::HISTORY_TABLE,
         MigrationDatabase::Project => "platform._sqlx_migrations",
     };
     crate::migrations::observe(client, table, sources).await
@@ -77,9 +77,7 @@ pub async fn apply_target(
         .execute(&mut *client)
         .await?;
         if database == MigrationDatabase::System {
-            sqlx::raw_sql("GRANT SELECT ON registry._sqlx_migrations TO wamn_apply")
-                .execute(&mut *client)
-                .await?;
+            wamn_registry::migrations::grant_history_read(client).await?;
         }
         let migrator = Migrator::with_migrations(sources.to_vec());
         crate::migrations::run(client, migrator, table).await

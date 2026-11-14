@@ -101,7 +101,13 @@ pub async fn bind(
         .get_mut(application)
         .context("fixture application")?
         .connections
-        .insert(alias.into(), name.into());
+        .insert(
+            alias.into(),
+            wamn_registry::configuration::ConnectionReference {
+                name: name.into(),
+                version: None,
+            },
+        );
     document.integrations.insert(
         name.into(),
         environment::document::Integration { version: 1 },
