@@ -15,8 +15,7 @@ pub(crate) async fn validate_history(root: &Path) -> anyhow::Result<()> {
     let history = Migrator::new(root.join("history")).await?;
     let Some(latest) = history
         .iter()
-        .filter(|migration| migration.migration_type.is_up_migration())
-        .last()
+        .rfind(|migration| migration.migration_type.is_up_migration())
     else {
         return Ok(());
     };

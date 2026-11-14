@@ -65,7 +65,7 @@ impl WamnPostgres {
         let digest = release
             .as_ref()
             .map(ReleaseIdentity::manifest_digest)
-            .map(|digest| digest.as_str());
+            .map(wamn_catalog::ManifestDigest::as_str);
         let result = self
             .executor_bound(component_id, async |connection| {
                 persistence::lease_next(
@@ -212,7 +212,7 @@ impl WamnPostgres {
         let digest = release
             .as_ref()
             .map(ReleaseIdentity::manifest_digest)
-            .map(|digest| digest.as_str());
+            .map(wamn_catalog::ManifestDigest::as_str);
         let Some(digest) = digest else {
             return Ok(false);
         };

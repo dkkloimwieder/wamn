@@ -40,19 +40,17 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
         .context("connect to the system database")?;
 
     let result = async {
-        let migration_input = match request.migration_database_url.as_deref() {
-            Some(input) => input.to_owned(),
-            None => {
-                let input = wamn_postgres::configuration(&request.system_database_url)?;
-                let config: wamn_postgres::ConnectionConfig = serde_json::from_str(&input)
-                    .context(
-                        "explicit platform initialization requires a separate migration connection",
-                    )?;
-                let role = MigrationDatabase::System.managed_role(&config.database);
-                // The bootstrap chart has already declared this fixed platform role and Secret.
-                crate::credentials::wait_role(&mut client, &role.name).await?;
-                MigrationDatabase::System.configuration(&config.to_json()?)?
-            }
+        let migration_input = if let Some(input) = request.migration_database_url.as_deref() {
+            input.to_owned()
+        } else {
+            let input = wamn_postgres::configuration(&request.system_database_url)?;
+            let config: wamn_postgres::ConnectionConfig = serde_json::from_str(&input).context(
+                "explicit platform initialization requires a separate migration connection",
+            )?;
+            let role = MigrationDatabase::System.managed_role(&config.database);
+            // The bootstrap chart has already declared this fixed platform role and Secret.
+            crate::credentials::wait_role(&mut client, &role.name).await?;
+            MigrationDatabase::System.configuration(&config.to_json()?)?
         };
         initialize_system(
             &mut client,

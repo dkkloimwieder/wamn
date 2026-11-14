@@ -582,9 +582,9 @@ pub fn filter_predicate(sql: &[u8], parameter: u32) -> Option<(Option<FilterMatc
                     mode = Some(FilterMatch::Range);
                 }
             }
-            NodeRef::SubLink(link)
-                if link.sub_link_type == pg_query::protobuf::SubLinkType::AnySublink as i32
-                    && link
+            NodeRef::SubLink(subquery)
+                if subquery.sub_link_type == pg_query::protobuf::SubLinkType::AnySublink as i32
+                    && subquery
                         .subselect
                         .as_ref()
                         .and_then(|node| node.node.as_ref())
