@@ -134,15 +134,9 @@ impl ControlRoutes<'_> {
                 Some(&request.env),
             )
             .await?;
-        let exists = sqlx::query(
-            wamn_registry::sql::EXECUTION_HOST_SRC_CONTROL_ROUTE_OPERATION_JOB_OPERATION_JOB,
-        )
-        .bind(self.org)
-        .bind(&request.project)
-        .bind(&request.env)
-        .fetch_optional(&mut *transaction)
-        .await?
-        .is_some();
+        let triple =
+            wamn_registry::Triple::new(self.org, request.env.as_str(), request.project.as_str());
+        let exists = wamn_registry::deployment::exists(&mut transaction, &triple).await?;
         if !exists {
             return Err(Refusal::Declared {
                 code: "environment_not_found",
@@ -182,8 +176,6 @@ impl ControlRoutes<'_> {
         let operation =
             Operation::parse(attachment.route.operation).context("unknown operation Job route")?;
         validate(operation, &request)?;
-        let triple =
-            wamn_registry::Triple::new(self.org, request.env.as_str(), request.project.as_str());
         let environment = {
             let mut connection = self.control.acquire().await?;
             wamn_registry::configuration::read(&mut connection, &triple)
@@ -195,8 +187,12 @@ impl ControlRoutes<'_> {
         {
             return Err(invalid("application"));
         }
-        let suffix: String = sqlx::query_scalar("SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3")
-            .bind(self.org).bind(&request.project).bind(&request.env).fetch_one(self.control).await?;
+        let suffix = wamn_registry::deployment::instance_suffix(
+            &mut *self.control.acquire().await?,
+            &triple,
+        )
+        .await?
+        .context("project deployment is absent")?;
         let database = wamn_control_provision::project_env_database_name(
             self.org,
             &request.project,

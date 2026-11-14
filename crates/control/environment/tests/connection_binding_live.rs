@@ -446,7 +446,13 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
         .applications
         .get_mut(PACKAGE)
         .unwrap()
-        .connections = BTreeMap::from([("erp".into(), "http-read".into())]);
+        .connections = BTreeMap::from([(
+        "erp".into(),
+        wamn_registry::configuration::ConnectionReference {
+            name: "http-read".into(),
+            version: None,
+        },
+    )]);
     declaration.integrations.remove("labels-store");
     authority
         .apply(

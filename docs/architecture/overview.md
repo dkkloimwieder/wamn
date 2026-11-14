@@ -273,6 +273,7 @@ The platform UI reads status through a control operation in the org namespace. K
 ## Registry hierarchy
 
 The hierarchy is org, environment, project, application.
+`wamn-registry` owns registry SQL. Its deployment and connection readers return typed values.
 `registry.environments` owns each environment's policy, status, disposable setting, and target.
 `registry.projects` holds org-level project definitions.
 `registry.environment_projects` places a project under an environment and owns its database Secret, instance suffix, and route host.

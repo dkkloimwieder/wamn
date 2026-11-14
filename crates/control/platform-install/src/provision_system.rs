@@ -185,10 +185,7 @@ pub async fn system_state(client: &mut sqlx::PgConnection) -> anyhow::Result<Sys
     if !present {
         return Ok(SystemState::Absent);
     }
-    let complete: bool =
-        sqlx::query_scalar("SELECT to_regclass('registry._sqlx_migrations') IS NOT NULL")
-            .fetch_one(client)
-            .await?;
+    let complete = wamn_registry::migrations::history_exists(client).await?;
     Ok(if complete {
         SystemState::Complete
     } else {
@@ -271,7 +268,7 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
         }
         wamn_control_provision::migration::prepare_history(
             admin,
-            "registry._sqlx_migrations",
+            wamn_registry::migrations::HISTORY_TABLE,
             "wamn_system",
         )
         .await?;

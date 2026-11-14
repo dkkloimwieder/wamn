@@ -248,31 +248,9 @@ pub const EXECUTION_HOST_SRC_FILE_ROUTE_GENERATIONS: &str = "SELECT connection_i
 pub const EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN: &str = "SELECT project,env FROM registry.environment_projects WHERE org=$1 AND project=$2 \
              AND ($3::text IS NULL OR env=$3) ORDER BY env";
 
-/// crates/execution/host/src/control_route/operation_job.rs::operation_job registry statement.
-pub const EXECUTION_HOST_SRC_CONTROL_ROUTE_OPERATION_JOB_OPERATION_JOB: &str =
-    "SELECT 1 FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3";
-
 /// crates/platform/connections/src/oauth_token.rs::lock registry statement.
 pub const PLATFORM_RUNTIME_SRC_OAUTH_TOKEN_LOCK: &str =
     "SELECT registry.lock_oauth_connection($1,$2,$3,$4)";
-
-/// crates/platform/connections/src/connection_credentials.rs::integration_version registry statement.
-pub const PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_INTEGRATION_VERSION: &str =
-    "SELECT version, digest FROM registry.read_integration_version($1,$2)";
-
-/// crates/platform/connections/src/connection_credentials.rs::env_connections registry statement.
-pub const PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_ENV_CONNECTIONS: &str =
-    "SELECT name, id FROM registry.read_env_connections($1,$2,$3)";
-
-/// crates/platform/connections/src/connection_credentials.rs::credential_secret registry statement.
-pub const PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CREDENTIAL_SECRET: &str =
-    "SELECT store, ref, version FROM registry.read_connection_secret($1,$2,$3,$4)";
-
-/// crates/platform/connections/src/connection_credentials.rs::connection_generation registry statement.
-pub const PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CONNECTION_GENERATION: &str = "SELECT name, integration_type, runtime_type, auth_type, external_system, parameters FROM registry.read_connection_generation($1,$2,$3,$4,$5)";
-
-/// crates/platform/connections/src/connection_credentials.rs::connection_fact registry statement.
-pub const PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CONNECTION_FACT: &str = "SELECT active_generation, active, credential_id, exclusive, target_id, resource_key, target_type, service_principal_id FROM registry.read_connection_fact($1,$2,$3,$4)";
 
 /// crates/identity/platform/src/application.rs::project_authority registry statement.
 pub const IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY: &str =
@@ -306,10 +284,6 @@ pub const IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_PROJECTS_SQL: &str = "SELECT r.i
       OR EXISTS (SELECT FROM identity.org_roles a WHERE a.principal_id=p.id AND a.org=$2) \
       OR EXISTS (SELECT FROM identity.environment_roles a JOIN registry.environment_projects e USING (org,env) WHERE a.principal_id=p.id AND a.org=$2 AND e.project=r.id)) \
     AND ($4::text IS NULL OR r.id>$4) ORDER BY r.id LIMIT $5";
-
-/// crates/identity/platform/src/connection_projection.rs::document registry statement.
-pub const IDENTITY_PLATFORM_SRC_CONNECTION_PROJECTION_DOCUMENT: &str =
-    "SELECT registry.connection_projection($1,$2,$3)";
 
 /// crates/identity/platform/src/org.rs::PROJECT_MEMBERS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_MEMBERS_SQL: &str = "SELECT p.id::text,p.email,p.display_name, \
@@ -427,10 +401,6 @@ pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED: &str = "SELE
 /// crates/control/environment/src/environment/bindings.rs::analyse registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_BINDINGS_ANALYSE: &str =
     "SELECT * FROM registry.resolve_environment_connection($1,$2,$3,$4,$5,$6)";
-
-/// crates/control/environment/src/environment/sql.rs::read registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_SQL_READ: &str = "SELECT instance_suffix FROM registry.environment_projects \
-             WHERE org=$1 AND project=$2 AND env=$3";
 
 /// crates/control/environment/src/environment/delete/rows.rs::delete_registry_rows registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS: &str =

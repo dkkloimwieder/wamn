@@ -15,6 +15,7 @@ uuid = { workspace = true, features = ["v4"] }
 wamn-catalog.workspace = true
 wamn-control-provision.workspace = true
 wamn-environment.workspace = true
+wamn-registry.workspace = true
 wamn-kubernetes.workspace = true
 wamn-postgres.workspace = true
 wamn-test-infrastructure.workspace = true

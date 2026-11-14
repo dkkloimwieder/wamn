@@ -26,8 +26,7 @@ pub async fn reset_database(
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<()> {
     let mut system = wamn_postgres::connect(system_url).await?;
-    let disposable: bool = sqlx::query_scalar("SELECT disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org=$1 AND project=$2 AND env=$3")
-        .bind(&triple.org).bind(&triple.project).bind(triple.env.as_str()).fetch_one(&mut system).await?;
+    let disposable = wamn_registry::deployment::disposable(&mut system, triple).await?;
     ensure!(disposable, "environment is not recorded as disposable");
     let project_env_key =
         wamn_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str());

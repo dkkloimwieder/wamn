@@ -77,6 +77,8 @@ The environment database holds a projection of each integration and connection.
 A package declares each connection name, WIT interfaces, and access mode in `wamn.k`.
 Install refuses a declared interface that the component does not import.
 An environment document maps these names to integrations and selects each integration version.
+A connection reference uses `name` or `name@version`.
+The registry stores the name and optional positive integer version in separate columns.
 Several declared names can use the same integration.
 Apply refuses missing or inactive connections and versions that do not export every required interface.
 Interface versions follow component-model compatibility rules.

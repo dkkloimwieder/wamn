@@ -284,7 +284,11 @@ async fn publish_built(
                         .iter()
                         .map(|package| package.package_id().to_owned())
                         .collect(),
-                    connections: selection.connections.clone(),
+                    connections: selection
+                        .connections
+                        .iter()
+                        .map(|(alias, connection)| (alias.clone(), connection.to_string()))
+                        .collect(),
                 },
             )]
             .into(),
