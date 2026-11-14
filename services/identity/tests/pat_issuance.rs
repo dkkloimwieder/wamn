@@ -120,6 +120,7 @@ fn operator_ca_configuration_refuses_missing_or_malformed_roots() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires: postgres"]
 async fn operator_pat_issuance_over_https() {
     let mut postgres =
         wamn_test_postgres::start(&[]).expect_redacted("start the test PostgreSQL server");

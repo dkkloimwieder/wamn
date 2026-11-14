@@ -37,11 +37,8 @@ async fn counts(client: &mut sqlx::PgConnection) -> anyhow::Result<(i64, i64, i6
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:docker, bin:rustc"]
+#[ignore = "requires: nats, postgres, bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:docker, bin:rustc"]
 async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:docker, bin:rustc",
-    );
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("candidate_health").await?;
     let mut admin = connect(database.url()).await?;

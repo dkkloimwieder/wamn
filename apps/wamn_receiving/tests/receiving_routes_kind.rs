@@ -6,12 +6,9 @@ use sqlx::Row as _;
 use std::path::Path;
 use wamn_test_application::Application;
 
-const PREREQUISITES: &str = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL";
-
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .context("Receiving source")?;
@@ -116,9 +113,8 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
 mod development_assertions;
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn product_dev_command_applies_packages_and_cleans_up() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .context("Receiving source")?;

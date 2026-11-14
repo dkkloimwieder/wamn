@@ -480,6 +480,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires: postgres"]
     async fn an_open_container_refuses_a_disabled_or_rotated_connection() {
         use wamn_connections::connection_credentials::test_util::Fixture;
         let _lock = wamn_test_postgres::lock();

@@ -14,6 +14,7 @@ async fn connect(url: &str) -> sqlx::PgConnection {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn external_signature_uses_the_service_principal_and_only_admin_granted_roles() {
     let _lock = wamn_test_postgres::lock();
     let mut server = wamn_test_postgres::start(&[]).unwrap();
@@ -260,14 +261,12 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
 /// A cached PAT remains accepted after the database revoke until its identity
 /// drop arrives. The long TTL cannot expire during this test.
 #[tokio::test]
-#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: postgres, nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     use crate::route_authentication::PlatformRouteAuthenticator;
     let live_platform_principal =
         wamn_identity_protocol::PlatformComponent::Executor.principal_id();
     use wamn_platform_identity::{assign_project_role, create_service, issue_pat, revoke_pat};
-
-    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
 
     let _lock = wamn_test_postgres::lock();
     let mut case_server = wamn_test_postgres::start(&[]).unwrap();

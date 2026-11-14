@@ -131,6 +131,7 @@ async fn a_fresh_install_grants_the_application_role_invariant_one(pool: sqlx::P
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn integration_and_target_seeds_live_only_in_the_system_database() {
     let mut server = wamn_test_postgres::start(&[]).unwrap();
     let database = server.create_database("wamn_system").await.unwrap();

@@ -332,6 +332,7 @@ async fn continuity(client: &mut sqlx::PgConnection) -> anyhow::Result<SqlContin
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn activation_preserves_sql_other_applications_and_running_release() -> anyhow::Result<()> {
     let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
     let scratch = ScratchRoot::create()?;

@@ -41,23 +41,38 @@ It includes committed, staged, unstaged, deleted, and untracked files.
   `tests/selection.toml` defines documentation as `docs/`, `.beads/`, and root Markdown files.
   A Markdown file below another directory also follows the package rules above.
 
-Without `--tier`, Cargo first runs each selected workspace.
-The root step then runs ignored cases whose `requires:` reasons name only available prerequisites.
-Their package and target must have a tier row that matches the selected tiers and is not `kind`.
-An `env:NAME` prerequisite needs a nonempty variable after input preparation.
-A `bin:PROGRAM` prerequisite needs an executable file on `PATH` or at the named absolute path.
-The step runs each eligible case by its exact name from the test executable that Cargo already built.
-It preserves the complete feature selection of that build and starts no second Cargo build.
-A selected ignored suite owns its named cases or filter, so the root step leaves those cases to that suite.
-Other ignored cases stay ignored.
-An explicit `--tier` filters executable targets within each selected package.
-Without `--tier`, the tool selects unit, contract, live-postgres, and live-nats.
-Use `--tier T[,T]` to select one or more tiers.
+Cargo metadata supplies executable targets and package dependencies.
+The selector reads each target's test declarations and lists its compiled cases before execution.
+A library can contain tests from several tiers. `--tier` filters individual cases within that library.
+Without `--tier`, the selector includes unit, contract, live-postgres, and live-nats tests.
+Use `--tier T[,T]` to choose tiers.
+
+A test states external needs in its `#[ignore = "requires: ..."]` reason.
+The shared parser in `wamn-test-postgres` derives the tier from these needs:
+
+- `postgres` selects live-postgres for a test that owns a private server.
+- `nats` selects live-nats.
+- `cluster` selects the cluster tier, selected with `--tier kind`.
+
+The strongest service determines the tier: cluster, then NATS, then PostgreSQL.
+`#[sqlx::test]` declares PostgreSQL without a repeated service entry.
+The selector runs these cases through `wamn-test-postgres`, with one private server per test binary.
+SQLx owns the separate database for each test.
+Tests without declared needs use unit for library and binary targets, or contract for integration targets.
+Other declared needs select contract when they name no service.
+
+An `input:ID` need selects the named preparation recipe when it has no environment output.
+An `env:NAME` need selects its output recipe and requires a nonempty variable after preparation.
+A `bin:PROGRAM` need requires an executable on `PATH` or at the given absolute path.
+The selector runs ignored cases only when it can supply their declared inputs.
+An explicit suite fails when a selected case lacks an input.
+Selected suites own their named cases or filters, so dependency selection runs each case once.
+The selector preserves the features of the Cargo build when it runs its test executable.
 The tool builds the guests that selected suites need.
 `cargo xtask repo-lint` also compiles guest targets that disable Cargo tests.
 A passing workspace test result does not establish compilation of those guest targets.
 The platform producer builds both role components through the package component builder.
-`tests/selection.toml` owns suite commands, tiers, prerequisites, and inputs beyond Cargo dependencies.
+`tests/selection.toml` owns suite commands, input rules, and preparation beyond Cargo dependencies.
 Platform fixture and catalog changes select `wamn-control-provision`.
 SQL changes select the environment retention and protected-relation interfaces with `ops`.
 Control and platform deployment changes select the exact native host case.
@@ -65,8 +80,7 @@ Every change outside documentation selects `environment_render` and `platform_re
 The release-chart-render suite runs the ignored Helm cases in `release_chart_render`.
 Path rules add to the selected targets and cases.
 The runner combines feature requirements for targets that both Cargo paths and suites select.
-A target runs through Cargo selection or its suite once for each execution mode: ordinary or ignored.
-These contract targets compile separately from the kind cases.
+Each selected case runs once through Cargo selection or its suite.
 Web changes select repository web lint, runtime tests, and platform UI lint, tests, and build.
 Full-workspace lint is an explicit integration operation:
 
@@ -77,17 +91,17 @@ cargo xtask test-changes --suite quality
 The quality suite runs `cargo xtask repo-lint run` without application preparation.
 Prepare generated application inputs through their owning build commands before full-workspace Clippy.
 
-The tool builds native binaries, application packages, and guests only when selected targets or suites need them.
+The tool builds native binaries, application packages, and guests only when selected cases need them.
 The selection file names each preparation step, its output variables, and its commands.
 The runner keeps nonempty overrides and skips their preparation commands.
 The pinned HTTP guest keeps its required release artifact. Other native and standalone guest inputs use debug mode.
-It builds the three HTTP workflow guests from `apps/Cargo.toml` under `$CARGO_TARGET_DIR`.
-It copies those debug guests to the root target path that the native host test reads.
 It builds applications through a private PostgreSQL database.
 Root workspace targets compile without `apps/target/wamn`.
-Preparation bindings name their packages and executable targets in the selection file.
-The runner matches bindings against selected Cargo targets and suites that run a whole target.
-Exact or filtered suites declare their own prerequisites.
+Preparation follows only cases that match the tier, name, and suite filters.
+Test declarations select named recipes or recipes that supply their environment inputs.
+The `control-binaries` recipe builds both `wamn` and `wamn-ctl` beside the native test executables.
+Journey cases request this recipe directly and check those executable paths.
+Package feature entries affect compilation and do not request runtime preparation.
 Application preparation builds each base before its overlays.
 Web consumers share one workspace installation per selection.
 The runner skips that installation when no selected consumer needs it.
@@ -95,7 +109,9 @@ It exports `WAMN_APPLICATION_COMPONENTS` and the selected guest and host paths.
 Control and CLI suites enable `ops`.
 Runtime changes also select the ignored JetStream round trip.
 Runtime and host changes also select the exact native host case.
-The tool starts a private NATS server on a free loopback port and stops it at exit.
+NATS tests use the broker inputs that their declarations name.
+Tests that own local brokers start and stop them through their shared support.
+The JetStream suite uses the supplied TLS broker address and certificate files.
 Set `WAMN_NATIVE_C_NATS_BIN` to a prebuilt `nats-server`, or put `nats-server` on `PATH`.
 If neither exists, the tool fails and names the variable.
 It never downloads or compiles NATS.
@@ -118,8 +134,8 @@ cargo xtask test-changes --suite receiving-business,wms-local
 ```
 
 Append `dry-run` to print the preparation commands and test filters without execution.
-The runner executes suites that declare `ignored = true` with `--ignored`.
-Every suite test command passes through `cargo xtask require-test-result`.
+Suites select cases by their names and declared tier, including ignored cases with supplied needs.
+It validates the test result with the same parser as `cargo xtask require-test-result`.
 Only selector discovery uses `--list`, which executes no tests.
 
 For direct Cargo commands or artifact comparisons, set these overrides explicitly.
@@ -140,7 +156,6 @@ In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this che
 | `WAMN_IDENTITY_BINARY` | `TARGET/debug/wamn-identity` |
 | `WAMN_FLOW_HTTP_COMPONENT` | `TARGET/apps/wasm32-wasip2/release/http_route.wasm` |
 | `WAMN_BLOB_PUT_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/blob_put.wasm` |
-| `WAMN_SQLX_TRANSACTION_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/sqlx_command.wasm` |
 | `WAMN_PLATFORM_UI_DIST` | `ROOT/apps/platform_ui/dist` |
 | `WAMN_SYNC_BENCH_DIST` | `TARGET/sync-bench/web` |
 | `WAMN_HOST_LIVE_NATS_SERVER_BIN` | Same input as `WAMN_NATIVE_C_NATS_BIN` |
@@ -151,14 +166,15 @@ In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this che
 
 The PostgreSQL directory holds `initdb`, `postgres`, `pg_ctl`, and `psql` from PostgreSQL 18.
 An empty override uses the default directory.
-The `operator_inputs` table in the selection file documents credentials, external addresses, comparison artifacts, and parent-owned fixture inputs.
-The runner does not create those operator inputs.
+Tests declare credentials, external addresses, and comparison artifacts as `env:` needs.
+The runner preserves supplied values and creates only inputs with a preparation entry.
 
 Other cross-package file readers still need explicit path rules.
 `cargo xtask test-changes dry-run` prints the selected commands.
 `cargo xtask test-changes run` reports each step and returns a nonzero status if any command fails.
 Each required command must report at least one executed passing case and exit successfully.
-Missing packages, targets, and exact test names fail before any test runs.
+Missing packages and targets fail selection.
+Exact test names must appear in the compiled binary before that binary runs.
 The same rule applies to the component contract and upstream release commands.
 `cargo xtask require-test-result` streams child output and checks the libtest summary after completion.
 It preserves command failures and refuses absent or entirely ignored test results.
@@ -184,8 +200,8 @@ The `exclusion_diagnostics` example of `wamn-test-infrastructure` runs the platf
 The tool passes the filter to Cargo as the test name filter, which selects the tests whose full names contain it.
 The filter matches only tests in the packages that the change set selects.
 If the change set selects no package, `run` and `dry-run` fail and name the filter.
-Otherwise, before `run` starts the tests, the tool lists the ignored tests that match the filter.
-If no ignored test in the selected packages matches, the tool fails and names the filter.
+The selector lists compiled cases before each binary runs.
+If no case in the selected packages matches, the command fails and names the filter.
 `dry-run` compiles nothing, so it does not list the tests.
 
 To run a named ignored test on an unchanged tree, add `--base <revision>` with a revision before a change to its package.
@@ -249,7 +265,7 @@ These scenarios need a product deployment fixture on the development cluster bef
 The native host and private provisioning fixtures no longer supply their prerequisites.
 
 The publish composition, edge bundle, release digest, and control-client cases use the same prepared HTTP guest.
-Their preparation rows supply the edge component and application packages when selected.
+Their test declarations select the edge component and application recipes.
 The release publication case starts a private registry.
 The control-client cases also need the installed web dependencies.
 
@@ -282,9 +298,6 @@ WAMN_EDGE_LIVE_TOKEN_FILE=<token file> WAMN_EDGE_LIVE_CA_FILE=<proxy CA file> \
 The edge runs the `sample.read` command of the `edge_device` bundle on each frame, and forwards the sample.
 The test sends each of its two samples twice, and prints the tag of its frames.
 Count the rows of that tag in `edge_samples.sample` of the session's target database: the count must be 2.
-
-The SQLx transaction case uses the `sqlx-command` preparation step.
-It commits and rolls back commands under the current PostgreSQL role.
 
 ## Deployed connection and caller tests
 
@@ -354,10 +367,11 @@ Application builds own generated history migrations.
 
 ## Execution tiers
 
-`tests/selection.toml` assigns every executable Cargo target to exactly one tier.
 Cargo metadata defines executable targets through `test = true`.
-The strongest boundary in a target determines its tier.
-A target with no tests takes unit.
+Each test declares its needs beside its body.
+The shared parser assigns the test to the tier of its strongest service.
+A library can contain cases from several tiers.
+[Select the relevant tests](#select-the-relevant-tests) gives the declarations and defaults.
 
 - Unit covers pure decisions and controlled time. It uses no database, broker, network service, subprocess, or component runtime.
 - Contract covers serialized values, WIT, generated artifacts, rendered objects, files, command-line tools, and owned loopback fixtures.
@@ -381,9 +395,12 @@ The connection and caller case lives in `wamn-dev --test platform_apply_kind` an
 
 ## Ignored tests
 
-An ignore reason lists only prerequisites in the fixed form `requires: bin:<program>, env:<VARIABLE>`, with comma-separated entries.
-The test requires every listed program and nonempty environment variable before setup, and missing prerequisites fail the test.
-The tier lives only in `tests/selection.toml`.
+An ignore reason lists needs with comma-separated entries after `requires:`.
+Use `postgres`, `nats`, or `cluster` for services, `bin:<program>` for programs, and `env:<VARIABLE>` for environment inputs.
+Use `input:<ID>` for a named preparation recipe.
+The shared parser derives the tier and validates these declarations.
+The selector checks required programs and variables before it runs a test.
+[Select the relevant tests](#select-the-relevant-tests) describes the tier rules.
 
 To run kind targets in selected packages, use `cargo xtask test-changes --tier kind`.
 They run one at a time.
@@ -523,7 +540,6 @@ Do not infer execution from the aggregate Cargo pass count.
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::session_identity::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
 | `[CAPTURE-GAP]` | `crates/control/environment/tests/capture_gap_live.rs`: requires a Kubernetes target, a stamped release chart, PostgreSQL 18 with `wal_level=logical`, and the platform NATS inputs below. It stops and restarts the reader Deployment during recovery |
-| `[SQLX-TRANSACTION]` | `crates/platform/postgres-capability/tests/sqlx_transaction_live.rs`: ignored in live-postgres, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
 
 The source owners declare additional credentials, artifact paths, and selected assertions.
 Do not substitute shared services for missing test inputs.

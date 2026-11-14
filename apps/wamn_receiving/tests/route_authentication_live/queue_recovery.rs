@@ -9,6 +9,7 @@ const LINE: &str = "00000000-0000-0000-0000-000000000504";
 const IDEMPOTENCY_KEY: &str = "queue-recovery";
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_run_killed_during_application_sql_completes_after_the_host_restarts()
 -> anyhow::Result<()> {
     let application: Application =

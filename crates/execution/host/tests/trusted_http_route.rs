@@ -1000,9 +1000,6 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires: env:WAMN_HTTP_REUSE_ARTIFACT_BASE, env:WAMN_HTTP_REUSE_COMPONENT_WASM"]
     async fn real_http_guest_reuses_connections_without_reusing_authority() -> anyhow::Result<()> {
-        wamn_test_postgres::require_ignored_prerequisites(
-            "requires: env:WAMN_HTTP_REUSE_ARTIFACT_BASE, env:WAMN_HTTP_REUSE_COMPONENT_WASM",
-        );
         Box::pin(tokio::time::timeout(
             Duration::from_secs(180),
             test_connection_reuse(),

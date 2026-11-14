@@ -343,6 +343,7 @@ mod tests {
     /// A route carries the relations its read reads and the revision field of
     /// its `get`, from the generated contract that publish reads.
     #[test]
+    #[ignore = "requires: input:wms, input:receiving"]
     fn a_read_route_carries_its_relations_and_a_get_its_revision() {
         let wms = app("wamn_wms");
         let get = package_route(&wms, "wamn_wms", "wms", &sealed("wamn-wms:packaging/get"))
@@ -389,6 +390,7 @@ mod tests {
     /// A write route names the input field of its idempotency key, from the
     /// generated input contract. A read and a keyless write name none.
     #[test]
+    #[ignore = "requires: input:wms, input:fixture"]
     fn a_write_route_names_its_idempotency_field() {
         let wms = app("wamn_wms");
         let route = |operation: &str| {

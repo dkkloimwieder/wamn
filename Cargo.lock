@@ -5551,7 +5551,6 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-platform-identity",
  "wamn-registry",
- "wamn-test-postgres",
  "wash-runtime",
  "wasmtime",
  "wat",
@@ -5660,7 +5659,6 @@ dependencies = [
  "wamn-digest",
  "wamn-engine",
  "wamn-package-artifact",
- "wamn-test-postgres",
  "wash-runtime",
  "wasmtime",
  "wasmtime-wasi",
@@ -5888,7 +5886,6 @@ dependencies = [
  "wamn-release-control",
  "wamn-run-state",
  "wamn-test-infrastructure",
- "wamn-test-postgres",
  "wit-component 0.254.2",
  "wit-parser 0.254.2",
 ]
@@ -5936,7 +5933,6 @@ dependencies = [
  "wamn-engine",
  "wamn-identity-protocol",
  "wamn-registry",
- "wamn-test-postgres",
  "wash-runtime",
 ]
 
@@ -6090,7 +6086,6 @@ dependencies = [
  "wamn-postgres-capability",
  "wamn-registry",
  "wamn-run-state",
- "wamn-test-postgres",
  "wash-runtime",
 ]
 
@@ -6587,7 +6582,6 @@ dependencies = [
  "wamn-test-postgres",
  "wash-runtime",
  "wasmtime",
- "wasmtime-wasi",
  "wat",
 ]
 
@@ -6902,7 +6896,6 @@ dependencies = [
  "wamn-release-control",
  "wamn-test-application",
  "wamn-test-infrastructure",
- "wamn-test-postgres",
 ]
 
 [[package]]
@@ -8295,6 +8288,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sqlx",
+ "syn 3.0.6",
  "tempfile",
  "tokio",
  "toml 1.1.6+spec-1.1.0",
@@ -8313,6 +8307,7 @@ dependencies = [
  "wamn-postgres",
  "wamn-publish",
  "wamn-release-control",
+ "wamn-test-postgres",
  "wash-runtime",
 ]
 

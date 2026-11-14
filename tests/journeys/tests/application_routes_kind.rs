@@ -10,17 +10,14 @@ use wamn_test_application::{Application, Routes};
 #[path = "support/write_log.rs"]
 mod write_log;
 
-const PREREQUISITES: &str = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL";
-
 /// A retry of `widget.record_batch` with its lines in another order and its
 /// amounts spelled another way answers the stored result, because the host
 /// applies the route's canonical form before it hashes the request element. A retry with
 /// another amount is another request (`docs/history/host-transaction.md` 7,
 /// ruling (a)).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     let application = fixture("platform_fixture").await?;
     let routes = &application.routes;
     let mut database = application.observer().await?;
@@ -124,9 +121,8 @@ async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn health_head_needs_no_credential() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     let application = fixture("platform_fixture").await?;
     let paths = &application.routes;
     let response = paths
@@ -143,9 +139,8 @@ async fn health_head_needs_no_credential() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_read_of_100000_rows_refuses_at_the_ceiling() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     let application = fixture("platform_fixture").await?;
     let paths = &application.routes;
     let load = json!([{"limit": 100_000}]);
@@ -201,9 +196,8 @@ async fn fixture(package: &str) -> anyhow::Result<Application> {
 
 /// Generated sequence bindings run in a guest command without any record.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_command_numbers_without_a_record_and_with_a_key_map() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     let application = fixture("platform_fixture").await?;
     let paths = &application.routes;
     let result = async {
@@ -238,9 +232,8 @@ async fn a_command_numbers_without_a_record_and_with_a_key_map() -> anyhow::Resu
 
 /// An overlay with no field declarations inherits the numbered insert and actors.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     let application = fixture("platform_fixture_overlay").await?;
     let caller = &application.caller;
     let paths = &application.routes;
@@ -279,9 +272,8 @@ async fn post(paths: &Routes, path: &str, body: &Value) -> anyhow::Result<Value>
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     let application = fixture("platform_fixture").await?;
     let paths = &application.routes;
     let result = async {
@@ -320,9 +312,8 @@ async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Res
 ///
 /// The caller loses `admin` before either request and holds `reader` alone.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_role_without_the_permission_is_refused_an_authored_feed() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     let application = fixture("platform_fixture").await?;
     let paths = &application.routes;
     let result = async {

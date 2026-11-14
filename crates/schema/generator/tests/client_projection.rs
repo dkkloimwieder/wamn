@@ -376,6 +376,7 @@ fn release() -> ClientContractIr {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn platform_update_preserves_writable_type_presence_and_nullability() {
     let platform = release();
     let update = platform.models[fixture::widget_index(&platform)]
@@ -444,6 +445,7 @@ fn platform_query_closed_sort_domains_remain_typed() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn direct_state_replay_and_composed_routes_remain_distinct() {
     let platform = release();
     let command = operation(&platform, "archive");
@@ -495,6 +497,7 @@ fn direct_state_replay_and_composed_routes_remain_distinct() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_direct_route_states_the_relations_it_reads_and_writes() {
     let platform = release();
     let response = |model: &str, name: &str| {
@@ -691,6 +694,7 @@ fn leaf<'a>(
 /// The three differ, and a label that arrives on one path alone is a screen
 /// that reads a database in the other two.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn authored_text_reaches_every_field_the_client_reads() {
     let ir = fixture::client_release();
     let operation = |name: &str| {
@@ -775,6 +779,7 @@ fn authored_text_reaches_every_field_the_client_reads() {
 /// text by decision, so without the join a detail reads field paths while the
 /// table beside it reads labels.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_published_response_takes_its_text_from_the_terminal() {
     let package = fixture::generate_fixture();
     let contracts = fixture::descriptions(&package);
@@ -835,6 +840,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
 /// an author writes nothing there. A screen cannot tell the two apart, which
 /// is the point.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
     let ir = fixture::client_release();
     let operation = |name: &str| {
@@ -927,6 +933,7 @@ fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
 /// in the manifest through the errors contract into the IR, on the operation
 /// and on its served response (wamn-ly11.2). A platform code states none.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn authored_refusal_text_reaches_the_client_ir() {
     let ir = fixture::client_release();
     let archive = ir

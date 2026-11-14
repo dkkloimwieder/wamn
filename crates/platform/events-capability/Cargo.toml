@@ -28,7 +28,6 @@ wash-runtime = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true, features = ["test-util"] }
-wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

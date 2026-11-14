@@ -304,6 +304,7 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate(pool: sqlx:
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn administration_refuses_values_incompatible_with_a_retained_release_version() {
     let _lock = wamn_test_postgres::lock();
     let mut case_server = wamn_test_postgres::start(&[]).unwrap();

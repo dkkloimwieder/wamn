@@ -11,11 +11,8 @@ const SECOND_EMAIL: &str = "project-admin@example.invalid";
 const BROWSER_PROJECT: &str = "browser-project";
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_BROWSER_EMAIL, env:WAMN_BROWSER_PASSWORD, env:WAMN_BROWSER_ORG, env:WAMN_TIMINGS_ROOT, bin:node, bin:pnpm, bin:google-chrome"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_BROWSER_EMAIL, env:WAMN_BROWSER_PASSWORD, env:WAMN_BROWSER_ORG, env:WAMN_TIMINGS_ROOT, bin:node, bin:pnpm, bin:google-chrome"]
 async fn local_control_projects_and_membership() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_BROWSER_EMAIL, env:WAMN_BROWSER_PASSWORD, env:WAMN_BROWSER_ORG, env:WAMN_TIMINGS_ROOT, bin:node, bin:pnpm, bin:google-chrome",
-    );
     let started = Instant::now();
     let fixture = kind_browser::Fixture::prepare("platform-ui-env").await?;
     let report = fixture.root.join("platform-ui-screenshots");

@@ -237,6 +237,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: input:fixture"]
     fn manifest_unknown_fields_are_refused_by_the_public_strict_parser() {
         let mut manifest: serde_json::Value =
             serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");
@@ -251,6 +252,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: input:fixture"]
     fn semantic_operation_vocabulary_refusal_reaches_the_grant_boundary() {
         let mut manifest: serde_json::Value =
             serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");
@@ -269,6 +271,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: input:fixture"]
     fn noncanonical_package_identity_reaches_the_grant_boundary() {
         let mut manifest: serde_json::Value =
             serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");

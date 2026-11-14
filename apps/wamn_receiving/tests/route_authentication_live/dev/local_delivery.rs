@@ -16,6 +16,7 @@ const CODE_BEFORE: &str = "read::location_list(connection)";
 const CODE_AFTER: &str = "async { let mut rows = read::location_list(connection).await?; for row in &mut rows { row.location_code.push_str(\"-edited\"); } Ok::<_, crate::data::AccessError>(rows) }";
 
 #[tokio::test]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn local_watch_preserves_data_and_refuses_bad_sql() -> anyhow::Result<()> {
     let application: Application =
         panic!("wamn-eulfr.12.9: no product location and order-line import");

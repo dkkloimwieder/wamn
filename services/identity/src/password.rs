@@ -1318,6 +1318,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires: postgres"]
     async fn operator_invitation_delivery_failure_and_shared_admission() {
         let mut pg = wamn_test_postgres::start(&[]).expect("owned PostgreSQL");
         let db = pg.create_database("wamn_system").await.unwrap();

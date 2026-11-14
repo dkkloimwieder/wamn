@@ -76,7 +76,6 @@ async fn build_digest_tracks_source_bytes_and_survives_another_checkout() {
 #[sqlx::test(migrations = false)]
 #[ignore = "requires: bin:docker"]
 async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx::PgPool) {
-    wamn_test_postgres::require_ignored_prerequisites("requires: bin:docker");
     let _lock = wamn_test_postgres::lock();
     let mut database = wamn_test_postgres::url(&pool);
     wamn_control_provision::test_database::system(database.as_str()).await;
@@ -161,7 +160,6 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx:
 #[sqlx::test(migrations = false)]
 #[ignore = "requires: bin:docker"]
 async fn publish_refuses_an_unknown_integration_without_creating_catalog_rows(pool: sqlx::PgPool) {
-    wamn_test_postgres::require_ignored_prerequisites("requires: bin:docker");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
     wamn_control_provision::test_database::system(database.as_str()).await;

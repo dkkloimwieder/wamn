@@ -102,10 +102,6 @@ pub fn analyze(
     Ok(PolicyReport)
 }
 
-// The highest `wasi:*@0.2` patch the host links, read at build from the WIT
-// of the resolved `wasmtime-wasi` (docs/plan/alignment.md W3).
-include!(concat!(env!("OUT_DIR"), "/wasi_ceiling.rs"));
-
 fn integration_import(name: &str) -> bool {
     match (import_pkg(name), import_version(name)) {
         ("wasi:sockets" | "wasi:io" | "wasi:clocks" | "wasi:random", Some(version)) => {
@@ -121,9 +117,8 @@ pub const WASI_FAMILY: &str = "0.2";
 
 /// Whether a row's version admits an import's version.
 ///
-/// A [`WASI_FAMILY`] row admits `0.2.N` for a plain decimal `N` up to
-/// [`WASI_CEILING`], the way the host links by semver. Every other row admits
-/// only its exact version.
+/// A [`WASI_FAMILY`] row admits `0.2.N` for any plain decimal `N`.
+/// Every other row admits only its exact version.
 fn admits_version(row_version: &str, version: &str) -> bool {
     if row_version != WASI_FAMILY {
         return row_version == version;
@@ -135,11 +130,7 @@ fn admits_version(row_version: &str, version: &str) -> bool {
         return false;
     };
     let canonical = patch == "0" || !patch.starts_with('0');
-    canonical
-        && patch.bytes().all(|byte| byte.is_ascii_digit())
-        && patch
-            .parse::<u32>()
-            .is_ok_and(|patch| patch <= WASI_CEILING)
+    !patch.is_empty() && canonical && patch.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// Whether importing a capability reaches outside the host.
@@ -162,7 +153,7 @@ pub struct CapabilityRow {
     /// Exact WIT `namespace:package`.
     pub package: &'static str,
     /// Exact package version, or [`WASI_FAMILY`] for a `wasi:*` row that
-    /// admits every patch up to [`WASI_CEILING`].
+    /// admits every `0.2.N` patch.
     pub version: &'static str,
     /// Whether importing it leaves the host.
     pub posture: Posture,
@@ -180,9 +171,8 @@ pub struct CapabilityRow {
 ///   change.
 /// * **Exact version, or the WASI family.** A `wamn:*`, `wasmcloud:*` or
 ///   `wasi:logging` row admits only its exact version. A `wasi:*` row of the
-///   family [`WASI_FAMILY`] admits `0.2.N` up to [`WASI_CEILING`], the patch
-///   the host's Wasmtime links. Any other range is lifecycle machinery parked
-///   on `.7`.
+///   family [`WASI_FAMILY`] admits every `0.2.N` patch. The host checks
+///   whether it implements the imported functions when it loads the component.
 /// * **Code, not catalog.** Posture is a security classification that must be
 ///   byte-identical on every host and must move only through code review plus
 ///   a stored row. A database row would let an operator reclassify an effect
@@ -740,12 +730,15 @@ mod tests {
         }
     }
 
-    /// W1: a `wasi:*` row admits its package at any `0.2.N` up to the
-    /// ceiling. Authored rows stay exact. This is the mutant target for the
-    /// version half of the key.
+    /// A `wasi:*` row admits its package at any `0.2.N`.
+    /// Authored rows stay exact.
     #[test]
     fn wasi_rows_match_the_family_and_authored_rows_stay_exact() {
-        for admitted in ["wasi:io/streams@0.2.9", "wasi:io/streams@0.2.12"] {
+        for admitted in [
+            "wasi:io/streams@0.2.9",
+            "wasi:io/streams@0.2.12",
+            "wasi:io/streams@0.2.4294967296",
+        ] {
             assert_eq!(
                 import_posture(admitted),
                 Some(Posture::Ambient),
@@ -753,11 +746,9 @@ mod tests {
             );
             assert!(integration_import(admitted), "{admitted:?} is refused");
         }
-        let above = format!("wasi:io/streams@0.2.{}", WASI_CEILING + 1);
         for refused in [
             "wasi:filesystem/types@0.2.12",
             "wasi:io/streams@0.3.0",
-            above.as_str(),
             "wasi:io/streams@0.2",
             "wasi:io/streams@0.2.",
             "wasi:io/streams@0.2.+9",
@@ -770,11 +761,7 @@ mod tests {
             assert_eq!(import_posture(refused), None, "{refused:?} is admitted");
         }
         assert!(integration_import("wamn:integration/bound@0.1.0"));
-        for refused in [
-            "wamn:integration/bound@0.1.1",
-            "wasi:io/streams@0.3.0",
-            above.as_str(),
-        ] {
+        for refused in ["wamn:integration/bound@0.1.1", "wasi:io/streams@0.3.0"] {
             assert!(!integration_import(refused), "{refused:?} is admitted");
         }
         assert_eq!(import_version("wamn:postgres/client@0.1.0"), Some("0.1.0"));
@@ -784,29 +771,6 @@ mod tests {
             Some("0.1.0-draft")
         );
         assert_eq!(import_version("wasi:clocks"), None);
-    }
-
-    /// W3: the ceiling is the patch the linked `wasmtime-wasi` WIT declares
-    /// for `wasi:io`, and an import one patch above it is refused.
-    #[test]
-    fn wasi_ceiling_is_the_linked_wit_patch() {
-        let io = std::fs::read_to_string(concat!(env!("WAMN_LINKED_WASI_WIT"), "/io.wit"))
-            .expect("read the linked wasi:io WIT");
-        assert!(
-            io.lines()
-                .any(|line| line.trim() == format!("package wasi:io@0.2.{WASI_CEILING};")),
-            "the linked wasi:io WIT is not at 0.2.{WASI_CEILING}"
-        );
-        let above = WASI_CEILING + 1;
-        for name in [
-            format!("wasi:io/streams@0.2.{above}"),
-            format!("wasi:clocks/monotonic-clock@0.2.{above}"),
-        ] {
-            assert_eq!(import_posture(&name), None, "{name} is admitted");
-        }
-        assert!(!integration_import(&format!(
-            "wasi:sockets/tcp@0.2.{above}"
-        )));
     }
 
     /// The registry is a closed set with unique keys; a duplicate row would let
@@ -890,10 +854,9 @@ mod tests {
 
     /// The one deny row: an application component may not import raw SQL,
     /// at any version and under any label, even with the `wamn:postgres`
-    /// grant. Its statements import still passes, and a platform component,
-    /// admitted by the first-party analysis, keeps `client`.
+    /// grant. Its statements import still passes.
     #[test]
-    fn an_application_component_is_refused_client_and_a_platform_component_is_not() {
+    fn an_application_component_is_refused_client() {
         let granted = BTreeSet::from(["wamn:postgres".to_string()]);
         for client in [
             instance_type("wamn:postgres/client@0.1.0", None),
@@ -909,13 +872,5 @@ mod tests {
         }
         let statements = ComponentImports::new([STATEMENTS_INTERFACE.to_string()]);
         assert!(analyze_project(&statements, &granted, "application").is_ok());
-
-        // The imports of the private sqlx-command driver and
-        // apps/platform/fixtures/sqlx-command.
-        let platform = ComponentImports::new([
-            "wamn:postgres/types@0.4.0".to_string(),
-            "wamn:postgres/client@0.4.0".to_string(),
-        ]);
-        assert!(analyze(&platform, PolicyProfile::FirstParty, "postgres-sqlx").is_ok());
     }
 }

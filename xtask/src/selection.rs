@@ -13,6 +13,172 @@ use tokio::process::Command;
 
 const WORKSPACES: [(&str, &str); 2] = [("root", "Cargo.toml"), ("apps", "apps/Cargo.toml")];
 
+#[derive(Debug, Default)]
+struct Case {
+    needs: BTreeSet<(String, String)>,
+    integration: bool,
+    ignored: bool,
+    database: bool,
+}
+
+impl Case {
+    fn tier(&self) -> &'static str {
+        wamn_test_postgres::test_tier(
+            self.needs
+                .iter()
+                .map(|(type_, name)| (type_.as_str(), name.as_str())),
+            self.integration,
+        )
+    }
+}
+
+fn attribute_text(attribute: &syn::Attribute) -> Option<String> {
+    let syn::Meta::NameValue(value) = &attribute.meta else {
+        return None;
+    };
+    let syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Str(value),
+        ..
+    }) = &value.value
+    else {
+        return None;
+    };
+    Some(value.value())
+}
+
+// Follow the modules of this Cargo target, including shared test modules.
+fn cases(source: &Path, integration: bool) -> anyhow::Result<BTreeMap<String, Case>> {
+    fn items(
+        source: &Path,
+        directory: &Path,
+        explicit_directory: &Path,
+        prefix: &str,
+        syntax: Vec<syn::Item>,
+        integration: bool,
+        cases: &mut BTreeMap<String, Case>,
+    ) -> anyhow::Result<()> {
+        for item in syntax {
+            match item {
+                syn::Item::Fn(function)
+                    if function.attrs.iter().any(|attr| {
+                        attr.path()
+                            .segments
+                            .last()
+                            .is_some_and(|segment| segment.ident == "test")
+                    }) =>
+                {
+                    let mut case = Case {
+                        integration,
+                        ..Case::default()
+                    };
+                    for attribute in &function.attrs {
+                        if attribute.path().is_ident("ignore") {
+                            case.ignored = true;
+                            let reason = attribute_text(attribute)
+                                .context("ignored test must declare its needs")?;
+                            case.needs.extend(
+                                wamn_test_postgres::parse_prerequisites(&reason)
+                                    .map_err(anyhow::Error::msg)?
+                                    .into_iter()
+                                    .map(|(type_, name)| (type_.to_owned(), name.to_owned())),
+                            );
+                        }
+                        if attribute
+                            .path()
+                            .segments
+                            .first()
+                            .is_some_and(|segment| segment.ident == "sqlx")
+                        {
+                            case.database = true;
+                            case.needs.insert(("service".into(), "postgres".into()));
+                        }
+                    }
+                    cases.insert(format!("{prefix}{}", function.sig.ident), case);
+                }
+                syn::Item::Mod(module) => {
+                    let prefix = format!("{prefix}{}::", module.ident);
+                    if let Some((_, content)) = module.content {
+                        items(
+                            source,
+                            &directory.join(module.ident.to_string()),
+                            &directory.join(module.ident.to_string()),
+                            &prefix,
+                            content,
+                            integration,
+                            cases,
+                        )?;
+                    } else {
+                        let explicit = module
+                            .attrs
+                            .iter()
+                            .find(|attr| attr.path().is_ident("path"))
+                            .and_then(attribute_text);
+                        let path = if let Some(path) = explicit {
+                            explicit_directory.join(path)
+                        } else {
+                            let path = directory.join(format!("{}.rs", module.ident));
+                            if path.is_file() {
+                                path
+                            } else {
+                                directory.join(module.ident.to_string()).join("mod.rs")
+                            }
+                        };
+                        if path.is_file() {
+                            let directory = if path.file_name().is_some_and(|name| name == "mod.rs")
+                            {
+                                path.parent().context("module parent")?.to_owned()
+                            } else {
+                                path.with_extension("")
+                            };
+                            items(
+                                &path,
+                                &directory,
+                                path.parent().context("module parent")?,
+                                &prefix,
+                                syn::parse_file(&std::fs::read_to_string(&path)?)
+                                    .with_context(|| format!("parse {}", path.display()))?
+                                    .items,
+                                integration,
+                                cases,
+                            )?;
+                        }
+                    }
+                }
+                syn::Item::Macro(item) if item.mac.path.is_ident("include") => {
+                    if let Ok(path) = syn::parse2::<syn::LitStr>(item.mac.tokens) {
+                        let path = source.parent().context("source parent")?.join(path.value());
+                        if !path.is_file() {
+                            continue;
+                        }
+                        items(
+                            &path,
+                            path.parent().context("include parent")?,
+                            path.parent().context("include parent")?,
+                            prefix,
+                            syn::parse_file(&std::fs::read_to_string(&path)?)?.items,
+                            integration,
+                            cases,
+                        )?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    let mut cases = BTreeMap::new();
+    items(
+        source,
+        source.parent().context("target source parent")?,
+        source.parent().context("target source parent")?,
+        "",
+        syn::parse_file(&std::fs::read_to_string(source)?)?.items,
+        integration,
+        &mut cases,
+    )?;
+    Ok(cases)
+}
+
 #[derive(Debug, ClapArgs)]
 pub struct Args {
     #[arg(long)]
@@ -29,11 +195,8 @@ pub struct Args {
 
 #[derive(Debug, Deserialize)]
 struct Policy {
-    version: u32,
     documentation: Vec<String>,
-    root_features: Vec<String>,
     rules: Vec<Rule>,
-    targets: Vec<TierAssignment>,
     suites: Vec<Suite>,
     preparation: Vec<Preparation>,
 }
@@ -44,13 +207,6 @@ struct Rule {
     workspaces: Vec<String>,
     #[serde(default)]
     application: bool,
-}
-#[derive(Debug, Deserialize)]
-struct TierAssignment {
-    workspace: String,
-    package: String,
-    target: String,
-    tier: String,
 }
 #[derive(Debug, Clone, Deserialize)]
 struct Suite {
@@ -68,8 +224,6 @@ struct Suite {
     resource_lock: String,
     always: Option<bool>,
     #[serde(default)]
-    ignored: bool,
-    #[serde(default)]
     filter: String,
     #[serde(default)]
     select_packages: Vec<String>,
@@ -82,10 +236,6 @@ struct Preparation {
     #[serde(default)]
     packages: Vec<String>,
     #[serde(default)]
-    target: Vec<String>,
-    #[serde(default)]
-    suites: Vec<String>,
-    #[serde(default)]
     prerequisites: Vec<String>,
     #[serde(default)]
     features: Vec<String>,
@@ -95,8 +245,6 @@ struct Preparation {
     aliases: BTreeMap<String, String>,
     #[serde(default)]
     applications: Vec<String>,
-    #[serde(default)]
-    before_applications: Vec<Vec<String>>,
     #[serde(default)]
     commands: Vec<Vec<String>>,
     #[serde(default)]
@@ -108,6 +256,7 @@ struct Selected {
     package: String,
     target: String,
     features: BTreeSet<String>,
+    cases: BTreeMap<String, Case>,
 }
 
 fn matches(patterns: &[String], path: &str) -> anyhow::Result<bool> {
@@ -124,7 +273,7 @@ fn target_name(target: &cargo_metadata::Target) -> String {
 }
 
 pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
-    let tiers: Vec<_> = if args.tier.is_empty() {
+    let mut tiers: Vec<_> = if args.tier.is_empty() {
         vec!["unit", "contract", "live-postgres", "live-nats"]
     } else {
         args.tier.iter().map(String::as_str).collect()
@@ -134,11 +283,6 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
             .iter()
             .all(|tier| ["unit", "contract", "live-postgres", "live-nats", "kind"].contains(tier)),
         "unknown test tier"
-    );
-    let cluster = tiers.contains(&"kind");
-    ensure!(
-        args.name.is_none() || cluster,
-        "--name requires --tier kind"
     );
     let base = match &args.base {
         Some(base) => base.clone(),
@@ -171,7 +315,6 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
     );
     let policy_text = std::fs::read_to_string(root.join("tests/selection.toml"))?;
     let policy: Policy = toml::from_str(&policy_text)?;
-    ensure!(policy.version == 1, "unsupported selection schema");
     let mut ids = BTreeSet::new();
     for suite in &policy.suites {
         ensure!(ids.insert(&suite.id), "duplicate suite {}", suite.id);
@@ -189,88 +332,30 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
     for id in &args.suite {
         ensure!(ids.contains(id), "unknown suite {id}");
     }
-    let mut row_suites = None;
-    let mut policy_tests_changed = false;
-    if changed
-        .split('\0')
-        .any(|path| path == "tests/selection.toml")
-    {
-        let previous = process::output(
-            root,
-            "git",
-            &["show", &format!("{base}:tests/selection.toml")],
-        )
-        .await?;
-        let before: toml::Value = toml::from_str(&previous)?;
-        let after: toml::Value = toml::from_str(&policy_text)?;
-        let shared = |value: &toml::Value| {
-            let mut value = value.clone();
-            for field in ["suites", "targets", "exclusions"] {
-                value.as_table_mut().expect("selection table").remove(field);
-            }
-            value
-        };
-        let previous_rows = before["suites"].as_array().context("previous suites")?;
-        let current_rows = after["suites"].as_array().context("current suites")?;
-        for removed in previous_rows
+    if !args.suite.is_empty() && args.tier.is_empty() {
+        tiers = policy
+            .suites
             .iter()
-            .filter_map(|row| row["id"].as_str())
-            .filter(|id| !ids.iter().any(|current| current.as_str() == *id))
-        {
-            let mut command = Command::new("git");
-            command.current_dir(root).args([
-                "grep",
-                "-w",
-                "-l",
-                "-F",
-                "-e",
-                removed,
-                "--",
-                ".",
-                ":!tests/selection.toml",
-                ":!docs/history/**",
-                ":!docs/audit/**",
-            ]);
-            let references = command.output().await?;
-            ensure!(
-                references.status.code().is_some_and(|code| code <= 1),
-                "cannot inspect removed suite {removed}"
-            );
-            ensure!(
-                references.stdout.is_empty(),
-                "removed suite {removed} is still referenced: {}",
-                String::from_utf8_lossy(&references.stdout)
-            );
-        }
-        if !changed
-            .split('\0')
-            .any(|path| path.starts_with("xtask/src/selection") || path == "tools/test-changes")
-            && shared(&before) == shared(&after)
-            && shared_comments(&previous) == shared_comments(&policy_text)
-        {
-            let rows: BTreeSet<String> = current_rows
-                .iter()
-                .filter(|row| !previous_rows.iter().any(|old| old == *row))
-                .filter_map(|row| row["id"].as_str().map(str::to_owned))
-                .collect();
-            policy_tests_changed = !rows.is_empty()
-                || before["targets"] != after["targets"]
-                || before.get("exclusions") != after.get("exclusions");
-            row_suites = Some(rows);
-        }
+            .filter(|suite| args.suite.contains(&suite.id))
+            .map(|suite| suite.tier.as_str())
+            .collect();
     }
+    let cluster = tiers.contains(&"kind");
+    ensure!(
+        args.name.is_none() || cluster,
+        "--name requires --tier kind"
+    );
     let mut paths = Vec::new();
     for path in changed.split('\0').filter(|path| !path.is_empty()) {
-        if !(matches(&policy.documentation, path)?
-            || path == "tests/selection.toml" && row_suites.is_some())
-        {
+        if !matches(&policy.documentation, path)? {
             paths.push(path);
         }
     }
+    let policy_changed = paths.contains(&"tests/selection.toml");
     paths.sort_unstable();
     paths.dedup();
     println!("working-directory: {}\nbase: {base}", root.display());
-    if paths.is_empty() && args.suite.is_empty() && !policy_tests_changed {
+    if paths.is_empty() && args.suite.is_empty() {
         println!("selected: nothing");
         ensure!(args.name.is_none(), "no tests match name filter");
         return Ok(());
@@ -397,11 +482,7 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
             .collect();
         dependents.extend(development);
         for package in md.workspace_packages() {
-            if !(unknown
-                || full.contains(&index)
-                || dependents.contains(&package.id)
-                || policy_tests_changed && package.name.as_str() == "xtask")
-            {
+            if !(unknown || full.contains(&index) || dependents.contains(&package.id)) {
                 continue;
             }
             selected_packages.insert(package.name.to_string());
@@ -434,29 +515,19 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
             if cluster && package.features.contains_key("cluster") {
                 features.insert(format!("{}/cluster", package.name));
             }
-            if index == 0 && (unknown || full.contains(&0)) {
-                features.extend(
-                    policy
-                        .root_features
-                        .iter()
-                        .filter(|feature| feature.starts_with(&format!("{}/", package.name)))
-                        .cloned(),
-                );
-            }
             for target in package
                 .targets
                 .iter()
                 .filter(|target| target.test && !target.is_custom_build())
             {
                 let name = target_name(target);
-                if !args.tier.is_empty()
-                    && !policy.targets.iter().any(|row| {
-                        row.workspace == WORKSPACES[index].0
-                            && row.package == package.name.as_str()
-                            && row.target == name
-                            && tiers.contains(&row.tier.as_str())
-                    })
-                {
+                let cases = cases(target.src_path.as_std_path(), target.is_test())?;
+                let eligible = if cases.is_empty() {
+                    tiers.contains(&wamn_test_postgres::test_tier([], target.is_test()))
+                } else {
+                    cases.values().any(|case| tiers.contains(&case.tier()))
+                };
+                if !eligible {
                     continue;
                 }
                 selected.push(Selected {
@@ -464,6 +535,7 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
                     package: package.name.to_string(),
                     target: name,
                     features: features.clone(),
+                    cases,
                 });
             }
         }
@@ -474,9 +546,7 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
             (suite.mode == "always" || tiers.contains(&suite.tier.as_str()))
                 && suite.always != Some(false)
                 && (unknown
-                    || row_suites
-                        .as_ref()
-                        .is_some_and(|rows| rows.contains(&suite.id))
+                    || policy_changed
                     || suite.always == Some(true)
                     || paths
                         .iter()
@@ -488,7 +558,7 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
         } else {
             args.suite.contains(&suite.id)
         };
-        if include {
+        if include && (args.name.is_none() || suite.execution == "libtest") {
             let mut suite = suite.clone();
             if suite.tier == "kind"
                 && !suite.tests.is_empty()
@@ -548,39 +618,6 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
             }
         }
     }
-    let preparation_suites = suites.clone();
-    suites.retain(|suite| {
-        if suite.execution != "libtest"
-            || suite.ignored
-            || suite.tier == "kind"
-            || !suite.filter.is_empty()
-        {
-            return true;
-        }
-        let workspace = WORKSPACES
-            .iter()
-            .position(|(name, _)| *name == suite.workspace)
-            .expect("suite workspace");
-        let package = metadata[workspace]
-            .workspace_packages()
-            .into_iter()
-            .find(|package| package.name.as_str() == suite.package)
-            .expect("validated suite package");
-        let targets: Vec<_> = package
-            .targets
-            .iter()
-            .filter(|target| {
-                target.test
-                    && (suite.target.is_empty() || suite.target.contains(&target_name(target)))
-            })
-            .map(target_name)
-            .collect();
-        !targets.iter().all(|target| {
-            selected.iter().any(|row| {
-                row.workspace == workspace && row.package == suite.package && row.target == *target
-            })
-        })
-    });
     let mut runner = Runner {
         root,
         mode: args.mode,
@@ -600,60 +637,49 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
         "PATH".into(),
         format!("{}/debug:{}", target.display(), std::env::var("PATH")?),
     );
-    let required = prepare(&mut runner, &policy, &selected, &preparation_suites).await?;
-    // Exact suite selectors are resolved before execution.
-    for suite in &preparation_suites {
-        if suite.execution != "libtest" {
-            continue;
-        }
-        for name in &suite.tests {
-            let mut command = runner.cargo_suite(suite);
-            command
-                .arg(name)
-                .args(["--", "--exact", "--list", "--format", "terse"]);
-            if suite.ignored {
-                command.arg("--ignored");
-            }
-            if matches!(args.mode, Mode::Run) {
-                let listed = process::execute(&mut command).await?;
-                ensure!(
-                    listed.lines().any(|line| line == format!("{name}: test")),
-                    "suite {}: missing exact test {name}",
-                    suite.id
-                );
-            } else {
-                println!("{}", tasks::describe(&command));
-            }
-        }
-    }
+    prepare(
+        &mut runner,
+        &policy,
+        &selected,
+        &suites,
+        &metadata,
+        &CaseSelection {
+            suites: &suites,
+            tiers: &tiers,
+            name: args.name.as_deref(),
+            only: None,
+            explicit: !args.suite.is_empty(),
+        },
+    )
+    .await?;
     let mut failed = Vec::new();
+    let mut executed = false;
     for suite in suites.iter().filter(|suite| suite.mode == "always") {
-        if let Err(error) = runner.suite(suite, args.name.as_deref()).await {
-            failed.push(format!("{}: {error:#}", suite.id));
-            if suite.tier == "kind" {
-                anyhow::bail!("{}", failed.join("\n"));
+        match runner
+            .suite(
+                suite,
+                args.name.as_deref(),
+                &metadata,
+                &tiers,
+                !args.suite.is_empty(),
+            )
+            .await
+        {
+            Ok(ran) => executed |= ran,
+            Err(error) => {
+                failed.push(format!("{}: {error:#}", suite.id));
+                if suite.tier == "kind" {
+                    anyhow::bail!("{}", failed.join("\n"));
+                }
             }
         }
     }
-    let mut generic_results: BTreeMap<usize, bool> = BTreeMap::new();
     for target in &selected {
-        let owned = suites.iter().any(|suite| {
-            suite.execution == "libtest"
-                && suite.workspace == WORKSPACES[target.workspace].0
-                && suite.package == target.package
-                && (suite.target.is_empty() || suite.target.contains(&target.target))
-                && (suite.tier == "kind"
-                    || (!suite.ignored && suite.filter.is_empty() && suite.tests.is_empty()))
-        });
-        if owned {
-            continue;
-        }
         let mut command = runner.command("cargo");
         command.args([
             "test",
             "--locked",
             "--offline",
-            "--no-fail-fast",
             "--manifest-path",
             WORKSPACES[target.workspace].1,
             "-p",
@@ -666,36 +692,27 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
                 &target
                     .features
                     .iter()
-                    .cloned()
+                    .map(String::as_str)
                     .collect::<Vec<_>>()
                     .join(","),
             ]);
         }
-        if let Some(name) = &args.name {
-            command.arg(name);
-        }
-        if cluster {
-            command.args([
-                "--",
-                if tiers.len() == 1 {
-                    "--ignored"
-                } else {
-                    "--include-ignored"
+        match runner
+            .native_test(
+                &mut command,
+                target,
+                &metadata[target.workspace],
+                &CaseSelection {
+                    suites: &suites,
+                    tiers: &tiers,
+                    name: args.name.as_deref(),
+                    only: None,
+                    explicit: false,
                 },
-                "--test-threads=1",
-            ]);
-        }
-        let result = if cluster {
-            runner.test(&mut command, None).await.map(|()| true)
-        } else {
-            runner
-                .native_test(&mut command, target, &metadata[target.workspace], &suites)
-                .await
-        };
-        match result {
-            Ok(executed) => {
-                *generic_results.entry(target.workspace).or_default() |= executed;
-            }
+            )
+            .await
+        {
+            Ok(ran) => executed |= ran,
             Err(error) => {
                 failed.push(format!("{} {}: {error:#}", target.package, target.target));
                 if cluster {
@@ -704,25 +721,31 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
             }
         }
     }
-    for (workspace, executed) in generic_results {
-        if !executed && matches!(args.mode, Mode::Run) {
-            failed.push(format!(
-                "{}: no executed passing cases",
-                WORKSPACES[workspace].0
-            ));
+    for suite in suites.iter().filter(|suite| suite.mode == "local") {
+        match runner
+            .suite(
+                suite,
+                args.name.as_deref(),
+                &metadata,
+                &tiers,
+                !args.suite.is_empty(),
+            )
+            .await
+        {
+            Ok(ran) => executed |= ran,
+            Err(error) => {
+                failed.push(format!("{}: {error:#}", suite.id));
+                if suite.tier == "kind" {
+                    break;
+                }
+            }
         }
     }
-    let _nats = if required.contains("private-nats") {
-        start_nats(&mut runner).await?
-    } else {
-        None
-    };
-    for suite in suites.iter().filter(|suite| suite.mode == "local") {
-        if let Err(error) = runner.suite(suite, args.name.as_deref()).await {
-            failed.push(format!("{}: {error:#}", suite.id));
-            if suite.tier == "kind" {
-                break;
-            }
+    if matches!(args.mode, Mode::Run) && !executed && failed.is_empty() {
+        if let Some(name) = &args.name {
+            failed.push(format!("no tests match name filter {name:?}"));
+        } else if !selected.is_empty() {
+            failed.push("no executed test cases for selection".into());
         }
     }
     ensure!(failed.is_empty(), "{}", failed.join("\n"));
@@ -808,14 +831,15 @@ impl Runner<'_> {
         }
         command
     }
-    async fn test(&self, command: &mut Command, expected: Option<&str>) -> anyhow::Result<()> {
-        if matches!(self.mode, Mode::DryRun) {
-            println!("{}", tasks::describe(command));
-            return Ok(());
-        }
-        process::validate(&process::execute(command).await?, expected, false)
-    }
-    async fn suite(&self, suite: &Suite, filter: Option<&str>) -> anyhow::Result<()> {
+    async fn suite(
+        &self,
+        suite: &Suite,
+        name: Option<&str>,
+        metadata: &[cargo_metadata::Metadata],
+        tiers: &[&str],
+        explicit: bool,
+    ) -> anyhow::Result<bool> {
+        let mut executed = false;
         let lock = if suite.resource_lock.is_empty() || matches!(self.mode, Mode::DryRun) {
             None
         } else {
@@ -825,132 +849,290 @@ impl Runner<'_> {
             file.lock()?;
             Some(file)
         };
-        let result = match suite.execution.as_str() {
-            "commands" => {
-                let mut errors = Vec::new();
-                for args in &suite.commands {
-                    if let Err(error) = self.commands(&[args[1..].to_vec()]).await {
+        let mut errors = Vec::new();
+        if suite.execution == "commands" {
+            for args in &suite.commands {
+                if let Err(error) = self.commands(&[args[1..].to_vec()]).await {
+                    errors.push(format!("{error:#}"));
+                }
+            }
+        } else {
+            let workspace = WORKSPACES
+                .iter()
+                .position(|(name, _)| *name == suite.workspace)
+                .context("suite workspace")?;
+            let md = &metadata[workspace];
+            let package = md
+                .workspace_packages()
+                .into_iter()
+                .find(|package| package.name.as_str() == suite.package)
+                .context("suite package")?;
+            for target in package.targets.iter().filter(|target| {
+                target.test
+                    && !target.is_custom_build()
+                    && (suite.target.is_empty() || suite.target.contains(&target_name(target)))
+            }) {
+                let selected = Selected {
+                    workspace,
+                    package: suite.package.clone(),
+                    target: target_name(target),
+                    features: BTreeSet::new(),
+                    cases: cases(target.src_path.as_std_path(), target.is_test())?,
+                };
+                let mut command = self.cargo_suite(suite);
+                if !target.required_features.is_empty() {
+                    command.args(["--features", &target.required_features.join(",")]);
+                }
+                // Each executable is discovered and run separately.
+                if suite.target.is_empty() {
+                    add_target(&mut command, &selected.target);
+                }
+                let selection = CaseSelection {
+                    suites: &[],
+                    tiers,
+                    name,
+                    only: Some(suite),
+                    explicit,
+                };
+                match self
+                    .native_test(&mut command, &selected, md, &selection)
+                    .await
+                {
+                    Ok(ran) => executed |= ran,
+                    Err(error) => {
                         errors.push(format!("{error:#}"));
-                    }
-                }
-                ensure!(errors.is_empty(), "{}", errors.join("\n"));
-                Ok(())
-            }
-            "libtest" => {
-                if suite.tests.is_empty() {
-                    let mut command = self.cargo_suite(suite);
-                    if !suite.filter.is_empty() {
-                        command.arg(&suite.filter);
-                    }
-                    if suite.ignored {
-                        command.args(["--", "--ignored", "--test-threads=1"]);
-                    }
-                    self.test(&mut command, None).await
-                } else {
-                    let mut errors = Vec::new();
-                    for name in suite
-                        .tests
-                        .iter()
-                        .filter(|name| filter.is_none_or(|filter| name.contains(filter)))
-                    {
-                        let mut command = self.cargo_suite(suite);
-                        command
-                            .arg(name)
-                            .args(["--", "--exact", "--test-threads=1"]);
-                        if suite.ignored {
-                            command.arg("--ignored");
-                        }
-                        if let Err(error) = self.test(&mut command, Some(name)).await {
-                            errors.push(format!("{error:#}"));
-                            if suite.tier == "kind" {
-                                break;
-                            }
+                        if suite.tier == "kind" {
+                            break;
                         }
                     }
-                    ensure!(errors.is_empty(), "{}", errors.join("\n"));
-                    Ok(())
                 }
             }
-            _ => anyhow::bail!("invalid suite execution"),
-        };
+            if explicit && !executed && matches!(self.mode, Mode::Run) && errors.is_empty() {
+                errors.push(format!("suite {}: no selected passing cases", suite.id));
+            }
+        }
         drop(lock);
-        result
+        ensure!(errors.is_empty(), "{}", errors.join("\n"));
+        Ok(executed)
     }
+
     async fn native_test(
         &self,
         command: &mut Command,
         target: &Selected,
         md: &cargo_metadata::Metadata,
-        suites: &[Suite],
+        selection: &CaseSelection<'_>,
     ) -> anyhow::Result<bool> {
-        command.arg("--message-format=json-render-diagnostics");
+        if selection.only.is_none_or(|suite| suite.tests.is_empty())
+            && !target.cases.is_empty()
+            && !target
+                .cases
+                .iter()
+                .any(|(name, case)| selection.includes(target, name, case))
+        {
+            return Ok(false);
+        }
+        command.args(["--no-run", "--message-format=json-render-diagnostics"]);
         if matches!(self.mode, Mode::DryRun) {
             println!("{}", tasks::describe(command));
+            for (name, case) in &target.cases {
+                if selection.includes(target, name, case) {
+                    println!(
+                        "  {} {name}{}",
+                        case.tier(),
+                        if case.database {
+                            " (private PostgreSQL)"
+                        } else {
+                            ""
+                        }
+                    );
+                }
+            }
             return Ok(false);
         }
         let text = process::execute(command).await?;
-        let mut results = text.clone();
-        // Libtest's ignore reason declares whether this runner supplies its resources.
-        let artifacts =
-            cargo_metadata::Message::parse_stream(text.as_bytes()).filter_map(|message| {
-                match message {
-                    Ok(cargo_metadata::Message::CompilerArtifact(artifact))
-                        if artifact.profile.test
-                            && target_name(&artifact.target) == target.target =>
-                    {
-                        Some(artifact)
-                    }
-                    _ => None,
-                }
-            });
-        let ignored = regex::Regex::new(r"(?m)^test (.+) \.\.\. ignored, requires: (.+)$")?;
-        for artifact in artifacts {
+        let mut executed = false;
+        let mut failures = Vec::new();
+        for message in cargo_metadata::Message::parse_stream(text.as_bytes()) {
+            let Ok(cargo_metadata::Message::CompilerArtifact(artifact)) = message else {
+                continue;
+            };
+            if !artifact.profile.test || target_name(&artifact.target) != target.target {
+                continue;
+            }
             let Some(executable) = artifact.executable.as_deref() else {
                 continue;
             };
-            let manifest = artifact.manifest_path.as_str();
             let Some(package) = md.packages.iter().find(|package| {
-                package.manifest_path.as_str() == manifest
+                package.manifest_path == artifact.manifest_path
                     && package.name.as_str() == target.package
             }) else {
                 continue;
             };
-            for row in ignored.captures_iter(&text) {
-                let name = &row[1];
-                let owned = suites.iter().any(|suite| {
-                    suite.ignored
-                        && suite.package == target.package
-                        && (suite.target.is_empty() || suite.target.contains(&target.target))
-                        && (suite.tests.iter().any(|test| test == name)
-                            || (suite.tests.is_empty() && name.contains(&suite.filter)))
-                });
-                if owned || !row[2].split(", ").all(|item| supplied(self, item)) {
-                    continue;
+            let directory = package
+                .manifest_path
+                .parent()
+                .context("package directory")?;
+            let binary = |database| {
+                let mut command = if database {
+                    let mut command = self.command(&format!(
+                        "{}/debug/wamn-test-postgres",
+                        self.env["CARGO_TARGET_DIR"]
+                    ));
+                    command.args(["--database", "selection", "--url-env", "DATABASE_URL", "--"]);
+                    command
+                } else {
+                    self.command("env")
+                };
+                if let Ok(runner) = std::env::var("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER") {
+                    command.args(runner.split_whitespace());
                 }
-                let mut ignored_command = self.command(executable.as_str());
-                ignored_command
-                    .current_dir(package.manifest_path.parent().expect("package directory"))
-                    .env(
-                        "CARGO_MANIFEST_DIR",
-                        package.manifest_path.parent().expect("package directory"),
-                    )
-                    .env("CARGO_MANIFEST_PATH", &package.manifest_path)
-                    .args([name, "--ignored", "--exact", "--test-threads=1"]);
-                let result = process::execute(&mut ignored_command).await?;
-                process::validate(&result, Some(name), false)?;
-                results.push_str(&result);
+                command
+                    .arg(executable.as_str())
+                    .current_dir(directory)
+                    .env("CARGO_MANIFEST_DIR", directory)
+                    .env("CARGO_MANIFEST_PATH", &package.manifest_path);
+                command
+            };
+            let listed =
+                process::execute(binary(false).args(["--list", "--format", "terse"])).await?;
+            let ignored =
+                process::execute(binary(false).args(["--list", "--ignored", "--format", "terse"]))
+                    .await?;
+            let ignored: BTreeSet<_> = ignored
+                .lines()
+                .filter_map(|line| line.strip_suffix(": test"))
+                .collect();
+            let names: Vec<_> = listed
+                .lines()
+                .filter_map(|line| line.strip_suffix(": test"))
+                .collect();
+            if let Some(suite) = selection.only {
+                for name in &suite.tests {
+                    ensure!(
+                        names.contains(&name.as_str()),
+                        "suite {}: missing exact test {name}",
+                        suite.id
+                    );
+                }
+            }
+            let default = Case {
+                integration: artifact.target.is_test(),
+                ..Case::default()
+            };
+            let mut skip = Vec::new();
+            let mut database = false;
+            let mut run = Vec::new();
+            for name in names {
+                ensure!(
+                    !ignored.contains(name) || target.cases.contains_key(name),
+                    "{name}: ignored test has no readable needs declaration"
+                );
+                let case = target.cases.get(name).unwrap_or(&default);
+                let available = case
+                    .needs
+                    .iter()
+                    .all(|(type_, name)| supplied(self, type_, name));
+                let eligible = selection.includes(target, name, case);
+                let missing = || {
+                    case.needs
+                        .iter()
+                        .filter(|(type_, name)| !supplied(self, type_, name))
+                        .map(|(type_, name)| format!("{type_}:{name}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                if eligible && case.ignored && !available && !selection.explicit {
+                    println!("skipped {} {name}: missing {}", target.package, missing());
+                }
+                if !eligible || (case.ignored && !available && !selection.explicit) {
+                    skip.push(name);
+                } else {
+                    ensure!(
+                        available,
+                        "{} {name}: missing {}",
+                        target.package,
+                        missing()
+                    );
+                    database |= case.database;
+                    run.push(name);
+                }
+            }
+            if run.is_empty() {
+                continue;
+            }
+            if selection.tiers.contains(&"kind") {
+                for name in run {
+                    let database = target.cases.get(name).is_some_and(|case| case.database);
+                    let output = process::execute(binary(database).args([
+                        name,
+                        "--include-ignored",
+                        "--exact",
+                        "--test-threads=1",
+                    ]))
+                    .await?;
+                    process::validate(&output, Some(name), false)?;
+                    executed = true;
+                }
+                continue;
+            }
+            let mut command = binary(database);
+            command.args(["--include-ignored", "--exact", "--test-threads=1"]);
+            for name in skip {
+                command.args(["--skip", name]);
+            }
+            let result = match process::execute(&mut command).await {
+                Ok(output) => process::validate(&output, None, false),
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(()) => executed = true,
+                Err(error) => failures.push(format!("{error:#}")),
             }
         }
-        // Empty libraries may own only ignored tests. Require a result across all executions.
-        Ok(process::validate(&results, None, false).is_ok())
+        ensure!(failures.is_empty(), "{}", failures.join("\n"));
+        Ok(executed)
     }
 }
 
-fn supplied(runner: &Runner<'_>, requirement: &str) -> bool {
-    if let Some(name) = requirement.strip_prefix("env:") {
+struct CaseSelection<'a> {
+    suites: &'a [Suite],
+    tiers: &'a [&'a str],
+    name: Option<&'a str>,
+    only: Option<&'a Suite>,
+    explicit: bool,
+}
+impl CaseSelection<'_> {
+    fn includes(&self, target: &Selected, name: &str, case: &Case) -> bool {
+        let matches = |suite: &Suite| {
+            case.tier() == suite.tier
+                && (suite.tests.is_empty() || suite.tests.iter().any(|test| test == name))
+                && (suite.filter.is_empty() || name.contains(&suite.filter))
+        };
+        self.tiers.contains(&case.tier())
+            && self.name.is_none_or(|filter| name.contains(filter))
+            && if let Some(suite) = self.only {
+                matches(suite)
+            } else {
+                !self.suites.iter().any(|suite| {
+                    suite.execution == "libtest"
+                        && suite.workspace == WORKSPACES[target.workspace].0
+                        && suite.package == target.package
+                        && (suite.target.is_empty() || suite.target.contains(&target.target))
+                        && matches(suite)
+                })
+            }
+    }
+}
+
+fn supplied(runner: &Runner<'_>, type_: &str, name: &str) -> bool {
+    if matches!(type_, "service" | "input") {
+        return true;
+    }
+    if type_ == "env" {
         return runner.value(name).is_some();
     }
-    if let Some(name) = requirement.strip_prefix("bin:") {
+    if type_ == "bin" {
         return runner.value("PATH").is_some_and(|path| {
             use std::os::unix::fs::PermissionsExt as _;
             std::env::split_paths(&path).any(|directory| {
@@ -968,33 +1150,106 @@ async fn prepare(
     policy: &Policy,
     targets: &[Selected],
     suites: &[Suite],
-) -> anyhow::Result<BTreeSet<String>> {
+    metadata: &[cargo_metadata::Metadata],
+    selection: &CaseSelection<'_>,
+) -> anyhow::Result<()> {
     let mut required: BTreeSet<_> = suites
         .iter()
+        .filter(|suite| suite.execution == "commands" && selection.name.is_none())
         .flat_map(|suite| suite.prerequisites.iter().cloned())
         .collect();
-    for prep in &policy.preparation {
-        if prep.id.is_none()
-            && (targets.iter().any(|target| {
-                target.workspace == 0
-                    && prep.packages.contains(&target.package)
-                    && (prep.target.is_empty() || prep.target.contains(&target.target))
-            }) || suites.iter().any(|suite| {
-                prep.suites.contains(&suite.id)
-                    || (suite.tests.is_empty()
-                        && suite.filter.is_empty()
-                        && prep.packages.contains(&suite.package)
-                        && (prep.target.is_empty()
-                            || suite.target.is_empty()
-                            || prep
-                                .target
-                                .iter()
-                                .any(|target| suite.target.contains(target))))
-            }))
-        {
-            required.extend(prep.prerequisites.iter().cloned());
+    let mut inputs = BTreeSet::new();
+    let mut postgres = false;
+    let mut collect = |case: &Case| {
+        postgres |= case.database;
+        for (type_, name) in &case.needs {
+            if type_ == "env" {
+                inputs.insert(name.clone());
+            }
+            if type_ == "input" {
+                required.insert(name.clone());
+            }
+        }
+    };
+    for target in targets {
+        for (name, case) in &target.cases {
+            if selection.includes(target, name, case) {
+                collect(case);
+            }
         }
     }
+    for suite in suites.iter().filter(|suite| suite.execution == "libtest") {
+        let workspace = WORKSPACES
+            .iter()
+            .position(|(name, _)| *name == suite.workspace)
+            .context("suite workspace")?;
+        let md = &metadata[workspace];
+        let package = md
+            .workspace_packages()
+            .into_iter()
+            .find(|package| package.name.as_str() == suite.package)
+            .context("suite package")?;
+        let suite_selection = CaseSelection {
+            suites: &[],
+            tiers: selection.tiers,
+            name: selection.name,
+            only: Some(suite),
+            explicit: selection.explicit,
+        };
+        for target in package.targets.iter().filter(|target| {
+            target.test
+                && !target.is_custom_build()
+                && (suite.target.is_empty() || suite.target.contains(&target_name(target)))
+        }) {
+            let target = Selected {
+                workspace,
+                package: suite.package.clone(),
+                target: target_name(target),
+                features: BTreeSet::new(),
+                cases: cases(target.src_path.as_std_path(), target.is_test())?,
+            };
+            for (name, case) in &target.cases {
+                if suite_selection.includes(&target, name, case) {
+                    collect(case);
+                }
+            }
+        }
+    }
+    if postgres {
+        runner
+            .commands(&[vec![
+                "cargo",
+                "build",
+                "--locked",
+                "--offline",
+                "-p",
+                "wamn-test-postgres",
+                "--bin",
+                "wamn-test-postgres",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()])
+            .await?;
+    }
+    for prep in &policy.preparation {
+        if let Some(id) = &prep.id
+            && prep
+                .outputs
+                .keys()
+                .chain(prep.aliases.keys())
+                .any(|name| inputs.contains(name))
+        {
+            required.insert(id.clone());
+        }
+    }
+    ensure!(
+        required.iter().all(|id| policy
+            .preparation
+            .iter()
+            .any(|prep| prep.id.as_ref() == Some(id))),
+        "selected case names an unknown preparation input"
+    );
     loop {
         let old = required.len();
         for prep in &policy.preparation {
@@ -1008,11 +1263,6 @@ async fn prepare(
     }
     let mut applications = Vec::new();
     let mut seen = BTreeSet::new();
-    if required.contains("fixture") {
-        for app in ["apps/platform_fixture", "apps/platform_fixture_overlay"] {
-            application(runner.root, app, &mut seen, &mut applications)?;
-        }
-    }
     let mut deferred = Vec::new();
     for prep in &policy.preparation {
         let Some(id) = prep.id.as_deref().filter(|id| required.contains(*id)) else {
@@ -1028,22 +1278,9 @@ async fn prepare(
             runner.env.insert("WAMN_NATIVE_C_NATS_BIN".into(), binary);
             continue;
         }
-        if id == "authored-applications" {
-            let files =
-                process::output(runner.root, "rg", &["--files", "apps", "-g", "wamn.k"]).await?;
-            for file in files.lines() {
-                application(
-                    runner.root,
-                    file.trim_end_matches("/wamn.k"),
-                    &mut seen,
-                    &mut applications,
-                )?;
-            }
-        }
         for app in &prep.applications {
             application(runner.root, app, &mut seen, &mut applications)?;
         }
-        runner.commands(&prep.before_applications).await?;
         if prep.after_applications {
             deferred.push(prep);
         } else {
@@ -1122,7 +1359,7 @@ async fn prepare(
     for prep in deferred {
         runner.commands(&prep.commands).await?;
     }
-    Ok(required)
+    Ok(())
 }
 
 fn needs(runner: &Runner<'_>, prep: &Preparation) -> bool {
@@ -1167,76 +1404,4 @@ fn application(
     }
     ordered.push(app.to_owned());
     Ok(())
-}
-
-struct Nats {
-    child: tokio::process::Child,
-    _directory: tempfile::TempDir,
-}
-impl Drop for Nats {
-    fn drop(&mut self) {
-        let _ = self.child.start_kill();
-    }
-}
-async fn start_nats(runner: &mut Runner<'_>) -> anyhow::Result<Option<Nats>> {
-    if matches!(runner.mode, Mode::DryRun) {
-        println!("input jetstream: private nats-server -js -a 127.0.0.1 -p -1");
-        return Ok(None);
-    }
-    let directory = tempfile::tempdir()?;
-    let log = directory.path().join("server.log");
-    let mut command = runner.command(
-        &runner
-            .value("WAMN_NATIVE_C_NATS_BIN")
-            .context("prebuilt nats-server executable")?,
-    );
-    command
-        .args(["-js", "-a", "127.0.0.1", "-p", "-1", "-sd"])
-        .arg(directory.path().join("data"))
-        .stdout(std::fs::File::create(&log)?)
-        .stderr(std::fs::File::options().append(true).open(&log)?)
-        .kill_on_drop(true);
-    let mut owned = Nats {
-        child: command.spawn()?,
-        _directory: directory,
-    };
-    let port = regex::Regex::new(r"Listening for client connections on 127\.0\.0\.1:(\d+)")?;
-    for _ in 0..100 {
-        let text = std::fs::read_to_string(&log)?;
-        if text.contains("Server is ready") {
-            let port = port.captures(&text).context("NATS reports no port")?[1].to_owned();
-            runner.env.insert(
-                "WAMN_EVT_NATS_URL".into(),
-                format!("nats://127.0.0.1:{port}"),
-            );
-            return Ok(Some(owned));
-        }
-        ensure!(
-            owned.child.try_wait()?.is_none(),
-            "private NATS exited: {text}"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    anyhow::bail!("private NATS did not become ready")
-}
-
-fn shared_comments(source: &str) -> Vec<&str> {
-    let mut inside_suites = false;
-    let mut braces = 0_i32;
-    let mut comments = Vec::new();
-    for line in source.lines() {
-        if line.starts_with("[[") {
-            inside_suites = line == "[[suites]]";
-        }
-        if !inside_suites && braces == 0 && line.trim_start().starts_with('#') {
-            comments.push(line);
-        }
-        if !line.trim_start().starts_with('#') {
-            braces += i32::try_from(line.bytes().filter(|b| *b == b'{').count())
-                .expect("line length fits i32");
-            braces -= i32::try_from(line.bytes().filter(|b| *b == b'}').count())
-                .expect("line length fits i32");
-        }
-    }
-    comments
 }

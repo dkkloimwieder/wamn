@@ -150,6 +150,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn service_admin_projects_without_user_membership_and_stale_admin_is_removed()
 -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();

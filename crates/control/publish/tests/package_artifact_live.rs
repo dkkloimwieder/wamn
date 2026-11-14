@@ -125,6 +125,7 @@ impl Drop for Fixture {
 }
 
 #[tokio::test]
+#[ignore = "requires: bin:docker, input:publication-applications"]
 async fn push_repeat_fetch_and_refusals() {
     let fixture = Fixture::start("receiving").await;
     let package = apps().join("wamn_receiving");
@@ -193,6 +194,7 @@ async fn push_repeat_fetch_and_refusals() {
 /// pushes anything: a tag that holds another digest refuses, names both
 /// digests and leaves no new component in the registry (R11).
 #[tokio::test]
+#[ignore = "requires: bin:docker, input:publication-applications"]
 async fn a_tag_that_holds_another_digest_refuses_before_any_push() {
     use wamn_compiler::build_record;
 

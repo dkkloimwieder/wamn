@@ -18,6 +18,7 @@ use wamn_test_application::Application;
 use crate::business_fixture::{LOCATION_A_ID, PACKAGING_ID};
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<()> {
     let application: Application = panic!("wamn-eulfr.12.9: no product packaging delete");
     let project_url = application.database_url().await?;

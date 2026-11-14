@@ -72,6 +72,7 @@ fn app_generation(database: &str, project_env_key: &str) -> String {
 /// DB-enforced behavior, as the superuser (the harness prepares project-targeted
 /// App generations).
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";

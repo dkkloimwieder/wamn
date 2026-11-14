@@ -22,6 +22,7 @@ use render_fixture::{
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 #[test]
+#[ignore = "requires: bin:kcl"]
 fn prekind_deploy_connections_cover_the_wms_environment() -> anyhow::Result<()> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let document =
@@ -256,6 +257,7 @@ fn fixture_secrets(document: &EnvironmentDocument) -> Vec<Value> {
 }
 
 #[test]
+#[ignore = "requires: bin:helm"]
 fn prekind_environment_renders() -> anyhow::Result<()> {
     let started = Instant::now();
     let work = ScratchRoot::create()?;
@@ -394,11 +396,13 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
 }
 
 #[test]
+#[ignore = "requires: bin:kcl, bin:helm"]
 fn prekind_receiving_pat_renders() -> anyhow::Result<()> {
     pat_release("receiving")
 }
 
 #[test]
+#[ignore = "requires: bin:kcl, bin:helm"]
 fn prekind_wms_pat_renders() -> anyhow::Result<()> {
     pat_release("wms")
 }

@@ -1931,6 +1931,7 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
 // one and that the guest sees `connection-unavailable`. It starts a SEPARATE
 // server with that setting, so it never runs against the stock test server.
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn live_scs_off_server_fails_checkout_closed() {
     let mut server = wamn_test_postgres::start(&[("standard_conforming_strings", "off")])
         .expect("start a PostgreSQL 18 server with standard_conforming_strings=off");
@@ -2452,10 +2453,9 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row(pool: sqlx::PgPool) {
 /// bucket, and a raw SQL write publishes no drop, so the memory answers until
 /// it clears or its TTL ends (`wamn-f2qud`).
 #[sqlx::test(migrations = false)]
-#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--removed";
-    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
     let admin_url = database.as_str();
@@ -2530,10 +2530,9 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears(pool: sq
 /// the memory, and the next bind reads again and refuses before the TTL ends
 /// (`wamn-f2qud`).
 #[sqlx::test(migrations = false)]
-#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--dropped";
-    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
     let admin_url = database.as_str();
@@ -3146,6 +3145,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot(pool: sqlx::PgPoo
 /// A warm get executes only its application SQL. A changed schema or runner
 /// applies before the query, including a cold Parse on the same connection.
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn live_autocommit_settings_are_reused_only_on_their_connection() {
     const PROJECT_ENV_KEY: &str = "test--dev--settings";
     let mut server =
@@ -3261,6 +3261,7 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
 /// caller carries a role. The cold read also proves that Parse follows the
 /// schema configuration. Cancellation closes the session while rows remain.
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn live_stream_reads_once_and_scopes_identity() {
     use super::super::run_stream::open_stream;
 

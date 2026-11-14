@@ -361,9 +361,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn a_delete_during_a_read_refuses_the_put() {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         let (_server, client) = nats().await;
         let (memory, writer) = watched(&client, Some("t")).await;
         let id = uuid::Uuid::new_v4();
@@ -387,9 +386,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn facts_reach_the_hosts_of_their_project_env_key_and_every_delete_reaches_them() {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         let (_server, client) = nats().await;
         let (a, writer) = watched(&client, Some("t")).await;
         let (b, _) = watched(&client, Some("t")).await;

@@ -574,6 +574,7 @@ fn certificates() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires: postgres"]
 async fn password_enrollment_and_sessions_preserve_current_authority() {
     use wamn_platform_identity::password::issue_invitation;
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("fresh password fixture");
@@ -766,6 +767,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires: postgres"]
 async fn password_environment_discovery_requires_current_authority() {
     use wamn_platform_identity::password::issue_invitation;
 

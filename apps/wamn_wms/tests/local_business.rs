@@ -7,6 +7,7 @@ use anyhow::Context as _;
 use wamn_test_application::Application;
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn operations_and_replay() -> anyhow::Result<()> {
     let application: Application = panic!("wamn-eulfr.12.9: no product revision import");
     let project_url = application.database_url().await?;

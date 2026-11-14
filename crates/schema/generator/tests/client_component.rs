@@ -6,6 +6,7 @@ mod fixture;
 mod typescript;
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn every_ir_field_has_an_authored_label_or_its_exact_path() {
     fn visit(fields: &[FieldIr]) {
         for field in fields {
@@ -28,6 +29,7 @@ fn every_ir_field_has_an_authored_label_or_its_exact_path() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture, input:web-install, bin:pnpm"]
 fn emitted_descriptions_compile_against_wfe() {
     typescript::compile_descriptions(&fixture::client_release())
         .expect("the emitted descriptions satisfy the pinned wfe types");

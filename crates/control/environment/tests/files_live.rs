@@ -38,6 +38,7 @@ fn file_fixture_declares_each_binding_mode() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn application_file_writes_are_refused_and_history_uses_the_standard_contract()
 -> anyhow::Result<()> {
     let mut fixture = files::fixture("file_authority").await?;
@@ -85,6 +86,7 @@ async fn application_file_writes_are_refused_and_history_uses_the_standard_contr
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn disabling_a_connection_preserves_file_references_and_referenced_delete_refuses()
 -> anyhow::Result<()> {
     let mut fixture = files::fixture("file_references").await?;
@@ -159,6 +161,7 @@ fn registry_definition() -> serde_json::Value {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn file_connection_lookup_refuses_wrong_login_and_forged_target() -> anyhow::Result<()> {
     let mut registry = files::registry("file-org", "project", registry_definition()).await?;
     assert_eq!(
@@ -212,6 +215,7 @@ async fn file_connection_lookup_refuses_wrong_login_and_forged_target() -> anyho
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn file_connection_lookup_requires_an_active_connection_and_integration() -> anyhow::Result<()>
 {
     let mut registry = files::registry("file-org", "project", registry_definition()).await?;
@@ -255,6 +259,7 @@ async fn file_connection_lookup_requires_an_active_connection_and_integration() 
 }
 
 #[tokio::test]
+#[ignore = "requires: bin:docker"]
 async fn raw_blobstore_mutations_refuse_file_namespaces_on_minio() -> anyhow::Result<()> {
     use object_store::{ObjectStoreExt as _, aws::AmazonS3Builder, path::Path};
     use std::sync::Arc;
@@ -312,6 +317,7 @@ async fn raw_blobstore_mutations_refuse_file_namespaces_on_minio() -> anyhow::Re
 /// MinIO's preserved source time supplies aged objects without changing the clock.
 /// Source: https://github.com/minio/minio/blob/76c06ff1d2cc844050fdeb1d54bf8fa70db72278/cmd/object-api-options.go
 #[tokio::test]
+#[ignore = "requires: postgres, bin:docker"]
 async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
 -> anyhow::Result<()> {
     use object_store::{
@@ -436,6 +442,7 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn file_reads_select_the_active_generation_and_refuse_another_connection()
 -> anyhow::Result<()> {
     let original = registry_definition();

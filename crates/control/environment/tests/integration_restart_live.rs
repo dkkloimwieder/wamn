@@ -492,11 +492,8 @@ async fn apply(
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:docker, bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:rustc"]
+#[ignore = "requires: nats, postgres, bin:docker, bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:rustc, input:modbus-reader"]
 async fn application_releases_keep_independent_integration_versions() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:docker, bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:rustc",
-    );
     let _lock = wamn_test_postgres::lock();
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     fixture(scratch.path())?;

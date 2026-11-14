@@ -8,6 +8,7 @@ const OUTAGE: Duration = Duration::from_secs(30);
 const RECOVERY_BUDGET: Duration = Duration::from_secs(60);
 
 #[tokio::test]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result<()> {
     let application: Application = panic!("wamn-eulfr.12.10: no product scheduler outage fixture");
     let host_name: String = panic!("wamn-eulfr.12.10: no product heartbeat observer");

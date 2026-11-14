@@ -398,6 +398,7 @@ fn fixture() -> &'static Fixture {
 
 /// The executor can read schedule configuration but cannot author it.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_executor_reads_settings_without_write_authority() {
     let fixture = fixture();
     apply(
@@ -433,6 +434,7 @@ fn the_executor_reads_settings_without_write_authority() {
 /// still BOUNDS it is its own table grants. Both halves are read back here: rows
 /// where a grant exists, `42501` where it does not.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn a_platform_family_without_project_env_key_context_reads_exactly_what_its_grants_say() {
     let fixture = fixture();
     let executor = WorkloadRoleFamily::ExecutorPlatform;
@@ -491,6 +493,7 @@ fn a_platform_family_without_project_env_key_context_reads_exactly_what_its_gran
 /// only subject the arm still has. That is asserted here
 /// rather than remembered, so the day a second one appears this arm reds.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_project_env_key_targeted_platform_member_reads_nothing_outside_its_grants() {
     let fixture = fixture();
     let login = generation(WorkloadRoleFamily::Retention);
@@ -527,6 +530,7 @@ fn the_project_env_key_targeted_platform_member_reads_nothing_outside_its_grants
 /// The server refuses an image column, the unlimited history table, and the
 /// logged relation itself. The family holds no `wamn_platform` edge.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_audit_retention_family_reads_only_the_retention_columns_of_its_history_tables() {
     let fixture = fixture();
     let family = WorkloadRoleFamily::AuditRetention;
@@ -574,6 +578,7 @@ fn the_audit_retention_family_reads_only_the_retention_columns_of_its_history_ta
 /// separates an isolated credential from a blind one for the family whose
 /// confinement is RLS-shaped rather than grant-shaped.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_guest_family_reads_its_own_project_env_key_and_only_its_own() {
     let fixture = fixture();
     let login = generation(WorkloadRoleFamily::App);
@@ -616,6 +621,7 @@ fn the_guest_family_reads_its_own_project_env_key_and_only_its_own() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_platform_group_members_are_exactly_the_derived_families() {
     let fixture = fixture();
 
@@ -675,6 +681,7 @@ fn the_platform_group_members_are_exactly_the_derived_families() {
 /// Every table of the control database has a project, so no policy admits
 /// every row. Read from the server.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn no_control_policy_passes_every_row() {
     let fixture = fixture();
     assert_eq!(
@@ -695,6 +702,7 @@ fn no_control_policy_passes_every_row() {
 
 /// A reader can select its public membership fields but cannot read the whole row.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_identity_reader_cannot_read_private_membership_fields() {
     let mut target = Url::parse(&fixture().control_url).unwrap();
     target
@@ -719,6 +727,7 @@ fn the_identity_reader_cannot_read_private_membership_fields() {
 
 /// Authority functions never grant execution through PUBLIC.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn authority_derivations_are_not_public_execute() {
     let denied = query(
         &fixture().db_url,

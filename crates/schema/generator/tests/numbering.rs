@@ -483,6 +483,7 @@ fn an_overlay_command_cannot_write_inherited_number_or_actor_fields() {
 /// Run the emitted statements under their emitted column grants, including
 /// an overlay that omits the owner's field declarations.
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
     let _lock = wamn_test_postgres::lock();
     let base = stamped_numbered();

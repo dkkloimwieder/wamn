@@ -12,54 +12,45 @@ use wamn_test_application::Application;
 const LOCATION_A_ID: &str = "00000000-0000-0000-0000-000000000201";
 const LOCATION_B_ID: &str = "00000000-0000-0000-0000-000000000202";
 const PACKAGING_ID: &str = "00000000-0000-0000-0000-000000000301";
-const PREREQUISITES: &str = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome";
-
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
 async fn offline_creates_survive_reload_and_follow_the_feed() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     run("offline").await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
 async fn a_refused_create_succeeds_after_correction() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     run("refusal").await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
 async fn a_lost_create_reply_replays_without_another_row() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     run("lost-reply").await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
 async fn a_waiting_shell_reloads_after_pending_and_sending_entries_finish() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     run("release").await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
 async fn an_old_binding_entry_gets_an_ordinary_refusal() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     run("old-entry").await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
 async fn take_offline_fills_packaging_and_locations() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     run("take-offline").await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
 async fn case2_offline_reopens_upload_three_rows_across_a_release() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
     run("case2").await
 }
 

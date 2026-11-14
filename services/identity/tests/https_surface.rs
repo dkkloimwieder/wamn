@@ -69,6 +69,7 @@ fn cli_and_validated_configuration_debug_do_not_disclose_database_credentials() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires: postgres"]
 async fn identity_https_has_only_public_jwks_and_health() {
     let mut postgres = wamn_test_postgres::start(&[]).expect("start the test PostgreSQL server");
     let mut system = postgres

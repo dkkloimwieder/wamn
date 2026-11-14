@@ -83,11 +83,8 @@ async fn gap_times(system: &mut Client) -> Vec<(DateTime<Utc>, Option<DateTime<U
 }
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY, env:KUBECONFIG, env:WAMN_RELEASE_CHART"]
+#[ignore = "requires: postgres, cluster, nats, env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY, env:KUBECONFIG, env:WAMN_RELEASE_CHART"]
 async fn recover_and_close_record_each_capture_gap() {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY, env:KUBECONFIG, env:WAMN_RELEASE_CHART",
-    );
     let org = format!("cg{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
     let kubeconfig = std::path::PathBuf::from(std::env::var_os("KUBECONFIG").unwrap());
     let target = Target {

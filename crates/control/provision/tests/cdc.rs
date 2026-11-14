@@ -64,6 +64,7 @@ fn run_ok(url: &str, script: &str) {
 }
 
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn cdc_substrate_applies_and_is_idempotent_on_postgres() {
     let (_server, url) = logical_server();
 
@@ -175,6 +176,7 @@ END $$;
 /// already-executed blanket grant standing, and every assertion below would pass
 /// on new environments while production stayed wide open.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn cdc_role_reads_only_the_classification_maps_and_still_decodes_project_env_key_tables() {
     let (_server, url) = logical_server();
 

@@ -14,11 +14,8 @@ fn repository() -> PathBuf {
 }
 
 #[test]
-#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT"]
+#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT, input:edge-application"]
 fn the_bundle_pins_the_separate_route_component() {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT",
-    );
     let route = PathBuf::from(std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").unwrap());
     let component = PathBuf::from(
         std::env::var_os("WAMN_EDGE_DEVICE_COMPONENT")

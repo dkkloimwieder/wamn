@@ -71,6 +71,7 @@ fn dechunk(mut body: &str) -> String {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: input:edge-application, bin:cargo, bin:rustc"]
 async fn the_edge_serves_a_route_to_a_session_whose_role_grants_it() {
     let (known, public) = key("key-one", 1);
     let (unknown, _) = key("key-other", 2);
@@ -116,6 +117,7 @@ fn outcome(request_id: &str, frame: &str) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: input:edge-application, bin:cargo, bin:rustc"]
 async fn a_write_replays_after_reopen_and_refuses_a_changed_request() {
     let (pair, public) = key("key-one", 1);
     let (directory, digest) = bundle("claims", &public);

@@ -10,8 +10,8 @@ The code-owned [capability declaration](../../crates/platform/component-policy/s
 It admits package and version pairs.
 A `wamn:*`, `wasmcloud:*` or `wasi:logging` row names an exact version.
 A `wasi:io`, `wasi:clocks` or `wasi:random` row names the family `0.2`.
-The family admits `0.2.N` up to the ceiling, the highest `0.2` patch that the host's Wasmtime links.
-The build reads the ceiling from the WIT of the linked `wasmtime-wasi`.
+The family admits every `0.2.N` patch.
+The host checks whether it implements the imported functions when it loads the component.
 An absent pair refuses, without other version ranges, normalization, or namespace guesses.
 An application component cannot import `wamn:postgres/client`, even with a grant, because it runs raw SQL outside the admitted statements.
 The platform's own native workloads use their separate publication authority.

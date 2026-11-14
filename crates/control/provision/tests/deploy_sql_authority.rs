@@ -190,6 +190,7 @@ fn reset(admin_url: &str) {
 /// relation carries its expression index, and a minted guest reads its own
 /// project and only its own.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_swept_minimum_admits_only_the_connected_guest_on_postgres() {
     let (_database, admin) = shared_server();
 
@@ -349,6 +350,7 @@ fn the_swept_minimum_admits_only_the_connected_guest_on_postgres() {
 /// The minimum was UNTARGETED, so it applied to every role — and it calls
 /// `wamn_authority.current_project_key()`, which only `wamn_app` may EXECUTE.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_platform_arm_admits_every_platform_family_from_the_server() {
     let (_database, admin) = shared_server();
 
@@ -613,6 +615,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
 /// NOCREATEROLE `wamn_system` owner, and some test harnesses apply it as a
 /// superuser. Each apply succeeds and creates no role.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
     const ROLE: &str = "wamn_audit_retention";
     const SYSTEM_DATABASE: &str = "wamn_minimum_system";
@@ -713,6 +716,7 @@ fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
 /// leg applies in production, so a hard-coded owner there refuses the whole
 /// install on a server whose superuser carries another name.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_catalog_and_app_schemas_install_under_a_superuser_not_named_postgres() {
     const PASSWORD: &str = "minimum-installer-probe";
     let (_database, admin) = shared_server();
@@ -839,6 +843,7 @@ fn as_guest(db_url: &str, guest: &str, actor: &str, body: &str) {
 
 /// Spec tests 1, 3, the no-op half of 8, and 9, over the production guest.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_stamp_trigger_stamps_guest_writes_on_postgres() {
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
@@ -1010,6 +1015,7 @@ fn refuses_without_actor(statement: &str) -> String {
 
 /// The database half of spec test 4 and spec test 12.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
@@ -1168,6 +1174,7 @@ fn apply_refused(url: &str, sql: &str) -> String {
 /// The history table shape, the function configuration and grants, and the
 /// 64-byte refusal, from the server catalogs.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
@@ -1346,6 +1353,7 @@ fn history_grants(url: &str) -> String {
 /// NOCREATEROLE `wamn_system` owner and as a superuser, with and without the
 /// role. The grant file refuses a database without `wamn_app`.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
     const SYSTEM_DATABASE: &str = "wamn_minimum_history_system";
     const OWNER_GRANTS: [&str; 7] = [
@@ -1488,6 +1496,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
 /// Level-2 spec tests 2, 5, 8, and 16, the '{}' images, the project flag, and
 /// the transaction id, over the production guest.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
@@ -1644,6 +1653,7 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
 /// Level-2 spec tests 4, 7, and 10, and the refusal of a relation with no
 /// primary key, over the production guest.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
@@ -1882,6 +1892,7 @@ fn finish(session: std::process::Child) {
 /// rows that commit out of position order keep every entry, and a rolled-back
 /// competitor leaves no entry.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
@@ -2104,6 +2115,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
 /// JSONB text, so a numeric scale-only update moves the updated pair. A true
 /// no-op keeps every stamp.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn a_numeric_scale_only_update_moves_the_stamps_on_postgres() {
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
@@ -2167,6 +2179,7 @@ fn a_numeric_scale_only_update_moves_the_stamps_on_postgres() {
 /// both spellings. A true no-op writes none. The relation has no stamp
 /// trigger, so only the amount changes.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
@@ -2346,6 +2359,7 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
 /// insert, two updates, and a delete of a widget, and reads the history. The
 /// fold then shows the row at each retained position.
 #[test]
+#[ignore = "requires: input:fixture, postgres, bin:psql"]
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     let manifest = wamn_compiler::manifest::PackageManifest::from_slice(
         &wamn_fixture_package::manifest_bytes(),
@@ -2568,6 +2582,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
 /// `P30D` fixture relation is the control: the same convergence grants the
 /// role its history table.
 #[test]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_log_fixture(&admin);

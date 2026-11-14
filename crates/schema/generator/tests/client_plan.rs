@@ -29,6 +29,7 @@ fn screen<'a>(plan: &'a ClientPlan<'a>, name: &str) -> &'a ScreenPlan<'a> {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn screens_drop_event_handlers_and_sort_within_their_model() {
     let mut ir = release();
     let mut handler = operation(&mut ir, "get").clone();
@@ -77,6 +78,7 @@ fn screens_drop_event_handlers_and_sort_within_their_model() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn supplied_inputs_name_only_the_reserved_contract_paths() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -138,6 +140,7 @@ fn supplied_inputs_name_only_the_reserved_contract_paths() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn revision_inputs_join_the_declared_and_guarded_paths() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -171,6 +174,7 @@ fn revision_inputs_join_the_declared_and_guarded_paths() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn record_links_repeat_the_contract_record() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -199,6 +203,7 @@ fn record_links_repeat_the_contract_record() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn revision_bindings_name_the_read_operation_that_supplies_them() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -224,6 +229,7 @@ fn revision_bindings_name_the_read_operation_that_supplies_them() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn each_platform_operation_takes_its_role_from_type_and_result_class() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -245,6 +251,7 @@ fn each_platform_operation_takes_its_role_from_type_and_result_class() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_bounded_list_read_and_a_projection_both_take_the_table_role() {
     let mut ir = release();
     let query = operation(&mut ir, "query");
@@ -260,6 +267,7 @@ fn a_bounded_list_read_and_a_projection_both_take_the_table_role() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn the_served_result_class_selects_the_role_over_the_declared_one() {
     let mut ir = release();
     operation(&mut ir, "get")
@@ -279,6 +287,7 @@ fn the_served_result_class_selects_the_role_over_the_declared_one() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
     let mut ir = release();
     operation(&mut ir, "get")
@@ -315,6 +324,7 @@ fn paths<'a>(fields: &[&'a FieldIr]) -> Vec<&'a str> {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn columns_are_the_served_result_leaves_in_contract_order() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -355,6 +365,7 @@ fn columns_are_the_served_result_leaves_in_contract_order() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn inputs_drop_the_supplied_revision_and_cursor_paths() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -402,6 +413,7 @@ fn inputs_drop_the_supplied_revision_and_cursor_paths() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn rows_come_from_the_served_result_class() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -422,6 +434,7 @@ fn rows_come_from_the_served_result_class() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn paging_carries_the_declared_filters_sort_and_limit() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -493,6 +506,7 @@ fn paging_carries_the_declared_filters_sort_and_limit() {
 /// A page control is input, and it is not one of the operator's own fields.
 /// An emitter that renders `inputs` must get no page control by accident.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_screen_names_its_page_controls_apart_from_the_operator_fields() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -536,6 +550,7 @@ fn a_screen_names_its_page_controls_apart_from_the_operator_fields() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn row_links_open_the_record_read_and_the_revision_command() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -581,6 +596,7 @@ fn row_links_open_the_record_read_and_the_revision_command() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn reads_and_confirmed_deletes_follow_from_type_and_role() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -603,6 +619,7 @@ fn reads_and_confirmed_deletes_follow_from_type_and_role() {
 /// test exists because "already there" is a property an emitter depends on,
 /// and a later change that copies fields instead would break it silently.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn the_plan_hands_the_authored_text_to_an_emitter() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -649,6 +666,7 @@ fn the_plan_hands_the_authored_text_to_an_emitter() {
 /// An emitter reads this and calls one binding. It never matches a name, and
 /// it never reads the manifest.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn the_plan_states_the_list_that_offers_each_referenced_input() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -727,6 +745,7 @@ fn the_plan_states_the_list_that_offers_each_referenced_input() {
 /// The report states the screen, the input it fills and the list it reads.
 /// A selector whose list declares the filter on its display field is absent.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn selectors_whose_list_declares_no_display_filter_are_reported() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -787,6 +806,7 @@ fn added_list(ir: &ClientContractIr, model: &str, name: &str) -> OperationIr {
 /// EXIT CONDITION for `wamn-7ymzs`: a list is chosen by fit, so a new read of a
 /// model leaves every existing selector on its list.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_second_list_of_the_same_model_changes_no_selector() {
     let mut ir = release();
     let before = selectors(&ClientPlan::from_ir(&ir));
@@ -807,6 +827,7 @@ fn a_second_list_of_the_same_model_changes_no_selector() {
 /// EXIT CONDITION for `wamn-7ymzs`: a narrowed selector reads only a list that
 /// takes the narrowing, whatever lists sort before it.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_narrowed_selector_reads_a_list_that_takes_the_narrowing() {
     let mut ir = release();
     // The Receiving shape: a read of the line model that takes no input
@@ -832,6 +853,7 @@ fn a_narrowed_selector_reads_a_list_that_takes_the_narrowing() {
 /// EXIT CONDITION for `wamn-7ymzs`: a narrowing that no served list takes is
 /// refused, naming the screen, the input and the narrowing.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_narrowing_no_list_takes_is_refused() {
     let mut ir = release();
     for field in &mut operation(&mut ir, "list").input_fields {
@@ -858,6 +880,7 @@ fn a_narrowing_no_list_takes_is_refused() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn adding_nullable_text_preserves_explicit_display_or_record_key_fallback() {
     for declared in [Some("name"), None] {
         let mut ir = release();
@@ -928,6 +951,7 @@ fn adding_nullable_text_preserves_explicit_display_or_record_key_fallback() {
 /// A form that names no such record is absent, and the two existing row-link
 /// reasons do not move.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -1001,6 +1025,7 @@ fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
 /// The text is the display field of the model's served list, so a cell shows
 /// what a selector offers for the same record.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_table_column_that_names_a_record_states_the_read_that_shows_it() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -1054,6 +1079,7 @@ fn a_table_column_that_names_a_record_states_the_read_that_shows_it() {
 /// A selector states the read that loads a held record its list did not
 /// return, by the rule a table column uses (wamn-1jrv).
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_selector_states_the_read_that_loads_a_record_off_its_list() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -1102,6 +1128,7 @@ fn a_selector_states_the_read_that_loads_a_record_off_its_list() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_generated_read_and_an_authored_read_populate_by_the_same_rule() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
@@ -1131,6 +1158,7 @@ fn a_generated_read_and_an_authored_read_populate_by_the_same_rule() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn the_result_fields_of_an_operation_have_one_owner() {
     // Result fields must come from the route to avoid drift from its columns.
     let mut ir = release();
@@ -1173,6 +1201,7 @@ fn the_result_fields_of_an_operation_have_one_owner() {
 /// A command keyed by one record sends that record's revision: the widget
 /// the operator chooses carries it, so no page supplies it (wamn-x5q4).
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_keyed_command_sends_the_revision_of_the_record_it_names() {
     let ir = fixture::client_release();
     let plan = ClientPlan::from_ir(&ir);
@@ -1198,6 +1227,7 @@ fn a_keyed_command_sends_the_revision_of_the_record_it_names() {
 /// The batch names `widget_maker` twice. Without the declaration no path
 /// says whose revision it sends, so the page supplies it.
 #[test]
+#[ignore = "requires: input:fixture"]
 fn a_revision_names_the_one_selector_whose_row_supplies_it() {
     let ir = fixture::client_release();
     let plan = ClientPlan::from_ir(&ir);
@@ -1270,6 +1300,7 @@ fn a_revision_names_the_one_selector_whose_row_supplies_it() {
 }
 
 #[test]
+#[ignore = "requires: input:fixture"]
 fn integer_create_ids_are_server_generated() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);

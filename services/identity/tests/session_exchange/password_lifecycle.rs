@@ -146,6 +146,7 @@ async fn active(fixture: &Fixture, body: &Value) -> bool {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires: postgres"]
 async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");
     let db = postgres
@@ -398,6 +399,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
 /// `org-admin` in the org, carries no application role, and never comes from a
 /// PAT.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires: postgres"]
 async fn a_control_session_follows_the_admin_roles_of_its_org() {
     const CONTROL: &str = "urn:wamn:control:demo";
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");
@@ -646,6 +648,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires: postgres"]
 async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");
     let db = postgres
@@ -860,6 +863,7 @@ fn renewal(values: &[String; 3]) -> String {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires: postgres"]
 async fn cookie_carrier_sets_rotates_and_clears_three_cookies() {
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");
     let db = postgres

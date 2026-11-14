@@ -36,7 +36,6 @@ wamn-platform-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
-wamn-test-postgres = { workspace = true }
 
 
 futures-util = { workspace = true }

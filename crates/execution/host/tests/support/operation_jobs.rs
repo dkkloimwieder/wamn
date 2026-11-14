@@ -3,9 +3,8 @@ use super::*;
 use wamn_catalog::HostHandler;
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: postgres, nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn operations_refuse_unrelated_project_authority_before_execution() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("operation_routes").await?;
     let mut admin = connect(database.url()).await?;

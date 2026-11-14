@@ -52,7 +52,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dev-dependencies]
-wamn-test-postgres = { workspace = true }
 wamn-compiler.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
 # The release tests build a manifest from parts, which wamn-catalog conditions

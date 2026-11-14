@@ -109,6 +109,7 @@ fn fixture() -> Fixture {
 }
 
 #[sqlx::test(migrations = false)]
+#[ignore = "requires: input:netsuite"]
 async fn pull_checkpoint_commits_through_the_application_role(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {
@@ -124,6 +125,7 @@ async fn pull_checkpoint_commits_through_the_application_role(
 }
 
 #[test]
+#[ignore = "requires: input:netsuite"]
 fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
     let Fixture {
         args,

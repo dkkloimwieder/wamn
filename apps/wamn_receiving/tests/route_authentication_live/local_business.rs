@@ -17,6 +17,7 @@ const ACME_OPERATION: &str = "client-acme-receiving:acme/record-receipt";
 const RECEIVING_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn command_histories() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let scratch = ScratchRoot::create()?;
@@ -35,6 +36,7 @@ async fn command_histories() -> anyhow::Result<()> {
 
 /// Both screen reads return view lines, and closing an order removes its open lines.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let scratch = ScratchRoot::create()?;
@@ -110,6 +112,7 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
 /// record_receipt. The same role calling Receiving's record_receipt directly is
 /// refused, because nothing derives that grant from the entry it holds.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let scratch = ScratchRoot::create()?;
@@ -226,6 +229,7 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
 /// that carries the first one's write-log row and none of its business rows: a
 /// replay that ran again would find no purchase order.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let scratch = ScratchRoot::create()?;

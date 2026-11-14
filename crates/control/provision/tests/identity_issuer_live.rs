@@ -2,6 +2,7 @@
 use wamn_control_provision::identity_role::identity_issuer_login;
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn targeted_issuer_grants_execute_on_postgres() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let mut server = wamn_test_postgres::start(&[])?;

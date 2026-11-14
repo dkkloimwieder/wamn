@@ -10,11 +10,8 @@ mod native_files {
     /// The file fixture release must have an http role, so that file.expose has a
     /// workload on port 80. This needs no kind cluster.
     #[tokio::test]
-    #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_BLOB_PUT_COMPONENT"]
+    #[ignore = "requires: postgres, bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_BLOB_PUT_COMPONENT"]
     async fn file_fixture_assembles_an_http_role_without_kind() -> anyhow::Result<()> {
-        wamn_test_postgres::require_ignored_prerequisites(
-            "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_BLOB_PUT_COMPONENT",
-        );
         let mut postgres = wamn_test_postgres::start(&[])?;
         let database = postgres.create_database("file_http_role").await?;
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
