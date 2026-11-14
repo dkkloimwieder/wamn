@@ -170,7 +170,7 @@ pub async fn existing_kubeconfig(
 ///
 /// # Errors
 /// Returns an error if cluster discovery or credential export fails.
-pub(super) async fn available_kubeconfig(
+pub async fn available_kubeconfig(
     document: &ClusterDocument,
     path: &Path,
 ) -> anyhow::Result<Option<String>> {

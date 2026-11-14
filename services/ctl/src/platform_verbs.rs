@@ -7,8 +7,7 @@ use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
 use wamn_control_provision::migrations::MigrationDatabase;
 use wamn_environment::platform::document::{ClusterDocument, UpgradeTarget};
-use wamn_environment::platform::pools::Direction;
-use wamn_environment::platform::{artifact_plan, deploy, provider, status};
+use wamn_environment::platform::{deploy, provider, status};
 use wamn_environment::platform_migrations;
 use wamn_release_control::release_chart::Target;
 
@@ -17,10 +16,6 @@ use wamn_release_control::release_chart::Target;
 pub enum PlatformCommand {
     /// Print a cluster.k file in its standard KCL form.
     Show(ShowArgs),
-    /// Set every node pool to its declared size and wait for PostgreSQL and NATS.
-    Wake(PoolsArgs),
-    /// Set every node pool to 0 nodes.
-    Sleep(PoolsArgs),
 }
 
 /// Platform verbs exposed by the product command.
@@ -30,7 +25,7 @@ pub enum ProductPlatformCommand {
     Deploy(DeployArgs),
     /// Read the current platform state without creating a cluster.
     Status(ShowArgs),
-    /// Inspect or apply platform SQL from an explicitly selected prepared chart.
+    /// Inspect or apply platform SQL through control.
     #[command(subcommand)]
     Schema(PlatformSchemaCommand),
     #[command(flatten)]
@@ -55,7 +50,6 @@ pub enum PlatformSchemaTarget {
 pub struct PlatformSchemaArgs {
     pub target: PlatformSchemaTarget,
     pub env: Option<PathBuf>,
-    pub chart: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -66,9 +60,6 @@ struct PlatformSchemaInput {
     /// The environment document, required only for project target.
     #[arg(long, required_if_eq("target", "project"))]
     env: Option<PathBuf>,
-    /// The prepared chart whose ctl image supplies the SQL.
-    #[arg(long)]
-    chart: PathBuf,
 }
 
 impl clap::FromArgMatches for PlatformSchemaArgs {
@@ -83,7 +74,6 @@ impl clap::FromArgMatches for PlatformSchemaArgs {
         Ok(Self {
             target: input.target,
             env: input.env,
-            chart: input.chart,
         })
     }
 
@@ -155,18 +145,12 @@ pub async fn run_system_schema(
 pub struct DeployArgs {
     /// The cluster.k document.
     pub file: PathBuf,
-    /// The prepared chart directory, required for installation and --only.
+    /// The prepared chart directory for initial installation.
     #[arg(long)]
     pub chart: Option<PathBuf>,
     /// Select control, identity, or host:<release>/<group> for an existing platform.
     #[arg(long, value_name = "TARGET")]
     pub only: Option<UpgradeTarget>,
-}
-
-#[derive(Debug, Args)]
-pub struct PoolsArgs {
-    /// The cluster.k document. Its pools come from project.k in the same directory.
-    pub file: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -190,59 +174,25 @@ pub async fn run_product(
             result.and(cleanup)
         }
         ProductPlatformCommand::Schema(command) => {
-            let (args, apply) = match &command {
+            let (args, apply) = match command {
                 PlatformSchemaCommand::Diff(args) => (args, false),
                 PlatformSchemaCommand::Apply(args) => (args, true),
             };
-            let chart = artifact_plan::select(&args.chart)?;
-            let target = wamn_environment::environment::kubernetes_target("platform".into())?;
-            let label = match args.target {
-                PlatformSchemaTarget::System => "system",
-                PlatformSchemaTarget::Project => "project",
-            };
-            writeln!(
-                output,
-                "{label} SQL target: {}/{}",
-                target.context, target.namespace
-            )?;
-            writeln!(output, "selected chart: {}", chart.directory().display())?;
-            writeln!(output, "{label} SQL image: {}", chart.image("ctl")?)?;
-            output.flush()?;
-            let directory = work_directory()?;
-            let result = Box::pin(interruptible(&mut signals, async {
-                match args.target {
-                    PlatformSchemaTarget::System => {
-                        let log = wamn_environment::platform::system_schema(
-                            &target, &directory, &chart, apply).await?;
-                        writeln!(output, "{log}")?;
-                    }
-                    PlatformSchemaTarget::Project => {
-                        let file = args.env.as_deref().context("--env is required for project target")?;
-                        let mut platform = wamn_environment::environment::Platform::project_schema_from_env()?;
-                        platform.target = target;
-                        let document = wamn_environment::environment::document::EnvironmentDocument::read(&platform, &wamn_environment::environment::document::EnvironmentDocument::compile(file)?.triple()).await?;
-                        writeln!(output, "project SQL environment: {}", document.triple())?;
-                        output.flush()?;
-                        let expected = wamn_environment::environment::sql::ExpectedDatabase::read(&platform, &document).await?;
-                        let migration = wamn_control_provision::migrations::MigrationDatabase::Project.configuration(&platform.system_database_url)?;
-                        wamn_environment::environment::sql::project_schema(&platform, &document,
-                            wamn_environment::environment::sql::ProjectSchemaRequest {
-                                expected: &expected, migration_database_url: &migration,
-                                sources: &wamn_environment::platform_migrations::embedded_sources(wamn_control_provision::migrations::MigrationDatabase::Project), apply,
-                            }, &mut output).await?;
-                    }
+            let (target, project, env) = match args.target {
+                PlatformSchemaTarget::System => ("system", None, None),
+                PlatformSchemaTarget::Project => {
+                    let file = args.env.context("--env is required for project SQL")?;
+                    let document =
+                        wamn_environment::environment::document::EnvironmentDocument::compile(
+                            &file,
+                        )?;
+                    ("project", Some(document.project), Some(document.env))
                 }
-                output.flush().context("write the platform SQL result")
-            })).await;
-            // Retain failed Job logs, including committed SQL and the resume command.
-            if result.is_ok() {
-                std::fs::remove_dir_all(directory).context("remove platform SQL directory")?;
-            }
-            result
+            };
+            let control = crate::operation_verbs::ControlHost::from_env()?;
+            interruptible(&mut signals, control.platform(serde_json::json!({"type":"schema","target":target,"project":project,"env":env,"apply":apply}))).await
         }
-        ProductPlatformCommand::Manage(command) => {
-            interruptible(&mut signals, run(command, output)).await
-        }
+        ProductPlatformCommand::Manage(command) => run(command, output),
     }
 }
 
@@ -257,55 +207,54 @@ async fn deploy(
         .with_context(|| format!("resolve cluster {}", args.file.display()))?;
     let document = ClusterDocument::compile(&file)?;
     writeln!(output, "cluster: {}", file.display())?;
+    if std::env::var_os("WAMN_CONTROL_URL").is_some() {
+        anyhow::ensure!(
+            args.chart.is_none(),
+            "control selects the prepared chart; --chart is only for bootstrap"
+        );
+        let selection = args
+            .only
+            .as_ref()
+            .context("after bootstrap, select the existing Helm owner with --only")?;
+        let control = crate::operation_verbs::ControlHost::from_env()?;
+        return interruptible(signals, control.platform(serde_json::json!({"type":"update","document":document,"selection":match selection { UpgradeTarget::Control => "control".to_owned(), UpgradeTarget::Identity => "identity".to_owned(), UpgradeTarget::Host { release, group } => format!("host:{release}/{group}") }}))).await;
+    }
+    let discovery = work_directory()?;
+    let existing = async {
+        let kubeconfig = discovery.join("kubeconfig");
+        let Some(context) = provider::available_kubeconfig(&document, &kubeconfig).await? else {
+            return anyhow::Ok(false);
+        };
+        let target = Target {
+            kubeconfig,
+            context,
+            namespace: document.org.clone(),
+        };
+        Ok(wamn_environment::platform::resources::release_values(
+            &target,
+            &document.org,
+            &wamn_registry::name::control_resource(&document.org),
+        )
+        .await?
+        .is_some())
+    }
+    .await;
+    std::fs::remove_dir_all(&discovery)?;
+    anyhow::ensure!(
+        !existing?,
+        "control already exists; set WAMN_CONTROL_URL and WAMN_TOKEN"
+    );
+    anyhow::ensure!(
+        args.only.is_none(),
+        "bootstrap does not update an existing Helm owner"
+    );
     let directory = work_directory()?;
     writeln!(output, "work directory: {}", directory.display())?;
     output.flush()?;
     let result = interruptible(signals, async {
-        match &args.only {
-            Some(selection) => {
-                let chart = artifact_plan::select(
-                    args.chart
-                        .as_deref()
-                        .context("--chart is required with --only. No resources changed.")?,
-                )?;
-                let (name, namespace) = selection.owner(&document);
-                writeln!(
-                    output,
-                    "selected chart ({namespace}/{name}): {}",
-                    chart.directory().display()
-                )?;
-                output.flush()?;
-                let kubeconfig = directory.join("kubeconfig");
-                let context = provider::existing_kubeconfig(&document, &kubeconfig).await?;
-                let target = Target {
-                    kubeconfig,
-                    context,
-                    namespace: "platform".into(),
-                };
-                let result =
-                    deploy::update(&document, &chart, &target, selection, &directory).await;
-                let observed = status::read_target(&document, &target, selection).await;
-                let reported = (|| -> anyhow::Result<()> {
-                    status::write_target(&observed, &mut output)?;
-                    output.flush()?;
-                    anyhow::ensure!(
-                        observed.category == status::Category::Ready,
-                        "target {} is {}",
-                        observed.name,
-                        observed.category
-                    );
-                    Ok(())
-                })();
-                result.and(reported)
-            }
-            None => deploy::deploy(&document, args.chart.as_deref(), &directory, &mut output).await,
-        }
+        deploy::deploy(&document, args.chart.as_deref(), &directory, &mut output).await
     })
     .await;
-    if args.only.is_some() {
-        let cleanup = std::fs::remove_dir_all(directory).context("remove update directory");
-        return result.and(cleanup);
-    }
     let observed = report_status(&document, &directory, signals, &mut output).await;
     // A failed observation or output write must not replace the deployment error.
     // Only a newly created kind cluster mounts this run's registry directory.
@@ -428,32 +377,8 @@ fn work_directory() -> anyhow::Result<PathBuf> {
     Ok(directory)
 }
 
-pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Result<()> {
-    if let PlatformCommand::Wake(args) | PlatformCommand::Sleep(args) = &command {
-        let direction = match &command {
-            PlatformCommand::Wake(_) => Direction::Wake,
-            _ => Direction::Sleep,
-        };
-        let document = ClusterDocument::compile(&args.file)?;
-        return wamn_environment::platform::pools::resize(
-            &document,
-            &args
-                .file
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join("project.k"),
-            direction,
-            &wamn_environment::platform::pools::work_directory()?,
-            |line| {
-                writeln!(output, "{line}")?;
-                output.flush().context("write resize progress")
-            },
-        )
-        .await;
-    }
-    let PlatformCommand::Show(args) = command else {
-        unreachable!()
-    };
+pub fn run(command: PlatformCommand, output: impl Write) -> anyhow::Result<()> {
+    let PlatformCommand::Show(args) = command;
     show(&args, output)
 }
 
@@ -490,9 +415,7 @@ mod tests {
         .expect("parse platform show");
         let Command::Platform(command) = cli.command;
         let mut output = Vec::new();
-        let super::PlatformCommand::Show(args) = command else {
-            panic!("expected show");
-        };
+        let super::PlatformCommand::Show(args) = command;
         show(&args, &mut output).expect("show the cluster document");
         output
     }

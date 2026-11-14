@@ -1,0 +1,40 @@
+{
+  "fields": [
+    {
+      "path": "slot",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "created_at",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "reason",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "start_lsn",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "start_at",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "end_lsn",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "fields": [
+    {
+      "path": "result",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.code",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.digest",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.version",
+      "type": "int32",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.parameter_schema",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.operations",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.write_interfaces",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

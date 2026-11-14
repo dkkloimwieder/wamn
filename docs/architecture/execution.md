@@ -200,36 +200,37 @@ The transaction binds `app.user_id` to the caller and `app.operation` to the sea
 The writes are the functions of [`wamn_platform_identity::org`](../../crates/identity/platform/src/org.rs), which `wamn-ctl invite` and `provision-org --admin` also call.
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the environment's `wamn_administration` login.
-The control host reads that login from the mounted Secret `wamn-control-administration-<org>`, one file per `<project>--<env>`, at each write (`--control-administration-dir`, `WAMN_CONTROL_ADMINISTRATION_DIR`).
+Native control reads that login from the installed public connection projection, one file per `<project>--<env>`, at each write. Its component configuration selects `administration_dir`; passwords stay in the owning role Secrets.
 Every authority mutation commits its system rows before application projection.
 Projection locks `identity.org_memberships` for the principal and org, then reads current authority.
 It commits the application write before releasing that system lock.
 If an environment fails, the route answers `application_write_incomplete` with that environment and the environments that completed.
 The system mutation remains committed.
-The next system mutation or `env apply` repairs application rows from current authority.
+The next system mutation or `environment::apply` repairs application rows from current authority.
 The four status routes need `org-admin`, and they write `registry.environments.status` through the `control` family, which holds `UPDATE` on that column only.
 Each status route also writes the status into the one row of `platform.environment` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
 Data, membership and role rows do not change with the status, and CDC stays attached.
-`user.invite` calls identity `POST /users` and `POST /invitations` with the operator certificate of `--pat-issuer`, `--pat-client-cert`, `--pat-client-key` and `--pat-server-ca`, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
+`user.invite` calls identity `POST /users` and `POST /invitations` with the configured identity operator certificate, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
 It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
 The host refuses an email or a display name that the identity rules refuse before it calls identity, and answers `user_refused` when identity refuses the user.
-The control set also serves `application.deploy`, `application.rollback`, `schema.diff`, `schema.apply`, `schema.reset`, and `operation.status`.
+The control set also serves `application.deploy`, `application.rollback`, `application.stop`, `release.retain`, `schema.diff`, `schema.apply`, `schema.reset`, and `operation.status`.
 Each route requires `ProjectAdmin` authority for `project` in the host's organization.
 The request names `project` and `env`.
 The server builds the command and credential references after it repeats authorization and resolves the target.
-The six start routes return a Kubernetes Job name.
+Each start route returns a Kubernetes Job name.
 `operation.status` compares that Job's target and reads its state and bounded log tail.
-The host links no deployment library and keeps no operation history.
+The service submits Jobs through the shared runner and keeps no operation history.
 The protected `WAMN_DEPLOY_ACTOR` input carries the authenticated principal to the worker.
 [Deployment routes](../operations/deployment.md#application-and-schema-operations) defines inputs, credential target, deadlines, and result bounds.
 
 The contracts of the control routes live in [`host_route/control/contracts`](../../crates/catalog/model/src/host_route/control/contracts), and the generator projects them into the TypeScript client `@wamn/control-org-client` in `apps/target/wamn/wamn_control/control/client-ts`.
 The control set has its own client because both sets serve `user.list`.
 
-The control serving root has no package, component, route, database or guest connection.
-`wamn-host --control` serves it for one org.
-A control host holds no project credential and no application release, and an application host never holds the `control` login.
+The native control service has no application release or guest connection.
+`wamn-control` serves it for one org.
+It reads owning role credentials for authenticated administration. An application host never holds the control login.
+See [Native control](control.md) for the installer configuration and worker interface.
 
 A read also carries an ETag, which the host derives and compares.
 A `get` has a strong ETag from the manifest digest of the release and the revision field of the record that it returns.
@@ -490,7 +491,7 @@ The [workflow contract](../../crates/execution/workflow/src/contract.rs) in `wam
 - `list` returns the runs of one environment, newest first, with their status and their queued and parked flags.
 
 `PostgresWorkflows` admits automation with project-admin authority.
-The `wamn-ctl workflow park`, `release` and `runs` commands call it ([queued automation](../operations/queued-automation.md)).
+The `wamn workflow park`, `release` and `runs` commands call it ([queued automation](../operations/queued-automation.md)).
 Its SQL lives in `wamn-run-state` beside the lease SQL.
 
 An event workflow is an enabled row of `catalog.workflows` in an environment application.
@@ -516,8 +517,8 @@ A schedule workflow is a row of `catalog.workflows` with trigger `schedule` and 
 A release published before this change may carry `workflow.schedules` in its manifest; the host reads it with the field ignored.
 
 The environment document declares its applications: each name with the packages of the release that belong to it.
-`env apply` refuses a release package that belongs to no application or to two, and a declared package that the release does not carry.
-The release chart passes the map to the host as canonical JSON in `--applications`, beside `--environment`, and keeps it in the Helm revision's values, where `env show` and `wamn-ctl workflow author` read it.
+`environment::apply` refuses a release package that belongs to no application or to two, and a declared package that the release does not carry.
+The release chart passes the map to the host as canonical JSON in `--applications`, beside `--environment`, and keeps it in the Helm revision's values, where `env show` and `wamn workflow author` read it.
 A host that serves a release from the registry refuses to start without `--applications`. A local candidate host takes the map when it is given and otherwise declares none.
 A workflow belongs to one declared application, by name: `workflow author` and `workflow.start` refuse a name that the environment does not declare.
 An application is a name, never a package. The workflow condition resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue leases the release's packages and the declared application names, and the executor resolves the run's nodes within that application's packages.
@@ -571,11 +572,11 @@ Its trigger is `manual`.
 Each version is one row of `catalog.workflows` in the project database.
 The row holds the application, the workflow id, the version, the graph, the wiring hash, the execution type, the execution role and `enabled`.
 
-`wamn-ctl workflow author` evaluates the graph conditions against the release that the environment serves, and stores the version disabled.
+`wamn workflow author` evaluates the graph conditions against the release that the environment serves, and stores the version disabled.
 The same bytes under the same version converge. Other bytes under that version refuse.
 A stored version never changes except `enabled`, and at most one version of a workflow is enabled.
 
-`enable` and `disable` take the lifecycle lock of the coordinate, as `env apply` does.
+`enable` and `disable` take the lifecycle lock of the coordinate, as `environment::apply` does.
 While another verb holds the lock, they refuse with `apply in progress`.
 `enable` evaluates the graph conditions again, then disables the enabled version and enables this one in one transaction.
 `disable` sets only `enabled` to false. Queued and running runs finish under the version they pinned.
@@ -605,9 +606,9 @@ Its principal must be an active `service`, and it holds the permissions of every
 
 Every workflow is a graph run by the router and the run queue under a run row. A single-operation workflow is a one-node graph. The in-process walk with no row (`RegistrationDelivery::Walk`) is removed.
 
-A workflow is keyed `(project_env_key, environment, application, workflow_id, version)`; a package version is not part of its identity. A version row is immutable (graph, hash, trigger, `execution_type`, `execution_role`); `enabled` is its one mutable field, and at most one version of a workflow is enabled at a time — a partial unique index on `(project_env_key, environment, application, workflow_id) WHERE enabled`; enabling a version disables the previous one in the same transaction. A start selects the enabled version. Disabling stops new starts only; queued and running runs finish under the version they pinned. Its graph names operations as `package.operation`; admission resolves them against the release the run pins. A package upgrade that keeps those operations does not touch the workflow; one that drops or changes them is refused at `env apply` by workflow and node.
+A workflow is keyed `(project_env_key, environment, application, workflow_id, version)`; a package version is not part of its identity. A version row is immutable (graph, hash, trigger, `execution_type`, `execution_role`); `enabled` is its one mutable field, and at most one version of a workflow is enabled at a time — a partial unique index on `(project_env_key, environment, application, workflow_id) WHERE enabled`; enabling a version disables the previous one in the same transaction. A start selects the enabled version. Disabling stops new starts only; queued and running runs finish under the version they pinned. Its graph names operations as `package.operation`; admission resolves them against the release the run pins. A package upgrade that keeps those operations does not touch the workflow; one that drops or changes them is refused at `environment::apply` by workflow and node.
 
-Enable, disable and change of a workflow take the environment's lifecycle lock (`environment/lock.rs::LifecycleLock`, `pg_try_advisory_lock`, shared with `env apply`): while an apply holds it, enable is refused with "apply in progress" and the caller retries; the lock does not queue. So no workflow becomes enabled between the apply's test and its Helm write. Authority lifetime: the enabler's authority is validated at enable and change. An enabled workflow belongs to the environment, not to a session. Revoking the execution role's permission refuses the next protected call under the existing per-operation test. No author query on every start. Deploying logic that runs on every record change is an admin act; a project that wants a narrower publisher makes a role holding the enable operation.
+Enable, disable and change of a workflow take the environment's lifecycle lock (`environment/lock.rs::LifecycleLock`, `pg_try_advisory_lock`, shared with `environment::apply`): while an apply holds it, enable is refused with "apply in progress" and the caller retries; the lock does not queue. So no workflow becomes enabled between the apply's test and its Helm write. Authority lifetime: the enabler's authority is validated at enable and change. An enabled workflow belongs to the environment, not to a session. Revoking the execution role's permission refuses the next protected call under the existing per-operation test. No author query on every start. Deploying logic that runs on every record change is an admin act; a project that wants a narrower publisher makes a role holding the enable operation.
 
 - One invocation function serves both. The route calls it once. The router calls it per node.
 
@@ -692,9 +693,10 @@ A host that cannot receive drops caches nothing, so it reads every request.
 The configured revocation bound applies when a drop is lost.
 Already admitted work retains its caller. Revocation does not cancel that work or undo its effects.
 
-Create an API identity with `wamn-ctl create-api-service`.
-Supply the org, project, environment, name, display name, one or more `--role` values, and `--lifetime-seconds`.
-The verb needs the system administrator URL, the target application database URL, and the existing PAT issuer credentials.
+Create an API identity with `wamn create-api-service`.
+Supply the project, environment, name, display name, one or more `--role` values, and `--lifetime-seconds`.
+The verb uses `WAMN_CONTROL_URL` and `WAMN_TOKEN`. The session selects the org.
+The native service selects the owning database connections and PAT issuer credentials.
 `--emit-secret` names a private JSON output file. The verb prints only the principal id.
 It creates or reuses the service, grants authored roles in the selected environment, then requests its PAT from identity.
 A partial creation can be retried. An API service cannot receive the reserved `admin` role through this verb.
@@ -924,7 +926,7 @@ A connection write, copy, credential change, disable, enable or delete deletes t
 A connection write, copy or delete also deletes the connection map of its environment, because it can create or remove a connection.
 An integration delete deletes no key, because it refuses while the integration has a connection.
 An integration disable or enable deletes the key of each of its connections, in every environment of the project.
-An `env apply` deletes the release key of each release whose connection rows changed.
+An `environment::apply` deletes the release key of each release whose connection rows changed.
 An `env delete` deletes every key of the environment.
 [`connection_drops_live`](../../crates/identity/platform/tests/connection_drops_live.rs) runs each administration writer once and makes sure of the keys it deletes.
 

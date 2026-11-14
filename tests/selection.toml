@@ -7,7 +7,6 @@ exclusions = [
 ]
 targets = [
   { workspace="root", package="wamn-ctl", target="test:control_operations", tier="contract" },
-  { workspace="root", package="wamn-ctl", target="test:application_publication", tier="contract" },
   { workspace="root", package="wamn-ctl", target="test:source_deploy_live", tier="live-postgres" },
   { workspace="root", package="wamn-ctl", target="test:platform_update", tier="live-postgres" },
   { workspace="root", package="wamn-integration-tests", target="bin:http-fixture", tier="contract" },
@@ -92,16 +91,17 @@ targets = [
   { workspace="root", package="wamn-kubernetes", target="lib:wamn_kubernetes", tier="contract" },
   { workspace="root", package="wamn-ctl", target="bin:wamn", tier="contract" },
   { workspace="root", package="wamn-ctl", target="bin:wamn-ctl", tier="contract" },
-  { workspace="root", package="wamn-ctl", target="bin:wamn-ctl-ops", tier="unit" },
   { workspace="root", package="wamn-ctl", target="lib:wamn_ctl", tier="contract" },
+  { workspace="root", package="wamn-control", target="lib:wamn_control", tier="unit" },
+  { workspace="root", package="wamn-control", target="bin:wamn-control", tier="unit" },
   { workspace="root", package="wamn-ctl", target="test:dev_command", tier="contract" },
   { workspace="root", package="wamn-ctl", target="test:read_query", tier="unit" },
   { workspace="root", package="wamn-ctl", target="test:identity_issuer_live", tier="live-postgres" },
   { workspace="root", package="wamn-ctl", target="test:pat_bootstrap_live", tier="live-nats" },
   { workspace="root", package="wamn-ctl", target="test:platform_ui_live", tier="live-nats" },
-  { workspace="root", package="wamn-ctl", target="test:protected_relations_live", tier="live-postgres" },
-  { workspace="root", package="wamn-ctl", target="test:prune_record_history_live", tier="live-postgres" },
-  { workspace="root", package="wamn-ctl", target="test:prune_run_history_live", tier="live-postgres" },
+  { workspace="root", package="wamn-environment", target="test:protected_relations_live", tier="live-postgres" },
+  { workspace="root", package="wamn-environment", target="test:history_retention_live", tier="live-postgres" },
+  { workspace="root", package="wamn-environment", target="test:prune_terminal_run_history_live", tier="live-postgres" },
   { workspace="root", package="wamn-ctl", target="test:receiving_ui_live", tier="live-nats" },
   { workspace="root", package="wamn-ctl", target="test:session_audience_live", tier="live-postgres" },
   { workspace="root", package="wamn-edge", target="lib:wamn_edge", tier="contract" },
@@ -237,7 +237,7 @@ targets = [
   { workspace="root", package="wamn-dev-control", target="test:install_sequence_live", tier="live-postgres" },
 ]
 documentation = ['^docs/', '^\.beads/', '^[^/]+\.md$']
-root_features = ["wamn-environment/ops", "wamn-ctl/ops"]
+root_features = ["wamn-environment/ops"]
 
 # Operator inputs select external services, comparison artifacts, or parent-owned fixtures.
 [operator_inputs]
@@ -307,7 +307,7 @@ packages = ["wamn-engine"]
 features = ["wasm_component_model_implements"]
 
 [[preparation]]
-packages = ["wamn-environment", "wamn-ctl"]
+packages = ["wamn-environment"]
 features = ["ops"]
 
 [[preparation]]
@@ -355,7 +355,7 @@ commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-host"]]
 id = "ctl"
 outputs = {WAMN_RECEIVING_DEV_BIN = "{target}/debug/wamn-ctl"}
 aliases = {WAMN_SESSION_EXCHANGE_CTL_BIN = "WAMN_RECEIVING_DEV_BIN"}
-commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-ctl", "--bin", "wamn-ctl", "--features", "ops"]]
+commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-ctl", "--bin", "wamn-ctl"]]
 
 [[preparation]]
 id = "identity"
@@ -534,11 +534,6 @@ prerequisites = ["http-route"]
 
 [[preparation]]
 packages = ["wamn-ctl"]
-target = ["test:application_publication"]
-prerequisites = ["http-route"]
-
-[[preparation]]
-packages = ["wamn-ctl"]
 target = ["test:platform_update"]
 prerequisites = ["helm"]
 
@@ -648,10 +643,10 @@ mode = "local"
 resource_lock = ""
 
 [[suites]]
-id = "ctl-ops"
+id = "retention"
 tier = "live-postgres"
 workspace = "root"
-package = "wamn-ctl"
+package = "wamn-environment"
 target = []
 tests = []
 features = ["ops"]

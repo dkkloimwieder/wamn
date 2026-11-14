@@ -1,35 +1,10 @@
-//! Arguments and output of the `workflow` verbs: author, enable, disable and
-//! list environment workflows
-//! (docs/architecture/execution.md#environment-workflows), start a run through
-//! the host route `workflow.start`, and park, release and list workflow runs
-//! through the workflow contract of `wamn-workflow`.
-//!
-//! `author` and `enable` condition the graph against the release the environment
-//! serves, derived as `env show` derives it. `enable` and `disable` take the
-//! lifecycle lock of the coordinate, as `env apply` does. These three read the
-//! platform inputs of `env` ([`Platform::from_env`]).
-
-use sqlx::{Connection as _, Row as _};
-use std::path::PathBuf;
+//! Workflow clients of the authenticated control and application routes.
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use wamn_environment::author_workflow::{
-    AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
-};
-use wamn_environment::environment::Platform;
-use wamn_environment::workflow_lifecycle::WorkflowVersion;
-use wamn_workflow::{PostgresWorkflows, Workflows as _};
+use std::path::PathBuf;
 
-use crate::env_verbs::parse_coordinate;
-
-/// Params: `$1` `project_env_key`, `$2` environment.
-const LIST_WORKFLOWS_SQL: &str = "\
-SELECT application, workflow_id, version, wiring_hash, trigger, execution_type, \
-       execution_role, enabled, created_by::text, created_at::text, schedule, source_package, entity, ops, condition, enable_sequence \
-  FROM catalog.workflows \
- WHERE project_env_key = $1 AND environment = $2 \
- ORDER BY application, workflow_id, version";
+use crate::operation_verbs::parse_coordinate;
 
 /// One workflow verb.
 #[derive(Debug, Subcommand)]
@@ -52,15 +27,9 @@ pub enum WorkflowCommand {
     Runs(ListArgs),
 }
 
-/// The database and environment every workflow verb acts in.
+/// The environment selected by a workflow request.
 #[derive(Debug, Args)]
 pub struct WorkflowDatabase {
-    /// Project-admin PostgreSQL URL for the project database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
-    pub admin_database_url: String,
-    /// Project run-plane schema.
-    #[arg(long, default_value = "wamn_run")]
-    pub schema: String,
     #[arg(long)]
     pub environment: String,
 }
@@ -70,17 +39,9 @@ pub struct WorkflowDatabase {
 pub struct WorkflowTarget {
     #[command(flatten)]
     pub target: WorkflowDatabase,
-    #[arg(long)]
-    pub org: String,
     /// Project whose environment owns the workflow or run.
     #[arg(long)]
     pub project: String,
-}
-
-impl WorkflowTarget {
-    fn project_env_key(&self) -> String {
-        wamn_registry::project_env_key(&self.org, &self.project, &self.target.environment)
-    }
 }
 
 /// The identity a run executes as.
@@ -94,12 +55,7 @@ pub enum ExecutionType {
 
 #[derive(Debug, Args)]
 pub struct AuthorArgs {
-    /// Read the local host's release facts from this dev root instead of Helm.
-    #[arg(long)]
-    pub dev_root: Option<PathBuf>,
-    #[command(flatten)]
-    pub target: WorkflowDatabase,
-    /// The coordinate, `org/project/env`, whose serving release evaluates the graph conditions.
+    /// The coordinate, `org/env/project`, whose serving release evaluates the graph conditions.
     #[arg(long)]
     pub coordinate: String,
     /// The application of the workflow, as the environment declares it.
@@ -128,17 +84,12 @@ pub struct AuthorArgs {
     /// A registration condition over the old and new row images.
     #[arg(long, requires = "source_package")]
     pub condition: Option<String>,
-    /// The `platform."user"` id of the authoring principal.
-    #[arg(long)]
-    pub principal_id: String,
 }
 
 /// One workflow version under the lifecycle lock of its coordinate.
 #[derive(Debug, Args)]
 pub struct VersionArgs {
-    #[command(flatten)]
-    pub target: WorkflowDatabase,
-    /// The coordinate, `org/project/env`, whose lifecycle lock the verb takes.
+    /// The coordinate, `org/env/project`, whose lifecycle lock the verb takes.
     #[arg(long)]
     pub coordinate: String,
     #[arg(long)]
@@ -151,27 +102,8 @@ pub struct VersionArgs {
 
 #[derive(Debug, Args)]
 pub struct EnableArgs {
-    /// Read the local host's release facts from this dev root instead of Helm.
-    #[arg(long)]
-    pub dev_root: Option<PathBuf>,
     #[command(flatten)]
     pub version: VersionArgs,
-    /// The `platform."user"` id of the enabling principal.
-    #[arg(long)]
-    pub principal_id: String,
-}
-
-impl VersionArgs {
-    fn workflow<'a>(&'a self, coordinate: &'a wamn_registry::Triple) -> WorkflowVersion<'a> {
-        WorkflowVersion {
-            org: &coordinate.org,
-            project: &coordinate.project,
-            environment: &self.target.environment,
-            application: &self.application,
-            workflow_id: &self.workflow_id,
-            version: self.version,
-        }
-    }
 }
 
 #[derive(Debug, Args)]
@@ -212,266 +144,78 @@ pub struct ListArgs {
     pub limit: u32,
 }
 
-async fn workflows(target: &WorkflowTarget) -> anyhow::Result<PostgresWorkflows> {
-    let client = wamn_postgres::connect(&target.target.admin_database_url)
-        .await
-        .context("connect to the project database")?;
-
-    Ok(PostgresWorkflows::new(
-        client,
-        &target.target.schema,
-        target.project_env_key(),
-        &target.target.environment,
-    ))
-}
-
-/// Connect to the project database with project-admin authority.
-async fn project(target: &WorkflowDatabase) -> anyhow::Result<sqlx::PgConnection> {
-    let client = wamn_postgres::connect(&target.admin_database_url)
-        .await
-        .context("connect to the project database")?;
-
-    Ok(client)
-}
-
-async fn serving_facts(
-    triple: &wamn_registry::Triple,
-    dev_root: Option<&std::path::Path>,
-    application: &str,
-) -> anyhow::Result<(String, wamn_catalog::EnvironmentApplications)> {
-    if let Some(root) = dev_root {
-        let release =
-            wamn_runtime::local_application::read_local_release(&root.join("local-artifacts"))?;
-        anyhow::ensure!(
-            release.applications.len() == 1 && release.applications.contains_key(application),
-            "local host serves a different application"
-        );
-        return Ok((release.manifest_digest.to_string(), release.applications));
-    }
-    let platform = Platform::from_env()?;
-    wamn_environment::environment::show::serving_application(&platform, triple, application).await
-}
-
-/// Run one workflow verb and print its result.
+/// Send workflow administration to the org control service.
 pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
-    match command {
-        WorkflowCommand::Author(args) => {
-            let execution = match (args.execution_type, args.execution_role.as_deref()) {
-                (ExecutionType::Role, Some(role)) => WorkflowExecution::Role(role),
-                (ExecutionType::Invoker, None) => WorkflowExecution::Invoker,
-                (ExecutionType::Role, None) => {
-                    anyhow::bail!("--execution-type role needs --execution-role")
-                }
-                (ExecutionType::Invoker, Some(_)) => {
-                    anyhow::bail!("--execution-type invoker takes no --execution-role")
-                }
-            };
-            let ops: Vec<_> = serde_json::from_value(serde_json::json!(args.ops))?;
-            let trigger = if let Some(source_package) = args.source_package.as_deref() {
-                WorkflowTrigger::Event {
-                    source_package,
-                    entity: args
-                        .entity
-                        .as_deref()
-                        .context("--source-package needs --entity")?,
-                    ops: &ops,
-                    condition: args.condition.as_deref(),
-                }
-            } else {
-                args.schedule
-                    .as_deref()
-                    .map_or(WorkflowTrigger::Manual, WorkflowTrigger::Schedule)
-            };
-            let document = wamn_environment::author_workflow::read_compiled_wiring_document(
-                &args.compiled_document,
-            )?;
-            let triple = parse_coordinate(&args.coordinate)?;
-            let (digest, declared) =
-                serving_facts(&triple, args.dev_root.as_deref(), &args.application).await?;
-            let hash = wamn_environment::author_workflow::author_workflow_in_databases(
-                &args.target.admin_database_url,
-                &AuthorWorkflowRequest {
-                    org: &triple.org,
-                    project: &triple.project,
-                    environment: &args.target.environment,
-                    application: &args.application,
-                    declared: &declared,
-                    document: &document,
-                    trigger,
-                    execution,
-                    created_by: &args.principal_id,
-                    manifest_digest: &digest,
-                },
-            )
-            .await?;
-            println!("{hash}");
-        }
-        WorkflowCommand::Enable(args) => {
-            let (system_database_url, events) = if args.dev_root.is_some() {
-                (
-                    std::env::var("WAMN_CONTROL_DATABASE_URL")
-                        .context("set WAMN_CONTROL_DATABASE_URL")?,
-                    wamn_environment::environment::event_broker_from_env()?,
-                )
-            } else {
-                let platform = Platform::from_env()?;
-                (platform.system_database_url, platform.events)
-            };
-            let triple = parse_coordinate(&args.version.coordinate)?;
-            let (digest, declared) =
-                serving_facts(&triple, args.dev_root.as_deref(), &args.version.application).await?;
-            let mut client = project(&args.version.target).await?;
-            wamn_environment::workflow_lifecycle::enable_workflow(
-                &system_database_url,
-                &triple,
-                &mut client,
-                &args.version.workflow(&triple),
-                &args.principal_id,
-                &digest,
-                &declared,
-                events.as_ref(),
-            )
-            .await?;
-            println!(
-                "enabled {} version {}",
-                args.version.workflow_id, args.version.version
-            );
-        }
-        WorkflowCommand::Disable(args) => {
-            let platform = Platform::from_env()?;
-            let triple = parse_coordinate(&args.coordinate)?;
-            let mut client = project(&args.target).await?;
-            wamn_environment::workflow_lifecycle::disable_workflow(
-                &platform.system_database_url,
-                &triple,
-                &mut client,
-                &args.workflow(&triple),
-            )
-            .await?;
-            println!("disabled {} version {}", args.workflow_id, args.version);
-        }
-        WorkflowCommand::List(target) => {
-            let mut client = project(&target.target).await?;
-            let project_env_key = target.project_env_key();
-            let mut transaction = client.begin().await?;
-            sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-                .bind(&project_env_key)
-                .fetch_one(&mut *transaction)
-                .await
-                .context("bind the workflow project identity")?;
-            for row in sqlx::query(LIST_WORKFLOWS_SQL)
-                .bind(&project_env_key)
-                .bind(&target.target.environment)
-                .fetch_all(&mut *transaction)
-                .await
-                .context("read the workflow versions")?
-            {
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "application": row.get::<String, _>(0),
-                        "workflow-id": row.get::<String, _>(1),
-                        "version": row.get::<i32, _>(2),
-                        "wiring-hash": row.get::<String, _>(3),
-                        "trigger": row.get::<String, _>(4),
-                        "schedule": row.get::<Option<String>, _>(10),
-                        "source-package": row.get::<Option<String>, _>(11),
-                        "entity": row.get::<Option<String>, _>(12),
-                        "ops": row.get::<Option<Vec<String>>, _>(13),
-                        "condition": row.get::<Option<String>, _>(14),
-                        "enable-sequence": row.get::<Option<i64>, _>(15),
-                        "execution-type": row.get::<String, _>(5),
-                        "execution-role": row.get::<Option<String>, _>(6),
-                        "enabled": row.get::<bool, _>(7),
-                        "created-by": row.get::<String, _>(8),
-                        "created-at": row.get::<String, _>(9),
-                    })
-                );
-            }
-            transaction.commit().await?;
-        }
-
+    use serde_json::json;
+    let (operation, value) = match command {
         WorkflowCommand::Start(args) => {
             println!("{}", start(&args).await?);
+            return Ok(());
         }
-        WorkflowCommand::Park(args) => {
-            workflows(&args.target).await?.park(&args.run_id).await?;
-            println!("parked {}", args.run_id);
+        WorkflowCommand::Author(args) => {
+            let triple = parse_coordinate(&args.coordinate)?;
+            let execution_type = match args.execution_type {
+                ExecutionType::Role => "role",
+                ExecutionType::Invoker => "invoker",
+            };
+            let document: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&args.compiled_document)?)?;
+            (
+                "workflow.author",
+                json!({"project":triple.project,"env":triple.env,"application":args.application,
+                "document":document,"execution_type":execution_type,"execution_role":args.execution_role,
+                "schedule":args.schedule,"source_package":args.source_package,"entity":args.entity,"ops":args.ops,"condition":args.condition}),
+            )
         }
-        WorkflowCommand::Release(args) => {
-            workflows(&args.target).await?.release(&args.run_id).await?;
-            println!("released {}", args.run_id);
-        }
-        WorkflowCommand::Runs(args) => {
-            for run in workflows(&args.target).await?.list(args.limit).await? {
-                println!("{}", serde_json::to_string(&run)?);
-            }
-        }
-    }
+        WorkflowCommand::Enable(args) => ("workflow.enable", version(&args.version)?),
+        WorkflowCommand::Disable(args) => ("workflow.disable", version(&args)?),
+        WorkflowCommand::List(args) => (
+            "workflow.list",
+            json!({"project":args.project,"env":args.target.environment}),
+        ),
+        WorkflowCommand::Park(args) => (
+            "workflow.park",
+            json!({"project":args.target.project,"env":args.target.target.environment,"run_id":args.run_id}),
+        ),
+        WorkflowCommand::Release(args) => (
+            "workflow.release",
+            json!({"project":args.target.project,"env":args.target.target.environment,"run_id":args.run_id}),
+        ),
+        WorkflowCommand::Runs(args) => (
+            "workflow.runs",
+            json!({"project":args.target.project,"env":args.target.target.environment,"limit":args.limit}),
+        ),
+    };
+    let result = crate::operation_verbs::ControlHost::from_env()?
+        .call(operation, &value)
+        .await?;
+    println!("{result}");
     Ok(())
 }
 
-/// The path of the host route `workflow.start`.
-fn start_route_path() -> anyhow::Result<String> {
-    let (_, attachment) = wamn_catalog::HostRouteSet::Application
-        .attachments()
-        .find(|(_, attachment)| {
-            attachment.route.handler == wamn_catalog::HostHandler::WorkflowStart
-        })
-        .context("the application host routes serve workflow.start")?;
-    attachment.definition["route"]["path"]
-        .as_str()
-        .map(str::to_owned)
-        .context("workflow.start names its path")
-}
-
-/// The one request element of `workflow.start`, as a generated client sends a
-/// write: the request id and the input under `value`.
-fn start_request(args: &StartArgs, input: &serde_json::Value) -> serde_json::Value {
-    serde_json::json!([{
-        "request_id": args.idempotency_key,
-        "value": {
-            "application": args.application,
-            "workflow_id": args.workflow_id,
-            "input_json": input,
-            "idempotency_key": args.idempotency_key,
-        },
-    }])
+fn version(args: &VersionArgs) -> anyhow::Result<serde_json::Value> {
+    let triple = parse_coordinate(&args.coordinate)?;
+    Ok(
+        serde_json::json!({"project":triple.project,"env":triple.env,"application":args.application,"workflow_id":args.workflow_id,"version":args.version}),
+    )
 }
 
 /// Call `workflow.start` on the host with the caller's token, and return the
 /// run id it answers.
 async fn start(args: &StartArgs) -> anyhow::Result<String> {
-    let input = serde_json::from_slice(&std::fs::read(&args.input).context("read the input file")?)
-        .context("parse the input file")?;
-    let url = format!(
-        "{}{}",
-        args.host_url.trim_end_matches('/'),
-        start_route_path()?
-    );
-    let response = reqwest::Client::new()
-        .post(&url)
-        .bearer_auth(&args.token)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(start_request(args, &input).to_string())
-        .send()
-        .await
-        .with_context(|| format!("call workflow.start at {url}"))?;
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .context("read the workflow.start answer")?;
-    anyhow::ensure!(
-        status.is_success(),
-        "workflow.start answered HTTP {status}: {body}"
-    );
-    let [request_element]: [serde_json::Value; 1] =
-        serde_json::from_str(&body).context("workflow.start answers one request element")?;
-    if let Some(error) = request_element.get("error") {
-        anyhow::bail!("workflow.start refused: {error}");
-    }
-    request_element["value"]["run_id"]
+    let input: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&args.input).context("read the input file")?)
+            .context("parse the input file")?;
+    crate::component_verbs::invoke(
+        &args.host_url,
+        &args.token,
+        "workflow.start",
+        &serde_json::json!({
+            "application":args.application,"workflow_id":args.workflow_id,
+            "input_json":input,"idempotency_key":args.idempotency_key,
+        }),
+    )
+    .await?["run_id"]
         .as_str()
         .map(str::to_owned)
         .context("workflow.start answers a run id")
@@ -480,7 +224,6 @@ async fn start(args: &StartArgs) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn author_accepts_an_event_and_refuses_incomplete_or_mixed_triggers() {
         use clap::Parser as _;
@@ -491,20 +234,14 @@ mod tests {
         }
         let base = [
             "workflow",
-            "--admin-database-url",
-            "postgres://localhost/project",
-            "--environment",
-            "dev",
             "--coordinate",
-            "acme/orders/dev",
+            "acme/dev/orders",
             "--application",
             "orders",
             "--document",
             "workflow.json",
             "--execution-type",
             "invoker",
-            "--principal-id",
-            "alice",
         ];
         let event = [
             "--source-package",
@@ -516,9 +253,7 @@ mod tests {
             "--condition",
             "new.status != old.status",
         ];
-        let command = Command::try_parse_from(base.into_iter().chain(event)).unwrap();
-        assert_eq!(command.args.ops, ["insert", "update"]);
-        assert_eq!(command.args.source_package.as_deref(), Some("orders"));
+        Command::try_parse_from(base.into_iter().chain(event)).unwrap();
         assert!(
             Command::try_parse_from(
                 base.into_iter()
@@ -541,65 +276,6 @@ mod tests {
                 "truncate"
             ]))
             .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn dev_root_supplies_the_host_release_without_helm() {
-        let directory =
-            std::env::temp_dir().join(format!("wamn-workflow-dev-root-{}", std::process::id()));
-        let artifacts = directory.join("local-artifacts");
-        std::fs::create_dir_all(&artifacts).unwrap();
-        let digest = format!("sha256:{}", "a".repeat(64));
-        let applications = std::collections::BTreeMap::from([(
-            "overlay".to_owned(),
-            wamn_catalog::ApplicationDefinition {
-                connections: std::collections::BTreeMap::new(),
-                packages: ["base".to_owned(), "overlay".to_owned()].into(),
-            },
-        )]);
-        std::fs::write(
-            artifacts.join(wamn_runtime::local_application::LOCAL_RELEASE_FILE),
-            serde_json::to_vec(&wamn_runtime::local_application::LocalRelease {
-                manifest_digest: wamn_catalog::ManifestDigest::parse(&digest).unwrap(),
-                applications: applications.clone(),
-            })
-            .unwrap(),
-        )
-        .unwrap();
-        let facts = serving_facts(
-            &wamn_registry::Triple::new("org", "dev", "project"),
-            Some(&directory),
-            applications.keys().next().unwrap(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(facts, (digest, applications));
-        std::fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn start_calls_the_host_route_with_no_user() {
-        assert_eq!(start_route_path().unwrap(), "/wamn_control/workflow/start");
-        let args = StartArgs {
-            host_url: "https://acme.example".to_owned(),
-            token: "token".to_owned(),
-            application: "orders".to_owned(),
-            workflow_id: "nightly".to_owned(),
-            idempotency_key: "batch-42".to_owned(),
-            input: PathBuf::from("input.json"),
-        };
-        assert_eq!(
-            start_request(&args, &serde_json::json!({"day": 1})),
-            serde_json::json!([{
-                "request_id": "batch-42",
-                "value": {
-                    "application": "orders",
-                    "workflow_id": "nightly",
-                    "input_json": {"day": 1},
-                    "idempotency_key": "batch-42",
-                },
-            }])
         );
     }
 }

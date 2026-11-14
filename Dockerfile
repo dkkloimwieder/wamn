@@ -54,12 +54,11 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-root-target-native-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-host -p wamn-runtime -p wamn-ctl -p wamn-cdc-reader -p wamn-identity \
- && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops \
+ && cargo build --locked --release -p wamn-host -p wamn-control -p wamn-runtime -p wamn-ctl -p wamn-cdc-reader -p wamn-identity \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host \
+ && install -D -m 0755 target/release/wamn-control /native-output/wamn-control \
  && install -D -m 0755 target/release/docker-credential-wamn /native-output/docker-credential-wamn \
  && install -D -m 0755 target/release/wamn-ctl /native-output/wamn-ctl \
- && install -D -m 0755 target/release/wamn-ctl-ops /native-output/wamn-ctl-ops \
  && install -D -m 0755 target/release/wamn /native-output/wamn \
  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader \
  && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity
@@ -109,17 +108,15 @@ COPY --from=build-native /native-output/docker-credential-wamn /usr/local/bin/do
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
 
-# The worker uses server-selected metadata, so a version bump changes no image bytes.
+# Workers use the prepared charts included in the selected image.
 FROM root-source AS ctl-deploy
-RUN rm /build/deploy/platform/release/Chart.yaml
 
 # ---- ctl image: the one-shot control-plane verbs (SR9) ----------------------
 FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build-native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 COPY --from=components /http.wasm /usr/local/share/wamn/http_route.wasm
-COPY --from=build-native /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
-# `wamn-ctl env` applies manifests with kubectl, pinned by version and its
+# Native workers apply manifests with kubectl, pinned by version and its
 # published sha256 (wamn-zua8.3). wamn-iggi moves the pin to the GKE minor.
 ADD --chmod=0755 --checksum=sha256:629d3f410e09bf49b64ae7079f7f0bda1191efed311f7d37fdbab0ad5b0ec2b7 https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl /usr/local/bin/kubectl
 ARG HELM_URL
@@ -136,6 +133,11 @@ ENV WAMN_KCL=/usr/local/bin/kcl
 COPY --from=ctl-deploy /build/deploy /usr/local/share/wamn/deploy
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-ctl"]
+
+# ---- native org control service and its operation worker -----------------
+FROM ctl AS control
+COPY --from=build-native /native-output/wamn-control /usr/local/bin/wamn-control
+ENTRYPOINT ["/usr/local/bin/wamn-control"]
 
 # ---- identity image: separate signing authority and public JWKS ------------
 FROM debian:trixie-slim AS identity

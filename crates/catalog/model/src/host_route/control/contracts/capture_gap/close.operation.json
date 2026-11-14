@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:capture-gap/close@0.9.0",
+  "type": "command",
+  "label": "Capture gap close",
+  "grant": "wamn-control:capture-gap/close@0.9.0",
+  "permission_token": "capture_gap.close",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

@@ -2,10 +2,10 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context as _, ensure};
+use anyhow::ensure;
 use clap::{Args, Subcommand};
 use serde_json::json;
-use wamn_environment::environment::{self, Platform, document::EnvironmentDocument, sql::schema};
+use wamn_environment::environment::document::EnvironmentDocument;
 
 use crate::operation_verbs::ControlHost;
 
@@ -15,7 +15,7 @@ pub enum SchemaCommand {
     Diff(SchemaArgs),
     /// Apply SQL without selecting code. Publish deployed source before the SQL Job.
     #[command(
-        long_about = "Apply SQL without selecting application code. An application name uses its configured current release unless --release selects another published release. A source directory publishes first for deployed execution. With an adjacent dev.json, source SQL uses the local database directly. Migrate mode applies pending SQL. Reset mode clears application state and reapplies migrations on every schema apply in a disposable environment."
+        long_about = "Apply SQL without selecting application code. An application name uses its configured current release unless --release selects another published release. A source directory publishes first for deployed execution. Migrate mode applies pending SQL. Reset mode clears application state and reapplies migrations on every schema apply in a disposable environment."
     )]
     Apply(SchemaArgs),
     /// Build and publish a candidate without installing it in the target database.
@@ -29,7 +29,7 @@ pub enum SchemaCommand {
 
 #[derive(Debug, Args)]
 pub struct EnvironmentArgs {
-    /// The target environment file. An adjacent dev.json selects local execution.
+    /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,
 }
@@ -58,141 +58,39 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
     let (args, apply) = match command {
         SchemaCommand::Publish(args) => return publish(args).await,
         SchemaCommand::Reset(args) => {
-            let configuration = args.env.with_file_name("dev.json");
-            if configuration.is_file() {
-                let instance =
-                    wamn_dev_control::dev::target_database::reset(&configuration).await?;
-                println!("{}", json!({"database_instance":instance,"result":"reset"}));
-                return Ok(());
-            }
-
-            if let Some(host) = ControlHost::from_env()? {
-                return host
-                    .run(
-                        "schema.reset",
-                        &EnvironmentDocument::compile(&args.env)?.triple(),
-                        json!({}),
-                    )
-                    .await;
-            }
-            let platform = Platform::apply_from_env()?;
-            let result = Box::pin(environment::sql::reset::reset_deployed(
-                &platform,
-                &EnvironmentDocument::compile(&args.env)?.triple(),
-                None,
-            ))
-            .await?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
-            return Ok(());
+            return ControlHost::from_env()?
+                .run(
+                    "schema.reset",
+                    &EnvironmentDocument::compile(&args.env)?.triple(),
+                    json!({}),
+                )
+                .await;
         }
         SchemaCommand::Diff(args) => (args, false),
         SchemaCommand::Apply(args) => (args, true),
     };
-    let local_config = args.env.with_file_name("dev.json");
-    if local_config.is_file() && std::path::Path::new(&args.application).is_dir() {
-        ensure!(
-            args.release.is_none(),
-            "local source SQL does not select a published release"
-        );
-        let diffs = wamn_dev_control::dev::target_database::schema_operation(
-            &local_config,
-            &args.env,
-            std::path::Path::new(&args.application),
-            apply,
-        )
-        .await?;
-        println!("{}", serde_json::to_string_pretty(&diffs)?);
-        return Ok(());
-    }
     let input = EnvironmentDocument::compile(&args.env)?;
     let source = !input.applications.contains_key(&args.application)
         && std::path::Path::new(&args.application).is_dir();
-    if (apply || !source)
-        && let Some(host) = ControlHost::from_env()?
-    {
-        let (application, release) = if source {
-            ensure!(
-                args.release.is_none(),
-                "a source schema operation does not select --release"
-            );
-            let (application, digest) =
-                crate::operation_verbs::publish(&input, std::path::Path::new(&args.application))
-                    .await?;
-            (application, Some(digest.to_string()))
-        } else {
-            (args.application, args.release)
-        };
-        let value = json!({"application":application, "release":release});
-        return host
-            .run(
-                if apply { "schema.apply" } else { "schema.diff" },
-                &input.triple(),
-                value,
-            )
-            .await;
-    }
-    let mut platform = if apply {
-        Platform::apply_from_env()?
-    } else {
-        Platform::from_env()?
-    };
-    let document = EnvironmentDocument::read_serving(&platform, &input.triple()).await?;
-    let (application, release) = if apply && !document.applications.contains_key(&args.application)
-    {
+    let host = ControlHost::from_env()?;
+    let (application, release) = if source {
         ensure!(
             args.release.is_none(),
             "a source schema operation does not select --release"
         );
-        let database_url = std::env::var("DATABASE_URL")
-            .context("set DATABASE_URL for disposable build databases")?;
-        let (application, digest) = wamn_dev_control::source_deploy::publish(
-            &platform,
-            &document,
-            std::path::Path::new(&args.application),
-            &database_url,
-        )
-        .await?;
+        let (application, digest) =
+            crate::operation_verbs::publish(&input, std::path::Path::new(&args.application))
+                .await?;
         (application, Some(digest.to_string()))
     } else {
         (args.application, args.release)
     };
-    environment::runtime::resolve_platform(&mut platform, &document.org).await?;
-    if document.applications.contains_key(&application) {
-        let diff = environment::operation::schema(
-            &platform,
-            &document.triple(),
-            &application,
-            release.as_deref(),
-            apply,
-            std::env::var("WAMN_SYSTEM_ADMIN_URL").ok().as_deref(),
-        )
-        .await?;
-        println!("{}", serde_json::to_string_pretty(&diff)?);
-        return Ok(());
-    }
-    ensure!(
-        release.is_none(),
-        "a source schema diff does not select --release"
-    );
-    ensure!(
-        std::path::Path::new(&application).is_dir(),
-        "application {application} is not declared and its source package directory is missing"
-    );
-    let (application, roots) =
-        wamn_dev_control::source_deploy::sources(&document, std::path::Path::new(&application))?;
-    let candidates = roots
-        .into_iter()
-        .map(|path| {
-            schema::Candidate::source(wamn_environment::apply_package::PackageRoot {
-                path,
-                artifact_digest: None,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let state = schema::state(&platform, &document).await?;
-    let diff = schema::plan(&document, &application, None, &candidates, &state).await?;
-    println!("{}", serde_json::to_string_pretty(&diff)?);
-    Ok(())
+    host.run(
+        if apply { "schema.apply" } else { "schema.diff" },
+        &input.triple(),
+        json!({"application":application,"release":release}),
+    )
+    .await
 }
 
 async fn publish(args: PublishArgs) -> anyhow::Result<()> {

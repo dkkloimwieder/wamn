@@ -27,44 +27,12 @@ It restores a base backup and then replays WAL up to the point you name.
 The restore always lands in a new cluster, and the source cluster is untouched.
 The new cluster holds every database and every role the source held at that instant.
 
-## Render the recovery manifests
+## Select recovery
 
-Run the command with the same `--template` that `provision-org` was run with.
-The template supplies the env policy that sizes the restored cluster.
-
-```bash
-wamn-ctl-ops recover-org-cluster \
-  --org acme --template standard --owner prod \
-  --at 2026-09-16T14:31:00Z \
-  --emit-object-store /tmp/restore-store.json \
-  --emit-cluster /tmp/restore-cluster.json \
-  --emit-scheduled-backup /tmp/restore-backup.json
-```
-
-`--owner` names the recovery domain, so the source cluster is `<org>-<owner>`.
-`--at` is an RFC3339 timestamp, and the replay stops there.
-If you omit `--at`, the replay applies every archived WAL segment.
-`--target` names the new cluster, and the default is `<org>-<owner>-restore`.
-The command refuses a target equal to the source.
-Such a manifest addresses the live cluster instead of a new one.
-
-The command reads no database and applies nothing.
-Read the rendered `Cluster` before you apply it, and compare its `storage` and `instances` with the source.
-If the org customized its policy after provisioning, edit the rendered values to match the source.
-
-## Apply the recovery manifests
-
-1. Apply the `ObjectStore` of the restored cluster.
-2. Apply the recovery `Cluster`.
-3. Wait for the cluster to report ready.
-4. Apply the `ScheduledBackup` of the restored cluster.
-
-```bash
-kubectl -n wamn-system apply -f /tmp/restore-store.json
-kubectl -n wamn-system apply -f /tmp/restore-cluster.json
-kubectl -n wamn-system wait --for=condition=Ready cluster/acme-prod-restore --timeout=30m
-kubectl -n wamn-system apply -f /tmp/restore-backup.json
-```
+The org chart owns recovery configuration and the generated CNPG resources.
+Select the recovery domain and restore time through that chart.
+Recovery creates a new cluster. Its name must differ from the source.
+Review its storage and replica count against the source before deployment.
 
 The restored cluster archives WAL to its own store, under the prefix of its own name.
 It can never write into the stream it was restored from.
@@ -91,7 +59,7 @@ Nothing points at the restored cluster until you change a target yourself.
 CloudNativePG restores a whole cluster, so there is no command that restores one database.
 To recover one database or one table, restore the cluster and then copy the rows out.
 
-1. Render and apply the recovery with `--at` set to the instant before the loss.
+1. Select recovery in the org chart at the instant before the loss.
 2. Read the superuser URI from the Secret `<target>-superuser`.
 3. Copy the wanted database or table out of the restored cluster.
 4. Load it into the live database under a new name, then move the rows.
@@ -131,6 +99,6 @@ When you no longer want them, remove them with the object-store client.
 ## Limits
 
 - An env policy with an empty `backup_cadence` has no WAL stream and cannot be recovered.
-- A pooled org owns no cluster, so `recover-org-cluster` refuses it.
-- The rendered size comes from the template, not from the recorded policy of the org.
+- A pooled org uses the recovery policy of its shared cluster.
+- The org chart owns the restored size.
 - Recovery restores a whole cluster, and every database in that cluster comes back together.

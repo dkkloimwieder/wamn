@@ -29,6 +29,17 @@ use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 use crate::application_route::ApplicationRoutes;
 use crate::control_route::{ControlRoutes, Refusal, control_page};
 
+/// Native control execution after the route checks the caller's current authority.
+#[async_trait::async_trait]
+pub trait ControlExecution: Send + Sync + fmt::Debug {
+    async fn execute(
+        &self,
+        operation: &str,
+        caller: &PrincipalId,
+        payload: &str,
+    ) -> anyhow::Result<Value>;
+}
+
 /// What the handlers of one host read.
 pub enum HostRouteHandlers {
     /// The application administration routes of one project environment.
@@ -79,23 +90,30 @@ impl fmt::Debug for HostRouteHandlers {
 
 /// Serves the host routes of a loaded release.
 pub struct HostRouteDelivery {
-    release: Arc<LoadedRelease>,
+    release: Option<Arc<LoadedRelease>>,
     #[cfg(feature = "test-util")]
     projection_pause: Option<Arc<crate::control_route::ProjectionPause>>,
     registry_token_metadata: bool,
     operation_jobs: Option<wamn_kubernetes::kubernetes_api::KubernetesApi>,
+    worker: Option<wamn_kubernetes::job::Worker>,
+    execution: Option<Arc<dyn ControlExecution>>,
     handlers: HostRouteHandlers,
     next: Option<Arc<dyn RouteDelivery>>,
     files: Option<Arc<crate::file_route::FileRoutes>>,
     connection_health: Option<Arc<wamn_runtime::connection_health::ConnectionHealth>>,
     oauth: Option<Arc<wamn_runtime::oauth_authorization::Authorization>>,
+    control_authenticator:
+        Option<Arc<wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator>>,
 }
 
 impl fmt::Debug for HostRouteDelivery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("HostRouteDelivery")
-            .field("release", &self.release.release())
+            .field(
+                "release",
+                &self.release.as_ref().map(|release| release.release()),
+            )
             .field("next", &self.next.is_some())
             .finish_non_exhaustive()
     }
@@ -109,9 +127,11 @@ impl HostRouteDelivery {
         next: Option<Arc<dyn RouteDelivery>>,
     ) -> Self {
         Self {
-            release,
+            release: Some(release),
             handlers,
             operation_jobs: None,
+            worker: None,
+            execution: None,
             registry_token_metadata: false,
             #[cfg(feature = "test-util")]
             projection_pause: None,
@@ -119,7 +139,51 @@ impl HostRouteDelivery {
             files: None,
             connection_health: None,
             oauth: None,
+            control_authenticator: None,
         }
+    }
+
+    /// Serve org control routes without an application release or guest runtime.
+    pub fn control(handlers: HostRouteHandlers) -> Self {
+        assert!(
+            matches!(handlers, HostRouteHandlers::Control { .. }),
+            "control requires org handlers"
+        );
+        Self {
+            release: None,
+            handlers,
+            operation_jobs: None,
+            worker: None,
+            execution: None,
+            registry_token_metadata: false,
+            #[cfg(feature = "test-util")]
+            projection_pause: None,
+            next: None,
+            files: None,
+            connection_health: None,
+            oauth: None,
+            control_authenticator: None,
+        }
+    }
+
+    /// Authenticate the native control endpoint with its org session authority.
+    pub fn with_control_authenticator(
+        mut self,
+        authenticator: Arc<wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator>,
+    ) -> Self {
+        self.control_authenticator = Some(authenticator);
+        self
+    }
+
+    fn attachments(&self) -> impl Iterator<Item = (&'static str, &'static HostAttachment)> + '_ {
+        let sets = self
+            .release
+            .as_ref()
+            .map(|release| &release.manifest().host_routes);
+        wamn_catalog::HostRouteSet::Control
+            .attachments()
+            .filter(move |_| sets.is_none())
+            .chain(sets.into_iter().flatten().flat_map(|set| set.attachments()))
     }
 
     #[cfg(feature = "test-util")]
@@ -152,6 +216,18 @@ impl HostRouteDelivery {
     /// Carry the host's registry credential choice into operation Jobs.
     pub fn with_registry_token_metadata(mut self, enabled: bool) -> Self {
         self.registry_token_metadata = enabled;
+        self
+    }
+
+    /// Hand authenticated service operations to their native owner.
+    pub fn with_control_execution(mut self, execution: Arc<dyn ControlExecution>) -> Self {
+        self.execution = Some(execution);
+        self
+    }
+
+    /// The installer supplies one pinned worker image and component configuration.
+    pub fn with_worker(mut self, worker: wamn_kubernetes::job::Worker) -> Self {
+        self.worker = Some(worker);
         self
     }
 
@@ -216,14 +292,23 @@ impl HostRouteDelivery {
                 let held = postgres
                     .held_operation_grants(
                         project,
-                        &self.release.target().project_env_key,
+                        &self
+                            .release
+                            .as_ref()
+                            .expect("application handlers require a release")
+                            .target()
+                            .project_env_key,
                         &principal,
                         &attachment.operation,
                     )
                     .await
                     .map_err(Refusal::Failed)?;
                 let permissions = if held.admin {
-                    served_references(&self.release)
+                    served_references(
+                        self.release
+                            .as_ref()
+                            .expect("application handlers require a release"),
+                    )
                 } else {
                     held.references.into_iter().collect()
                 };
@@ -289,7 +374,10 @@ impl HostRouteDelivery {
                     postgres,
                     project,
                     changes,
-                    release: &self.release,
+                    release: self
+                        .release
+                        .as_ref()
+                        .expect("application handlers require a release"),
                     identity: identity
                         .as_ref()
                         .map(|(client, org)| (client, org.as_str())),
@@ -310,7 +398,10 @@ impl HostRouteDelivery {
                     postgres,
                     project,
                     changes,
-                    release: &self.release,
+                    release: self
+                        .release
+                        .as_ref()
+                        .expect("application handlers require a release"),
                     identity: identity
                         .as_ref()
                         .map(|(client, org)| (client, org.as_str())),
@@ -339,6 +430,8 @@ impl HostRouteDelivery {
                     administration: administration.as_deref(),
                     status: status.as_ref(),
                     operation_jobs: self.operation_jobs.as_ref(),
+                    worker: self.worker.as_ref(),
+                    execution: self.execution.as_deref(),
                     registry_token_metadata: self.registry_token_metadata,
                     org,
                     changes,
@@ -410,14 +503,29 @@ impl RouteDelivery for HostRouteDelivery {
         request: DeliveryRequest,
         caller: Option<AuthenticatedCaller>,
     ) -> DeliveryReport {
-        let resolved = match &request.source {
-            Source::Attachment(id) => resolve_authorized_host_route(
-                self.release.manifest(),
-                SourceRef::Attachment(id),
-                caller.as_ref(),
-            ),
-            Source::Registration(_) => None,
-        };
+        let resolved =
+            match &request.source {
+                Source::Attachment(id) => match &self.release {
+                    Some(release) => resolve_authorized_host_route(
+                        release.manifest(),
+                        SourceRef::Attachment(id),
+                        caller.as_ref(),
+                    ),
+                    None => self.attachments().find(|(source, _)| source == id).map(
+                        |(_, attachment)| {
+                            if caller
+                                .as_ref()
+                                .is_some_and(|caller| caller.attachment_id() == id)
+                            {
+                                Ok(attachment)
+                            } else {
+                                Err(DeliveryError::InvalidRequest)
+                            }
+                        },
+                    ),
+                },
+                Source::Registration(_) => None,
+            };
         let Some(resolved) = resolved else {
             return match &self.next {
                 Some(next) => next.deliver(request, caller).await,
@@ -502,16 +610,9 @@ impl HostRouteDelivery {
             );
             response
         };
-        let Some((id, attachment)) = self
-            .release
-            .manifest()
-            .host_routes
-            .iter()
-            .flat_map(|set| set.attachments())
-            .find(|(_, attachment)| {
-                attachment.definition["route"]["path"].as_str() == Some(request.uri().path())
-            })
-        else {
+        let Some((id, attachment)) = self.attachments().find(|(_, attachment)| {
+            attachment.definition["route"]["path"].as_str() == Some(request.uri().path())
+        }) else {
             return answer(404, json!({"error":{"code":"route-not-found"}}));
         };
         if attachment.route.type_.http_method() != request.method().as_str() {
@@ -548,7 +649,11 @@ impl HostRouteDelivery {
                 bytes.extend_from_slice(&data);
             }
         }
-        let caller = match routing.authenticate(id, &headers, &bytes).await {
+        let authentication = match &self.control_authenticator {
+            Some(authenticator) => authenticator.authenticate_control(id, read, &headers).await,
+            None => routing.authenticate(id, &headers, &bytes).await,
+        };
+        let caller = match authentication {
             Ok(caller) => caller,
             Err(error) => return answer(error.status, json!({"error":{"code":error.code}})),
         };

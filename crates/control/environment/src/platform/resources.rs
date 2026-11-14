@@ -240,7 +240,7 @@ pub(super) async fn require_inputs(target: &Target, entry: &Value) -> anyhow::Re
 }
 
 /// Read the values of an existing release, including failed or pending releases.
-pub(crate) async fn release_values(
+pub async fn release_values(
     target: &Target,
     namespace: &str,
     name: &str,

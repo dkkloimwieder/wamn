@@ -1,0 +1,52 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.type",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.document",
+      "type": "json",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.selection",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.target",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.project",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.env",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.apply",
+      "type": "bool",
+      "nullable": true,
+      "values": []
+    }
+  ]
+}

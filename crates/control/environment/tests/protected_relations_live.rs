@@ -1,3 +1,4 @@
+#![cfg(feature = "ops")]
 //! Tests database shapes and author privileges in fresh PostgreSQL 18.
 //!
 //! It uses a superuser connection to a database on the PostgreSQL server of its
@@ -17,9 +18,9 @@ use wamn_test_infrastructure::locked_database;
 
 const SYSTEM_SCHEMA_SQL: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const CONTROL_PORTABLE_STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
-const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
+const APP_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
-    include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
+    include_str!("../../../../test-support/fixtures/sql/current-database-public-connect.sql");
 const AUTHOR_SQL_ROLES: [&str; 1] = ["wamn_app"];
 
 #[derive(Debug, PartialEq, Eq)]

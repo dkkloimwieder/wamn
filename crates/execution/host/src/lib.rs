@@ -19,7 +19,7 @@ mod readiness;
 mod route;
 mod router_delivery;
 
-pub use host_route::{HostRouteDelivery, HostRouteHandlers};
+pub use host_route::{ControlExecution, HostRouteDelivery, HostRouteHandlers};
 pub use operation::{
     CallIntents, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,
     OperationHostConfig, component_invocation, invocation_span, node_trace_context,

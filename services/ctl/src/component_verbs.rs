@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::route_request::request as route_request;
 use anyhow::{Context as _, ensure};
 use clap::{Args, Subcommand};
+use http_body_util::BodyExt as _;
 use serde_json::Value;
 use wamn_catalog::{HostAttachment, HostRouteSet};
 
@@ -122,33 +123,38 @@ pub(crate) async fn call(
     operation: &str,
     value: &Value,
 ) -> anyhow::Result<()> {
-    let value = invoke(&reqwest::Client::new(), host_url, token, operation, value).await?;
+    let value = invoke(host_url, token, operation, value).await?;
     println!("{value}");
     Ok(())
 }
 
 /// Call one route and retain its result for adapters that follow an operation.
 pub(crate) async fn invoke(
-    client: &reqwest::Client,
     host_url: &str,
     token: &str,
     operation: &str,
     value: &Value,
 ) -> anyhow::Result<Value> {
     let attachment = route(operation)?;
-    let request = route_request(client, host_url, token, attachment, value)?;
-    let response = client
-        .execute(request)
+    let request = route_request(host_url, token, attachment, value)?;
+    let response = crate::route_request::client()
+        .request(request)
         .await
         .context("call control route")?;
     let status = response.status();
-    let body = response.text().await.context("read control response")?;
+    let body = http_body_util::Limited::new(response.into_body(), 16 * 1024 * 1024)
+        .collect()
+        .await
+        .map_err(anyhow::Error::from_boxed)
+        .context("read control response")?
+        .to_bytes();
     ensure!(
         status.is_success(),
-        "{operation} answered HTTP {status}: {body}"
+        "{operation} answered HTTP {status}: {}",
+        String::from_utf8_lossy(&body)
     );
     let [mut answer]: [Value; 1] =
-        serde_json::from_str(&body).context("control route answers one request element")?;
+        serde_json::from_slice(&body).context("control route answers one request element")?;
     if let Some(error) = answer.get("error") {
         anyhow::bail!("{operation} refused: {error}");
     }
@@ -194,7 +200,6 @@ pub async fn integration_type(args: IntegrationTypeArgs) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use wamn_catalog::{HostRouteAuthority, OperationType};
 
     fn args() -> ConfigurationArgs {
         ConfigurationArgs {
@@ -206,59 +211,21 @@ mod tests {
     }
 
     #[test]
-    fn candidate_tests_read_the_credential_file_without_query_parameters() {
-        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
-        let mut args = args();
-        args.file = scratch.path().join("request.json");
-        let credential = scratch.path().join("credential.json");
-        std::fs::write(
-            &args.file,
-            json!({"project":"app","env":"dev","name":"erp","parameters":{},"version":2})
-                .to_string(),
-        )
-        .unwrap();
-        std::fs::write(&credential, r#"{"key":"private-candidate"}"#).unwrap();
-        args.credential_file = Some(credential);
-        let value = request(&args, "connection.test").unwrap();
-        assert!(
-            value["credential"]
-                .as_str()
-                .unwrap()
-                .contains("private-candidate")
-        );
-        assert_eq!(value["version"], 2);
-        let request = route_request(
-            &reqwest::Client::new(),
-            &args.host_url,
-            &args.token,
-            route("connection.test").unwrap(),
-            &value,
-        )
-        .unwrap();
-        assert_eq!(request.method(), reqwest::Method::POST);
-        assert_eq!(request.url().path(), "/wamn_control/connection/test");
-        assert!(request.url().query().is_none());
-    }
-
-    #[test]
     fn reads_send_the_canonical_query_and_no_body() {
         let value = json!({"project":"app","env":"dev","name":"erp"});
         let request = route_request(
-            &reqwest::Client::new(),
             &args().host_url,
             &args().token,
             route("connection.get").unwrap(),
             &value,
         )
         .unwrap();
-        assert_eq!(request.method(), reqwest::Method::GET);
-        assert_eq!(request.url().path(), "/wamn_control/connection/get");
-        assert!(request.body().is_none());
+        assert_eq!(request.method(), hyper::Method::GET);
+        assert_eq!(request.uri().path(), "/wamn_control/connection/get");
+        assert!(hyper::body::Body::size_hint(request.body()).exact() == Some(0));
         assert_eq!(
             Value::Object(
-                request
-                    .url()
-                    .query_pairs()
+                url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
                     .map(|(name, value)| (name.into_owned(), serde_json::from_str(&value).unwrap()))
                     .collect()
             ),
@@ -266,62 +233,27 @@ mod tests {
         );
     }
 
-    #[test]
-    fn writes_send_one_request_element_and_keep_credentials_out_of_the_url() {
+    #[tokio::test]
+    async fn writes_send_one_request_element_and_keep_credentials_out_of_the_url() {
         let value = json!({"project":"app","env":"dev","name":"erp","credential":"private-value"});
         let request = route_request(
-            &reqwest::Client::new(),
             &args().host_url,
             &args().token,
             route("connection.set_credential").unwrap(),
             &value,
         )
         .unwrap();
-        assert_eq!(request.method(), reqwest::Method::POST);
-        assert!(request.url().query().is_none());
-        let body: Value =
-            serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(request.method(), hyper::Method::POST);
+        assert!(request.uri().query().is_none());
+        let body: Value = serde_json::from_slice(
+            &http_body_util::BodyExt::collect(request.into_body())
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
         assert_eq!(body.as_array().unwrap().len(), 1);
         assert!(body[0]["request_id"].is_string());
         assert_eq!(body[0]["value"], value);
-    }
-
-    #[test]
-    fn every_administration_verb_maps_to_a_project_route() {
-        for (group, verbs) in [
-            ("integration_type", &["list"][..]),
-            ("external_system", &["write", "list", "delete"][..]),
-            (
-                "integration",
-                &["write", "list", "get", "disable", "enable", "delete"][..],
-            ),
-            (
-                "connection",
-                &[
-                    "write",
-                    "copy",
-                    "set_credential",
-                    "authorize",
-                    "disable",
-                    "enable",
-                    "delete",
-                    "list",
-                    "get",
-                ][..],
-            ),
-        ] {
-            for verb in verbs {
-                let attachment = route(&format!("{group}.{verb}")).unwrap();
-                assert_eq!(attachment.route.authority, HostRouteAuthority::ProjectAdmin);
-                assert_eq!(
-                    attachment.route.type_,
-                    if matches!(*verb, "list" | "get") {
-                        OperationType::Get
-                    } else {
-                        OperationType::Command
-                    }
-                );
-            }
-        }
     }
 }

@@ -47,7 +47,7 @@ use sqlx::{Connection as _, Row as _};
 use wamn_broker::Publisher;
 mod connection_test;
 mod integration;
-mod operation_job;
+mod operations;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -135,6 +135,19 @@ impl From<IdentityError> for Refusal {
     }
 }
 
+fn operation_refusal(error: anyhow::Error) -> Refusal {
+    match error.downcast_ref::<wamn_kubernetes::job::ObservationError>() {
+        Some(refusal) => Refusal::Declared {
+            code: match refusal.type_ {
+                wamn_kubernetes::job::ObservationErrorType::InvalidName => "invalid_input",
+                wamn_kubernetes::job::ObservationErrorType::NotFound => "not_found",
+            },
+            detail: json!({"field":"job"}),
+        },
+        None => Refusal::Failed(error),
+    }
+}
+
 /// What the org routes of one control host use.
 pub(crate) struct ControlRoutes<'a> {
     /// The `control` login for reads.
@@ -149,6 +162,8 @@ pub(crate) struct ControlRoutes<'a> {
     /// The runtime reader selected by the host mode.
     pub(crate) status: &'a dyn crate::environment_status::StatusSource,
     pub(crate) registry_token_metadata: bool,
+    pub(crate) execution: Option<&'a dyn crate::ControlExecution>,
+    pub(crate) worker: Option<&'a wamn_kubernetes::job::Worker>,
     pub(crate) operation_jobs: Option<&'a wamn_kubernetes::kubernetes_api::KubernetesApi>,
     pub(crate) org: &'a str,
     /// Publishes each user row and status change of an environment.
@@ -237,6 +252,32 @@ struct MembershipRequest {
 }
 
 impl ControlRoutes<'_> {
+    async fn execute(
+        &self,
+        attachment: &HostAttachment,
+        caller: &PrincipalId,
+        payload: &str,
+    ) -> Result<Value, Refusal> {
+        let input: Value = serde_json::from_str(payload).map_err(anyhow::Error::from)?;
+        let mut writer = self.writer.lock().await;
+        let transaction = self
+            .begin_in_environment(
+                &mut writer,
+                attachment,
+                caller,
+                input["project"].as_str(),
+                input["env"].as_str(),
+            )
+            .await?;
+        transaction.commit().await?;
+        drop(writer);
+        self.execution
+            .context("native control execution is absent")?
+            .execute(attachment.route.operation, caller, payload)
+            .await
+            .map_err(operation_refusal)
+    }
+
     /// Serve one org or project route for `caller`.
     pub(crate) async fn handle(
         &self,
@@ -286,6 +327,7 @@ impl ControlRoutes<'_> {
             return Err(denied(attachment));
         }
         match attachment.route.handler {
+            HostHandler::ControlExecution => self.execute(attachment, caller, payload).await,
             HostHandler::OperationJob => self.operation_job(attachment, caller, payload).await,
             HostHandler::IntegrationAdministration => {
                 self.integration_administration(attachment, caller, payload)

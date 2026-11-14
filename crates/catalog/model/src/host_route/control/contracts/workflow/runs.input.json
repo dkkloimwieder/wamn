@@ -1,0 +1,22 @@
+{
+  "fields": [
+    {
+      "path": "project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "env",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "limit",
+      "type": "int32",
+      "nullable": true,
+      "values": []
+    }
+  ]
+}

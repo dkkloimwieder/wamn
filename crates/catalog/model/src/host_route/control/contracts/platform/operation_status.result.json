@@ -1,0 +1,22 @@
+{
+  "fields": [
+    {
+      "path": "job",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "state",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "log",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

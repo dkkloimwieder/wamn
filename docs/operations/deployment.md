@@ -32,7 +32,7 @@ wamn platform status deploy/kind/cluster.k
 Deployment creates or reuses `wamn-local` and connects its registry to the kind network.
 It applies namespaces, certificates, NATS, the wasmCloud operator, and CloudNativePG PostgreSQL.
 Without a recorded org control release, deployment initializes `wamn_system`, the organization, identity, and control.
-Once that release exists, reapply applies resources and releases without initialization Jobs or initialization Secret writes.
+Once control exists, authenticated platform updates select an existing owner with `--only`.
 Reapply does not refresh credentials.
 It does not rewrite the registry pull Secret, the Resend key Secret, the control operator Secret, or the identity signing keys.
 The command returns success only when every required component is ready.
@@ -53,7 +53,7 @@ Its categories are `ready`, `incomplete`, `failed`, and `unknown`.
 A failed query reports `unknown`. Status never creates a missing cluster.
 Unselected UI, external mail, or telemetry does not prevent platform readiness.
 
-After an interruption, repeat the deployment command with the same document and chart:
+If bootstrap stops before control exists, repeat it with the same document and chart:
 
 ```bash
 wamn platform deploy deploy/kind/cluster.k --chart /tmp/wamn-platform-chart
@@ -162,14 +162,14 @@ There is no operation history database.
 The server selects the image, command, namespace, actor, chart, and credential references.
 Deploy, rollback, and diff use the existing apply, registry, and NATS credentials.
 Apply and reset also receive the existing CNPG administrator credential.
-Those SQL Jobs are privileged.
+SQL steps run inside the authorized operation Job with their owning role credentials.
 The ctl image carries the chart templates and deployment resources.
-Platform deployment stores immutable chart values and the image selection in a ConfigMap.
+The installed control configuration names the pinned worker image and its configuration.
 Environment provisioning creates separate code and SQL ServiceAccounts and namespace Roles.
 
 
 Set `WAMN_CONTROL_URL` to the deployed control host and `WAMN_TOKEN` to your password session token.
-With that URL, `wamn deploy`, `wamn rollback`, and `wamn-ctl env rollback` use the control routes.
+`wamn deploy` and `wamn rollback` require these control credentials.
 The published `wamn schema diff`, deployed `schema apply`, and `schema reset` commands also use those routes.
 The CLI starts the Job and polls `operation.status`.
 It prints one line when the state changes and prints the log tail once when the Job ends.
@@ -186,24 +186,10 @@ Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE`, `WAMN_RELEASE_
 For an HTTP registry, the existing `WAMN_RELEASE_HOST_GROUP` document supplies `--allow-insecure-registries` in `extraArgs`.
 `wamn schema publish` only publishes and starts no Job.
 
-Without `WAMN_CONTROL_URL`, application and schema commands use the trusted path for platform administrators.
-Unset that variable explicitly before trusted administration.
-That path uses the selected kubeconfig, database credentials, chart, and broker inputs below.
-Provisioning, `env apply`, internal SQL workers, platform schema commands, and status retain direct access.
-An adjacent `dev.json` keeps local source schema execution direct.
-Read-only source schema diff also stays direct.
-GCP coverage and upgrades of persistent system databases remain outside this rebuild.
-
-Prepare the platform first, as [building](building.md#local-platform-artifacts) describes.
-For the trusted path, use the selected kubeconfig and its current context.
-Supply the existing application inputs before trusted commands:
-
-- Set `WAMN_APPLY_DATABASE_URL` for restricted system access during mutations.
-- Set `WAMN_CONTROL_DATABASE_URL` for read-only schema inspection and status.
-- Set `WAMN_SYSTEM_ADMIN_URL` for provisioning, status, and SQL Jobs.
-- Set `WAMN_RELEASE_CHART`, `WAMN_RELEASE_ARTIFACT_BASE`, `WAMN_PACKAGE_ARTIFACT_BASE`, and `WAMN_COMPONENT_ARTIFACT_BASE` to the prepared artifacts.
-- Set `WAMN_REGISTRY_AUTH_FILE` and the existing certificate and broker inputs for that platform.
-- Set `DATABASE_URL` to a separate disposable PostgreSQL server when building source.
+Application, schema and administration commands require `WAMN_CONTROL_URL` and `WAMN_TOKEN`.
+Control selects the installed database, chart, registry and broker configuration.
+The CLI has no direct database fallback. Source publication still uses a disposable build database.
+See [Native control](../architecture/control.md) for the service and worker configuration.
 
 The applied environment configuration lives in `registry.environment_projects.configuration`.
 `wamn-registry` defines its type. Unconfigured deployments hold NULL.
@@ -212,7 +198,7 @@ It contains no release digest or package membership. Old document shapes are ref
 Set `revocation_seconds` for the project and each application.
 These nonnegative values bound credential revocation delay when an invalidation is lost.
 Zero disables auth caching. Restart hosts after changing a bound.
-`env apply` reads `environment.k` and stores the configuration after provisioning succeeds.
+The environment library reads `environment.k` and stores the configuration after provisioning succeeds. Its deployed provisioning route still needs the installer handoff; the public worker verb is removed.
 Other lifecycle operations take the coordinate and read the registry.
 Helm history records the applied release. Each release manifest defines its packages.
 The configuration export contains no code selection.
@@ -227,7 +213,7 @@ wamn status --env environments/dev/environment.k
 ```
 
 Publication needs no destination database.
-Provision the environment with `env apply` and apply its application SQL before the first code deployment.
+Provision the environment through its owning lifecycle before applying application SQL and deploying code. The provisioning route is pending the installer handoff.
 Each application owns its Helm release, host group, workloads, Services, and route ConfigMaps.
 The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
 Code-only deploy, reapply, and rollback preserve installed SQL and other applications' data, permissions, routes, and workloads.
@@ -279,7 +265,7 @@ An ordinary migration file and its completion record commit together.
 A separate SQLx history table records each package and environment's applied versions and checksums.
 Authored and generated history migrations run through the same SQLx sequence.
 The restricted migration connection keeps its actor binding across commits.
-For an explicit PostgreSQL catalog URL, pass the migration login's actual connection with `wamn-ctl apply-package --migration-database-url`.
+The operation worker selects the migration login from its server-owned connection configuration.
 Both connections retain their own password and TLS parameters.
 Kubernetes callers use the managed role's basic-auth Secret.
 A separate trusted connection records package completion and grants.
@@ -336,7 +322,7 @@ Create an integration request in `/private/integration.json`:
 Write the integration:
 
 ```bash
-wamn-ctl integration write --file /private/integration.json
+wamn integration write --file /private/integration.json
 ```
 
 Create its environment request in `/private/connection.json`:
@@ -369,7 +355,7 @@ chmod 600 /private/credential.json
 For authentication types other than `oauth2_authorization_code`, test the candidate before the first write:
 
 ```bash
-wamn-ctl connection test --file /private/connection.json --credential-file /private/credential.json
+wamn connection test --file /private/connection.json --credential-file /private/credential.json
 ```
 
 The command uses project administrator authority and answers `{"ok":true}` or `{"ok":false,"error":"..."}`.
@@ -388,7 +374,7 @@ It reads `WAMN_COMPONENT_ARTIFACT_BASE` with `WAMN_REGISTRY_AUTH_FILE` or regist
 Write the connection with its first credential:
 
 ```bash
-wamn-ctl connection write --file /private/connection.json --credential-file /private/credential.json
+wamn connection write --file /private/connection.json --credential-file /private/credential.json
 ```
 
 For later credential changes, create `/private/target.json` with the project, `env`, and integration name:
@@ -400,7 +386,7 @@ For later credential changes, create `/private/target.json` with the project, `e
 Set the replacement credential:
 
 ```bash
-wamn-ctl connection set-credential --file /private/target.json --credential-file /private/credential.json
+wamn connection set-credential --file /private/target.json --credential-file /private/credential.json
 ```
 
 For `oauth2_authorization_code`, set `parameters.auth` to `client_id`, `authorize_url`, `token_url`, and a `scopes` array.
@@ -408,7 +394,7 @@ Write the client secret through `--credential-file` as `{"client_secret":"..."}`
 After the write, read the connection metadata:
 
 ```bash
-wamn-ctl connection get --file /private/target.json
+wamn connection get --file /private/target.json
 ```
 
 Register its `redirect_uri` with the provider.
@@ -417,7 +403,7 @@ The local control host uses its local public URL with `/oauth/callback`.
 Start authorization:
 
 ```bash
-wamn-ctl connection authorize --file /private/target.json
+wamn connection authorize --file /private/target.json
 ```
 
 Open the returned `authorization_url` within ten minutes.
@@ -447,7 +433,7 @@ The first connection write reads the credential value from `--credential-file`, 
 ### Integration write interfaces
 
 Publish a typed integration with one `--write-interface <interface>` flag for each export that permits writes.
-For Modbus, supply `--write-interface wamn:modbus/write@1.0.0` to `wamn-ctl integration publish modbus`.
+For Modbus, supply `--write-interface wamn:modbus/write@1.0.0` to `wamn integration publish modbus`.
 Publication refuses an interface that the component does not export.
 Host types use an empty list and enforce the declared mode at run time.
 Environment apply refuses a read requirement that imports a declared write interface.
@@ -468,7 +454,7 @@ Platform deployment owns system initialization, the initial organization, and th
 Do not repeat the removed numbered installer or its initial application pass.
 
 Application publication is independent of the destination database.
-`env apply` provisions shared environment resources.
+`environment::apply` provisions shared environment resources.
 Apply application SQL before `wamn deploy` selects the targeted code release.
 Platform deployment performs no application pass.
 
@@ -480,15 +466,13 @@ It refuses a web artifact whose package id differs from `client.package` or whos
 The revision values keep the host-to-package map in `webClients` and the host-to-web-digest map in `webDigests`.
 
 The same immutable web artifact can serve more than one environment.
-The verb reads its platform inputs from environment variables (see the selected command's `--help` for its required inputs):
+Deploy a published release through control:
 
 ```bash
-wamn-ctl env apply <document> --application <application> --dry-run
-wamn-ctl env apply <document> --application <application>
+wamn deploy --env <document> --application <application> --release <digest>
 ```
 
-`--dry-run` prints the plan and changes nothing.
-`wamn-ctl env apply` holds the targeted application's lock and a shared environment lock.
+The operation worker holds the targeted application lock and a shared environment lock.
 Different applications can deploy concurrently. A whole-environment reset takes the exclusive environment lock.
 A CI completion order does not set deployment precedence.
 
@@ -508,32 +492,16 @@ Read each command's current required arguments with `--help`.
 
 ## Publish a release
 
-The example below selects Receiving.
-`publish-release` composes package artifacts.
-Push the package with `wamn-ctl push-package` first.
-It admits each component, pushes it under its digest, and then pushes the package artifact with the component descriptors.
-Before it pushes anything, it reads the tag `<package_id>-<version>`.
-If the tag holds another digest, it refuses, names both digests, and pushes nothing. Tags are immutable.
-If the tag holds the same digest, it reports `already present` and pushes nothing again.
-No database records the package: the artifact in the registry is the proof of its tests.
-Each `--package ID@VERSION` is the artifact under the tag `ID-VERSION` in `--artifact-base`, read from the registry only.
-A package with no artifact in the registry refuses, and the publish writes nothing.
-The release takes each package's `wamn.json`, attachments and component descriptors from its artifact.
-For an overlay, repeat `--package` for the exact selected package set.
-`publish-release` reads the file argument, compiles it, and takes its `applications` map.
-The document supplies the organization, project, and environment.
-A map with one application needs no `--application` selector.
-For a map with multiple applications, pass the application name through `--application`.
-Publication derives the selected application closure from the declared package membership and verified package artifacts.
+Publish a source package through the product command:
 
 ```bash
-WAMN_RELEASE_ARTIFACT_BASE="$RELEASE_BASE" wamn-ctl publish-release \
-  environments/dev/environment.k \
-  --package "$PACKAGE_ID@$PACKAGE_VERSION" \
-  --artifact-base "$PACKAGE_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"
+wamn schema publish apps/wamn_receiving --env environments/dev/environment.k
 ```
 
-`publish-release` records the release by its canonical manifest digest.
+Publication verifies package and component artifacts and prints the immutable release digest.
+The environment document selects the application package closure.
+
+Source publication records the release by its canonical manifest digest.
 If the release has an HTTP attachment, publication composes the pinned route guest with the application.
 Set `WAMN_COMPONENT_ARTIFACT_BASE` for this step. `WAMN_FLOW_HTTP_COMPONENT` can name another route guest file.
 It pushes the entry to `<component-artifact-base>/entries`, beside the members.
@@ -599,9 +567,9 @@ Deployment needs no source checkout, pnpm installation, or local UI output.
 Kind keeps an empty web bucket and selects no platform UI.
 
 The control root is `https://control.wamn.dev`.
-Its host group runs `wamn-host host --control --org=dkk` in namespace `hosts`.
-Its platform HTTP role contains the pinned route guest and an empty dispatcher, with `poolSize: 0` and no release record.
-The HTTP transport workload selects that host group and supplies endpoints for the fixed Service `c-dkk-http`.
+The org chart runs `wamn-control --config /etc/wamn/control/config.json` in the org namespace.
+The native service has no route guest or application release.
+The control Service selects that Deployment.
 Local platform deployment installs control without a UI upload. GCP integration for public control access remains unfinished.
 
 The edge values can contain a separate `control` entry with `host` and `api`.
@@ -676,12 +644,12 @@ The route bodies and limits are in [password enrollment](../architecture/executi
 Every other role is authored in the project, and it holds the stable operation references `<package>:<interface>/<operation>` granted to it.
 A user or a service reaches no route and no environment at sign-in until it holds a role.
 
-Give a role with `wamn-ctl grant-role`, and take it away with `wamn-ctl revoke-role`.
+Give a role with `wamn grant-role`, and take it away with `wamn revoke-role`.
 Both verbs use the application host URL and the caller's session token.
 The target user is named by principal UUID:
 
 ```bash
-wamn-ctl grant-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" \
+wamn grant-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" \
   --user-id <principal UUID> --role <authored role>
 ```
 
@@ -690,27 +658,27 @@ Grant or revoke system project-admin or org-admin to change application administ
 The target needs an existing application user or service row.
 The HTTP owner refuses unknown users. A grant also refuses a missing role.
 The operator service of an environment, `wamn-operator-<org>--<env>--<project>`, has the email `<subject>@<platform domain>`.
-`env apply` writes its PAT Secret when it can reach identity. GCP deployment integration for a missing operator PAT remains unfinished.
+`environment::apply` writes its PAT Secret when it can reach identity. GCP deployment integration for a missing operator PAT remains unfinished.
 
 ### Authored roles
 
-Create an authored role with `wamn-ctl create-role`, and delete it with `wamn-ctl delete-role`.
+Create an authored role with `wamn create-role`, and delete it with `wamn delete-role`.
 The delete also removes the role's assignments and permissions.
 The verbs take the same host and session arguments as `grant-role`.
 The `--role` argument names the role.
 A role name has lowercase letters, digits, and hyphens after the first character, and at most 64 bytes.
 The verbs refuse `admin`.
 
-Select an operation for an authored role with `wamn-ctl grant-permission`:
+Select an operation for an authored role with `wamn grant-permission`:
 
 ```bash
-wamn-ctl grant-permission --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" \
+wamn grant-permission --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" \
   --role <role> \
   --operation <package>:<interface>/<operation>
 ```
 
 The grant stores the operation even when the serving release does not serve it.
-`wamn-ctl revoke-permission` removes the operation, and it refuses an operation that the role does not hold.
+`wamn revoke-permission` removes the operation, and it refuses an operation that the role does not hold.
 
 
 ## Mailbox-loss recovery
@@ -769,7 +737,7 @@ After commit, ask the user to request normal recovery with the replacement email
 The recovery endpoint and reset fields are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
 Keep reset secrets and passwords out of command arguments and logs.
 After reset, require normal login with the new email and password.
-Run `wamn-ctl env apply` for affected environments to update their copied user rows.
+Control membership routes project committed authority into affected application databases.
 
 ## Identity target credentials
 
@@ -779,18 +747,17 @@ Use the environment's identity Deployment and require its readiness before issui
 
 ## Platform schema upgrades
 
-Select the prepared chart explicitly for each platform SQL operation.
-Set `KUBECONFIG` to the target cluster file and select its current context first.
-Without `KUBECONFIG`, the command uses `$HOME/.kube/config`.
+Set `WAMN_CONTROL_URL` and `WAMN_TOKEN` for platform SQL operations.
+Control selects its installed chart and pinned worker image.
 System target reads its managed migration login's basic-auth Secret in the org namespace.
 Both targets execute SQL in a bounded Job in that namespace.
 
 ```bash
-wamn platform schema diff --target system --chart /prepared/platform
-wamn platform schema apply --target system --chart /prepared/platform
+wamn platform schema diff --target system
+wamn platform schema apply --target system
 ```
 
-Both commands run the selected chart's immutable `ctl` image and print its digest.
+Both commands run the installed immutable `control` image.
 Both read the migration bytes embedded in that image.
 Diff writes no SQL state.
 It reports installed and pending SQLx versions, checksums, and missing files.
@@ -800,7 +767,7 @@ A later failure keeps earlier commits.
 Files that begin with `-- no-transaction` need safe retries after partial execution.
 
 Fresh platform installation initializes an empty system database, then runs every embedded system migration.
-If migration execution stops, resume with `platform schema apply --target system` and the same `--chart`.
+If migration execution stops, resume with `platform schema apply --target system` with the same installed worker image.
 Repeated installation preserves initialization and runs no pending migration.
 Ordinary platform reapply also runs no migration.
 
@@ -809,15 +776,14 @@ It changes no service release, application selection, credential, or Helm releas
 Deploy compatible control code separately with `platform deploy ... --only control`.
 For one environment, select project target and its environment document.
 Project target requires `--env`, and system target refuses it.
-Set `WAMN_APPLY_DATABASE_URL` to the installed system registry before project operations.
-The command reads the environment's recorded database instance and PostgreSQL cluster from that registry.
+Control reads the environment's recorded database instance and installed connection projection.
 The SQL Job uses the scope's own CNPG migration login and basic-auth Secret.
 The platform owner roles stay `NOLOGIN`. Migration logins inherit their privileges through membership.
 Platform migration execution refuses administrator sessions.
 
 ```bash
-wamn platform schema diff --target project --env environments/dev/environment.k --chart /prepared/platform
-wamn platform schema apply --target project --env environments/dev/environment.k --chart /prepared/platform
+wamn platform schema diff --target project --env environments/dev/environment.k
+wamn platform schema apply --target project --env environments/dev/environment.k
 ```
 
 The Job holds the environment's exclusive lifecycle lock for the whole operation.
@@ -829,14 +795,12 @@ The operation runs no environment provisioning or application activation.
 Fresh environment provisioning installs the catalog and project substrate, then runs every embedded project migration.
 Repeated provisioning runs no pending migration.
 If execution stops, the error reports completed and remaining files.
-Resume with `wamn platform schema apply --target project --env FILE --chart DIR` and the same chart.
+Resume with `wamn platform schema apply --target project --env FILE` with the same installed worker image.
 Application package migrations keep their own streams.
 
 ## Rollback and maintenance
 
 Rollback restores the latest successful revision after a failed head. Otherwise, it restores the preceding distinct release and client pin.
-Use `wamn-ctl env rollback <org/env/project> --application <application>` for the low-level command.
-`env show` and `env status` also take `org/env/project`.
 Use `--release <digest>` to select an explicit published release.
 Both forms use the same selection and application deployment owner.
 
@@ -844,7 +808,7 @@ A release digest selects exact bytes, but a mutable image tag does not.
 The installed package and its committed migrations remain in place.
 Reverse migration is not rollback.
 
-`wamn-ctl-ops` contains copy, run-history pruning, event advisory, and cluster recovery commands.
+Retention runs through its owning library interfaces.
 For backup and recovery, use CloudNativePG backup and recovery on the cluster.
 The procedure is in [backup and recovery](backup-and-recovery.md).
 Use its `--help` output for the selected action and required credentials.
@@ -875,7 +839,7 @@ Set `WAMN_SYSTEM_ADMIN_URL` to the administrator connection configuration for th
 Run `wamn-ctl provision-system --platform-domain DOMAIN` in the org namespace.
 For explicit PostgreSQL access, also pass the system migration login's connection through `--migration-database-url`.
 It declares the restricted apply login through CloudNativePG and publishes its connection data in the `wamn-apply` ConfigMap.
-Set `WAMN_APPLY_DATABASE_URL` from its `apply.json` entry before `wamn-ctl env apply`.
+The installer supplies that public apply connection object in the native control configuration.
 The other apply phases use the restricted credential. The SQLx constructor reads its native basic-auth Secret and cluster CA.
 
 ## PostgreSQL client TLS

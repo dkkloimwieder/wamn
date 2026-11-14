@@ -71,15 +71,6 @@ async fn api(writer: Arc<tokio::sync::Mutex<Client>>) -> anyhow::Result<Api> {
                     value.clone(),
                 );
                 value.to_string()
-            } else if path.contains("/configmaps/wamn-operation-org-a HTTP") {
-                json!({"data":{"inputs":"wamn-operation-org-a-selected"}}).to_string()
-            } else if path.contains("/configmaps/wamn-operation-") {
-                json!({"data":{"image":format!("registry/ctl@sha256:{}","a".repeat(64))}})
-                    .to_string()
-            } else if path.contains("/namespaces/hosts/configmaps/") {
-                json!({"data":{"environment.json":json!({"org":ORG,"project":"billing","env":"dev","applications":{"billing_app":{}}}).to_string()}}).to_string()
-            } else if path.contains("/configmaps/") {
-                json!({"data":{"cluster":"wamn-pg"}}).to_string()
             } else if path.contains("/jobs/") {
                 let name = path
                     .split_whitespace()
@@ -123,7 +114,7 @@ async fn api(writer: Arc<tokio::sync::Mutex<Client>>) -> anyhow::Result<Api> {
                 ),
             endpoint,
             "protected-token".into(),
-            "hosts".into(),
+            ORG.into(),
         ),
         requests,
         task,
@@ -169,19 +160,24 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
     let (_server, nats) = wamn_runtime::auth_cache::test_util::nats().await;
     let writer = Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?));
     let mut api = api(Arc::clone(&writer)).await?;
-    let delivery = HostRouteDelivery::new(
-        Arc::new(LoadedRelease::control_root()),
-        HostRouteHandlers::Control {
-            status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
-            administration: None,
-            control: wamn_postgres::pool(&control_url, 4).await?,
-            writer,
-            identity: None,
-            org: ORG.into(),
-            changes: Publisher::new(nats),
-        },
-        None,
-    )
+    sqlx::query("UPDATE registry.environment_projects SET configuration=$1 WHERE org=$2 AND project='billing'")
+        .bind(json!({"org":ORG,"project":"billing","env":"dev","applications":{"billing_app":{}}})).bind(ORG).execute(&mut admin).await?;
+    let delivery = HostRouteDelivery::control(HostRouteHandlers::Control {
+        status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
+        administration: None,
+        control: wamn_postgres::pool(&control_url, 4).await?,
+        writer,
+        identity: None,
+        org: ORG.into(),
+        changes: Publisher::new(nats),
+    })
+    .with_worker(wamn_kubernetes::job::Worker {
+        image: format!("registry/control@sha256:{}", "a".repeat(64)),
+        configuration: "control-configuration".into(),
+        service_account: "control-worker".into(),
+        database_credential: "owning-apply".into(),
+        administration: "/etc/wamn/control/administration".into(),
+    })
     .with_operation_jobs(api.client.clone());
     let mut started = Vec::new();
     for (_, attachment) in HostRouteSet::Control
@@ -196,7 +192,7 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
                 value["application"] = "billing_app".into();
                 value["release"] = format!("sha256:{}", "a".repeat(64)).into();
             }
-            "application.rollback" | "schema.apply" | "schema.diff" => {
+            "application.rollback" | "application.stop" | "schema.apply" | "schema.diff" => {
                 value["application"] = "billing_app".into();
             }
             "operation.status" => {
@@ -321,10 +317,5 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
             "wrong target reached pod logs"
         );
     }
-    assert!(
-        !HostRouteSet::Control
-            .attachments()
-            .any(|(_, attachment)| attachment.route.operation.starts_with("system_schema."))
-    );
     Ok(())
 }

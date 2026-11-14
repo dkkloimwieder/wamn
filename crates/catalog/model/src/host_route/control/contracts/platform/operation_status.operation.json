@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:platform/operation-status@0.9.0",
+  "type": "get",
+  "label": "Platform operation_status",
+  "grant": "wamn-control:platform/operation-status@0.9.0",
+  "permission_token": "platform.operation_status",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

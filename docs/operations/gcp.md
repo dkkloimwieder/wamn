@@ -430,7 +430,7 @@ The operations below use the external cloud credentials described above.
 
 Use the existing infrastructure and platform owners in this order.
 
-1. Render `deploy/gcp/project.k` with `wamn-ctl project render FILE --state-bucket BUCKET --state-prefix PREFIX DIRECTORY`.
+1. Render `deploy/gcp/project.k` through the platform infrastructure tooling. The user CLI no longer exposes `project render`.
    Use the existing state bucket and prefix for this project.
    Initialize OpenTofu in that directory.
    For a fresh cluster, target the node pool resource addresses from `main.tf.json`.
@@ -519,25 +519,12 @@ Section 3 keeps that registry, the uploaded UI, buckets, IAM grants, and other p
 
 ### 5.1 Pool after the daily guard
 
-The guard sets every pool to 0 nodes at 03:00 New York time (07:00 UTC) every day. Run the wake verb to set every pool back to the size that `deploy/gcp/project.k` declares:
-
-```bash
-$CARGO_TARGET_DIR/debug/wamn-ctl platform wake deploy/gcp/cluster.k
-```
-
-The verb resizes pool `pg` first, then the other pools. It prints one line for each pool. The `Cluster` keeps its old `Ready` condition while its pod is gone, so the verb then waits up to 900 seconds for the pod `wamn-pg-1` to exist and be Ready. Last, it waits up to 600 seconds for the statefulset `wamn-nats` to roll out.
-
-Pod replacement ends existing port-forwards. Restart them for the services that you need.
+The guard sets every pool to zero nodes each day. Restore the sizes declared in `deploy/gcp/project.k` through the platform infrastructure tooling. The user CLI no longer exposes pool commands.
+Pod replacement ends existing port-forwards. Restart the ones that you need.
 
 ### 5.2 Pause
 
-Run the sleep verb to set every pool to 0 nodes. The PostgreSQL volume keeps the data:
-
-```bash
-$CARGO_TARGET_DIR/debug/wamn-ctl platform sleep deploy/gcp/cluster.k
-```
-
-The verb prints one line for each pool, and then the names of the pools that it set to 0. Run section 5.1 to start the cluster again.
+Use the platform infrastructure tooling to set pool sizes to zero. PostgreSQL volumes retain the data. S10-A owns the replacement pool commands.
 
 ### Application operations
 
@@ -561,11 +548,10 @@ Keep the old key active until the replacement serves a successful recovery reque
 
 ### 5.5 Delete an environment
 
-`wamn-ctl env delete <org/env/project> [--data]` deletes one environment, so that the next `env apply` of its document makes a new suffix. It uninstalls the release chart, revokes the PATs, deletes the credential Secrets, the streams, the slot, the `Database` and the registry rows. With `--data` it also drops the database and its roles, and asks for the coordinate again at a terminal. Every step is "if present", so run it again after a failure:
-
-```bash
-$CARGO_TARGET_DIR/debug/wamn-ctl env delete dkk/dev/receiving
-```
+The environment lifecycle owner deletes an environment and its deployed resources.
+It uninstalls releases, revokes PATs and removes credentials, streams, slots and registry rows.
+Deleting data also removes the database and its roles.
+The internal bootstrap worker no longer exposes environment deletion.
 
 ### 5.7 CDC slot lost
 
@@ -576,16 +562,16 @@ kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
   "select slot_name, active, wal_status, invalidation_reason from pg_replication_slots"
 ```
 
-`recover-capture-gap` drops the lost slot, makes it again under the same name and writes the open gap row. It connects as `wamn-ctl` with explicit database credentials and the existing `WAMN_NATS_*` inputs:
+`recover-capture-gap` drops the lost slot, makes it again under the same name and writes the open gap row. It calls authenticated control, which selects the capture role and event observer credentials:
 
 ```bash
-$CARGO_TARGET_DIR/debug/wamn-ctl recover-capture-gap --org dkk --project wms --env dev --admin-database-url "$WAMN_PG_ADMIN_URL"
+$CARGO_TARGET_DIR/debug/wamn recover-capture-gap --project wms --env dev
 ```
 
 After the resync, or on the owner's word while no resync exists, run `close-capture-gap`. The reader resumes within 30 seconds:
 
 ```bash
-$CARGO_TARGET_DIR/debug/wamn-ctl close-capture-gap --org dkk --project wms --env dev
+$CARGO_TARGET_DIR/debug/wamn close-capture-gap --project wms --env dev
 ```
 
 1. The reader stops capture and does not open a session. It stays running and does not exit.
@@ -612,8 +598,8 @@ After issue 1, the confirmed position can sit past the last commit, so `start_at
 
 Two verbs write the row with the control credential:
 
-- `wamn-ctl recover-capture-gap --org --project --env` drops the lost slot and creates it again under the same name, `cdc_object_name(org, project, env, instance)`. The publication and the replication role keep that name and stay untouched. The verb writes the row with its end position. It reads the last CDC event with the observer credential, through the three NATS flags of `enable-cdc-project-env`. It takes `--system-database-url` as `enable-cdc-project-env` does, and `--admin-database-url` for the project database owner. It refuses a healthy slot, an active slot, and a connection to any database other than the project-env database.
-- `wamn-ctl close-capture-gap --org --project --env` sets `resync_at` on the newest row. It refuses when no row exists and when the newest row already has `resync_at`. Until the resync exists, the operator runs it on the owner's word.
+- `wamn recover-capture-gap --project PROJECT --env ENV` drops the lost slot and creates it again under the same name, `cdc_object_name(org, project, env, instance)`. The publication and the replication role keep that name and stay untouched. The verb writes the row with its end position. The native service reads the last CDC event with its configured observer credential. It selects the system owner and the recorded capture login. It refuses a healthy slot, an active slot, and a connection to any database other than the project-env database.
+- `wamn close-capture-gap --org --project --env` sets `resync_at` on the newest row. It refuses when no row exists and when the newest row already has `resync_at`. Until the resync exists, the operator runs it on the owner's word.
 
 - A lost slot is not recoverable. A new slot starts at the current WAL position, and the WAL between the old confirmed position and that point is removed. The rows written in that interval produce no events.
 

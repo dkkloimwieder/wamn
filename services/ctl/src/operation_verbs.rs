@@ -13,16 +13,16 @@ pub(crate) struct ControlHost {
 }
 
 impl ControlHost {
-    pub(crate) fn from_env() -> anyhow::Result<Option<Self>> {
-        let url = match std::env::var("WAMN_CONTROL_URL") {
-            Ok(url) => url,
-            Err(std::env::VarError::NotPresent) => return Ok(None),
-            Err(error) => return Err(error).context("read WAMN_CONTROL_URL"),
-        };
+    pub(crate) fn from_env() -> anyhow::Result<Self> {
+        let url = std::env::var("WAMN_CONTROL_URL").context("set WAMN_CONTROL_URL")?;
         ensure!(!url.trim().is_empty(), "WAMN_CONTROL_URL is empty");
         let token = std::env::var("WAMN_TOKEN").context("set WAMN_TOKEN for the control host")?;
         ensure!(!token.trim().is_empty(), "WAMN_TOKEN is empty");
-        Ok(Some(Self { url, token }))
+        Ok(Self { url, token })
+    }
+
+    pub(crate) async fn call(&self, operation: &str, value: &Value) -> anyhow::Result<Value> {
+        crate::component_verbs::invoke(&self.url, &self.token, operation, value).await
     }
 
     pub(crate) async fn run(
@@ -33,22 +33,34 @@ impl ControlHost {
     ) -> anyhow::Result<()> {
         value["project"] = coordinate.project.as_str().into();
         value["env"] = coordinate.env.as_str().into();
-        let client = reqwest::Client::new();
+        self.run_value(operation, value, "operation.status").await
+    }
+
+    pub(crate) async fn platform(&self, value: Value) -> anyhow::Result<()> {
+        self.run_value("platform.update", value, "platform.operation_status")
+            .await
+    }
+
+    async fn run_value(
+        &self,
+        operation: &str,
+        value: Value,
+        status_operation: &str,
+    ) -> anyhow::Result<()> {
         let started =
-            crate::component_verbs::invoke(&client, &self.url, &self.token, operation, &value)
-                .await?;
+            crate::component_verbs::invoke(&self.url, &self.token, operation, &value).await?;
         let job = started["job"].as_str().context("operation Job name")?;
-        let target = json!({"project":value["project"], "env":value["env"], "job":job});
+        let mut target = json!({"job":job});
+        for field in ["project", "env"] {
+            if let Some(value) = value.get(field) {
+                target[field] = value.clone();
+            }
+        }
         let mut previous = Value::Null;
         loop {
-            let mut status = crate::component_verbs::invoke(
-                &client,
-                &self.url,
-                &self.token,
-                "operation.status",
-                &target,
-            )
-            .await?;
+            let mut status =
+                crate::component_verbs::invoke(&self.url, &self.token, status_operation, &target)
+                    .await?;
             let state = status["state"].take();
             let name = state.as_str().context("operation state")?;
             if state != previous {
@@ -78,4 +90,14 @@ pub(crate) async fn publish(
     let database_url =
         std::env::var("DATABASE_URL").context("set DATABASE_URL for disposable build databases")?;
     wamn_dev_control::source_deploy::publish_from_env(document, package, &database_url).await
+}
+
+/// Parse the existing org/env/project CLI coordinate.
+pub(crate) fn parse_coordinate(value: &str) -> anyhow::Result<wamn_registry::Triple> {
+    let parts: Vec<_> = value.split('/').collect();
+    let [org, env, project] = parts.as_slice() else {
+        anyhow::bail!("a coordinate is org/env/project");
+    };
+    wamn_control_provision::validate_project_env(org, project, env)?;
+    Ok(wamn_registry::Triple::new(*org, *env, *project))
 }

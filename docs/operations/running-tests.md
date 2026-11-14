@@ -59,7 +59,7 @@ A passing workspace test result does not establish compilation of those guest ta
 The platform producer builds both role components through the package component builder.
 `tests/selection.toml` owns suite commands, tiers, prerequisites, and inputs beyond Cargo dependencies.
 Platform fixture and catalog changes select `wamn-control-provision`.
-SQL changes select `wamn-ctl` with `ops`, including `protected_relations_live`.
+SQL changes select the environment retention and protected-relation interfaces with `ops`.
 Control and platform deployment changes select the exact native host case.
 Every change outside documentation selects `environment_render` and `platform_render` in `wamn-environment` through prekind or Cargo selection.
 The release-chart-render suite runs the ignored Helm cases in `release_chart_render`.
@@ -461,7 +461,7 @@ Do not restart a stopped sweep or start broad runs at cleanup boundaries.
 If the user requests a workspace sweep, use the retained command:
 
 ```bash
-cargo test --workspace --locked --offline --features wamn-ctl/ops \
+cargo test --workspace --locked --offline --features wamn-environment/ops \
   --no-fail-fast -- --nocapture --test-threads=1 \
   > "$WAMN_RESULTS/workspace.log" 2>&1
 ```
@@ -469,7 +469,7 @@ cargo test --workspace --locked --offline --features wamn-ctl/ops \
 Record its exit status before running another command.
 Do not pipe the command through `tail` or another output filter.
 `--workspace` selects all root members, including members outside Cargo's defaults.
-`--features wamn-ctl/ops` builds the targets that require the `ops` feature.
+`--features wamn-environment/ops` builds the targets that require the `ops` feature.
 The kind cases stay ignored, so this command starts no cluster.
 `--no-fail-fast` retains later binary results after a failure.
 
@@ -554,31 +554,25 @@ A failure prints both paths.
 
 ### Record history retention test
 
-`services/ctl/tests/prune_record_history_live.rs` tests the record history retention verb.
-It creates roles, so each case holds the process lock and starts from the project+platform base grants.
-The `ops` feature builds `wamn-ctl-ops` beside the test binary:
+`crates/control/environment/tests/history_retention_live.rs` tests record retention through the owning library.
+It creates roles and holds the process lock.
 
 ```bash
-cargo test --locked --offline -p wamn-ctl --features ops \
-  --test prune_record_history_live -- --nocapture
+cargo test --locked --offline -p wamn-environment --features ops --test history_retention_live -- --nocapture
 ```
 
-The case applies a fixture package through `wamn-ctl apply-package` and runs `wamn-ctl-ops prune-record-history`.
-`prune_removes_only_the_expired_prefix_of_each_row` also creates the run retention login to test the refusals.
+The cases assert retained rows, credential refusals and database grants.
 
 ### Run history retention test
 
-`services/ctl/tests/prune_run_history_live.rs` tests the run history retention verb.
-It creates roles, so it holds the process lock and starts from the project base grants.
-It needs the `ops` feature:
+`crates/control/environment/tests/prune_terminal_run_history_live.rs` tests terminal run retention through the owning library.
+It creates roles and holds the process lock.
 
 ```bash
-cargo test --locked --offline -p wamn-ctl --features ops \
-  --test prune_run_history_live -- --nocapture
+cargo test --locked --offline -p wamn-environment --features ops --test prune_terminal_run_history_live -- --nocapture
 ```
 
-The case applies `run-state.sql` and `run-queue.sql`, mints the run retention login, and runs `wamn-ctl-ops prune-run-history`.
-It tests the removed and kept runs, the refusals, and the grants of the login.
+The cases assert retained runs, credential refusals and database grants.
 
 ### Development identity lifecycle
 
@@ -671,25 +665,24 @@ Each body starts with an absent environment and installs only its required initi
 The reset body installs no earlier code versions.
 Artifact preparation uses the product build and publication operation before the focused bodies run.
 These tests can run in any order on the same platform.
-The recovery body provisions the environment with `env apply` and initializes SQL with `schema apply` before code deployment.
+The recovery body provisions the environment with `environment::apply` and initializes SQL with `schema apply` before code deployment.
 The reset, platform runtime, and platform SQL bodies use those same explicit commands.
 Code reapply reads the canonical selection through `status`.
 Platform recovery publishes no applications.
 
-After a body succeeds, `wamn-ctl env delete <org/env/project> --data` deletes its environment, database, and roles.
+After a body succeeds, product lifecycle cleanup removes its environment, database, and roles.
 Reset and platform schema cases also delete their isolation environments after all assertions succeed.
 Failed bodies retain their resources and logs.
-Project deletion has no command or control route (`services/ctl/src/project_verbs.rs:10`, `crates/catalog/model/src/host_route.rs:192`).
-The `--data` confirmation requires a terminal (`services/ctl/src/env_verbs.rs:338`).
-The harness supplies a virtual terminal with `script` and types only the coordinate of the environment that it created.
-Tests do not write control tables or supply a project deletion workaround.
+The old environment worker and its terminal confirmation are removed.
+Creation and deletion journeys need the replacement lifecycle routes before they can run.
+Tests must use those routes for setup and cleanup.
 
 `wamn-package-control/tests/migrations_live.rs` covers SQLx checksums, transaction rollback, retry behavior, and failed history writes.
 It also calls package apply to refuse rebinding an existing relation to another package or entity.
 The same target checks direct migration credentials and refuses administrator sessions for platform migrations.
 `wamn-compiler/tests/build_live.rs::history_changes_append_immutable_versions_and_execute_during_build` covers generated history versioning.
 These live targets require PostgreSQL. Compile them without starting a server with `cargo test -p <package> --test <target> --no-run`.
-Stale-event admission has no test because deployed environments have no workflow authoring operation (`wamn-alrvy.19`).
+Workflow authoring now has an authenticated control operation. Its deployed acceptance coverage remains with the workflow owner.
 Reset still asserts old-event disposal and environment isolation.
 `wamn-alrvy.20` (temporary directory leak) and `wamn-alrvy.22` (uncovered lint requirements) remain open.
 The accepted Epic 2 items `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` remain open.
@@ -819,12 +812,12 @@ Keep chart A, the installed chart, available and unchanged.
 In a scratch source tree, add one SQL file under each of `deploy/sql/migrations/system/` and `deploy/sql/migrations/project/`.
 Each file must create one probe table and insert one row.
 Keep the initialization SQL and existing migration files unchanged.
-Rebuild and publish only the `ctl` image from that tree.
-Use `cargo xtask build-platform` to stamp chart B with that image and every other image from chart A.
+Rebuild and publish only the `control` image from that tree.
+Use `cargo xtask build-platform` to stamp chart B with that image and every other image from chart A. Install the selected control worker configuration through the platform owner.
 Set `WAMN_RELEASE_CHART` to chart B.
 
 DEP5-06 adds `platform_schema_kind` with its body in `support/platform_schema.rs`.
-The case refuses equal `ctl` digests or a changed digest for any other image.
+The case refuses equal `control` digests or a changed digest for any other image.
 It derives pending file names and checksums from `wamn platform schema diff` for chart B.
 It reads each database catalog directly and requires one new table with one row in the applied database, and no relation change in the others.
 The existing journey deploys one application release into two environments and deletes both environments after success.
@@ -867,7 +860,7 @@ Retain their identifiers for the cleanup observation.
 These operations show that setup works without a platform upgrade.
 
 Make sure that cleanup works on that environment before you approve the upgrade body.
-Run `wamn-ctl env delete ORG/PROJECT/ENV --data` in a terminal.
+Remove the environment through its product lifecycle owner.
 Enter only the disposable environment's coordinate at its confirmation prompt.
 Observe that its database, roles, and Helm releases disappear.
 Make sure that the shared CNPG Cluster stays ready.

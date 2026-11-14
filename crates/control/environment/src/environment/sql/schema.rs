@@ -352,7 +352,6 @@ pub async fn apply(
     document: &EnvironmentDocument,
     application: &str,
     release: &str,
-    admin_url: &str,
 ) -> anyhow::Result<()> {
     let (_, candidates) =
         release_candidates(platform, document, application, Some(release)).await?;
@@ -366,8 +365,6 @@ pub async fn apply(
         .await?
         .context("environment database is absent")?;
     let url = analyse::project_url(platform, document, &row)?;
-    let mut admin = wamn_postgres::connect(admin_url).await?;
-    super::super::ensure::ensure_migration_role(&mut admin).await?;
     apply_candidates(platform, document, candidates, &url).await
 }
 

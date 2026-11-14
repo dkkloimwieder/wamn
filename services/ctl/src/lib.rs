@@ -1,29 +1,16 @@
-//! The command line for the one-shot control-plane verbs.
-//!
-//! MVP outcome: provisioning · publish · additive schema · project isolation (T1 minting).
-//!
-//! The four control crates own the control operations. This crate holds the clap argument
-//! definitions, the printed output, and the exit codes. Each verb parses its
-//! arguments, calls its owner, and prints the result. The user-creation,
-//! broker-advisory reporting, and history-pruning verbs require the `ops`
-//! feature and ship in the separate `wamn-ctl-ops` binary. The clients in `dev/` retain argument parsing,
-//! output, and process signals for `wamn-control::dev` sessions.
+//! Local builds and clients of authenticated control routes.
 
 pub mod application_verbs;
 pub mod artifact_verbs;
 pub mod build_verbs;
 pub mod component_verbs;
 pub mod dev;
-pub mod env_verbs;
 pub mod identity_verbs;
 pub mod integration_verbs;
 mod operation_verbs;
-#[cfg(feature = "ops")]
-pub mod ops_verbs;
 pub mod package_verbs;
 pub mod platform_verbs;
 pub mod provisioning_verbs;
-pub mod release_verbs;
 pub mod role_verbs;
 mod route_request;
 pub mod schema_verbs;

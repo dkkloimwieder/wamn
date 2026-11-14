@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:application/stop@0.9.0",
+  "type": "command",
+  "label": "application.stop",
+  "grant": "wamn-control:application/stop@0.9.0",
+  "permission_token": "application.stop",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

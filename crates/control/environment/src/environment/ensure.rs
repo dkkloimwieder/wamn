@@ -511,7 +511,6 @@ pub(crate) async fn ensure_project_database_with_migrations(
         "GRANT CONNECT ON DATABASE {} TO wamn_apply; GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE;",
         postgres_protocol::escape::escape_identifier(&database),
     ))).execute(&mut *admin).await.map(drop)?;
-    ensure_migration_role(admin).await?;
     let mut project = connect(&project_admin).await?;
     if crate::platform_migrations::install_project(&mut project).await? {
         let migration_input = crate::provision_project_env::workload::provision_platform_migration(
@@ -554,18 +553,6 @@ pub async fn restore_project_database_access(
     )
     .await
     .context("restore workload database access")
-}
-
-/// Prepare the single migration privilege role through the administrator.
-pub(super) async fn ensure_migration_role(admin: &mut sqlx::PgConnection) -> anyhow::Result<()> {
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::ensure_workload_acl_role_sql(
-            wamn_control_provision::WorkloadRoleFamily::Migration,
-        ),
-    ))
-    .execute(admin)
-    .await?;
-    Ok(())
 }
 
 /// Prepare replication authority before the admin connection leaves ensure.

@@ -1,0 +1,42 @@
+[package]
+name = "wamn-control"
+description = "Native org control service and authorized operation worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "json"] }
+clap = { workspace = true, features = ["derive"] }
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["http1", "tokio"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+wasmtime-wasi-http.workspace = true
+wamn-broker.workspace = true
+wamn-catalog.workspace = true
+wamn-control-provision.workspace = true
+wamn-engine.workspace = true
+wamn-environment = { workspace = true, features = ["ops"] }
+wamn-event-reg.workspace = true
+wamn-workflow.workspace = true
+wamn-package-control.workspace = true
+async-trait.workspace = true
+wamn-package-artifact.workspace = true
+wamn-execution-host.workspace = true
+wamn-identity-client.workspace = true
+wamn-identity-protocol.workspace = true
+wamn-kubernetes.workspace = true
+wamn-platform-identity.workspace = true
+wamn-postgres.workspace = true
+wamn-registry.workspace = true
+wamn-runtime.workspace = true
+
+[lints]
+workspace = true

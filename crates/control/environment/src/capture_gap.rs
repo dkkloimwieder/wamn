@@ -44,11 +44,11 @@ pub struct RecoverCaptureGapRequest {
     pub project: String,
     pub env: String,
 
-    /// Superuser URL of the system database: the instance suffix, the reader
+    /// Owning connection of the system database: the instance suffix, the reader
     /// registration, and the gap row.
     pub system_database_url: String,
 
-    /// Superuser URL of the project-env database, which holds the slot.
+    /// Capture-role connection of the project database that holds the slot.
     pub admin_database_url: String,
 
     /// The NATS of the event streams, with the client certificate.
@@ -62,7 +62,7 @@ pub struct CloseCaptureGapRequest {
     pub project: String,
     pub env: String,
 
-    /// Superuser URL of the system database.
+    /// Owning connection of the system database.
     pub system_database_url: String,
 }
 
@@ -343,7 +343,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-/// Connect as the superuser and `SET ROLE wamn_system`, the registry owner.
+/// Select `wamn_system`, the registry owner, on its owning connection.
 async fn connect_system(url: &str) -> anyhow::Result<Client> {
     let mut client = connect(url).await.context("system db connect")?;
     sqlx::raw_sql("SET ROLE wamn_system")

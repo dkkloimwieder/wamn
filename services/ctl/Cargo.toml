@@ -6,40 +6,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[features]
-default = []
-ops = [
-    "wamn-environment/ops",
-    "wamn-control-provision/ops",
-]
-
-[[bin]]
-name = "wamn-ctl-ops"
-path = "src/bin/wamn-ctl-ops.rs"
-required-features = ["ops"]
-
 [[bin]]
 name = "wamn"
 path = "src/bin/wamn.rs"
 
-[[test]]
-name = "protected_relations_live"
-path = "tests/protected_relations_live.rs"
-required-features = ["ops"]
-
-[[test]]
-name = "prune_record_history_live"
-path = "tests/prune_record_history_live.rs"
-required-features = ["ops"]
-
-[[test]]
-name = "prune_run_history_live"
-path = "tests/prune_run_history_live.rs"
-required-features = ["ops"]
-
 [dependencies]
 wamn-postgres.workspace = true
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-build.workspace = true
 wamn-broker = { workspace = true }
 wamn-digest.workspace = true
@@ -59,7 +31,11 @@ tracing = { workspace = true }
 # keeps its meaning (dep diagnostics to stderr), matching the pre-split
 # no-OTEL behavior of wash_runtime::observability::initialize_observability.
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-reqwest = { workspace = true, features = ["rustls"] }
+bytes.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["client", "http1"] }
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
+hyper-rustls = { workspace = true, features = ["http1", "webpki-roots", "aws-lc-rs"] }
 rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity
 # implemented by the catalog model; the writer never re-derives that hash.
@@ -83,9 +59,6 @@ wamn-registry = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-runtime = { workspace = true }
-# The `workflow` verbs call the workflow contract over a project-admin
-# connection.
-wamn-workflow = { workspace = true }
 
 [dev-dependencies]
 wit-parser = { workspace = true }

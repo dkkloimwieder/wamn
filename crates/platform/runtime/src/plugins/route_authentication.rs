@@ -631,14 +631,26 @@ impl ControlRouteAuthenticator {
     }
 }
 
-#[async_trait::async_trait]
-impl RouteAuthenticator for ControlRouteAuthenticator {
-    async fn authenticate(
+impl ControlRouteAuthenticator {
+    /// Authenticate an org control endpoint without an application release.
+    pub async fn authenticate_control(
         &self,
-        request: AuthenticationRequest<'_>,
+        attachment_id: &str,
+        read: bool,
+        headers: &[wamn_engine::flow_http_routing::Header],
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let RouteCredential::Session { token, csrf } = route_credential(&request)? else {
+        use wamn_engine::flow_http_routing::session_cookie;
+        let cookie = session_cookie(headers)?;
+        if cookie.is_some()
+            && headers
+                .iter()
+                .any(|header| header.name.eq_ignore_ascii_case("authorization"))
+        {
             return Err(unauthorized());
+        }
+        let (token, csrf) = match cookie {
+            Some(token) => (token, Some(!read)),
+            None => (required_bearer_token(headers)?, None),
         };
         let session = self
             .verifier
@@ -646,11 +658,7 @@ impl RouteAuthenticator for ControlRouteAuthenticator {
             .await
             .map_err(|_| unauthorized())?;
         if let Some(requires_csrf) = csrf {
-            require_csrf(
-                requires_csrf,
-                session.claims().csrf.as_deref(),
-                request.headers,
-            )?;
+            require_csrf(requires_csrf, session.claims().csrf.as_deref(), headers)?;
         }
         let active = tokio::time::timeout(
             std::time::Duration::from_secs(5),
@@ -679,13 +687,28 @@ impl RouteAuthenticator for ControlRouteAuthenticator {
                 .map_err(|_| unauthorized())?;
         }
         Ok(Some(AuthenticatedCaller::new(
-            request.attachment_id,
+            attachment_id,
             session.claims().sub.to_string().as_str(),
             CredentialType::Session,
             false,
             std::collections::HashSet::new(),
             None,
         )))
+    }
+}
+
+#[async_trait::async_trait]
+impl RouteAuthenticator for ControlRouteAuthenticator {
+    async fn authenticate(
+        &self,
+        request: AuthenticationRequest<'_>,
+    ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
+        self.authenticate_control(
+            request.attachment_id,
+            wamn_engine::flow_http_routing::serves_read(request.manifest, request.attachment),
+            request.headers,
+        )
+        .await
     }
 }
 
