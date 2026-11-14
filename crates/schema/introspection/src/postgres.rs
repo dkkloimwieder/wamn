@@ -3,6 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use fallible_iterator::FallibleIterator as _;
+use postgres_protocol::types;
 use sqlx::postgres::PgRow as Row;
 use sqlx::{
     AssertSqlSafe, Executor as _, PgPool as Client, Row as _, SqlSafeStr as _, Statement as _,
@@ -420,8 +422,8 @@ SELECT namespace.nspname::text AS schema_name,
        catalog_index.indislive AS is_live,
        catalog_index.indnatts AS attribute_count,
        catalog_index.indnkeyatts AS key_count,
-       ARRAY(SELECT unnest(catalog_index.indkey::smallint[])) AS column_numbers,
-       ARRAY(SELECT unnest(catalog_index.indoption::smallint[])) AS key_options,
+       catalog_index.indkey::smallint[] AS column_numbers,
+       catalog_index.indoption::smallint[] AS key_options,
        ARRAY(
            SELECT operator_class.opcdefault
              FROM unnest(catalog_index.indclass::oid[]) WITH ORDINALITY
@@ -822,16 +824,96 @@ async fn load_constraints(
         .map(|rows| rows.iter().map(constraint_row).collect())
 }
 
+// Catalog vectors start at zero. Their subscripts do not change the attribute values.
+struct CatalogInt2Array(Vec<i16>);
+
+impl sqlx::Type<sqlx::Postgres> for CatalogInt2Array {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <Vec<i16> as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for CatalogInt2Array {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        if value.format() == sqlx::postgres::PgValueFormat::Binary {
+            let array = types::array_from_sql(value.as_bytes()?)?;
+            if array.dimensions().count()? > 1 {
+                return Err("catalog array must have at most one dimension".into());
+            }
+            return array
+                .values()
+                .map(|value| types::int2_from_sql(value.ok_or(sqlx::error::UnexpectedNullError)?))
+                .collect()
+                .map(Self);
+        }
+
+        let text = value.as_str()?;
+        let array = text.split_once('=').map_or(text, |(_, array)| array);
+        let elements = array
+            .strip_prefix('{')
+            .and_then(|array| array.strip_suffix('}'))
+            .ok_or("invalid catalog array")?;
+        if elements.is_empty() {
+            return Ok(Self(Vec::new()));
+        }
+        Ok(Self(
+            elements
+                .split(',')
+                .map(str::parse)
+                .collect::<Result<_, _>>()?,
+        ))
+    }
+}
+
+#[cfg(test)]
+#[sqlx::test(migrations = false)]
+async fn catalog_arrays_preserve_values_at_any_lower_bound(pool: sqlx::PgPool) {
+    for lower in [i32::MIN, -7, 0, 1, 42, i32::MAX - 2] {
+        let array = format!("[{lower}:{}]={{7,-3}}", lower + 1);
+        let binary = sqlx::query(
+            AssertSqlSafe("SELECT $1::text::smallint[] AS values".to_owned()).into_sql_str(),
+        )
+        .bind(&array)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let text = pool
+            .fetch_one(
+                AssertSqlSafe(format!("SELECT '{array}'::smallint[] AS values")).into_sql_str(),
+            )
+            .await
+            .unwrap();
+        for row in [binary, text] {
+            assert_eq!(row.get::<CatalogInt2Array, _>("values").0, [7, -3]);
+        }
+    }
+    for (array, accepted) in [("{}", true), ("{{1,2},{3,4}}", false), ("{NULL}", false)] {
+        let row = sqlx::query(
+            AssertSqlSafe("SELECT $1::text::smallint[] AS values".to_owned()).into_sql_str(),
+        )
+        .bind(array)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row.try_get::<CatalogInt2Array, _>("values").is_ok(),
+            accepted
+        );
+    }
+}
+
 fn constraint_row(row: &Row) -> ConstraintRow {
     ConstraintRow {
         schema: row.get("schema_name"),
         table: row.get("table_name"),
         name: row.get("constraint_name"),
         type_: row.get("constraint_kind"),
-        columns: row.get("column_numbers"),
+        columns: row.get::<CatalogInt2Array, _>("column_numbers").0,
         referenced_schema: row.get("referenced_schema"),
         referenced_table: row.get("referenced_table"),
-        referenced_columns: row.get("referenced_column_numbers"),
+        referenced_columns: row
+            .get::<CatalogInt2Array, _>("referenced_column_numbers")
+            .0,
         on_update: row.get("on_update"),
         on_delete: row.get("on_delete"),
         match_type: row.get("match_type"),
@@ -857,7 +939,9 @@ fn constraint_row(row: &Row) -> ConstraintRow {
         supporting_index_predicate: row.get("supporting_index_has_predicate"),
         exclusion_operators: row.get("exclusion_operators"),
         exclusion_key_definitions: row.get("exclusion_key_definitions"),
-        exclusion_dependency_columns: row.get("exclusion_dependency_columns"),
+        exclusion_dependency_columns: row
+            .get::<CatalogInt2Array, _>("exclusion_dependency_columns")
+            .0,
     }
 }
 
@@ -888,8 +972,8 @@ fn index_row(row: &Row) -> IndexRow {
         live: row.get("is_live"),
         attributes: row.get("attribute_count"),
         keys: row.get("key_count"),
-        column_numbers: row.get("column_numbers"),
-        options: row.get("key_options"),
+        column_numbers: row.get::<CatalogInt2Array, _>("column_numbers").0,
+        options: row.get::<CatalogInt2Array, _>("key_options").0,
         default_operator_classes: row.get("default_operator_classes"),
         default_collations: row.get("default_collations"),
         expression: row.get("has_expression"),
