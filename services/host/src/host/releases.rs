@@ -22,6 +22,9 @@ use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::wasi_logging::TracingLogger;
 
+pub(super) type ManifestCache =
+    Arc<std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::OnceCell<Arc<[u8]>>>>>>;
+
 type ReleaseKey = (String, String);
 
 pub(super) struct Resources {
@@ -45,6 +48,7 @@ pub(super) struct Resources {
         wamn_package_artifact::registry_credentials::RegistryCredentialSource,
     )>,
     pub queue_lease_ttl_ms: u64,
+    pub leases: Arc<wamn_runtime::resource_lease::ResourceLeases>,
 }
 
 pub(super) struct ResidentRelease {
@@ -52,6 +56,7 @@ pub(super) struct ResidentRelease {
     pub handlers: Arc<HostRouteDelivery>,
     pub files: Arc<wamn_execution_host::file_route::FileRoutes>,
     queue: Arc<QueueService>,
+    _manifest: Arc<[u8]>,
     stop: watch::Sender<bool>,
 }
 
@@ -63,23 +68,31 @@ struct Selection {
 
 pub(super) struct Releases {
     resources: Resources,
+    paused: std::sync::atomic::AtomicBool,
     api: KubernetesApi,
     resident: RwLock<BTreeMap<ReleaseKey, Arc<ResidentRelease>>>,
     selections: RwLock<BTreeMap<String, Selection>>,
     loading: std::sync::Mutex<BTreeMap<ReleaseKey, Arc<Mutex<()>>>>,
-    bytes: std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::OnceCell<Arc<[u8]>>>>>,
+    bytes: ManifestCache,
 }
 
 impl Releases {
-    pub fn new(resources: Resources, api: KubernetesApi) -> Self {
+    pub fn new(resources: Resources, api: KubernetesApi, bytes: ManifestCache) -> Self {
         Self {
             resources,
+            paused: std::sync::atomic::AtomicBool::new(false),
             api,
             resident: RwLock::default(),
             selections: RwLock::default(),
             loading: std::sync::Mutex::default(),
-            bytes: std::sync::Mutex::default(),
+            bytes,
         }
+    }
+
+    /// Stop new schedule and event admissions while existing runs and calls finish.
+    pub fn pause_admission(&self) {
+        self.paused
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Retain the selected deployment through the workload's stop and active calls.
@@ -142,20 +155,18 @@ impl Releases {
             let mut bytes = self.bytes.lock().expect("release bytes lock poisoned");
             Arc::clone(bytes.entry(digest.to_owned()).or_default())
         };
-        let bytes = cached
-            .get_or_try_init(|| async {
-                let bytes = r
-                    .postgres
-                    .release_bytes(&r.configuration.project, &r.target.project_env_key, digest)
-                    .await?;
-                let (manifest, _) = ServingManifest::from_canonical_bytes(&bytes)?;
-                anyhow::ensure!(
-                    manifest.digest().as_str() == digest,
-                    "release catalog digest mismatch"
-                );
-                anyhow::Ok(Arc::<[u8]>::from(bytes))
-            })
+        let authorized = r
+            .postgres
+            .release_bytes(&r.configuration.project, &r.target.project_env_key, digest)
             .await?;
+        let (manifest, _) = ServingManifest::from_canonical_bytes(&authorized)?;
+        anyhow::ensure!(
+            manifest.digest().as_str() == digest,
+            "release catalog digest mismatch"
+        );
+        let bytes = cached
+            .get_or_init(|| async { Arc::<[u8]>::from(authorized) })
+            .await;
         let (manifest, _) = ServingManifest::from_canonical_bytes(bytes)?;
         let packages = manifest
             .release
@@ -250,6 +261,7 @@ impl Releases {
             handlers,
             files,
             queue,
+            _manifest: Arc::clone(bytes),
             stop: watch::channel(false).0,
         });
         self.resident
@@ -260,6 +272,9 @@ impl Releases {
     }
 
     async fn selected(&self) -> anyhow::Result<BTreeMap<String, (String, String)>> {
+        if self.paused.load(std::sync::atomic::Ordering::Acquire) {
+            return Ok(BTreeMap::new());
+        }
         let r = &self.resources;
         let maps = self
             .api
@@ -269,6 +284,7 @@ impl Releases {
             ))
             .await?;
         let mut selected = BTreeMap::new();
+        let mut ambiguous = BTreeSet::new();
         for map in maps["items"]
             .as_array()
             .context("ConfigMap list has no items")?
@@ -313,12 +329,16 @@ impl Releases {
             })();
             match projection {
                 Ok(projection) => {
-                    anyhow::ensure!(
-                        selected
-                            .insert(application.to_owned(), projection)
-                            .is_none(),
-                        "application has multiple current selections"
-                    );
+                    if ambiguous.contains(application) {
+                        continue;
+                    }
+                    if selected.contains_key(application) {
+                        selected.remove(application);
+                        ambiguous.insert(application.to_owned());
+                        tracing::warn!(%application, "application has multiple current selections; its admission is paused");
+                    } else {
+                        selected.insert(application.to_owned(), projection);
+                    }
                 }
                 Err(error) => {
                     tracing::warn!(%application, %error, "application selection is unusable");
@@ -401,20 +421,71 @@ impl Releases {
             .lock()
             .expect("release preparations lock poisoned")
             .retain(|key, lock| needed.contains_key(key) || Arc::strong_count(lock) > 1);
-        self.bytes
-            .lock()
-            .expect("release bytes lock poisoned")
-            .retain(|digest, cell| {
-                needed.keys().any(|(_, needed)| needed == digest)
-                    || self
-                        .resident
-                        .read()
-                        .expect("resident releases lock poisoned")
-                        .keys()
-                        .any(|(_, loaded)| loaded == digest)
-                    || Arc::strong_count(cell) > 1
-            });
         Ok(needed)
+    }
+
+    /// Read current residency and unfinished-run pins from the owning project.
+    pub async fn residency(
+        &self,
+    ) -> anyhow::Result<Vec<wamn_kubernetes::environment_state::ReleaseResidency>> {
+        let r = &self.resources;
+        let pins = r
+            .postgres
+            .unfinished_releases(
+                &r.configuration.project,
+                &r.target.project_env_key,
+                &r.target.environment,
+            )
+            .await?;
+        let mut releases: BTreeMap<
+            ReleaseKey,
+            wamn_kubernetes::environment_state::ReleaseResidency,
+        > = self
+            .resident
+            .read()
+            .expect("resident releases lock poisoned")
+            .keys()
+            .map(|key| {
+                (
+                    key.clone(),
+                    wamn_kubernetes::environment_state::ReleaseResidency {
+                        application: key.0.clone(),
+                        manifest_digest: key.1.clone(),
+                        loaded: true,
+                        runs: Vec::new(),
+                    },
+                )
+            })
+            .collect();
+        for (application, selection) in self
+            .selections
+            .read()
+            .expect("release selections lock poisoned")
+            .iter()
+            .filter(|(_, selection)| !selection.digest.is_empty())
+        {
+            releases
+                .entry((application.clone(), selection.digest.clone()))
+                .or_insert_with(|| wamn_kubernetes::environment_state::ReleaseResidency {
+                    application: application.clone(),
+                    manifest_digest: selection.digest.clone(),
+                    loaded: false,
+                    runs: Vec::new(),
+                });
+        }
+        for (application, digest, run) in pins {
+            releases
+                .entry((application.clone(), digest.clone()))
+                .or_insert_with(|| wamn_kubernetes::environment_state::ReleaseResidency {
+                    application,
+                    manifest_digest: digest,
+                    loaded: false,
+                    runs: Vec::new(),
+                })
+                .runs
+                .push(run);
+        }
+        Ok(releases.into_values().collect())
     }
 
     /// Reconcile residency while each release drains its own queue independently.
@@ -581,6 +652,7 @@ impl Releases {
         while let Some(result) = queues.join_next().await {
             result?.1?;
         }
+        self.resources.leases.shutdown().await;
         Ok(())
     }
 }

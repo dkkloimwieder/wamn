@@ -1,14 +1,11 @@
 //! Authored selections and independently observed application and database state.
 
-pub(super) mod plan;
-use plan::terminating;
-
 use std::collections::BTreeMap;
 
 use anyhow::Context as _;
 use serde::Serialize;
 use serde_json::Value;
-use wamn_kubernetes::environment_state::{environment_state, observe, release_digest};
+use wamn_kubernetes::environment_state::{environment_state, observe};
 use wamn_registry::Triple;
 
 use super::Platform;
@@ -23,6 +20,7 @@ pub use wamn_kubernetes::environment_state::DeploymentStatus;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Status {
     pub applications: BTreeMap<String, ApplicationStatus>,
+    pub residency: Option<Vec<super::drain::ReleaseResidency>>,
     /// Unfinished runs with no live host anywhere in this environment.
     pub stranded: Option<Vec<Stranded>>,
     pub installed: Option<BTreeMap<String, super::analyse::Installed>>,
@@ -51,10 +49,7 @@ pub struct Observed {
     pub deployment: Option<DeploymentStatus>,
     /// Each WorkloadDeployment of the release, with its conditions.
     pub workloads: BTreeMap<String, BTreeMap<String, String>>,
-    /// Release digest to the count of host pods that are not terminated.
-    pub live: BTreeMap<String, usize>,
-    /// Release digest to the count of host pods that are terminating.
-    pub terminating: BTreeMap<String, usize>,
+    pub residency: Vec<super::drain::ReleaseResidency>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -134,32 +129,30 @@ pub async fn status(
             })
             .collect()
     });
-    let stranded = match async {
-        let observed = wamn_kubernetes::environment_state::observe_environment(
-            &platform.target.namespace,
-            &triple.to_string(),
-            |path| async move {
-                let body = kubectl(
-                    platform,
-                    &platform.target.namespace,
-                    &["get", "--raw", &path],
-                    None,
-                )
-                .await?;
-                serde_json::from_str(&body).context("read environment hosts")
-            },
-        )
-        .await?;
-        let live = wamn_kubernetes::environment_state::live_set(&observed.pods);
-        stranded_runs(platform, &triple, &live, admin_url).await
-    }
-    .await
-    {
-        Ok(runs) => Some(runs),
+    let residency = match super::drain::observe(platform, &triple).await {
+        Ok(residency) => Some(residency),
         Err(error) => {
-            warnings.push(format!("stranded runs unknown: {error:#}"));
+            warnings.push(format!("residency unknown: {error:#}"));
             None
         }
+    };
+    let stranded = if let Some(residency) = &residency {
+        match stranded_runs(
+            platform,
+            &triple,
+            &super::drain::loaded(residency),
+            admin_url,
+        )
+        .await
+        {
+            Ok(runs) => Some(runs),
+            Err(error) => {
+                warnings.push(format!("stranded runs unknown: {error:#}"));
+                None
+            }
+        }
+    } else {
+        None
     };
     let mut applications = BTreeMap::new();
     for (application, selection) in &document.applications {
@@ -174,19 +167,29 @@ pub async fn status(
                     chart: revision.chart,
                 });
             let namespace = platform.target.namespace.as_str();
-            let observed = observe(namespace, &release_name, |path| async move {
+            let host_name = super::ensure::environment_host_name(&triple.org, triple.env.as_str())?;
+            let observed = observe(namespace, &host_name, |path| async move {
                 let body = kubectl(platform, namespace, &["get", "--raw", &path], None).await?;
                 serde_json::from_str::<Value>(&body).with_context(|| format!("decode {path}"))
             })
             .await?;
             let state = environment_state(&observed, &release_name);
+            let application_residency: Vec<_> = residency
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .filter(|release| release.application == *application)
+                .cloned()
+                .collect();
             Ok::<_, anyhow::Error>(Observed {
-                terminating: terminating(&observed.pods),
+                residency: application_residency,
                 release_name,
                 revision,
-                deployment: state.deployment,
+                deployment: wamn_kubernetes::environment_state::environment_state(
+                    &observed, &host_name,
+                )
+                .deployment,
                 workloads: state.workloads,
-                live: state.live,
             })
         }
         .await;
@@ -215,6 +218,7 @@ pub async fn status(
     }
     Ok(Status {
         applications,
+        residency,
         stranded,
         installed,
         warnings,
@@ -228,7 +232,7 @@ pub async fn status(
 async fn stranded_runs(
     platform: &Platform,
     triple: &Triple,
-    live: &BTreeMap<String, usize>,
+    live: &BTreeMap<(String, String), usize>,
     admin_url: &str,
 ) -> anyhow::Result<Vec<Stranded>> {
     // A lifecycle verb: the provisioning credential, as the install Jobs use.
@@ -254,22 +258,4 @@ async fn stranded_runs(
     let project_env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, triple.env.as_str());
     stranded(&url, &project_env_key, triple.env.as_str(), None, live).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn only_draining_pods_are_terminating() {
-        let pods = json!({"items": [
-            {"metadata": {"annotations": {"wamn.release-digest": "sha256:a"}, "deletionTimestamp": "t"}, "status": {"phase": "Running"}},
-            {"metadata": {"annotations": {"wamn.release-digest": "sha256:b"}}, "status": {"phase": "Running"}}
-        ]});
-        assert_eq!(
-            terminating(&pods),
-            BTreeMap::from([("sha256:a".to_owned(), 1)])
-        );
-    }
 }

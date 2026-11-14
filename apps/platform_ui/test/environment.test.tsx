@@ -22,22 +22,29 @@ function fixture(initial: "active" | "inactive" = "active", digest: string | nul
         JSON.stringify([{ request_id: body[0].request_id, value: { project: "widgets", env: "dev", status: state } }]),
       );
     }
+    const selectedDigest = path.includes("/release/profile")
+      ? JSON.parse(new URL(path, "http://localhost").searchParams.get("digest") ?? "null") as string
+      : digest;
     const value = path.includes("/member/list")
       ? { members: [] }
       : path.includes("/environment/list")
         ? { environments: [{ name: "dev", state }] }
         : path.includes("/environment/status")
           ? {
-              digest,
+              digest: null,
               users_with_role: 3,
               roles: 4,
               memberships: 5,
               rollout: { replicas: 2, updated_replicas: 1, ready_replicas: 1, available_replicas: 1 },
               workloads: [{ name: "http", conditions: [{ type: "Ready", status: "True" }] }],
               live: [{ digest: "sha256:release", pods: 1 }],
+              residency: digest ? [
+                { application: "orders", manifest_digest: digest, loaded: true, runs: [] },
+                { application: "receiving", manifest_digest: "sha256:other", loaded: false, runs: ["pending"] },
+              ] : [],
             }
           : {
-              digest,
+              digest: selectedDigest,
               operations: [
                 {
                   package: "acme",
@@ -106,10 +113,14 @@ describe("Environment", () => {
     const data = fixture();
     mount(data);
     await screen.findByRole("region", { name: "Release profile" });
-    expect(screen.getByRole("region", { name: "Environment status" }).textContent).toContain("release");
+    expect(screen.getByRole("group", { name: "Workloads" }).textContent).toContain("1 ready");
+    fireEvent.change(screen.getByRole("combobox", { name: "Application release" }), {
+      target: { value: "receiving@sha256:other" },
+    });
+    await waitFor(() => expect(screen.getByRole("region", { name: "Release profile" }).textContent).toContain("sha256:other"));
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.queryByRole("navigation", { name: "Environment tables" })).toBeNull();
-    expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(1);
+    expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(2);
     expect(data.calls.filter((path) => path.includes("/environment/status"))).toHaveLength(1);
     expect(screen.getByRole("group", { name: "Roles" }).textContent).toContain("4");
   });
@@ -299,7 +310,7 @@ describe("Environment", () => {
     const data = fixture("inactive", null);
     mount(data);
     await screen.findByRole("button", { name: "Activate environment" });
-    expect(screen.getByRole("group", { name: "Release" }).getAttribute("data-state")).toBe("unknown");
+    expect(screen.getByRole("group", { name: "Resident releases" }).textContent).toContain("0 loaded");
     expect(screen.queryByRole("region", { name: "Release profile" })).toBeNull();
     expect(data.calls.some((path) => path.includes("/release/profile"))).toBe(false);
   });

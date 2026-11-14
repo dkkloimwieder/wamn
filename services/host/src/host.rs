@@ -23,12 +23,13 @@ use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::washlet::AttachedHostControl;
 
 mod commands;
+mod projects;
 mod releases;
 
 #[cfg(test)]
 use wamn_catalog::ServingManifest;
+use wamn_control_provision::project_env_database_name;
 use wamn_control_provision::session_target::session_audience;
-use wamn_control_provision::{SystemReader, project_env_database_name, system_reader_login};
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
@@ -36,23 +37,15 @@ use wamn_engine::engine::{
 };
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-use wamn_execution_host::OperationHostConfig;
 use wamn_identity_protocol::verifier::SessionVerifier;
-use wamn_registry::{Triple, environment_nats_user, project_env_key};
-use wamn_runtime::auth_cache::replicate;
+use wamn_registry::Triple;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_runtime::connection_credentials::ConnectionCredentials;
-use wamn_runtime::connection_facts::ConnectionFacts;
-use wamn_runtime::connection_memory::{self, ConnectionMemory};
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::route_authentication::{
-    EnvironmentStatusReader, PlatformRouteAuthenticator,
-};
-use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
+use wamn_runtime::plugins::route_authentication::EnvironmentStatusReader;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
-use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnPostgres};
+use wamn_runtime::plugins::{ClassCredentials, WamnPostgres};
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
 use wamn_workflow::DEFAULT_QUEUE_LEASE_TTL_MS;
 
@@ -148,9 +141,9 @@ pub struct HostArgs {
     #[arg(long = "environment", overrides_with = "environment")]
     pub environment: Option<String>,
 
-    /// Declared application membership for this project, as canonical JSON.
-    #[arg(long = "applications")]
-    pub applications: Option<String>,
+    /// Environment chart projection listing the projects this host serves.
+    #[arg(long)]
+    pub projects: Option<PathBuf>,
 
     /// Address for the workload HTTP server
     #[arg(long = "http-addr")]
@@ -256,11 +249,11 @@ pub struct HostArgs {
     )]
     pub core_instances: u32,
 
-    /// Guest memory accounting mode. Count records growth without enforcing the guest budget.
+    /// Guest memory mode. Enforce refuses growth beyond the container-derived guest budget.
     #[arg(
         long,
         env = "WASH_GUEST_MEMORY_MODE",
-        default_value = "count",
+        default_value = "enforce",
         value_parser = clap::builder::PossibleValuesParser::new(["count", "enforce"])
             .map(|mode| if mode == "enforce" { GuestMemoryMode::Enforce } else { GuestMemoryMode::Count })
     )]
@@ -297,15 +290,7 @@ pub struct HostArgs {
     )]
     pub registry_token_metadata: bool,
 
-    /// Targeted system connection reader for node credentials and signature routes.
-    #[arg(long, env = "WAMN_CONNECTION_STORE_URL")]
-    pub connection_store_url: Option<String>,
-
-    /// Project whose platform pool and credentials this host uses.
-    #[arg(long, env = "WAMN_PROJECT", default_value = "default")]
-    pub project: String,
-
-    /// Organization owning this host's project deployment.
+    /// Organization owning this environment host.
     #[arg(long, env = "WAMN_ORG")]
     pub org: Option<String>,
 
@@ -316,14 +301,6 @@ pub struct HostArgs {
     /// Public CA bundle for the configured identity service.
     #[arg(long, env = "WAMN_SESSION_JWKS_CA", requires = "session_issuer")]
     pub session_jwks_ca: Option<PathBuf>,
-
-    /// Provisioned database instance suffix for the exact session audience.
-    #[arg(
-        long,
-        env = "WAMN_SESSION_INSTANCE_SUFFIX",
-        requires = "session_issuer"
-    )]
-    pub session_instance_suffix: Option<String>,
 
     /// Optional application data search path installed at node checkout.
     #[arg(long, env = "WAMN_SCHEMA")]
@@ -350,37 +327,6 @@ impl<'a> RegistryPullCredential<'a> {
             "a release-backed host requires --registry-auth-file or --registry-token-metadata",
         )
     }
-}
-
-/// The environment key and declared applications that this host serves (R1).
-/// The manifest names none of them, so they come from `--org`, `--project`,
-/// `--environment` and `--applications`, and the environment key is
-/// [`project_env_key`] of the first three.
-fn release_target(args: &HostArgs) -> anyhow::Result<ReleaseTarget> {
-    let org = args
-        .org
-        .as_deref()
-        .filter(|org| !org.is_empty())
-        .context("a host that serves a release requires --org/WAMN_ORG")?;
-    anyhow::ensure!(
-        !args.project.is_empty(),
-        "a host that serves a release requires a nonempty --project/WAMN_PROJECT"
-    );
-    let environment = args
-        .environment
-        .as_deref()
-        .filter(|environment| !environment.is_empty())
-        .context("a host that serves a release requires --environment")?;
-    let applications = match args.applications.as_deref() {
-        None => wamn_catalog::EnvironmentApplications::new(),
-        Some(applications) => serde_json::from_str(applications)
-            .context("--applications is not the JSON of the declared applications")?,
-    };
-    Ok(ReleaseTarget::new(
-        project_env_key(org, &args.project, environment),
-        environment,
-    )
-    .with_applications(applications))
 }
 
 /// The `host.plugins` entries of the chart's host configuration file. Only
@@ -505,23 +451,15 @@ fn host_memory(args: &HostArgs) -> anyhow::Result<HostMemoryBudgets> {
 /// continues. Unnaming is not the same as leaving the shared entry in place —
 /// see [`ClassCredentials::without_class`].
 fn host_credentials(
-    database_url: Option<String>,
+    databases: Option<(String, String)>,
     executor_platform_url: Option<String>,
     http_admitter_url: Option<String>,
     administration_url: Option<String>,
 ) -> ClassCredentials {
-    let credentials = database_url.map_or_else(ClassCredentials::default, |input| {
-        let config = wamn_postgres::configuration(&input)
-            .ok()
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
-        match config {
-            Some(config) if config.get("compiled").is_some() && config.get("dynamic").is_some() => {
-                ClassCredentials::default()
-                    .with_class(AuthorityClass::GuestSql, config["compiled"].to_string())
-                    .with_class(AuthorityClass::DynamicSql, config["dynamic"].to_string())
-            }
-            _ => ClassCredentials::default().with_class(AuthorityClass::GuestSql, input),
-        }
+    let credentials = databases.map_or_else(ClassCredentials::default, |(compiled, dynamic)| {
+        ClassCredentials::default()
+            .with_class(AuthorityClass::GuestSql, compiled)
+            .with_class(AuthorityClass::DynamicSql, dynamic)
     });
     let credentials = match executor_platform_url {
         Some(platform) => credentials.with_class(AuthorityClass::ExecutorPlatform, platform),
@@ -539,22 +477,11 @@ fn host_credentials(
     }
 }
 
-fn require_queue_admission(
-    released: bool,
-    guest_url: Option<&str>,
-    executor_platform_url: Option<&str>,
-) -> anyhow::Result<bool> {
-    let complete = guest_url.is_some() && executor_platform_url.is_some();
-    anyhow::ensure!(
-        !released || complete,
-        "a released host requires both WAMN_PG_URL and WAMN_EXECUTOR_PLATFORM_PG_URL for durable queue admission"
-    );
-    Ok(complete)
-}
-
 fn session_verifier(
     args: &HostArgs,
     environment: &str,
+    project: &str,
+    suffix: &str,
     http_admitter_url: &str,
 ) -> anyhow::Result<SessionVerifier<IssuerKeys>> {
     let org = args
@@ -565,12 +492,8 @@ fn session_verifier(
         .session_issuer
         .as_deref()
         .context("a session route requires --session-issuer")?;
-    let suffix = args
-        .session_instance_suffix
-        .as_deref()
-        .context("a session route requires --session-instance-suffix")?;
-    let audience = session_audience(&Triple::new(org, environment, &args.project), suffix)?;
-    let database = project_env_database_name(org, &args.project, environment, suffix);
+    let audience = session_audience(&Triple::new(org, environment, project), suffix)?;
+    let database = project_env_database_name(org, project, environment, suffix);
     // Compare trusted deployment coordinates, not anything carried by a token.
     // Parsing failures never attach the credential-bearing URL to diagnostics.
     let (_, configured_database) = wamn_postgres::identity(http_admitter_url)?;
@@ -617,6 +540,7 @@ async fn connect_data_nats(
     args: &HostArgs,
     name: &str,
     user: Option<&str>,
+    certificate: Option<&Path>,
 ) -> anyhow::Result<async_nats::Client> {
     let mut opts = async_nats::ConnectOptions::new()
         .name(name)
@@ -627,11 +551,14 @@ async fn connect_data_nats(
             &wamn_registry::name::nats_token("_INBOX_", user, ""),
         ]));
     }
+    let ca = certificate.map(|path| path.join("ca.crt"));
+    let cert = certificate.map(|path| path.join("tls.crt"));
+    let key = certificate.map(|path| path.join("tls.key"));
     opts = wamn_broker::nats::tls_options(
         opts,
-        args.data_nats_tls_ca.as_deref(),
-        args.data_nats_tls_cert.as_deref(),
-        args.data_nats_tls_key.as_deref(),
+        ca.as_deref().or(args.data_nats_tls_ca.as_deref()),
+        cert.as_deref().or(args.data_nats_tls_cert.as_deref()),
+        key.as_deref().or(args.data_nats_tls_key.as_deref()),
         None,
     )?;
     if args.data_nats_tls_first {
@@ -723,6 +650,7 @@ async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<a
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
+    let args = Arc::new(args);
     let startup_started = Instant::now();
     let descriptor_soft_limit = wash_runtime::host::quota::raise_descriptor_limit();
     tracing::info!(
@@ -745,51 +673,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .context("trust the configured OCI CA bundles")?;
     }
 
-    let target = args
-        .org
-        .as_ref()
-        .zip(args.environment.as_ref())
-        .map(|_| release_target(&args))
-        .transpose()?;
-    let http_admitter_url = std::env::var("WAMN_HTTP_ADMITTER_PG_URL")
-        .ok()
-        .filter(|url| !url.is_empty());
-    let session_verifier = if args.session_issuer.is_some() {
-        Some(session_verifier(
-            &args,
-            &target
-                .as_ref()
-                .context("session routes require an environment")?
-                .environment,
-            http_admitter_url
-                .as_deref()
-                .context("session routes require WAMN_HTTP_ADMITTER_PG_URL")?,
-        )?)
-    } else {
-        None
-    };
-    let (route_auth_target, identity_reader) =
-        if let (Some(target), Ok(system_url)) = (&target, std::env::var("WAMN_SYSTEM_URL")) {
-            let org = args.org.as_deref().context("host org is absent")?;
-            let (login, database) = wamn_postgres::identity(&system_url)?;
-            anyhow::ensure!(
-                login
-                    == system_reader_login(
-                        SystemReader::Identity,
-                        org,
-                        &args.project,
-                        &target.environment,
-                        &database
-                    ),
-                "identity reader targets another environment"
-            );
-            (
-                Some(org.to_owned()),
-                Some(wamn_postgres::pool(&system_url, 4).await?),
-            )
-        } else {
-            (None, None)
-        };
     let router_owner = args
         .runner
         .clone()
@@ -803,16 +686,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let scheduler_nats_client =
         connect_scheduler_nats(&args, args.host_name.as_deref().unwrap_or(&router_owner)).await?;
-    // The data connection carries the environment identity.
-    let data_nats_user = target
-        .as_ref()
-        .map(|target| environment_nats_user(&target.project_env_key));
-    let data_nats_client = connect_data_nats(
-        &args,
-        args.host_name.as_deref().unwrap_or(&router_owner),
-        data_nats_user.as_deref(),
-    )
-    .await?;
     let host_memory = host_memory(&args)?;
     let engine = Arc::new(
         if let Some(compilation_cache_dir) = args.wasmtime_cache_dir.as_deref() {
@@ -832,145 +705,14 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             )?
         },
     );
-    let executor_platform_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
-        .ok()
-        .filter(|url| !url.is_empty());
-    let guest_url = std::env::var("WAMN_PG_URL")
-        .ok()
-        .filter(|url| !url.is_empty());
-    // An application host refuses every route while its environment is
-    // inactive, from its row read as `wamn_app`
-    // (docs/architecture/execution.md#routing-and-availability).
-    let reads_environment_status = target.is_some() && guest_url.is_some();
-    let queue_credentials_complete = require_queue_admission(
-        target.is_some(),
-        guest_url.as_deref(),
-        executor_platform_url.as_deref(),
-    )?;
-    // The host routes of an application release read and write the
-    // authorization relations under their own credential
-    // (docs/architecture/data-access.md#actors).
-    let administration_url = std::env::var("WAMN_ADMINISTRATION_PG_URL")
-        .ok()
-        .filter(|url| !url.is_empty() && target.is_some());
-    let postgres_credentials = if guest_url.is_some()
-        || executor_platform_url.is_some()
-        || http_admitter_url.is_some()
-        || administration_url.is_some()
-    {
-        Some(host_credentials(
-            guest_url.clone(),
-            executor_platform_url.clone(),
-            http_admitter_url.clone(),
-            administration_url.clone(),
-        ))
-    } else {
-        None
-    };
-    let mut postgres = WamnPostgres::from_env_for_project(&args.project, postgres_credentials)
-        .context("wamn:postgres plugin init")?;
-    if http_admitter_url.is_some()
-        && let Some(target) = &target
-    {
-        postgres
-            .configure_revocation(
-                &args.project,
-                &target
-                    .applications
-                    .keys()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
-            )
-            .await?;
-    }
-    let postgres = Arc::new(postgres);
+    let credentials = Arc::new(projects::Credentials::default());
+    let postgres = Arc::new(WamnPostgres::with_provider(
+        Arc::clone(&credentials) as Arc<_>
+    ));
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
-    let mut file_connection_reader = None;
-    let credentials = match (&target, &args.connection_store_url) {
-        (Some(target), Some(url)) => {
-            let org = args.org.as_deref().context("host org is absent")?;
-            let (login, database) = wamn_postgres::identity(url)?;
-            anyhow::ensure!(
-                login
-                    == system_reader_login(
-                        SystemReader::Connection,
-                        org,
-                        &args.project,
-                        &target.environment,
-                        &database
-                    ),
-                "connection reader targets another environment"
-            );
-            let client = wamn_postgres::pool(url, 4).await?;
-            file_connection_reader = Some(client.clone());
-            ConnectionCredentials::from_database(client, org)
-        }
-        _ => ConnectionCredentials::empty(),
-    };
-    let credentials = Arc::new(credentials);
-    let resource_leases = Arc::new(
-        wamn_runtime::resource_lease::ResourceLeases::new(args.connection_store_url.as_deref())
-            .context("configure resource lease session")?,
-    );
-    let memory =
-        Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&resource_leases)));
-    let changes = connection_memory::replicate(
-        &data_nats_client,
-        target
-            .as_ref()
-            .map(|target| target.project_env_key.as_str()),
-        Arc::clone(&memory),
-    );
-    let oauth_encryption = args
-        .oauth_encryption
-        .as_deref()
-        .map(|value| {
-            let configuration =
-                serde_json::from_str(value).context("decode WAMN_OAUTH_ENCRYPTION")?;
-            wamn_runtime::oauth_encryption::Envelope::open(&configuration)
-                .map(Arc::new)
-                .context("open OAuth envelope encryption")
-        })
-        .transpose()?;
-    let facts = Arc::new(
-        ConnectionFacts::new(
-            memory,
-            changes,
-            Arc::clone(&credentials),
-            &postgres,
-            target
-                .as_ref()
-                .map_or("", |target| target.project_env_key.as_str()),
-            &args.project,
-            target
-                .as_ref()
-                .map_or("", |target| target.environment.as_str()),
-        )
-        .with_oauth_encryption(oauth_encryption.clone()),
-    );
-
-    let integration_registry = if let Some(base) = &args.component_artifact_base {
-        let registry_name = wamn_catalog::parse_component_artifact_base(base)?;
-        let credentials = match RegistryPullCredential::select(args.registry_auth_file.as_deref(), args.registry_token_metadata)? {
-            RegistryPullCredential::AuthFile(path) => wamn_package_artifact::registry_credentials::RegistryCredentialSource::Fixed(
-                wamn_package_artifact::registry_credentials::read_registry_credentials(path, registry_name.registry())?),
-            RegistryPullCredential::TokenMetadata => wamn_package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer,
-        };
-        Some((
-            wamn_package_artifact::PackageRegistry {
-                artifact_base: base.clone(),
-                credentials: None,
-                registry_auth_file: args.registry_auth_file.clone().unwrap_or_default(),
-                insecure_registry: args.allow_insecure_registries,
-                oci_ca_paths: args.oci_ca_paths.clone(),
-            },
-            credentials,
-        ))
-    } else {
-        None
-    };
-    let source = if target.is_some() {
+    let authentication = Arc::new(projects::Authentication::default());
+    let source = if args.projects.is_some() {
         let artifact_base = args
             .component_artifact_base
             .as_deref()
@@ -1008,98 +750,26 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         oci_cache_dir: args.oci_cache_dir.clone(),
         oci_ca_paths: args.oci_ca_paths.clone(),
     };
-    let mut jetstream_config = WamnJetstreamConfig::from_env();
-    jetstream_config.event_target = args
-        .org
-        .as_deref()
-        .zip(args.environment.as_deref())
-        .map(|(org, environment)| wamn_registry::Triple::new(org, environment, &args.project));
-    if jetstream_config.event_target.is_some() {
-        jetstream_config = jetstream_config.with_nats(data_nats_client.clone());
-    }
-    let jetstream = Arc::new(WamnJetstream::new(jetstream_config).await?);
-    let flow_http = FlowHttpRouting::new(Arc::clone(&postgres.scopes));
-    // The auth memory is the replica of the NATS KV bucket wamn-auth, and
-    // the host deletes the keys of its own writes there
-    // (docs/architecture/execution.md#auth-memory).
-    let project_env_key = target.as_ref().map(|target| target.project_env_key.clone());
-    let auth_changes = replicate(
-        &data_nats_client,
-        project_env_key.as_deref(),
-        Arc::clone(postgres.auth_cache()),
-    );
-    // The host always installs its authenticator, even an empty one, so a
-    // protected route refuses the same way on every host.
-    let authenticator = PlatformRouteAuthenticator::new(
-        Arc::clone(&postgres),
-        [Arc::clone(&facts)],
-        identity_reader.as_ref().map(|reader| {
-            (
-                reader.clone(),
-                session_verifier
-                    .into_iter()
-                    .map(|verifier| (facts.project_env_key().to_owned(), verifier))
-                    .collect(),
-            )
-        }),
-    );
-    let flow_http = if reads_environment_status {
-        flow_http
-            .with_authenticator(Arc::new(authenticator))
-            .with_environment_status(Arc::new(EnvironmentStatusReader::new(Arc::clone(
-                &postgres,
-            ))))
-    } else {
-        flow_http.with_authenticator(Arc::new(authenticator))
+    let releases = source.map(|source| {
+        Arc::new(projects::Environment::new(
+            Arc::clone(&args),
+            credentials,
+            Arc::clone(&authentication),
+            Arc::clone(&engine),
+            Arc::clone(&postgres),
+            http_transport,
+            Arc::clone(&logging),
+            source,
+            router_owner.clone(),
+        ))
+    });
+    let flow_http = FlowHttpRouting::new(Arc::clone(&postgres.scopes))
+        .with_authenticator(authentication as Arc<_>);
+    let status: Arc<dyn wamn_engine::flow_http_routing::EnvironmentStatus> = match &releases {
+        Some(environment) => Arc::clone(environment) as Arc<_>,
+        None => Arc::new(EnvironmentStatusReader::new(Arc::clone(&postgres))),
     };
-
-    let flow_http = Arc::new(flow_http);
-    let releases = if let (Some(target), Some(source)) = (target, source) {
-        anyhow::ensure!(
-            queue_credentials_complete,
-            "project host has no queue credentials"
-        );
-        Some(Arc::new(releases::Releases::new(
-            releases::Resources {
-                engine: Arc::clone(&engine),
-                postgres: Arc::clone(&postgres),
-                transport: Arc::clone(&http_transport),
-                facts: Arc::clone(&facts),
-                logging: Arc::clone(&logging),
-                source,
-                allowed_hosts: args
-                    .allowed_hosts
-                    .iter()
-                    .map(|value| value.parse())
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into(),
-                configuration: OperationHostConfig {
-                    project: args.project.clone(),
-                    schema: args.schema.clone(),
-                    owner_prefix: router_owner.clone(),
-                    warm_reuse: wamn_engine::warm_reuse::WarmReuse::new(
-                        &args.trusted_warm_component_digest,
-                        args.component_pool_size,
-                        args.component_reclaim_window_seconds,
-                    )?,
-                },
-                target,
-                org: args.org.clone().context("host org is absent")?,
-                connection_reader: file_connection_reader,
-                identity: route_auth_target
-                    .zip(identity_reader)
-                    .map(|(org, client)| (client, org)),
-                administration_url,
-                changes: auth_changes,
-                jetstream: Arc::clone(&jetstream),
-                registry: integration_registry,
-                queue_lease_ttl_ms: args.queue_lease_ttl_ms,
-            },
-            wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?,
-        )))
-    } else {
-        None
-    };
+    let flow_http = Arc::new(flow_http.with_environment_status(status));
     let mut plugins: Vec<Arc<dyn plugin::HostPlugin>> = vec![
         Arc::new(
             plugin::wasi_config::DynamicConfig::builder()
@@ -1108,12 +778,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         ),
         logging,
         Arc::new(plugin::wasi_otel::WasiOtel::default()),
-        // Pool config from WAMN_PG_URL + the WAMN_PG_* tuning env; without a URL
-        // the plugin still links and returns connection-unavailable on use.
         Arc::<WamnPostgres>::clone(&postgres),
-        // Native event transport shares the host's data connection.
-        // Workflow matches events against the loaded application release.
-        Arc::<WamnJetstream>::clone(&jetstream),
         // wamn-0h0g.15.96: READER 3 of the loaded release. Route projection stays wholly
         // in-memory; a PAT-protected route additionally carries the targeted
         // identity reader and preloads exact grants from the existing
@@ -1223,7 +888,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let prepared_host = builder.build().context("failed to build native host")?;
     tracing::info!(
         router_delivery = releases.is_some(),
-        "wamn-host starting (base plugins: wasi:config, wasi:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing)"
+        "wamn-host starting (base plugins: wasi:config, wasi:logging, wasi:otel, wamn:postgres, wamn:flow-http-routing)"
     );
     let mut file_tasks = tokio::task::JoinSet::new();
     if let Some(listener) = file_listener {
@@ -1234,8 +899,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         );
         file_tasks.spawn(wamn_execution_host::file_route::serve_selected(
             listener,
-            move |host| releases.files(host),
+            {
+                let releases = Arc::clone(&releases);
+                move |host| releases.files(host)
+            },
             Arc::clone(&flow_http),
+            Some(releases as Arc<_>),
         ));
     }
     let mut probe_tasks = tokio::task::JoinSet::new();
@@ -1275,7 +944,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
     let cleanup_host = Arc::clone(&native_host);
     let native_cleanup = async move {
-        resource_leases.shutdown().await;
         let control_result = control.shutdown().await;
         let host_result = cleanup_host.stop().await;
         control_result?;
@@ -1287,6 +955,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         cleanup_budget_secs = cleanup_budget.as_secs(),
         "wamn-host runtime startup completed"
     );
+    let drain_bound_seconds = args.drain_bound_seconds;
     let result = {
         let queue_serving = async {
             match releases.as_ref() {
@@ -1324,7 +993,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             // Component replies report Stopping until HTTP drains (R20).
             // Past the operator wait bound, the host drain goes on.
             if let Err(error) = workload_drain
-                .stop(&native_host, Duration::from_secs(args.drain_bound_seconds))
+                .stop(&native_host, Duration::from_secs(drain_bound_seconds))
                 .await
             {
                 tracing::warn!(%error, "workload drain");
@@ -1604,14 +1273,6 @@ mod tests {
             admissions += 1;
         })
         .await;
-    }
-
-    #[test]
-    fn queue_admission_is_hard_for_released_hosts_only() {
-        assert!(require_queue_admission(false, None, None).is_ok());
-        assert!(require_queue_admission(true, Some("guest"), Some("platform")).is_ok());
-        assert!(require_queue_admission(true, Some("guest"), None).is_err());
-        assert!(require_queue_admission(true, None, Some("platform")).is_err());
     }
 
     #[test]
@@ -2061,6 +1722,7 @@ host:
     }
 
     const GUEST: &str = "postgres://guest@h/db";
+    const QUERY: &str = "postgres://query@h/db";
     const PLATFORM: &str = "postgres://platform@h/db";
     const ADMITTER: &str = "postgres://admitter@h/db";
     const ADMINISTRATION: &str = "postgres://administration@h/db";
@@ -2076,7 +1738,7 @@ host:
     #[test]
     fn the_host_routes_each_url_to_its_own_class() {
         let credentials = host_credentials(
-            Some(GUEST.to_owned()),
+            Some((GUEST.to_owned(), QUERY.to_owned())),
             Some(PLATFORM.to_owned()),
             Some(ADMITTER.to_owned()),
             Some(ADMINISTRATION.to_owned()),
@@ -2086,7 +1748,8 @@ host:
                 AuthorityClass::ExecutorPlatform => PLATFORM,
                 AuthorityClass::CallableHttp => ADMITTER,
                 AuthorityClass::Administration => ADMINISTRATION,
-                AuthorityClass::GuestSql | AuthorityClass::DynamicSql => GUEST,
+                AuthorityClass::GuestSql => GUEST,
+                AuthorityClass::DynamicSql => QUERY,
             };
             assert_eq!(
                 credentials.url(class),
@@ -2107,7 +1770,7 @@ host:
     #[test]
     fn a_host_with_no_generation_for_a_family_refuses_rather_than_borrows() {
         let no_admitter = host_credentials(
-            Some(GUEST.to_owned()),
+            Some((GUEST.to_owned(), QUERY.to_owned())),
             Some(PLATFORM.to_owned()),
             None,
             None,
@@ -2125,7 +1788,7 @@ host:
         );
 
         let no_platform = host_credentials(
-            Some(GUEST.to_owned()),
+            Some((GUEST.to_owned(), QUERY.to_owned())),
             None,
             Some(ADMITTER.to_owned()),
             None,
@@ -2142,7 +1805,8 @@ host:
             "unnaming executor-platform must not disturb another class"
         );
 
-        let neither = host_credentials(Some(GUEST.to_owned()), None, None, None);
+        let neither =
+            host_credentials(Some((GUEST.to_owned(), QUERY.to_owned())), None, None, None);
         assert_eq!(neither.url(AuthorityClass::ExecutorPlatform), None);
         assert_eq!(neither.url(AuthorityClass::CallableHttp), None);
         assert_eq!(
@@ -2180,13 +1844,7 @@ host:
             "--registry-token-metadata",
         ];
         assert!(parse(both).is_err());
-        let neither = RegistryPullCredential::select(None, false)
-            .err()
-            .expect("a host with no registry credential refuses");
-        assert_eq!(
-            neither.to_string(),
-            "a release-backed host requires --registry-auth-file or --registry-token-metadata"
-        );
+        assert!(RegistryPullCredential::select(None, false).is_err());
     }
 
     #[test]
@@ -2203,14 +1861,10 @@ host:
             "host",
             "--org",
             "fixture",
-            "--project",
-            "widgets",
             "--session-issuer",
             "https://identity.invalid",
             "--session-jwks-ca",
             "/nonexistent/session-public-ca.pem",
-            "--session-instance-suffix",
-            "k3m9x2p7",
         ])
         .expect("complete session trust configuration");
         for database in [
@@ -2222,6 +1876,8 @@ host:
             let error = session_verifier(
                 &cli.args,
                 "dev",
+                "widgets",
+                "k3m9x2p7",
                 &format!("postgres://reader:secret@localhost/{database}"),
             )
             .expect_err("the permission reader must target the exact audience database");
@@ -2331,7 +1987,7 @@ host:
         );
         assert_eq!(
             parse(["wamn-host"]).unwrap().args.guest_memory_mode,
-            GuestMemoryMode::Count
+            GuestMemoryMode::Enforce
         );
         assert!(parse(["wamn-host", "--guest-memory-mode=off"]).is_err());
         assert_eq!(cli.args.socket_egress, EgressMode::Enforce);

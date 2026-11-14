@@ -1,8 +1,7 @@
 //! Step 7 of `apply`: readiness
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
-//! `helm upgrade --wait` returned when the host Deployment was ready. The verb
-//! then waits on each role WorkloadDeployment of the release to report
+//! Helm applied the application resources. The verb waits on each role WorkloadDeployment of the release to report
 //! `Ready`, with what remains of the readiness budget: the budget bounds the
 //! rollout, not each wait in turn. The manifest names no test route, so
 //! readiness is the test. Failed workloads remain available for inspection.

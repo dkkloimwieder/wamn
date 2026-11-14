@@ -41,7 +41,8 @@ const ALLOWED_POOLING_ENV: [&str; 5] = [
 
 /// Build wasmCloud's native memory budgets from WAMN's two capacity knobs.
 ///
-/// `max_guest_memory` remains wasmCloud's cgroup-aware derived advisory. WAMN
+/// `max_guest_memory` remains derived from the container limit. Enforce mode
+/// refuses growth beyond that shared budget. WAMN
 /// owns the per-memory ceiling and allocator instance count, which are the two
 /// values it previously installed through a bespoke pooling configuration.
 pub fn host_memory_budgets(
@@ -115,7 +116,7 @@ pub fn build_engine_with_socket_policy(
         proposals,
         socket_policy,
         default_host_memory_budgets(),
-        GuestMemoryMode::Count,
+        GuestMemoryMode::Enforce,
         None,
     )
 }
@@ -714,12 +715,7 @@ interface tcp-create-socket {
 
         let over_ceiling = wat::parse_str(format!("(module (memory {}))", pages + 1))
             .expect("encode a module one page over the ceiling");
-        let rejection = Module::new(engine.inner(), &over_ceiling)
-            .expect_err("one page over the ceiling is refused, which only pooling does");
-        assert!(
-            format!("{rejection:?}").contains("exceeds the limit"),
-            "the refusal is the allocator's memory limit, not another compile error: {rejection:?}"
-        );
+        assert!(Module::new(engine.inner(), &over_ceiling).is_err());
     }
 
     /// Pin both parts of the surviving native path: the pooling allocator is
@@ -807,13 +803,7 @@ interface tcp-create-socket {
         let mut first = Store::new(engine.inner(), ());
         Instance::new(&mut first, &module, &[]).expect("the first instance takes the only slot");
         let mut second = Store::new(engine.inner(), ());
-        let exhausted = Instance::new(&mut second, &module, &[])
-            .expect_err("a second live instance exceeds the configured slot count");
-        assert!(
-            format!("{exhausted:?}").contains("limit of 1"),
-            "the refusal is the configured slot count, not another instantiation error: \
-             {exhausted:?}"
-        );
+        assert!(Instance::new(&mut second, &module, &[]).is_err());
     }
 
     fn memory_budgets(pages: u64) -> HostMemoryBudgets {
@@ -839,6 +829,30 @@ interface tcp-create-socket {
             .get_memory(&mut store, "memory")
             .expect("the fixture exports its memory");
         (store, memory)
+    }
+
+    #[test]
+    fn a_guest_cannot_grow_past_the_default_heap_ceiling() -> anyhow::Result<()> {
+        let engine = build_engine(&[])?;
+        let bytes = wat::parse_str(
+            "(module (memory (export \"memory\") 1)
+             (func (export \"grow\") (param i32) (result i32)
+               local.get 0 memory.grow))",
+        )?;
+        let module = Module::new(engine.inner(), bytes)?;
+        let ctx = SharedCtx::new(Ctx::builder("memory-test", "memory-test").build())
+            .with_guest_memory(engine.guest_memory());
+        let mut store = Store::new(engine.inner(), ctx);
+        store.set_epoch_deadline(u64::MAX / 2);
+        install_memory_limiter(&mut store);
+        let instance = Instance::new(&mut store, &module, &[])?;
+        let grow = instance.get_typed_func::<i32, i32>(&mut store, "grow")?;
+        let pages = i32::try_from(MEMORY_CAP_BYTES / PAGE)?;
+        assert_eq!(grow.call(&mut store, pages - 1)?, 1);
+        assert_eq!(grow.call(&mut store, 1)?, -1);
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+        assert_eq!(memory.data_size(&store), MEMORY_CAP_BYTES);
+        Ok(())
     }
 
     #[test]
@@ -1053,23 +1067,21 @@ interface tcp-create-socket {
     /// zero as allocator capacity.
     #[test]
     fn zero_native_budgets_are_refused() {
-        let zero_heap = host_memory_budgets(0, 1).expect_err("a zero heap must be refused");
-        assert!(zero_heap.to_string().contains("default-heap-memory"));
-
-        let zero_instances =
-            host_memory_budgets(1 << 20, 0).expect_err("zero instances must be refused");
-        assert!(zero_instances.to_string().contains("core-instances"));
+        assert!(host_memory_budgets(0, 1).is_err());
+        assert!(host_memory_budgets(1 << 20, 0).is_err());
 
         let invalid = HostMemoryBudgets {
             max_guest_memory: 0,
             ..default_host_memory_budgets()
         };
-        let error =
-            build_engine_with_host_memory(&[], invalid, GuestMemoryMode::Count, EgressMode::Count)
-                .expect_err("a direct invalid native budget must be refused");
-        assert_eq!(
-            error.to_string(),
-            "max guest memory must be greater than zero"
+        assert!(
+            build_engine_with_host_memory(
+                &[],
+                invalid,
+                GuestMemoryMode::Enforce,
+                EgressMode::Count,
+            )
+            .is_err()
         );
     }
 

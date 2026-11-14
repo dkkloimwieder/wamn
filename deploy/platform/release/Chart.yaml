@@ -1,12 +1,6 @@
 apiVersion: v2
 name: release
-description: One environment of one application, a release on its own host group (docs/architecture/naming.md#environment-names).
+description: One application release on the shared environment host (docs/architecture/naming.md#environment-names).
 type: application
 version: 0.1.143
 appVersion: "0.1.143"
-dependencies:
-  # Host-only: values.yaml switches off every cluster-singular half, which the
-  # operator release owns. Both releases use this pinned chart archive.
-  - name: runtime-operator
-    version: 2.11.0
-    repository: oci://ghcr.io/wasmcloud/charts

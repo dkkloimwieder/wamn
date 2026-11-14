@@ -1081,12 +1081,19 @@ impl AsyncRead for BodyReader {
     }
 }
 
+/// Observe the native environment's loaded releases and unfinished-run pins.
+#[async_trait::async_trait]
+pub trait ResidencyReader: Send + Sync {
+    async fn residency(&self) -> wamn_kubernetes::environment_state::Residency;
+}
+
 /// Serve native file requests independently of component workloads.
 /// Serve file requests through the current application selection for their host.
 pub async fn serve_selected(
     listener: tokio::net::TcpListener,
     select: impl Fn(&str) -> Option<Arc<FileRoutes>> + Send + Sync + 'static,
     routing: Arc<FlowHttpRouting>,
+    residency: Option<Arc<dyn ResidencyReader>>,
 ) -> std::io::Result<()> {
     let select = Arc::new(select);
     let mut connections = tokio::task::JoinSet::new();
@@ -1101,11 +1108,20 @@ pub async fn serve_selected(
                 let (stream, peer) = accepted?;
                 let select = Arc::clone(&select);
                 let routing = Arc::clone(&routing);
+                let residency = residency.as_ref().map(Arc::clone);
                 connections.spawn(async move {
                     let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
                         let files = request.headers().get(hyper::header::HOST).and_then(|host| host.to_str().ok()).and_then(|host| select(host));
                         let routing = Arc::clone(&routing);
+                        let residency = residency.as_ref().map(Arc::clone);
                         async move {
+                            if request.method() == hyper::Method::GET && request.uri().path() == "/_wamn/residency" {
+                                let response = match residency {
+                                    Some(reader) => response(200, &serde_json::to_value(reader.residency().await).expect("residency is JSON")),
+                                    None => hyper::Response::builder().status(404).body(WasiBody::default()).expect("valid response"),
+                                };
+                                return Ok::<_, std::convert::Infallible>(response);
+                            }
                             let request = request.map(|body| body.map_err(wasmtime_wasi_http::Error::from).boxed_unsync());
                             let response = match files {
                                 Some(files) => files.http(&routing, request).await,
@@ -1433,6 +1449,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_residency_reports_loaded_releases_and_run_pins() {
+        struct Reader;
+        #[async_trait::async_trait]
+        impl ResidencyReader for Reader {
+            async fn residency(&self) -> wamn_kubernetes::environment_state::Residency {
+                [(
+                    "orders".into(),
+                    wamn_kubernetes::environment_state::ProjectResidency {
+                        releases: vec![wamn_kubernetes::environment_state::ReleaseResidency {
+                            application: "orders".into(),
+                            manifest_digest: format!("sha256:{}", "a".repeat(64)),
+                            loaded: true,
+                            runs: vec!["unfinished".into()],
+                        }],
+                        error: None,
+                    },
+                )]
+                .into()
+            }
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(serve_selected(
+            listener,
+            |_| None,
+            Arc::new(FlowHttpRouting::new(Arc::default())),
+            Some(Arc::new(Reader)),
+        ));
+        let response = reqwest::get(format!("http://{address}/_wamn/residency"))
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        let reports: wamn_kubernetes::environment_state::Residency = response.json().await.unwrap();
+        let releases =
+            wamn_kubernetes::environment_state::project_residency(vec![reports], "orders").unwrap();
+        assert!(
+            releases
+                .iter()
+                .any(|release| release.loaded && !release.runs.is_empty())
+        );
+        task.abort();
+        let _ = task.await;
+    }
+
+    #[tokio::test]
     async fn native_listener_uses_shared_authentication_and_preserves_file_paths() {
         let files = Arc::new(files());
         let routing = Arc::new(
@@ -1445,6 +1506,7 @@ mod tests {
             listener,
             move |host| (host == "orders.example.com").then(|| Arc::clone(&files)),
             routing,
+            None,
         ));
         let client = reqwest::Client::new();
         for (authorization, status) in [(None, 401), (Some("Bearer session"), 403)] {

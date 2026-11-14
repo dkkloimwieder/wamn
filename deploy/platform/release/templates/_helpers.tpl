@@ -8,19 +8,12 @@ wamn.application: {{ keys . | first | quote }}
 {{- end }}
 {{- end }}
 
-{{/* The selector of every role workload: the host group and the release.
-     The release is the `wamn.release` pod label the renderer wrote; the chart
-     carries no second copy of it. */}}
+{{/* Application workloads share their environment host. */}}
 {{- define "release.hostSelector" -}}
-{{- $podLabels := index .Values "runtime-operator" "runtime" "podLabels" | default dict }}
-hostgroup: {{ .Release.Name | quote }}
-wamn.release: {{ required "runtime-operator.runtime.podLabels.wamn.release is required" (index $podLabels "wamn.release") | quote }}
+hostgroup: {{ required "hostGroup is required" .Values.hostGroup | quote }}
 {{- end }}
 
-{{/* Refuse a chart whose platform image set was not stamped. */}}
+{{/* Refuse a chart whose HTTP image was not selected. */}}
 {{- define "release.requireImageSet" -}}
-{{- $image := index .Values "runtime-operator" "runtime" "image" }}
-{{- $_ := required "runtime-operator.runtime.image.repository is required: stamp the platform image set" $image.repository }}
-{{- $_ := required "runtime-operator.runtime.image.tag is required: stamp the platform image set" $image.tag }}
 {{- $_ := required "platform.roles.http.image is required: stamp the platform image set" .Values.platform.roles.http.image }}
 {{- end }}

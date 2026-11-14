@@ -195,21 +195,17 @@ pub async fn update(
             .await?
             .context("host update requires existing release platform/wamn")?;
         let owner_chart = artifact_plan::platform_chart(Some(&operator), None)?;
-        let lock = match &coordinate.1 {
-            Some(application) => {
-                LifecycleLock::acquire_application(registry, &coordinate.0, application).await?
-            }
-            None => LifecycleLock::acquire(registry, &coordinate.0).await?,
-        };
+        anyhow::ensure!(coordinate.0 == document.org, "host belongs to another org");
+        let lock = LifecycleLock::acquire_environment(registry, coordinate.0, coordinate.1).await?;
         let result = lock.protect(async {
             release_chart::recover_pending(&owner, &name).await?;
             let installed = installed_values(&owner, &name).await?;
             anyhow::ensure!(
                 host_target(&installed, group)? == coordinate,
-                "recovered release changed its environment or application owner"
+                "recovered release changed its environment owner"
             );
             let values = chart.selection_values(document, selection, installed)?;
-            let entry = serde_json::json!({"chart":owner_chart.directory(), "version":owner_chart.version,
+            let entry = serde_json::json!({"chart":owner_chart.directory().join("platform/environment"), "version":owner_chart.version,
                 "name":name, "namespace":namespace, "values":values});
             resources::require_inputs(target, &entry).await?;
             resources::upgrade_release(&owner, &entry, directory).await
@@ -265,61 +261,32 @@ async fn initialize(
     Ok(())
 }
 
-fn host_target<'a>(
-    values: &'a Value,
-    group: &str,
-) -> anyhow::Result<(wamn_registry::Triple, Option<&'a str>)> {
-    let application = match values.get("applications") {
-        Some(applications) => {
-            let applications = applications
-                .as_object()
-                .context("installed applications must be an object")?;
-            anyhow::ensure!(
-                applications.len() == 1,
-                "application release must own one application"
-            );
-            applications.keys().next().map(String::as_str)
-        }
-        None => None,
-    };
-    let triple = if let Some(environment) = values["environment"].as_str() {
-        let parts: Vec<_> = environment.split('/').collect();
-        let [org, env, project] = parts.as_slice() else {
-            anyhow::bail!("installed release has no environment coordinate");
-        };
-        wamn_registry::Triple::new(*org, *env, *project)
-    } else {
-        let group = values["runtime-operator"]["runtime"]["hostGroups"]
-            .as_array()
-            .context("installed release has no host groups")?
-            .iter()
-            .find(|entry| entry["name"] == group)
-            .context("selected host group is absent")?;
-        let variables = group["env"]
-            .as_array()
-            .context("installed host has no environment variables")?;
-        let variable = |name| {
-            variables
-                .iter()
-                .find(|variable| variable["name"] == name)
-                .and_then(|variable| variable["value"].as_str())
-                .context("installed host has no environment coordinate")
-        };
-        let environment = group["extraArgs"]
-            .as_array()
-            .and_then(|args| {
-                args.iter()
-                    .filter_map(Value::as_str)
-                    .find_map(|arg| arg.strip_prefix("--environment="))
-            })
-            .context("installed host has no environment argument")?;
-        wamn_registry::Triple::new(
-            variable("WAMN_ORG")?,
-            environment,
-            variable("WAMN_PROJECT")?,
-        )
-    };
-    Ok((triple, application))
+fn host_target<'a>(values: &'a Value, name: &str) -> anyhow::Result<(&'a str, &'a str)> {
+    let group = values["runtime-operator"]["runtime"]["hostGroups"]
+        .as_array()
+        .context("installed release has no host groups")?
+        .iter()
+        .find(|entry| entry["name"] == name)
+        .context("selected host group is absent")?;
+    let org = group["env"]
+        .as_array()
+        .context("host has no environment variables")?
+        .iter()
+        .find(|variable| variable["name"] == "WAMN_ORG")
+        .and_then(|variable| variable["value"].as_str())
+        .context("host has no org")?;
+    let env = group["extraArgs"]
+        .as_array()
+        .context("host has no arguments")?
+        .iter()
+        .filter_map(Value::as_str)
+        .find_map(|argument| argument.strip_prefix("--environment="))
+        .context("host has no environment")?;
+    anyhow::ensure!(
+        wamn_registry::name::environment_host_name(org, env)? == name,
+        "host group differs from its environment owner"
+    );
+    Ok((org, env))
 }
 
 async fn installed_values(target: &Target, name: &str) -> anyhow::Result<Value> {

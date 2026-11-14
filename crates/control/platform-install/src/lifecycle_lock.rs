@@ -40,13 +40,18 @@ impl LifecycleLock {
     /// When the system database refuses the connection, or another session
     /// holds the lock.
     pub async fn acquire(system_url: &str, triple: &Triple) -> anyhow::Result<Self> {
+        Self::acquire_environment(system_url, &triple.org, triple.env.as_str()).await
+    }
+
+    /// Take exclusive ownership of the host shared by an org and environment.
+    pub async fn acquire_environment(
+        system_url: &str,
+        org: &str,
+        env: &str,
+    ) -> anyhow::Result<Self> {
         let lock = Self::connect(system_url).await?;
-        let env = triple.env.as_str();
-        let held = lock
-            .try_acquire(TRY_LOCK_SQL, &[&triple.org, &triple.project, env])
-            .await?;
-        if !held {
-            bail!("{DEPLOYMENT_IN_PROGRESS}: another verb holds the lifecycle lock of {triple}");
+        if !lock.try_acquire(TRY_LOCK_SQL, &[org, env]).await? {
+            bail!("{DEPLOYMENT_IN_PROGRESS}: environment {org}/{env}");
         }
         Ok(lock)
     }
@@ -55,10 +60,7 @@ impl LifecycleLock {
     pub async fn acquire_wait(system_url: &str, triple: &Triple) -> anyhow::Result<Self> {
         let lock = Self::connect(system_url).await?;
         while !lock
-            .try_acquire(
-                TRY_LOCK_SQL,
-                &[&triple.org, &triple.project, triple.env.as_str()],
-            )
+            .try_acquire(TRY_LOCK_SQL, &[&triple.org, triple.env.as_str()])
             .await?
         {}
         Ok(lock)
@@ -95,10 +97,7 @@ impl LifecycleLock {
     pub async fn acquire_shared(system_url: &str, triple: &Triple) -> anyhow::Result<Self> {
         let lock = Self::connect(system_url).await?;
         let held = lock
-            .try_acquire(
-                TRY_SHARED_LOCK_SQL,
-                &[&triple.org, &triple.project, triple.env.as_str()],
-            )
+            .try_acquire(TRY_SHARED_LOCK_SQL, &[&triple.org, triple.env.as_str()])
             .await?;
         if !held {
             bail!("{DEPLOYMENT_IN_PROGRESS}: environment {triple}");

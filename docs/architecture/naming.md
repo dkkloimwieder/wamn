@@ -92,7 +92,9 @@ The hash covers `org/env/project`, so sibling projects keep separate resources.
 An application release uses `r-<slug>-<hash>` and hashes `org/env/project/application`.
 Both use at most 24 environment characters and 20 hex characters from SHA-256.
 Names fit Helm's 53-character limit.
-A full coordinate remains in the object's `wamn.environment` annotation.
+Application objects carry `org/env/project` in `wamn.environment`. Shared host pods carry `org/env`.
 
 
-The pod label is the same value for the live set and `kubectl`; the two label keys for the group differ (`wasmcloud.com/hostgroup` on the pod, `hostgroup` in the heartbeat) and are both the chart's. A Kubernetes label value is at most 63 characters of `[a-z0-9A-Z._-]`, so the label carries the full 32-byte digest as lowercase unpadded base32 (52 characters), which is exact; the hex form is in the `wamn.release-digest` annotation and in the host's arguments. The host group is the environment's stable pool, one per environment. Its name is the Helm release name (§9.1). The release chart (`deploy/platform/release`) derives `runtime-operator.runtime.hostGroups[].name` and passes the release in its arguments. The release is the label, not the group.
+The environment host name is `h-<slug>-<hash>`. The hash comes from `org/env`, without a project. The environment chart owns its ServiceAccount and project projection.
+
+Application workloads select the shared environment host group. Each workload carries its own release digest and project deployment key in annotations. The `release` chart owns application workloads and route records. The `environment` chart owns the host Deployment. Application releases do not set release labels or release arguments on the host.

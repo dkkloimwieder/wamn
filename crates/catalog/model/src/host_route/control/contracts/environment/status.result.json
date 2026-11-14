@@ -78,6 +78,30 @@
       "type": "int32",
       "nullable": true,
       "values": []
+    },
+    {
+      "path": "residency[].application",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "residency[].manifest_digest",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "residency[].loaded",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "residency[].runs[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
     }
   ]
 }
