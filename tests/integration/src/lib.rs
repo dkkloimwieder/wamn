@@ -11,8 +11,6 @@ mod route_authentication_live;
 #[cfg(test)]
 mod route_interface_live;
 pub mod trusted_http_route;
-#[cfg(test)]
-mod write_log_live;
 
 #[cfg(test)]
 mod fixture_membership;
@@ -24,3 +22,6 @@ mod fixture_membership;
     reason = "The shared fixture also serves verifier lifecycle tests."
 )]
 mod session_fixture;
+
+/// Product deployment fixtures shared by application acceptance tests.
+pub mod product_application;

@@ -30,20 +30,9 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
     let (_, roots) = wamn_dev::source_deploy::sources(&document, &args.overlay_root)?;
     let source = if args.watch {
         let git = GitSource::discover(&args.overlay_root).await?;
-        let mut shared = roots
-            .iter()
-            .filter_map(|root| root.parent())
-            .map(|root| root.join("platform"))
-            .chain(
-                ["wit", "crates/platform/runtime/wit/deps"]
-                    .map(|path| git.repository_root().join(path)),
-            )
-            .filter(|path| path.is_dir())
-            .collect::<Vec<_>>();
-        shared.sort();
-        shared.dedup();
+        let (shared, files) = watch_inputs(&roots, &args.config)?;
         let mut source = FilesystemInvalidationSource::new(roots, shared, git).await?;
-        source.replace_configuration_files([args.config.canonicalize()?])?;
+        source.replace_configuration_files(files)?;
         Some(source)
     } else {
         None
@@ -60,10 +49,16 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
         }
         shutdown.send_replace(true);
     });
-    let result = wamn_dev::dev::run(source, receiver, || async {
+    let result = wamn_dev::dev::run(source, receiver, async |source| {
         let result = async {
             let document = EnvironmentDocument::compile(&args.config)?;
-            let (application, _) = wamn_dev::source_deploy::sources(&document, &args.overlay_root)?;
+            let (application, roots) =
+                wamn_dev::source_deploy::sources(&document, &args.overlay_root)?;
+            if let Some(source) = source {
+                let (shared, files) = watch_inputs(&roots, &args.config)?;
+                source.replace_roots(roots, shared).await?;
+                source.replace_configuration_files(files)?;
+            }
             crate::application_verbs::develop(crate::application_verbs::DeployArgs {
                 package: Some(args.overlay_root.clone()),
                 release: None,
@@ -103,4 +98,16 @@ pub async fn publish(args: PublishArgs) -> anyhow::Result<()> {
         wamn_dev::source_deploy::publish_built_from_env(&document, &args.package).await?;
     println!("{application} {digest}");
     Ok(())
+}
+
+fn watch_inputs(
+    roots: &[PathBuf],
+    configuration: &std::path::Path,
+) -> anyhow::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let mut inputs = std::collections::BTreeSet::new();
+    for root in roots {
+        inputs.extend(wamn_dev::source_deploy::build_inputs(root)?);
+    }
+    inputs.insert(configuration.canonicalize()?);
+    Ok(inputs.into_iter().partition(|path| path.is_dir()))
 }

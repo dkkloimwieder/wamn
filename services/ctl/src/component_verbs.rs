@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use crate::route_request::request as route_request;
 use anyhow::{Context as _, ensure};
 use clap::{Args, Subcommand};
-use http_body_util::BodyExt as _;
 use serde_json::Value;
 use wamn_catalog::{HostAttachment, HostRouteSet};
 
@@ -137,17 +136,11 @@ pub(crate) async fn invoke(
 ) -> anyhow::Result<Value> {
     let attachment = route(operation)?;
     let request = route_request(host_url, token, attachment, value)?;
-    let response = crate::route_request::client()
-        .request(request)
+    let response = crate::route_request::send(request)
         .await
         .context("call control route")?;
     let status = response.status();
-    let body = http_body_util::Limited::new(response.into_body(), 16 * 1024 * 1024)
-        .collect()
-        .await
-        .map_err(anyhow::Error::from_boxed)
-        .context("read control response")?
-        .to_bytes();
+    let body = response.into_body();
     ensure!(
         status.is_success(),
         "{operation} answered HTTP {status}: {}",

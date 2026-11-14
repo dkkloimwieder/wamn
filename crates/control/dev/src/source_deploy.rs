@@ -143,28 +143,56 @@ async fn build(
     })
 }
 
+/// Source directories and exact configuration inputs consumed by a package build.
+/// The digest and development watcher use this same dependency closure.
+pub fn build_inputs(root: &Path) -> anyhow::Result<BTreeSet<PathBuf>> {
+    let workspace = wamn_compiler::package_workspace(root);
+    let repository = workspace.parent().context("package workspace parent")?;
+    let mut inputs = [
+        root.to_owned(),
+        workspace.join("platform"),
+        repository.join("wit"),
+        repository.join("crates/platform/runtime/wit/deps"),
+        workspace.join("Cargo.toml"),
+        workspace.join("Cargo.lock"),
+        repository.join("Cargo.toml"),
+        repository.join("Cargo.lock"),
+        repository.join("rust-toolchain.toml"),
+        repository.join(".cargo"),
+        workspace.join(".cargo"),
+    ]
+    .into_iter()
+    .filter(|path| path.exists())
+    .collect::<BTreeSet<_>>();
+    if workspace.join("Cargo.toml").is_file() {
+        let manifest = read_package_manifest(root)?;
+        let packages = manifest
+            .components
+            .keys()
+            .map(|name| name.replace('_', "-"))
+            .collect::<Vec<_>>();
+        inputs.extend(wamn_build::source_dependencies(
+            &workspace.join("Cargo.toml"),
+            &packages,
+        )?);
+    }
+    if repository.join("Cargo.toml").is_file() {
+        inputs.extend(wamn_build::source_dependencies(
+            &repository.join("Cargo.toml"),
+            &["wamn-build".into()],
+        )?);
+    }
+    Ok(inputs)
+}
+
 fn content_digest(root: &Path) -> anyhow::Result<String> {
     let workspace = wamn_compiler::package_workspace(root);
     let repository = workspace
         .parent()
         .context("package workspace has no repository parent")?;
     let mut files = BTreeMap::new();
-    for input in [
-        root.to_owned(),
-        workspace.join("platform"),
-        repository.join("wit"),
-        repository.join("crates/platform/runtime/wit/deps"),
-        repository.join("crates/schema"),
-        repository.join("xtask/build"),
-        workspace.join("Cargo.toml"),
-        workspace.join("Cargo.lock"),
-        repository.join("Cargo.toml"),
-        repository.join("Cargo.lock"),
-        repository.join("rust-toolchain.toml"),
-    ] {
-        if input.exists() {
-            hash_inputs(repository, &input, &mut files)?;
-        }
+    for input in build_inputs(root)? {
+        hash_inputs(repository, &input, &mut files)?;
     }
     let manifest = read_package_manifest(root)?;
     for dependency in manifest.base_dependencies.values() {

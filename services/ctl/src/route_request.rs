@@ -48,16 +48,18 @@ pub(crate) fn request(
         .context("build control request")
 }
 
-/// The shared HTTP transport for every CLI route.
-pub(crate) fn client() -> hyper_util::client::legacy::Client<
-    hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
-    http_body_util::Full<bytes::Bytes>,
-> {
-    let connector = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_webpki_roots()
-        .https_or_http()
-        .enable_http1()
-        .build();
-    hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-        .build(connector)
+/// Send CLI requests through the platform HTTP transport.
+pub(crate) async fn send(
+    request: hyper::Request<http_body_util::Full<bytes::Bytes>>,
+) -> anyhow::Result<hyper::Response<bytes::Bytes>> {
+    use http_body_util::BodyExt as _;
+    let (parts, body) = request.into_parts();
+    let body = body.collect().await?.to_bytes();
+    wamn_package_artifact::http_client::HttpClient::shared()?
+        .send(
+            hyper::Request::from_parts(parts, body),
+            std::time::Duration::from_secs(60),
+            16 * 1024 * 1024,
+        )
+        .await
 }

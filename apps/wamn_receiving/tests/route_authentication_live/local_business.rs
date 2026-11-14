@@ -1,4 +1,4 @@
-//! Receiving business histories over the local runtime and disposable PostgreSQL.
+//! Receiving business histories through the installed application.
 
 use sqlx::Row as _;
 #[path = "../../../../services/ctl/src/read_query.rs"]
@@ -8,46 +8,41 @@ use std::fs;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_integration_tests::local_application::{
-    LocalApplication, LocalApplicationConfig, LocalPackage,
-};
+use wamn_integration_tests::product_application::Application;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
+const INSPECTION: &str = "command/record_receipt/record_inspection.sql";
+const LOCK: &str = "command/record_receipt/lock_purchase_order.sql";
+const ACME_OPERATION: &str = "client-acme-receiving:acme/record-receipt";
+const RECEIVING_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
+
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn command_histories() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
     let scratch = ScratchRoot::create()?;
-    let application = start(system.url(), project.url(), scratch.path()).await?;
+    let application = start().await?;
+    let project_url = application.database_url().await?;
+    let system_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")?;
     let result = async {
-        histories(&application, system.url(), project.url(), scratch.path()).await?;
-        acme_inspection(&application, project.url()).await?;
+        histories(&application, &system_url, &project_url, scratch.path()).await?;
+        acme_inspection(&application, &project_url).await?;
         reads(&application).await
     }
     .await;
-    application.shutdown().await?;
+    application.remove().await?;
     result
 }
 
 /// Both screen reads return view lines, and closing an order removes its open lines.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
     let scratch = ScratchRoot::create()?;
-    let application = start(system.url(), project.url(), scratch.path()).await?;
+    let application = start().await?;
+    let project_url = application.database_url().await?;
+    let system_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")?;
     let result = async {
-        let mut client = wamn_postgres::connect(project.url()).await?;
+        let mut client = wamn_postgres::connect(&project_url).await?;
 
         super::bind_fixture_principal(&mut client).await?;
         seed_acme_orders(&mut client).await?;
@@ -63,9 +58,9 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
         let read = async |path: &str, input: Value| -> anyhow::Result<Value> {
             let request_element = input.as_object().context("read input is an object")?;
             let query = read_query::encode_read_query(request_element);
-            let response = http.get(format!("{}{path}?{query}", application.endpoint))
-                .header(reqwest::header::HOST, &application.route_host)
-                .bearer_auth(&application.bearer).send().await?;
+            let response = http.get(format!("{}{path}?{query}", application.routes.endpoint))
+                .header(reqwest::header::HOST, &application.routes.host)
+                .bearer_auth(&application.routes.bearer).send().await?;
             let status = response.status();
             let body: Value = response.json().await?;
             ensure!(status.is_success(), "{path} returned {status}: {body}");
@@ -105,7 +100,7 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
         drop(client);
         Ok(())
     }.await;
-    application.shutdown().await?;
+    application.remove().await?;
     result
 }
 
@@ -115,18 +110,14 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
 /// record_receipt. The same role calling Receiving's record_receipt directly is
 /// refused, because nothing derives that grant from the entry it holds.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
     let scratch = ScratchRoot::create()?;
-    let application = start(system.url(), project.url(), scratch.path()).await?;
+    let application = start().await?;
+    let project_url = application.database_url().await?;
+    let system_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")?;
     let result = async {
-        let mut client = wamn_postgres::connect(project.url()).await?;
+        let mut client = wamn_postgres::connect(&project_url).await?;
 
         super::bind_fixture_principal(&mut client).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(("INSERT INTO receiving.item (id, item_number) VALUES \
@@ -160,9 +151,9 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
         );
         let http = reqwest::Client::new();
         let record = async |path: &str, key: &str, order: &str, line: &str| {
-            http.post(format!("{}{path}", application.endpoint))
-                .header(reqwest::header::HOST, &application.route_host)
-                .bearer_auth(&application.bearer)
+            http.post(format!("{}{path}", application.routes.endpoint))
+                .header(reqwest::header::HOST, &application.routes.host)
+                .bearer_auth(&application.routes.bearer)
                 .json(&json!([{"request_id":key,"value":{
                     "idempotency_key":key,
                     "purchase_order_id":order,
@@ -224,17 +215,10 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
         Ok(())
     }
     .await;
-    application.shutdown().await?;
+    application.remove().await?;
     result
 }
 
-/// `purchase_order.create` numbers the order from the `purchase_order` sequence
-/// and fills its actor fields from the caller
-/// (docs/architecture/data-access.md#declaration): two creates give PO-000001
-/// and PO-000002, each created and updated by the caller. The local runtime
-/// runs no env apply, so the test writes the sequence row that env apply
-/// creates, for the composing application and for Receiving; the application in
-/// host state selects one.
 /// A write-log entry is keyed by the versionless operation, so a key stored
 /// through Acme under one release answers the stored result under the next
 /// (docs/architecture/data-access.md#the-write-log). The local runtime installs
@@ -242,11 +226,7 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
 /// that carries the first one's write-log row and none of its business rows: a
 /// replay that ran again would find no purchase order.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
     let scratch = ScratchRoot::create()?;
     for name in ["first", "second"] {
@@ -264,7 +244,7 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
             .get(0))
     };
     let key = "release-key";
-    let request_element = async |application: &LocalApplication| {
+    let request_element = async |application: &Application| {
         record(
             application,
             "/acme/acme/record_receipt",
@@ -276,24 +256,15 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
         .await
     };
 
-    let (first_system, first_project) = (
-        wamn_test_postgres::database(),
-        wamn_test_postgres::database(),
-    );
-    let first = start(
-        first_system.url(),
-        first_project.url(),
-        &scratch.path().join("first"),
-    )
-    .await?;
-    let mut first_client = connect(first_project.url()).await?;
+    let first: Application = panic!("wamn-eulfr.12.9: no product write-log import across releases");
+    let first_url = first.database_url().await?;
+    let mut first_client = connect(&first_url).await?;
     let stored = async {
         super::bind_fixture_principal(&mut first_client).await?;
         seed_acme_orders(&mut first_client).await?;
         request_element(&first).await
     }
     .await;
-    first.shutdown().await?;
     let stored = stored?;
     ensure!(
         stored[0]["value"]["receipt_id"].is_string(),
@@ -309,18 +280,9 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
     .await?;
     let (request, result): (Vec<u8>, Option<String>) = (claim.get(0), claim.get(1));
 
-    let (second_system, second_project) = (
-        wamn_test_postgres::database(),
-        wamn_test_postgres::database(),
-    );
-    let second = start_with(
-        second_system.url(),
-        second_project.url(),
-        &scratch.path().join("second"),
-        &["client-acme-receiving:quality/approve-inspection"],
-    )
-    .await?;
-    let mut second_client = connect(second_project.url()).await?;
+    let second = start_with().await?;
+    let second_url = second.database_url().await?;
+    let mut second_client = connect(&second_url).await?;
     let replayed = async {
         ensure!(
             release(&mut second_client).await? != release(&mut first_client).await?,
@@ -340,7 +302,6 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
         request_element(&second).await
     }
     .await;
-    second.shutdown().await?;
     let replayed = replayed?;
     ensure!(
         replayed[0]["value"] == stored[0]["value"],
@@ -358,100 +319,16 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
 
 /// Serve Receiving and Acme on the local runtime with the record, read and
 /// Acme routes, under a PAT caller that holds `admin`.
-async fn start(
-    system: &str,
-    project: &str,
-    scratch: &std::path::Path,
-) -> anyhow::Result<LocalApplication> {
-    start_with(system, project, scratch, &[]).await
+async fn start() -> anyhow::Result<Application> {
+    panic!("wamn-eulfr.12.9: no product Receiving data import");
 }
 
-/// [`start`], with the Acme routes of `more_overlay` served too, so the
-/// release differs.
-async fn start_with(
-    system: &str,
-    project: &str,
-    scratch: &std::path::Path,
-    more_overlay: &[&str],
-) -> anyhow::Result<LocalApplication> {
-    let repository = super::repository_root()?;
-    let components = std::path::PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
-    let flow_http = std::path::PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
-    let receiving = repository.join("apps/wamn_receiving");
-    let acme = repository.join("apps/client_acme_receiving");
-    let mut attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
-        wamn_compiler::publication::read_package_attachments(&receiving)?;
-    attachments.retain(|_, attachment| {
-        matches!(
-            wamn_catalog::sealed_operation_reference(route_operation(attachment)),
-            "wamn-receiving:purchase-order/query"
-                | "wamn-receiving:purchase-order/create"
-                | "wamn-receiving:purchase-order/update"
-                | "wamn-receiving:receipt/get"
-                | "wamn-receiving:receiving/record-receipt"
-                | "wamn-receiving:receiving/load-receipt-screen"
-                | "wamn-receiving:receiving/load-open-receipt-lines"
-                | "wamn-receiving:receiving/load-purchase-order-history"
-                | "wamn-receiving:receiving/purchase-order-summary"
-                | "wamn-receiving:location/list"
-        )
-    });
-    let overlay_attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
-        wamn_compiler::publication::read_package_attachments(&acme)?;
-    for (name, attachment) in overlay_attachments {
-        let operation = wamn_catalog::sealed_operation_reference(route_operation(&attachment));
-        if matches!(
-            operation,
-            "client-acme-receiving:acme/record-receipt"
-                | "client-acme-receiving:quality/load-purchase-order-detail"
-        ) || more_overlay.contains(&operation)
-        {
-            attachments.insert(name, attachment);
-        }
-    }
-    std::fs::write(
-        scratch.join("environment.k"),
-        include_str!("../../../../tests/integration/fixtures/local-environments/acme-receiving.k"),
-    )?;
-    LocalApplication::start(LocalApplicationConfig {
-        system_database_url: system,
-        database_url: project,
-        scratch,
-        component_directory: &components,
-        flow_http_wasm: &flow_http,
-        project_env_key: super::identity().project_env_key().as_str(),
-        org: super::identity().org.as_str(),
-        project: super::identity().project.as_str(),
-        environment: super::identity().environment.as_str(),
-        schema: "receiving",
-        caller_role: "admin",
-        route_host: "receiving.local.test",
-        attachments: &attachments,
-        packages: &[
-            LocalPackage {
-                root: &receiving,
-                component: "receiving",
-            },
-            LocalPackage {
-                root: &acme,
-                component: "client_acme_receiving",
-            },
-        ],
-    })
-    .await
+async fn start_with() -> anyhow::Result<Application> {
+    panic!("wamn-eulfr.12.5: no product fixture route override");
 }
 
-/// Acme's inspection statement and one of Receiving's, by path.
-const INSPECTION: &str = "command/record_receipt/record_inspection.sql";
-const LOCK: &str = "command/record_receipt/lock_purchase_order.sql";
-
-/// The versionless write-log operations of the two entries.
-const ACME_OPERATION: &str = "client-acme-receiving:acme/record-receipt";
-const RECEIVING_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
-
-/// One record_receipt request element on `path`, answered as JSON.
 async fn record(
-    application: &LocalApplication,
+    application: &Application,
     path: &str,
     key: &str,
     reference: &str,
@@ -459,9 +336,9 @@ async fn record(
     line: &str,
 ) -> anyhow::Result<Value> {
     let response = reqwest::Client::new()
-        .post(format!("{}{path}", application.endpoint))
-        .header(reqwest::header::HOST, &application.route_host)
-        .bearer_auth(&application.bearer)
+        .post(format!("{}{path}", application.routes.endpoint))
+        .header(reqwest::header::HOST, &application.routes.host)
+        .bearer_auth(&application.routes.bearer)
         .json(&json!([{"request_id":key,"value":{
             "idempotency_key":key,
             "purchase_order_id":order,
@@ -499,19 +376,12 @@ async fn claims(
 /// Acme's record_receipt calls Receiving's operation and records the inspection
 /// in the same host transaction, under its own claim
 /// (docs/architecture/data-access.md#inputs-queries-and-transactions).
-async fn acme_inspection(application: &LocalApplication, database_url: &str) -> anyhow::Result<()> {
+async fn acme_inspection(application: &Application, database_url: &str) -> anyhow::Result<()> {
     let mut project = wamn_postgres::connect(database_url).await?;
 
     super::bind_fixture_principal(&mut project).await?;
     seed_acme_orders(&mut project).await?;
-    member_instances(
-        &mut project,
-        application
-            .component_digests
-            .get("receiving")
-            .context("Receiving was not admitted")?,
-    )
-    .await?;
+    member_instances(&mut project).await?;
 
     // Not required: Receiving runs on its own named instance, the receipt
     // commits, and no row is written.
@@ -675,9 +545,9 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
     // spelled another way is the same request under Acme's canonical form.
     let reordered = async |lines: [&str; 2], occurred_at: &str| -> anyhow::Result<Value> {
         let response = reqwest::Client::new()
-            .post(format!("{}/acme/acme/record_receipt", application.endpoint))
-            .header(reqwest::header::HOST, &application.route_host)
-            .bearer_auth(&application.bearer)
+            .post(format!("{}/acme/acme/record_receipt", application.routes.endpoint))
+            .header(reqwest::header::HOST, &application.routes.host)
+            .bearer_auth(&application.routes.bearer)
             .json(&json!([{"request_id":"part-reordered","value":{
                 "idempotency_key":"part-reordered",
                 "purchase_order_id":"00000000-0000-0000-0000-000000000725",
@@ -777,15 +647,19 @@ async fn seed_acme_orders(project: &mut sqlx::PgConnection) -> anyhow::Result<()
 /// and not Acme's, and Acme's holds Acme's and no Receiving statement, so a
 /// Receiving statement named through Acme's instance is unknown to it
 /// (docs/architecture/components.md#grouping-and-publication).
-async fn member_instances(
-    project: &mut sqlx::PgConnection,
-    receiving_digest: &str,
-) -> anyhow::Result<()> {
+async fn member_instances(project: &mut sqlx::PgConnection) -> anyhow::Result<()> {
     let bytes: Vec<u8> = sqlx::query("SELECT canonical_bytes FROM catalog.releases")
         .fetch_one(&mut *project)
         .await?
         .get(0);
     let manifest: Value = serde_json::from_slice(&bytes)?;
+    let receiving_digest = manifest["components"]
+        .as_array()
+        .context("release components")?
+        .iter()
+        .find(|component| component["package-id"] == "wamn_receiving")
+        .and_then(|component| component["descriptor"]["component-digest"].as_str())
+        .context("Receiving component digest")?;
     let acme = manifest["components"]
         .as_array()
         .and_then(|components| {
@@ -837,7 +711,7 @@ async fn member_instances(
 /// outside any host transaction, so the refusals of run, run-stream and begin
 /// inside one leave them unchanged
 /// (docs/architecture/data-access.md#inputs-queries-and-transactions).
-async fn reads(application: &LocalApplication) -> anyhow::Result<()> {
+async fn reads(application: &Application) -> anyhow::Result<()> {
     let http = reqwest::Client::new();
     let order = "00000000-0000-0000-0000-000000000720";
     for (path, request_element) in [
@@ -856,9 +730,9 @@ async fn reads(application: &LocalApplication) -> anyhow::Result<()> {
         };
         let query = read_query::encode_read_query(&request_element);
         let response = http
-            .get(format!("{}{path}?{query}", application.endpoint))
-            .header(reqwest::header::HOST, &application.route_host)
-            .bearer_auth(&application.bearer)
+            .get(format!("{}{path}?{query}", application.routes.endpoint))
+            .header(reqwest::header::HOST, &application.routes.host)
+            .bearer_auth(&application.routes.bearer)
             .send()
             .await?;
         let status = response.status();
@@ -878,29 +752,13 @@ async fn reads(application: &LocalApplication) -> anyhow::Result<()> {
 }
 
 async fn histories(
-    application: &LocalApplication,
-    system_url: &str,
-    database_url: &str,
+    _application: &Application,
+    _system_url: &str,
+    _database_url: &str,
     evidence: &std::path::Path,
 ) -> anyhow::Result<()> {
     let path = evidence.join("receiving-correctness.jsonl");
-    let auth_nats = &application.auth_nats.connection;
-    let inputs = serde_json::from_value(json!({
-        "auth_nats": {
-            "url":auth_nats.nats_url,"ca":auth_nats.nats_tls_ca,
-            "cert":auth_nats.nats_tls_cert,"key":auth_nats.nats_tls_key,
-            "server_name":auth_nats.nats_tls_server_name,
-        },
-        "project_pg_url":database_url,"system_pg_url":system_url,
-        "org":super::identity().org.as_str(),"project":super::identity().project.as_str(),
-        "environment":super::identity().environment.as_str(),"route_endpoint":application.endpoint,
-        "route_host":application.route_host,"operator_secret":application.caller_secret_path,
-        "project_env_key":super::identity().project_env_key().as_str(),"caller_role":"admin","evidence_file":path,
-        "component_digests":application.component_digests,
-        "packages":super::released_package_roots(),
-        "record_receipt_operation":wamn_test_infrastructure::operations::sealed("wamn-receiving:receiving/record-receipt"),
-        "seed":7701,"cases":16,"history":null,
-    }))?;
+    let inputs = panic!("wamn-eulfr.12.10: no product command-history fault fixture");
     let cancellation = pg_walstream::CancellationToken::new();
     let _cancel_on_exit = cancellation.clone().drop_guard();
     tokio::task::spawn_blocking(move || {
@@ -929,10 +787,4 @@ async fn histories(
         "Receiving command history results are absent or incomplete"
     );
     Ok(())
-}
-
-fn route_operation(attachment: &wamn_catalog::ServingAttachment) -> &str {
-    match &attachment.target {
-        wamn_catalog::AttachmentTarget::Route { operation, .. } => operation,
-    }
 }

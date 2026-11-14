@@ -8,6 +8,33 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 
+/// Read one versioned credential through the configured store.
+pub(crate) async fn read_secret(
+    reference: &str,
+    version: &str,
+    store: Option<&dyn wamn_kubernetes::Store>,
+) -> anyhow::Result<String> {
+    let configured;
+    let backend = if let Some(backend) = store {
+        backend
+    } else {
+        configured =
+            wamn_kubernetes::kubernetes::KubernetesStore::in_cluster().map_err(|error| {
+                let local = error.type_ == Some(wamn_kubernetes::ErrorType::NoCluster);
+                let error = anyhow::Error::new(error);
+                if local {
+                    let reason = "no credential store in local mode";
+                    tracing::warn!("{reason}");
+                    error.context(reason)
+                } else {
+                    error
+                }
+            })?;
+        &configured
+    };
+    String::from_utf8(backend.get(reference, version).await?).context("credential is not UTF-8")
+}
+
 /// Connection credentials targeted by the authenticated reader login.
 #[derive(Clone)]
 pub struct ConnectionCredentials {
@@ -82,27 +109,8 @@ impl ConnectionCredentials {
         }
         let reference: String = row.get(1);
         let version: String = row.get(2);
-        let configured;
-        let backend: &dyn wamn_kubernetes::Store = if let Some(backend) = self.store.as_deref() {
-            backend
-        } else {
-            configured =
-                wamn_kubernetes::kubernetes::KubernetesStore::in_cluster().map_err(|error| {
-                    let local = error.type_ == Some(wamn_kubernetes::ErrorType::NoCluster);
-                    let error = anyhow::Error::new(error);
-                    if local {
-                        let reason = "no credential store in local mode";
-                        tracing::warn!("{reason}");
-                        error.context(reason)
-                    } else {
-                        error
-                    }
-                })?;
-            &configured
-        };
-        let value = backend.get(&reference, &version).await?;
         Ok(Some(
-            String::from_utf8(value).context("credential is not UTF-8")?,
+            read_secret(&reference, &version, self.store.as_deref()).await?,
         ))
     }
 

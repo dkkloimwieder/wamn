@@ -266,7 +266,7 @@ async fn install_fresh(
     .execute(&mut project)
     .await
     .map(drop)?;
-    super::install_journey_platform_base_grants(&mut project, super::PLATFORM_DOMAIN).await?;
+    panic!("wamn-eulfr.12.10: no product fresh-install comparison fixture");
     let roots = packages
         .iter()
         .map(|package| {

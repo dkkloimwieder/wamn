@@ -1,80 +1,32 @@
 //! WMS business operations over real local components and PostgreSQL.
 
 use sqlx::Row as _;
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use wamn_catalog::ServingAttachment;
-use wamn_integration_tests::local_application::{
-    LocalApplication, LocalApplicationConfig, LocalPackage,
-};
-use wamn_test_infrastructure::scratch::ScratchRoot;
+use wamn_integration_tests::product_application::Application;
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn operations_and_replay() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
-    );
-    let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
-    let scratch = ScratchRoot::create()?;
+    let application: Application = panic!("wamn-eulfr.12.9: no product revision import");
+    let project_url = application.database_url().await?;
     let app = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .context("the WMS test crate has an application parent")?
+        .context("WMS source")?
         .to_owned();
-    let mut attachments: BTreeMap<String, ServingAttachment> =
-        wamn_compiler::publication::read_package_attachments(&app)?;
-    // Business assertions use the authored direct move. Deployed tests retain
-    // the composed label/blob boundary and its partial-completion assertions.
-    attachments
-        .get_mut("inventory-move-http")
-        .context("WMS declares the move route")?
-        .target = wamn_catalog::AttachmentTarget::Route {
-        component: "wms".into(),
-        operation: wamn_test_infrastructure::operations::sealed("wamn-wms:inventory/move"),
-    };
-    let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
-    let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
-    std::fs::write(
-        scratch.path().join("environment.k"),
-        include_str!("../../../tests/integration/fixtures/local-environments/wms.k"),
-    )?;
-    let application = LocalApplication::start(LocalApplicationConfig {
-        system_database_url: system.url(),
-        database_url: project.url(),
-        scratch: scratch.path(),
-        component_directory: &components,
-        flow_http_wasm: &flow_http,
-        project_env_key: crate::environment::identity().project_env_key().as_str(),
-        org: crate::environment::identity().org.as_str(),
-        project: crate::environment::identity().project.as_str(),
-        environment: crate::environment::identity().environment.as_str(),
-        schema: crate::environment::SCHEMA,
-        caller_role: "admin",
-        route_host: "wms.local.test",
-        packages: &[LocalPackage {
-            root: &app,
-            component: "wms",
-        }],
-        attachments: &attachments,
-    })
-    .await?;
-    let mut admin = wamn_postgres::connect(project.url()).await?;
+    let mut admin = wamn_postgres::connect(&project_url).await?;
 
     // A revision near the top of int4, with room for the moves that follow.
     let initial_revision = 2_147_483_547_i64;
     crate::business_fixture::seed_fixture(&mut admin, initial_revision).await?;
     let runtime = crate::business_fixture::runtime_phase();
     let route = crate::wms_runtime_live::Route::local(
-        application.endpoint.clone(),
-        application.route_host.clone(),
-        application.bearer.clone(),
+        application.routes.endpoint.clone(),
+        application.routes.host.clone(),
+        application.routes.bearer.clone(),
     );
     crate::inventory_commands_live::assert_outcomes(&mut admin).await?;
-    crate::inventory_commands_live::assert_fresh_reads(&mut admin, project.url()).await?;
+    crate::inventory_commands_live::assert_fresh_reads(&mut admin, &project_url).await?;
     crate::wms_runtime_live::assert_contention_and_replay(&route, &runtime, initial_revision)
         .await?;
     crate::wms_runtime_live::assert_remaining_operations(&route, &runtime).await?;
@@ -100,6 +52,6 @@ async fn operations_and_replay() -> anyhow::Result<()> {
         "every balance equals the sum of its transactions: {disagreements:?}"
     );
     drop(admin);
-    application.shutdown().await?;
+    application.remove().await?;
     Ok(())
 }

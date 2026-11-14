@@ -1,8 +1,5 @@
 //! Bounded child-process execution shared by repository command owners.
 
-pub(super) mod plan;
-use plan::diagnostic_tail;
-
 use std::os::unix::process::CommandExt as _;
 use std::process::{Output, Stdio};
 use std::time::Duration;
@@ -136,4 +133,8 @@ pub async fn execute(
         stdout: stdout_bytes,
         stderr: stderr_bytes,
     })
+}
+
+fn diagnostic_tail(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(DIAGNOSTIC_BYTES)..])
 }

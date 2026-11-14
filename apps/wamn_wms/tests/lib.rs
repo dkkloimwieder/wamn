@@ -4,9 +4,6 @@
 mod wms_runtime_live;
 
 #[cfg(test)]
-mod environment;
-
-#[cfg(test)]
 mod business_fixture;
 
 #[cfg(test)]

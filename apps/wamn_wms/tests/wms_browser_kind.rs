@@ -6,20 +6,8 @@ use sqlx::Row as _;
 use std::path::Path;
 use std::process::Stdio;
 use wamn_test_infrastructure::scratch::ScratchRoot;
-#[expect(
-    dead_code,
-    reason = "The shared fixture also serves application administration cases."
-)]
-#[path = "../../../tests/integration/tests/support/application.rs"]
-mod product;
 mod release_bindings;
-#[expect(
-    dead_code,
-    reason = "The shared request client also serves fixture batch tests."
-)]
-#[path = "../../../tests/integration/tests/support/write_log_routes.rs"]
-mod write_log_routes;
-use product::Application;
+use wamn_integration_tests::product_application::Application;
 
 const LOCATION_A_ID: &str = "00000000-0000-0000-0000-000000000201";
 const LOCATION_B_ID: &str = "00000000-0000-0000-0000-000000000202";

@@ -20,9 +20,7 @@ use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType, FlowHttpRouting};
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_runtime::plugins::route_authentication::{
-    PlatformRouteAuthenticator, SessionRouteAuthentication,
-};
+use wamn_runtime::plugins::route_authentication::PlatformRouteAuthenticator;
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
@@ -238,14 +236,10 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
 }
 
 fn routing(
-    authentication: Arc<SessionRouteAuthentication>,
+    authentication: Arc<PlatformRouteAuthenticator>,
     modes: &[&str],
 ) -> anyhow::Result<FlowHttpRouting> {
-    Ok(
-        FlowHttpRouting::new(Some(load_release(modes)?)).with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_session_authentication(authentication),
-        )),
-    )
+    Ok(FlowHttpRouting::new(Some(load_release(modes)?)).with_authenticator(authentication))
 }
 
 async fn accepted(route: &FlowHttpRouting, body: &Value) -> AuthenticatedCaller {
@@ -386,14 +380,14 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     // This reader watches no auth bucket, so it keeps no auth answer and
     // reads every request (wamn-f2qud).
     let reader = permission_reader(url.as_str())?;
-    let authentication = Arc::new(SessionRouteAuthentication::new(
-        verifier.clone(),
-        identity_reader.clone(),
+    let authentication = Arc::new(PlatformRouteAuthenticator::for_test(
         Arc::clone(&reader),
         PROJECT,
+        Some(identity_reader.clone()),
+        Some(verifier.clone()),
     ));
     let route = routing(
-        Arc::<SessionRouteAuthentication>::clone(&authentication),
+        Arc::<PlatformRouteAuthenticator>::clone(&authentication),
         &["session"],
     )?;
     let mixed = routing(authentication, &["pat", "session"])?;
@@ -457,14 +451,12 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     assert_eq!(granted.rows_added, 1, "the unserved reference is stored");
     let serving = load_release_serving(&["session"], &[READ, WRITE, APPROVE])?;
     let later = FlowHttpRouting::new(Some(Arc::clone(&serving))).with_authenticator(Arc::new(
-        PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
-            SessionRouteAuthentication::new(
-                verifier,
-                identity_reader,
-                permission_reader(url.as_str())?,
-                PROJECT,
-            ),
-        )),
+        PlatformRouteAuthenticator::for_test(
+            permission_reader(url.as_str())?,
+            PROJECT,
+            Some(identity_reader),
+            Some(verifier),
+        ),
     ));
     assert!(
         accepted(&later, &first).await.permits(APPROVE),

@@ -79,10 +79,6 @@ impl Fixture {
         let postgres = Arc::new(crate::plugins::wamn_postgres::WamnPostgres::with_provider(
             Arc::new(crate::plugins::wamn_postgres::StaticCredentialProvider::new(projects, None)),
         ));
-        let identity = wamn_postgres::pool(self.credentials.database.url(), 4)
-            .await
-            .unwrap();
-
         let facts = Arc::new(crate::connection_facts::ConnectionFacts::new(
             Arc::clone(&self.memory),
             self.changes.clone(),
@@ -92,12 +88,9 @@ impl Fixture {
             project,
             "dev",
         ));
-        let authentication = Arc::new(RouteAuthentication::new(identity, postgres, project));
-        Arc::new(
-            PlatformRouteAuthenticator::default()
-                .with_authentication(authentication)
-                .with_signature_authentication(facts, project),
-        )
+        Arc::new(PlatformRouteAuthenticator::new(
+            postgres, facts, project, None,
+        ))
     }
 
     async fn plugin(&mut self, secret: &str, project: &str) -> FlowHttpRouting {

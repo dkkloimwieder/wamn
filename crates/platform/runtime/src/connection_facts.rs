@@ -240,12 +240,7 @@ impl ConnectionFacts {
         }
         self.memory
             .oauth_tokens
-            .entries
-            .lock()
-            .expect("OAuth token cache lock")
-            .retain(|(connection, generation), _| {
-                connection != id || fact.is_some_and(|fact| fact.active_generation == *generation)
-            });
+            .retain_generation(*id, fact.map(|fact| fact.active_generation));
         let mut seen = self.seen.lock().unwrap_or_else(PoisonError::into_inner);
         let old = match fact {
             Some(fact) => seen.insert(*id, fact.clone()),

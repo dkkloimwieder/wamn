@@ -31,7 +31,6 @@ use wamn_runtime::plugins::connection_http::{
     InvocationEntry,
 };
 use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
-use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::valid_runner;
 use wamn_runtime::plugins::wamn_postgres::{
     PreparedStatementMembers, PreparedStatementSet, ReleaseIdentity, SessionIdentity,
@@ -40,6 +39,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
+use wash_runtime::plugin::wasi_logging::TracingLogger;
 
 use wamn_engine::operation::{
     invocation_policy, native_call, native_workload, next_scope, node_types,
@@ -168,7 +168,7 @@ pub struct OperationHost {
     /// Shared by every driver in this process, independently of fresh stores.
     http_transport: Arc<HttpTransport>,
     facts: Arc<ConnectionFacts>,
-    logging: Arc<WamnLogging>,
+    logging: Arc<TracingLogger>,
     allowed_hosts: Arc<[AllowedHost]>,
     pub release: Arc<LoadedRelease>,
     pub source: Arc<dyn ArtifactSource>,
@@ -249,7 +249,7 @@ impl OperationHost {
         postgres: Arc<WamnPostgres>,
         http_transport: Arc<HttpTransport>,
         facts: Arc<ConnectionFacts>,
-        logging: Arc<WamnLogging>,
+        logging: Arc<TracingLogger>,
         allowed_hosts: Arc<[AllowedHost]>,
         release: Arc<LoadedRelease>,
         source: Arc<dyn ArtifactSource>,

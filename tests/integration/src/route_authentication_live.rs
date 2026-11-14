@@ -19,18 +19,20 @@ use wamn_platform_identity::{
     PrincipalType, assign_project_role, create_service, create_user, disable_principal, issue_pat,
     operator_subject, resolve_subject, revoke_pat,
 };
-use wamn_runtime::plugins::route_authentication::{
-    PlatformRouteAuthenticator, RouteAuthentication, SessionRouteAuthentication,
-};
+use wamn_runtime::plugins::route_authentication::PlatformRouteAuthenticator;
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
 
 use crate::fixture_membership::{self, MembershipRequest};
-use wamn_dev::dev::environment::{
-    ENVIRONMENT, JourneyTarget, ORG, PROJECT, PROJECT_ENV_KEY, connect, provision_route,
-    reset_control_store,
-};
+use wamn_postgres::connect;
+const ORG: &str = "acme";
+const PROJECT: &str = "receiving";
+const ENVIRONMENT: &str = "dev";
+fn project_env_key() -> String {
+    wamn_registry::project_env_key(ORG, PROJECT, ENVIRONMENT)
+}
+
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 use crate::session_fixture;
@@ -58,33 +60,6 @@ const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 enum Refusal {
     Authentication(u16, String),
     Permission(Box<str>),
-}
-
-async fn reset_and_install_control(admin: &mut Client) -> anyhow::Result<()> {
-    reset_control_store(admin).await?;
-    // The fixture writes the policies, principals and tokens as wamn:provisioning.
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .execute(&mut *admin)
-        .await
-        .map(|result| result.rows_affected())
-        .context("bind wamn:provisioning for the fixture session")?;
-    sqlx::raw_sql(r#"RESET ROLE;
-               SET ROLE wamn_system;
-               INSERT INTO registry.orgs (id, placement_type, pool_cluster)
-               VALUES ('acme', 'pooled', 'route-auth-pg18');
-               INSERT INTO registry.env_policies
-                 (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
-               VALUES
-                 ('acme', 'dev', '"own"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18'),
-                 ('acme', 'prod', '"own"'::jsonb, 2, 1, '1Gi', '1', '1Gi', 'postgres:18');
-               RESET ROLE;"#).execute(&mut *admin).await.map(drop)
-        .context("seed the auth-only test's declared environment policies")?;
-    Ok(())
 }
 
 /// Write the operator service's project `user` row, as `reconcile-run-plane`
@@ -117,7 +92,7 @@ async fn grant_service_operator(
         .map(drop)?;
     let outcome = wamn_platform_identity::application::mutate_grant(
         project,
-        PROJECT_ENV_KEY,
+        project_env_key().as_str(),
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
             user_id: principal.id().to_string().as_str(),
@@ -317,7 +292,7 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &bytes,
         "route-authentication-live fixture",
-        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT)
+        wamn_engine::release_manifest::ReleaseTarget::new(project_env_key().as_str(), ENVIRONMENT)
             .with_applications(
                 [(
                     "inventory".to_owned(),
@@ -357,9 +332,7 @@ async fn routing(
 ) -> anyhow::Result<FlowHttpRouting> {
     Ok(
         FlowHttpRouting::new(Some(loaded_release)).with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_authentication(Arc::new(
-                RouteAuthentication::new(identity_reader, postgres, PROJECT),
-            )),
+            PlatformRouteAuthenticator::for_test(postgres, PROJECT, Some(identity_reader), None),
         )),
     )
 }
@@ -530,11 +503,12 @@ async fn assert_user_environment_membership(
     let verifier =
         wamn_identity_protocol::verifier::SessionVerifier::new(server.cache().0, ORG, &audience)?;
     let session_routing = FlowHttpRouting::new(Some(Arc::clone(&loaded_release)))
-        .with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
-                SessionRouteAuthentication::new(verifier, identity_reader, postgres, PROJECT),
-            )),
-        ));
+        .with_authenticator(Arc::new(PlatformRouteAuthenticator::for_test(
+            postgres,
+            PROJECT,
+            Some(identity_reader),
+            Some(verifier),
+        )));
     let route_auth = &session_routing;
     let loaded_release = loaded_release.as_ref();
     let authorization = format!(
@@ -602,11 +576,7 @@ async fn assert_user_environment_membership(
     .execute(&mut other_project)
     .await
     .map(drop)?;
-    wamn_dev::dev::environment::install_journey_platform_base_grants(
-        &mut other_project,
-        "example.test",
-    )
-    .await?;
+    panic!("wamn-eulfr.12.10: no product second-environment fault fixture");
     sqlx::query(
         "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:other-environment-fixture', false)",
@@ -848,13 +818,10 @@ async fn assert_user_environment_membership(
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_IDENTITY_BINARY"]
 async fn production_operator_authentication_and_operation_authorization() {
+    panic!("wamn-eulfr.12.10: no product issuer fault setup");
     use futures_util::FutureExt as _;
     use std::os::unix::fs::DirBuilderExt as _;
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_IDENTITY_BINARY",
-    );
 
     let results = std::env::var_os("TMPDIR")
         .map_or_else(|| PathBuf::from("/var/tmp"), PathBuf::from)
@@ -906,17 +873,7 @@ async fn production_operator_authentication_and_operation_authorization() {
 }
 
 async fn production_operator_authentication(root: &Path) {
-    wamn_dev::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
-    // Provisioning changes roles and database grants of the whole server, so
-    // the test starts its own.
-    let mut server =
-        wamn_test_infrastructure::postgres::start(&[]).expect("start the test PostgreSQL server");
-    let admin_url = server
-        .create_database("wamn_system")
-        .expect("create the wamn_system database")
-        .url()
-        .to_owned();
-
+    let admin_url: String = panic!("wamn-eulfr.12.10: no product issuer fault setup");
     let mut admin = connect(&admin_url).await.expect("connect admin");
     let version: i32 = sqlx::query("SHOW server_version_num")
         .fetch_one(&mut admin)
@@ -929,41 +886,26 @@ async fn production_operator_authentication(root: &Path) {
         version >= 180_000,
         "the condition requires PostgreSQL 18 or newer"
     );
-    reset_and_install_control(&mut admin)
-        .await
-        .expect("install the control plane");
-    let route = provision_route(
-        &JourneyTarget::receiving(),
-        &admin_url,
-        &mut admin,
-        root,
-        None,
-    )
-    .await
-    .expect("mint the production operator service");
+    let (principal_subject, database_url, token, token_prefix): (String, String, String, String) =
+        panic!("wamn-eulfr.12.10: no product issuer fault setup");
     assert_eq!(
-        route.principal_subject,
+        principal_subject,
         operator_subject(ORG, PROJECT, ENVIRONMENT).expect("derive expected route subject")
     );
 
-    let mut project = connect(&route.database_url)
+    let mut project = connect(&database_url)
         .await
         .expect("connect project database");
-    install_project_and_reconcile(&mut project, &route.database_url)
+    install_project_and_reconcile(&mut project, &database_url)
         .await
         .expect("install and reconcile the route-authentication fixture");
-    grant_service_operator(
-        &admin_url,
-        &mut project,
-        &route.database_url,
-        &route.principal_subject,
-    )
-    .await
-    .expect("grant the authored role to the operator service");
+    grant_service_operator(&admin_url, &mut project, &database_url, &principal_subject)
+        .await
+        .expect("grant the authored role to the operator service");
 
     let identity_url = wamn_test_infrastructure::credentials::database_login(
         &admin_url,
-        Some(&route.database_url),
+        Some(&database_url),
         ORG,
         PROJECT,
         ENVIRONMENT,
@@ -976,7 +918,7 @@ async fn production_operator_authentication(root: &Path) {
         .expect("identity reader pool");
     let http_url = wamn_test_infrastructure::credentials::database_login(
         &admin_url,
-        Some(&route.database_url),
+        Some(&database_url),
         ORG,
         PROJECT,
         ENVIRONMENT,
@@ -1008,7 +950,7 @@ async fn production_operator_authentication(root: &Path) {
     .expect("test user environment membership through the production CLI and route authentication");
 
     let mut router_admissions = 0;
-    let valid = format!("Bearer {}", route.token);
+    let valid = format!("Bearer {}", token);
     invoke(
         &route_auth,
         &loaded_release,
@@ -1019,8 +961,8 @@ async fn production_operator_authentication(root: &Path) {
     .expect("production-minted caller reaches the production router authorization boundary");
     assert_eq!(router_admissions, 1);
 
-    let forged = format!("Bearer {}", flip_last_hex_digit(&route.token));
-    let expired = issue_pat_for_subject(&mut admin, &route.principal_subject, "expired")
+    let forged = format!("Bearer {}", flip_last_hex_digit(&token));
+    let expired = issue_pat_for_subject(&mut admin, &principal_subject, "expired")
         .await
         .expect("mint expiring PAT");
     sqlx::query(
@@ -1032,7 +974,7 @@ async fn production_operator_authentication(root: &Path) {
     .await
     .map(|result| result.rows_affected())
     .expect("expire PAT in the server clock");
-    let revoked = issue_pat_for_subject(&mut admin, &route.principal_subject, "revoked")
+    let revoked = issue_pat_for_subject(&mut admin, &principal_subject, "revoked")
         .await
         .expect("mint revocable PAT");
     assert!(
@@ -1089,7 +1031,7 @@ async fn production_operator_authentication(root: &Path) {
         assert_eq!(router_admissions, 1, "{label} reached router admission");
     }
 
-    let principal = resolve_subject(&mut admin, PrincipalType::Service, &route.principal_subject)
+    let principal = resolve_subject(&mut admin, PrincipalType::Service, &principal_subject)
         .await
         .expect("resolve the operator service")
         .expect("the operator service remains stored");
@@ -1187,7 +1129,7 @@ async fn production_operator_authentication(root: &Path) {
     // identity.pats keeps passing. It is the sibling of the permission case
     // below, and the assertion an authorization cache breaks first
     // (wamn-0h0g.17.21).
-    let in_use = issue_pat_for_subject(&mut admin, &route.principal_subject, "revoked in use")
+    let in_use = issue_pat_for_subject(&mut admin, &principal_subject, "revoked in use")
         .await
         .expect("mint a PAT to revoke after it authenticates");
     let in_use_authorization = format!("Bearer {}", in_use.0);
@@ -1292,6 +1234,6 @@ async fn production_operator_authentication(root: &Path) {
         "identity outage reached router admission"
     );
 
-    assert_eq!(route.token_prefix.len(), 16);
+    assert_eq!(token_prefix.len(), 16);
     drop(project);
 }

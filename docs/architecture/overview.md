@@ -313,9 +313,12 @@ Five layers run a component, and each layer depends only on the layers below it:
 
 1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) owns run admission, leases, settlement and pruning on authorized connections. Concrete operation owners hold their own claim storage.
 2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, `invoke_operation`, and the host side of the `wamn:operation` binding that the separate route component calls. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
-3. [`wamn-runtime`](../../crates/platform/runtime/src/lib.rs) holds the plugin set: Postgres, JetStream, blobstore, HTTP connections, credentials, logging, route authentication, and the OCI registry source. `WamnPostgres` supplies authorized transaction transport for run persistence.
+3. [`wamn-runtime`](../../crates/platform/runtime/src/lib.rs) holds the plugin set: Postgres, JetStream, blobstore, HTTP connections, credentials, route authentication, and the component registry adapter. `WamnPostgres` supplies authorized transaction transport for run persistence.
 4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) holds `OperationHost`, native platform endpoints and release readiness.
 5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) owns the private graph walk, the node invocation driver, the durable queue, and the workflow contract (start, park, release, list). It indexes catalog graphs directly. A route never enters it.
+
+`wamn-package-artifact` owns shared registry clients, release artifact transfer and the pod metadata service.
+The host uses wash-runtime's logger and its own tracing exporter.
 
 The services compose these layers.
 
@@ -325,9 +328,9 @@ The workflow crate resolves and drives runs. The run-state crate owns their pers
 The [capability owners](capabilities.md) supply database, HTTP, object storage, and event access without guest credentials.
 
 Development publishes the same artifacts and deploys through the same control routes as other environments.
-It requires the expected file digests and a database marker tied to the `project_env_key`, environment, and physical database creation.
-Local facts supply released wiring, connection requirements, and binding selections without changing the frozen catalog records.
-The normal runtime still owns project authority, run leases, credential generations, and effects.
+Each changed source snapshot gets an immutable prerelease coordinate derived from its build inputs.
+The installed platform resolves released wiring, connection requirements, and bindings from its normal registry and release records.
+The runtime owns project authority, run leases, credential generations, and effects.
 
 ## Cloud providers
 

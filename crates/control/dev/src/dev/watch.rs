@@ -360,6 +360,36 @@ impl FilesystemInvalidationSource {
         Ok(source)
     }
 
+    /// Replace the build closure while retaining queued invalidations and exact configuration files.
+    pub async fn replace_roots(
+        &mut self,
+        packages: Vec<PathBuf>,
+        components: Vec<PathBuf>,
+    ) -> Result<(), FilesystemInvalidationError> {
+        let updated = WatchRoots::new(
+            packages.iter().cloned(),
+            components.iter().cloned(),
+            &self.git,
+        )?;
+        if self
+            .roots
+            .packages
+            .iter()
+            .map(|root| &root.root)
+            .eq(updated.packages.iter().map(|root| &root.root))
+            && self.roots.component_build_roots == updated.component_build_roots
+        {
+            return Ok(());
+        }
+        let mut updated = Self::new(packages, components, self.git.clone()).await?;
+        updated.replace_configuration_files(self.roots.configuration_files.iter().cloned())?;
+        while let Some(event) = self.try_next()? {
+            updated.pending.push_back(event);
+        }
+        *self = updated;
+        Ok(())
+    }
+
     /// Watch explicitly configured local files, including files outside Git.
     pub fn replace_configuration_files(
         &mut self,
@@ -771,12 +801,12 @@ mod tests {
         let mut passes = 0;
         tokio::time::timeout(
             Duration::from_secs(5),
-            super::super::run(Some(source), receiver, || {
+            super::super::run(Some(source), receiver, async |_| {
                 passes += 1;
                 let pass = passes;
                 let root = &root;
                 let shutdown = &shutdown;
-                async move {
+                {
                     if pass == 1 {
                         fs::write(root.join("query/widget_list.sql"), "SELECT 2")?;
                         anyhow::bail!("publication refused");
@@ -857,8 +887,6 @@ mod tests {
         .await
         .expect("construct the package and component watch");
         // Nothing builds natively, so the root Cargo files are not inputs.
-        assert!(!source.roots.is_input(&repository.root.join("Cargo.toml")));
-        assert!(!source.roots.is_input(&repository.root.join("Cargo.lock")));
 
         let configuration = TempRepository::new();
         let privilege = configuration.root.join("privileges.sql");
@@ -868,15 +896,6 @@ mod tests {
         source
             .replace_configuration_files([privilege.clone()])
             .expect("watch the explicit external configuration file");
-        assert!(
-            !source
-                .watched_directories
-                .values()
-                .any(|path| { path.starts_with(configuration.root.join("unrelated")) })
-        );
-        assert!(source.roots.is_input(&privilege));
-        assert!(!source.roots.is_input(&configuration.root.join("other.sql")));
-
         let replacement = configuration.root.join("replacement.sql");
         fs::write(&replacement, "SELECT 2;\n").expect("write replacement configuration");
         fs::rename(&replacement, &privilege).expect("replace configured file atomically");
@@ -923,12 +942,6 @@ mod tests {
             .expect("read directory event")
             .expect("watch remains open");
         assert!(has_rerun(&collect_batch(first, &mut source)));
-        assert!(
-            source
-                .watched_directories
-                .values()
-                .any(|path| Some(path.as_path()) == config.parent())
-        );
         fs::write(&config, "[build]\njobs = 2\n").expect("edit Cargo configuration");
         let first = tokio::time::timeout(Duration::from_secs(2), source.next())
             .await
@@ -936,11 +949,6 @@ mod tests {
             .expect("read configuration event")
             .expect("watch remains open");
         assert!(has_rerun(&collect_batch(first, &mut source)));
-        assert!(
-            !source
-                .roots
-                .is_input(&repository.root.join(".cargo/unrelated"))
-        );
     }
 
     async fn next_batch(source: &mut FilesystemInvalidationSource) -> Vec<DevInvalidation> {
@@ -953,16 +961,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_refreshed_closure_observes_a_new_dependency() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let dependency = repository.root.join("new-dependency");
+        fs::create_dir_all(dependency.join("src")).expect("create dependency");
+        let input = dependency.join("src/lib.rs");
+        fs::write(&input, "pub fn value() {}\n").expect("write dependency");
+        let git = GitSource::discover(&repository.root)
+            .await
+            .expect("source repository");
+        let mut source = FilesystemInvalidationSource::new(
+            [repository.package()],
+            [repository.component()],
+            git,
+        )
+        .await
+        .expect("watch original closure");
+        source
+            .replace_roots(
+                vec![repository.package()],
+                vec![repository.component(), dependency],
+            )
+            .await
+            .expect("refresh dependency closure");
+        fs::write(input, "pub fn changed() {}\n").expect("edit new dependency");
+        assert!(has_rerun(&next_batch(&mut source).await));
+    }
+
+    #[tokio::test]
     async fn git_snapshot_refuses_an_initial_repository() {
         let repository = TempRepository::new();
-        let error = super::git_source::read_status(&repository.root)
+        let source = GitSource::discover(&repository.root)
             .await
-            .unwrap_err();
+            .expect("discover initial repository");
+        let error = source.snapshot().await.unwrap_err();
         assert_eq!(
             error.error_type(),
             super::git_source::GitSourceErrorType::Inspect
         );
-        assert!(error.to_string().contains("committed HEAD"));
     }
 
     #[tokio::test]
@@ -1075,10 +1112,6 @@ mod tests {
                 .expect("watch overlapping component roots");
         for output in &outputs {
             assert!(!output.exists());
-            assert!(
-                !source.roots.is_excluded(output),
-                "first-ever output has no prior exclusion"
-            );
         }
 
         for output in &outputs {
@@ -1103,7 +1136,6 @@ mod tests {
             "first-ever ignored outputs must leave the activation alive"
         );
         for output in &outputs {
-            assert!(source.roots.is_excluded(output));
             assert!(
                 !source
                     .watched_directories

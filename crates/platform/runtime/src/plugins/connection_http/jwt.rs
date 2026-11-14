@@ -121,22 +121,14 @@ fn build_request(
     .map_err(|_| failure("key", "invalid PEM or algorithm mismatch"))?;
     let assertion = jsonwebtoken::encode(&header, &claims, &key)
         .map_err(|_| failure("signature", "key or signing refused"))?;
-    let mut form = url::form_urlencoded::Serializer::new(String::new());
-    form.append_pair("grant_type", "client_credentials");
-    form.append_pair(
-        "client_assertion_type",
-        "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-    );
-    form.append_pair("client_assertion", &assertion);
-    if let Some(scope) = scope {
-        form.append_pair("scope", &scope);
-    }
-    Ok(Oauth2Request {
-        token_url: parameters.token_url,
-        token_authority: parameters.token_authority,
-        body: form.finish(),
-        authorization: None,
-    })
+    Oauth2Request::assertion(
+        parameters.client_id,
+        parameters.token_url,
+        parameters.token_authority,
+        scope,
+        assertion,
+    )
+    .map_err(|_| failure("request", "invalid OAuth endpoint or client"))
 }
 
 #[cfg(test)]

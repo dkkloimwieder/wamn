@@ -1,16 +1,5 @@
-/**
- * The Vite configuration every Solid application of the repository shares.
- *
- * The page serves one origin. The dev server carries `/password` to the
- * identity process and `/api` to the release, and strips `/api` on the way.
- * The edge proxy of a deployment does the same, so one rule holds in both.
- *
- * The application host routes by the `Host` header, which a browser cannot
- * set. The identity process signed its own certificate, which a browser does
- * not trust. Both facts stop at this proxy.
- */
+/** Shared Vite configuration for applications backed by an installed platform. */
 
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import solid from "@solidjs/vite-plugin";
 import type { Plugin, ProxyOptions } from "vite";
@@ -30,58 +19,22 @@ export interface ApplicationOptions {
   readonly outDir: string;
   /** The port of the dev server. */
   readonly port: number;
-  /** `serve` for the dev server, `build` for static files. Only `serve` reads `dev.json`. A build reads nothing about the deployment. */
+  /** `serve` for the dev server, `build` for static files. Only `serve` contacts the installed platform. A build reads no deployment settings. */
   readonly command: "serve" | "build";
 }
 
-interface DevConfiguration {
-  readonly route_host: string;
-  readonly session_identity: { readonly issuer: string };
-  readonly org: string;
-  readonly project: string;
-}
-
-/** The `dev.json` of the local stack, from the variable the dev loop documents. */
-function devConfiguration(): DevConfiguration {
-  const directory = process.env["WAMN_DEV_ENV_DIR"];
-  if (directory === undefined) {
-    throw new Error("set WAMN_DEV_ENV_DIR to the directory that holds dev.json");
-  }
-  return JSON.parse(readFileSync(`${directory}/dev.json`, "utf8")) as DevConfiguration;
-}
-
-/** The proxy to the local stack, from `dev.json` and the base URL the dev loop printed. */
-function proxy(parsed: DevConfiguration): Record<string, ProxyOptions> {
+/** The installed application's origin, supplied by the development procedure. */
+function devConfiguration(): string {
   const route = process.env["WAMN_ROUTE_URL"];
-  if (route === undefined) {
-    throw new Error("set WAMN_ROUTE_URL to the base URL the dev loop printed");
-  }
-  return {
-    // The issuer signed its own certificate, so this hop does not verify it.
-    // Nothing outside the loopback address is reachable here.
-    "/password": { target: parsed.session_identity.issuer, secure: false, changeOrigin: true },
-    "/api": {
-      target: route,
-      headers: { host: parsed.route_host },
-      rewrite: (path) => path.replace(/^\/api/, ""),
-    },
-  };
+  if (route === undefined) throw new Error("set WAMN_ROUTE_URL to the installed application URL");
+  const url = new URL(route);
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("the application URL must use HTTP or HTTPS");
+  return url.origin;
 }
 
-/**
- * The dev server answers `/config.json` with the org and the project of
- * `dev.json`, as `wamn web upload` writes the file beside `index.html`.
- */
-function configPlugin(dev: DevConfiguration): Plugin {
-  return {
-    name: "wamn-config",
-    configureServer(server) {
-      server.middlewares.use("/config.json", (_request, response) => {
-        response.setHeader("content-type", "application/json");
-        response.end(JSON.stringify({ org: dev.org, project: dev.project }));
-      });
-    },
-  };
+/** Preserve product routing and obtain browser settings from the deployed web service. */
+function proxy(target: string): Record<string, ProxyOptions> {
+  return Object.fromEntries(["/password", "/api", "/config.json", "/wamn_control", "/oauth/callback"].map((path) => [path, { target, changeOrigin: true }]));
 }
 
 /**
@@ -125,7 +78,7 @@ export function solidApplication(
 
 /**
  * The server and the output of one application. The dev server alone adds
- * the config response and the proxy to the local stack.
+ * the proxy to the installed platform.
  */
 export function applicationConfig(options: ApplicationOptions): ApplicationConfig {
   const at = (path: string) => fileURLToPath(new URL(path, options.root));
@@ -133,7 +86,7 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
   const store = fileURLToPath(new URL("../../node_modules", import.meta.url));
   const dev = options.command === "serve" ? devConfiguration() : undefined;
   return {
-    plugins: dev === undefined ? [] : [configPlugin(dev)],
+    plugins: [],
     resolve: {},
     server: {
       port: options.port,

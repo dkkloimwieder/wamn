@@ -14,13 +14,15 @@
  * (a location of the filter), WAMN_FIRST_ID (a row the list returns).
  * Run `pnpm run build` first. The last line is the result as JSON.
  */
-import { request } from "node:http";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { createInterface } from "node:readline";
 import { chromium } from "playwright";
 import { preparedPreview } from "./preview.ts";
 import { uuidv7 } from "../../runtime/src/sync/ids.ts";
 
 const endpoint = new URL(process.env.WAMN_ENDPOINT);
+const request = endpoint.protocol === "https:" ? httpsRequest : httpRequest;
 const routeHost = process.env.WAMN_ROUTE_HOST;
 const bearer = process.env.WAMN_BEARER;
 const userId = process.env.WAMN_USER_ID;
@@ -40,7 +42,7 @@ function host(method, path, headers, body) {
         hostname: endpoint.hostname,
         port: endpoint.port,
         method,
-        path,
+        path: endpoint.pathname.replace(/\/$/, "") + path,
         headers: { ...headers, host: routeHost, authorization: `Bearer ${bearer}` },
       },
       (response) => {

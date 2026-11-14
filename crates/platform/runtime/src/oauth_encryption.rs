@@ -13,6 +13,7 @@ use ring::{
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use tokio::sync::Mutex;
+use wamn_package_artifact::http_client::HttpClient;
 use zeroize::Zeroizing;
 
 const CACHE_ENTRIES: usize = 1024;
@@ -82,7 +83,7 @@ struct FileKey {
     unwraps: std::sync::atomic::AtomicUsize,
 }
 struct Kms {
-    client: reqwest::Client,
+    client: HttpClient,
     tokens: Arc<dyn CredentialProvider<Credential = GcpCredential>>,
     endpoint: String,
     name: String,
@@ -129,10 +130,7 @@ impl Envelope {
                 let (tokens, _) = crate::pod_identity::providers()
                     .map_err(|_| failure("open", "pod identity client unavailable"))?;
                 Backend::Kms(Kms {
-                    client: reqwest::Client::builder()
-                        .redirect(reqwest::redirect::Policy::none())
-                        .timeout(Duration::from_secs(10))
-                        .build()
+                    client: HttpClient::shared()
                         .map_err(|_| failure("open", "KMS client unavailable"))?,
                     tokens,
                     endpoint: "https://cloudkms.googleapis.com/v1".into(),
@@ -342,21 +340,22 @@ impl Kms {
             .get_credential()
             .await
             .map_err(|_| failure(operation, "pod identity unavailable"))?;
+        let request = hyper::Request::post(format!("{}/{}:{operation}", self.endpoint, self.name))
+            .header("authorization", format!("Bearer {}", token.bearer))
+            .header("content-type", "application/json")
+            .body(bytes::Bytes::from(
+                serde_json::to_vec(&body).map_err(|_| failure(operation, "invalid KMS request"))?,
+            ))
+            .map_err(|_| failure(operation, "invalid KMS request"))?;
         let reply = self
             .client
-            .post(format!("{}/{}:{operation}", self.endpoint, self.name))
-            .bearer_auth(&token.bearer)
-            .json(&body)
-            .send()
+            .send(request, Duration::from_secs(10), 65_536)
             .await
             .map_err(|_| failure(operation, "KMS request failed"))?;
         if !reply.status().is_success() {
             return Err(failure(operation, "KMS refused request"));
         }
-        reply
-            .json()
-            .await
-            .map_err(|_| failure(operation, "invalid KMS response"))
+        serde_json::from_slice(reply.body()).map_err(|_| failure(operation, "invalid KMS response"))
     }
 }
 

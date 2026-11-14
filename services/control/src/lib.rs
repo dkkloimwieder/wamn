@@ -319,7 +319,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
             ),
             &std::fs::read(&config.session_jwks_ca)?,
         )?,
-    )?;
+    );
     let verifier = wamn_identity_protocol::verifier::SessionVerifier::new(
         keys,
         &config.org,

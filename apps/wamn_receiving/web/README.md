@@ -28,36 +28,26 @@ The shell shows literal uppercase breadcrumbs after sign-in.
 
 ## Run it
 
-Stand up a local stack that serves the Receiving release first. The notes of Beads `wamn-78or.6` hold the exact commands.
-The stack prints a base URL. Keep it.
-Install the web packages once with `pnpm install` at the repository root, as [running tests](../../../docs/operations/running-tests.md#web-packages) describes.
+Deploy Receiving on a disposable `kind` platform with the [development loop](../../../docs/operations/development-loop.md).
+Set `WAMN_ROUTE_URL` to its installed application URL, including the application hostname.
+The browser and the development machine must trust the platform certificate.
+Install the web packages once with `pnpm install` at the repository root.
 
 ```bash
 cd apps/wamn_receiving/web
-WAMN_DEV_ENV_DIR=<the environment directory that holds dev.json> \
-WAMN_ROUTE_URL=<the base URL the loop printed> \
-  pnpm run dev
+WAMN_ROUTE_URL=https://receiving.example.test pnpm run dev
 ```
 
-Open the address that Vite prints, and sign in with an account of that environment.
+Open the address that Vite prints. Sign in with an account from the installed platform.
+Vite forwards `/config.json`, sign-in requests, and `/api` requests to that application URL.
+It keeps the `/api` prefix. The installed web service supplies browser configuration.
 
-`pnpm run build` writes the static files to `apps/target/wamn/wamn_receiving/web`, the package's build output. `wamn build` runs it for the package. `push-package` packs them into the package artifact, [`wamn web upload`](../../../docs/operations/deployment.md#web-client-files) writes them to a bucket, and the edge in [`deploy/platform/edge`](../../../deploy/platform/edge) serves them.
+`pnpm run build` writes the static files to `apps/target/wamn/wamn_receiving/web`.
+Use [`wamn web upload`](../../../docs/operations/deployment.md#web-client-files) to publish the client files.
 
-## The account and the seed
+## Application data
 
-Sign in with `receiving-demo@wamn.dev`. Its password is the same string, because the identity service requires 15 characters or more.
-The notes of Beads `wamn-78or.6` hold the commands that create the account in a local environment.
-It is a demo credential in a disposable local environment.
-
-Receiving declares no operation that creates an item, a location or a purchase order, so a table shows rows only after you apply a dataset.
-The by-hand tests run at 1000:
-
-```bash
-psql "$TARGET_DATABASE_URL" -v scale=1000 -f ../tests/fixtures/receiving-seed.sql
-```
-
-The large size writes 1000 items, 1000 locations, 1000 purchase orders and about 500000 lines.
-`receiving-seed-small.sql` is the saved small size: 10 items, 10 locations, 10 purchase orders and 55 lines.
-Paging needs more than 25 orders, so only the large size shows it.
-
-The [local Receiving browser test](../../../docs/operations/running-tests.md#local-receiving-screens) saves a screenshot for each screen.
+Receiving has no operation that creates an item, a location, or a purchase order.
+These tables need an imported dataset. The product import route is tracked by `wamn-eulfr.12.9`.
+The browser tests retain their screen and paging assertions and fail at that missing import step.
+The seed SQL files describe the small and large datasets; the browser tests do not apply SQL in place of the missing product route.

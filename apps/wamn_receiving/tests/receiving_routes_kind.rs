@@ -4,19 +4,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use sqlx::Row as _;
 use std::path::Path;
-#[expect(
-    dead_code,
-    reason = "The shared fixture also serves administration and browser cases."
-)]
-#[path = "../../../tests/integration/tests/support/application.rs"]
-mod product;
-#[expect(
-    dead_code,
-    reason = "The shared request client also serves fixture batch tests."
-)]
-#[path = "../../../tests/integration/tests/support/write_log_routes.rs"]
-mod write_log_routes;
-use product::Application;
+use wamn_integration_tests::product_application::Application;
 
 const PREREQUISITES: &str = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL";
 
@@ -123,4 +111,53 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
     .await;
     application.remove().await?;
     result
+}
+
+mod development_assertions;
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
+async fn product_dev_command_applies_packages_and_cleans_up() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(PREREQUISITES);
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .context("Receiving source")?;
+    let application = Application::prepare(source).await?;
+    let mut system = wamn_postgres::connect(&std::env::var("WAMN_SYSTEM_ADMIN_URL")?).await?;
+    sqlx::raw_sql("SET default_transaction_read_only = on")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
+    let mut project = application.observer().await?;
+    let before = development_state(&mut system, &mut project).await?;
+    application.rebuild(source).await?;
+    application.rebuild(source).await?;
+    let after = development_state(&mut system, &mut project).await?;
+    ensure!(
+        before == after,
+        "development changed PAT state or database ACLs"
+    );
+    let document = application.target();
+    let key = wamn_registry::project_env_key(&document.org, &document.project, &document.env);
+    development_assertions::verify_dev_target_package_and_acl_state(
+        &mut project,
+        &[source.to_owned()],
+        &key,
+    )
+    .await?;
+    application.remove().await
+}
+
+async fn development_state(
+    system: &mut sqlx::PgConnection,
+    project: &mut sqlx::PgConnection,
+) -> anyhow::Result<(i64, Option<String>, Option<String>)> {
+    let pats: i64 = sqlx::query("SELECT count(*) FROM identity.pats")
+        .fetch_one(&mut *system)
+        .await?
+        .get(0);
+    let acl = "SELECT (SELECT array_agg(entry::text ORDER BY entry::text) FROM pg_database, unnest(datacl) AS entry WHERE datname=current_database())::text";
+    let system_acl = sqlx::query(acl).fetch_one(&mut *system).await?.get(0);
+    let project_acl = sqlx::query(acl).fetch_one(&mut *project).await?.get(0);
+    Ok((pats, system_acl, project_acl))
 }

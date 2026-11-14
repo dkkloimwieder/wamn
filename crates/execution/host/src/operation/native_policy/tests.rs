@@ -28,7 +28,6 @@ use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
 };
 use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
-use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
     ReleaseIdentity, SessionIdentity, StaticCredentialProvider, WAMN_POSTGRES_ID, WamnPostgres,
 };
@@ -39,6 +38,7 @@ use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
 use wash_runtime::host::HostRef;
 use wash_runtime::host::http::{HostHandler, NullServer};
 use wash_runtime::observability::{MeterKind, Meters};
+use wash_runtime::plugin::wasi_logging::TracingLogger;
 use wash_runtime::plugin::{HostPlugin, PluginBindings, WitInterfaces};
 use wash_runtime::types::{Component, LocalResources, Workload};
 use wash_runtime::wit::{WitInterface, WitWorld};
@@ -60,11 +60,12 @@ mod trace;
 #[path = "tests/warm.rs"]
 mod warm;
 
+const PROJECT_ENV_KEY: &str = "org-a--test--test";
 const ROOT: &str = "root:entry/run@1.0.0";
 /// An operation that the root calls. No host runs it: composition embeds it
 /// in the root, which runs under its own grant.
 const CHILD: &str = "child:entry/run@1.0.0";
-const OBSERVE: &str = "test:authority/observe@1.0.0";
+const OBSERVE: &str = "wasi:clocks/monotonic-clock@0.2.0";
 const STATEMENTS: &str = "wamn:postgres/statements@0.4.0";
 const CHILD_MARKER: &str = "WAMN_NATIVE_POLICY_CHILD";
 const BUDGET: Duration = Duration::from_millis(200);
@@ -141,16 +142,24 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
     };
     let observer = format!(
         r#"(import "{OBSERVE}" (instance $observe
-          (export "record" (func (param "phase" u32)))))
-          (core func $observe (canon lower (func $observe "record")))"#
+          (export "now" (func (result u64)))
+          (export "resolution" (func (result u64)))))
+          (core func $observe (canon lower (func $observe "now")))
+          (core func $observe-start (canon lower (func $observe "resolution")))"#
     );
     wat::parse_str(format!(
         r#"(component
       {NODE_TYPES}
       {observer}
+      (import "wasi:logging/logging@0.1.0-draft" (instance $logging
+        (type $level' (enum "trace" "debug" "info" "warn" "error" "critical"))
+        (export "level" (type $level (eq $level')))
+        (export "log" (func (param "level" $level) (param "context" string) (param "message" string)))))
       {postgres}
       (core module $memory
         (memory (export "memory") 16)
+        (data (i32.const 16) "guest")
+        (data (i32.const 32) "native-log")
         (global $next (mut i32) (i32.const 1024))
         (func (export "realloc") (param $old i32) (param $old-size i32)
           (param $align i32) (param $size i32) (result i32) (local $new i32)
@@ -162,24 +171,29 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
             local.get $new local.get $old local.get $old-size memory.copy
           end local.get $new))
       (core instance $memory (instantiate $memory))
+      (core func $log (canon lower (func $logging "log")
+        (memory $memory "memory") (realloc (func $memory "realloc"))))
       (core func $return (canon task.return (result (result $emission (error $error)))
         (memory $memory "memory")))
       (core module $main
         (import "memory" "memory" (memory 16))
-        (import "host" "observe" (func $observe (param i32)))
+        (import "host" "observe" (func $observe (result i64)))
+        (import "host" "observe-start" (func $observe-start (result i64)))
+        (import "host" "log" (func $log (param i32 i32 i32 i32 i32)))
         (import "host" "return" (func $return
           (param i32 i32 i32 i32 i32 i32 i32 i32 i64)))
         (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
-        (func $start i32.const 0 call $observe {start})
+        (func $start call $observe-start drop {start})
         (start $start)
         (func (export "run") (param $input i32) (result i32)
-          i32.const 1 call $observe
+          call $observe drop
+          i32.const 2 i32.const 16 i32.const 5 i32.const 32 i32.const 10 call $log
           {body}
           i32.const 0 local.get $input i32.load offset=96 local.get $input i32.load offset=100
           i32.const 0 i32.const 0 i32.const 0 i32.const 0 i32.const 0 i64.const 0
           call $return i32.const 0))
       (core instance $main (instantiate $main (with "memory" (instance $memory))
-        (with "host" (instance (export "observe" (func $observe))
+        (with "host" (instance (export "observe" (func $observe)) (export "observe-start" (func $observe-start)) (export "log" (func $log))
           (export "return" (func $return))))))
       (func $run async (param "ctx" $context) (param "input" $json)
         (result (result $emission (error $error)))
@@ -527,54 +541,63 @@ impl HostPlugin for Observe {
         }
     }
 
+    fn wasi_overrides(&self) -> WitWorld {
+        WitWorld {
+            imports: HashSet::from([WitInterface::from(OBSERVE)]),
+            exports: HashSet::new(),
+        }
+    }
+
     async fn on_workload_item_bind<'a>(
         &self,
         item: &mut WorkloadItem<'a>,
         _interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
         item.linker()?.instance("wamn:node/types@0.1.0")?;
-        let policy = Arc::clone(&self.policy);
-        let events = Arc::clone(&self.events);
-        let entered = Arc::clone(&self.entered);
-        item.linker()?.instance(OBSERVE)?.func_wrap(
-            "record",
-            move |mut store: wash_runtime::wasmtime::StoreContextMut<'_, SharedCtx>,
-                  (phase,): (u32,)| {
-                let mut active = extract_active_ctx(store.data_mut());
-                let trace = wamn_engine::invocation_trace::invocation_trace(&mut active);
-                trace.in_scope(|| {
-                    let scope = active.ctx.component_id.to_string();
-                    let native_identity = policy
-                        .bindings
-                        .read()
-                        .expect("bindings lock")
-                        .contains_key(&scope);
-                    let identity = policy.resources.postgres.session_identity(&scope);
-                    let invocation = policy.resources.postgres.invocation(&scope);
-                    let _effect = invocation
-                        .as_ref()
-                        .filter(|_| phase == 1)
-                        .map(|invocation| {
-                            tracing::info_span!("test.host.observe",
-                                wamn.operation = %invocation.operation,
-                                wamn.component_digest = %invocation.component_digest,
-                            )
-                            .entered()
+        for (method, phase) in [("resolution", 0_u32), ("now", 1_u32)] {
+            let policy = Arc::clone(&self.policy);
+            let events = Arc::clone(&self.events);
+            let entered = Arc::clone(&self.entered);
+            item.wasi_override_instance(OBSERVE)?.func_wrap(
+                method,
+                move |mut store: wash_runtime::wasmtime::StoreContextMut<'_, SharedCtx>, (): ()| {
+                    let mut active = extract_active_ctx(store.data_mut());
+                    let trace = wamn_engine::invocation_trace::invocation_trace(&mut active);
+                    trace.in_scope(|| {
+                        let scope = active.ctx.component_id.to_string();
+                        let native_identity = policy
+                            .bindings
+                            .read()
+                            .expect("bindings lock")
+                            .contains_key(&scope);
+                        let identity = policy.resources.postgres.session_identity(&scope);
+                        let invocation = policy.resources.postgres.invocation(&scope);
+                        let _effect =
+                            invocation
+                                .as_ref()
+                                .filter(|_| phase == 1)
+                                .map(|invocation| {
+                                    tracing::info_span!("test.host.observe",
+                                        wamn.operation = %invocation.operation,
+                                        wamn.component_digest = %invocation.component_digest,
+                                    )
+                                    .entered()
+                                });
+                        events.lock().expect("observations lock").push(Observation {
+                            phase,
+                            scope,
+                            native_identity,
+                            identity,
+                            invocation,
                         });
-                    events.lock().expect("observations lock").push(Observation {
-                        phase,
-                        scope,
-                        native_identity,
-                        identity,
-                        invocation,
-                    });
-                    if phase == 1 {
-                        entered.notify_one();
-                    }
-                    Ok(())
-                })
-            },
-        )?;
+                        if phase == 1 {
+                            entered.notify_one();
+                        }
+                        Ok((0_u64,))
+                    })
+                },
+            )?;
+        }
         Ok(())
     }
 
@@ -595,7 +618,7 @@ impl HostPlugin for Observe {
 fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
     AdmittedComponent {
         target: ComponentPackageCoordinate {
-            project_env_key: "org-a".into(),
+            project_env_key: PROJECT_ENV_KEY.into(),
             package_id: operation
                 .split_once(':')
                 .expect("qualified operation")
@@ -618,7 +641,11 @@ fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
             },
         )]),
         component_digest: bytes_sha256(bytes),
-        imports: vec![OBSERVE.into(), "wamn:node/types@0.1.0".into()],
+        imports: vec![
+            OBSERVE.into(),
+            "wamn:node/types@0.1.0".into(),
+            "wasi:logging/logging@0.1.0-draft".into(),
+        ],
         imports_fingerprint: bytes_sha256(OBSERVE.as_bytes()),
         effects: Vec::new(),
     }
@@ -763,7 +790,7 @@ impl Fixture {
             LoadedRelease::load_canonical_bytes(
                 &manifest.canonical_bytes(),
                 "native policy fixture",
-                wamn_engine::release_manifest::ReleaseTarget::new("org-a", "test")
+                wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "test")
                     .with_applications(
                         serde_json::from_value(
                             serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
@@ -783,7 +810,7 @@ impl Fixture {
             Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             Arc::clone(&postgres),
-            "org-a",
+            PROJECT_ENV_KEY,
             "test",
             release.target().environment.as_str(),
         ));
@@ -807,9 +834,7 @@ impl Fixture {
                     Arc::clone(&release),
                 )),
                 postgres,
-                logging: Arc::new(
-                    WamnLogging::new(&WamnLoggingConfig::default()).expect("logging plugin"),
-                ),
+                logging: Arc::new(TracingLogger::default()),
                 release,
                 project: "test".into(),
             },
@@ -906,7 +931,7 @@ impl Fixture {
             facts: NativeFacts::entry(
                 NodeAcquisition {
                     identity: SessionIdentity {
-                        project_env_key: "org-a".into(),
+                        project_env_key: PROJECT_ENV_KEY.into(),
                         project: Some("test".into()),
                         release: Some(ReleaseIdentity::for_test(
                             self.policy.resources.release.manifest().digest(),
@@ -1108,7 +1133,7 @@ async fn run_case(case: Case) {
                 .identity
                 .as_ref()
                 .expect("execution has host identity");
-            assert_eq!(identity.project_env_key, "org-a");
+            assert_eq!(identity.project_env_key, PROJECT_ENV_KEY);
             if !matches!(case, Case::Cancellation) {
                 assert_eq!(
                     identity.user_id,
@@ -1183,6 +1208,14 @@ fn run_isolated_test(name: &str, test: impl std::future::Future<Output = ()>) {
     drop(runtime);
     done.send(()).expect("finish watchdog");
     watchdog.join().expect("join watchdog");
+}
+
+#[test]
+fn native_guest_logs_follow_the_invocation_trace() {
+    run_isolated_test(
+        "native_guest_logs_follow_the_invocation_trace",
+        trace::guest_log_trace(),
+    );
 }
 
 #[test]
@@ -1404,6 +1437,7 @@ async fn assert_call_owner() {
         !policy.resources.postgres.scopes.is_empty(),
         "the active call retains its trace"
     );
+    task.abort();
     assert!(
         timeout(CLEANUP, task)
             .await
@@ -1437,13 +1471,6 @@ async fn assert_call_owner() {
                 .resources
                 .blobstore
                 .invocation(&event.scope)
-                .is_none()
-        );
-        assert!(
-            policy
-                .resources
-                .logging
-                .identity_snapshot(&event.scope)
                 .is_none()
         );
         assert!(
@@ -1509,12 +1536,13 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "validation fixture",
-            wamn_engine::release_manifest::ReleaseTarget::new("org-a", "test").with_applications(
-                serde_json::from_value(
-                    serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
-                )
-                .unwrap(),
-            ),
+            wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "test")
+                .with_applications(
+                    serde_json::from_value(
+                        serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
+                    )
+                    .unwrap(),
+                ),
         )
         .unwrap(),
     );
@@ -1563,12 +1591,13 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         LoadedRelease::load_canonical_bytes(
             &next_manifest.canonical_bytes(),
             "another release",
-            wamn_engine::release_manifest::ReleaseTarget::new("org-a", "test").with_applications(
-                serde_json::from_value(
-                    serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
-                )
-                .unwrap(),
-            ),
+            wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "test")
+                .with_applications(
+                    serde_json::from_value(
+                        serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
+                    )
+                    .unwrap(),
+                ),
         )
         .unwrap(),
     );

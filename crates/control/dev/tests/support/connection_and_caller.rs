@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use sqlx::Row as _;
 use wamn_environment::environment::document::EnvironmentDocument;
 
-use super::{Journey, get, observer};
+use super::{Journey, observer};
 
 pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Result<()> {
     journey
@@ -31,17 +31,8 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         )
         .await?;
 
-    // The installed web service supplies the upstream. Its health endpoint
-    // needs no application credentials or extra fixture workload.
-    let service = get(journey.run, "hosts", "service", "wamn-edge").await?;
-    let port = service["spec"]["ports"]
-        .as_array()
-        .context("web service ports")?
-        .iter()
-        .find(|port| port["name"] == "http")
-        .context("web HTTP port")?["port"]
-        .as_u64()
-        .context("web HTTP port number")?;
+    let origin: String =
+        panic!("wamn-eulfr.12.10: no product deployment of an HTTP request observer");
     let configuration = journey.run.directory.join("connection.json");
     std::fs::write(
         &configuration,
@@ -62,7 +53,7 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         &configuration,
         serde_json::to_vec(&json!({
             "project":journey.project,"env":journey.environment,"name":"upstream",
-            "parameters":{"primary-authority":format!("http://wamn-edge.hosts.svc.cluster.local:{port}"),
+            "parameters":{"primary-authority":origin,
                 "tls-verification":"disabled"}
         }))?,
     )?;
@@ -73,7 +64,7 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         .mode(0o600)
         .open(&credential)?;
     file.write_all(&serde_json::to_vec(
-        &json!({"username":"fixture","password":"fixture-connection-key"}),
+        &json!({"username":"fixture","password":"fixture-password"}),
     )?)?;
     drop(file);
     journey
@@ -127,6 +118,7 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
     std::fs::write(&input, serde_json::to_vec(&json!({"id":1}))?)?;
     let mut database = observer(journey).await?;
     let application_url = format!("{}/api", journey.edge.trim_end_matches('/'));
+    let mut successful_response = String::new();
     for (workflow, terminal) in [
         ("connection-without-response", false),
         ("response-without-caller", true),
@@ -136,7 +128,7 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
             "nodes":{
                 "input":{"component":"transform","interface-version":"0.1.0","operation":"wamn:node/handler@0.1.0","params":{"pointer":""}},
                 "send":{"component":"http-request","interface-version":"0.1.0","operation":"wamn:node/async-handler@0.1.0",
-                    "params":{"requirement":"upstream","method":"GET","path-and-query":"/healthz"}}
+                    "params":{"requirement":"upstream","method":"POST","path-and-query":"/reuse"}}
             },
             "edges":[{"from":"input","to":"send"}]
         });
@@ -236,10 +228,20 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
             );
         } else {
             ensure!(
-                status == "completed" && body["status"] == 200,
+                status == "completed" && body["status"] == 200 && body["body"] == json!({"id":1}),
                 "deployed connection must reach its upstream: {status}: {body}"
             );
+            successful_response = body.to_string();
         }
+    }
+    let observations: Vec<String> =
+        panic!("wamn-eulfr.12.10: no product HTTP request observations");
+    ensure!(
+        !observations.is_empty(),
+        "upstream observed no connection request"
+    );
+    for observation in observations {
+        crate::http_observation::assert_observed_request(200, &successful_response, &observation)?;
     }
     Ok(())
 }

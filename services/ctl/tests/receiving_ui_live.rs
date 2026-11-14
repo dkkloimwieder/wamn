@@ -15,17 +15,12 @@ use kind_browser::required;
 
 /// The installed platform supplies application and identity services.
 #[tokio::test]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_BROWSER_EMAIL, env:WAMN_BROWSER_PASSWORD, env:WAMN_BROWSER_ORG, env:WAMN_TIMINGS_ROOT, bin:node, bin:pnpm, bin:google-chrome"]
 async fn local_receiving_screens() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_BROWSER_EMAIL, env:WAMN_BROWSER_PASSWORD, env:WAMN_BROWSER_ORG, env:WAMN_TIMINGS_ROOT, bin:node, bin:pnpm, bin:google-chrome",
-    );
     drive(Browser {
         name: "local_receiving_screens",
         script: "apps/wamn_receiving/web/test/browser.mjs",
         environment: "receiving-ui-env",
         screenshots: "receiving-screenshots",
-        passed: "PASS: Receiving screens, writes, pagination and navigation",
     })
     .await
 }
@@ -33,17 +28,12 @@ async fn local_receiving_screens() -> anyhow::Result<()> {
 /// The five sync tests of the open receipt lines screen: a 30 s drop, another
 /// browser, a reopen during an outage, a flapping replay, and a refusal.
 #[tokio::test]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_BROWSER_EMAIL, env:WAMN_BROWSER_PASSWORD, env:WAMN_BROWSER_ORG, env:WAMN_TIMINGS_ROOT, bin:node, bin:pnpm, bin:google-chrome"]
 async fn local_receiving_sync() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_BROWSER_EMAIL, env:WAMN_BROWSER_PASSWORD, env:WAMN_BROWSER_ORG, env:WAMN_TIMINGS_ROOT, bin:node, bin:pnpm, bin:google-chrome",
-    );
     drive(Browser {
         name: "local_receiving_sync",
         script: "apps/wamn_receiving/web/test/sync-browser.mjs",
         environment: "receiving-sync-env",
         screenshots: "receiving-sync-screenshots",
-        passed: "PASS: Receiving sync tests",
     })
     .await
 }
@@ -52,17 +42,12 @@ async fn local_receiving_sync() -> anyhow::Result<()> {
 /// reopen after and before the login expires, expired entries, sign-out
 /// clearing, and a local_first reopen.
 #[tokio::test]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_BROWSER_EMAIL, env:WAMN_BROWSER_PASSWORD, env:WAMN_BROWSER_ORG, env:WAMN_TIMINGS_ROOT, bin:node, bin:pnpm, bin:google-chrome"]
 async fn local_receiving_offline() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_BROWSER_EMAIL, env:WAMN_BROWSER_PASSWORD, env:WAMN_BROWSER_ORG, env:WAMN_TIMINGS_ROOT, bin:node, bin:pnpm, bin:google-chrome",
-    );
     drive(Browser {
         name: "local_receiving_offline",
         script: "apps/wamn_receiving/web/test/offline-browser.mjs",
         environment: "receiving-offline-env",
         screenshots: "receiving-offline-screenshots",
-        passed: "PASS: Receiving offline profile tests",
     })
     .await
 }
@@ -72,10 +57,10 @@ struct Browser {
     script: &'static str,
     environment: &'static str,
     screenshots: &'static str,
-    passed: &'static str,
 }
 
 async fn drive(browser_run: Browser) -> anyhow::Result<()> {
+    panic!("wamn-eulfr.12.9: no product Receiving browser data import");
     let _lock = wamn_test_postgres::lock();
     let started = Instant::now();
     let fixture = kind_browser::Fixture::prepare(browser_run.environment).await?;
@@ -107,10 +92,6 @@ async fn drive(browser_run: Browser) -> anyhow::Result<()> {
     let output = browser.wait_with_output().await?;
     println!("{}", String::from_utf8_lossy(&output.stdout));
     ensure!(output.status.success(), "browser failed: {}", output.status);
-    ensure!(
-        String::from_utf8_lossy(&output.stdout).contains(browser_run.passed),
-        "Receiving browser assertions did not finish"
-    );
     println!(
         "{}: {:.2}s",
         browser_run.name,

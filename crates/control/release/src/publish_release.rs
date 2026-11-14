@@ -2007,12 +2007,12 @@ mod manifest_push {
     use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
     use wamn_package_artifact::read_ca_bundles;
     use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
-    use wamn_package_artifact::{artifact_is_absent, registry_auth};
-    use wamn_runtime::release_manifest_artifact::{
+    use wamn_package_artifact::release_manifest_artifact::{
         RELEASE_MANIFEST_CONFIG_BYTES, ReleaseManifestArtifactBlobs,
         release_manifest_artifact_layout, release_manifest_artifact_reference,
         verify_release_manifest_artifact_layout,
     };
+    use wamn_package_artifact::{artifact_is_absent, registry_auth};
 
     /// Bound each registry connect/read phase without adding a deployment knob.
     const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -2365,8 +2365,8 @@ mod manifest_push {
 
     #[cfg(test)]
     mod tests {
+        use wamn_package_artifact::release_manifest_artifact::RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE;
         use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
-        use wamn_runtime::release_manifest_artifact::RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE;
 
         use super::*;
 

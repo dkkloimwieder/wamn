@@ -17,12 +17,12 @@ use wamn_postgres::schema::BareSchemaName;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
-use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, EventBatchAdmission, ProjectConfig, ReleaseIdentity,
     SessionIdentity, StaticCredentialProvider, WamnPostgres,
 };
 use wash_runtime::host::probes::Liveness;
+use wash_runtime::plugin::wasi_logging::TracingLogger;
 
 use crate::{PostgresWorkflows, RouterDriver, WorkflowErrorType};
 use wamn_execution_host::{OperationHost, OperationHostConfig};
@@ -286,10 +286,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         )?,
         &bytes,
     )?;
-    let (logging, capture) = WamnLogging::new_with_capture(
-        &wamn_runtime::plugins::wamn_logging::WamnLoggingConfig::default(),
-    )?;
-    let logging = Arc::new(logging);
+    let logging = Arc::new(TracingLogger::default());
     let driver = Arc::new(RouterDriver::new(Arc::new(OperationHost::new(
         Arc::clone(&engine),
         Arc::clone(&postgres),
@@ -352,8 +349,6 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
                     driver: &driver,
                     postgres: &postgres,
                     engine: &engine,
-                    logging: &logging,
-                    capture: &capture,
                     target: &target,
                     jetstream: &jetstream,
                 },

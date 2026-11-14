@@ -2025,7 +2025,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots 1.0.12",
 ]
 
 [[package]]
@@ -2765,6 +2764,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "oauth2"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51e219e79014df21a225b1860a479e2dcd7cbd9130f4defd4bd0e191ea31d67d"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "getrandom 0.2.17",
+ "http",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "url",
 ]
 
 [[package]]
@@ -4196,6 +4214,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a93142f0367a4cc53ae0fead1bcda39e85beccfad3dcd717656cacab94b12985"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "serde_path_to_error"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
+dependencies = [
+ "itoa",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -5705,8 +5734,6 @@ dependencies = [
  "clap",
  "http-body-util",
  "hyper",
- "hyper-rustls",
- "hyper-util",
  "postgres-protocol",
  "reqwest",
  "rustix 1.1.5",
@@ -5752,8 +5779,13 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "oci-client",
+ "postgres-protocol",
+ "reqwest",
  "rustix 1.1.5",
+ "serde",
  "serde_json",
+ "serde_yaml",
+ "sqlx",
  "tokio",
  "tokio-rustls",
  "tracing",
@@ -5774,6 +5806,7 @@ dependencies = [
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-platform-identity",
+ "wamn-postgres",
  "wamn-registry",
  "wamn-release-control",
  "wamn-run-state",
@@ -5961,6 +5994,7 @@ dependencies = [
  "hyper-util",
  "object_store",
  "opentelemetry",
+ "opentelemetry-appender-tracing",
  "opentelemetry_sdk",
  "rcgen",
  "reqwest",
@@ -6171,7 +6205,6 @@ dependencies = [
  "wamn-component-composer",
  "wamn-component-policy",
  "wamn-control-provision",
- "wamn-dev",
  "wamn-digest",
  "wamn-engine",
  "wamn-environment",
@@ -6237,8 +6270,15 @@ name = "wamn-package-artifact"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
  "oci-client",
  "reqwest",
+ "rustls",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "tokio",
@@ -6407,7 +6447,6 @@ dependencies = [
  "wamn-compiler",
  "wamn-component-composer",
  "wamn-control-provision",
- "wamn-dev",
  "wamn-digest",
  "wamn-engine",
  "wamn-environment",
@@ -6526,17 +6565,15 @@ dependencies = [
  "hyper-util",
  "jsonwebtoken 11.1.0",
  "moka",
+ "oauth2",
  "object_store",
  "oci-client",
  "opentelemetry",
- "opentelemetry-otlp",
  "opentelemetry_sdk",
  "postgres-protocol",
  "rcgen",
- "reqwest",
  "ring",
  "rustls",
- "rustls-platform-verifier",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -6701,7 +6738,6 @@ dependencies = [
  "wamn-cdc-reader",
  "wamn-compiler",
  "wamn-control-provision",
- "wamn-dev",
  "wamn-digest",
  "wamn-environment",
  "wamn-event-wire",

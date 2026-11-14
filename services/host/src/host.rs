@@ -14,9 +14,9 @@ use clap::builder::TypedValueParser as _;
 use wash_runtime::engine::WasmProposal;
 use wash_runtime::engine::guest_memory::GuestMemoryMode;
 use wash_runtime::engine::host_memory::HostMemoryBudgets;
+use wash_runtime::host::HostConfig;
 use wash_runtime::host::http::{ConnectionLimit, HostHandler as _, Ingress};
 use wash_runtime::host::probes::{self, Liveness, ProbeState};
-use wash_runtime::host::{HostApi, HostConfig};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin;
 use wash_runtime::sockets::policy::EgressMode;
@@ -40,6 +40,7 @@ use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig,
 };
 use wamn_identity_protocol::verifier::SessionVerifier;
+use wamn_package_artifact::release_manifest_source::ReleaseManifestSource;
 use wamn_registry::{Triple, environment_nats_user, project_env_key};
 use wamn_runtime::auth_cache::replicate;
 use wamn_runtime::component_artifact_source::{
@@ -50,13 +51,11 @@ use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::connection_memory::{self, ConnectionMemory};
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::route_authentication::{
-    EnvironmentStatusReader, PlatformRouteAuthenticator, RouteAuthentication,
-    SessionRouteAuthentication,
+    EnvironmentStatusReader, PlatformRouteAuthenticator,
 };
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
-use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnLogging, WamnPostgres};
-use wamn_runtime::release_manifest_source::ReleaseManifestSource;
+use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnPostgres};
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
 use wamn_workflow::{DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig, RouterDriver};
 
@@ -759,7 +758,7 @@ fn session_verifier(
     let mut endpoint = url::Url::parse(issuer).context("parse the configured session issuer")?;
     endpoint.set_path("/.well-known/jwks.json");
     endpoint.set_query(None);
-    let keys = IssuerKeys::new(IssuerKeysConfig::new(issuer, endpoint.as_str(), &ca)?)?;
+    let keys = IssuerKeys::new(IssuerKeysConfig::new(issuer, endpoint.as_str(), &ca)?);
     SessionVerifier::new(keys, org, &audience).context("configure the host session verifier")
 }
 
@@ -951,6 +950,17 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let session_routes = application.is_some_and(|loaded_release| {
         requires_session_route_authentication(loaded_release.manifest())
     });
+    let signature_routes = application.is_some_and(|loaded_release| {
+        loaded_release
+            .manifest()
+            .every_served_attachment()
+            .any(|(_, attachment)| {
+                matches!(
+                    wamn_catalog::parse_attachment_auth_policy(attachment.auth_policy()),
+                    Some(wamn_catalog::AttachmentAuthPolicy::Signature { .. })
+                )
+            })
+    });
     let connection_requirements = application
         .is_some_and(|loaded_release| declares_connection_requirement(loaded_release.manifest()));
     let http_admitter_url = std::env::var("WAMN_HTTP_ADMITTER_PG_URL")
@@ -1098,7 +1108,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .ok()
         .filter(|url| !url.is_empty());
     let http_admitter_url = demanded_http_admitter_url(
-        pat_routes || session_routes,
+        pat_routes || session_routes || signature_routes,
         connection_requirements,
         http_admitter_url,
     );
@@ -1138,7 +1148,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
     let mut postgres = WamnPostgres::from_env_for_project(&args.project, postgres_credentials)
         .context("wamn:postgres plugin init")?;
-    if (pat_routes || session_routes)
+    if (pat_routes || session_routes || signature_routes)
         && let Some(release) = &release
     {
         postgres
@@ -1154,8 +1164,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .await?;
     }
     let postgres = Arc::new(postgres);
-    let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
-    logging.set_scope_registry(Arc::clone(&postgres.scopes))?;
+    let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
     let mut file_connection_reader = None;
     let credentials = match (&application, &args.connection_store_url) {
@@ -1334,37 +1343,18 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let auth_changes = replicate(
         &data_nats_client,
         project_env_key.as_deref(),
-        Arc::clone(&postgres),
+        Arc::clone(postgres.auth_cache()),
     );
     // The host always installs its authenticator, even an empty one, so a
     // protected route refuses the same way on every host.
-    let authenticator = PlatformRouteAuthenticator::default()
-        .with_signature_authentication(Arc::clone(&facts), args.project.clone());
-    let authenticator = match (&route_auth_target, &identity_reader) {
-        (Some(_), Some(identity_reader)) => {
-            authenticator.with_authentication(Arc::new(RouteAuthentication::new(
-                identity_reader.clone(),
-                Arc::clone(&postgres),
-                args.project.clone(),
-            )))
-        }
-        (None, None) => authenticator,
-        _ => unreachable!("route authentication inputs are constructed together"),
-    };
-    let authenticator = match session_verifier {
-        Some(verifier) => {
-            authenticator.with_session_authentication(Arc::new(SessionRouteAuthentication::new(
-                verifier,
-                identity_reader
-                    .as_ref()
-                    .expect("authenticated routes have an identity reader")
-                    .clone(),
-                Arc::clone(&postgres),
-                args.project.clone(),
-            )))
-        }
-        None => authenticator,
-    };
+    let authenticator = PlatformRouteAuthenticator::new(
+        Arc::clone(&postgres),
+        Arc::clone(&facts),
+        args.project.clone(),
+        identity_reader
+            .as_ref()
+            .map(|reader| (reader.clone(), session_verifier)),
+    );
     let flow_http = if reads_environment_status {
         flow_http
             .with_authenticator(Arc::new(authenticator))
@@ -1414,11 +1404,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .copy_environment(true)
                 .build(),
         ),
-        // S5: the custom wamn:logging plugin replaces the native TracingLogger
-        // — it enriches (host-trusted environment/project + guest flow/run/node),
-        // owns a bounded front queue + drop counter, and ships enriched OTel log
-        // records to the collector. Both implement wasi:logging/logging, so exactly
-        // one may be registered.
         logging,
         Arc::new(plugin::wasi_otel::WasiOtel::default()),
         // Pool config from WAMN_PG_URL + the WAMN_PG_* tuning env; without a URL
@@ -1555,27 +1540,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             },
         ));
     }
-    if let Some(connection) = &control {
-        let client = connection.client.clone();
-        let org = connection.org.clone();
-        let mut stopped = stopping.clone();
-        schedule_tasks.spawn(async move {
-            let mut ticks = tokio::time::interval(Duration::from_secs(60));
-            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                tokio::select! {
-                    _ = stopped.changed() => return,
-                    _ = ticks.tick() => {},
-                }
-                tokio::select! {
-                    _ = stopped.changed() => return,
-                    result = async { wamn_execution_host::credential_cleanup::collect(&mut *client.acquire().await?, &org).await } => {
-                        if let Err(error) = result { tracing::warn!(%error, "credential collection failed"); }
-                    }
-                }
-            }
-        });
-    }
     // Each host admits schedules with its own loaded application release.
     if let Some(release) = application {
         let schedules = wamn_workflow::schedule::PostgresSchedules::new(
@@ -1649,7 +1613,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let prepared_host = builder.build().context("failed to build native host")?;
     tracing::info!(
         router_delivery = router_driver.is_some(),
-        "wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing)"
+        "wamn-host starting (base plugins: wasi:config, wasi:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing)"
     );
     // Whether this host carries a release is the first thing an operator needs from
     // the log: it decides whether the release-conditioned interfaces have a manifest to

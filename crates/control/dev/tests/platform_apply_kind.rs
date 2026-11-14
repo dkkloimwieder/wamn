@@ -24,6 +24,9 @@ use wamn_release_control::release_chart::Target;
 #[path = "../../environment/tests/support/platform_images.rs"]
 pub mod platform_images;
 
+#[path = "../../environment/tests/support/http_observation.rs"]
+pub mod http_observation;
+
 #[path = "support/application_deploy.rs"]
 mod application_deploy;
 
@@ -68,11 +71,8 @@ impl Drop for Run {
 // The cluster document is the one target input authorized by wamn-alrvy.18.
 // The namespace annotation records consent to use the platform as disposable.
 #[tokio::test]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD"]
 async fn connection_and_caller_kind() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD",
-    );
+    panic!("wamn-eulfr.12.10: no product deployment of an HTTP request observer");
     focused(application_deploy::Case::ConnectionAndCaller).await
 }
 

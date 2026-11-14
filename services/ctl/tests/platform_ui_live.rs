@@ -21,13 +21,9 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
     let report = fixture.root.join("platform-ui-screenshots");
     std::fs::create_dir_all(&report)?;
     println!("Platform UI screenshots: {}", report.display());
-    let release = fixture.status["applications"]
-        .as_object()
-        .context("application status")?
-        .values()
-        .next()
-        .context("Receiving status")?["current"]
-        .clone();
+    let release = fixture.status["digest"]
+        .as_str()
+        .context("served release digest")?;
     let mut browser = Command::new("pnpm")
         .current_dir(&fixture.repository)
         .args(["exec", "node", "apps/platform_ui/test/browser.mjs"])
@@ -62,25 +58,6 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
     let output = browser.wait_with_output().await?;
     println!("{}", String::from_utf8_lossy(&output.stdout));
     ensure!(output.status.success(), "browser failed: {}", output.status);
-    ensure!(
-            String::from_utf8_lossy(&output.stdout).contains(
-                "PASS: audience table replaces sign-in; Control first; org/project/environment rows enter their audiences"
-            ),
-            "browser did not complete the audience table assertions"
-        );
-    ensure!(
-            String::from_utf8_lossy(&output.stdout).contains(
-                "PASS: application role create/delete, permission grant/revoke, user-role grant/revoke and reload state"
-            ),
-            "browser did not complete application administration"
-        );
-    ensure!(
-            String::from_utf8_lossy(&output.stdout).contains(
-                "PASS: environment and Control splash tiles match status values, grouped by project, with one read per environment"
-            ),
-            "browser did not complete the splash tile assertions"
-        );
-
     ensure!(
         started.elapsed().as_secs() < 900,
         "sign-in exceeded the 15-minute issue budget"

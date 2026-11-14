@@ -41,7 +41,6 @@ tracing-subscriber = { workspace = true }
 wamn-package-control = { workspace = true, features = ["test-util"] }
 wamn-release-control = { workspace = true }
 wamn-environment = { workspace = true, features = ["test-util"] }
-wamn-dev.workspace = true
 wamn-platform-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["ops"] }

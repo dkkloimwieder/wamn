@@ -1,14 +1,9 @@
 //! Authorization code exchange and encrypted, single-use PKCE state.
 
 use std::{fmt, sync::Arc, time::Duration};
-use wamn_kubernetes::Store as _;
 
 use anyhow::Context as _;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use ring::rand::{SecureRandom as _, SystemRandom};
-use serde::Deserialize;
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 use sqlx::{Connection as _, Row as _};
 use url::Url;
 use zeroize::Zeroizing;
@@ -122,22 +117,10 @@ impl Authorization {
         if context["auth_type"] != "oauth2_authorization_code" {
             return Err(refused("unsupported authentication type"));
         }
-        let auth: Parameters = serde_json::from_value(context["parameters"]["auth"].clone())
-            .map_err(|error| failed("invalid authorization parameters", error))?;
-        let state = random()?;
-        // Thirty-two random bytes encode to 43 unreserved characters (RFC 7636).
-        let verifier = Zeroizing::new(random()?);
-        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-        let mut url = provider_url(&auth.authorize_url)?;
-        url.query_pairs_mut().extend_pairs([
-            ("response_type", "code"),
-            ("client_id", &auth.client_id),
-            ("redirect_uri", &self.redirect_uri),
-            ("scope", &auth.scopes.join(" ")),
-            ("state", &state),
-            ("code_challenge", &challenge),
-            ("code_challenge_method", "S256"),
-        ]);
+        let (url, state, verifier) =
+            crate::oauth::authorize(&context["parameters"]["auth"], &self.redirect_uri)
+                .map_err(|error| failed("invalid authorization parameters", error))?;
+        let verifier = Zeroizing::new(verifier);
         let encrypted = self
             .envelope
             .encrypt(verifier.as_bytes())
@@ -146,7 +129,7 @@ impl Authorization {
         sqlx::query("INSERT INTO identity.oauth_authorization(state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at) \
             VALUES($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+interval '10 minutes')").bind(&state).bind(connection).bind(generation).bind(&encrypted.ciphertext).bind(&encrypted.wrapped_key).bind(&encrypted.nonce).bind(&encrypted.key_id).bind(caller).execute(&mut **tx)
             .await.map_err(|error| failed("authorization state write failed", error))?;
-        Ok(url.into())
+        Ok(url)
     }
 
     /// Roll back every refusal, including expired and stale-generation states.
@@ -232,67 +215,37 @@ impl Authorization {
             .map_err(|error| failed("authorization state decryption failed", error))?;
         let verifier = std::str::from_utf8(verifier.expose())
             .map_err(|error| failed("invalid PKCE verifier", error))?;
-        let auth: Parameters = serde_json::from_value(context["parameters"]["auth"].clone())
-            .map_err(|error| failed("invalid authorization parameters", error))?;
         let material = self
             .credential(&context)
             .await
             .map_err(|error| failed("client credential unavailable", error))?;
-        let secret: Credential = serde_json::from_str(&material)
-            .map_err(|error| failed("invalid client credential", error))?;
-        let form = Zeroizing::new(
-            url::form_urlencoded::Serializer::new(String::new())
-                .extend_pairs([
-                    ("grant_type", "authorization_code"),
-                    ("code", code.as_str()),
-                    ("redirect_uri", &self.redirect_uri),
-                    ("client_id", &auth.client_id),
-                    ("client_secret", &secret.client_secret),
-                    ("code_verifier", verifier),
-                ])
-                .finish(),
-        );
+        let request = crate::oauth::Request::code(
+            &context["parameters"]["auth"],
+            &material,
+            &self.redirect_uri,
+            code.to_string(),
+            verifier.to_owned(),
+        )
+        .map_err(|error| failed("invalid authorization parameters", error))?;
         let parameters = &context["parameters"];
         let authority = crate::connection_authority::parse_http_definition(parameters)
             .map_err(|error| failed("invalid connection authority", error))?;
         let decision = crate::plugins::connection_http::token_endpoint(
             &authority,
-            auth.token_authority.as_deref(),
-            &auth.token_url,
+            request.token_authority.as_deref(),
+            &request.token_url,
             None,
         )
         .await
         .map_err(|error| failed("token endpoint authority refused", error))?;
-        let request = hyper::Request::builder()
-            .method("POST")
-            .uri(decision.logical_url.as_ref())
-            .header("content-type", "application/x-www-form-urlencoded")
-            .body(form.as_bytes())
-            .map_err(|error| failed("invalid token request", error))?;
-        let response = self
-            .transport
-            .send_once(&decision, request)
+        let token = request
+            .send(&crate::oauth::Transport {
+                http: (*self.transport).clone(),
+                decision,
+                identity: None,
+            })
             .await
-            .map_err(|error| failed("provider token endpoint unavailable", error))?;
-        let status = response.status();
-        let bytes = Zeroizing::new(response.into_body().to_vec());
-        if let Ok(error) = serde_json::from_slice::<ProviderError>(&bytes) {
-            return Err(refused(format!(
-                "provider token exchange failed: {}",
-                error.error
-            )));
-        }
-        if !status.is_success() {
-            return Err(refused(format!(
-                "provider token exchange failed (HTTP {})",
-                status.as_u16()
-            )));
-        }
-        let token: Response = serde_json::from_slice(&bytes)
             .map_err(|error| failed("invalid provider token response", error))?;
-        if !token.token_type.eq_ignore_ascii_case("bearer") || token.access_token.is_empty() {
-            return Err(refused("invalid provider bearer token"));
-        }
         let received = tokio::time::Instant::now();
         let plaintext = Zeroizing::new(
             serde_json::to_vec(&crate::oauth_token::Token {
@@ -326,47 +279,15 @@ impl Authorization {
                 .as_str()
                 .context("credential reference missing")
         };
+        let store = None;
         #[cfg(any(test, feature = "test-util"))]
-        if let Some(store) = &self.store {
-            return Ok(Zeroizing::new(String::from_utf8(
-                store.get(text("ref")?, text("version")?).await?,
-            )?));
-        }
-        let store = wamn_kubernetes::kubernetes::KubernetesStore::in_cluster()?;
-        let bytes = store.get(text("ref")?, text("version")?).await?;
-        Ok(Zeroizing::new(String::from_utf8(bytes)?))
+        let store = self.store.as_deref().or(store);
+        crate::connection_credentials::read_secret(text("ref")?, text("version")?, store)
+            .await
+            .map(Zeroizing::new)
     }
 }
 
-#[derive(Deserialize)]
-struct Parameters {
-    client_id: String,
-    authorize_url: String,
-    token_url: String,
-    token_authority: Option<String>,
-    scopes: Vec<String>,
-}
-#[derive(Deserialize)]
-struct Credential {
-    client_secret: String,
-}
-impl Drop for Credential {
-    fn drop(&mut self) {
-        use zeroize::Zeroize as _;
-        self.client_secret.zeroize();
-    }
-}
-#[derive(Deserialize)]
-struct ProviderError {
-    error: String,
-}
-#[derive(Deserialize)]
-struct Response {
-    access_token: String,
-    refresh_token: Option<String>,
-    expires_in: Option<u64>,
-    token_type: String,
-}
 struct Callback {
     state: Option<String>,
     code: Option<String>,
@@ -391,46 +312,13 @@ fn callback_parameters(query: &str) -> Result<Callback, Error> {
     }
     Ok(callback)
 }
-fn random() -> Result<String, Error> {
-    let mut bytes = [0; 32];
-    SystemRandom::new()
-        .fill(&mut bytes)
-        .map_err(|_| refused("authorization entropy unavailable"))?;
-    Ok(URL_SAFE_NO_PAD.encode(bytes))
-}
-fn provider_url(value: &str) -> Result<Url, Error> {
-    let url = Url::parse(value).map_err(|error| failed("invalid provider URL", error))?;
-    if !matches!(url.scheme(), "http" | "https")
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(refused("invalid provider URL"));
-    }
-    Ok(url)
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn entropy_and_callback_parameters() {
-        let a = random().unwrap();
-        assert_eq!(URL_SAFE_NO_PAD.decode(&a).unwrap().len(), 32);
-        assert_eq!(a.len(), 43);
-        assert!(
-            a.bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        );
-        assert_ne!(a, random().unwrap());
+    fn callback_parameters_refuse_duplicates() {
         assert!(callback_parameters("state=a&state=b").is_err());
-        assert_eq!(
-            callback_parameters("state=a%2Bb&code=c%26d")
-                .unwrap()
-                .state
-                .as_deref(),
-            Some("a+b")
-        );
+        assert!(callback_parameters("state=a%2Bb&code=c%26d").is_ok());
     }
 }

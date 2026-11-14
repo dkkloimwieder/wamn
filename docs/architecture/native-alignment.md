@@ -57,6 +57,12 @@ The adoption decision requires no benchmark.
 
 Standard-library guests retain their original WASI imports. Admission permits the approved ambient interfaces. The host supplies an empty environment, argument list and standard streams, with no preopened directories.
 
+Guest logging uses the pinned runtime's public binding hook and `TracingLogger`.
+The host tracing exporter sends the records. Guest context remains an ordinary attribute.
+The host replaces only the native record callback to enter the invocation span held by the store's active scope.
+The pinned runtime stays unchanged.
+
+The shared artifact owner builds OCI clients for all artifact readers.
 The OCI readers preserve WAMN configuration blobs and media types.
 They require registry-targeted `HttpsExcept`, connect and read timeouts, and `ManifestUnknown` discrimination for exact republishing.
 A generic upstream component transfer cannot replace them by dropping those facts.

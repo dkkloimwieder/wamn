@@ -9,13 +9,14 @@ use wamn_environment::environment::document::{DeclaredRelease, EnvironmentDocume
 use wamn_environment::platform::{document::ClusterDocument, document::Provider, provider};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-use super::write_log_routes::Routes;
+mod routes;
+pub use routes::Routes;
 
-pub(super) struct Application {
+pub struct Application {
     pub routes: Routes,
     pub caller: String,
     document: EnvironmentDocument,
-    _scratch: ScratchRoot,
+    scratch: ScratchRoot,
 }
 
 impl Application {
@@ -96,14 +97,7 @@ impl Application {
             )?;
             product(["connection", "enable", "--file", text(&request)?]).await?;
         }
-        product([
-            "dev",
-            "--config",
-            text(&file)?,
-            "--overlay-root",
-            text(source)?,
-        ])
-        .await?;
+        deploy(&file, source).await?;
         let secret = scratch.path().join("caller.json");
         product([
             "create-api-service",
@@ -145,11 +139,11 @@ impl Application {
             routes,
             caller,
             document,
-            _scratch: scratch,
+            scratch,
         })
     }
 
-    pub async fn observer(&self) -> anyhow::Result<sqlx::PgConnection> {
+    pub async fn database_url(&self) -> anyhow::Result<String> {
         let url = std::env::var("WAMN_SYSTEM_ADMIN_URL")?;
         let suffix = self.instance_suffix().await?;
         let name = wamn_control_provision::project_env_database_name(
@@ -158,13 +152,25 @@ impl Application {
             &self.document.env,
             &suffix,
         );
-        let url = wamn_postgres::database_configuration(&url, &name)?;
+        wamn_postgres::database_configuration(&url, &name)
+    }
+
+    pub async fn observer(&self) -> anyhow::Result<sqlx::PgConnection> {
+        let url = self.database_url().await?;
         let mut client = wamn_postgres::connect(&url).await?;
         sqlx::raw_sql("SET ROLE wamn_db_owner; SET default_transaction_read_only = on")
             .execute(&mut client)
             .await
             .map(drop)?;
         Ok(client)
+    }
+
+    pub fn target(&self) -> &EnvironmentDocument {
+        &self.document
+    }
+
+    pub async fn rebuild(&self, source: &Path) -> anyhow::Result<()> {
+        deploy(&self.scratch.path().join("environment.k"), source).await
     }
 
     pub async fn audience(&self) -> anyhow::Result<String> {
@@ -227,4 +233,24 @@ async fn product<const N: usize>(args: [&str; N]) -> anyhow::Result<()> {
         String::from_utf8_lossy(&output.stderr)
     );
     Ok(())
+}
+
+async fn deploy(file: &Path, source: &Path) -> anyhow::Result<()> {
+    product([
+        "dev",
+        "--config",
+        text(file)?,
+        "--overlay-root",
+        text(source)?,
+    ])
+    .await
+}
+
+impl std::fmt::Debug for Application {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Application")
+            .field("document", &self.document.triple())
+            .finish_non_exhaustive()
+    }
 }

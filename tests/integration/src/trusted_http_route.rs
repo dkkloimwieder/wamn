@@ -45,9 +45,9 @@ use wamn_runtime::component_artifact_source::{
 };
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 use wamn_workflow::RouterDriver;
+use wash_runtime::plugin::wasi_logging::TracingLogger;
 
 /// The one project every seeded row and every identity is bound to.
 pub const PROJECT_ENV_KEY: &str = "org-a";
@@ -349,9 +349,7 @@ async fn build_with_credentials(
             postgres,
             Arc::new(HttpTransport::new().context("build the process HTTP transport")?),
             facts,
-            Arc::new(
-                WamnLogging::new(&WamnLoggingConfig::default()).context("build wamn:logging")?,
-            ), // The upstream is a loopback origin the test owns; the cluster
+            Arc::new(TracingLogger::default()), // The upstream is a loopback origin the test owns; the cluster
             // ceiling is Kubernetes' job, not this fixture's.
             Arc::from(vec!["*".parse().context("parse the allowed-host policy")?]),
             Arc::clone(&release),

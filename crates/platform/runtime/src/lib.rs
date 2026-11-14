@@ -15,14 +15,12 @@ pub mod connection_memory;
 pub mod integrations;
 mod kv_memory;
 pub mod plugins;
-mod registry_transport;
-pub mod release_manifest_artifact;
-pub mod release_manifest_source;
 pub mod resource_lease;
 pub mod session_keys;
 
 pub mod connection_credentials;
 
+mod oauth;
 pub mod oauth_authorization;
 pub mod oauth_encryption;
 pub mod oauth_token;

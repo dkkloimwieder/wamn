@@ -1,4 +1,4 @@
-//! The packaging screen follows the change feed of a local WMS host
+//! The packaging screen follows the deployed WMS change feed
 //! (docs/architecture/execution.md#change-feed).
 //!
 //! The test serves WMS over real components and PostgreSQL, and runs
@@ -8,87 +8,27 @@
 //! the test deletes in the database leaves it. The selected runner prepares
 //! the screen and supplies its path.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 
 use anyhow::Context as _;
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
-use wamn_catalog::ServingAttachment;
-use wamn_integration_tests::local_application::{
-    LocalApplication, LocalApplicationConfig, LocalPackage,
-};
-use wamn_test_infrastructure::scratch::ScratchRoot;
+use wamn_integration_tests::product_application::Application;
 
 use crate::business_fixture::{LOCATION_A_ID, PACKAGING_ID};
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_SYNC_BENCH_DIST, bin:node"]
 async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_SYNC_BENCH_DIST, bin:node",
-    );
-    let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
-    let scratch = ScratchRoot::create()?;
+    let application: Application = panic!("wamn-eulfr.12.9: no product packaging delete");
+    let project_url = application.database_url().await?;
     let app = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .context("the WMS test crate has an application parent")?
+        .context("WMS source")?
         .to_owned();
-    let attachments: BTreeMap<String, ServingAttachment> =
-        wamn_compiler::publication::read_package_attachments(&app)?;
-    let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
-    let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
-    std::fs::write(
-        scratch.path().join("environment.k"),
-        include_str!("../../../tests/integration/fixtures/local-environments/wms.k"),
-    )?;
-    let application = LocalApplication::start(LocalApplicationConfig {
-        system_database_url: system.url(),
-        database_url: project.url(),
-        scratch: scratch.path(),
-        component_directory: &components,
-        flow_http_wasm: &flow_http,
-        project_env_key: crate::environment::identity().project_env_key().as_str(),
-        org: crate::environment::identity().org.as_str(),
-        project: crate::environment::identity().project.as_str(),
-        environment: crate::environment::identity().environment.as_str(),
-        schema: crate::environment::SCHEMA,
-        caller_role: "admin",
-        route_host: "wms.local.test",
-        packages: &[LocalPackage {
-            root: &app,
-            component: "wms",
-        }],
-        attachments: &attachments,
-    })
-    .await?;
-    let mut admin = wamn_postgres::connect(project.url()).await?;
-
-    let mut identity = wamn_postgres::connect(system.url()).await?;
+    let mut admin = wamn_postgres::connect(&project_url).await?;
 
     let result = async {
-        let target = crate::environment::identity();
-        let subject = wamn_platform_identity::operator_subject(
-            &target.org,
-            &target.project,
-            &target.environment,
-        )?;
-        let user = wamn_platform_identity::resolve_subject(
-            &mut identity,
-            wamn_platform_identity::PrincipalType::Service,
-            &subject,
-        )
-        .await?
-        .context("the local application's operator principal")?;
-        // This PAT fixture has no registered session instance or identity service.
-        // The browser's mocked session uses this test-only instance suffix.
-        let audience = wamn_control_provision::session_target::session_audience(
-            &wamn_registry::Triple::new(target.org.clone(), target.environment.as_str(), target.project.clone()),
-            "localapp",
-        )?;
-        crate::business_fixture::seed_fixture(&mut admin, 1).await?;
+        let audience = application.audience().await?;
         let bench = app.join("../../web/sync-bench").canonicalize()?;
         let mut driver = tokio::process::Command::new("node")
             .arg("bench/follow.mjs")
@@ -97,10 +37,10 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
                 "WAMN_SYNC_BENCH_DIST",
                 std::env::var_os("WAMN_SYNC_BENCH_DIST").context("WAMN_SYNC_BENCH_DIST")?,
             )
-            .env("WAMN_ENDPOINT", &application.endpoint)
-            .env("WAMN_ROUTE_HOST", &application.route_host)
-            .env("WAMN_BEARER", &application.bearer)
-            .env("WAMN_USER_ID", user.id().to_string().as_str())
+            .env("WAMN_ENDPOINT", &application.routes.endpoint)
+            .env("WAMN_ROUTE_HOST", &application.routes.host)
+            .env("WAMN_BEARER", &application.routes.bearer)
+            .env("WAMN_USER_ID", application.caller.as_str())
             .env("WAMN_AUD", audience)
             .env("WAMN_LOCATION_ID", LOCATION_A_ID)
             .env("WAMN_FIRST_ID", PACKAGING_ID)
@@ -145,7 +85,6 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
     }
     .await;
     drop(admin);
-    drop(identity);
-    application.shutdown().await?;
+    application.remove().await?;
     result
 }

@@ -22,9 +22,7 @@ use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType, FlowHt
 use wamn_engine::operation::invocation_policy::InvocationPolicy as _;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_protocol::verifier::SessionVerifier;
-use wamn_runtime::plugins::route_authentication::{
-    PlatformRouteAuthenticator, SessionRouteAuthentication,
-};
+use wamn_runtime::plugins::route_authentication::PlatformRouteAuthenticator;
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
@@ -42,7 +40,7 @@ mod session_fixture;
 use session_fixture::{ORG, Server, claims, header, signed};
 
 const PROJECT: &str = "test";
-const PROJECT_ENV_KEY: &str = "org-a";
+const PROJECT_ENV_KEY: &str = super::PROJECT_ENV_KEY;
 const ENVIRONMENT: &str = "test";
 const AUDIENCE: &str = "urn:wamn:project-env:org-a:test:test:native-b";
 const ATTACHMENT: &str = "native-test-http";
@@ -260,11 +258,11 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
             .map(|result| result.rows_affected())?;
         }
     }
-    let authentication = Arc::new(SessionRouteAuthentication::new(
-        verifier,
-        wamn_postgres::pool(admin_url, 4).await?,
+    let authentication = Arc::new(PlatformRouteAuthenticator::for_test(
         postgres,
         PROJECT,
+        Some(wamn_postgres::pool(admin_url, 4).await?),
+        Some(verifier),
     ));
     let definition = json!({"id": ATTACHMENT, "type": "http", "route": {
         "host": "native.example.test", "path": "/native", "method": "POST"
@@ -291,9 +289,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
                 json!({"receiving": {"packages": ["root", "child"]}}),
             )?),
     )?);
-    let route = FlowHttpRouting::new(Some(release)).with_authenticator(Arc::new(
-        PlatformRouteAuthenticator::default().with_session_authentication(authentication),
-    ));
+    let route = FlowHttpRouting::new(Some(release)).with_authenticator(authentication);
     Ok((server, route))
 }
 
@@ -1277,7 +1273,6 @@ async fn pat_caller(
     release: &LoadedRelease,
 ) -> anyhow::Result<AuthenticatedCaller> {
     use wamn_platform_identity::{assign_project_role, create_service, issue_pat};
-    use wamn_runtime::plugins::route_authentication::RouteAuthentication;
 
     let system_database = wamn_control_provision::test_database::system();
     let mut system = connect(system_database.url()).await?;
@@ -1376,9 +1371,7 @@ async fn pat_caller(
             )?),
     )?);
     let routing = FlowHttpRouting::new(Some(release)).with_authenticator(Arc::new(
-        PlatformRouteAuthenticator::default().with_authentication(Arc::new(
-            RouteAuthentication::new(reader, postgres, PROJECT),
-        )),
+        PlatformRouteAuthenticator::for_test(postgres, PROJECT, Some(reader), None),
     ));
     routing
         .authenticate_authorization_for_test(ATTACHMENT, Some(&format!("Bearer {}", token.token())))

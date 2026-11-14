@@ -1164,7 +1164,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
         NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig, component_invocation,
     };
     use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-    use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
+    use wash_runtime::plugin::wasi_logging::TracingLogger;
 
     let package = signed_read::signed_read_fixture(PROJECT_ENV_KEY)?;
     let mut fixture =
@@ -1216,7 +1216,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
             PROJECT,
             "dev",
         )),
-        Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
+        Arc::new(TracingLogger::default()),
         Arc::from([]),
         Arc::clone(&package.release),
         Arc::new(LocalComponentSource::new(package.scratch.path().to_owned())),

@@ -12,19 +12,15 @@
 //! the band.
 
 use sqlx::{Connection as _, Row as _};
+use std::collections::BTreeMap;
 #[path = "../../../services/ctl/src/read_query.rs"]
 mod read_query;
-
-use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use anyhow::Context as _;
 use base64::Engine as _;
 use serde_json::{Value, json};
-use wamn_catalog::ServingAttachment;
-use wamn_test_infrastructure::scratch::ScratchRoot;
 
-use crate::local_application::{LocalApplication, LocalApplicationConfig, LocalPackage};
+use crate::product_application::Application;
 
 const ROUTE_PREFIX: &str = "/route";
 
@@ -171,84 +167,18 @@ fn edit_version(answer: &Value) -> anyhow::Result<i64> {
 }
 
 /// Each fixture route attachment under `/route`, and at its own path an
-/// attachment of a one-node wiring that calls the same export.
-fn attachments(app: &std::path::Path) -> anyhow::Result<BTreeMap<String, ServingAttachment>> {
-    let routes = wamn_compiler::publication::read_package_attachments(app)?;
-    let mut attachments = BTreeMap::new();
-    for (id, attachment) in routes {
-        let mut alias = attachment.clone();
-        let path = alias.definition["route"]["path"]
-            .as_str()
-            .context("route path")?
-            .to_owned();
-        alias.definition["route"]["path"] = json!(format!("{ROUTE_PREFIX}{path}"));
-        alias.definition["id"] = json!(format!("route-{id}"));
-        attachments.insert(format!("route-{id}"), alias);
-        attachments.insert(id, attachment);
-    }
-    Ok(attachments)
-}
-
-/// Start the fixture application with every attachment served twice, and
-/// the client that calls it.
-async fn start(
-    system_url: &str,
-    project_url: &str,
-    scratch: &ScratchRoot,
-    caller_role: &str,
-) -> anyhow::Result<(LocalApplication, Paths)> {
-    let app = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../apps/platform_fixture")
-        .canonicalize()?;
-    let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
-    let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
-    let attachments = attachments(&app)?;
-    std::fs::write(
-        scratch.path().join("environment.k"),
-        include_str!("../fixtures/local-environments/platform.k"),
-    )?;
-    let application = LocalApplication::start(LocalApplicationConfig {
-        system_database_url: system_url,
-        database_url: project_url,
-        scratch: scratch.path(),
-        component_directory: &components,
-        flow_http_wasm: &flow_http,
-        project_env_key: "route-interface",
-        org: "acme",
-        project: "fixture",
-        environment: "dev",
-        schema: "inventory",
-        caller_role,
-        route_host: "fixture.local.test",
-        packages: &[LocalPackage {
-            root: &app,
-            component: "fixture",
-        }],
-        attachments: &attachments,
-    })
-    .await?;
-    let paths = Paths {
-        endpoint: application.endpoint.clone(),
-        host: application.route_host.clone(),
-        bearer: application.bearer.clone(),
-        client: reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()?,
-    };
-    Ok((application, paths))
-}
-
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_route_answers_every_operation_type_consistently_across_aliases() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
-    let scratch = ScratchRoot::create()?;
-    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
+    let application: Application =
+        panic!("wamn-eulfr.12.5: no product route aliases or sequence override");
+    let project_url = application.database_url().await?;
+    let paths = Paths {
+        endpoint: application.routes.endpoint.clone(),
+        host: application.routes.host.clone(),
+        bearer: application.routes.bearer.clone(),
+        client: application.routes.client.clone(),
+    };
 
     // CREATE. The route replays the command the wiring created, from the same
     // write log record: the same id and the same creation time.
@@ -548,7 +478,7 @@ async fn a_route_answers_every_operation_type_consistently_across_aliases() -> a
         "an update changes the get tag: {status} {changed:?} {get_tag}"
     );
 
-    application.shutdown().await?;
+    application.remove().await?;
     Ok(())
 }
 
@@ -574,17 +504,17 @@ fn names(answer: &Value, member: &str) -> anyhow::Result<Vec<String>> {
 /// days until the request sends one, and its search finds a part of the name
 /// in any case.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn each_filter_mode_the_search_and_the_band_read_their_rows() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
-    let scratch = ScratchRoot::create()?;
-    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
-    let mut database = wamn_postgres::connect(project.url()).await?;
+    let application: Application = panic!("wamn-eulfr.12.9: no product fixture import");
+    let project_url = application.database_url().await?;
+    let paths = Paths {
+        endpoint: application.routes.endpoint.clone(),
+        host: application.routes.host.clone(),
+        bearer: application.routes.bearer.clone(),
+        client: application.routes.client.clone(),
+    };
+    let mut database = wamn_postgres::connect(&project_url).await?;
 
     // The seed states each creation time, which the stamp trigger would
     // replace, so it runs without triggers.
@@ -653,28 +583,25 @@ async fn each_filter_mode_the_search_and_the_band_read_their_rows() -> anyhow::R
     }
 
     drop(database);
-    application.shutdown().await?;
+    application.remove().await?;
     Ok(())
 }
 
 /// A composed read adds no transaction statements (wamn-5x0tt).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn composed_reads_use_one_statement_plus_optional_wal() -> anyhow::Result<()> {
     const REQUESTS: i64 = 10;
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
-    );
-    let mut server = wamn_test_postgres::start(&[
-        ("shared_preload_libraries", "pg_stat_statements"),
-        ("pg_stat_statements.track", "all"),
-    ])?;
-    let system = server.create_database("statement_system")?;
-    let project = server.create_database("statement_project")?;
-    let scratch = ScratchRoot::create()?;
-    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
+    let application: Application =
+        panic!("wamn-eulfr.12.10: no product statement statistics setup");
+    let project_url = application.database_url().await?;
+    let paths = Paths {
+        endpoint: application.routes.endpoint.clone(),
+        host: application.routes.host.clone(),
+        bearer: application.routes.bearer.clone(),
+        client: application.routes.client.clone(),
+    };
     let result = async {
-        let mut database = wamn_postgres::connect(project.url()).await?;
+        let mut database = wamn_postgres::connect(&project_url).await?;
 
         sqlx::raw_sql("CREATE EXTENSION IF NOT EXISTS pg_stat_statements").execute(&mut database).await.map(drop)?;
         let created = paths
@@ -741,7 +668,7 @@ async fn composed_reads_use_one_statement_plus_optional_wal() -> anyhow::Result<
         Ok::<_, anyhow::Error>(())
     }
     .await;
-    application.shutdown().await?;
+    application.remove().await?;
     result
 }
 
@@ -859,18 +786,18 @@ async fn note_widget(paths: &Paths, id: &Value, version: i64, note: &str) -> any
 /// retention, the first cursor is older than the oldest entry kept, and the
 /// feed refuses it with `cursor_expired`.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
-    let scratch = ScratchRoot::create()?;
-    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
+    let application: Application = panic!("wamn-eulfr.12.6: no product history expiry");
+    let project_url = application.database_url().await?;
+    let paths = Paths {
+        endpoint: application.routes.endpoint.clone(),
+        host: application.routes.host.clone(),
+        bearer: application.routes.bearer.clone(),
+        client: application.routes.client.clone(),
+    };
     let result = async {
-        integer_identity_operations(&paths, project.url()).await?;
+        integer_identity_operations(&paths, &project_url).await?;
         let all = json!({});
         let (first, first_version) = create_widget(&paths, "standard", "kept").await?;
         let (second, second_version) = create_widget(&paths, "priority", "kept").await?;
@@ -1016,7 +943,7 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
         // CURSOR EXPIRED. Every entry so far is older than the retention, and
         // a real pruning run removes them. One newer entry stays, so the first
         // cursor is older than the oldest entry kept.
-        let mut database = wamn_postgres::connect(project.url()).await?;
+        let mut database = wamn_postgres::connect(&project_url).await?;
 
         sqlx::query("UPDATE inventory.widget_history SET changed_at = now() - interval '31 days'")
             .execute(&mut database)
@@ -1041,7 +968,7 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
         Ok::<_, anyhow::Error>(())
     }
     .await;
-    application.shutdown().await?;
+    application.remove().await?;
     result
 }
 
@@ -1080,18 +1007,18 @@ fn screen_ids(changes: &Value, expected: &[&str], deleted: bool) -> anyhow::Resu
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
-    let scratch = ScratchRoot::create()?;
-    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
+    let application: Application = panic!("wamn-eulfr.12.9: no product fixture import");
+    let project_url = application.database_url().await?;
+    let paths = Paths {
+        endpoint: application.routes.endpoint.clone(),
+        host: application.routes.host.clone(),
+        bearer: application.routes.bearer.clone(),
+        client: application.routes.client.clone(),
+    };
     let result = async {
-        let mut writer = wamn_postgres::connect(project.url()).await?;
+        let mut writer = wamn_postgres::connect(&project_url).await?;
 
         sqlx::raw_sql("SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), false), set_config('app.operation', 'admin:screen-feed', false);
             INSERT INTO inventory.feed_order VALUES ('00000000-0000-4000-8000-000000000001', 'order one'), ('00000000-0000-4000-8000-000000000002', 'order two');
@@ -1191,26 +1118,26 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
         drop(writer);
         Ok::<_, anyhow::Error>(())
     }.await;
-    application.shutdown().await?;
+    application.remove().await?;
     result
 }
 
 /// A held transaction leaves room for one page of visible commits above xmin.
 /// Replacing the priority row keeps the fixture's two-code constraint intact.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
-    );
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
-    let scratch = ScratchRoot::create()?;
-    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
+    let application: Application = panic!("wamn-eulfr.12.10: no product held transaction");
+    let project_url = application.database_url().await?;
+    let paths = Paths {
+        endpoint: application.routes.endpoint.clone(),
+        host: application.routes.host.clone(),
+        bearer: application.routes.bearer.clone(),
+        client: application.routes.client.clone(),
+    };
     let result = async {
         let (standard, version) = create_widget(&paths, "standard", "before").await?;
-        let mut writer = wamn_postgres::connect(project.url())
+        let mut writer = wamn_postgres::connect(&project_url)
                 .await
                 .context("connect the feed writer")?;
 
@@ -1227,7 +1154,7 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
             .context("grant the list permission and move the caller to reader")?;
         let list = paths.route("/widget/query", &json!([{}])).await?;
         let cursor = value(&list)?["cursor"].as_str().context("a list cursor")?;
-        let mut holder = wamn_postgres::connect(project.url())
+        let mut holder = wamn_postgres::connect(&project_url)
                 .await
                 .context("connect the held writer")?;
 
@@ -1346,7 +1273,7 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
         Ok::<_, anyhow::Error>(())
     }
     .await;
-    application.shutdown().await?;
+    application.remove().await?;
     result
 }
 

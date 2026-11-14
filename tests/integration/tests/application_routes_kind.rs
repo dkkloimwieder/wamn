@@ -3,17 +3,12 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use sqlx::Row as _;
-#[expect(
-    dead_code,
-    reason = "The shared fixture also supplies browser audiences."
-)]
-#[path = "support/application.rs"]
-mod product;
 #[path = "../../../services/ctl/src/read_query.rs"]
 mod read_query;
-#[path = "support/write_log_routes.rs"]
-mod write_log_routes;
-use product::Application;
+use wamn_integration_tests::product_application::{Application, Routes};
+
+#[path = "support/write_log.rs"]
+mod write_log;
 
 const PREREQUISITES: &str = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL";
 
@@ -182,11 +177,7 @@ async fn a_read_of_100000_rows_refuses_at_the_ceiling() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn get(
-    paths: &write_log_routes::Routes,
-    path: &str,
-    body: &Value,
-) -> anyhow::Result<(u16, Value)> {
+async fn get(paths: &Routes, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
     let input = body[0].as_object().context("read input")?;
     let query = read_query::encode_read_query(input);
     let response = paths
@@ -269,7 +260,7 @@ async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Resu
     result
 }
 
-async fn post(paths: &write_log_routes::Routes, path: &str, body: &Value) -> anyhow::Result<Value> {
+async fn post(paths: &Routes, path: &str, body: &Value) -> anyhow::Result<Value> {
     let response = paths
         .client
         .post(format!("{}{path}", paths.endpoint))

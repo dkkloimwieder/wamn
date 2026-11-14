@@ -34,8 +34,6 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 bytes.workspace = true
 http-body-util.workspace = true
 hyper = { workspace = true, features = ["client", "http1"] }
-hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
-hyper-rustls = { workspace = true, features = ["http1", "webpki-roots", "aws-lc-rs"] }
 rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity
 # implemented by the catalog model; the writer never re-derives that hash.

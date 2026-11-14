@@ -29,21 +29,20 @@ pub trait DevInvalidationSource {
 /// Shutdown waits for an active deployment to finish. A failed watch pass is
 /// reported and the next source change retries through the same product path.
 #[cfg(target_os = "linux")]
-pub async fn run<S, F, R>(
+pub async fn run<S, F>(
     mut source: Option<S>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     mut deploy: F,
 ) -> anyhow::Result<()>
 where
     S: DevInvalidationSource,
-    F: FnMut() -> R,
-    R: Future<Output = anyhow::Result<()>>,
+    F: AsyncFnMut(&mut Option<S>) -> anyhow::Result<()>,
 {
     loop {
         if *shutdown.borrow() {
             return Ok(());
         }
-        let result = deploy().await;
+        let result = deploy(&mut source).await;
         let Some(source) = source.as_mut() else {
             return result;
         };

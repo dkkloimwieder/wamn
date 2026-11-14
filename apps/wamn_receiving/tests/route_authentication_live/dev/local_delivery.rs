@@ -1,23 +1,13 @@
-//! Saved-edit acceptance through the existing Receiving developer command.
-
-use sqlx::Row as _;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use std::time::Duration;
-
+//! Saved edits retain deployed data and refuse invalid source through product commands.
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt as _, BufReader, Lines};
-use tokio::process::{Child, ChildStderr, ChildStdout, Command};
-
-use super::super::{
-    GitSource, GitSourceState, PLATFORM_DOMAIN, ScratchRoot, connect,
-    environment::seed_receiving_business_rows, identity, repository_root, required_journey_path,
-    write_dev_config,
-};
-use super::{DEV_COMMAND_TIMEOUT, DevJourneyInputs};
+use sqlx::Row as _;
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use wamn_integration_tests::product_application::Application;
+use wamn_postgres::connect;
 
 const CODE: &str = "apps/wamn_receiving/component/src/reads.rs";
 const SQL: &str = "apps/wamn_receiving/query/location.sql";
@@ -26,92 +16,17 @@ const CODE_BEFORE: &str = "read::location_list(connection)";
 const CODE_AFTER: &str = "async { let mut rows = read::location_list(connection).await?; for row in &mut rows { row.location_code.push_str(\"-edited\"); } Ok::<_, crate::data::AccessError>(rows) }";
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_LOCAL_DEV_EDIT_ROOT, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:jq"]
 async fn local_watch_preserves_data_and_refuses_bad_sql() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_LOCAL_DEV_EDIT_ROOT, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:jq",
-    );
-    let repository = repository_root()?;
-    ensure!(
-        required_journey_path("WAMN_LOCAL_DEV_EDIT_ROOT")?
-            .canonicalize()
-            .context("resolve WAMN_LOCAL_DEV_EDIT_ROOT")?
-            == repository
-            && repository.join(".git").is_file(),
-        "WAMN_LOCAL_DEV_EDIT_ROOT must name this explicitly owned linked worktree"
-    );
-    let git = GitSource::discover(&repository).await?;
-    let initial = git.snapshot().await?;
-    ensure!(
-        initial.state() == GitSourceState::Clean,
-        "the owned edit worktree must start clean"
-    );
-    // The environment resets the control store of the whole server, so the test starts its own.
-    let mut server = wamn_test_infrastructure::postgres::start(&[])?;
-    let system_url = server.create_database("wamn_system")?.url().to_owned();
-    let mut inputs = DevJourneyInputs::required()?;
-    ensure!(
-        inputs
-            .environment
-            .local_artifacts
-            .flow_http_component
-            .is_file(),
-        "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT must name the local flow-http component file"
-    );
+    let application: Application =
+        panic!("wamn-eulfr.12.9: no product location and order-line import");
+    let repository = super::super::repository_root()?;
+    let source = repository.join("apps/client_acme_receiving");
+    let source = source.as_path();
+    let project_url = application.database_url().await?;
     let mut original = SavedSource::capture(&repository)?;
-    let scratch = ScratchRoot::create()?;
-    let root = scratch.path();
-    inputs.environment.local_artifacts.directory = root.join("local-artifacts");
-
-    let mut admin = connect(&system_url).await?;
-    std::fs::write(
-        root.join("environment.k"),
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../tests/integration/fixtures/local-environments/acme-receiving.k"
-        )),
-    )?;
-    let environment = wamn_dev::dev::environment::provision(
-        &system_url,
-        &mut admin,
-        root,
-        PLATFORM_DOMAIN,
-        &wamn_environment::environment::document::EnvironmentDocument::compile(
-            &root.join("environment.k"),
-        )?,
-    )
-    .await?;
-    let provisioning = inputs.environment.nats.connect().await?;
-    let target = wamn_registry::Triple::new(
-        &environment.identity.org,
-        environment.identity.environment.as_str(),
-        &environment.identity.project,
-    );
-    wamn_broker::streams::provision(
-        &async_nats::jetstream::new(provisioning.clone()),
-        &target,
-        inputs.environment.stream_replicas,
-        Duration::from_secs(inputs.environment.dup_window_secs),
-        &[],
-    )
-    .await?;
-
-    let config = write_dev_config(
-        root,
-        &system_url,
-        &environment.route,
-        &environment.credentials,
-        &inputs.environment,
-        &environment.identity,
-    )?;
-    let mut watch = Watch::start(&inputs.wamn_binary, &repository, &config)?;
+    let first = Served::deployed(&application).await?;
     let result = async {
-        let first = watch.served().await?;
-        ensure!(!first.skipped.contains("migrate"), "a new local session must prepare its schema");
-        let mut project = connect(&environment.route.database_url).await?;
-        seed_receiving_business_rows(&mut project).await?;
-        sqlx::query("INSERT INTO receiving.location(id,location_code) VALUES ('00000000-0000-0000-0000-000000000202','DOCK-2')").execute(&mut project).await.map(|result| result.rows_affected())?;
-        let token = &environment.route.token;
+        let token = &application.routes.bearer;
         let denied = http_client()?.get(format!("{}/location/list", first.url))
             .header("Host", &first.host).send().await?;
         ensure!(denied.status() == reqwest::StatusCode::UNAUTHORIZED, "the local route must require authentication");
@@ -121,70 +36,51 @@ async fn local_watch_preserves_data_and_refuses_bad_sql() -> anyhow::Result<()> 
             "expected_row_version":1, "change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}
         }])).await?;
         ensure!(updated[0]["value"]["row_version"] == 2, "the authenticated command did not commit its revision");
-        require_local_facts(root, &environment.route.database_url).await?;
 
         original.replace(CODE, CODE_BEFORE, CODE_AFTER)?;
-        let code = watch.served().await?;
-        code.retained(&first, &["migrate", "acl"])?;
+        application.rebuild(source).await?;
+        let code = Served::deployed(&application).await?;
+        code.retained(&first)?;
         code.locations(token, &["DOCK-1-edited", "DOCK-2-edited"]).await?;
-        require_revision(&environment.route.database_url).await?;
+        require_revision(&project_url).await?;
 
         original.replace(SQL, "location.location_code ASC", "location.location_code DESC")?;
-        let sql = watch.served().await?;
-        sql.retained(&code, &["migrate"])?;
+        application.rebuild(source).await?;
+        let sql = Served::deployed(&application).await?;
+        sql.retained(&code)?;
         sql.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
-        require_revision(&environment.route.database_url).await?;
+        require_revision(&project_url).await?;
 
         let valid_sql = fs::read(repository.join(SQL))?;
         fs::write(repository.join(SQL), b"SELECT invalid_delivery_sql FROM receiving.location;\n")?;
-        watch.refused_stage("migrate").await?;
+        ensure!(application.rebuild(source).await.is_err(), "invalid source was accepted");
         sql.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
-        require_revision(&environment.route.database_url).await?;
+        require_revision(&project_url).await?;
         fs::write(repository.join(SQL), valid_sql)?;
-        let repaired = watch.served().await?;
-        repaired.retained(&sql, &["migrate"])?;
+        application.rebuild(source).await?;
+        let repaired = Served::deployed(&application).await?;
+        repaired.retained(&sql)?;
         repaired.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
 
         let valid_code = fs::read(repository.join(CODE))?;
         let mut invalid_code = valid_code.clone();
         invalid_code.extend_from_slice(b"\ncompile_error!(\"invalid candidate Rust\");\n");
         fs::write(repository.join(CODE), invalid_code)?;
-        watch.refused_stage("migrate").await?;
+        ensure!(application.rebuild(source).await.is_err(), "invalid source was accepted");
         repaired.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
-        require_revision(&environment.route.database_url).await?;
+        require_revision(&project_url).await?;
         fs::write(repository.join(CODE), valid_code)?;
-        let compiled = watch.served().await?;
-        compiled.retained(&repaired, &[])?;
+        application.rebuild(source).await?;
+        let compiled = Served::deployed(&application).await?;
+        compiled.retained(&repaired)?;
         compiled.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
 
         Ok::<_, anyhow::Error>(())
     }.await;
-    let stopped = watch.stop().await;
-    let result = result.with_context(|| {
-        format!(
-            "local developer stderr tail:\n{}",
-            watch
-                .diagnostics
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    });
-    drop(watch);
     let restored = original.restore();
-
-    provisioning.drain().await?;
+    application.remove().await?;
     result?;
-    stopped?;
-    restored?;
-    let final_source = git.snapshot().await?;
-    ensure!(
-        final_source.state() == GitSourceState::Clean
-            && final_source.source_commit() == initial.source_commit(),
-        "the exact source was not restored"
-    );
-    Ok(())
+    restored
 }
 
 async fn require_revision(url: &str) -> anyhow::Result<()> {
@@ -193,50 +89,6 @@ async fn require_revision(url: &str) -> anyhow::Result<()> {
     ensure!(
         version == 2,
         "a compatible save lost or replayed the authenticated mutation"
-    );
-    Ok(())
-}
-
-async fn require_local_facts(root: &Path, target_url: &str) -> anyhow::Result<()> {
-    let bytes = fs::read(
-        root.join("local-artifacts")
-            .join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
-    )?;
-    let (_, digest) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    let facts = wamn_runtime::local_application::read_local_release(&root.join("local-artifacts"))?;
-    ensure!(
-        facts.manifest_digest == digest,
-        "dev release facts differ from the host release"
-    );
-    ensure!(
-        !facts.applications.is_empty(),
-        "dev host declares no local application"
-    );
-    let mut target = connect(target_url).await?;
-    let wirings: i64 =
-        sqlx::query("SELECT count(*) FROM catalog.workflows WHERE project_env_key=$1")
-            .bind(&identity().project_env_key().as_str())
-            .fetch_one(&mut target)
-            .await?
-            .get(0);
-    // The local run plane needs the release row its runs pin, and nothing
-    // else: dev authors no workflow on its own.
-    let releases = sqlx::query(
-        "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE project_env_key=$1",
-    )
-    .bind(&identity().project_env_key().as_str())
-    .fetch_all(&mut target)
-    .await?
-    .into_iter()
-    .map(|row| (row.get::<String, _>(0), row.get::<Vec<u8>, _>(1)))
-    .collect::<Vec<_>>();
-    ensure!(
-        wirings == 0,
-        "local execution wrote permanent publication facts"
-    );
-    ensure!(
-        releases == [(digest.as_str().to_owned(), bytes)],
-        "the disposable run-plane release differs from the local manifest"
     );
     Ok(())
 }
@@ -253,19 +105,21 @@ pub(super) struct Served {
     pub(super) url: String,
     pub(super) host: String,
     pub(super) instance: String,
-    skipped: BTreeSet<String>,
 }
 
 impl Served {
-    fn retained(&self, previous: &Self, reused: &[&str]) -> anyhow::Result<()> {
+    async fn deployed(application: &Application) -> anyhow::Result<Self> {
+        Ok(Self {
+            url: application.routes.endpoint.clone(),
+            host: application.routes.host.clone(),
+            instance: application.database_url().await?,
+        })
+    }
+
+    fn retained(&self, previous: &Self) -> anyhow::Result<()> {
         ensure!(
             self.instance == previous.instance,
             "a compatible edit recreated the application database"
-        );
-        ensure!(
-            reused.iter().all(|stage| self.skipped.contains(*stage)),
-            "the local loop repeated unchanged stages: {:?}",
-            self.skipped
         );
         Ok(())
     }
@@ -314,199 +168,6 @@ impl Served {
             "the served SQL or retained rows differ: {body}"
         );
         Ok(())
-    }
-}
-
-fn retain_diagnostic(diagnostics: &mut VecDeque<String>, line: String) {
-    // Keep startup failures available without retaining an unbounded build log.
-    if diagnostics.len() == 32 {
-        diagnostics.pop_front();
-    }
-    diagnostics.push_back(line);
-}
-
-pub(super) struct Watch {
-    child: Child,
-    process_group: Option<u32>,
-    stdout: Lines<BufReader<ChildStdout>>,
-    stderr: Lines<BufReader<ChildStderr>>,
-    stdout_open: bool,
-    stderr_open: bool,
-    pub(super) diagnostics: VecDeque<String>,
-}
-
-impl Watch {
-    pub(super) fn start(binary: &Path, repository: &Path, config: &Path) -> anyhow::Result<Self> {
-        let mut child = Command::new(binary)
-            .current_dir(repository)
-            .args(["dev", "--config"])
-            .arg(config)
-            .arg("--overlay-root")
-            .arg(repository.join("apps/client_acme_receiving"))
-            .args(["--watch", "--hold"])
-            .process_group(0)
-            .kill_on_drop(true)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        Ok(Self {
-            process_group: child.id(),
-            stdout: BufReader::new(child.stdout.take().context("watch stdout")?).lines(),
-            stderr: BufReader::new(child.stderr.take().context("watch stderr")?).lines(),
-            child,
-            stdout_open: true,
-            stderr_open: true,
-            diagnostics: VecDeque::new(),
-        })
-    }
-
-    pub(super) async fn line(&mut self) -> anyhow::Result<(bool, String)> {
-        loop {
-            ensure!(
-                self.stdout_open || self.stderr_open,
-                "the dev watch closed its output before its result (status {:?}): {}",
-                self.child.try_wait()?,
-                self.diagnostics
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            );
-            let (stderr, line) = tokio::select! {
-                line = self.stdout.next_line(), if self.stdout_open => (false, line?),
-                line = self.stderr.next_line(), if self.stderr_open => (true, line?),
-            };
-            let Some(line) = line else {
-                if stderr {
-                    self.stderr_open = false;
-                } else {
-                    self.stdout_open = false;
-                }
-                continue;
-            };
-            if stderr {
-                retain_diagnostic(&mut self.diagnostics, line.clone());
-            }
-            return Ok((stderr, line));
-        }
-    }
-
-    pub(super) async fn served(&mut self) -> anyhow::Result<Served> {
-        tokio::time::timeout(DEV_COMMAND_TIMEOUT, async {
-            let mut skipped = BTreeSet::new();
-            loop {
-                let (stderr, line) = self.line().await?;
-                ensure!(
-                    !stderr || !line.contains("dev-stage-failed"),
-                    "local watch refused a valid edit: {line}"
-                );
-                if let Some((_, stages)) = line.split_once(" skipped: unchanged ") {
-                    skipped = stages.split(',').map(str::to_owned).collect();
-                }
-                if let Some(endpoint) = line.strip_prefix("run served: ") {
-                    let (url, rest) = endpoint
-                        .split_once(" host=")
-                        .context("the served endpoint names its host")?;
-                    let (host, instance) = rest
-                        .split_once(" target_instance=")
-                        .context("the served endpoint names its database creation")?;
-                    ensure!(
-                        url.starts_with("http://127.0.0.1:") && !instance.is_empty(),
-                        "the local endpoint is not an explicit loopback target"
-                    );
-                    return Ok(Served {
-                        url: url.to_owned(),
-                        host: host.to_owned(),
-                        instance: instance.to_owned(),
-                        skipped,
-                    });
-                }
-            }
-        })
-        .await
-        .context("the local watch did not serve its candidate within the product bound")?
-    }
-
-    async fn refused_stage(&mut self, stage: &str) -> anyhow::Result<()> {
-        tokio::time::timeout(DEV_COMMAND_TIMEOUT, async {
-            loop {
-                let (stderr, line) = self.line().await?;
-                ensure!(
-                    !line.starts_with("run served: "),
-                    "a refused candidate reached activation"
-                );
-                if stderr && line.contains("dev-stage-failed") {
-                    ensure!(
-                        line.contains(&format!("dev-stage-failed at {stage}:")),
-                        "the candidate failed before the expected {stage} refusal: {line}"
-                    );
-                    return Ok(());
-                }
-            }
-        })
-        .await
-        .with_context(|| {
-            format!("the local watch did not refuse at {stage} within the product bound")
-        })?
-    }
-
-    pub(super) async fn stop(&mut self) -> anyhow::Result<()> {
-        if let Some(pid) = self.child.id() {
-            let _ = Command::new("kill")
-                .args(["-TERM", &pid.to_string()])
-                .output()
-                .await?;
-        }
-        let child = &mut self.child;
-        let stdout = &mut self.stdout;
-        let stderr = &mut self.stderr;
-        let diagnostics = &mut self.diagnostics;
-        let completed = tokio::time::timeout(Duration::from_secs(60), async {
-            let (status, (), ()) = tokio::try_join!(
-                child.wait(),
-                async {
-                    while stdout.next_line().await?.is_some() {}
-                    Ok::<_, std::io::Error>(())
-                },
-                async {
-                    while let Some(line) = stderr.next_line().await? {
-                        retain_diagnostic(diagnostics, line);
-                    }
-                    Ok::<_, std::io::Error>(())
-                }
-            )?;
-            Ok::<_, std::io::Error>(status)
-        })
-        .await;
-        let status = if let Ok(status) = completed {
-            status?
-        } else {
-            self.kill_group();
-            self.child.kill().await?;
-            anyhow::bail!("the owned developer process did not stop within its cleanup bound");
-        };
-        self.kill_group();
-        ensure!(
-            status.success(),
-            "the developer process failed during cleanup: {status}"
-        );
-        Ok(())
-    }
-
-    fn kill_group(&mut self) {
-        if let Some(pid) = self.process_group.take() {
-            let _ = std::process::Command::new("kill")
-                .args(["-KILL", "--", &format!("-{pid}")])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
-    }
-}
-
-impl Drop for Watch {
-    fn drop(&mut self) {
-        self.kill_group();
     }
 }
 

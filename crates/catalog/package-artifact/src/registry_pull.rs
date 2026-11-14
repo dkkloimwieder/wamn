@@ -151,6 +151,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manifest_decode_errors_do_not_retry() {
+        let server = Server::start(vec![(200, b"not json".to_vec())]).await;
+        let reader = repository(&server);
+        assert!(
+            retry(
+                &server.reference,
+                Instant::now() + Duration::from_secs(3),
+                || reader
+                    .client
+                    .pull_image_manifest(&reader.reference, &reader.auth),
+                |error| error
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(server.requests(), 1);
+    }
+
+    #[tokio::test]
     async fn manifest_404_is_absent_without_retry() {
         let server = Server::start(vec![(404, Vec::new())]).await;
         assert!(repository(&server).manifest().await.unwrap().is_none());
