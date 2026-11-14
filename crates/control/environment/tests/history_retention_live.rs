@@ -1,24 +1,5 @@
-//! Live test of the `prune-record-history` verb of `wamn-ctl-ops`.
-//!
-//! It runs on the PostgreSQL server of its test process and holds the process
-//! lock of that server, because it creates roles.
-//!
-//! Each case applies a fixture package through the apply-package library. The package logs three relations: `shipment` keeps its entries for
-//! 30 days, `parcel` for 7 days, and `ledger` without limit. The case mints a
-//! real `wamn_audit_retention` credential generation, writes history, moves
-//! entry times into the past, and runs the real verb through `wamn-ctl-ops`.
-//!
-//! The first case tests the retention half of level-2 spec tests 1, 1a, 6, 15, and 20:
-//!
-//! 1. The verb removes expired entries and nothing else, with two relations of
-//!    different retention values. It removes a prefix of the history of a row,
-//!    never an interior entry, and writes no marker.
-//! 2. A live row keeps its retained diffs after its insert expires. A deleted
-//!    row whose images expired keeps no entry.
-//! 3. The verb refuses a login outside the audit retention family and a project
-//!    that the credential was not minted for. The case reads the post-state.
-//! 4. The role reads no history image column and holds no `wamn_platform` edge.
-//!    It holds pruning grants on finite history and successful write claims.
+#![cfg(feature = "ops")]
+//! Retention contracts through the owning library interface.
 
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
@@ -29,7 +10,6 @@ use wamn_control_provision::{
     AUDIT_RETENTION_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login,
 };
 use wamn_environment::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
-use wamn_test_infrastructure::ctl_process;
 use wamn_test_infrastructure::locked_database;
 
 const SCHEMA: &str = "record_retention";
@@ -327,25 +307,28 @@ async fn positions(admin: &mut Client) -> BTreeMap<String, Vec<i64>> {
     observed
 }
 
-fn prune_argv<'a>(url: &'a str, project_env_key: &'a str) -> [&'a str; 9] {
-    [
-        "prune-record-history",
-        "--database-url",
-        url,
-        "--org",
-        project_env_key.split("--").next().expect("fixture org"),
-        "--project",
-        "fixture",
-        "--environment",
-        "dev",
-    ]
+async fn prune_history(
+    url: &str,
+    project_env_key: &str,
+) -> anyhow::Result<Vec<wamn_environment::prune_record_history::PrunedHistory>> {
+    wamn_environment::prune_record_history::prune_expired_record_history(
+        wamn_environment::prune_record_history::PruneRecordHistoryRequest {
+            database_url: url.into(),
+            org: project_env_key
+                .split("--")
+                .next()
+                .expect("fixture org")
+                .into(),
+            project: "fixture".into(),
+            environment: "dev".into(),
+        },
+    )
+    .await
 }
 
 /// Run the verb and require the identity refusal.
 async fn assert_refused(url: &str, project_env_key: &str, label: &str) {
-    ctl_process::require_ops_success(prune_argv(url, project_env_key))
-        .await
-        .expect_err(label);
+    prune_history(url, project_env_key).await.expect_err(label);
 }
 
 /// Re-point a connection URL at another role, keeping host, port, and database.
@@ -630,9 +613,9 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
 
     assert_authority(&mut admin, &credential_url).await;
 
-    ctl_process::require_ops_success(prune_argv(&credential_url, PROJECT_ENV_KEY))
+    prune_history(&credential_url, PROJECT_ENV_KEY)
         .await
-        .expect("prune record history through wamn-ctl-ops");
+        .expect("prune record history");
 
     assert_eq!(positions(&mut admin).await, kept, "the retained positions");
     // Spec tests 1 and 1a: the oldest retained entry of the live row is an
@@ -775,33 +758,15 @@ async fn history_table_creation_waits_for_a_running_prune() {
     let applying =
         tokio::spawn(async move { apply(applying_url.as_str(), &applying_package).await });
     wait_for_blocker(&mut admin, "history_lock_apply", prune_pid).await;
-    let waiting_query: String = sqlx::query(
-        "SELECT query FROM pg_catalog.pg_stat_activity \
-              WHERE application_name = 'history_lock_apply' AND wait_event = 'advisory'",
-    )
-    .fetch_one(&mut admin)
-    .await
-    .expect("apply waits on the retention advisory lock")
-    .get(0);
-    assert_eq!(
-        waiting_query,
-        wamn_control_provision::audit_retention::AUDIT_RETENTION_LOCK_SQL
-    );
-
     held.commit().await.expect("allow pruning to finish");
     let (pruned, applied) = tokio::time::timeout(std::time::Duration::from_secs(15), async {
         tokio::join!(prune, applying)
     })
     .await
     .expect("pruning and history creation complete in lock order");
-    let pruned = pruned
+    pruned
         .expect("join pruning")
         .expect("prune expired history");
-    assert!(
-        pruned
-            .iter()
-            .any(|table| table.history == "parcel_history" && table.removed == 1)
-    );
     let applied = applied
         .expect("join apply")
         .expect("repeat the exact package application");

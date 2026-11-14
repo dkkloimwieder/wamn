@@ -489,7 +489,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     );
     // Published SQL remains executable after its source directory disappears.
     std::fs::remove_dir_all(scratch.path().join("b"))?;
-    sql::schema::apply(&platform, &document, "b", b.digest().as_str(), system.url()).await?;
+    sql::schema::apply(&platform, &document, "b", b.digest().as_str()).await?;
     let installed = sql::schema::state(&platform, &document).await?;
     for (id, package) in &diff.packages {
         assert_eq!(

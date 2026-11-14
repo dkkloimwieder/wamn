@@ -2,11 +2,10 @@
 
 use anyhow::{Context as _, ensure};
 use sqlx::{Connection as _, Row as _};
-use std::path::PathBuf;
 use std::time::Duration;
 use wamn_broker::{Publisher, auth_changes::AuthDrops};
 use wamn_identity_client::{PatClient, PatIssuerConfig};
-use wamn_identity_protocol::{PrincipalId, RoleName};
+use wamn_identity_protocol::RoleName;
 use wamn_platform_identity::PrincipalStatus;
 use wamn_platform_identity::application::{
     ApplicationUser, GrantAuthority, GrantChange, mutate_grant, write_service,
@@ -25,7 +24,6 @@ pub struct Request {
     pub system_database_url: String,
     pub application_database_url: String,
     pub identity: PatIssuerConfig,
-    pub emit_secret: PathBuf,
 }
 impl std::fmt::Debug for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -35,7 +33,10 @@ impl std::fmt::Debug for Request {
 
 /// Create the service and issue its PAT through the existing identity authority.
 /// Retrying a partial creation reuses its identity and grants.
-pub async fn create(request: &Request, changes: &Publisher) -> anyhow::Result<PrincipalId> {
+pub async fn create(
+    request: &Request,
+    changes: &Publisher,
+) -> anyhow::Result<wamn_identity_protocol::wire::PatResponse> {
     wamn_control_provision::validate_project_env(&request.org, &request.project, &request.env)?;
     ensure!(
         request.name.parse::<wamn_registry::ProjectId>().is_ok(),
@@ -50,7 +51,6 @@ pub async fn create(request: &Request, changes: &Publisher) -> anyhow::Result<Pr
             && request.lifetime <= wamn_platform_identity::MAX_PAT_TTL,
         "invalid PAT lifetime"
     );
-    crate::provision_project_env::ensure_secret_path(&request.emit_secret, "API service PAT")?;
     let issuer = PatClient::new(&request.identity)?;
     let mut system = wamn_postgres::connect(&request.system_database_url)
         .await
@@ -142,9 +142,5 @@ pub async fn create(request: &Request, changes: &Publisher) -> anyhow::Result<Pr
     let token = issuer
         .issue(principal.id(), &request.name, request.lifetime)
         .await?;
-    crate::provision_project_env::write_secret_json(
-        &request.emit_secret,
-        &serde_json::to_value(&token)?,
-    )?;
-    Ok(*principal.id())
+    Ok(token)
 }

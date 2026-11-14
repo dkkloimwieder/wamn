@@ -347,28 +347,26 @@ pub(super) fn resource_entry(
 ///
 /// # Errors
 /// Refuses missing or unreadable state within the complete call time limit.
-pub async fn require_keys(target: &Target, limit: std::time::Duration) -> anyhow::Result<()> {
-    inspect_keys(target, tokio::time::Instant::now() + limit).await.context(
-        "Cannot inspect identity signing state. If no org control release is recorded, run platform deploy \
-         without --only to initialize identity. Otherwise restore a verified system database backup. \
-         No resources changed.",
-    )
+pub async fn require_keys(
+    input: &str,
+    org: &str,
+    limit: std::time::Duration,
+) -> anyhow::Result<()> {
+    tokio::time::timeout(limit, async {
+        let mut connection=wamn_postgres::connect(input).await?;
+        let active: bool=sqlx::query_scalar("SELECT EXISTS(SELECT FROM identity.session_signing_state s JOIN identity.session_keys k ON (k.issuer,k.kid)=(s.issuer,s.active_kid) WHERE s.issuer=$1 AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL)")
+            .bind(issuer(org)).fetch_one(&mut connection).await?;
+        ensure!(active,"identity has no active signing key");
+        anyhow::Ok(())
+    }).await.context("inspect identity signing state within the call limit")?
 }
 
-async fn inspect_keys(target: &Target, deadline: tokio::time::Instant) -> anyhow::Result<()> {
-    let state = tokio::time::timeout_at(deadline, key_state(target)).await??;
-    ensure!(
-        state["active"].is_object(),
-        "identity has no active private signing key"
-    );
-    Ok(())
-}
-
+// Initial platform bootstrap alone uses the explicit administrator connection.
 async fn key_state(target: &Target) -> anyhow::Result<Value> {
     let forward =
         super::database::forward(target, &target.namespace, "wamn-pg", "wamn_system").await?;
     let mut connection = wamn_postgres::connect(&forward.input).await?;
-    Ok(sqlx::query_scalar("SELECT json_build_object(        'active',(SELECT json_build_object('kid',k.kid::text,'x',translate(rtrim(encode(k.public_key,'base64'),'='),'+/','-_'))          FROM identity.session_signing_state s JOIN identity.session_keys k ON (k.issuer,k.kid)=(s.issuer,s.active_kid)          WHERE s.issuer=$1 AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL),        'published',(SELECT kid::text FROM identity.session_keys WHERE issuer=$1 AND signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL ORDER BY published_at,kid LIMIT 1))")
+    Ok(sqlx::query_scalar("SELECT json_build_object('active',(SELECT json_build_object('kid',k.kid::text,'x',translate(rtrim(encode(k.public_key,'base64'),'='),'+/','-_')) FROM identity.session_signing_state s JOIN identity.session_keys k ON (k.issuer,k.kid)=(s.issuer,s.active_kid) WHERE s.issuer=$1 AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL),'published',(SELECT kid::text FROM identity.session_keys WHERE issuer=$1 AND signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL ORDER BY published_at,kid LIMIT 1))")
         .bind(issuer(&target.namespace)).fetch_one(&mut connection).await?)
 }
 

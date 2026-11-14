@@ -135,8 +135,12 @@ impl WamnJetstream {
     pub async fn admit_application_events(
         &self,
         postgres: &WamnPostgres,
+        project: &str,
         release: &LoadedRelease,
         admit: impl AsyncFn(
+            &WamnPostgres,
+            &str,
+            &LoadedRelease,
             &EventBatchAdmission<'_>,
         ) -> Result<(), wamn_run_state::run_store::ProductionLeaseError>,
     ) -> Result<(), JsError> {
@@ -239,13 +243,18 @@ impl WamnJetstream {
                 let id = ids.next().filter(|_| ids.next().is_none()).ok_or_else(|| {
                     JsError::Other("event source identity must have one header".into())
                 })?;
-                admit(&EventBatchAdmission {
-                    source_package: package,
-                    entity,
-                    envelope,
-                    sequence,
-                    source_event_id: id.as_str(),
-                })
+                admit(
+                    postgres,
+                    project,
+                    release,
+                    &EventBatchAdmission {
+                        source_package: package,
+                        entity,
+                        envelope,
+                        sequence,
+                        source_event_id: id.as_str(),
+                    },
+                )
                 .await
                 .map_err(|error| JsError::Other(error.to_string()))?;
                 message

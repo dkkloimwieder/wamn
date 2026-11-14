@@ -1,4 +1,4 @@
-//! Tests of the release chart that `wamn-ctl env apply` writes, on a kind
+//! Tests of the release chart that the environment lifecycle writes, on a kind
 //! cluster (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! The environment release is `deploy/platform/release`, in the operator

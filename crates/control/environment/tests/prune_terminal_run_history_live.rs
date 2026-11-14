@@ -1,23 +1,5 @@
-//! Live test of the `prune-run-history` verb of `wamn-ctl-ops`.
-//!
-//! It runs on the PostgreSQL server of its test process and holds the process
-//! lock of that server, because it creates roles.
-//!
-//! The case applies the real `deploy/sql/run-state.sql` and
-//! `deploy/sql/run-queue.sql` on the project base grants, mints a real
-//! `wamn_run_retention` credential generation, seeds run history for two
-//! projects, and runs the real verb through `wamn-ctl-ops`. It tests four things:
-//!
-//! 1. The verb removes only old terminal runs of the project of the credential,
-//!    and the queue row of each removed run goes with it through its cascade.
-//! 2. The verb refuses a project that the credential was not minted for, an
-//!    unknown project, and the shared `wamn_app` login. The case reads the
-//!    post-state, because a refusal must not look like a match of nothing.
-//! 3. The generation reads only the three columns of the prune predicate, holds
-//!    nothing on `run_queue` and nothing outside `runs`, and the terminal-only
-//!    trigger refuses its raw non-terminal delete.
-//! 4. The `wamn_platform` arm still lets the generation read those three columns
-//!    of another project. No grant can close that, so the case asserts it.
+#![cfg(feature = "ops")]
+//! Retention contracts through the owning library interface.
 
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
@@ -25,11 +7,10 @@ use sqlx::Row as _;
 use wamn_control_provision::{
     APP_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login,
 };
-use wamn_test_infrastructure::ctl_process;
 use wamn_test_infrastructure::locked_database;
 
-const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
-const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
+const RUN_STATE_SQL: &str = include_str!("../../../../deploy/sql/run-state.sql");
+const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const SCHEMA: &str = "wamn_run";
 const PROJECT_ENV_KEY: &str = "run-retention-t--dev--fixture";
 /// A second project with history of its own. Without it the cross-project
@@ -39,7 +20,6 @@ const PACKAGE_ID: &str = "run_retention_fixture";
 /// The release every seeded run pins: the digest of the bytes `{}`.
 const RELEASE_DIGEST: &str =
     "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
-const RETENTION_DAYS: &str = "30";
 const GENERATION_PASSWORD: &str = "run-retention-test-generation";
 const APP_PASSWORD: &str = "run-retention-test-app";
 
@@ -172,29 +152,28 @@ async fn keys(admin: &mut Client, relation: &str) -> Vec<String> {
     .collect()
 }
 
-fn prune_argv<'a>(url: &'a str, project_env_key: &'a str) -> [&'a str; 13] {
-    [
-        "prune-run-history",
-        "--database-url",
-        url,
-        "--schema",
-        SCHEMA,
-        "--org",
-        project_env_key.split("--").next().expect("fixture org"),
-        "--project",
-        "fixture",
-        "--environment",
-        "dev",
-        "--retention-days",
-        RETENTION_DAYS,
-    ]
+async fn prune_history(url: &str, project_env_key: &str) -> anyhow::Result<u64> {
+    wamn_environment::prune_run_history::prune_terminal_run_history(
+        wamn_environment::prune_run_history::PruneRunHistoryRequest {
+            database_url: url.into(),
+            org: project_env_key
+                .split("--")
+                .next()
+                .expect("fixture org")
+                .into(),
+            project: "fixture".into(),
+            environment: "dev".into(),
+            schema: SCHEMA.into(),
+            retention_days: 30,
+            dry_run: false,
+        },
+    )
+    .await
 }
 
 /// Run the verb and require the identity refusal, not a success that reports zero.
 async fn assert_refused(url: &str, project_env_key: &str, label: &str) {
-    ctl_process::require_ops_success(prune_argv(url, project_env_key))
-        .await
-        .expect_err(label);
+    prune_history(url, project_env_key).await.expect_err(label);
 }
 
 /// Re-point a connection URL at another role, keeping host, port, and database.
@@ -360,15 +339,10 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key(
     assert_authority(&mut credential).await;
     drop(credential);
 
-    let pruned = ctl_process::require_ops_success(prune_argv(&credential_url, PROJECT_ENV_KEY))
+    let pruned = prune_history(&credential_url, PROJECT_ENV_KEY)
         .await
-        .expect("prune run history through wamn-ctl-ops");
-    let stdout = String::from_utf8(pruned.stdout).expect("prune output is UTF-8");
-    print!("{stdout}");
-    assert!(
-        stdout.contains("pruned 1 terminal run(s)"),
-        "the verb did not report one pruned run: {stdout}"
-    );
+        .expect("prune terminal run history");
+    assert_eq!(pruned, 1);
     let kept = vec![
         format!("{OTHER_PROJECT_ENV_KEY}/foreign-done"),
         format!("{PROJECT_ENV_KEY}/old-running"),

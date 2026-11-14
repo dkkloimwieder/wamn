@@ -1,0 +1,40 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.env",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.document",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.disposable",
+      "type": "bool",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.application",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    }
+  ]
+}

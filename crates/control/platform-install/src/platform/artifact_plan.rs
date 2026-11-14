@@ -229,6 +229,7 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
     validate_platform_images(&values["platform"]).context("invalid selected platform image")?;
     for name in [
         "ctl",
+        "control",
         "identity",
         "edge",
         "roles/http",

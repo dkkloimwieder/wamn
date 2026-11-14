@@ -27,36 +27,12 @@ It restores a base backup and then replays WAL up to the point you name.
 The restore always lands in a new cluster, and the source cluster is untouched.
 The new cluster holds every database and every role the source held at that instant.
 
-## Prepare recovery values
+## Select recovery
 
-Run the recovery command with the org's template and recovery domain.
-It writes values for a separate org chart release. It reads no database and applies nothing.
-
-```bash
-wamn-ctl-ops recover-org-cluster \
-  --org acme --template standard --owner prod \
-  --at 2026-09-16T14:31:00Z \
-  --emit-cluster restore-values.json
-```
-
-`--owner` names the source recovery domain.
-`--at` stops replay at an RFC3339 timestamp. Omit it to replay all archived WAL.
-`--target` names the restored cluster. Its default is `<org>-<owner>-restore`.
-The command refuses the source name and shared clusters.
-Check the policy values against the org's registered policy before installation.
-Keep backup credentials in the existing Kubernetes Secret named by `backup.secret`.
-
-## Install the recovery release
-
-Use the org chart from the platform's selected, published chart.
-Install it in the org namespace under a separate release name.
-The source org release keeps its existing clusters and roles.
-
-```bash
-helm upgrade --install recovery-acme-prod /selected-chart/platform/org \
-  --namespace acme --values restore-values.json --wait --timeout 30m
-kubectl -n acme wait --for=condition=Ready cluster/acme-prod-restore --timeout=30m
-```
+The org chart owns recovery configuration and the generated CNPG resources.
+Select the recovery domain and restore time through that chart.
+Recovery creates a new cluster. Its name must differ from the source.
+Review its storage and replica count against the source before deployment.
 
 Helm owns the restored Cluster, ObjectStore, and ScheduledBackup together.
 
@@ -85,7 +61,7 @@ Nothing points at the restored cluster until you change a target yourself.
 CloudNativePG restores a whole cluster, so there is no command that restores one database.
 To recover one database or one table, restore the cluster and then copy the rows out.
 
-1. Prepare and install the recovery with `--at` set to the instant before the loss.
+1. Select recovery in the org chart at the instant before the loss.
 2. Read the superuser URI from the Secret `<target>-superuser`.
 3. Copy the wanted database or table out of the restored cluster.
 4. Load it into the live database under a new name, then move the rows.
@@ -123,6 +99,6 @@ When you no longer want them, remove them with the object-store client.
 ## Limits
 
 - An env policy with an empty `backup_cadence` has no WAL stream and cannot be recovered.
-- A pooled org owns no cluster, so `recover-org-cluster` refuses it.
-- The rendered size comes from the template, not from the recorded policy of the org.
+- A pooled org uses the recovery policy of its shared cluster.
+- The org chart owns the restored size.
 - Recovery restores a whole cluster, and every database in that cluster comes back together.

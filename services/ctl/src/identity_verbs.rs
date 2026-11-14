@@ -17,8 +17,6 @@ use crate::provisioning_verbs::PatIssuerArgs;
 #[derive(Args)]
 pub struct ApiServiceArgs {
     #[arg(long)]
-    pub org: String,
-    #[arg(long)]
     pub project: String,
     #[arg(long)]
     pub env: String,
@@ -30,14 +28,8 @@ pub struct ApiServiceArgs {
     pub role: Vec<wamn_identity_protocol::RoleName>,
     #[arg(long)]
     pub lifetime_seconds: u64,
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
-    pub system_database_url: String,
-    #[arg(long, hide_env_values = true)]
-    pub application_database_url: String,
     #[arg(long)]
     pub emit_secret: PathBuf,
-    #[command(flatten)]
-    pub pat_issuer: PatIssuerArgs,
 }
 impl fmt::Debug for ApiServiceArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -46,29 +38,16 @@ impl fmt::Debug for ApiServiceArgs {
 }
 
 pub async fn create_api_service(args: ApiServiceArgs) -> anyhow::Result<()> {
-    let changes = if std::env::var_os("WAMN_NATS_URL").is_some() {
-        wamn_broker::Publisher::connect(&wamn_broker::nats::PlatformNats::from_env()?).await?
-    } else {
-        wamn_broker::Publisher::default()
-    };
-    let principal = wamn_environment::api_service::create(
-        &wamn_environment::api_service::Request {
-            org: args.org,
-            project: args.project,
-            env: args.env,
-            name: args.name,
-            display_name: args.display_name,
-            roles: args.role,
-            lifetime: std::time::Duration::from_secs(args.lifetime_seconds),
-            system_database_url: args.system_database_url,
-            application_database_url: args.application_database_url,
-            identity: args.pat_issuer.into(),
-            emit_secret: args.emit_secret,
-        },
-        &changes,
-    )
-    .await?;
-    println!("created API service principal_id={principal}");
+    wamn_environment::provision_project_env::ensure_secret_path(
+        &args.emit_secret,
+        "API service PAT",
+    )?;
+    let token = crate::operation_verbs::ControlHost::from_env()?.call("api_service.create", &json!({
+        "project":args.project,"env":args.env,"name":args.name,"display_name":args.display_name,
+        "roles":args.role,"lifetime_seconds":args.lifetime_seconds,
+    })).await?;
+    wamn_environment::provision_project_env::write_secret_json(&args.emit_secret, &token)?;
+    println!("created API service principal_id={}", token["principal_id"]);
     Ok(())
 }
 

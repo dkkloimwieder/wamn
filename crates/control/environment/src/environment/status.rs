@@ -93,7 +93,7 @@ pub async fn status(
         let Some(row) = super::analyse::read_row(&mut system, &document).await? else {
             return Ok::<_, anyhow::Error>(None);
         };
-        let url = super::analyse::project_url(platform, &document, &row)?;
+        let url = super::analyse::project_url(platform, &document, &row).await?;
         let mut project = super::analyse::connect_project(&url).await?;
         crate::platform_migrations::observe_project(&mut project)
             .await

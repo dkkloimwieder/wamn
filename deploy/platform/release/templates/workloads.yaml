@@ -1,4 +1,6 @@
+{{- if not .Values.controlService }}
 {{- include "release.requireImageSet" . }}
+{{- end }}
 {{- range .Values.roles }}
 {{- if eq .name "http" }}
 ---

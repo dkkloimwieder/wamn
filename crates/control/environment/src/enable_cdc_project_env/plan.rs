@@ -8,7 +8,15 @@ use std::fmt::Write as _;
 /// the map rows. Apply the role SQL to the cluster before this bundle.
 /// Every statement is idempotent (safe to apply again).
 pub fn cdc_sql_bundle(schemas: &[String], cdc_name: &str, db_name: &str) -> String {
-    let mut bundle = sql::create_failover_slot_sql(cdc_name);
+    format!(
+        "{}\n{}",
+        sql::create_failover_slot_sql(cdc_name),
+        cdc_schema_sql_bundle(schemas, cdc_name, db_name)
+    )
+}
+
+pub(super) fn cdc_schema_sql_bundle(schemas: &[String], cdc_name: &str, db_name: &str) -> String {
+    let mut bundle = String::new();
     if schemas.is_empty() {
         writeln!(
             bundle,

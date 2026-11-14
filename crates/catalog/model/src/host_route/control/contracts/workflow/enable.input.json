@@ -1,0 +1,40 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.env",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.application",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.workflow_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.version",
+      "type": "int32",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

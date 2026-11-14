@@ -166,6 +166,13 @@ fn project(
         declarations.entry(owner.into()).or_default().push(role);
     }
     let roles = declarations.entry(cluster.into()).or_default();
+    if !roles.iter().any(|role| role.name == "wamn_apply") {
+        roles.push(managed_role(
+            "wamn_apply".into(),
+            "wamn_db_owner",
+            "wamn-apply".into(),
+        ));
+    }
     roles.push(MigrationDatabase::Project.managed_role(&database));
     roles.push(managed_replication_role(
         wamn_control_provision::cdc_object_name(
@@ -189,14 +196,42 @@ pub fn values(declarations: &Declarations) -> anyhow::Result<Value> {
     for (cluster, logins) in declarations {
         let mut roles = BTreeMap::new();
         for login in logins {
-            for group in &login.in_roles {
+            for group in login
+                .in_roles
+                .iter()
+                .filter(|group| !group.starts_with("pg_"))
+            {
                 roles.entry(group.as_str()).or_insert_with(|| json!({"name":group,"ensure":"present","login":false,
                     "superuser":false,"createdb":false,"createrole":false,"inherit":false,"replication":false,"bypassrls":false}));
             }
         }
+        let platform = roles.contains_key("wamn_platform");
+        if let Some(owner) = roles.get_mut("wamn_db_owner") {
+            owner["inRoles"] = platform
+                .then(|| vec!["wamn_platform"])
+                .unwrap_or_default()
+                .into();
+        }
+        let migrations = logins
+            .iter()
+            .filter(|login| login.ensure == "present" && login.name.starts_with("wamn_migration_"))
+            .map(|login| login.name.as_str())
+            .collect::<Vec<_>>();
         let mut roles = roles.into_values().collect::<Vec<_>>();
         for login in logins {
-            roles.push(serde_json::to_value(login)?);
+            let mut value = serde_json::to_value(login)?;
+            // NOLOGIN owner roles do not inherit a second membership by default.
+            // The actual owner login needs direct membership for package DDL and RLS.
+            if login.ensure == "present"
+                && login.in_roles.iter().any(|group| group == "wamn_db_owner")
+            {
+                let memberships = value["inRoles"].as_array_mut().unwrap();
+                memberships.extend(migrations.iter().map(|name| json!(name)));
+                if platform {
+                    memberships.push("wamn_platform".into());
+                }
+            }
+            roles.push(value);
         }
         result.insert(cluster.to_owned(), roles.into());
     }

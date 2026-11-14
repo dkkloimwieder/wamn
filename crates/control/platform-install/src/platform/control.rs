@@ -9,9 +9,9 @@ use wamn_kubernetes::kubectl;
 use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
-use super::document::{ClusterDocument, Provider, UpgradeTarget};
+use super::document::{ClusterDocument, Provider};
 
-const REGISTRY_PULL: &str = "wamn-registry-pull";
+use wamn_registry::name::REGISTRY_PULL;
 
 /// Wait until every control host observes the environment's administration login change.
 pub async fn wait_administration(
@@ -46,10 +46,10 @@ pub async fn wait_administration(
             })
             .transpose()?;
         let path = format!("/etc/wamn/control-administration/{key}");
-        let selector = wamn_registry::name::host_selector(&wamn_registry::name::resource_suffix(
-            "c",
-            &triple.org,
-        ));
+        let selector = format!(
+            "app.kubernetes.io/name={}",
+            wamn_registry::name::control_resource(&triple.org)
+        );
         let script = if present {
             r#"test -r "$1" && cmp -s "$1" -"#
         } else {
@@ -76,7 +76,7 @@ pub async fn wait_administration(
                     &target.context,
                     &target.namespace,
                     &[
-                        "exec", "-i", pod, "-c", "host", "--", "sh", "-c", script, "--", &path,
+                        "exec", "-i", pod, "-c", "control", "--", "sh", "-c", script, "--", &path,
                     ],
                     Some(login.as_deref().unwrap_or_default().as_bytes()),
                 )
@@ -146,7 +146,6 @@ pub fn host_values(org: &str) -> Value {
             "name": name, "namespace": org, "replicas": 1,
             "schedulerNatsUrl": "nats://wamn-nats.platform.svc.cluster.local:4222",
             "dataNatsUrl": "nats://wamn-nats.platform.svc.cluster.local:4222",
-            "extraArgs": ["--control", format!("--org={org}")],
             "envFrom": [{"configMapRef":{"name":"wamn-host-settings"}}],
             "env": [
                 {"name": "WAMN_DRAIN_BOUND_SECONDS", "value": "70"},
@@ -176,79 +175,67 @@ pub fn host_values(org: &str) -> Value {
     values
 }
 
-pub(crate) fn release_values(document: &ClusterDocument, chart: &Value) -> anyhow::Result<Value> {
-    let mut desired = chart.clone();
-    super::resources::merge(&mut desired, host_values(&document.org));
-    let group = &mut desired["runtime-operator"]["runtime"]["hostGroups"][0];
-    if let Some(configuration) = chart["runtime-operator"]["runtime"]["hostGroups"]
-        .as_array()
-        .and_then(|groups| groups.iter().find(|entry| entry["name"] == group["name"]))
-    {
-        super::resources::merge(group, configuration.clone());
-    }
-    let mut shared = super::installation::host_settings(document)["hostConfiguration"].take();
-    for field in ["volumes", "volumeMounts"] {
-        group[field]
-            .as_array_mut()
-            .context("control mounts")?
-            .append(
-                shared[field]
-                    .take()
-                    .as_array_mut()
-                    .context("shared host mounts")?,
-            );
-    }
-    if document.provider == Provider::Kind {
-        group["extraArgs"]
-            .as_array_mut()
-            .expect("host arguments")
-            .push("--allow-insecure-registries".into());
-    }
+pub(super) fn resource_entry(
+    document: &ClusterDocument,
+    chart: &SelectedChart,
+    _installed: Option<&Value>,
+) -> anyhow::Result<Value> {
+    use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity};
+    let org = &document.org;
+    let name = wamn_registry::name::control_resource(org);
+    let configuration = format!("{name}-configuration");
+    let login = wamn_control_provision::workload_login(
+        WorkloadRoleFamily::Control,
+        WorkloadRoleIdentity::Org {
+            org,
+            database: "wamn_system",
+        },
+    )?;
+    let connection = |username, secret| {
+        crate::credentials::configuration(
+            org,
+            "wamn-pg",
+            format!("wamn-pg-rw.{org}.svc.cluster.local"),
+            5432,
+            "wamn_system".into(),
+            username,
+            secret,
+        )
+    };
     let scheme = if document.provider == Provider::Kind {
         "http"
     } else {
         "https"
     };
-    group["env"].as_array_mut().expect("host environment").push(
-        json!({"name":"WAMN_CONTROL_PUBLIC_ORIGIN","value":format!("{scheme}://{}", document.route_hosts.control)}));
-    let platform_ui = match chart.get("platformUi") {
-        Some(value) => value
-            .as_str()
-            .context("platformUi must be an artifact digest or empty")?,
-        None => "",
+    let registry = if document.provider == Provider::Kind {
+        super::resources::POD_REGISTRY
+    } else {
+        &document.registry
     };
+    let nats = json!({"url":super::identity::NATS_URL,"ca":"/credentials/nats/ca.crt","cert":"/credentials/nats/tls.crt","key":"/credentials/nats/tls.key","server_name":null});
+    let platform_ui = chart
+        .values()
+        .get("platformUi")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     if !platform_ui.is_empty() {
         wamn_package_artifact::ensure_digest(platform_ui)?;
     }
-    desired["platformUi"] = platform_ui.into();
-    desired["org"] = document.org.as_str().into();
-    desired["routeHost"] = document.route_hosts.control.as_str().into();
-    // The resource entry supplies the native control Service.
-    desired["roles"] = json!([]);
-    Ok(desired)
-}
-
-pub(super) fn resource_entry(
-    document: &ClusterDocument,
-    chart: &SelectedChart,
-    installed: Option<&Value>,
-) -> anyhow::Result<Value> {
-    let mut desired = release_values(document, chart.values())?;
-    for group in desired["runtime-operator"]["runtime"]["hostGroups"]
-        .as_array_mut()
-        .expect("control host groups")
-    {
-        if let Some(image) = super::installed::host_image(
-            installed,
-            group["name"].as_str().expect("control host group name"),
-        ) {
-            group["image"] = image.clone();
-        }
-    }
-    desired["controlService"] = true.into();
-    let desired = chart.selection_values(document, &UpgradeTarget::Control, desired)?;
-    Ok(json!({"chart":chart.directory(), "version":chart.version,
-        "name":wamn_registry::name::control_resource(&document.org), "namespace":document.org, "values":desired}))
+    let config = json!({"org":org,"http_addr":"0.0.0.0:80","public_origin":format!("{scheme}://{}",document.route_hosts.control),
+        "database":connection(login,wamn_control_provision::org_workload_secret_name(WorkloadRoleFamily::Control,org)),
+        "apply_database":connection("wamn_apply".into(),"wamn-apply".into()),
+        "session_issuer":super::identity::issuer(org),"session_jwks_ca":"/etc/identity-ca/ca.crt",
+        "administration_dir":"/etc/wamn/control-administration","worker":{"image":chart.image("control")?,"configuration":configuration,"service_account":wamn_registry::name::operation(org)},
+        "chart":chart.reference(),"release_artifact_base":format!("{registry}/wamn/releases"),"package_artifact_base":format!("{registry}/wamn/packages"),"component_artifact_base":format!("{registry}/wamn/components"),"integration_artifact_base":format!("{registry}/wamn/integrations"),
+        "registry_auth_file":"/credentials/registry/config.json","registry_token_metadata":document.provider!=Provider::Kind,"insecure_registry":document.provider==Provider::Kind,
+        "nats":nats,"events":{"stream_replicas":1,"dup_window_secs":120},
+        "event_observer":null,"identity":{"endpoint":super::identity::issuer(org),"client_cert":"/etc/identity-operator/tls.crt","client_key":"/etc/identity-operator/tls.key","server_ca":"/etc/identity-ca/ca.crt"},"oauth_encryption":super::oauth::configuration(document)});
+    Ok(
+        json!({"chart":chart.directory(),"version":chart.version,"name":name,"namespace":org,
+        "values":{"controlService":true,"org":org,"platformUi":platform_ui,"routeHost":document.route_hosts.control,"roles":[],"runtime-operator":{"runtime":{"hostGroups":[]}},
+        "control":{"image":chart.image("control")?,"configuration":config,"natsSecret":wamn_registry::name::control_nats_certificate(org),"operatorSecret":wamn_registry::name::resource_suffix("operator",org),"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::control_nats_user(org),"registrySecret":if document.provider==Provider::Kind {REGISTRY_PULL}else{""},"oauthSecret":if document.provider==Provider::Kind {"wamn-oauth"}else{""}},
+        "platform":{"chart":chart.reference()}}}),
+    )
 }
 
 /// Require the control route to refuse a request without credentials.
@@ -283,51 +270,13 @@ pub async fn probe(target: &Target, document: &ClusterDocument) -> anyhow::Resul
         "the unauthenticated control route returned {}; expected 401",
         response.status()
     );
-    // The deploy kubeconfig is private and temporary, and the workload Service
-    // has no selector, so the hint names the exported context and the host Deployment.
+    // The hint uses the exported context and the native control Deployment.
     println!(
-        "Local control access: kubectl --context '{}' -n hosts port-forward --address=127.0.0.1 deployment/hostgroup-c-{} 8080:80\nHost: {}",
+        "Local control access: kubectl --context '{}' -n {} port-forward --address=127.0.0.1 deployment/{} 8080:80\nHost: {}",
         target.context.replace('\'', "'\\''"),
         document.org,
+        wamn_registry::name::control_resource(&document.org),
         document.route_hosts.control,
     );
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn control_reapply_renders_the_recorded_host_image_override() -> anyhow::Result<()> {
-        let document = document();
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let chart = super::super::artifact_plan::test_util::prepared_chart(&repository)?;
-        let selected = super::super::artifact_plan::select(&chart.0)?;
-        let mut installed = release_values(&document, selected.values())?;
-        let image = json!({"registry":"previous.example", "repository":"host",
-            "tag":format!("previous@sha256:{}", "b".repeat(64)), "pull_policy":"IfNotPresent"});
-        installed["runtime-operator"]["runtime"]["hostGroups"][0]["image"] = image.clone();
-        let entry = resource_entry(&document, &selected, Some(&installed))?;
-        let objects = wamn_kubernetes::helm::template(&entry)?;
-        let deployment = objects
-            .iter()
-            .find(|object| object["kind"] == "Deployment")
-            .unwrap();
-        assert_eq!(
-            deployment["spec"]["template"]["spec"]["containers"][0]["image"],
-            format!("previous.example/host:previous@sha256:{}", "b".repeat(64))
-        );
-        Ok(())
-    }
-
-    fn document() -> ClusterDocument {
-        serde_json::from_value(json!({
-            "provider": "kind", "project_id": "", "zone": "", "cluster_name": "test",
-            "org": "acme", "owner_email": "owner@example.com", "registry": "localhost:5000",
-            "buckets": {"web": "", "otel": "", "state": ""},
-            "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
-        }))
-        .unwrap()
-    }
 }

@@ -25,7 +25,7 @@ pub async fn resolve(
     let target = Target {
         kubeconfig,
         context,
-        namespace: "hosts".into(),
+        namespace: environment.org.clone(),
     };
     platform.target = target;
     platform.release_artifact_base = format!("{}/wamn/releases", document.registry);
@@ -67,10 +67,12 @@ pub async fn resolve_platform(platform: &mut Platform, org: &str) -> anyhow::Res
     Ok(installed.values)
 }
 
-pub(super) async fn resolve_registry(platform: &mut Platform, _org: &str) -> anyhow::Result<Value> {
+pub(super) async fn resolve_registry(platform: &mut Platform, org: &str) -> anyhow::Result<Value> {
     let installed = crate::platform::installed::InstalledPlatform::read(&platform.target)
         .await?
         .context("platform is not installed")?;
+    platform.target.namespace = org.into();
+    platform.database_namespace = org.into();
     apply_registry_configuration(platform, &installed.values["configuration"])?;
     Ok(installed.values)
 }
@@ -98,6 +100,17 @@ fn apply_registry_configuration(
             .context("component registry is absent")?
             .into(),
     );
+    platform.release_artifact_base =
+        pod_artifact_base(platform.insecure_registry, &platform.release_artifact_base)?
+            .into_owned();
+    if let Some(base) = &platform.package_artifact_base {
+        platform.package_artifact_base =
+            Some(pod_artifact_base(platform.insecure_registry, base)?.into_owned());
+    }
+    if let Some(base) = &platform.component_artifact_base {
+        platform.component_artifact_base =
+            Some(pod_artifact_base(platform.insecure_registry, base)?.into_owned());
+    }
     Ok(())
 }
 

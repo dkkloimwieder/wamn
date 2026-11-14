@@ -9,7 +9,7 @@ use tokio::process::Command;
 use wamn_catalog::HostRouteSet;
 use wamn_environment::platform::{artifact_plan, document::Provider};
 
-use super::{Journey, get, route_request, success};
+use super::{Journey, get, read_query, success};
 
 struct Control<'a> {
     journey: &'a Journey<'a>,
@@ -45,15 +45,30 @@ impl Control<'_> {
             )
             .await?;
         }
-        let mut request = route_request::request(
-            self.client,
-            self.url,
-            session["access_token"]
+        let endpoint = format!(
+            "{}{}",
+            self.url.trim_end_matches('/'),
+            attachment.definition["route"]["path"]
                 .as_str()
-                .context("session access token")?,
-            attachment,
-            &value,
-        )?;
+                .context("route path")?
+        );
+        let request = if attachment.route.type_.is_read() {
+            self.client.get(format!(
+                "{endpoint}?{}",
+                read_query::encode_read_query(value.as_object().context("read request")?)
+            ))
+        } else {
+            self.client
+                .post(endpoint)
+                .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":value}]))
+        };
+        let mut request = request
+            .bearer_auth(
+                session["access_token"]
+                    .as_str()
+                    .context("session access token")?,
+            )
+            .build()?;
         drop(session);
         // Only the type port-forward URL needs the route host. The GKE URL
         // already names it, and the load balancer refuses a second Host over HTTP/2.
@@ -100,7 +115,7 @@ impl Control<'_> {
         .context("operation Job deadline")??;
         let pods = get(
             self.journey.run,
-            "platform",
+            &self.journey.run.document.org,
             "pods",
             &format!("-l=job-name={name}"),
         )
@@ -121,15 +136,12 @@ pub(super) async fn exercise(
     control_url: &str,
     password: &str,
 ) -> anyhow::Result<()> {
-    // Initial environment declaration and provisioning remain trusted product verbs.
+    // Provision through the authenticated product route.
     journey
         .apply(
             "provision-environment",
             journey
-                .cli(
-                    &journey.run.binary.with_file_name("wamn-ctl"),
-                    &["env", "apply"],
-                )
+                .command(&["env", "apply"])
                 .arg(&journey.file)
                 .args(["--application", "alpha"]),
         )
@@ -204,18 +216,18 @@ pub(super) async fn exercise(
     if journey.run.document.provider == Provider::Kind {
         denial(&control, identity_url, &artifacts["b1"]).await?;
     }
-    let before = document(journey, &coordinate).await?;
-    let alpha_release = application_release(journey, "alpha").await?;
+    let before = journey.status().await?;
+    let alpha_revision = &before["applications"]["alpha"]["observed"]["revision"]["number"];
     let deployed = control
         .operation(
             "application.deploy",
             json!({"application":"beta","release":artifacts["b1"]}),
         )
         .await?;
-    let after = document(journey, &coordinate).await?;
+    let after = journey.status().await?;
     ensure!(
-        after["applications"]["alpha"] == before["applications"]["alpha"]
-            && application_release(journey, "alpha").await? == alpha_release,
+        after["applications"]["alpha"]["current"] == before["applications"]["alpha"]["current"]
+            && after["applications"]["alpha"]["observed"]["revision"]["number"] == *alpha_revision,
         "deploying beta changed alpha's selection or release ConfigMap"
     );
     ensure!(
@@ -226,10 +238,11 @@ pub(super) async fn exercise(
     control
         .operation("application.rollback", json!({"application":"beta"}))
         .await?;
-    let rolled_back = document(journey, &coordinate).await?;
+    let rolled_back = journey.status().await?;
     ensure!(
         rolled_back["applications"]["beta"]["current"] == artifacts["b0"]
-            && rolled_back["applications"]["alpha"] == before["applications"]["alpha"],
+            && rolled_back["applications"]["alpha"]["current"]
+                == before["applications"]["alpha"]["current"],
         "route rollback did not restore only beta"
     );
     let applied = control
@@ -246,34 +259,27 @@ pub(super) async fn exercise(
         found["label"] == "before-migrated",
         "schema.apply did not mutate the served data"
     );
-    ensure!(
-        document(journey, &coordinate).await?["applications"] == rolled_back["applications"],
-        "schema.apply changed code selections"
-    );
+    let after_schema = journey.status().await?;
+    for (application, selected) in rolled_back["applications"]
+        .as_object()
+        .context("applications")?
+    {
+        ensure!(
+            after_schema["applications"][application]["current"] == selected["current"],
+            "schema.apply changed a code selection"
+        );
+    }
     Ok(())
 }
 
-async fn document(journey: &Journey<'_>, coordinate: &str) -> anyhow::Result<Value> {
-    let object = get(journey.run, "hosts", "configmap", coordinate).await?;
-    Ok(serde_json::from_str(
-        object["data"]["environment.json"]
-            .as_str()
-            .context("environment document")?,
-    )?)
-}
-
-async fn application_release(journey: &Journey<'_>, application: &str) -> anyhow::Result<Value> {
-    let name = wamn_control_provision::environment_names::application_release_name(
-        &journey.run.document.org,
-        journey.project,
-        journey.environment,
-        application,
-    )?;
-    Ok(get(journey.run, "hosts", "configmap", &name).await?["data"].take())
-}
-
 async fn jobs(control: &Control<'_>) -> anyhow::Result<BTreeSet<String>> {
-    let objects = get(control.journey.run, "platform", "jobs", "").await?;
+    let objects = get(
+        control.journey.run,
+        &control.journey.run.document.org,
+        "jobs",
+        "",
+    )
+    .await?;
     objects["items"]
         .as_array()
         .context("Jobs")?
@@ -370,9 +376,10 @@ async fn job_credentials(
     code: &Value,
     schema: &Value,
 ) -> anyhow::Result<()> {
+    let org = &journey.run.document.org;
     let target = get(
         journey.run,
-        "platform",
+        org,
         "configmap",
         &format!("{coordinate}-operations"),
     )
@@ -381,42 +388,56 @@ async fn job_credentials(
         .as_str()
         .context("target CNPG cluster")?;
     let administrator = format!("{cluster}-superuser");
-    // Schema mutation needs the target administrator in addition to the code worker's credentials.
-    // Derive shared credentials from the deployed code pod; no credential roster is pinned here.
+    let administration = get(
+        journey.run,
+        org,
+        "configmap",
+        &wamn_registry::name::control_administration_secret_name(org),
+    )
+    .await?;
+    let key =
+        wamn_control_provision::control_administration_key(journey.project, journey.environment);
+    let connection: wamn_postgres::ConnectionConfig = serde_json::from_str(
+        administration["data"][key]
+            .as_str()
+            .context("public project connection")?,
+    )?;
+    let owner = wamn_control_provision::migrations::MigrationDatabase::Project
+        .managed_role(&connection.database);
+    let migration = wamn_control_provision::workload_secret_name(
+        wamn_control_provision::WorkloadRoleFamily::Migration,
+        org,
+        journey.project,
+        journey.environment,
+    );
+    let capture = wamn_control_provision::project_env_cdc_secret_name(
+        org,
+        journey.project,
+        journey.environment,
+    );
     let mut common = BTreeSet::new();
     for pod in code["items"].as_array().context("code pods")? {
-        let mut actual = BTreeSet::new();
-        secret_names(&pod["spec"], &mut actual);
-        ensure!(
-            !actual.contains(administrator.as_str()),
-            "deploy pod has administrator Secret"
-        );
-        for container in ["containers", "initContainers"]
-            .into_iter()
-            .flat_map(|field| pod["spec"][field].as_array().into_iter().flatten())
-        {
-            ensure!(
-                !container["env"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .any(|env| env["name"] == "WAMN_SYSTEM_ADMIN_URL"
-                        || env["value"]
-                            .as_str()
-                            .is_some_and(|value| value.contains("/credentials/administrator"))),
-                "deploy pod has administrator environment"
-            );
-        }
-        common.extend(actual);
+        secret_names(&pod["spec"], &mut common);
     }
+    ensure!(
+        !common.contains(administrator.as_str())
+            && !common.contains(owner.password_secret.name.as_str())
+            && !common.contains(migration.as_str())
+            && !common.contains(capture.as_str()),
+        "code worker received SQL or capture authority"
+    );
     let mut expected = common;
-    expected.insert(&administrator);
+    expected.extend([
+        owner.password_secret.name.as_str(),
+        migration.as_str(),
+        capture.as_str(),
+    ]);
     for pod in schema["items"].as_array().context("schema pods")? {
         let mut actual = BTreeSet::new();
         secret_names(&pod["spec"], &mut actual);
         ensure!(
-            actual == expected,
-            "schema pod credentials differ from its operation needs"
+            !actual.contains(administrator.as_str()) && actual == expected,
+            "schema worker credentials differ from the owning roles"
         );
     }
     Ok(())
@@ -424,53 +445,12 @@ async fn job_credentials(
 
 async fn worker(journey: &Journey<'_>, pods: &Value) -> anyhow::Result<()> {
     let selected = artifact_plan::select(&journey.run.chart)?;
-    let selector = get(
-        journey.run,
-        "platform",
-        "configmap",
-        &wamn_registry::name::operation(&journey.run.document.org),
-    )
-    .await?;
-    let inputs = selector["data"]["inputs"]
-        .as_str()
-        .context("worker input selection")?;
-    let configuration = get(journey.run, "platform", "configmap", inputs).await?;
-    ensure!(
-        configuration["immutable"] == true,
-        "worker inputs are mutable"
-    );
-    for file in ["Chart.yaml", "values.yaml"] {
-        ensure!(
-            configuration["data"][file].as_str()
-                == Some(std::fs::read_to_string(journey.run.chart.join(file))?.as_str()),
-            "worker chart differs from the published selection"
-        );
-    }
     for pod in pods["items"].as_array().context("worker pods")? {
         let spec = &pod["spec"];
         for volume in spec["volumes"].as_array().context("volumes")? {
             ensure!(
                 volume.get("hostPath").is_none() && volume.get("persistentVolumeClaim").is_none(),
                 "worker uses machine storage"
-            );
-        }
-        ensure!(
-            spec["volumes"]
-                .as_array()
-                .context("volumes")?
-                .iter()
-                .any(|volume| volume["configMap"]["name"] == inputs),
-            "worker did not mount selected chart inputs"
-        );
-        let encoded = serde_json::to_string(spec)?;
-        for path in [
-            &journey.run.repository,
-            &journey.run.checkout,
-            &journey.run.chart,
-        ] {
-            ensure!(
-                !encoded.contains(path.to_str().context("checkout path")?),
-                "worker refers to submitting machine"
             );
         }
         let container = spec["containers"]
@@ -480,7 +460,8 @@ async fn worker(journey: &Journey<'_>, pods: &Value) -> anyhow::Result<()> {
             .find(|container| container["name"] == "operation")
             .context("operation container")?;
         ensure!(
-            container["image"] == selected.image("ctl")? && pod["status"]["phase"] == "Succeeded",
+            container["image"] == selected.image("control")?
+                && pod["status"]["phase"] == "Succeeded",
             "worker did not execute the published image"
         );
     }

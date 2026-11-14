@@ -4,6 +4,7 @@ These pages describe implemented WAMN behavior, its contract boundaries, and kno
 
 [Overview](overview.md): Applications, control libraries, publication, releases, and cloud providers.
 [Execution](execution.md): Routing, request authority, session tokens, and runtime limits.
+[Native control](control.md): Authenticated org service, operation Jobs, and installer configuration.
 [Data access](data-access.md): Schema ownership, SQL generation, transactions, record history, and query contracts.
 [Naming](naming.md): Package, operation, and language identifiers, and reserved names.
 [Components](components.md): Artifact grouping, admitted dependencies, and guest build identity.

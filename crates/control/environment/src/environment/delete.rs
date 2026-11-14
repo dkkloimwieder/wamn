@@ -28,7 +28,6 @@ pub use rows::delete_registry_rows;
 
 use anyhow::{Context as _, bail};
 use async_nats::jetstream;
-use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::sql::drop_replication_slot_sql;
 use wamn_control_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, workload_login,
@@ -45,9 +44,6 @@ use super::ensure::{kubectl, management_author_pat_name, project_url};
 use super::lock::LifecycleLock;
 use wamn_postgres::connect;
 use wamn_release_control::release_chart;
-
-/// How long CloudNativePG may take to finalize the `Database` CR.
-const DATABASE_DELETE_TIMEOUT: &str = "--timeout=600s";
 
 /// Delete the environment. With `data`, the database and its roles are
 /// dropped too, and a stranded run does not stop the delete. The caller
@@ -255,30 +251,6 @@ async fn delete_locked(
             lines.push(format!("revoked the PAT of {secret}"));
         }
     }
-    let configurations = [
-        wamn_control_provision::project_env_secret_name(org, project, env),
-        wamn_control_provision::project_env_cdc_secret_name(org, project, env),
-    ];
-    let mut arguments = vec!["delete", "configmap", "--ignore-not-found"];
-    arguments.extend(configurations.iter().map(String::as_str));
-    let deleted = kubectl(platform, org, &arguments, None).await?;
-    if !deleted.is_empty() {
-        lines.push(deleted);
-    }
-    let mut secrets = WorkloadRoleFamily::project_env_families()
-        .map(|family| wamn_control_provision::workload_secret_name(family, org, project, env))
-        .collect::<Vec<_>>();
-    secrets.push(wamn_control_provision::project_env_cdc_secret_name(
-        org, project, env,
-    ));
-    secrets.extend(pat_secrets);
-    let mut arguments = vec!["delete", "secret", "--ignore-not-found"];
-    arguments.extend(secrets.iter().map(String::as_str));
-    let deleted = kubectl(platform, org, &arguments, None).await?;
-    if !deleted.is_empty() {
-        lines.push(deleted);
-    }
-
     // The environment's key of the org's control administration Secret.
     let control = control_administration_secret_name(org);
     let control_present = !kubectl(
@@ -352,82 +324,59 @@ async fn delete_locked(
     resources::delete_publication(platform, &database).await?;
     lines.push(format!("deleted publication {database} (or it was gone)"));
 
-    // The replication slot, on the cluster's `postgres` database.
-    let postgres_url = wamn_postgres::database_configuration(admin_url, "postgres")?;
-    let mut admin = connect(&postgres_url).await?;
-    let slot = cdc_object_name(org, project, env, &instance);
-    if let Some(row) = sqlx::query("SELECT active FROM pg_replication_slots WHERE slot_name = $1")
-        .bind(&slot)
-        .fetch_optional(&mut admin)
-        .await
-        .context("read the replication slot")?
-    {
-        if row.get::<bool, _>(0) {
-            bail!("refused: replication slot {slot} is active: a reader still streams from it");
+    // Slot administration belongs to the capture login on the recorded cluster.
+    if cr_present {
+        let project_connection =
+            wamn_platform_install::environment::connection(admin_url, triple).await?;
+        let mut observer = connect(&wamn_postgres::database_configuration(
+            &project_connection.to_json()?,
+            "postgres",
+        )?)
+        .await?;
+        let slot = cdc_object_name(org, project, env, &instance);
+        if let Some(row) = sqlx::query("SELECT active FROM pg_replication_slots WHERE slot_name=$1")
+            .bind(&slot)
+            .fetch_optional(&mut observer)
+            .await?
+        {
+            if row.get::<bool, _>(0) {
+                bail!("replication slot is active");
+            }
+            let capture =
+                wamn_platform_install::environment::capture_connection(admin_url, triple).await?;
+            let mut capture = connect(&capture).await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(drop_replication_slot_sql(&slot)))
+                .execute(&mut capture)
+                .await?;
         }
-        sqlx::raw_sql(sqlx::AssertSqlSafe(drop_replication_slot_sql(&slot)))
-            .execute(&mut admin)
-            .await
-            .map(drop)
-            .context("drop the replication slot")?;
-        lines.push(format!("dropped replication slot {slot}"));
     }
 
-    // The Database CR: retained, or with --data, dropped with its database.
     if cr_present {
-        if data {
-            kubectl(
-                platform,
-                &platform.database_namespace,
-                &[
-                    "patch",
-                    "database",
-                    &database,
-                    "--type",
-                    "merge",
-                    "-p",
-                    r#"{"spec":{"databaseReclaimPolicy":"delete"}}"#,
-                ],
-                None,
-            )
-            .await
-            .context("set the Database CR's reclaim policy to delete")?;
-        }
-        kubectl(
-            platform,
-            &platform.database_namespace,
-            &[
-                "delete",
-                "database",
-                &database,
-                "--ignore-not-found",
-                "--wait=true",
-                DATABASE_DELETE_TIMEOUT,
-            ],
-            None,
+        wamn_platform_install::environment::remove_database(
+            &platform.target,
+            &platform.chart,
+            admin_url,
+            triple,
+            data,
         )
-        .await
-        .context("delete the Database CR")?;
-        lines.push(if data {
-            format!("deleted the Database CR {database} and dropped its database")
-        } else {
-            format!("deleted the Database CR {database}; the database is retained on the cluster")
-        });
+        .await?;
+        lines.push("removed the chart-owned database resource".into());
     }
 
     // The roles, only with the database: a retained database keeps its
     // owner roles for manual recovery.
-    let mut removed_roles = roles::delete_control_roles(admin_url, triple, platform).await?;
+    roles::delete_control_roles(admin_url, triple, platform).await?;
     lines.push("deleted the environment's control logins (or they were gone)".into());
     if data {
-        let roles = instance_roles(triple, &instance, &project_env_key)?;
-        let options = wamn_postgres::connect_options(admin_url).await?;
-        let cluster = options
-            .get_host()
-            .split('.')
-            .next()
-            .context("database host")?
-            .trim_end_matches("-rw");
+        let mut roles = instance_roles(triple, &instance, &project_env_key)?;
+        roles.push(wamn_control_provision::migrations::MigrationDatabase::Project.login(&database));
+        let project_connection =
+            wamn_platform_install::environment::connection(admin_url, triple).await?;
+        let cluster = project_connection
+            .server_ca
+            .name
+            .strip_suffix("-ca")
+            .context("project cluster CA")?;
         crate::provision_project_env::workload::remove_roles(
             &platform.system_database_url,
             &platform.target.kubeconfig,
@@ -437,18 +386,31 @@ async fn delete_locked(
             &roles,
         )
         .await?;
-        for role in &roles {
-            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-                "DROP ROLE IF EXISTS {}",
-                escape_identifier(role)
-            )))
-            .execute(&mut admin)
-            .await
-            .map(drop)
-            .with_context(|| format!("drop role {role}"))?;
-        }
         lines.push(format!("dropped {} roles (or they were gone)", roles.len()));
-        removed_roles.extend(roles);
+    }
+
+    let configurations = [
+        wamn_control_provision::project_env_secret_name(org, project, env),
+        wamn_control_provision::project_env_cdc_secret_name(org, project, env),
+    ];
+    let mut arguments = vec!["delete", "configmap", "--ignore-not-found"];
+    arguments.extend(configurations.iter().map(String::as_str));
+    let deleted = kubectl(platform, org, &arguments, None).await?;
+    if !deleted.is_empty() {
+        lines.push(deleted);
+    }
+    let mut secrets = WorkloadRoleFamily::project_env_families()
+        .map(|family| wamn_control_provision::workload_secret_name(family, org, project, env))
+        .collect::<Vec<_>>();
+    secrets.push(wamn_control_provision::project_env_cdc_secret_name(
+        org, project, env,
+    ));
+    secrets.extend(pat_secrets);
+    let mut arguments = vec!["delete", "secret", "--ignore-not-found"];
+    arguments.extend(secrets.iter().map(String::as_str));
+    let deleted = kubectl(platform, org, &arguments, None).await?;
+    if !deleted.is_empty() {
+        lines.push(deleted);
     }
 
     // Keep the registry inputs until the credential store and its account are gone.

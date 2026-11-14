@@ -120,6 +120,8 @@ pub enum HostRouteSet {
 pub enum HostHandler {
     /// Start or observe one authorized application deployment or schema Job.
     OperationJob,
+    /// Execute an authenticated native control operation.
+    ControlExecution,
     /// Project integration and environment connection administration.
     IntegrationAdministration,
     /// The caller's effective permission set in this application.
@@ -247,6 +249,34 @@ pub struct HostRoute {
 
 const ROUTES: &[HostRoute] = &[
     HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.configure",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.delete",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.operation_status",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "pat.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
         set: HostRouteSet::Application,
         operation: "file.put",
         type_: OperationType::Command,
@@ -273,6 +303,111 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
         handler: HostHandler::FileExpose,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "workflow.author",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "workflow.enable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "workflow.disable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "workflow.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "workflow.park",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "workflow.release",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "workflow.runs",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "capture_gap.recover",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "capture_gap.close",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "platform.update",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "platform.operation_status",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "integration.publish",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "api_service.create",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "application.stop",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "release.retain",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
     },
     HostRoute {
         set: HostRouteSet::Control,

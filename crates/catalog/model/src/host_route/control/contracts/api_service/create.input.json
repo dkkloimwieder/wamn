@@ -1,0 +1,46 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.env",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.display_name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.roles",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.lifetime_seconds",
+      "type": "int64",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

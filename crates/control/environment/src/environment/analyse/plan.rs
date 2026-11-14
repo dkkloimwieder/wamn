@@ -28,11 +28,22 @@ pub(super) fn sequence_refusals(
 }
 
 /// The project database URL: the system URL with the environment's database.
-pub(crate) fn project_url(
+pub(crate) async fn project_url(
     platform: &Platform,
     document: &EnvironmentDocument,
     row: &EnvironmentRow,
 ) -> anyhow::Result<String> {
+    if wamn_postgres::configuration(&platform.system_database_url)?
+        .trim_start()
+        .starts_with('{')
+    {
+        return wamn_platform_install::environment::connection(
+            &platform.system_database_url,
+            &document.triple(),
+        )
+        .await?
+        .to_json();
+    }
     wamn_postgres::database_configuration(
         &platform.system_database_url,
         &wamn_control_provision::project_env_database_name(

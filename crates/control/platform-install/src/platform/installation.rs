@@ -165,6 +165,19 @@ pub fn host_settings(document: &ClusterDocument) -> Value {
         "WAMN_RELEASE_ARTIFACT_BASE":format!("{registry}/wamn/releases"),
         "WAMN_OAUTH_ENCRYPTION":super::oauth::configuration(document).to_string(),
     });
+    if document.provider == Provider::Kind {
+        values["hostEnvironment"]["WAMN_REGISTRY_AUTH_FILE"] =
+            "/etc/wamn/registry/config.json".into();
+        values["hostEnvironment"]["WAMN_OAUTH_KEY_FILE"] = "/etc/wamn/oauth/key".into();
+    } else {
+        values["hostEnvironment"]["WAMN_REGISTRY_TOKEN_METADATA"] = "true".into();
+    }
+    values["hostConfiguration"] = host_configuration(document.provider);
+    values
+}
+
+/// Shared application host inputs, independent of the control service implementation.
+pub fn host_configuration(provider: Provider) -> Value {
     let mut shared = json!({"replicas":1,"http":{"enabled":true,"port":80},
         "schedulerNatsUrl":"nats://wamn-nats.platform.svc.cluster.local:4222",
         "dataNatsUrl":"nats://wamn-nats.platform.svc.cluster.local:4222",
@@ -174,11 +187,8 @@ pub fn host_settings(document: &ClusterDocument) -> Value {
         "volumeMounts":[{"name":"identity-ca","mountPath":"/etc/identity-ca","readOnly":true},
             {"name":"registry-pull","mountPath":"/etc/wamn/registry","readOnly":true}]
     });
-    if document.provider == Provider::Kind {
-        values["hostEnvironment"]["WAMN_REGISTRY_AUTH_FILE"] =
-            "/etc/wamn/registry/config.json".into();
-        values["hostEnvironment"]["WAMN_OAUTH_KEY_FILE"] = "/etc/wamn/oauth/key".into();
-        shared["volumes"][1] = json!({"name":"registry-pull","secret":{"secretName":"wamn-registry-pull","items":[{"key":".dockerconfigjson","path":"config.json"}]}});
+    if provider == Provider::Kind {
+        shared["volumes"][1] = json!({"name":"registry-pull","secret":{"secretName":wamn_registry::name::REGISTRY_PULL,"items":[{"key":".dockerconfigjson","path":"config.json"}]}});
         shared["volumes"].as_array_mut().unwrap().push(
             json!({"name":"oauth-key","secret":{"secretName":"wamn-oauth","defaultMode":384}}),
         );
@@ -186,9 +196,6 @@ pub fn host_settings(document: &ClusterDocument) -> Value {
             .as_array_mut()
             .unwrap()
             .push(json!({"name":"oauth-key","mountPath":"/etc/wamn/oauth","readOnly":true}));
-    } else {
-        values["hostEnvironment"]["WAMN_REGISTRY_TOKEN_METADATA"] = "true".into();
     }
-    values["hostConfiguration"] = shared;
-    values
+    shared
 }

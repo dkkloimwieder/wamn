@@ -161,6 +161,23 @@ pub async fn publish(
     database_url: &str,
     publication: &Publication,
 ) -> anyhow::Result<()> {
+    push(built, registry, publication).await?;
+    record(
+        registry,
+        database_url,
+        &built.code,
+        &built.digest,
+        publication,
+    )
+    .await
+}
+
+/// Push verified artifact bytes without changing deployed registry facts.
+pub async fn push(
+    built: &BuiltIntegration,
+    registry: &PackageRegistry,
+    publication: &Publication,
+) -> anyhow::Result<()> {
     let exports = crate::connection_requirement::exported_interfaces(&built.component)?;
     plan::require_write_interfaces(publication, &exports)?;
     let repository = Repository::open(registry, &built.digest)?;
@@ -194,6 +211,23 @@ pub async fn publish(
         &pulled,
         &built.code,
     )?;
+    Ok(())
+}
+
+/// Record one verified published artifact on the owning database authority.
+pub async fn record(
+    registry: &PackageRegistry,
+    database_url: &str,
+    code: &str,
+    digest: &str,
+    publication: &Publication,
+) -> anyhow::Result<()> {
+    require_code(code)?;
+    let bytes = wamn_package_artifact::integration::pull(registry, code, digest).await?;
+    let exports = crate::connection_requirement::exported_interfaces(&bytes)?;
+    plan::require_write_interfaces(publication, &exports)?;
+    let engine = wamn_engine::build_engine(&[])?;
+    wamn_engine::component_admission::validate_integration_admission(&engine, &bytes, code)?;
     let mut system = wamn_postgres::connect(database_url).await?;
     let mut tx = system.begin().await?;
     sqlx::raw_sql("SET LOCAL ROLE wamn_system")
@@ -201,9 +235,9 @@ pub async fn publish(
         .await
         .map(drop)?;
     sqlx::query(wamn_registry::sql::CONTROL_PACKAGE_SRC_INTEGRATION_PUBLISH)
-        .bind(&built.code)
+        .bind(code)
         .bind(publication.version)
-        .bind(&built.digest)
+        .bind(digest)
         .bind(publication.parameter_schema.to_string())
         .bind(&publication.operations)
         .bind(&exports)

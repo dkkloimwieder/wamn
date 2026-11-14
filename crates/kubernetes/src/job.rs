@@ -1,4 +1,4 @@
-//! Bounded platform Job lifecycle and private credential handoffs.
+//! Bounded platform Job execution and observation.
 use crate::{Target, kubectl};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
@@ -8,20 +8,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-const OUTPUT_FILE: &str = "/out/secret.json";
 // Bound execution even if the caller exits. Kubernetes never retries these Jobs.
 const INSTALL_DEADLINE: Duration = Duration::from_mins(15);
-const HANDOFF: &str = r#"umask 077
-/usr/local/bin/wamn-ctl "$@"
-waited=0
-while [ -e /out/secret.json ] && [ "$waited" -lt 300 ]; do
-  sleep 1
-  waited=$((waited + 1))
-done
-test ! -e /out/secret.json
-"#;
-const READ_OUTPUT: &str = "if [ -f /out/secret.json ]; then cat /out/secret.json; fi";
-const ACK_OUTPUT: &str = "rm -f /out/secret.json";
 
 #[derive(Debug)]
 struct JobError {
@@ -48,7 +36,7 @@ pub fn manifest(name: &str, image: &str, command: &[&str], arguments: &[&str]) -
     json!({"apiVersion":"batch/v1", "kind":"Job", "metadata":{"name":name},
         "spec":{"suspend":true, "backoffLimit":0, "activeDeadlineSeconds":INSTALL_DEADLINE.as_secs(),
             "template":{"spec":{"restartPolicy":"Never", "automountServiceAccountToken":false,
-                "containers":[{"name":name, "image":image, "command":command, "args":arguments, "env":[], "volumeMounts":[]}],
+                "containers":[{"name":"operation", "image":image, "command":command, "args":arguments, "env":[], "volumeMounts":[]}],
                 "volumes":[]}}}})
 }
 
@@ -99,6 +87,31 @@ pub fn mount(job: &mut Value, name: &str, secret: &str, path: &str, keys: &[&str
         .push(json!({"name":name, "mountPath":path, "readOnly":true}));
 }
 
+/// Mount the installed OCI client configuration for the selected credential source.
+pub fn registry(job: &mut Value, metadata: bool) {
+    if !metadata {
+        job["spec"]["template"]["spec"]["imagePullSecrets"] =
+            json!([{"name":wamn_registry::name::REGISTRY_PULL}]);
+    }
+    let source = if metadata {
+        json!({"configMap":{"name":"wamn-registry-helper"}})
+    } else {
+        json!({"secret":{"secretName":wamn_registry::name::REGISTRY_PULL,"defaultMode":256,
+            "items":[{"key":".dockerconfigjson","path":"config.json"}]}})
+    };
+    let mut volume = source;
+    volume["name"] = "registry".into();
+    job["spec"]["template"]["spec"]["volumes"]
+        .as_array_mut()
+        .unwrap()
+        .push(volume);
+    container(job)["volumeMounts"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"registry","mountPath":"/credentials/registry","readOnly":true}));
+    environment(job, &[("DOCKER_CONFIG", "/credentials/registry")]);
+}
+
 pub fn files(job: &mut Value, files: BTreeMap<String, String>) -> Secret {
     let secret = format!("{}-files", name(job));
     mount(
@@ -119,30 +132,6 @@ pub fn files(job: &mut Value, files: BTreeMap<String, String>) -> Secret {
     Secret(object)
 }
 
-pub fn secret_output(job: &mut Value) {
-    let name = name(job).to_owned();
-    let container = container(job);
-    container["command"] = json!(["/bin/sh", "-ec"]);
-    container["args"]
-        .as_array_mut()
-        .unwrap()
-        .splice(0..0, [HANDOFF.into(), name.into()]);
-    container["volumeMounts"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"name":"out", "mountPath":"/out"}));
-    job["spec"]["template"]["spec"]["volumes"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({
-            "name":"out", "emptyDir":{"medium":"Memory", "sizeLimit":"1Mi"}
-        }));
-}
-
-fn emits_secret(job: &Value) -> bool {
-    job["spec"]["template"]["spec"]["containers"][0]["args"][0] == HANDOFF
-}
-
 fn owner_reference(metadata: &Value) -> anyhow::Result<Value> {
     let uid = metadata["uid"].as_str().context("created Job has no uid")?;
     Ok(json!([{"apiVersion":"batch/v1", "kind":"Job", "name":metadata["name"], "uid":uid}]))
@@ -150,11 +139,10 @@ fn owner_reference(metadata: &Value) -> anyhow::Result<Value> {
 
 /// Run a Job and return its public output after cleanup.
 ///
-/// Existing Jobs are collected before a new request runs. Interrupted handoffs
-/// remain available for recovery until their Kubernetes deadline expires.
+/// Existing Jobs are collected before a new request runs.
 ///
 /// # Errors
-/// Returns execution, handoff, log, or cleanup failures.
+/// Returns execution, log, or cleanup failures.
 pub async fn run(
     target: &Target,
     directory: &Path,
@@ -228,24 +216,45 @@ pub async fn run(
     collect(target, directory, job).await
 }
 
-fn completed(status: &Value, name: &str) -> Result<bool, JobError> {
-    let Some(conditions) = status["status"]["conditions"].as_array() else {
-        return Ok(false);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum State {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+fn state(job: &Value) -> State {
+    let conditions = job["status"]["conditions"].as_array();
+    let has = |type_| {
+        conditions.is_some_and(|conditions| {
+            conditions
+                .iter()
+                .any(|condition| condition["type"] == type_ && condition["status"] == "True")
+        })
     };
-    if conditions
-        .iter()
-        .any(|condition| condition["type"] == "Failed" && condition["status"] == "True")
-    {
-        return Err(JobError { name: name.into() });
+    if has("Failed") {
+        State::Failed
+    } else if has("Complete") {
+        State::Succeeded
+    } else if job["status"]["active"].as_u64().unwrap_or(0) > 0 {
+        State::Running
+    } else {
+        State::Pending
     }
-    Ok(conditions
-        .iter()
-        .any(|condition| condition["type"] == "Complete" && condition["status"] == "True"))
+}
+
+fn completed(job: &Value, name: &str) -> Result<bool, JobError> {
+    match state(job) {
+        State::Failed => Err(JobError { name: name.into() }),
+        State::Succeeded => Ok(true),
+        State::Pending | State::Running => Ok(false),
+    }
 }
 
 async fn wait(target: &Target, job: &Value) -> anyhow::Result<()> {
     let deadline = Instant::now() + INSTALL_DEADLINE;
-    let mut handed_off = false;
     loop {
         let status: Value = match kubectl::get(
             &target.kubeconfig,
@@ -265,9 +274,6 @@ async fn wait(target: &Target, job: &Value) -> anyhow::Result<()> {
         if completed(&status, name(job))? {
             return Ok(());
         }
-        if emits_secret(job) && !handed_off && status["status"]["ready"].as_u64().unwrap_or(0) > 0 {
-            handed_off = handoff(target, job).await?;
-        }
         ensure!(
             Instant::now() < deadline,
             "platform Job {} did not complete in {}s",
@@ -278,44 +284,10 @@ async fn wait(target: &Target, job: &Value) -> anyhow::Result<()> {
     }
 }
 
-async fn handoff(target: &Target, job: &Value) -> anyhow::Result<bool> {
-    let job = format!("job/{}", name(job));
-    let output = kubectl::kubectl(
-        &target.kubeconfig,
-        &target.context,
-        &target.namespace,
-        &["exec", &job, "--", "/bin/sh", "-ec", READ_OUTPUT],
-        Some(&[]),
-    )
-    .await?;
-    if output.is_empty() {
-        return Ok(false);
-    }
-    let secret = emitted_secret(&output)?;
-    kubectl::apply(
-        &target.kubeconfig,
-        &target.context,
-        secret["metadata"]["namespace"]
-            .as_str()
-            .context("emitted Secret namespace")?,
-        &secret,
-    )
-    .await?;
-    kubectl::kubectl(
-        &target.kubeconfig,
-        &target.context,
-        &target.namespace,
-        &["exec", &job, "--", "/bin/sh", "-ec", ACK_OUTPUT],
-        Some(&[]),
-    )
-    .await?;
-    Ok(true)
-}
-
 async fn collect(target: &Target, directory: &Path, job: &Value) -> anyhow::Result<String> {
     let result = wait(target, job).await;
     let output = logs(target, directory, job).await;
-    // An API or handoff failure says nothing about execution. Preserve the Job
+    // An API failure says nothing about execution. Preserve the Job
     // and its owned credentials so the next invocation can recover its result.
     let cleanup = if result.is_ok() || result.as_ref().is_err_and(anyhow::Error::is::<JobError>) {
         cleanup(target, job).await
@@ -337,17 +309,6 @@ async fn collect(target: &Target, directory: &Path, job: &Value) -> anyhow::Resu
     })?;
     cleanup?;
     output
-}
-
-fn emitted_secret(output: &str) -> anyhow::Result<Value> {
-    // Parser diagnostics can quote a credential. Keep them out of errors.
-    let secret: Value = serde_json::from_str(output)
-        .map_err(|_| anyhow::anyhow!("decode the emitted Secret from {OUTPUT_FILE}"))?;
-    ensure!(
-        secret["apiVersion"] == "v1" && secret["kind"] == "Secret",
-        "the Job output is not a v1 Secret"
-    );
-    Ok(secret)
 }
 
 async fn logs(target: &Target, directory: &Path, job: &Value) -> anyhow::Result<String> {
@@ -403,6 +364,133 @@ async fn cleanup(target: &Target, job: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Installed worker image and its public component configuration.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Worker {
+    pub image: String,
+    pub configuration: String,
+    pub service_account: String,
+    #[serde(skip)]
+    pub database_credential: String,
+    #[serde(skip)]
+    pub administration: std::path::PathBuf,
+}
+
+/// Submit one bounded operation Job. The caller has already authorized its target.
+pub async fn submit(
+    api: &crate::kubernetes_api::KubernetesApi,
+    job: &Value,
+) -> anyhow::Result<Value> {
+    let created = api.create_job(&api.namespace, job).await?;
+    ensure!(
+        created["metadata"]["name"] == job["metadata"]["name"],
+        "Kubernetes returned a different Job"
+    );
+    Ok(json!({"job":name(job)}))
+}
+
+/// A refused observation never reveals a Job outside the authorized target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservationErrorType {
+    InvalidName,
+    NotFound,
+}
+
+#[derive(Debug)]
+pub struct ObservationError {
+    pub type_: ObservationErrorType,
+}
+impl std::fmt::Display for ObservationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "operation observation refused: {:?}", self.type_)
+    }
+}
+impl std::error::Error for ObservationError {}
+
+/// Observe only Jobs that belong to the authorized environment and operation set.
+pub async fn observe(
+    api: &crate::kubernetes_api::KubernetesApi,
+    name: &str,
+    target: &str,
+    operations: &[&str],
+) -> anyhow::Result<Value> {
+    let namespace = &api.namespace;
+    if !kubernetes_name(name)
+        || name
+            .strip_prefix("op-")
+            .is_none_or(|id| uuid::Uuid::parse_str(id).is_err())
+    {
+        return Err(ObservationError {
+            type_: ObservationErrorType::InvalidName,
+        }
+        .into());
+    }
+    let job = api
+        .get_job(&api.namespace, name)
+        .await
+        .map_err(anyhow::Error::from)?
+        .ok_or(ObservationError {
+            type_: ObservationErrorType::NotFound,
+        })?;
+    if job["metadata"]["annotations"]["wamn.dev/operation-target"] != target
+        || job["metadata"]["annotations"]["wamn.dev/operation"]
+            .as_str()
+            .is_none_or(|operation| !operations.contains(&operation))
+    {
+        return Err(ObservationError {
+            type_: ObservationErrorType::NotFound,
+        }
+        .into());
+    }
+    let uid = job["metadata"]["uid"]
+        .as_str()
+        .context("Job UID is absent")?;
+    let uid = uuid::Uuid::parse_str(uid).context("Job UID is invalid")?;
+    let pods = api.get(format!("/api/v1/namespaces/{namespace}/pods?labelSelector=batch.kubernetes.io%2Fcontroller-uid%3D{uid}&limit=1")).await.map_err(anyhow::Error::from)?;
+    let mut log = String::new();
+    if let Some(pod) = pods["items"].as_array().and_then(|items| items.first()) {
+        let owned = pod["metadata"]["ownerReferences"]
+            .as_array()
+            .is_some_and(|owners| {
+                owners
+                    .iter()
+                    .any(|owner| owner["uid"] == uid.to_string() && owner["kind"] == "Job")
+            });
+        if owned
+            && pod["status"]["containerStatuses"]
+                .as_array()
+                .is_some_and(|states| {
+                    states.iter().any(|state| {
+                        state["name"] == job["spec"]["template"]["spec"]["containers"][0]["name"]
+                            && state["state"].get("waiting").is_none()
+                    })
+                })
+        {
+            let pod = pod["metadata"]["name"]
+                .as_str()
+                .filter(|name| kubernetes_name(name))
+                .context("pod name is invalid")?;
+            log = api
+                .pod_log(&api.namespace, pod)
+                .await
+                .map_err(anyhow::Error::from)?;
+        }
+    }
+    let state = state(&job);
+    Ok(json!({"job":name,"state":state,"log":log}))
+}
+
+fn kubernetes_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 253
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && name.as_bytes()[0].is_ascii_alphanumeric()
+        && name.as_bytes()[name.len() - 1].is_ascii_alphanumeric()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,27 +498,5 @@ mod tests {
     #[test]
     fn secret_ownership_refuses_a_job_without_a_uid() {
         assert!(owner_reference(&json!({"name":"platform-system"})).is_err());
-    }
-
-    #[test]
-    fn emitted_secret_refuses_invalid_output() {
-        for output in [
-            r#"{"private-credential": invalid}"#,
-            r#"{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"private-credential","namespace":"identity"}}"#,
-        ] {
-            assert!(emitted_secret(output).is_err());
-        }
-    }
-
-    #[test]
-    fn job_conditions_report_failure_and_require_completed_execution() {
-        let failed = json!({"status":{"conditions":[{"type":"Failed","status":"True"}]}});
-        let error = completed(&failed, "platform-system").unwrap_err();
-        assert_eq!(error.name, "platform-system");
-        assert!(!completed(&json!({"status":{"active":1}}), "platform-system").unwrap());
-        let mut status = json!({"status":{"conditions":[{"type":"Complete","status":"False"}]}});
-        assert!(!completed(&status, "platform-system").unwrap());
-        status["status"]["conditions"][0]["status"] = "True".into();
-        assert!(completed(&status, "platform-system").unwrap());
     }
 }

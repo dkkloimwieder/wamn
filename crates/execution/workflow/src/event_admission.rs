@@ -170,9 +170,7 @@ pub async fn admit_application_events(
     release: &LoadedRelease,
 ) -> anyhow::Result<()> {
     jetstream
-        .admit_application_events(postgres, release, async |admission| {
-            admit_event_batch(postgres, project, release, admission).await
-        })
+        .admit_application_events(postgres, project, release, admit_event_batch)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }

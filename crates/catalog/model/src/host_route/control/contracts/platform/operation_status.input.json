@@ -1,0 +1,10 @@
+{
+  "fields": [
+    {
+      "path": "job",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

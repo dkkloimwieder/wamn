@@ -1,34 +1,32 @@
 # Queued automation
 
-`wamn-ctl workflow start` starts one run of an environment workflow through the host route `workflow.start`.
+`wamn workflow start` starts one run of an environment workflow through the host route `workflow.start`.
 The route is an operation of the application's ACL: `admin` holds it, and another role holds it through a stored permission row of `wamn-control:workflow/start`.
-The other `workflow` commands call the workflow contract in `wamn-workflow`, and they use project-admin database authority.
+The other `workflow` commands call org control routes. The service checks current project administration authority.
 The host's queue worker uses its existing database roles to lease and execute the run.
 
-Author and enable the workflow first with `wamn-ctl workflow author` and `wamn-ctl workflow enable`.
-Every `workflow` command except `start` needs `--environment` and the project-admin database URL.
+Author and enable the workflow first with `wamn workflow author` and `wamn workflow enable`.
+Author, enable and disable use `--coordinate <org>/<env>/<project>` and control credentials. List, park, release and runs use `--project` and `--environment`.
 `author`, `enable`, and `disable` take the organization and project from `--coordinate`.
-`list`, `park`, `release`, and `runs` require `--org` and `--project`.
-Pass the URL with `--admin-database-url` or `WAMN_PG_ADMIN_URL`.
-`--schema` selects the run-plane schema and defaults to `wamn_run`.
-`author` and `enable` also read the platform inputs of `wamn-ctl env`.
+`list`, `park`, `release`, and `runs` require `--project`.
+Workflow administration uses `WAMN_CONTROL_URL` and `WAMN_TOKEN`.
+The server selects the database, serving release and authenticated author.
 `author` requires these flags:
 
-- `--coordinate <org>/<project>/<env>`
+- `--coordinate <org>/<env>/<project>`
 - `--application`
 - `--document <compiled-publication-wiring>`
 - `--execution-type role|invoker`
-- `--principal-id`
 
 `author` also requires `--execution-role` with `--execution-type role`, and refuses it with `invoker`.
-`enable` requires `--coordinate`, `--application`, `--workflow-id`, `--version`, and `--principal-id`.
-`disable` takes the same flags as `enable`, except `--principal-id`.
+`enable` requires `--coordinate`, `--application`, `--workflow-id`, and `--version`.
+`disable` takes the same flags as `enable`.
 A workflow of type `role` runs as the environment's `workflow` user with its execution role, so grant that role to the `workflow` user.
 A workflow of type `invoker` runs as the caller with its active role.
 A caller with `admin` acts as `admin`, and a caller with exactly one role acts with that role.
 A caller with no role or more than one role is refused with `active_role_required`.
 
-`wamn-ctl workflow author --schedule '<cron>'` authors a schedule workflow: a five-field cron, evaluated in the project `timezone` setting of the environment database.
+`wamn workflow author --schedule '<cron>'` authors a schedule workflow: a five-field cron, evaluated in the project `timezone` setting of the environment database.
 The default is UTC. Due moments and their keys always use UTC.
 An invalid cron is refused at author.
 `workflow.start` does not start a schedule workflow, and it refuses `workflow_not_enabled`.
@@ -43,7 +41,7 @@ Set `WAMN_TOKEN` to a session token or a PAT of the caller.
 Then submit an input file:
 
 ```bash
-wamn-ctl workflow start \
+wamn workflow start \
   --host-url "https://$APPLICATION_HOST" --application orders --workflow-id nightly \
   --idempotency-key batch-42 --input /tmp/orders-input.json
 ```
@@ -68,13 +66,13 @@ The executing principal owns application writes, while the `wamn:executor` crede
 
 ## Park, release, and list runs
 
-Each command needs `--org`, `--project`, and `--environment`. `park` and `release` also need `--run-id`.
+Each command needs `--project` and `--environment`. `park` and `release` also need `--run-id`.
 `runs` takes an optional `--limit`, which defaults to 50.
 
 ```bash
-wamn-ctl workflow park --org acme --project orders --environment dev --run-id "$RUN_ID"
-wamn-ctl workflow release --org acme --project orders --environment dev --run-id "$RUN_ID"
-wamn-ctl workflow runs --org acme --project orders --environment dev --limit 20
+wamn workflow park --project orders --environment dev --run-id "$RUN_ID"
+wamn workflow release --project orders --environment dev --run-id "$RUN_ID"
+wamn workflow runs --project orders --environment dev --limit 20
 ```
 
 A park holds a queued run that no worker holds, so no worker leases it.
@@ -83,22 +81,15 @@ A running or finished run refuses the park.
 A release returns a parked run to the queue, and a run that is not parked refuses it.
 `runs` prints one JSON object per run, newest first, with its status and its `queued` and `parked` flags.
 
-## Declared workflows
+## Authored workflows
 
-Pass the database URL as above, then select the installed release with the required `--release-digest`:
-
-```bash
-wamn-ctl workflow declared --org acme --project orders --environment dev --release-digest "$RELEASE_DIGEST"
-```
-
-The command prints each declared workflow with its event registration.
-`workflow runs` prints runs, and `workflow list` prints the workflow versions authored in the environment.
-A package declares no schedule.
-Author a schedule workflow in the environment with `wamn-ctl workflow author --schedule '<cron>'`, then enable it.
+`wamn workflow list --project orders --environment dev` lists authored workflow versions.
+`workflow runs` lists their runs. A package declares no schedule.
+Author a scheduled workflow with `wamn workflow author --coordinate <org>/<env>/<project> --schedule '<cron>'`, then enable it.
 
 Every application host runs one schedule task.
 At each minute it reads, in one query, the enabled schedule workflows of the applications its environment declares, and admits a run for each one whose cron names that minute.
-`wamn-ctl workflow author` refuses an application that the environment does not declare.
+`wamn workflow author` refuses an application that the environment does not declare.
 The task uses `WAMN_EXECUTOR_PLATFORM_PG_URL`.
 An enable or a disable takes effect at the next minute.
 See [workflows](../architecture/execution.md#workflows) for timing and retry behavior.
@@ -107,7 +98,7 @@ See [workflows](../architecture/execution.md#workflows) for timing and retry beh
 
 A release no longer carries the NetSuite pull's minute schedule.
 An environment that ran the pull from its release, such as wamn-dev, stops pulling when it applies such a release.
-That apply also declares the environment's applications, which `env apply` now requires.
+That apply also declares the environment's applications, which `environment::apply` now requires.
 Add one application `netsuite` to the environment document of the wamn-dev NetSuite environment, and list every package of its release in it:
 
 ```python
@@ -116,7 +107,7 @@ Add one application `netsuite` to the environment document of the wamn-dev NetSu
     }
 ```
 
-`env apply` refuses a release package that no application lists, a package that two applications list, and a listed package that the release does not carry.
+`environment::apply` refuses a release package that no application lists, a package that two applications list, and a listed package that the release does not carry.
 Do these steps once, after that apply, as an environment admin.
 Set `WAMN_CONTROL_URL` to the application host and `WAMN_TOKEN` to your session token.
 Set the coordinate `<org>/<project>/<env>`, its composed environment key, and your application user ID as `$ADMIN_ID`.
@@ -124,31 +115,31 @@ Set the coordinate `<org>/<project>/<env>`, its composed environment key, and yo
 1. Create the role the pull executes with. It holds exactly the consumer command that the pull's `record` node calls:
 
    ```bash
-   wamn-ctl create-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --role netsuite-pull
-   wamn-ctl grant-permission --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --role netsuite-pull \
+   wamn create-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --role netsuite-pull
+   wamn grant-permission --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --role netsuite-pull \
      --operation <consumer package>:<interface>/<operation>
    ```
 
-2. Grant the role to the `workflow` user, whose email is `workflow@<platform domain>`, with `wamn-ctl grant-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --user-id <workflow UUID> --role netsuite-pull`.
+2. Grant the role to the `workflow` user, whose email is `workflow@<platform domain>`, with `wamn grant-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --user-id <workflow UUID> --role netsuite-pull`.
    The enabler must also hold the role, or hold `admin`.
 3. Build the NetSuite package with `wamn build` first. Copy the example in `apps/netsuite/tests/workflows/netsuite_pull.json` to `netsuite-pull.json` in the environment configuration. Edit its parameters, then author it as a schedule workflow of the application `netsuite`:
 
    ```bash
-   wamn-ctl workflow author --environment <env> --coordinate <org>/<project>/<env> \
+   wamn workflow author --coordinate <org>/<env>/<project> \
      --application netsuite \
      --document netsuite-pull.json \
-     --execution-type role --execution-role netsuite-pull --schedule '* * * * *' --principal-id "$ADMIN_ID"
+     --execution-type role --execution-role netsuite-pull --schedule '* * * * *'
    ```
 
    Authorship validates the graph against the serving release.
 4. Enable it:
 
    ```bash
-   wamn-ctl workflow enable --environment <env> --coordinate <org>/<project>/<env> \
-     --application netsuite --workflow-id netsuite_pull --version 1 --principal-id "$ADMIN_ID"
+   wamn workflow enable --coordinate <org>/<env>/<project> \
+     --application netsuite --workflow-id netsuite_pull --version 1
    ```
 
 The next minute admits the first pull.
 Its run key is `schedule:netsuite/netsuite_pull:<due>`, and the run executes as the `workflow` user with `netsuite-pull`.
-`wamn-ctl workflow list` shows the enabled version, and `wamn-ctl workflow disable` stops the pull.
+`wamn workflow list` shows the enabled version, and `wamn workflow disable` stops the pull.
 The pull keeps its checkpoint in `wamn_integration.setting`, so the first pull after cutover continues from the last pull of the release.

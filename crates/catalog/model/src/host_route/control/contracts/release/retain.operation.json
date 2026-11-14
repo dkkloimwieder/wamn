@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:release/retain@0.9.0",
+  "type": "command",
+  "label": "release.retain",
+  "grant": "wamn-control:release/retain@0.9.0",
+  "permission_token": "release.retain",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

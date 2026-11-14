@@ -245,25 +245,22 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
     )
     .await
     .expect("create the auth memory buckets");
-    let revoked = std::process::Command::new(env!("CARGO_BIN_EXE_wamn-ctl"))
-        .args([
-            "provision-project-env",
-            "--revoke-pat-prefix",
-            &route.token_prefix,
-        ])
-        .env("WAMN_SYSTEM_ADMIN_URL", &url)
-        .env("WAMN_NATS_URL", &nats.url)
-        .env("WAMN_NATS_TLS_CA", &nats.client.ca)
-        .env("WAMN_NATS_TLS_CERT", &nats.client.cert)
-        .env("WAMN_NATS_TLS_KEY", &nats.client.key)
-        .stdin(Stdio::null())
-        .output()
-        .expect("run the compiled PAT revocation verb");
-    assert!(
-        revoked.status.success(),
-        "the PAT revocation verb failed: {}",
-        String::from_utf8_lossy(&revoked.stderr)
-    );
+    let changes = wamn_broker::Publisher::connect(&wamn_broker::nats::PlatformNats {
+        nats_url: nats.url.clone(),
+        nats_tls_ca: nats.client.ca.clone(),
+        nats_tls_cert: nats.client.cert.clone(),
+        nats_tls_key: nats.client.key.clone(),
+        nats_tls_server_name: None,
+    })
+    .await
+    .expect("connect the revocation publisher");
+    wamn_environment::provision_project_env::revoke_provisioning_pat(
+        &url,
+        &route.token_prefix,
+        &changes,
+    )
+    .await
+    .expect("revoke the service PAT");
     let revocation: bool = sqlx::query(sqlx::AssertSqlSafe(
         ("SELECT revoked_at IS NOT NULL AND created_at::text = $2 \
                 AND created_by = $1::text::uuid AND updated_by = $1::text::uuid \
@@ -448,6 +445,14 @@ async fn development_identity_survives_schema_reset_and_owned_teardown() {
     wamn_environment::environment::sql::reset::reset_database(
         system.url(),
         &environment.route.database_url,
+        &wamn_control_provision::test_database::package_migration_input(
+            &environment.route.database_url,
+            "acme",
+            "receiving",
+            "dev",
+        )
+        .await
+        .unwrap(),
         &wamn_registry::Triple::new("acme", "dev", "receiving"),
     )
     .await

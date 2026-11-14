@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:api-service/create@0.9.0",
+  "type": "command",
+  "label": "api_service.create",
+  "grant": "wamn-control:api-service/create@0.9.0",
+  "permission_token": "api_service.create",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

@@ -2025,6 +2025,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots 1.0.12",
 ]
 
 [[package]]
@@ -5629,6 +5630,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-control"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wamn-broker",
+ "wamn-catalog",
+ "wamn-control-provision",
+ "wamn-engine",
+ "wamn-environment",
+ "wamn-event-reg",
+ "wamn-execution-host",
+ "wamn-identity-client",
+ "wamn-identity-protocol",
+ "wamn-kubernetes",
+ "wamn-package-artifact",
+ "wamn-package-control",
+ "wamn-platform-identity",
+ "wamn-platform-install",
+ "wamn-postgres",
+ "wamn-registry",
+ "wamn-runtime",
+ "wamn-workflow",
+ "wasmtime-wasi-http",
+]
+
+[[package]]
 name = "wamn-control-provision"
 version = "0.1.0"
 dependencies = [
@@ -5662,7 +5701,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
+ "bytes",
  "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
  "postgres-protocol",
  "reqwest",
  "rustix 1.1.5",
@@ -5688,13 +5732,13 @@ dependencies = [
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-platform-identity",
+ "wamn-platform-install",
  "wamn-postgres",
  "wamn-registry",
  "wamn-release-control",
  "wamn-runtime",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
- "wamn-workflow",
  "wit-component 0.254.2",
  "wit-parser 0.254.2",
 ]
@@ -6317,6 +6361,7 @@ dependencies = [
  "tracing",
  "url",
  "wamn-broker",
+ "wamn-catalog",
  "wamn-compiler",
  "wamn-control-provision",
  "wamn-digest",

@@ -10,12 +10,11 @@ use serde_json::{Value, json};
 use wamn_catalog::HostAttachment;
 
 pub(crate) fn request(
-    client: &reqwest::Client,
     host_url: &str,
     token: &str,
     attachment: &HostAttachment,
     value: &Value,
-) -> anyhow::Result<reqwest::Request> {
+) -> anyhow::Result<hyper::Request<http_body_util::Full<bytes::Bytes>>> {
     let mut url = format!(
         "{}{}",
         host_url.trim_end_matches('/'),
@@ -23,24 +22,42 @@ pub(crate) fn request(
             .as_str()
             .context("route path")?
     );
-    let request = if attachment.route.type_.is_read() {
+    let (method, body) = if attachment.route.type_.is_read() {
         let query = encode_read_query(value.as_object().context("read request object")?);
         if !query.is_empty() {
             url.push('?');
             url.push_str(&query);
         }
-        client.get(url)
+        (hyper::Method::GET, Vec::new())
     } else {
         let request_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos()
             .to_string();
-        client
-            .post(url)
-            .json(&json!([{"request_id":request_id,"value":value}]))
+        (
+            hyper::Method::POST,
+            serde_json::to_vec(&json!([{"request_id":request_id,"value":value}]))?,
+        )
     };
-    request
-        .bearer_auth(token)
-        .build()
+    hyper::Request::builder()
+        .method(method)
+        .uri(url)
+        .header(hyper::header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .body(http_body_util::Full::new(bytes::Bytes::from(body)))
         .context("build control request")
+}
+
+/// The shared HTTP transport for every CLI route.
+pub(crate) fn client() -> hyper_util::client::legacy::Client<
+    hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+    http_body_util::Full<bytes::Bytes>,
+> {
+    let connector = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_webpki_roots()
+        .https_or_http()
+        .enable_http1()
+        .build();
+    hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+        .build(connector)
 }

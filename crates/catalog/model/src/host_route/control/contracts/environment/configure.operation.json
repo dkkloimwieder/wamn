@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:environment/configure@0.9.0",
+  "type": "command",
+  "label": "environment.configure",
+  "grant": "wamn-control:environment/configure@0.9.0",
+  "permission_token": "environment.configure",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}
