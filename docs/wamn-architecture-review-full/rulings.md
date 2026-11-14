@@ -116,3 +116,5 @@ W27. S9 runs as three serial lanes after S10-D and before S12-C: S9-A (project a
 - `environment_host_name` drops the project, and the existing per-project host consolidates with the application host groups.
 - Drain stops asking for one settled release. It reports which releases stay loaded and which runs pin them.
 - The scope registry stays in `engine/src/invocation_scope.rs::InvocationScopes`, and `QUEUE_LEASE_INVOCATION` goes.
+
+W28. Guest memory enforcement (owner, 2026-11-14, revises how R2 is met). The pinned `wash-runtime` v2.12.1 already limits each instance, so nobody forks it. The host sets `HostMemoryBudgets::default_heap_memory` to 256 MiB, the ceiling of each linear memory, and switches the guest memory mode from `count` to `Enforce`. The host-wide `max_guest_memory` stays derived from the container limit, and the container memory limit stays the outer boundary. The per-component `memory_limit_mb` field is not used, because v2.12.1 does not enforce it. The measured fixture peaks are about 1.1 MiB.
