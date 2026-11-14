@@ -10,7 +10,6 @@ use wamn_control_provision::{
     AUDIT_RETENTION_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login,
 };
 use wamn_environment::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
-use wamn_test_infrastructure::locked_database;
 
 const SCHEMA: &str = "record_retention";
 const PACKAGE_ID: &str = "record_retention_fixture";
@@ -415,9 +414,11 @@ async fn assert_authority(admin: &mut Client, credential_url: &str) {
     }
 }
 
-#[tokio::test]
-async fn prune_removes_only_the_expired_prefix_of_each_row() {
-    let url = locked_database::database(wamn_platform_identity::test_database::project_platform);
+#[sqlx::test(migrations = false)]
+async fn prune_removes_only_the_expired_prefix_of_each_row(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool).to_string();
+    wamn_platform_identity::test_database::project_platform(&url).await;
     let mut admin = connect(&url).await;
     let mut database = current_database(&mut admin).await;
     provision(&mut admin).await;
@@ -696,9 +697,11 @@ async fn wait_for_blocker(observer: &mut Client, application: &str, blocker: i32
     .expect("the expected process blocks the queued operation");
 }
 
-#[tokio::test]
-async fn history_table_creation_waits_for_a_running_prune() {
-    let url = locked_database::database(wamn_platform_identity::test_database::project_platform);
+#[sqlx::test(migrations = false)]
+async fn history_table_creation_waits_for_a_running_prune(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool).to_string();
+    wamn_platform_identity::test_database::project_platform(&url).await;
     let mut admin = connect(&url).await;
     provision(&mut admin).await;
     let package = fixture_root("prune-record-history-lock");

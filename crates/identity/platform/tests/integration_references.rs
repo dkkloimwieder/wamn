@@ -3,10 +3,10 @@
 use sqlx::Connection as _;
 use wamn_platform_identity::connections::references::refuse_environment_references;
 
-async fn refusal(relation: &str, expected: &str) {
+async fn refusal(pool: &sqlx::PgPool, relation: &str, expected: &str) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let database = wamn_test_postgres::url(pool);
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql("CREATE SCHEMA platform; CREATE SCHEMA catalog; \
         CREATE TABLE platform.external_system(id uuid PRIMARY KEY); \
@@ -38,22 +38,22 @@ async fn refusal(relation: &str, expected: &str) {
     assert_eq!(error.field, expected);
 }
 
-#[tokio::test]
-async fn binding_refuses_connection_deletion() {
-    refusal("catalog.connection_binding", "binding").await;
+#[sqlx::test(migrations = false)]
+async fn binding_refuses_connection_deletion(pool: sqlx::PgPool) {
+    refusal(&pool, "catalog.connection_binding", "binding").await;
 }
 
-#[tokio::test]
-async fn release_version_refuses_connection_deletion() {
-    refusal("catalog.release_connection", "release_connection").await;
+#[sqlx::test(migrations = false)]
+async fn release_version_refuses_connection_deletion(pool: sqlx::PgPool) {
+    refusal(&pool, "catalog.release_connection", "release_connection").await;
 }
 
-#[tokio::test]
-async fn file_refuses_connection_deletion() {
-    refusal("platform.file", "file").await;
+#[sqlx::test(migrations = false)]
+async fn file_refuses_connection_deletion(pool: sqlx::PgPool) {
+    refusal(&pool, "platform.file", "file").await;
 }
 
-#[tokio::test]
-async fn record_refuses_external_system_deletion() {
-    refusal("platform.record_source", "record").await;
+#[sqlx::test(migrations = false)]
+async fn record_refuses_external_system_deletion(pool: sqlx::PgPool) {
+    refusal(&pool, "platform.record_source", "record").await;
 }

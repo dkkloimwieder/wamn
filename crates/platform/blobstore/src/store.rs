@@ -484,7 +484,9 @@ mod tests {
         use wamn_connections::connection_credentials::test_util::Fixture;
         let _lock = wamn_test_postgres::lock();
         for rotate in [false, true] {
-            let mut fixture = Fixture::new().await;
+            let mut server = wamn_test_postgres::start(&[]).unwrap();
+            let database = server.create_database("fixture").await.unwrap();
+            let mut fixture = Fixture::new(url::Url::parse(database.url()).unwrap()).await;
             fixture
                 .put("store", "secret", &["project-a", "project-b"])
                 .await;

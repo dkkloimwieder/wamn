@@ -166,11 +166,11 @@ fn run(url: &str, script: &str) {
 /// FKs satisfied, no key collision — so `42501` here is the revoked privilege and
 /// not a `WITH CHECK` rejection, which shares the SQLSTATE. That the project base grants
 /// does admit such a row under the App generation is what the counter test shows.
-#[test]
-fn author_sql_cannot_write_the_relations_that_authorize_it() {
+#[sqlx::test(migrations = false)]
+async fn author_sql_cannot_write_the_relations_that_authorize_it(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
 
     let (app_generation, mut script) = prelude(&url);
     writeln!(
@@ -266,11 +266,11 @@ ROLLBACK;"#
 /// that is not a sequence. The `wamn:postgres` plugin resolves the id from the
 /// application in host state, and its statement admission refuses guest SQL
 /// that names the function. `number_counter` has no history table.
-#[test]
-fn the_application_advances_a_counter_only_through_bump_counter() {
+#[sqlx::test(migrations = false)]
+async fn the_application_advances_a_counter_only_through_bump_counter(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
 
     let (app_generation, mut script) = prelude(&url);
     writeln!(
@@ -337,11 +337,11 @@ ROLLBACK;"
 /// value of the `''` allocator once, and the same value after; the `''` key is
 /// refused, and an id that is not a sequence is refused with
 /// `undefined_object`. The function reads no claim.
-#[test]
-fn the_application_assigns_a_keyed_counter_only_through_assign_counter() {
+#[sqlx::test(migrations = false)]
+async fn the_application_assigns_a_keyed_counter_only_through_assign_counter(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
 
     let (app_generation, mut script) = prelude(&url);
     writeln!(
@@ -397,11 +397,11 @@ ROLLBACK;"
 /// row or sets its value; it refuses a value below 1, and refuses with
 /// `undefined_object` an id that is not a sequence. It reads no claim: the
 /// route resolves the sequence by the application it validated.
-#[test]
-fn the_application_sets_a_counter_only_through_set_counter() {
+#[sqlx::test(migrations = false)]
+async fn the_application_sets_a_counter_only_through_set_counter(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
 
     let (app_generation, mut script) = prelude(&url);
     writeln!(
@@ -455,11 +455,11 @@ ROLLBACK;"
 ///
 /// These history tables have no row security, so `42501` here means that
 /// the caller lacks the privilege to write an entry.
-#[test]
-fn author_sql_reads_and_writes_no_history_table() {
+#[sqlx::test(migrations = false)]
+async fn author_sql_reads_and_writes_no_history_table(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
 
     let (app_generation, mut script) = prelude(&url);
     // One direct entry insert. A position also names the position column.

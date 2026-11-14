@@ -170,7 +170,7 @@ pub struct Fixture {
     pub read: wamn_catalog::AdmittedComponent,
     pub release: Arc<LoadedRelease>,
     pub digest: String,
-    _database: wamn_test_postgres::Database,
+    _database: url::Url,
 }
 
 impl std::fmt::Debug for Fixture {
@@ -182,9 +182,9 @@ impl std::fmt::Debug for Fixture {
     }
 }
 
-pub async fn fixture() -> Fixture {
-    let database = wamn_test_postgres::database();
-    let url = database.url().to_owned();
+pub async fn fixture(pool: &sqlx::PgPool) -> Fixture {
+    let database = wamn_test_postgres::url(pool);
+    let url = database.as_str().to_owned();
     let mut admin = connect(&url).await;
     sqlx::raw_sql("CREATE SCHEMA application_data")
         .execute(&mut admin)

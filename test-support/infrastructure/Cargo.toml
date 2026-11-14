@@ -8,10 +8,6 @@ license.workspace = true
 [lib]
 path = "lib.rs"
 
-[[bin]]
-name = "wamn-test-postgres"
-path = "postgres-run.rs"
-
 [dependencies]
 hmac = { workspace = true }
 sha2 = { workspace = true }
@@ -30,14 +26,13 @@ hex = { workspace = true }
 ring = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
-rustix = { workspace = true }
 wamn-registry = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-compiler = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "process", "signal", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "process", "time"] }
 url = { workspace = true }
 wamn-test-postgres = { workspace = true }
 

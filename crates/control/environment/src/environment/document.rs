@@ -291,16 +291,19 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn registry_configuration_round_trip() -> anyhow::Result<()> {
+    #[sqlx::test(migrations = false)]
+    async fn registry_configuration_round_trip(pool: sqlx::PgPool) -> anyhow::Result<()> {
         use wamn_registry::configuration;
         let _lock = wamn_test_postgres::lock();
-        let database = wamn_control_provision::test_database::system();
-        database.execute(&[
-            &wamn_control_provision::test_database::seed_org_project_env_sql("acme", "wms", "prod"),
-        ])?;
+        let database = wamn_test_postgres::url(&pool);
+        wamn_control_provision::test_database::system(database.as_str()).await;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "wms", "prod"),
+        ))
+        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await?;
         let triple = Triple::new("acme", "prod", "wms");
-        let mut connection = wamn_postgres::connect(database.url()).await?;
+        let mut connection = wamn_postgres::connect(database.as_str()).await?;
         assert!(
             configuration::read(&mut connection, &triple)
                 .await?
@@ -319,10 +322,18 @@ mod tests {
         second.revocation_seconds = u64::MAX;
         second.connections.clear();
         expected.applications.insert("second".into(), second);
-        database.execute(&[
-            "CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
-            wamn_control_provision::apply::APPLY_GRANTS_SQL,
-        ])?;
+        {
+            let batches: &[&str] = &[
+                "CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
+                wamn_control_provision::apply::APPLY_GRANTS_SQL,
+            ];
+            let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
+            for batch in batches {
+                sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                    .execute(&mut setup_connection)
+                    .await?;
+            }
+        }
         sqlx::raw_sql("SET ROLE wamn_apply")
             .execute(&mut connection)
             .await?;
@@ -422,16 +433,19 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn registry_configuration_constraints() -> anyhow::Result<()> {
+    #[sqlx::test(migrations = false)]
+    async fn registry_configuration_constraints(pool: sqlx::PgPool) -> anyhow::Result<()> {
         use wamn_registry::configuration;
         let _lock = wamn_test_postgres::lock();
-        let database = wamn_control_provision::test_database::system();
-        database.execute(&[
-            &wamn_control_provision::test_database::seed_org_project_env_sql("acme", "wms", "prod"),
-        ])?;
+        let database = wamn_test_postgres::url(&pool);
+        wamn_control_provision::test_database::system(database.as_str()).await;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "wms", "prod"),
+        ))
+        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await?;
         let triple = Triple::new("acme", "prod", "wms");
-        let mut connection = wamn_postgres::connect(database.url()).await?;
+        let mut connection = wamn_postgres::connect(database.as_str()).await?;
         let expected =
             EnvironmentDocument::from_json(&serde_json::to_vec(&configuration())?)?.configuration();
         let mut transaction =
@@ -532,9 +546,11 @@ mod tests {
                 .as_ref(),
             Some(&expected)
         );
-        database.execute(&[
-            &wamn_control_provision::test_database::seed_org_project_env_sql("acme", "wms", "dev"),
-        ])?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "wms", "dev"),
+        ))
+        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await?;
         let mut redirected = expected.clone();
         redirected.policy = "dev".into();
         redirected.revocation_seconds = 0;

@@ -83,9 +83,9 @@ async fn execute(
 const CREDENTIAL: &str = r#"{"username":"fixture","password":"private"}"#;
 
 /// The broker must be private to this test run.
-#[tokio::test]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
-async fn every_connection_writer_deletes_exactly_its_connection_keys() {
+async fn every_connection_writer_deletes_exactly_its_connection_keys(pool: sqlx::PgPool) {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
     );
@@ -103,8 +103,9 @@ async fn every_connection_writer_deletes_exactly_its_connection_keys() {
         .unwrap();
     let publisher = Publisher::new(broker);
 
-    let database = wamn_control_provision::test_database::system();
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
         .execute(&mut client)

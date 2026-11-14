@@ -17,11 +17,11 @@ use wamn_platform_identity::session_token::{IssuedSessionToken, sign_session_tok
 const ISSUER: &str = "https://identity.lifecycle.internal";
 const OTHER_ISSUER: &str = "https://other.lifecycle.internal";
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn session_key_lifecycle_on_postgres() {
+#[sqlx::test(migrations = false)]
+async fn session_key_lifecycle_on_postgres(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let (url, mut admin) = prepare_database(test_database.url()).await;
+    let test_database = wamn_test_postgres::url(&pool);
+    let (url, mut admin) = prepare_database(test_database.as_str()).await;
 
     let first = publish_session_key(&mut admin, ISSUER).await.unwrap();
     let second = publish_session_key(&mut admin, ISSUER).await.unwrap();
@@ -242,12 +242,12 @@ async fn session_key_lifecycle_on_postgres() {
     sqlx::raw_sql("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE;").execute(&mut admin).await.map(drop).expect("remove owned platform test schemas");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn signer_backend_loss_before_commit_does_not_issue_token() {
+#[sqlx::test(migrations = false)]
+async fn signer_backend_loss_before_commit_does_not_issue_token(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
+    let test_database = wamn_test_postgres::url(&pool);
     tokio::time::timeout(Duration::from_secs(30), async {
-        let (url, mut admin) = prepare_database(test_database.url()).await;
+        let (url, mut admin) = prepare_database(test_database.as_str()).await;
         let first = publish_session_key(&mut admin, ISSUER).await.unwrap();
         let second = publish_session_key(&mut admin, ISSUER).await.unwrap();
         activate_session_key(&mut admin, ISSUER, &first.kid).await.unwrap();
@@ -502,11 +502,11 @@ fn now() -> i64 {
         .unwrap()
 }
 
-#[tokio::test]
-async fn scheduled_rotation_keeps_the_previous_verification_key() {
+#[sqlx::test(migrations = false)]
+async fn scheduled_rotation_keeps_the_previous_verification_key(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let (_, mut admin) = prepare_database(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    let (_, mut admin) = prepare_database(database.as_str()).await;
     let issuer = "https://identity.schedule.internal";
     let interval = Duration::from_secs(3600);
     let first = publish_session_key(&mut admin, issuer).await.unwrap();

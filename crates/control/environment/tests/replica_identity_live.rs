@@ -5,7 +5,6 @@ use sqlx::Row as _;
 
 use wamn_catalog::package_schema::ManagedModel;
 use wamn_environment::reconcile_replica_identity::reconcile;
-use wamn_test_infrastructure::locked_database;
 
 async fn connect(url: &str) -> Client {
     let client = wamn_postgres::connect(url)
@@ -53,9 +52,11 @@ async fn install(client: &mut Client) {
     .expect("install RI application tables");
 }
 
-#[tokio::test]
-async fn captured_models_stay_full_without_registration_storage() {
-    let url = locked_database::database(wamn_catalog::test_database::project);
+#[sqlx::test(migrations = false)]
+async fn captured_models_stay_full_without_registration_storage(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool).to_string();
+    wamn_catalog::test_database::project(&url).await;
     let mut client = connect(&url).await;
     install(&mut client).await;
     sqlx::raw_sql("DROP TABLE IF EXISTS catalog.event_registrations")

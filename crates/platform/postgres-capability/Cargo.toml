@@ -52,6 +52,7 @@ wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
+sqlx = { workspace = true, features = ["macros", "migrate"] }
 wamn-http-capability = { workspace = true }
 
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }

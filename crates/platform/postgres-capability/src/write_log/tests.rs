@@ -28,13 +28,15 @@ fn write_log_sql() -> &'static str {
 
 /// A plugin over a fresh database of `project_env_key`, with the write log installed.
 async fn project_env_key_database(
+    pool: &sqlx::PgPool,
     project_env_key: &str,
-) -> (wamn_test_postgres::Database, Arc<WamnPostgres>) {
-    let database = wamn_test_postgres::database();
-    let guest_url = live_guest_url(database.url(), project_env_key).await;
-    ensure_live_user_rows(database.url(), &[LIVE_PRINCIPAL]).await;
-    database
-        .execute(&[write_log_sql()])
+) -> (url::Url, Arc<WamnPostgres>) {
+    let database = wamn_test_postgres::url(pool);
+    let guest_url = live_guest_url(database.as_str(), project_env_key).await;
+    ensure_live_user_rows(database.as_str(), &[LIVE_PRINCIPAL]).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(write_log_sql()))
+        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await
         .expect("install the write log");
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
@@ -52,10 +54,10 @@ async fn project_env_key_database(
 
 const OPERATION: &str = "base:widget/create@1.0.0";
 
-#[tokio::test]
-async fn claims_commit_with_their_transaction_and_rollback_releases_them() {
+#[sqlx::test(migrations = false)]
+async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = project_env_key_database("test--dev--writelogtx").await;
+    let (database, postgres) = project_env_key_database(&pool, "test--dev--writelogtx").await;
     postgres
         .bind_session_identity(
             SCOPE,
@@ -77,7 +79,7 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them() {
         super::Claim::New
     ));
     transaction.finish_opaque(OPERATION, "key", json!({"value":{"id":7}}).to_string());
-    let mut observer = wamn_postgres::connect(database.url()).await.unwrap();
+    let mut observer = wamn_postgres::connect(database.as_str()).await.unwrap();
     let visible: bool = sqlx::query_scalar("SELECT EXISTS (SELECT FROM platform.write_log)")
         .fetch_one(&mut observer)
         .await
@@ -152,7 +154,7 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them() {
         lost.begin_opaque(OPERATION, "lost", vec![1]).await.unwrap(),
         super::Claim::New
     ));
-    database.execute(&["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction' AND pid <> pg_backend_pid()"]).unwrap();
+    sqlx::raw_sql("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction' AND pid <> pg_backend_pid()").execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
     assert!(
         lost.begin_opaque(OPERATION, "after-loss", vec![1])
             .await
@@ -170,10 +172,10 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them() {
     recovered.rollback().await.unwrap();
 }
 
-#[tokio::test]
-async fn a_known_result_needs_no_update_and_a_missing_finish_rolls_back() {
+#[sqlx::test(migrations = false)]
+async fn a_known_result_needs_no_update_and_a_missing_finish_rolls_back(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = project_env_key_database("test--dev--writelogtx").await;
+    let (database, postgres) = project_env_key_database(&pool, "test--dev--writelogtx").await;
     postgres
         .bind_session_identity(
             SCOPE,
@@ -196,7 +198,7 @@ async fn a_known_result_needs_no_update_and_a_missing_finish_rolls_back() {
     ));
     transaction.finish_opaque(OPERATION, "missing-other", json!({"value":1}).to_string());
     assert!(transaction.commit().await.is_err());
-    database.execute(&["ALTER TABLE platform.write_log ADD CHECK (result IS NOT NULL); CREATE FUNCTION public.refuse_log_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'unexpected update'; END $$; CREATE TRIGGER refuse_log_update BEFORE UPDATE ON platform.write_log FOR EACH ROW EXECUTE FUNCTION public.refuse_log_update()"]).unwrap();
+    sqlx::raw_sql("ALTER TABLE platform.write_log ADD CHECK (result IS NOT NULL); CREATE FUNCTION public.refuse_log_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'unexpected update'; END $$; CREATE TRIGGER refuse_log_update BEFORE UPDATE ON platform.write_log FOR EACH ROW EXECUTE FUNCTION public.refuse_log_update()").execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
     let known = postgres
         .begin_operation_transaction(SCOPE)
         .await
@@ -223,10 +225,10 @@ async fn a_known_result_needs_no_update_and_a_missing_finish_rolls_back() {
 }
 
 /// Every writer's committed WAL invalidates weak model tags, including deletes and truncates.
-#[tokio::test]
-async fn model_versions_follow_wal_without_a_counter() {
+#[sqlx::test(migrations = false)]
+async fn model_versions_follow_wal_without_a_counter(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
+    let database = wamn_test_postgres::url(&pool);
     let family = wamn_control_provision::WorkloadRoleFamily::HttpAdmitter;
     let role = wamn_control_provision::workload_login(
         family,
@@ -234,18 +236,19 @@ async fn model_versions_follow_wal_without_a_counter() {
             org: "wal-test",
             project: PROJECT,
             environment: "test",
-            database: database.name(),
+            database: database.path().trim_start_matches('/'),
         },
     )
     .unwrap();
-    database
-        .execute(&[&format!(
-            "CREATE ROLE {} LOGIN PASSWORD 'wal-reader'; {}",
-            postgres_protocol::escape::escape_identifier(&role),
-            wamn_control_provision::test_database::membership_sql(family, &role, true),
-        )])
-        .unwrap();
-    let mut reader_url = url::Url::parse(database.url()).unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE ROLE {} LOGIN PASSWORD 'wal-reader'; {}",
+        postgres_protocol::escape::escape_identifier(&role),
+        wamn_control_provision::test_database::membership_sql(family, &role, true),
+    )))
+    .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+    .await
+    .unwrap();
+    let mut reader_url = url::Url::parse(database.as_str()).unwrap();
     reader_url.set_username(&role).unwrap();
     reader_url.set_password(Some("wal-reader")).unwrap();
     let postgres = WamnPostgres::new(WamnPostgresConfig {
@@ -260,18 +263,22 @@ async fn model_versions_follow_wal_without_a_counter() {
         row_limit: 10,
     })
     .unwrap();
-    database
-        .execute(&[
-            "CREATE TABLE public.etag_rows (id int); INSERT INTO public.etag_rows VALUES (1), (2)",
-        ])
-        .unwrap();
+    sqlx::raw_sql(
+        "CREATE TABLE public.etag_rows (id int); INSERT INTO public.etag_rows VALUES (1), (2)",
+    )
+    .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+    .await
+    .unwrap();
     let mut previous = postgres.model_version(PROJECT).await.unwrap();
     for statement in [
         "UPDATE public.etag_rows SET id = 3 WHERE id = 1",
         "DELETE FROM public.etag_rows WHERE id = 3",
         "TRUNCATE public.etag_rows",
     ] {
-        database.execute(&[statement]).unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+            .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+            .await
+            .unwrap();
         let current = postgres.model_version(PROJECT).await.unwrap();
         assert_ne!(previous, current, "{statement}");
         previous = current;
@@ -279,10 +286,10 @@ async fn model_versions_follow_wal_without_a_counter() {
 }
 
 /// The call bound changes the refusal without preventing a late result or expiry.
-#[tokio::test]
-async fn unfinished_claims_have_a_call_bound_and_accept_late_completion() {
+#[sqlx::test(migrations = false)]
+async fn unfinished_claims_have_a_call_bound_and_accept_late_completion(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = project_env_key_database("test--dev--writelogtx").await;
+    let (database, postgres) = project_env_key_database(&pool, "test--dev--writelogtx").await;
     let store = WriteLogStore::new(
         postgres,
         PROJECT.to_owned(),
@@ -301,7 +308,12 @@ async fn unfinished_claims_have_a_call_bound_and_accept_late_completion() {
         super::Claim::Conflict
     ));
     let bound = wamn_engine::engine::MAX_HOST_CALL_DURATION.as_secs() + 1;
-    database.execute(&[&format!("UPDATE platform.write_log SET created_at = clock_timestamp() - interval '{bound} seconds'")]).unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "UPDATE platform.write_log SET created_at = clock_timestamp() - interval '{bound} seconds'"
+    )))
+    .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+    .await
+    .unwrap();
     assert!(matches!(
         store.claim(OPERATION, "late", vec![1]).await.unwrap(),
         super::Claim::OutcomeUnknown
@@ -326,26 +338,35 @@ async fn unfinished_claims_have_a_call_bound_and_accept_late_completion() {
         store.claim(OPERATION, "expired", vec![1]).await.unwrap(),
         super::Claim::New
     ));
-    database
-        .execute(&[
+    {
+        let batches: &[&str] = &[
             "UPDATE platform.write_log SET created_at = clock_timestamp() - interval '31 days'",
             wamn_control_provision::audit_retention::WRITE_LOG_RETENTION_SQL,
-        ])
-        .unwrap();
+        ];
+        let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
+        for batch in batches {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                .execute(&mut setup_connection)
+                .await
+                .unwrap();
+        }
+    }
     assert!(matches!(
         store.claim(OPERATION, "expired", vec![1]).await.unwrap(),
         super::Claim::New
     ));
 }
 
-#[tokio::test]
-async fn cancellation_retains_external_claims_and_rolls_back_transactional_claims() {
+#[sqlx::test(migrations = false)]
+async fn cancellation_retains_external_claims_and_rolls_back_transactional_claims(
+    pool: sqlx::PgPool,
+) {
     use crate::invocation::{AuthorizedInvocation, InvocationRequest, PrincipalVerification};
     use wamn_engine::operation::{native_call::NativeOutcome, node_types::NodeError};
 
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = project_env_key_database("test--dev--writelogtx").await;
-    let mut observer = wamn_postgres::connect(database.url()).await.unwrap();
+    let (database, postgres) = project_env_key_database(&pool, "test--dev--writelogtx").await;
+    let mut observer = wamn_postgres::connect(database.as_str()).await.unwrap();
     let route = wamn_catalog::ServingRoute {
         package_id: "base".into(),
         component: "widget".into(),

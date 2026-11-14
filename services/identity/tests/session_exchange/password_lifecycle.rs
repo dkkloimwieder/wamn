@@ -150,6 +150,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");
     let db = postgres
         .create_database("wamn_system")
+        .await
         .expect_redacted("owned system database");
     let mut fixture = setup(db.url()).await;
     let user = enroll(&mut fixture, EMAIL, PASSWORD).await;
@@ -402,6 +403,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");
     let db = postgres
         .create_database("wamn_system")
+        .await
         .expect_redacted("owned system database");
     let mut fixture = setup(db.url()).await;
     let user = enroll(&mut fixture, EMAIL, PASSWORD).await;
@@ -648,6 +650,7 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");
     let db = postgres
         .create_database("wamn_system")
+        .await
         .expect_redacted("owned system database");
     let mut fixture = setup(db.url()).await;
     let user = enroll(&mut fixture, EMAIL, PASSWORD).await;
@@ -861,6 +864,7 @@ async fn cookie_carrier_sets_rotates_and_clears_three_cookies() {
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");
     let db = postgres
         .create_database("wamn_system")
+        .await
         .expect_redacted("owned system database");
     let mut fixture = setup(db.url()).await;
     enroll(&mut fixture, EMAIL, PASSWORD).await;

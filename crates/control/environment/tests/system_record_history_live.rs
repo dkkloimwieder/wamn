@@ -3,11 +3,12 @@
 use wamn_control_provision::PlatformComponent;
 use wamn_test_infrastructure::record_history::assert_stamp;
 
-#[tokio::test]
-async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor() {
+#[sqlx::test(migrations = false)]
+async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     let actor = PlatformComponent::Provisioning.principal_id().to_string();
     sqlx::query("SELECT set_config('app.user_id', $1, false)")

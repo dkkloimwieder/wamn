@@ -33,20 +33,22 @@ async fn system_client(url: &str) -> Client {
     client
 }
 
-fn fixed_service_id(system: &wamn_test_postgres::Database) {
-    system
-        .execute(&[&format!(
-            "ALTER TABLE identity.principals ALTER COLUMN id SET DEFAULT '{PRINCIPAL}'::uuid"
-        )])
-        .unwrap();
+async fn fixed_service_id(system: &url::Url) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "ALTER TABLE identity.principals ALTER COLUMN id SET DEFAULT '{PRINCIPAL}'::uuid"
+    )))
+    .execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap())
+    .await
+    .unwrap();
 }
 
-#[tokio::test]
-async fn auth_drops_create_service_records_the_created_identity() {
+#[sqlx::test(migrations = false)]
+async fn auth_drops_create_service_records_the_created_identity(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut system = wamn_control_provision::test_database::system();
-    fixed_service_id(&mut system);
-    let mut client = system_client(system.url()).await;
+    let mut system = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(system.as_str()).await;
+    fixed_service_id(&system).await;
+    let mut client = system_client(system.as_str()).await;
     let mut tx = provisioning_transaction(&mut client).await.unwrap();
     let mut drops = AuthDrops::default();
     let principal = create_service(&mut tx, "new-service", "New service", &mut drops)
@@ -65,12 +67,13 @@ async fn auth_drops_create_service_records_the_created_identity() {
     );
 }
 
-#[tokio::test]
-async fn auth_drops_assign_project_role_records_the_changed_identity() {
+#[sqlx::test(migrations = false)]
+async fn auth_drops_assign_project_role_records_the_changed_identity(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut system = wamn_control_provision::test_database::system();
-    fixed_service_id(&mut system);
-    let mut client = system_client(system.url()).await;
+    let mut system = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(system.as_str()).await;
+    fixed_service_id(&system).await;
+    let mut client = system_client(system.as_str()).await;
     let principal = resolve_or_create_service(
         &mut client,
         "role-service",
@@ -107,12 +110,15 @@ async fn auth_drops_assign_project_role_records_the_changed_identity() {
     );
 }
 
-#[tokio::test]
-async fn auth_drops_resolve_or_create_service_returns_only_the_created_identity() {
+#[sqlx::test(migrations = false)]
+async fn auth_drops_resolve_or_create_service_returns_only_the_created_identity(
+    pool: sqlx::PgPool,
+) {
     let _lock = wamn_test_postgres::lock();
-    let mut system = wamn_control_provision::test_database::system();
-    fixed_service_id(&mut system);
-    let mut client = system_client(system.url()).await;
+    let mut system = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(system.as_str()).await;
+    fixed_service_id(&system).await;
+    let mut client = system_client(system.as_str()).await;
     let (principal, drops) =
         resolve_or_create_service_drops(&mut client, "resolved-service", "Resolved service")
             .await
@@ -121,7 +127,7 @@ async fn auth_drops_resolve_or_create_service_returns_only_the_created_identity(
     expected.identity(PRINCIPAL);
     assert_eq!(drops, expected);
     assert_eq!(principal.id().to_string().as_str(), PRINCIPAL);
-    let mut reader = system_client(system.url()).await;
+    let mut reader = system_client(system.as_str()).await;
     assert_eq!(
         resolve_subject(&mut reader, PrincipalType::Service, "resolved-service")
             .await

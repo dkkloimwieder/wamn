@@ -73,20 +73,21 @@ async fn build_digest_tracks_source_bytes_and_survives_another_checkout() {
     assert_ne!(a.digest, edited.digest);
 }
 
-#[tokio::test]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: bin:docker"]
-async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
+async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx::PgPool) {
     wamn_test_postgres::require_ignored_prerequisites("requires: bin:docker");
     let _lock = wamn_test_postgres::lock();
-    let mut database = wamn_control_provision::test_database::system();
-    database.execute(&["SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('fixture','wasm',false)"]).unwrap();
+    let mut database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('fixture','wasm',false)").execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
     let fixture = fixture();
     let (_registry, configuration) = registry(fixture.path(), "integration").await;
     let built = integration::build(fixture.path(), "fixture").await.unwrap();
     integration::publish(
         &built,
         &configuration,
-        database.url(),
+        database.as_str(),
         &integration::Publication {
             version: 1,
             parameter_schema: serde_json::json!({"type":"object","properties":{}}),
@@ -99,7 +100,7 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
     integration::publish(
         &built,
         &configuration,
-        database.url(),
+        database.as_str(),
         &integration::Publication {
             version: 1,
             parameter_schema: serde_json::json!({"type":"object","properties":{}}),
@@ -109,7 +110,7 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
     )
     .await
     .unwrap_err();
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     let row = sqlx::query("SELECT digest, count(*) OVER (), exports FROM registry.integration_type_version WHERE integration_type='fixture'").fetch_one(&mut client).await.unwrap();
     assert_eq!(row.get::<String, _>(0), built.digest);
@@ -157,20 +158,21 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
     assert_eq!(published["versions"][0]["digest"], built.digest);
 }
 
-#[tokio::test]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: bin:docker"]
-async fn publish_refuses_an_unknown_integration_without_creating_catalog_rows() {
+async fn publish_refuses_an_unknown_integration_without_creating_catalog_rows(pool: sqlx::PgPool) {
     wamn_test_postgres::require_ignored_prerequisites("requires: bin:docker");
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
     let fixture = fixture();
     let (_registry, configuration) = registry(fixture.path(), "unknown-integration").await;
     let built = integration::build(fixture.path(), "fixture").await.unwrap();
     let _error = integration::publish(
         &built,
         &configuration,
-        database.url(),
+        database.as_str(),
         &integration::Publication {
             version: 1,
             parameter_schema: serde_json::json!({"type":"object","properties":{}}),

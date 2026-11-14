@@ -14,10 +14,10 @@ use tokio::{
 use wamn_environment::environment::lock::LifecycleLock;
 use wamn_registry::Triple;
 
-#[tokio::test]
-async fn a_second_verb_refuses_until_the_holder_is_gone() {
-    let database = wamn_test_postgres::database();
-    let url = database.url();
+#[sqlx::test(migrations = false)]
+async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
+    let database = wamn_test_postgres::url(&pool);
+    let url = database.as_str();
     let prod = Triple::new("acme", "prod", "wms");
 
     LifecycleLock::hold(url, &prod, async |_| {
@@ -81,17 +81,17 @@ async fn a_second_verb_refuses_until_the_holder_is_gone() {
         .await;
 }
 
-#[tokio::test]
-async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open() {
-    let database = wamn_test_postgres::database();
+#[sqlx::test(migrations = false)]
+async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open(pool: sqlx::PgPool) {
+    let database = wamn_test_postgres::url(&pool);
     let triple = Triple::new("acme", "prod", "wms");
     let mut tasks = JoinSet::new();
-    let mut observer = wamn_postgres::connect(database.url()).await.unwrap();
+    let mut observer = wamn_postgres::connect(database.as_str()).await.unwrap();
     tasks.spawn(async move {});
 
     for application in [None, Some("orders")] {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut proxy_url = url::Url::parse(database.url()).unwrap();
+        let mut proxy_url = url::Url::parse(database.as_str()).unwrap();
         let server_port = proxy_url.port().unwrap();
         proxy_url
             .set_port(Some(listener.local_addr().unwrap().port()))
@@ -128,7 +128,7 @@ async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open() {
 
         let recovered = timeout(
             Duration::from_secs(7),
-            acquire(database.url(), &triple, application),
+            acquire(database.as_str(), &triple, application),
         )
         .await
         .expect("an abandoned lock becomes available within the acquisition bound");
@@ -153,12 +153,12 @@ async fn acquire(url: &str, triple: &Triple, application: Option<&str>) -> Lifec
     .unwrap()
 }
 
-#[tokio::test]
-async fn lock_loss_cancels_the_protected_operation() -> anyhow::Result<()> {
-    let database = wamn_test_postgres::database();
+#[sqlx::test(migrations = false)]
+async fn lock_loss_cancels_the_protected_operation(pool: sqlx::PgPool) -> anyhow::Result<()> {
+    let database = wamn_test_postgres::url(&pool);
     let triple = Triple::new("acme", "prod", "wms");
-    let mut observer = wamn_postgres::connect(database.url()).await?;
-    let lock = LifecycleLock::acquire(database.url(), &triple).await?;
+    let mut observer = wamn_postgres::connect(database.as_str()).await?;
+    let lock = LifecycleLock::acquire(database.as_str(), &triple).await?;
     let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *lock.client().await)
         .await?;
@@ -173,7 +173,7 @@ async fn lock_loss_cancels_the_protected_operation() -> anyhow::Result<()> {
     .await?;
     assert!(result.is_err());
     lock.release().await;
-    LifecycleLock::acquire(database.url(), &triple)
+    LifecycleLock::acquire(database.as_str(), &triple)
         .await?
         .release()
         .await;

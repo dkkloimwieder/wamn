@@ -7,7 +7,6 @@ use sqlx::Row as _;
 use wamn_control_provision::{
     APP_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login,
 };
-use wamn_test_infrastructure::locked_database;
 
 const RUN_STATE_SQL: &str = include_str!("../../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql");
@@ -266,9 +265,13 @@ async fn assert_authority(credential: &mut Client) {
     );
 }
 
-#[tokio::test]
-async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key() {
-    let url = locked_database::database(wamn_catalog::test_database::project);
+#[sqlx::test(migrations = false)]
+async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key(
+    pool: sqlx::PgPool,
+) {
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool).to_string();
+    wamn_catalog::test_database::project(&url).await;
     let mut admin = connect(&url).await;
     let database: String = sqlx::query("SELECT current_database()::text")
         .fetch_one(&mut admin)

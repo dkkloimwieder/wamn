@@ -14,7 +14,9 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let _lock = wamn_test_postgres::lock();
     let mut postgres = wamn_test_postgres::start(&[])?;
-    let database = postgres.create_database("control_oauth_authorization")?;
+    let database = postgres
+        .create_database("control_oauth_authorization")
+        .await?;
     let mut admin = connect(database.url()).await?;
     let control_url = install(&mut admin, database.url()).await?;
     let (logins, _billing, _shop) = environments(&mut admin, database.url(), "oauth").await?;

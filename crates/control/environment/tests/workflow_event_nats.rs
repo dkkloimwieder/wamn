@@ -9,14 +9,16 @@ mod event_batch {
     use futures_util::StreamExt as _;
     use wamn_events_capability::WamnJetstreamConfig;
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[sqlx::test(migrations = false)]
     #[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
-    async fn applications_admit_independently_across_upgrade_rollback_and_redelivery() {
+    async fn applications_admit_independently_across_upgrade_rollback_and_redelivery(
+        pool: sqlx::PgPool,
+    ) {
         wamn_test_postgres::require_ignored_prerequisites(
             "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
         );
         let _lock = wamn_test_postgres::lock();
-        let mut fixture = fixture().await;
+        let mut fixture = fixture(&pool).await;
         fixture.grant_workflow_user("reader").await;
         let txid = changed_order(&mut fixture).await;
         event(&mut fixture, "first", 0, Some("reader")).await;

@@ -5,7 +5,7 @@ use wamn_control_provision::identity_role::identity_issuer_login;
 async fn targeted_issuer_grants_execute_on_postgres() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let mut server = wamn_test_postgres::start(&[])?;
-    let database = server.create_database("wamn_system")?;
+    let database = server.create_database("wamn_system").await?;
     let mut admin = wamn_postgres::connect(database.url()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("{} CREATE ROLE wamn_system NOLOGIN NOINHERIT; GRANT CREATE ON DATABASE wamn_system TO wamn_system; SET ROLE wamn_system; {} RESET ROLE;", wamn_control_provision::sql::ensure_db_owner_role_sql(), wamn_control_provision::SYSTEM_SCHEMA_SQL))).execute(&mut admin).await?;
     let issuer = "https://issuer.example.test";

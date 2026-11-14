@@ -19,8 +19,6 @@ use wamn_control_provision::{
 use wamn_environment::create_user::{CreateUserRequest, create_user_principal};
 use wamn_platform_identity::{IdentityError, IdentityErrorType};
 
-use wamn_test_infrastructure::locked_database;
-
 const EMAIL: &str = "a.person@example.test";
 
 async fn connect(url: &str) -> Client {
@@ -81,9 +79,10 @@ fn request(url: &str, subject: &str, email: &str) -> CreateUserRequest {
     }
 }
 
-#[tokio::test]
-async fn create_user_stores_the_email_folded_to_lower_case() {
-    let url = locked_database::database(wamn_test_postgres::database);
+#[sqlx::test(migrations = false)]
+async fn create_user_stores_the_email_folded_to_lower_case(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool).to_string();
     let mut observer = system_database(&url).await;
 
     let principal = create_user_principal(
@@ -125,9 +124,10 @@ async fn create_user_stores_the_email_folded_to_lower_case() {
     assert_eq!(folded, "second.person@example.test");
 }
 
-#[tokio::test]
-async fn one_email_address_names_one_principal() {
-    let url = locked_database::database(wamn_test_postgres::database);
+#[sqlx::test(migrations = false)]
+async fn one_email_address_names_one_principal(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool).to_string();
     let mut observer = system_database(&url).await;
 
     create_user_principal(
@@ -192,9 +192,10 @@ async fn one_email_address_names_one_principal() {
     assert_eq!(refusal.constraint(), Some("principals_email_key"));
 }
 
-#[tokio::test]
-async fn only_a_user_row_carries_an_email() {
-    let url = locked_database::database(wamn_test_postgres::database);
+#[sqlx::test(migrations = false)]
+async fn only_a_user_row_carries_an_email(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool).to_string();
     let mut client = system_database(&url).await;
     sqlx::raw_sql("SET ROLE wamn_system")
         .execute(&mut client)

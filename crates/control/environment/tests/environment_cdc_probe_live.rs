@@ -18,11 +18,13 @@ const PROJECT: &str = "app";
 const ENV: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
 
-#[tokio::test]
-async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_once() {
+#[sqlx::test(migrations = false)]
+async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_once(
+    pool: sqlx::PgPool,
+) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let mut db = wamn_postgres::connect(database.url())
+    let database = wamn_test_postgres::url(&pool);
+    let mut db = wamn_postgres::connect(database.as_str())
         .await
         .expect("connect the test database");
 
@@ -109,12 +111,12 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     let triple = Triple::new(ORG, ENV, PROJECT);
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let schemas = vec!["app".to_owned(), "other".to_owned()];
-    let observations = wamn_postgres::pool(database.url(), 4).await.unwrap();
+    let observations = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
     let in_place = async || {
         let mut observation = observations.acquire().await?;
         cdc_in_place(&mut observation, &cdc_name, &schemas).await
     };
-    let record = || record_event_reader(database.url(), &triple, &schemas, &cdc_name, None);
+    let record = || record_event_reader(database.as_str(), &triple, &schemas, &cdc_name, None);
     let readers = || async {
         sqlx::query("SELECT count(*) FROM registry.event_readers WHERE org = $1")
             .bind(&ORG)

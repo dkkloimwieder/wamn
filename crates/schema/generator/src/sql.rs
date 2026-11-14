@@ -707,12 +707,12 @@ mod tests {
     use wamn_scalar::SqlValueType;
     use wamn_schema_introspection::ir::{Column, Constraint, Table};
 
-    #[tokio::test]
-    async fn create_returns_database_generated_integer_ids() {
+    #[sqlx::test(migrations = false)]
+    async fn create_returns_database_generated_integer_ids(pool: sqlx::PgPool) {
         use wamn_schema_introspection::ir::{ColumnDefault, ColumnGeneration, IdentityMode};
 
-        let database = wamn_test_postgres::database();
-        let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+        let database = wamn_test_postgres::url(&pool);
+        let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
         let model: ModelDeclaration = serde_json::from_value(serde_json::json!({
             "schema": "public", "table": "key_row", "owner": "fixture", "operations": {}
@@ -794,10 +794,10 @@ mod tests {
         drop(client);
     }
 
-    #[tokio::test]
-    async fn query_seeks_and_pages_tied_values_in_both_directions() {
-        let database = wamn_test_postgres::database();
-        let mut client = wamn_postgres::connect(database.url())
+    #[sqlx::test(migrations = false)]
+    async fn query_seeks_and_pages_tied_values_in_both_directions(pool: sqlx::PgPool) {
+        let database = wamn_test_postgres::url(&pool);
+        let mut client = wamn_postgres::connect(database.as_str())
             .await
             .expect("connect to the query test database");
 

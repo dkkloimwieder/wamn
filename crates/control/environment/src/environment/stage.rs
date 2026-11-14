@@ -429,16 +429,18 @@ mod tests {
 
     use super::apply_order;
 
-    #[tokio::test]
-    async fn release_writer_stamps_publisher_and_keeps_first_stamp_on_retry() {
+    #[sqlx::test(migrations = false)]
+    async fn release_writer_stamps_publisher_and_keeps_first_stamp_on_retry(pool: sqlx::PgPool) {
         let _lock = wamn_test_postgres::lock();
-        let database = wamn_platform_identity::test_database::project_platform();
-        database
-            .execute(&[&format!(
-                "BEGIN; {} COMMIT;",
-                wamn_control_provision::platform_principals_sql("example.invalid").unwrap()
-            )])
-            .unwrap();
+        let database = wamn_test_postgres::url(&pool);
+        wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "BEGIN; {} COMMIT;",
+            wamn_control_provision::platform_principals_sql("example.invalid").unwrap()
+        )))
+        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await
+        .unwrap();
         let manifest = ServingManifest {
             composed_entry: None,
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
@@ -457,7 +459,7 @@ mod tests {
         let digest = manifest.digest();
         let publisher = uuid::Uuid::new_v4();
         super::write_release(
-            database.url(),
+            database.as_str(),
             "history",
             digest.as_str(),
             &manifest,
@@ -465,7 +467,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let mut client = super::super::analyse::connect_project(database.url())
+        let mut client = super::super::analyse::connect_project(database.as_str())
             .await
             .unwrap();
         let mut stamps = async || {
@@ -489,7 +491,7 @@ mod tests {
         assert_eq!((before.0, before.1), (publisher, publisher));
         assert_eq!(before.2, before.3);
         super::write_release(
-            database.url(),
+            database.as_str(),
             "history",
             digest.as_str(),
             &manifest,

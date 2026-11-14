@@ -11,7 +11,6 @@ use std::collections::BTreeSet;
 use wamn_broker::auth_changes::AuthDrops;
 
 use wamn_platform_identity::application::{create_role, delete_role};
-use wamn_test_infrastructure::locked_database::{self, LockedDatabase};
 
 async fn rows(client: &mut Client) -> BTreeSet<String> {
     sqlx::query(
@@ -24,14 +23,6 @@ async fn rows(client: &mut Client) -> BTreeSet<String> {
     .iter()
     .map(|row| row.get(0))
     .collect()
-}
-
-/// Connect to a disposable database with the application schema installed.
-async fn install() -> (LockedDatabase, Client) {
-    let url = locked_database::database(wamn_platform_identity::test_database::project_platform);
-    let mut client = wamn_postgres::connect(&*url).await.unwrap();
-
-    (url, client)
 }
 
 fn set(items: &[&str]) -> BTreeSet<String> {
@@ -60,9 +51,12 @@ macro_rules! change {
     }};
 }
 
-#[tokio::test]
-async fn permission_grants_and_revokes_store_rows() {
-    let (_database, mut client) = install().await;
+#[sqlx::test(migrations = false)]
+async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
     let mut drops = AuthDrops::default();
 
     let refused =

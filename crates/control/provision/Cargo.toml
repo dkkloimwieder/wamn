@@ -8,9 +8,9 @@ license.workspace = true
 [features]
 default = []
 ops = []
-# The system test database minimum (`test_database`). It starts a private
-# PostgreSQL server for the test process, so no production build enables it.
-test-util = ["dep:wamn-test-postgres"]
+# The system test database setup (`test_database`) installs the control store
+# on a supplied test connection.
+test-util = []
 
 [dependencies]
 anyhow.workspace = true
@@ -46,7 +46,6 @@ wamn-record-history = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
 url = { workspace = true }
-wamn-test-postgres = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

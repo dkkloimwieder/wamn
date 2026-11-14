@@ -1081,6 +1081,8 @@ async fn prepare(
                 "wamn",
                 "-p",
                 "wamn-test-infrastructure",
+                "-p",
+                "wamn-test-postgres",
                 "--bins",
             ]
             .into_iter()

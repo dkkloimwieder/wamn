@@ -41,6 +41,7 @@ wamn-platform-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 
 [dev-dependencies]
+sqlx = { workspace = true, features = ["macros", "migrate"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 jsonwebtoken = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["test-util"] }

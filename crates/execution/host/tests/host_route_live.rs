@@ -98,7 +98,7 @@ async fn outcome(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
-    let test_database = postgres.create_database("host_route")?;
+    let test_database = postgres.create_database("host_route").await?;
     let admin_url = test_database.url();
     let mut admin = connect(admin_url).await?;
     let database: String = sqlx::query("SELECT current_database()::text")
@@ -724,12 +724,14 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
 /// serving root, the control route authenticator and the org's real
 /// `control` login. Only a browser session of a current `project-admin` or
 /// `org-admin` is admitted, and a revoked role refuses the next request.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
--> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let test_database = wamn_control_provision::test_database::system();
-    let admin_url = test_database.url();
+    let test_database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(test_database.as_str()).await;
+    let admin_url = test_database.as_str();
     let mut admin = connect(admin_url).await?;
     let database: String = sqlx::query("SELECT current_database()::text")
         .fetch_one(&mut admin)

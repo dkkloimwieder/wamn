@@ -777,10 +777,10 @@ fn database_url_for_role(database_url: &str, role: &str, password: &str) -> Stri
 // (a marker table a spliced `DROP`/`DELETE` would destroy survives).
 // `valid_*` would reject these values, but the point is the BIND is safe
 // regardless of validation.
-#[tokio::test]
-async fn live_bound_identity_are_injection_inert_and_txn_local() {
-    let database = wamn_test_postgres::database();
-    let mut client = connect_raw(database.url()).await;
+#[sqlx::test(migrations = false)]
+async fn live_bound_identity_are_injection_inert_and_txn_local(pool: sqlx::PgPool) {
+    let database = wamn_test_postgres::url(&pool);
+    let mut client = connect_raw(database.as_str()).await;
     let marker = format!("wave2_marker_{}", std::process::id());
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
@@ -964,11 +964,13 @@ async fn live_bound_identity_are_injection_inert_and_txn_local() {
 // txn. `app.project_env_key` is NOT among them (`wamn-0h0g.22.6.7`): a guest's project_env_key
 // is its LOGIN, and injecting a GUC nothing it can read consults would be a
 // second, settable statement about an authority derived elsewhere.
-#[tokio::test]
-async fn live_begin_with_identity_sets_the_guest_set_without_a_project_env_key_identity() {
+#[sqlx::test(migrations = false)]
+async fn live_begin_with_identity_sets_the_guest_set_without_a_project_env_key_identity(
+    pool: sqlx::PgPool,
+) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(
             live_guest_url(admin_url, LIVE_PROJECT_ENV_KEY).await,
@@ -1129,16 +1131,16 @@ fn rls_fixture_sql(schema: &str, probe: &str, project_env_key: &str, u1: &str, u
 // This drives the REAL plugin (`one_shot`) as a NOSUPERUSER
 // NOBYPASSRLS role, so it fails against a `IDENTITY_SQL` that does not inject
 // the caller's identity.
-#[tokio::test]
-async fn live_compiled_per_user_policy_permits_the_injected_caller() {
+#[sqlx::test(migrations = false)]
+async fn live_compiled_per_user_policy_permits_the_injected_caller(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--rls-identity-live";
     const COMPONENT: &str = "rls-identity-live-component";
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     const U2: &str = "22222222-2222-4222-8222-222222222222";
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let suffix = std::process::id();
     let schema = format!("wamn_rls_identity_{suffix}");
     // The probe login is NAMED AS A GUEST GENERATION for this test's project_env_key:
@@ -1228,16 +1230,16 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
 // binding WITHOUT refusal turns a silent-deny bug into privilege escalation.
 // The CONTROL below shows the escalation is real, so the refusal that
 // follows is load-bearing rather than vacuous.
-#[tokio::test]
-async fn live_guest_cannot_override_the_injected_role_or_user_identity() {
+#[sqlx::test(migrations = false)]
+async fn live_guest_cannot_override_the_injected_role_or_user_identity(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--rls-override-live";
     const COMPONENT: &str = "rls-override-live-component";
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     const U2: &str = "22222222-2222-4222-8222-222222222222";
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let suffix = std::process::id();
     let schema = format!("wamn_rls_override_{suffix}");
     // The probe login is NAMED AS A GUEST GENERATION for this test's project_env_key:
@@ -1638,15 +1640,16 @@ fn two_project_env_key_rls_fixture_sql(
 ///
 /// The logins are NOSUPERUSER NOBYPASSRLS, so the server cannot be talked
 /// out of the minimum either.
-#[tokio::test]
-async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_project_env_keys_rows()
- {
+#[sqlx::test(migrations = false)]
+async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_project_env_keys_rows(
+    pool: sqlx::PgPool,
+) {
     const PROJECT_ENV_KEY_A: &str = "test--dev--seam-live-a";
     const PROJECT_ENV_KEY_B: &str = "test--dev--seam-live-b";
 
     let _lock = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let admin_url = test_database.url();
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin_url = test_database.as_str();
     let suffix = std::process::id();
     let schema = format!("wamn_seam_{suffix}");
     let mut database = live_database(admin_url);
@@ -1765,11 +1768,11 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
 
 // R18 — the post_create hook runs on connect; a successful checkout from the
 // pool shows the assertion passed on this server (stock PG18 = on).
-#[tokio::test]
-async fn live_connect_asserts_standard_conforming_strings() {
+#[sqlx::test(migrations = false)]
+async fn live_connect_asserts_standard_conforming_strings(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(
             live_guest_url(admin_url, LIVE_PROJECT_ENV_KEY).await,
@@ -1795,11 +1798,13 @@ async fn live_connect_asserts_standard_conforming_strings() {
     assert_eq!(scs, "on");
 }
 
-#[tokio::test]
-async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving() {
+#[sqlx::test(migrations = false)]
+async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving(
+    pool: sqlx::PgPool,
+) {
     let _lock = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let admin_url = test_database.url();
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin_url = test_database.as_str();
     let url = live_guest_url(admin_url, LIVE_PROJECT_ENV_KEY).await;
     let mut database = live_database(admin_url);
     let family = wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform;
@@ -1931,6 +1936,7 @@ async fn live_scs_off_server_fails_checkout_closed() {
         .expect("start a PostgreSQL 18 server with standard_conforming_strings=off");
     let url = server
         .create_database("scs_off")
+        .await
         .expect("create the scs-off test database")
         .url()
         .to_owned();
@@ -2057,12 +2063,12 @@ fn cold_parse_statement() -> VerifiedStatement {
 /// guaranteed round trip, and the statement half — polled during that await
 /// — always sends its Parse first. Reverting to that shape, or swapping the
 /// two branches of the `join!`, fails this every run.
-#[tokio::test]
-async fn live_a_cold_connection_parses_inside_the_identity_transaction() {
+#[sqlx::test(migrations = false)]
+async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--coldparse";
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let schema = format!("wamn_coldparse_{}", std::process::id());
     let role = format!(
         "wamn_app_{}",
@@ -2236,13 +2242,15 @@ fn an_explicit_transaction_statement_without_an_executing_principal_is_refused()
 /// A transactional statement runs with `app.user_id` bound to its executing
 /// principal. A read with the same principal keeps the autocommit path, so its
 /// session carries no `app.user_id`.
-#[tokio::test]
-async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autocommit() {
+#[sqlx::test(migrations = false)]
+async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autocommit(
+    pool: sqlx::PgPool,
+) {
     const PROJECT_ENV_KEY: &str = "test--dev--principal";
     const PRINCIPAL_B: &str = "00000000-0000-0000-0000-000000000020";
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
         wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
@@ -2371,13 +2379,13 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
 ///
 /// The platform principal is the third case: `wamn:executor` carries its own
 /// row, which provisioning writes, so it binds like any other principal.
-#[tokio::test]
-async fn live_a_bind_refuses_a_principal_with_no_user_row() {
+#[sqlx::test(migrations = false)]
+async fn live_a_bind_refuses_a_principal_with_no_user_row(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--unprovisioned";
     const ABSENT_PRINCIPAL: &str = "11111111-2222-4333-8444-555555555555";
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
         wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
@@ -2443,14 +2451,14 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row() {
 /// is unaffected (`wamn-0h0g.9.19`, `wamn-stxy9.2`). The host watches the
 /// bucket, and a raw SQL write publishes no drop, so the memory answers until
 /// it clears or its TTL ends (`wamn-f2qud`).
-#[tokio::test]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
-async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
+async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--removed";
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
         wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
@@ -2521,14 +2529,14 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
 /// On a host that watches the bucket, the drop of a removed user row reaches
 /// the memory, and the next bind reads again and refuses before the TTL ends
 /// (`wamn-f2qud`).
-#[tokio::test]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
-async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
+async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--dropped";
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
         wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
@@ -2681,13 +2689,15 @@ async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it
 /// operation. A read keeps the autocommit path and carries no `app.operation`.
 /// The pool holds one connection. A session-level `app.operation` on that
 /// connection does not reach the next transaction, which has no operation.
-#[tokio::test]
-async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connection_keeps_none() {
+#[sqlx::test(migrations = false)]
+async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connection_keeps_none(
+    pool: sqlx::PgPool,
+) {
     const PROJECT_ENV_KEY: &str = "test--dev--operation";
     const OPERATION: &str = "platform-fixture:widget/update@1.0.0";
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
         wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
@@ -2867,14 +2877,14 @@ async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_
 /// the application its host bound and never the other's: not the previous
 /// transaction's, not a session-level value left on the connection, and not a
 /// value that guest SQL names, which the identity guard refuses.
-#[tokio::test]
-async fn live_a_transaction_carries_only_the_application_its_host_bound() {
+#[sqlx::test(migrations = false)]
+async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--application";
     const APPLICATION_A: &str = "platform_fixture";
     const APPLICATION_B: &str = "platform_fixture_overlay";
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
         wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
@@ -2992,14 +3002,14 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
 /// commits between its two selects, as `receipt_screen` makes them, is not
 /// visible to the second (`wamn-ruakx`). The same transaction of a command
 /// sees the write, which proves the read case is not vacuous.
-#[tokio::test]
-async fn live_a_read_invocation_transaction_reads_one_snapshot() {
+#[sqlx::test(migrations = false)]
+async fn live_a_read_invocation_transaction_reads_one_snapshot(pool: sqlx::PgPool) {
     use super::super::resources::{begin_statement_transaction, run_verified_query, take_conn};
 
     const PROJECT_ENV_KEY: &str = "test--dev--read-snapshot";
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
         wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
@@ -3141,7 +3151,7 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
     let mut server =
         wamn_test_postgres::start(&[("shared_preload_libraries", "pg_stat_statements")])
             .expect("start PostgreSQL with statement statistics");
-    let database = server.create_database("settings").unwrap();
+    let database = server.create_database("settings").await.unwrap();
     let mut admin = connect_raw(database.url()).await;
     sqlx::raw_sql("CREATE EXTENSION pg_stat_statements")
         .execute(&mut admin)
@@ -3259,7 +3269,7 @@ async fn live_stream_reads_once_and_scopes_identity() {
         current_setting('app.runner', true), current_setting('transaction_read_only'), \
         value FROM stream_probe";
     let mut server = wamn_test_postgres::start(&[("log_statement", "all")]).unwrap();
-    let database = server.create_database("stream_sequence").unwrap();
+    let database = server.create_database("stream_sequence").await.unwrap();
     let mut admin = connect_raw(database.url()).await;
     let guest_url = live_guest_url(database.url(), PROJECT_ENV_KEY).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -3582,14 +3592,14 @@ async fn an_unverified_declared_statement_is_refused_before_a_stream_opens() {
     }
 }
 
-#[tokio::test]
-async fn live_an_unverified_declared_statement_is_refused_when_it_runs() {
+#[sqlx::test(migrations = false)]
+async fn live_an_unverified_declared_statement_is_refused_when_it_runs(pool: sqlx::PgPool) {
     use super::super::resources::run_verified_query;
 
     const PROJECT_ENV_KEY: &str = "test--dev--unverified-sql";
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let admin_url = database.url();
+    let database = wamn_test_postgres::url(&pool);
+    let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
         wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
@@ -3643,11 +3653,14 @@ async fn live_an_unverified_declared_statement_is_refused_when_it_runs() {
     .expect("drop the guest generation");
 }
 
-#[tokio::test]
-async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_user_role() {
+#[sqlx::test(migrations = false)]
+async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_user_role(
+    pool: sqlx::PgPool,
+) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::project_platform();
-    let mut admin = connect_raw(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    let mut admin = connect_raw(database.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "SET app.user_id='{LIVE_PLATFORM_PRINCIPAL}'; SET app.operation='admin:role-refusal-fixture';
          INSERT INTO platform.\"user\"(id,type,email) VALUES

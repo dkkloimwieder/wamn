@@ -273,7 +273,7 @@ pub(super) async fn application_host_with_release(
     release: Arc<LoadedRelease>,
 ) -> anyhow::Result<(ApplicationHost, Arc<WamnPostgres>, String)> {
     let mut postgres = wamn_test_postgres::start(&[])?;
-    let test_database = postgres.create_database(name)?;
+    let test_database = postgres.create_database(name).await?;
     let admin_url = test_database.url();
     let mut admin = connect(admin_url).await?;
     let mut database: String = sqlx::query("SELECT current_database()::text")

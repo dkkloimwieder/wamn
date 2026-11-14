@@ -80,10 +80,10 @@ fn reset_and_apply(url: &str, before_store: &str) {
     psql_ok(url, "apply the control portable store", &script);
 }
 
-#[test]
-fn current_database_connect_posture_is_exactly_targeted() {
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+#[sqlx::test(migrations = false)]
+async fn current_database_connect_posture_is_exactly_targeted(pool: sqlx::PgPool) {
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
     let sibling = format!("wamn_portable_sibling_{}", std::process::id());
     psql_ok(
         &url,
@@ -128,11 +128,11 @@ fn current_database_connect_posture_is_exactly_targeted() {
     );
 }
 
-#[test]
-fn control_portable_store_enforces_the_current_record_on_postgres() {
+#[sqlx::test(migrations = false)]
+async fn control_portable_store_enforces_the_current_record_on_postgres(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
     reset_and_apply(&url, "");
 
     psql_ok(

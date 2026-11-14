@@ -19,11 +19,11 @@ use wamn_control_provision::Template;
 /// DB-enforced invariants. The test connects as the superuser (the harness
 /// provisions the `wamn_system` owner role) and holds the process lock, because
 /// it creates cluster-wide roles.
-#[test]
-fn system_schema_applies_and_enforces_invariants_on_postgres() {
+#[sqlx::test(migrations = false)]
+async fn system_schema_applies_and_enforces_invariants_on_postgres(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
 
     let mut script = String::new();
     script.push_str(

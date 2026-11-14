@@ -73,6 +73,7 @@ async fn identity_https_has_only_public_jwks_and_health() {
     let mut postgres = wamn_test_postgres::start(&[]).expect("start the test PostgreSQL server");
     let mut system = postgres
         .create_database("wamn_system")
+        .await
         .expect("create the wamn_system test database");
     let admin_url = system.url();
     let mut admin = connect(admin_url).await;

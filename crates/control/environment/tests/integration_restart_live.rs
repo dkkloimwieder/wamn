@@ -491,7 +491,7 @@ async fn apply(
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[ignore = "requires: bin:docker, bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:rustc"]
 async fn application_releases_keep_independent_integration_versions() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
@@ -500,9 +500,27 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     let _lock = wamn_test_postgres::lock();
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     fixture(scratch.path())?;
-    let database = wamn_control_provision::test_database::system();
-    let project_database = wamn_platform_identity::test_database::project_platform();
-    let mut admin = connect(database.url()).await?;
+    let mut case_server = wamn_test_postgres::start(&[]).unwrap();
+    let database = url::Url::parse(
+        case_server
+            .create_database("fixture_1")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    wamn_control_provision::test_database::system(database.as_str()).await;
+
+    let project_database = url::Url::parse(
+        case_server
+            .create_database("fixture_extra")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    wamn_platform_identity::test_database::project_platform(project_database.as_str()).await;
+    let mut admin = connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "SET ROLE wamn_system; {}",
@@ -529,7 +547,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         oci_ca_paths: vec![],
     };
     let first = integration::build(scratch.path(), "modbus").await?;
-    integration::publish(&first, &configuration, database.url(), &integration::Publication {version:2, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into(),write_interfaces:vec!["wamn:modbus/write@1.0.0".into()]}).await?;
+    integration::publish(&first, &configuration, database.as_str(), &integration::Publication {version:2, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into(),write_interfaces:vec!["wamn:modbus/write@1.0.0".into()]}).await?;
     let source_path = scratch
         .path()
         .join("apps/platform/no-std/modbus/src/lib.rs");
@@ -542,7 +560,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         ),
     )?;
     let second = integration::build(scratch.path(), "modbus").await?;
-    integration::publish(&second, &configuration, database.url(), &integration::Publication {version:3, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into(),write_interfaces:vec!["wamn:modbus/write@1.0.0".into()]}).await?;
+    integration::publish(&second, &configuration, database.as_str(), &integration::Publication {version:3, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into(),write_interfaces:vec!["wamn:modbus/write@1.0.0".into()]}).await?;
     assert_ne!(first.digest, second.digest);
     let (authority, accepts, simulator_task) = simulator().await?;
     let (observer_authority, _, observer_task) = simulator().await?;
@@ -604,19 +622,31 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     let packages = [package, observer_package];
     apply(
         &mut admin,
-        database.url(),
-        project_database.url(),
+        database.as_str(),
+        project_database.as_str(),
         &document,
         &packages,
     )
     .await?;
     // A dedicated reader login fixes target through session_user, independent of GUCs.
     let login = format!("c9_integration_{}", std::process::id());
-    database.execute(&[
-        &sql::grant_connection_reader_surface_sql(),
-        &format!("CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_projects(login_identity,project_env_key,org_id,project_id,environment) VALUES ('{login}','acme--dev--one','acme','one','dev'); COMMIT;", database.name(), bind_platform_principal_sql(PlatformComponent::Provisioning)),
-    ])?;
-    let mut reader_url = url::Url::parse(database.url())?;
+    {
+        let batches: &[&str] = &[
+            &sql::grant_connection_reader_surface_sql(),
+            &format!(
+                "CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_projects(login_identity,project_env_key,org_id,project_id,environment) VALUES ('{login}','acme--dev--one','acme','one','dev'); COMMIT;",
+                database.path().trim_start_matches('/'),
+                bind_platform_principal_sql(PlatformComponent::Provisioning)
+            ),
+        ];
+        let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
+        for batch in batches {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                .execute(&mut setup_connection)
+                .await?;
+        }
+    }
+    let mut reader_url = url::Url::parse(database.as_str())?;
     reader_url.set_username(&login).unwrap();
     reader_url.set_password(Some("fixture")).unwrap();
     let mut reader_database = connect(reader_url.as_str()).await?;
@@ -644,7 +674,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         wamn_postgres_capability::WamnPostgres::from_env_for_project(
             "one",
             Some(wamn_postgres_capability::ClassCredentials::every_class(
-                project_database.url().to_owned(),
+                project_database.as_str().to_owned(),
             )),
         )?,
     );
@@ -707,7 +737,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     );
     // A missing new digest refuses its first call before the old instance runs.
     let absent = format!("sha256:{}", "f".repeat(64));
-    let mut control = connect(database.url()).await?;
+    let mut control = connect(database.as_str()).await?;
     let parameters: serde_json::Value = sqlx::query("SELECT parameter_schema FROM registry.integration_type_version WHERE integration_type='modbus' AND version=2").fetch_one(&mut control)
         .await?
         .get(0);
@@ -724,8 +754,8 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     document.integrations.get_mut("meter").unwrap().version = 4;
     apply(
         &mut admin,
-        database.url(),
-        project_database.url(),
+        database.as_str(),
+        project_database.as_str(),
         &document,
         &packages,
     )
@@ -736,8 +766,8 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     document.integrations.get_mut("meter").unwrap().version = 2;
     apply(
         &mut admin,
-        database.url(),
-        project_database.url(),
+        database.as_str(),
+        project_database.as_str(),
         &document,
         &packages,
     )
@@ -795,8 +825,8 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     document.integrations.get_mut("meter").unwrap().version = 3;
     apply(
         &mut admin,
-        database.url(),
-        project_database.url(),
+        database.as_str(),
+        project_database.as_str(),
         &document,
         &packages,
     )
@@ -810,8 +840,8 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     document.integrations.get_mut("meter").unwrap().version = 2;
     apply(
         &mut admin,
-        database.url(),
-        project_database.url(),
+        database.as_str(),
+        project_database.as_str(),
         &document,
         &packages,
     )
@@ -868,8 +898,10 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     simulator_task.abort();
     observer_task.abort();
     leases.shutdown().await;
-    database.execute(&[&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "RESET ROLE; DROP OWNED BY {login}; DROP ROLE {login};"
-    )])?;
+    )))
+    .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+    .await?;
     Ok(())
 }

@@ -25,13 +25,14 @@ use wash_runtime::plugin::wasi_logging::TracingLogger;
 const PROJECT_ENV_KEY: &str = "rest--test--publication";
 
 pub async fn invoke(
+    pool: &sqlx::PgPool,
     roots: &[PathBuf],
     manifest: &wamn_catalog::ServingManifest,
     admissions: &[ComponentAdmission],
 ) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let mut admin = wamn_postgres::connect(database.url()).await?;
+    let database = wamn_test_postgres::url(pool);
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
 
     let guest_url = super::consumer_live::install(&mut admin, &database, roots, manifest).await?;
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
@@ -47,7 +48,7 @@ pub async fn invoke(
                 ProjectConfig {
                     credentials: ClassCredentials::default()
                         .with_class(AuthorityClass::GuestSql, &guest_url)
-                        .with_class(AuthorityClass::ExecutorPlatform, database.url()),
+                        .with_class(AuthorityClass::ExecutorPlatform, database.as_str()),
                     guest_pool_max_size: 2,
                     platform_pool_max_size: 2,
                     wait_timeout_ms: 5000,

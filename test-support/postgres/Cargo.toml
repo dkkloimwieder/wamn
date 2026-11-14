@@ -8,7 +8,13 @@ license.workspace = true
 [lib]
 path = "lib.rs"
 
+[[bin]]
+name = "wamn-test-postgres"
+path = "postgres-run.rs"
+
 [dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "process", "signal", "time"] }
+rustix.workspace = true
 rcgen.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }

@@ -94,7 +94,7 @@ async fn admitted(route: &FlowHttpRouting) -> Result<bool, (u16, String)> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
-    let test_database = postgres.create_database("environment_status")?;
+    let test_database = postgres.create_database("environment_status").await?;
     let admin_url = test_database.url();
     let mut admin = connect(admin_url).await?;
     let database: String = sqlx::query("SELECT current_database()::text")

@@ -120,7 +120,7 @@ async fn vitest(file: &str, env: &[(&str, String)]) -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
-    let test_database = postgres.create_database("control_client")?;
+    let test_database = postgres.create_database("control_client").await?;
     let admin_url = test_database.url();
     let mut admin = control_fixture::connect(admin_url).await?;
     let control_url = control_fixture::install(&mut admin, admin_url).await?;

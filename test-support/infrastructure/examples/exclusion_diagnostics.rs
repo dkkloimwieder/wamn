@@ -122,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
         std::fs::copy(root.join(name), destination)?;
     }
     let mut server = postgres::start(&[])?;
-    let mut database = server.create_database("exclusion_diagnostics")?;
+    let mut database = server.create_database("exclusion_diagnostics").await?;
     let mut client = wamn_postgres::connect(database.url()).await?;
 
     sqlx::raw_sql("CREATE SCHEMA inventory; CREATE EXTENSION btree_gist; CREATE ROLE wamn_app; GRANT USAGE ON SCHEMA inventory TO wamn_app;").execute(&mut client).await.map(drop)?;

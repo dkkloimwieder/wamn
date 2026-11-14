@@ -1224,11 +1224,11 @@ mod tests {
         assert_eq!(control_window(&all), Some((None, None)));
     }
 
-    #[tokio::test]
-    async fn admission_stamps_every_bucket_as_the_platform_principal() {
+    #[sqlx::test(migrations = false)]
+    async fn admission_stamps_every_bucket_as_the_platform_principal(pool: sqlx::PgPool) {
         let _lock = wamn_test_postgres::lock();
-        let database = wamn_test_postgres::database();
-        let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+        let database = wamn_test_postgres::url(&pool);
+        let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
         sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system; END IF; END $$").execute(&mut client).await.map(drop).unwrap();
         sqlx::raw_sql(wamn_control_provision::SYSTEM_SCHEMA_SQL)
@@ -1320,7 +1320,7 @@ mod tests {
     #[tokio::test]
     async fn operator_invitation_delivery_failure_and_shared_admission() {
         let mut pg = wamn_test_postgres::start(&[]).expect("owned PostgreSQL");
-        let db = pg.create_database("wamn_system").unwrap();
+        let db = pg.create_database("wamn_system").await.unwrap();
         let mut admin = connect_database(db.url()).await.unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (wamn_control_provision::sql::ensure_db_owner_role_sql()).to_string(),

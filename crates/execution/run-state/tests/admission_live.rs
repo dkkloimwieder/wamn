@@ -42,11 +42,11 @@ fn success(url: &str, script: &str) -> String {
     String::from_utf8(output.stdout).expect("psql stdout is UTF-8")
 }
 
-#[test]
-fn surviving_authority_matrix_live() {
+#[sqlx::test(migrations = false)]
+async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
     let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
     let app_schema = wamn_control_provision::APP_SCHEMA_SQL;

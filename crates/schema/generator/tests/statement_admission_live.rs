@@ -2,8 +2,10 @@
 
 use sqlx::Row as _;
 
-#[tokio::test(flavor = "current_thread")]
-async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn generated_crud_outcomes_hold_under_column_grants(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     type Timestamp = sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>;
 
     use wamn_compiler::{
@@ -12,11 +14,11 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
     };
 
     let _serialized = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
-    let mut client = wamn_postgres::connect(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    let mut client = wamn_postgres::connect(database.as_str()).await?;
     wamn_fixture_package::apply_migrations(&mut client).await?;
     let catalog = wamn_schema_introspection::postgres::read_catalog(
-        &wamn_postgres::pool(database.url(), 1).await?,
+        &wamn_postgres::pool(database.as_str(), 1).await?,
         &[wamn_fixture_package::SCHEMA],
     )
     .await?;

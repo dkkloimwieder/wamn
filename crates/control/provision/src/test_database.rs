@@ -13,34 +13,34 @@ const SYSTEM_ROLE_SQL: &str = "DO $system_role$ BEGIN \
        END IF; \
      END $system_role$;";
 
-/// Create a test database with the system base grants: the control store that a
-/// fresh control database has.
-///
-/// The database is owned by `wamn_system`, and [`SYSTEM_SCHEMA_SQL`] and
-/// [`CONTROL_PORTABLE_STORE_SQL`] are applied as `wamn_system`, as the control
-/// bootstrap applies them.
-///
-/// # Panics
-///
-/// Panics when the test server cannot start or the control store does not install.
-pub fn system() -> wamn_test_postgres::Database {
-    let database = wamn_test_postgres::database();
-    database
-        .execute(&[
+/// Install the control store on a supplied database, owned by `wamn_system`.
+pub async fn system(database: &str) {
+    let mut connection = wamn_postgres::connect(database).await.unwrap();
+    let name: String = sqlx::query_scalar("SELECT current_database()")
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+    {
+        let batches: &[&str] = &[
             SYSTEM_ROLE_SQL,
             sql::ensure_db_owner_role_sql(),
             &format!(
-                "ALTER DATABASE \"{}\" OWNER TO wamn_system",
-                database.name()
+                "ALTER DATABASE {} OWNER TO wamn_system",
+                postgres_protocol::escape::escape_identifier(&name)
             ),
             "SET ROLE wamn_system",
             SYSTEM_SCHEMA_SQL,
             CONTROL_PORTABLE_STORE_SQL,
             "RESET ROLE",
             &sql::grant_control_surface_sql(),
-        ])
-        .expect("install the system control store minimum");
-    database
+        ];
+        for batch in batches {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                .execute(&mut connection)
+                .await
+                .expect("install the system control store minimum");
+        }
+    }
 }
 
 /// Seed one named organization, project and environment for authority tests.
@@ -101,25 +101,33 @@ pub async fn package_migration_input(
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_control_login_reads_and_writes_only_its_own_org() {
+    #[sqlx::test(migrations = false)]
+    async fn a_control_login_reads_and_writes_only_its_own_org(pool: sqlx::PgPool) {
         let _lock = wamn_test_postgres::lock();
-        let database = system();
-        database
-            .execute(&[
+        let database = wamn_test_postgres::url(&pool);
+        system(database.as_str()).await;
+        {
+            let batches: &[&str] = &[
                 &seed_org_project_env_sql("acme", "orders", "dev"),
                 &seed_org_project_env_sql("other", "orders", "dev"),
-            ])
-            .unwrap();
+            ];
+            let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
+            for batch in batches {
+                sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                    .execute(&mut setup_connection)
+                    .await
+                    .unwrap();
+            }
+        }
         let login = crate::workload_login(
             crate::WorkloadRoleFamily::Control,
             crate::WorkloadRoleIdentity::Org {
                 org: "acme",
-                database: database.name(),
+                database: database.path().trim_start_matches('/'),
             },
         )
         .unwrap();
-        database.execute(&[&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "CREATE ROLE {login} LOGIN INHERIT NOSUPERUSER NOBYPASSRLS; \
              GRANT wamn_control TO {login}; SET SESSION AUTHORIZATION {login}; \
              SET ROLE wamn_control; \
@@ -139,7 +147,7 @@ mod tests {
                  EXCEPTION WHEN insufficient_privilege THEN NULL; END; \
              END $isolation$; \
              RESET SESSION AUTHORIZATION; DROP ROLE {login};"
-        )]).unwrap();
+        ))).execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
     }
 }
 

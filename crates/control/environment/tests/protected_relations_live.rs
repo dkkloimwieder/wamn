@@ -14,7 +14,6 @@ use wamn_control_provision::identity_role::{
 use wamn_control_provision::sql;
 use wamn_environment::apply_package::{self, ApplyPackageRequest};
 use wamn_postgres::schema::BareSchemaName;
-use wamn_test_infrastructure::locked_database;
 
 const SYSTEM_SCHEMA_SQL: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const CONTROL_PORTABLE_STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
@@ -305,9 +304,10 @@ async fn assert_author_sql_boundaries(client: &mut Client) {
         .expect("finish read-only catalog snapshot");
 }
 
-#[tokio::test]
-async fn protected_relations_match_reconciled_postgres() {
-    let url = locked_database::database(wamn_test_postgres::database);
+#[sqlx::test(migrations = false)]
+async fn protected_relations_match_reconciled_postgres(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool).to_string();
     let mut client = connect(&url).await;
     let version: String = sqlx::query("SELECT current_setting('server_version_num')")
         .fetch_one(&mut client)

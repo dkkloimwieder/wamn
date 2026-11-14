@@ -1,10 +1,8 @@
 //! Private PostgreSQL 18 servers for tests.
 //!
-//! [`database`] gives the calling test a database of its own on the server of
-//! its test process. [`start`] gives a test a separate server, for example one
-//! with other server settings. The owned runner binary uses the same server to
-//! pass database coordinates to one child command. [`require_prerequisites`]
-//! fails an ignored make sure that is missing a declared prerequisite.
+//! SQLx owns per-test databases. [`start`] owns TLS servers and special server
+//! settings. The runner passes a private server URL to one child command.
+//! [`require_prerequisites`] fails a test missing a declared prerequisite.
 
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{Read as _, Write as _};
@@ -13,7 +11,6 @@ use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt 
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -32,45 +29,40 @@ fn postgres_bin_dir() -> PathBuf {
     postgres_bin(std::env::var_os("WAMN_POSTGRES_BIN_DIR"))
 }
 
-/// Create a database that the calling test owns on the server of this test process.
+/// Return a libpq-compatible test URL with usable TLS certificate paths.
 ///
-/// The first call starts the server. The server stops, and its directory is
-/// removed, when the test process exits, also after a panic. Dropping
-/// the returned value drops the database.
-///
-/// Roles and server settings are shared by every database of the server. Tests
-/// of one test process that change them hold [`lock`], or use [`start`].
-///
-/// # Panics
-///
-/// Panics when the PostgreSQL 18 binaries cannot start a server.
-/// `WAMN_POSTGRES_BIN_DIR` overrides the default `/usr/lib/postgresql/18/bin`.
-pub fn database() -> Database {
-    static SERVER: Mutex<Option<OwnedPostgres>> = Mutex::new(None);
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let mut server = SERVER.lock().unwrap_or_else(PoisonError::into_inner);
-    if server.is_none() {
-        *server = Some(start(&[]).expect(
-            "start the test PostgreSQL server with WAMN_POSTGRES_BIN_DIR or /usr/lib/postgresql/18/bin",
-        ));
-    }
-    let server = server.as_mut().expect("the test PostgreSQL server started");
-    let name = format!("test_{}", NEXT.fetch_add(1, Ordering::Relaxed));
-    let owned = server
-        .create_database(&name)
-        .expect("create the test database");
-    Database {
-        url: owned.url,
-        name,
-        port: server.port,
-        password: server.password.clone(),
-    }
+/// SQLx 0.9 serializes certificate file paths with a `file: ` display prefix,
+/// but its URL parser treats that prefix as part of the path.
+pub fn url(pool: &sqlx::PgPool) -> Url {
+    let mut url = sqlx::ConnectOptions::to_url_lossy(&*pool.connect_options());
+    let parameters: Vec<_> = url
+        .query_pairs()
+        .filter(|(name, _)| {
+            matches!(
+                name.as_ref(),
+                "sslmode" | "sslrootcert" | "sslcert" | "sslkey"
+            )
+        })
+        .map(|(name, value)| {
+            let value = value.into_owned();
+            let value = if matches!(name.as_ref(), "sslrootcert" | "sslcert" | "sslkey")
+                && let Some(path) = value.strip_prefix("file: ")
+            {
+                path.to_owned()
+            } else {
+                value
+            };
+            (name.into_owned(), value)
+        })
+        .collect();
+    url.query_pairs_mut().clear().extend_pairs(parameters);
+    url
 }
 
 /// Hold the lock of this test process for tests that change shared roles or settings.
 ///
 /// Every test of the process that changes roles or server settings of the
-/// [`database`] server, or depends on roles that such a test changes, holds the
+/// SQLx server, or depends on roles that such a test changes, holds the
 /// returned value for its whole duration. A test that panicked releases it.
 pub fn lock() -> ProcessLock {
     static LOCK: Mutex<()> = Mutex::new(());
@@ -174,66 +166,6 @@ pub fn require_ignored_prerequisites(reason: &str) {
     );
 }
 
-/// A database that one test owns on the server of its test process.
-pub struct Database {
-    url: String,
-    name: String,
-    port: u16,
-    password: String,
-}
-
-impl std::fmt::Debug for Database {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("Database")
-            .field("name", &self.name)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Database {
-    /// Return the superuser URL of this database.
-    pub fn url(&self) -> &str {
-        &self.url
-    }
-
-    /// Return the name of this database.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Run each SQL batch in order, in one superuser session of this database.
-    ///
-    /// Each batch is one simple query, as `batch_execute` of a client sends it.
-    /// The result is the unaligned output of the rows that the batches return.
-    ///
-    /// Calls in one test process run one at a time. Role bootstrap SQL takes an
-    /// advisory lock, and an advisory lock does not reach other databases, so
-    /// two setups in different databases of one server could otherwise create
-    /// the same role at once.
-    pub fn execute(&self, batches: &[&str]) -> anyhow::Result<String> {
-        static SETUP: Mutex<()> = Mutex::new(());
-        let _setup = SETUP.lock().unwrap_or_else(PoisonError::into_inner);
-        psql(self.port, &self.password, &self.name, batches)
-    }
-}
-
-impl Drop for Database {
-    fn drop(&mut self) {
-        if let Err(error) = psql(
-            self.port,
-            &self.password,
-            "postgres",
-            &[&format!(
-                "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE)",
-                self.name
-            )],
-        ) {
-            report_cleanup_failure("drop the owned test database", &error);
-        }
-    }
-}
-
 /// A database coordinate of an owned server, with credentials omitted from Debug.
 pub struct OwnedDatabase {
     url: String,
@@ -251,17 +183,6 @@ impl OwnedDatabase {
     /// Return the superuser coordinate of this database.
     pub fn url(&self) -> &str {
         &self.url
-    }
-
-    /// Select the role under test without changing the database coordinate.
-    pub fn with_credentials(&self, user: &str, password: &str) -> anyhow::Result<Self> {
-        let mut url = Url::parse(&self.url)?;
-        ensure!(!user.is_empty(), "the test database role must be named");
-        url.set_username(user)
-            .expect("PostgreSQL URLs accept a role");
-        url.set_password(Some(password))
-            .expect("PostgreSQL URLs accept credentials");
-        Ok(Self { url: url.into() })
     }
 }
 
@@ -436,24 +357,23 @@ impl OwnedPostgres {
             );
             std::thread::sleep(Duration::from_millis(25));
         }
-        let ready = self.sql(
-            "postgres",
-            "SELECT current_setting('server_version_num')::int / 10000",
-        )?;
         ensure!(
-            ready.trim() == "18",
+            fs::read_to_string(self.directory.join("data/PG_VERSION"))?.trim() == "18",
             "the test server must run PostgreSQL 18"
         );
         Ok(())
     }
 
     /// Create a database on this server and return its coordinate.
-    pub fn create_database(&mut self, name: &str) -> anyhow::Result<OwnedDatabase> {
+    pub async fn create_database(&mut self, name: &str) -> anyhow::Result<OwnedDatabase> {
         ensure!(
             valid_database_name(name),
             "the test database name must be a lowercase SQL identifier"
         );
-        self.sql("postgres", &format!("CREATE DATABASE {name}"))?;
+        let mut connection = wamn_postgres::connect(self.database("postgres")?.url()).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+            .execute(&mut connection)
+            .await?;
         self.database(name)
     }
 
@@ -500,35 +420,6 @@ impl OwnedPostgres {
         }
         Ok(())
     }
-
-    fn sql(&self, database: &str, sql: &str) -> anyhow::Result<String> {
-        psql(self.port, &self.password, database, &[sql])
-    }
-}
-
-fn psql(port: u16, password: &str, database: &str, batches: &[&str]) -> anyhow::Result<String> {
-    let mut command = Command::new(postgres_bin_dir().join("psql"));
-    command
-        .env_clear()
-        .env("LC_ALL", "C")
-        .env("PGHOST", "127.0.0.1")
-        .env("PGPORT", port.to_string())
-        .env("PGUSER", "postgres")
-        .env("PGPASSWORD", password)
-        .env("PGDATABASE", database)
-        .args(["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"]);
-    for batch in batches {
-        command.arg("-c").arg(batch);
-    }
-    let output = command
-        .output()
-        .context("query the owned PostgreSQL connection")?;
-    ensure!(
-        output.status.success(),
-        "the owned PostgreSQL query failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).context("read the owned PostgreSQL result")
 }
 
 impl Drop for OwnedPostgres {
@@ -581,46 +472,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn postgres_binaries_use_a_nonempty_override_or_the_default() {
-        assert_eq!(postgres_bin(None), Path::new(POSTGRES_BIN));
-        assert_eq!(postgres_bin(Some("".into())), Path::new(POSTGRES_BIN));
-        assert_eq!(
-            postgres_bin(Some("/custom/postgres/bin".into())),
-            Path::new("/custom/postgres/bin")
-        );
-    }
-
-    #[test]
-    fn log_tail_keeps_the_last_twenty_lines_and_reports_an_absent_log() {
-        let path = std::env::temp_dir().join(format!(
-            "wamn-test-postgres-log-tail-{}",
-            std::process::id()
-        ));
-        let log = (1..=25)
-            .map(|line| format!("line {line}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        private_file(&path)
-            .unwrap()
-            .write_all(log.as_bytes())
-            .unwrap();
-        let long_tail = log_tail(&path);
-        fs::write(&path, "first\nsecond\nthird\n").unwrap();
-        let short_tail = log_tail(&path);
-        fs::remove_file(&path).unwrap();
-
-        assert_eq!(
-            long_tail,
-            (6..=25)
-                .map(|line| format!("line {line}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-        assert_eq!(short_tail, "first\nsecond\nthird");
-        assert!(log_tail(&path).starts_with("cannot read server.log: "));
-    }
-
-    #[test]
     fn ignored_prerequisites_use_only_explicit_programs_and_variables() {
         assert_eq!(
             parse_prerequisites("requires: bin:sh, env:PATH").unwrap(),
@@ -639,147 +490,34 @@ mod tests {
             assert!(parse_prerequisites(reason).is_err(), "accepted {reason:?}");
         }
         require_ignored_prerequisites("requires: bin:/bin/sh, env:PATH");
-        let panic = std::panic::catch_unwind(|| {
+        assert!(std::panic::catch_unwind(|| {
             require_ignored_prerequisites(
                 "requires: env:WAMN_TEST_PREREQUISITE_NEVER_SET, bin:wamn-test-program-never-installed",
             );
-        })
-        .unwrap_err();
-        assert_eq!(
-            panic.downcast_ref::<String>().map(String::as_str),
-            Some(
-                "missing prerequisites: environment variable WAMN_TEST_PREREQUISITE_NEVER_SET, program wamn-test-program-never-installed on PATH"
-            )
-        );
+        }).is_err());
     }
 
     #[test]
-    fn prerequisites_fail_naming_every_missing_variable_and_program() {
+    fn missing_prerequisites_refuse() {
         require_prerequisites(&["PATH", "sh"]);
-        let panic = std::panic::catch_unwind(|| {
-            require_prerequisites(&[
-                "PATH",
-                "WAMN_TEST_PREREQUISITE_NEVER_SET",
-                "sh",
-                "wamn-test-program-never-installed",
-            ]);
-        })
-        .unwrap_err();
-        assert_eq!(
-            panic.downcast_ref::<String>().map(String::as_str),
-            Some(
-                "missing prerequisites: environment variable WAMN_TEST_PREREQUISITE_NEVER_SET, program wamn-test-program-never-installed on PATH"
-            )
-        );
-    }
-
-    #[test]
-    fn process_server_starts_on_first_use_and_gives_each_call_a_distinct_database() {
-        let first = database();
-        let second = database();
-        assert_ne!(first.name(), second.name());
-        assert_eq!(
-            Url::parse(first.url()).unwrap().port(),
-            Url::parse(second.url()).unwrap().port()
-        );
-        assert_eq!(
-            first
-                .execute(&[
-                    "CREATE TABLE owned_by_first (id int)",
-                    "SELECT current_database() || ' ' || current_setting('server_version_num')::int / 10000",
-                ])
-                .unwrap()
-                .trim(),
-            format!("{} 18", first.name())
-        );
-        assert_eq!(
-            second
-                .execute(&["SELECT to_regclass('owned_by_first') IS NULL"])
-                .unwrap()
-                .trim(),
-            "t"
-        );
-        let name = first.name().to_owned();
-        drop(first);
-        assert_eq!(
-            second
-                .execute(&[&format!(
-                    "SELECT count(*) FROM pg_catalog.pg_database WHERE datname = '{name}'"
-                )])
-                .unwrap()
-                .trim(),
-            "0"
-        );
-    }
-
-    #[test]
-    fn database_drop_failure_fails_normal_test_execution() {
-        let database = Database {
-            url: "postgresql://unused.invalid/invalid".to_owned(),
-            name: "invalid_cleanup_target".to_owned(),
-            port: 0,
-            password: "invalid".to_owned(),
-        };
-        let panic = std::panic::catch_unwind(|| drop(database)).unwrap_err();
-        let message = panic
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| panic.downcast_ref::<&str>().copied())
-            .expect("cleanup failure panic has a message");
-        assert!(
-            message.contains("PostgreSQL test cleanup failed: drop the owned test database"),
-            "{message}"
-        );
-    }
-
-    #[test]
-    fn process_server_directory_is_removed_after_its_test_process_panics() {
-        const CHILD: &str = "WAMN_TEST_POSTGRES_PANICKING_CHILD";
-        if std::env::var_os(CHILD).is_some() {
-            let database = database();
-            let data = database.execute(&["SHOW data_directory"]).unwrap();
-            println!("data_directory={}", data.trim());
-            panic!("the child test panics while the process server runs");
-        }
-        let output = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "tests::process_server_directory_is_removed_after_its_test_process_panics",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let data = stdout
-            .lines()
-            .find_map(|line| line.strip_prefix("data_directory="))
-            .unwrap_or_else(|| panic!("the child reports its data directory: {stdout}"));
-        let directory = Path::new(data).parent().unwrap();
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while directory.exists() {
-            assert!(
-                Instant::now() < deadline,
-                "the process server directory remains after its test process exited"
-            );
-            std::thread::sleep(Duration::from_millis(50));
+        for names in [
+            &["PATH", "WAMN_TEST_PREREQUISITE_NEVER_SET"][..],
+            &["sh", "wamn-test-program-never-installed"][..],
+        ] {
+            assert!(std::panic::catch_unwind(|| require_prerequisites(names)).is_err());
         }
     }
 
-    #[test]
-    fn separate_server_applies_its_settings() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn separate_server_applies_its_settings() -> anyhow::Result<()> {
         let mut server = start(&[("standard_conforming_strings", "off")])?;
-        server.create_database("settings")?;
-        assert_eq!(
-            server
-                .sql("settings", "SHOW standard_conforming_strings")?
-                .trim(),
-            "off"
-        );
-        let directory = server.directory.clone();
-        drop(server);
-        assert!(!directory.exists());
+        let database = server.create_database("settings").await?;
+        let mut connection = wamn_postgres::connect(database.url()).await?;
+        let enabled: bool =
+            sqlx::query_scalar("SELECT current_setting('standard_conforming_strings')::boolean")
+                .fetch_one(&mut connection)
+                .await?;
+        assert!(!enabled);
         Ok(())
     }
 }

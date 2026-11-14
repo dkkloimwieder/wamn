@@ -30,11 +30,11 @@ const ENABLER: &str = "00000000-0000-4000-8000-0000000000e1";
 /// workflow: `role` with exactly `operations`, held by the `workflow` user and
 /// by the enabler. Returns the admin's project connection.
 pub async fn execution_role(
-    database: &wamn_test_postgres::Database,
+    database: &url::Url,
     role: &str,
     operations: &[&str],
 ) -> anyhow::Result<Client> {
-    let mut project = wamn_postgres::connect(database.url()).await?;
+    let mut project = wamn_postgres::connect(database.as_str()).await?;
 
     sqlx::query(
         "SELECT set_config('app.user_id', $1, false), \
@@ -94,7 +94,7 @@ pub async fn execution_role(
 /// any other login, the superuser included.
 pub async fn workflow_host(
     admin: &mut Client,
-    database: &wamn_test_postgres::Database,
+    database: &url::Url,
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<Arc<WamnPostgres>> {
     wamn_environment::platform_migrations::install_project(admin).await?;
@@ -111,7 +111,7 @@ pub async fn workflow_host(
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     wamn_environment::environment::stage::write_release(
-        database.url(),
+        database.as_str(),
         PROJECT_ENV_KEY,
         digest.as_str(),
         manifest,
@@ -137,13 +137,13 @@ pub async fn workflow_host(
                 org: PROJECT_ENV_KEY,
                 project: "test",
                 environment: "test",
-                database: database.name(),
+                database: database.path().trim_start_matches('/'),
             },
         )?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&wamn_control_provision::test_database::login_sql(
                 family,
-                database.name(),
+                database.path().trim_start_matches('/'),
                 &role,
                 PASSWORD,
             ))
@@ -152,7 +152,7 @@ pub async fn workflow_host(
         .execute(&mut *admin)
         .await
         .map(drop)?;
-        let mut login = url::Url::parse(database.url())?;
+        let mut login = url::Url::parse(database.as_str())?;
         login.set_username(&role).unwrap();
         login.set_password(Some(PASSWORD)).unwrap();
         credentials = credentials.with_class(class, login.to_string());
@@ -207,7 +207,7 @@ pub fn declared(
     reason = "one fixture step over the project and control databases"
 )]
 pub async fn schedule_run(
-    database: &wamn_test_postgres::Database,
+    database: &url::Url,
     host: &WamnPostgres,
     manifest: &wamn_catalog::ServingManifest,
     application: &str,
@@ -229,7 +229,7 @@ pub async fn schedule_run(
 
     let declared = declared(application, manifest);
     author_workflow_in_databases(
-        database.url(),
+        database.as_str(),
         &AuthorWorkflowRequest {
             org: "rest",
             project: "publication",
@@ -245,7 +245,7 @@ pub async fn schedule_run(
     )
     .await?;
     enable_workflow(
-        database.url(),
+        database.as_str(),
         &wamn_registry::Triple::new("rest", "test", application),
         &mut project,
         &WorkflowVersion {
@@ -311,7 +311,7 @@ pub async fn run_caller(
 
 pub async fn install(
     admin: &mut Client,
-    database: &wamn_test_postgres::Database,
+    database: &url::Url,
     roots: &[PathBuf],
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<String> {
@@ -352,7 +352,7 @@ pub async fn install(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let migration_database_url = wamn_control_provision::test_database::package_migration_input(
-        database.url(),
+        database.as_str(),
         "rest",
         "publication",
         "test",
@@ -365,7 +365,7 @@ pub async fn install(
                 .unwrap(),
             changes: wamn_broker::Publisher::default(),
             package: package.clone(),
-            database_url: database.url().into(),
+            database_url: database.as_str().into(),
             org: "rest".into(),
             project: "publication".into(),
             environment: "test".into(),
@@ -376,13 +376,13 @@ pub async fn install(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: PROJECT_ENV_KEY,
-            database: database.name(),
+            database: database.path().trim_start_matches('/'),
         },
     )?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::App,
-            database.name(),
+            database.path().trim_start_matches('/'),
             &role,
             PASSWORD,
         ))
@@ -397,15 +397,26 @@ pub async fn install(
     .execute(&mut *admin)
     .await
     .map(drop)?;
-    let system = wamn_control_provision::test_database::system();
-    system.execute(&[
-        "BEGIN",
-        &wamn_control_provision::bind_platform_principal_sql(
-            wamn_identity_protocol::PlatformComponent::Provisioning,
-        ),
-        "UPDATE registry.meta SET platform_domain = 'example.test'",
-        "COMMIT",
-    ])?;
+    let mut system_server = wamn_test_postgres::start(&[])?;
+    let system_coordinate = system_server.create_database("control").await?;
+    let system = url::Url::parse(system_coordinate.url())?;
+    wamn_control_provision::test_database::system(system.as_str()).await;
+    {
+        let batches: &[&str] = &[
+            "BEGIN",
+            &wamn_control_provision::bind_platform_principal_sql(
+                wamn_identity_protocol::PlatformComponent::Provisioning,
+            ),
+            "UPDATE registry.meta SET platform_domain = 'example.test'",
+            "COMMIT",
+        ];
+        let mut setup_connection = wamn_postgres::connect(system.as_str()).await.unwrap();
+        for batch in batches {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                .execute(&mut setup_connection)
+                .await?;
+        }
+    }
     let manifests = roots
         .iter()
         .map(|root| {
@@ -415,8 +426,8 @@ pub async fn install(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     wamn_environment::environment::stage::materialize_application_principals(
-        system.url(),
-        database.url(),
+        system.as_str(),
+        database.as_str(),
         PROJECT_ENV_KEY,
         manifest,
         &manifests,
@@ -443,7 +454,7 @@ pub async fn install(
     eprintln!(
         "consumer SQL role={role}, schema=rest_consumer_fixture; item SELECT(key,external_system_id,external_id), INSERT(key,name,external_system_id,external_id); write_log SELECT/INSERT/DELETE, UPDATE(result)"
     );
-    let mut url = url::Url::parse(database.url())?;
+    let mut url = url::Url::parse(database.as_str())?;
     url.set_username(&role).unwrap();
     url.set_password(Some(PASSWORD)).unwrap();
     Ok(url.into())
@@ -478,7 +489,7 @@ pub async fn source(admin: &mut sqlx::PgConnection, name: &str) -> anyhow::Resul
 }
 
 pub async fn invoke(
-    database: &wamn_test_postgres::Database,
+    database: &url::Url,
     guest_url: &str,
     manifest: &wamn_catalog::ServingManifest,
     admissions: &[ComponentAdmission],
@@ -507,7 +518,7 @@ pub async fn invoke(
                 ProjectConfig {
                     credentials: ClassCredentials::default()
                         .with_class(AuthorityClass::GuestSql, guest_url)
-                        .with_class(AuthorityClass::ExecutorPlatform, database.url()),
+                        .with_class(AuthorityClass::ExecutorPlatform, database.as_str()),
                     guest_pool_max_size: 2,
                     platform_pool_max_size: 2,
                     wait_timeout_ms: 5000,
@@ -563,7 +574,7 @@ pub async fn invoke(
             bytes,
         }])
         .await?;
-    let mut admin = wamn_postgres::connect(database.url()).await?;
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
 
     let source_id = source(&mut admin, "rest-fixture").await?.to_string();
     // The rest_connector item is an environment workflow, authored, enabled and

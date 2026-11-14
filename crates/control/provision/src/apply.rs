@@ -15,16 +15,21 @@ pub const APPLY_GRANTS_SQL: &str = include_str!("../../../../deploy/sql/apply-gr
 mod tests {
     use super::{APPLY_GRANTS_SQL, ensure_apply_role_sql};
 
-    #[test]
-    fn apply_cannot_write_connection_authority_or_assume_the_system_owner() {
+    #[sqlx::test(migrations = false)]
+    async fn apply_cannot_write_connection_authority_or_assume_the_system_owner(
+        pool: sqlx::PgPool,
+    ) {
         let _lock = wamn_test_postgres::lock();
-        let database = crate::test_database::system();
-        database.execute(&[
-            "CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
-            ensure_apply_role_sql(),
-            &crate::sql::ensure_platform_group_role_sql(),
-            "GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE",
-            APPLY_GRANTS_SQL, r"
+        let database = wamn_test_postgres::url(&pool);
+        crate::test_database::system(database.as_str()).await;
+        {
+            let batches: &[&str] = &[
+                "CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
+                ensure_apply_role_sql(),
+                &crate::sql::ensure_platform_group_role_sql(),
+                "GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE",
+                APPLY_GRANTS_SQL,
+                r"
         DO $denials$ DECLARE relation text; privilege text; BEGIN
             ASSERT (SELECT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls FROM pg_roles WHERE rolname='wamn_apply');
             ASSERT pg_has_role('wamn_apply', 'wamn_db_owner', 'MEMBER');
@@ -51,6 +56,15 @@ mod tests {
         SELECT principal_id FROM identity.org_memberships ORDER BY principal_id FOR UPDATE;
         SELECT * FROM registry.resolve_environment_connection('absent','absent','dev','cloud','absent',1);
         RESET SESSION AUTHORIZATION;
-    "]).unwrap();
+    ",
+            ];
+            let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
+            for batch in batches {
+                sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
+                    .execute(&mut setup_connection)
+                    .await
+                    .unwrap();
+            }
+        }
     }
 }

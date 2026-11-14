@@ -108,9 +108,10 @@ async fn components_on_one_connection_do_not_overlap_and_shutdown_drains() {
     );
 }
 
-async fn database() -> (wamn_test_postgres::Database, sqlx::PgConnection) {
-    let database = wamn_control_provision::test_database::system();
-    let client = wamn_postgres::connect(database.url()).await.unwrap();
+async fn database(pool: &sqlx::PgPool) -> (url::Url, sqlx::PgConnection) {
+    let database = wamn_test_postgres::url(pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     (database, client)
 }
@@ -125,12 +126,12 @@ async fn lock_pid(client: &mut sqlx::PgConnection, key: &str, granted: bool) -> 
     }).await.unwrap()
 }
 
-#[tokio::test]
-async fn database_owners_unlock_and_recover_after_session_termination() {
+#[sqlx::test(migrations = false)]
+async fn database_owners_unlock_and_recover_after_session_termination(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, mut client) = database().await;
-    let a = Arc::new(ResourceLeases::new(Some(database.url())).unwrap());
-    let b = Arc::new(ResourceLeases::new(Some(database.url())).unwrap());
+    let (database, mut client) = database(&pool).await;
+    let a = Arc::new(ResourceLeases::new(Some(database.as_str())).unwrap());
+    let b = Arc::new(ResourceLeases::new(Some(database.as_str())).unwrap());
     let connection = uuid::Uuid::new_v4();
     let target = uuid::Uuid::new_v4();
     let key = format!("resource:{target}:device");
@@ -178,11 +179,11 @@ async fn database_owners_unlock_and_recover_after_session_termination() {
     a.shutdown().await;
 }
 
-#[tokio::test]
-async fn a_waiting_acquire_does_not_block_another_resource_release() {
+#[sqlx::test(migrations = false)]
+async fn a_waiting_acquire_does_not_block_another_resource_release(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, mut client) = database().await;
-    let owner = Arc::new(ResourceLeases::new(Some(database.url())).unwrap());
+    let (database, mut client) = database(&pool).await;
+    let owner = Arc::new(ResourceLeases::new(Some(database.as_str())).unwrap());
     let target = uuid::Uuid::new_v4();
     let first = uuid::Uuid::new_v4();
     let second = uuid::Uuid::new_v4();
@@ -222,11 +223,11 @@ async fn a_waiting_acquire_does_not_block_another_resource_release() {
     owner.shutdown().await;
 }
 
-#[tokio::test]
-async fn a_replacement_on_the_same_owner_waits_for_the_old_call() {
+#[sqlx::test(migrations = false)]
+async fn a_replacement_on_the_same_owner_waits_for_the_old_call(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, _) = database().await;
-    let owner = Arc::new(ResourceLeases::new(Some(database.url())).unwrap());
+    let (database, _) = database(&pool).await;
+    let owner = Arc::new(ResourceLeases::new(Some(database.as_str())).unwrap());
     let target = uuid::Uuid::new_v4();
     let old = uuid::Uuid::new_v4();
     let replacement = uuid::Uuid::new_v4();

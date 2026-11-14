@@ -304,10 +304,10 @@ mod tests {
     use super::*;
     use test_util::Fixture;
 
-    #[tokio::test]
-    async fn active_references_are_targeted_and_disabled_connections_refuse() {
+    #[sqlx::test(migrations = false)]
+    async fn active_references_are_targeted_and_disabled_connections_refuse(pool: sqlx::PgPool) {
         let _lock = wamn_test_postgres::lock();
-        let mut fixture = Fixture::new().await;
+        let mut fixture = Fixture::new(wamn_test_postgres::url(&pool)).await;
         fixture.put("erp", "first", &["project-a"]).await;
         fixture.put("erp", "other", &["project-b"]).await;
         fixture.put("erp", "current", &["project-a"]).await;
@@ -362,12 +362,14 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn memory_reads_follow_the_active_generation_inside_the_login_environment() {
+    #[sqlx::test(migrations = false)]
+    async fn memory_reads_follow_the_active_generation_inside_the_login_environment(
+        pool: sqlx::PgPool,
+    ) {
         use crate::connection_memory::ConnectionStatus;
 
         let _lock = wamn_test_postgres::lock();
-        let mut fixture = Fixture::new().await;
+        let mut fixture = Fixture::new(wamn_test_postgres::url(&pool)).await;
         fixture.put_store("files", "first", &["project-a"]).await;
         fixture.put("erp", "http", &["project-a"]).await;
         let reader = fixture.reader("project-a").await;
@@ -445,12 +447,12 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_generation_carries_its_authentication() {
+    #[sqlx::test(migrations = false)]
+    async fn a_generation_carries_its_authentication(pool: sqlx::PgPool) {
         use serde_json::json;
 
         let _lock = wamn_test_postgres::lock();
-        let mut fixture = Fixture::new().await;
+        let mut fixture = Fixture::new(wamn_test_postgres::url(&pool)).await;
         let parameters =
             json!({"client_id":"app","token_url":"https://example.com/token","scopes":["read"]});
         fixture

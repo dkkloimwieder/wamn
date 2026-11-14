@@ -71,8 +71,8 @@ fn app_generation(database: &str, project_env_key: &str) -> String {
 /// Apply `deploy/sql/app-schema.sql` to a test database and assert the live,
 /// DB-enforced behavior, as the superuser (the harness prepares project-targeted
 /// App generations).
-#[test]
-fn app_schema_applies_and_enforces_isolation_on_postgres() {
+#[tokio::test]
+async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
     const U3: &str = "33333333-3333-3333-3333-333333333333";
@@ -81,13 +81,29 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     const PROJECT_ENV_KEY_2: &str = "t2";
 
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let mut case_server = wamn_test_postgres::start(&[]).unwrap();
+    let test_database = url::Url::parse(
+        case_server
+            .create_database("fixture_1")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    let url = test_database.as_str().to_owned();
 
     let database = current_database(&url);
     let project_env_key_1_app = app_generation(&database, PROJECT_ENV_KEY_1);
-    let other = wamn_test_postgres::database();
-    let other_database = current_database(other.url());
+
+    let other = url::Url::parse(
+        case_server
+            .create_database("fixture_extra")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    let other_database = current_database(other.as_str());
     let project_env_key_2_app = app_generation(&other_database, PROJECT_ENV_KEY_2);
     let mut other_script = wamn_control_provision::test_database::login_sql(
         WorkloadRoleFamily::App,
@@ -102,7 +118,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     writeln!(other_script, "SET ROLE {project_env_key_2_app}; DO $$ BEGIN
         ASSERT (SELECT count(*) FROM platform.role)=0, 'another environment sees none of the first environment roles';
         END $$; RESET ROLE;").unwrap();
-    run(other.url(), &other_script);
+    run(other.as_str(), &other_script);
 
     // Production preparation hardens the stable ACL carrier to passwordless
     // NOLOGIN/NOINHERIT and makes each project generation the only LOGIN.
@@ -304,15 +320,15 @@ fn run(url: &str, script: &str) -> String {
 /// derives. The users CHECKs refuse every other shape: a missing or unknown
 /// type, a platform row with a name or id outside the pinned pairs, and a
 /// user or service row with a `wamn:` name.
-#[test]
-fn platform_rows_carry_their_pinned_ids_on_postgres() {
+#[sqlx::test(migrations = false)]
+async fn platform_rows_carry_their_pinned_ids_on_postgres(pool: sqlx::PgPool) {
     const DOMAIN: &str = "example.invalid";
     const USER: &str = "11111111-1111-1111-1111-111111111111";
     const FIXTURE_USER: &str = "00000000-0000-0000-0000-000000000000";
 
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
 
     let provisioning = PlatformComponent::Provisioning;
     let executor = PlatformComponent::Executor;
@@ -419,11 +435,11 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
 }
 
 /// Provisioning stamps its writes and releases the transaction binding.
-#[test]
-fn platform_relations_stamp_provisioning_writes_on_postgres() {
+#[sqlx::test(migrations = false)]
+async fn platform_relations_stamp_provisioning_writes_on_postgres(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str();
     let mut script = sql::ensure_app_acl_role_sql();
     script.push_str("\nDROP SCHEMA IF EXISTS platform CASCADE;\n");
     script.push_str(&record_history_sql());
@@ -453,8 +469,8 @@ fn platform_relations_stamp_provisioning_writes_on_postgres() {
 }
 
 /// Row changes record the actor and operation, including key changes and cascades.
-#[test]
-fn platform_relations_log_every_row_change_on_postgres() {
+#[sqlx::test(migrations = false)]
+async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool) {
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
     const U3: &str = "33333333-3333-3333-3333-333333333333";
@@ -465,8 +481,8 @@ fn platform_relations_log_every_row_change_on_postgres() {
     const REMOVE: &str = "admin:remove-history-fixture";
 
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str();
     let mut script = sql::ensure_app_acl_role_sql();
     script.push_str("\nDROP SCHEMA IF EXISTS platform CASCADE;\n");
     script.push_str(&record_history_sql());
@@ -578,11 +594,13 @@ fn platform_relations_log_every_row_change_on_postgres() {
     run(url, &script);
 }
 
-#[test]
-fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
+#[sqlx::test(migrations = false)]
+async fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres(
+    pool: sqlx::PgPool,
+) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
 
     let mut script = sql::ensure_app_acl_role_sql();
     script.push('\n');
@@ -622,11 +640,13 @@ fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
 /// spells the same column. A history read builds its current row image with
 /// this function. The session time zone is not UTC, and the values include
 /// zero and non-zero microseconds and infinity.
-#[test]
-fn timestamptz_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
+#[sqlx::test(migrations = false)]
+async fn timestamptz_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres(
+    pool: sqlx::PgPool,
+) {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
 
     let mut script = sql::ensure_app_acl_role_sql();
     script.push('\n');

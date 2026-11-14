@@ -72,11 +72,12 @@ async fn seed(client: &mut sqlx::PgConnection) {
     tx.commit().await.unwrap();
 }
 
-#[tokio::test]
-async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
+#[sqlx::test(migrations = false)]
+async fn apply_refuses_invalid_names_interfaces_environments_and_versions(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     sqlx::raw_sql("SET ROLE wamn_db_owner")
         .execute(&mut client)
@@ -205,11 +206,14 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
     );
 }
 
-#[tokio::test]
-async fn two_packages_can_bind_distinct_names_to_one_connection_without_authority_writes() {
+#[sqlx::test(migrations = false)]
+async fn two_packages_can_bind_distinct_names_to_one_connection_without_authority_writes(
+    pool: sqlx::PgPool,
+) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     let mut doc = document();
     doc.applications
@@ -252,11 +256,12 @@ async fn two_packages_can_bind_distinct_names_to_one_connection_without_authorit
     );
 }
 
-#[tokio::test]
-async fn a_version_change_refuses_stored_values_that_do_not_validate() {
+#[sqlx::test(migrations = false)]
+async fn a_version_change_refuses_stored_values_that_do_not_validate(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     let mut tx = client.begin().await.unwrap();
     sqlx::raw_sql("SET LOCAL ROLE wamn_control")
@@ -301,12 +306,30 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate() {
 #[tokio::test]
 async fn administration_refuses_values_incompatible_with_a_retained_release_version() {
     let _lock = wamn_test_postgres::lock();
-    let system_database = wamn_control_provision::test_database::system();
-    let mut system = connect(system_database.url()).await;
+    let mut case_server = wamn_test_postgres::start(&[]).unwrap();
+    let system_database = url::Url::parse(
+        case_server
+            .create_database("fixture_1")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    wamn_control_provision::test_database::system(system_database.as_str()).await;
+    let mut system = connect(system_database.as_str()).await;
     seed(&mut system).await;
     sqlx::raw_sql("INSERT INTO registry.integration_type_version(integration_type,version,parameter_schema,operations,exports,published_at) SELECT integration_type,2,jsonb_set(parameter_schema,'{required}',(parameter_schema->'required') || '\"unit\"'::jsonb) || jsonb_build_object('properties',(parameter_schema->'properties') || '{\"unit\":{\"type\":\"integer\"}}'::jsonb),operations,exports,now() FROM registry.integration_type_version WHERE integration_type='http' AND version=1").execute(&mut system).await.map(drop).unwrap();
-    let environment_database = wamn_platform_identity::test_database::project_platform();
-    let mut environment = connect(environment_database.url()).await;
+
+    let environment_database = url::Url::parse(
+        case_server
+            .create_database("fixture_extra")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    wamn_platform_identity::test_database::project_platform(environment_database.as_str()).await;
+    let mut environment = connect(environment_database.as_str()).await;
     sqlx::raw_sql("CREATE SCHEMA IF NOT EXISTS wamn_run")
         .execute(&mut environment)
         .await
@@ -320,10 +343,13 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
     .map(drop)
     .unwrap();
     let document = document();
-    let _ =
-        bindings::project_authority(system_database.url(), environment_database.url(), &document)
-            .await
-            .unwrap();
+    let _ = bindings::project_authority(
+        system_database.as_str(),
+        environment_database.as_str(),
+        &document,
+    )
+    .await
+    .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "BEGIN; {}",
@@ -446,11 +472,12 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
     );
 }
 
-#[tokio::test]
-async fn apply_refuses_a_connection_version_missing_one_required_interface() {
+#[sqlx::test(migrations = false)]
+async fn apply_refuses_a_connection_version_missing_one_required_interface(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     sqlx::raw_sql("SET ROLE wamn_db_owner")
         .execute(&mut client)
@@ -469,11 +496,12 @@ async fn apply_refuses_a_connection_version_missing_one_required_interface() {
     );
 }
 
-#[tokio::test]
-async fn blobstore_interfaces_accept_another_storage_provider() {
+#[sqlx::test(migrations = false)]
+async fn blobstore_interfaces_accept_another_storage_provider(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     let mut tx = client.begin().await.unwrap();
     sqlx::raw_sql("SET LOCAL ROLE wamn_control")
@@ -525,10 +553,11 @@ async fn blobstore_interfaces_accept_another_storage_provider() {
     assert_eq!(bindings[0].integration_type, "gcs");
 }
 
-#[tokio::test]
-async fn publish_refuses_wasm_and_native_worlds_without_health() {
-    let database = wamn_control_provision::test_database::system();
-    let mut client = connect(database.url()).await;
+#[sqlx::test(migrations = false)]
+async fn publish_refuses_wasm_and_native_worlds_without_health(pool: sqlx::PgPool) {
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('native-health','native',false); SET ROLE wamn_control").execute(&mut client).await.map(drop).unwrap();
     for code in ["modbus", "native-health"] {
         let error = sqlx::query("SELECT registry.publish_integration($1,2,$2,$3,$4,$5,'{}')").bind(&code).bind(&format!("sha256:{}", "a".repeat(64))).bind(&json!({"type":"object","properties":{"authority":{"type":"string","immutable":true}},"required":["authority"]})).bind(&"wamn:modbus/client@1.0.0").bind(&vec!["wamn:modbus/read@1.0.0".to_owned()]).fetch_one(&mut client).await.unwrap_err();
@@ -539,11 +568,12 @@ async fn publish_refuses_wasm_and_native_worlds_without_health() {
     }
 }
 
-#[tokio::test]
-async fn apply_refuses_a_read_requirement_for_a_write_interface() {
+#[sqlx::test(migrations = false)]
+async fn apply_refuses_a_read_requirement_for_a_write_interface(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     let mut tx = client.begin().await.unwrap();
     sqlx::raw_sql("SET LOCAL ROLE wamn_control")
@@ -611,11 +641,12 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface() {
     );
 }
 
-#[tokio::test]
-async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings() {
+#[sqlx::test(migrations = false)]
+async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     let mut tx = client.begin().await.unwrap();
     sqlx::raw_sql("SET LOCAL ROLE wamn_control")
@@ -753,10 +784,11 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings() {
     }
 }
 
-#[tokio::test]
-async fn publish_refuses_write_interfaces_outside_the_exports() {
-    let database = wamn_control_provision::test_database::system();
-    let mut client = connect(database.url()).await;
+#[sqlx::test(migrations = false)]
+async fn publish_refuses_write_interfaces_outside_the_exports(pool: sqlx::PgPool) {
+    let database = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     sqlx::raw_sql("SET ROLE wamn_control")
         .execute(&mut client)
         .await
@@ -777,11 +809,12 @@ async fn publish_refuses_write_interfaces_outside_the_exports() {
     );
 }
 
-#[tokio::test]
-async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() {
+#[sqlx::test(migrations = false)]
+async fn project_observation_preserves_the_baseline_and_refuses_unknown_state(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::project_platform();
-    let mut client = connect(database.url()).await;
+    let database = wamn_test_postgres::url(&pool);
+    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    let mut client = connect(database.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (wamn_control_provision::sql::ensure_db_owner_role_sql()).to_string(),
     ))
@@ -789,7 +822,7 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() 
     .await
     .map(drop)
     .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE; ALTER DATABASE {} OWNER TO wamn_db_owner; ALTER SCHEMA catalog OWNER TO wamn_db_owner; GRANT USAGE ON SCHEMA platform TO wamn_db_owner; GRANT SELECT ON ALL TABLES IN SCHEMA catalog, platform TO wamn_db_owner", postgres_protocol::escape::escape_identifier(database.name())))).execute(&mut client).await.map(drop).unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE; ALTER DATABASE {} OWNER TO wamn_db_owner; ALTER SCHEMA catalog OWNER TO wamn_db_owner; GRANT USAGE ON SCHEMA platform TO wamn_db_owner; GRANT SELECT ON ALL TABLES IN SCHEMA catalog, platform TO wamn_db_owner", postgres_protocol::escape::escape_identifier(database.path().trim_start_matches('/'))))).execute(&mut client).await.map(drop).unwrap();
     let fingerprint = format!("sha256:{}", "a".repeat(64));
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
@@ -810,7 +843,7 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() 
         .await
         .map(drop)
         .unwrap();
-    let observed = analyse::read_project(database.url(), "acme--dev--one")
+    let observed = analyse::read_project(database.as_str(), "acme--dev--one")
         .await
         .unwrap()
         .unwrap();
@@ -822,12 +855,15 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() 
         .map(drop)
         .unwrap();
     assert!(
-        analyse::read_project(database.url(), "acme--dev--one")
+        analyse::read_project(database.as_str(), "acme--dev--one")
             .await
             .is_err()
     );
-    let mut missing = url::Url::parse(database.url()).unwrap();
-    missing.set_path(&format!("/{}_absent", database.name()));
+    let mut missing = url::Url::parse(database.as_str()).unwrap();
+    missing.set_path(&format!(
+        "/{}_absent",
+        database.path().trim_start_matches('/')
+    ));
     assert!(
         analyse::read_project(missing.as_str(), "acme--dev--one")
             .await

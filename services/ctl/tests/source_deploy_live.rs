@@ -38,12 +38,13 @@ manifest.Package {{
     Ok(root)
 }
 
-#[tokio::test]
-async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() -> anyhow::Result<()>
-{
+#[sqlx::test(migrations = false)]
+async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
-    let database = wamn_test_postgres::database();
-    let mut client = wamn_postgres::connect(database.url()).await?;
+    let database = wamn_test_postgres::url(&pool);
+    let mut client = wamn_postgres::connect(database.as_str()).await?;
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("CREATE TABLE untouched (value text); INSERT INTO untouched VALUES ('retained');")
@@ -91,7 +92,7 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
             .arg(root)
             .arg(if development { "--config" } else { "--env" })
             .arg(&file)
-            .env("DATABASE_URL", database.url())
+            .env("DATABASE_URL", database.as_str())
             .env("WAMN_CONTROL_URL", "http://127.0.0.1:0")
             .env("WAMN_TOKEN", "caller-session")
             .env_remove("KUBECONFIG")

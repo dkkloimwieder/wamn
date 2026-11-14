@@ -161,10 +161,11 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
 /// initial migration adds a nullable field to `purchase_order`, rebuilt in a
 /// test-owned workspace, installs fresh with the overlay as built, and the
 /// overlay's required schema is satisfied exactly as on the unchanged base.
-#[tokio::test(flavor = "current_thread")]
+#[sqlx::test(migrations = false)]
 #[ignore = "requires: cargo, rustc"]
-async fn an_additive_base_change_leaves_the_overlay_unchanged_and_compatible() -> anyhow::Result<()>
-{
+async fn an_additive_base_change_leaves_the_overlay_unchanged_and_compatible(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     // The nullable field the additive base adds.
     const FIELD: &str = "overlay_compatibility_note";
     wamn_test_postgres::require_prerequisites(&["cargo", "rustc"]);
@@ -188,8 +189,8 @@ async fn an_additive_base_change_leaves_the_overlay_unchanged_and_compatible() -
         &migration,
         text.replacen(header, &format!("{header}    {FIELD} text,\n"), 1),
     )?;
-    let build_server = wamn_test_postgres::database();
-    super::package_copies::build(&copies, &["wamn_receiving"], build_server.url()).await?;
+    let build_server = wamn_test_postgres::url(&pool);
+    super::package_copies::build(&copies, &["wamn_receiving"], build_server.as_str()).await?;
 
     let required = &required_schema_contract(&overlay)?;
     let mut postgres = production_server().await?;

@@ -361,7 +361,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let missing_registry = Registry::start(&missing_root, missing_objects).await?;
     let registry = Registry::start(scratch.path(), objects).await?;
     let mut postgres = wamn_test_postgres::start(&[("wal_level", "logical")])?;
-    let system = postgres.create_database("wamn_system")?;
+    let system = postgres.create_database("wamn_system").await?;
     let admin_url = url::Url::parse(system.url())?;
     let mut admin = connect(system.url()).await?;
     // CNPG supplies this database owner before the platform SQL operation.

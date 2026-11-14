@@ -16,7 +16,12 @@ async fn connect(url: &str) -> sqlx::PgConnection {
 #[tokio::test]
 async fn external_signature_uses_the_service_principal_and_only_admin_granted_roles() {
     let _lock = wamn_test_postgres::lock();
-    let mut fixture = wamn_connections::connection_credentials::test_util::Fixture::new().await;
+    let mut server = wamn_test_postgres::start(&[]).unwrap();
+    let control = server.create_database("control").await.unwrap();
+    let mut fixture = wamn_connections::connection_credentials::test_util::Fixture::new(
+        url::Url::parse(control.url()).unwrap(),
+    )
+    .await;
     fixture
         .put(
             "webhook",
@@ -25,8 +30,8 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         )
         .await;
     let principal: String = sqlx::query("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'").fetch_one(&mut fixture.admin).await.unwrap().get(0);
-    let database = wamn_test_postgres::database();
-    let mut project = connect(database.url()).await;
+    let database = url::Url::parse(server.create_database("project").await.unwrap().url()).unwrap();
+    let mut project = connect(database.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (sql::ensure_db_owner_role_sql()).to_string(),
     ))
@@ -51,14 +56,14 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
             org: "acme",
             project: "host-project",
             environment: "prod",
-            database: database.name(),
+            database: database.path().trim_start_matches('/'),
         },
     )
     .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::HttpAdmitter,
-            database.name(),
+            database.path().trim_start_matches('/'),
             &role,
             "fixture-password",
         ))
@@ -70,7 +75,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     .unwrap();
     sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:connection-principal',false)").bind(&principal).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
     sqlx::query("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','webhook@example.test')").bind(&principal).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
-    let mut reader = url::Url::parse(database.url()).unwrap();
+    let mut reader = url::Url::parse(database.as_str()).unwrap();
     reader.set_username(&role).unwrap();
     reader.set_password(Some("fixture-password")).unwrap();
     let base = WamnPostgresConfig {
@@ -126,7 +131,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         "host-project",
         "dev",
     ));
-    let authority = wamn_postgres::pool(fixture.database.url(), 4)
+    let authority = wamn_postgres::pool(fixture.database.as_str(), 4)
         .await
         .unwrap();
     let authentication = Arc::new(PlatformRouteAuthenticator::new(
@@ -169,7 +174,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     assert!(!caller.permits("fixture:item/write@1.0.0"));
     assert!(caller.active_role().is_none());
     // An API service needs its application grants, with no operator identity or system admin role.
-    let mut authority = connect(fixture.database.url()).await;
+    let mut authority = connect(fixture.database.as_str()).await;
     let mut tx = authority.begin().await.unwrap();
     sqlx::raw_sql("SET LOCAL ROLE wamn_system")
         .execute(&mut *tx)
@@ -265,9 +270,27 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
 
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_control_provision::test_database::system();
-    let project = wamn_platform_identity::test_database::project_platform();
-    let mut admin = connect(system.url()).await;
+    let mut case_server = wamn_test_postgres::start(&[]).unwrap();
+    let system = url::Url::parse(
+        case_server
+            .create_database("fixture_1")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    wamn_control_provision::test_database::system(system.as_str()).await;
+
+    let project = url::Url::parse(
+        case_server
+            .create_database("fixture_extra")
+            .await
+            .unwrap()
+            .url(),
+    )
+    .unwrap();
+    wamn_platform_identity::test_database::project_platform(project.as_str()).await;
+    let mut admin = connect(system.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "SET ROLE wamn_system; \
          SELECT set_config('app.user_id', '{live_platform_principal}', false); \
@@ -300,7 +323,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     )
     .await
     .unwrap();
-    let mut project_admin = connect(project.url()).await;
+    let mut project_admin = connect(project.as_str()).await;
     sqlx::raw_sql("CREATE SCHEMA wamn_run")
         .execute(&mut project_admin)
         .await
@@ -313,7 +336,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
                 org: "org",
                 project: "project",
                 environment: "prod",
-                database: project.name(),
+                database: project.path().trim_start_matches('/'),
             },
         )
         .unwrap()
@@ -333,7 +356,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&wamn_control_provision::test_database::login_sql(
                 family,
-                project.name(),
+                project.path().trim_start_matches('/'),
                 name,
                 "pat-drop",
             ))
@@ -348,7 +371,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         "SET ROLE \"{administration}\"; SET app.user_id = '{live_platform_principal}'; SET app.operation = 'admin:seed-pat-drop-fixture';"
     ))).execute(&mut project_admin).await.map(drop).unwrap();
     sqlx::query("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1::text::uuid, 'service', 'pat-drop@example.test')").bind(&principal.id().to_string().as_str()).execute(&mut project_admin).await.map(|result| result.rows_affected()).unwrap();
-    let mut http_url = url::Url::parse(project.url()).unwrap();
+    let mut http_url = url::Url::parse(project.as_str()).unwrap();
     http_url.set_username(&http).unwrap();
     http_url.set_password(Some("pat-drop")).unwrap();
     let config = WamnPostgresConfig {
@@ -374,9 +397,12 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         wamn_capability_authority::auth_cache::AuthCache::with_ttl(ttl),
     ));
     let pg = Arc::new(pg);
-    system
-        .execute(&[&wamn_control_provision::sql::grant_identity_reader_surface_sql()])
-        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::grant_identity_reader_surface_sql(),
+    ))
+    .execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap())
+    .await
+    .unwrap();
     let identity_reader = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .after_connect(|connection, _| {
@@ -387,7 +413,11 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
                 Ok(())
             })
         })
-        .connect_lazy_with(wamn_postgres::connect_options(system.url()).await.unwrap());
+        .connect_lazy_with(
+            wamn_postgres::connect_options(system.as_str())
+                .await
+                .unwrap(),
+        );
     let authentication = PlatformRouteAuthenticator::for_test(
         Arc::clone(&pg),
         "project",

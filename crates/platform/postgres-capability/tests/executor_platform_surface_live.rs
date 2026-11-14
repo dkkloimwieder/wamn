@@ -97,13 +97,13 @@ async fn begin_bound(client: &mut Client) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn executor_platform_surface_live() -> anyhow::Result<()> {
+#[sqlx::test(migrations = false)]
+async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     const COMPONENT: &str = "executor-authority-test";
 
     let _lock = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let admin_url = test_database.url();
+    let test_database = wamn_test_postgres::url(&pool);
+    let admin_url = test_database.as_str();
     let mut admin = connect(admin_url).await?;
     sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:executor-surface-fixture', false)").bind(&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut admin).await.map(|result| result.rows_affected())?;
     let database: String = sqlx::query("SELECT current_database()::text")

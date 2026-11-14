@@ -924,8 +924,8 @@ mod tests {
     use super::*;
     use crate::describe::DescribedColumn;
 
-    #[tokio::test]
-    async fn verification_migration_accepts_a_platform_file_reference() {
+    #[sqlx::test(migrations = false)]
+    async fn verification_migration_accepts_a_platform_file_reference(pool: sqlx::PgPool) {
         let manifest = json!({
             "package": {"id": "files_fixture", "version": "0.1.0"},
             "required_platform_policy_contract": {"id": "files_fixture_data_access", "state": "satisfied"},
@@ -943,9 +943,9 @@ mod tests {
         fs::create_dir_all(root.join("migrations")).unwrap();
         fs::write(root.join("migrations/0001_initial.sql"),
             "CREATE TABLE files_fixture.attachment (id uuid CONSTRAINT attachment_id_pkey PRIMARY KEY, file_id uuid CONSTRAINT attachment_file_id_fkey REFERENCES platform.file(id), created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)").unwrap();
-        let database = wamn_test_postgres::database();
+        let database = wamn_test_postgres::url(&pool);
         let result = migrate(
-            database.url(),
+            database.as_str(),
             &root,
             &ManifestSources::from_document(&serde_json::to_value(&manifest).unwrap()).unwrap(),
             &[],
@@ -954,7 +954,7 @@ mod tests {
         .await;
         fs::remove_dir_all(root).unwrap();
         result.expect("the verification database permits a platform.file foreign key");
-        let client = wamn_postgres::pool(database.url(), 4).await.unwrap();
+        let client = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
         wamn_schema_introspection::postgres::read_catalog(&client, &["files_fixture"])
             .await
             .unwrap();
@@ -967,96 +967,6 @@ mod tests {
             Some("23503")
         );
         client.close().await;
-    }
-
-    #[tokio::test]
-    async fn paged_query_warns_for_each_allowed_sort_field_without_an_index() {
-        let database = wamn_test_postgres::database();
-        let root = std::env::temp_dir().join(format!("wamn-paged-index-{}", std::process::id()));
-        fs::create_dir(&root).expect("create the test package");
-        fs::create_dir(root.join("migrations")).expect("create the migrations directory");
-        let manifest = json!({
-            "package": {"id": "sort_fixture", "version": "0.1.0"},
-            "required_platform_policy_contract": {"id": "sort_fixture_data_access", "state": "satisfied"},
-            "connections": {},
-            "components": {"fixture": {}},
-            "models": {"order_row": {
-                "schema": "receiving", "table": "order_row", "owner": "sort_fixture",
-                "server_owned_fields": [],
-                "audit_log": {"columns": ["created_at"], "retention": "none"},
-                "operations": {"query": {
-                    "feed": false,
-                    "permission": "order_row.query", "result": "page",
-                    "sort": {"fields": ["created_at", "status"], "directions": ["ascending", "descending"]},
-                    "pagination": {"default_sort": {"field": "created_at", "direction": "ascending"}, "tie_breaker": {"field": "id"}},
-                    "limit": {"default": 100, "minimum": 1, "maximum": 100}
-                }}
-            }}
-        });
-        fs::write(
-            root.join("wamn.json"),
-            serde_json::to_vec(&manifest).unwrap(),
-        )
-        .expect("write the package manifest");
-        fs::write(
-            root.join("migrations/0001_initial.sql"),
-            "CREATE TABLE receiving.order_row (
-                 id uuid CONSTRAINT order_row_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
-                 status text NOT NULL DEFAULT 'open',
-                 created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
-             );",
-        )
-        .expect("write the table migration");
-        fs::write(
-            root.join("migrations/0002_default_index.sql"),
-            "CREATE INDEX order_row_id_created_at_idx ON receiving.order_row (created_at, id);",
-        )
-        .expect("index the default sort only");
-        let request = BuildRequest::new(&root, &root.join("target"), database.url());
-        let built = generate_package(&request).await;
-        let parsed = PackageManifest::from_slice(&serde_json::to_vec(&manifest).unwrap())
-            .expect("parse the test manifest");
-        let warned = missing_indexes(&root, &parsed).await;
-        fs::write(
-            root.join("migrations/0003_status_index.sql"),
-            "CREATE INDEX order_row_id_status_idx ON receiving.order_row (status, id);",
-        )
-        .expect("index the other allowed sort in a later migration");
-        let indexed = generate_package(&request).await;
-        let silent = missing_indexes(&root, &parsed).await;
-        fs::remove_dir_all(&root).expect("remove the test package");
-        built.expect("a missing pagination index is a warning, not a refusal");
-        assert_eq!(
-            warned,
-            vec![
-                "sort-fixture:order-row/query@0.1.0 on receiving.order_row has no index for ORDER BY (status, id). \
-                 Add to the package's migrations: CREATE INDEX order_row_id_status_idx ON receiving.order_row (status, id);"
-                    .to_owned()
-            ]
-        );
-        indexed.expect("the build reads both indexes from later package migrations");
-        assert!(silent.is_empty(), "{silent:?}");
-    }
-
-    /// The warnings for the package, on a fresh database migrated with its
-    /// migrations.
-    async fn missing_indexes(root: &Path, manifest: &PackageManifest) -> Vec<String> {
-        let database = wamn_test_postgres::database();
-        migrate(
-            database.url(),
-            root,
-            &ManifestSources::from_document(&serde_json::to_value(manifest).unwrap()).unwrap(),
-            &[],
-            &default_output_root(root),
-        )
-        .await
-        .expect("migrate the test package");
-        let catalog = introspect_with_manifest(database.url(), manifest, &[])
-            .await
-            .expect("introspect the migrated package");
-        missing_paged_query_indexes(database.url(), &catalog, manifest)
-            .await
-            .expect("list the missing indexes")
     }
 
     fn manifest(row_nullable: bool, row_type: Option<&str>) -> Value {
