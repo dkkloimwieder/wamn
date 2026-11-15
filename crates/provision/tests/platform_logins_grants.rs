@@ -30,7 +30,7 @@ async fn platform_rules(pool: &sqlx::PgPool, scope: MigrationDatabase) {
             .unwrap();
     let mut connection = wamn_postgres::connect(&url).await.unwrap();
     scope.require_login(&mut connection).await.unwrap();
-    let rows: Vec<(String, uuid::Uuid, bool)> = sqlx::query_as(
+    let rows: Vec<(wamn_identity_protocol::LoginName, wamn_identity_protocol::PrincipalId, bool)> = sqlx::query_as(
         "SELECT p.login,p.principal_id,NOT (r.rolsuper OR r.rolbypassrls OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication)
          FROM platform.login_principal p JOIN pg_roles r ON r.rolname=p.login",
     ).fetch_all(pool).await.unwrap();

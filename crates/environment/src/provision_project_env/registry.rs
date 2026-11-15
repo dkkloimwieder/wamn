@@ -71,9 +71,7 @@ pub(crate) async fn resolve_cluster_on(
 ) -> anyhow::Result<String> {
     let mut transaction = wamn_platform_identity::transaction::read_connection(
         client,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     let row = wamn_registry::deployment::org_placement(&mut transaction, org)
@@ -123,9 +121,7 @@ pub async fn read_project_env_instance(
 
     let mut transaction = wamn_platform_identity::transaction::read_connection(
         &mut client,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     let result = async {
@@ -152,9 +148,7 @@ pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyho
 
     let mut transaction = wamn_platform_identity::transaction::read_connection(
         &mut client,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     let result = async {

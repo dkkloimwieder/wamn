@@ -120,7 +120,7 @@ pub async fn provision_apply(input: &str) -> anyhow::Result<()> {
         .map(std::path::PathBuf::from)
         .unwrap_or_default();
     let role = wamn_control_provision::connection::managed_role(
-        "wamn_apply".into(),
+        "wamn_apply".parse()?,
         "wamn_db_owner",
         "wamn-apply".into(),
     );
@@ -269,7 +269,7 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
         wamn_control_provision::migration::prepare_history(
             admin,
             wamn_registry::migrations::HISTORY_TABLE,
-            "wamn_system",
+            &"wamn_system".parse()?,
         )
         .await?;
         sqlx::raw_sql("RESET ROLE")

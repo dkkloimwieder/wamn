@@ -67,7 +67,7 @@ pub struct IdentityTicket(u64);
 
 struct Token {
     deadline: SystemTime,
-    principal: String,
+    principal: wamn_identity_protocol::PrincipalId,
     /// The principal a PAT admitted, or `None` for an active session.
     pat: Option<AuthenticatedPrincipal>,
 }
@@ -178,7 +178,7 @@ impl AuthCache {
         &self,
         ticket: IdentityTicket,
         token: &str,
-        principal: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
         pat: Option<&AuthenticatedPrincipal>,
         deadline: SystemTime,
     ) {
@@ -211,18 +211,18 @@ impl AuthCache {
         token: &str,
         principal: &AuthenticatedPrincipal,
     ) {
-        let id = principal.principal().id().to_string();
+        let id = principal.principal().id();
         let Some(deadline) = principal.pat_deadline() else {
             return;
         };
-        self.keep_token(ticket, token, &id, Some(principal), deadline);
+        self.keep_token(ticket, token, id, Some(principal), deadline);
     }
 
     pub fn keep_session_active(
         &self,
         ticket: IdentityTicket,
         token: &str,
-        principal: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
         deadline: SystemTime,
     ) {
         self.keep_token(ticket, token, principal, None, deadline);
@@ -232,7 +232,7 @@ impl AuthCache {
     pub fn grants(
         &self,
         project_env_key: &str,
-        principal: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
     ) -> Result<PrincipalGrants, Ticket> {
         let key = principal_key(project_env_key, principal);
         match self.memory.answer(&key) {
@@ -247,7 +247,7 @@ impl AuthCache {
     pub async fn keep_grants(
         &self,
         project_env_key: &str,
-        principal: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
         ticket: Ticket,
         grants: PrincipalGrants,
     ) {
@@ -300,7 +300,9 @@ impl Watched for AuthCache {
         {
             let mut tokens = self.tokens();
             tokens.identity_revision = tokens.identity_revision.wrapping_add(1);
-            let principal = principal.to_owned();
+            let Ok(principal) = principal.parse::<wamn_identity_protocol::PrincipalId>() else {
+                return;
+            };
             tokens
                 .tokens
                 .invalidate_entries_if(move |_, token| token.principal == principal)
@@ -343,30 +345,34 @@ pub mod tests {
 
     #[tokio::test]
     async fn a_host_without_the_bucket_keeps_no_fact() {
+        let p: wamn_identity_protocol::PrincipalId =
+            "00000000-0000-4000-8000-000000000001".parse().unwrap();
         let cache = AuthCache::with_ttl(Duration::from_secs(60));
         let ticket = cache.environment_inactive("t").unwrap_err();
         cache.keep_environment_inactive("t", ticket, true).await;
-        let ticket = cache.grants("t", "p").unwrap_err();
+        let ticket = cache.grants("t", &p).unwrap_err();
         let present = PrincipalGrants {
             present: true,
             user: false,
             ..PrincipalGrants::default()
         };
-        cache.keep_grants("t", "p", ticket, present).await;
+        cache.keep_grants("t", &p, ticket, present).await;
         cache.keep_session_active(
             cache.identity_ticket(),
             "token",
-            "p",
+            &p,
             SystemTime::now() + Duration::from_secs(3600),
         );
         assert!(cache.environment_inactive("t").is_err());
-        assert!(cache.grants("t", "p").is_err());
+        assert!(cache.grants("t", &p).is_err());
         assert!(!cache.session_active("token"));
     }
 
     #[tokio::test]
     #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn a_fact_expires_after_the_ttl_and_a_clear_drops_it() {
+        let p: wamn_identity_protocol::PrincipalId =
+            "00000000-0000-4000-8000-000000000001".parse().unwrap();
         let (_server, client) = nats().await;
         let cache = Arc::new(AuthCache::with_ttl(Duration::from_millis(50)));
         watched(&client, None, Arc::clone(&cache)).await;
@@ -375,7 +381,7 @@ pub mod tests {
         cache.keep_session_active(
             cache.identity_ticket(),
             "token",
-            "p",
+            &p,
             SystemTime::now() + Duration::from_secs(3600),
         );
         assert_eq!(cache.environment_inactive("t"), Ok(true));
@@ -385,7 +391,7 @@ pub mod tests {
         cache.keep_session_active(
             cache.identity_ticket(),
             "expired",
-            "p",
+            &p,
             SystemTime::UNIX_EPOCH,
         );
         assert!(!cache.session_active("expired"));
@@ -394,7 +400,7 @@ pub mod tests {
         cache.keep_session_active(
             in_flight,
             "stale",
-            "p",
+            &p,
             SystemTime::now() + Duration::from_secs(3600),
         );
         assert!(!cache.session_active("stale"));
@@ -417,6 +423,10 @@ pub mod tests {
     #[tokio::test]
     #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn the_bucket_shares_kept_facts_and_every_drop_reaches_every_host() {
+        let q: wamn_identity_protocol::PrincipalId =
+            "00000000-0000-4000-8000-000000000002".parse().unwrap();
+        let p: wamn_identity_protocol::PrincipalId =
+            "00000000-0000-4000-8000-000000000001".parse().unwrap();
         use wamn_broker::auth_changes::AuthDrops;
 
         let (_server, client) = nats().await;
@@ -436,57 +446,57 @@ pub mod tests {
         };
 
         // A fact one host keeps reaches the other host of the project only.
-        let ticket = a.grants("t", "p").unwrap_err();
-        a.keep_grants("t", "p", ticket, present.clone()).await;
-        assert_eq!(a.grants("t", "p"), Ok(present.clone()));
-        until("host b sees the grants", || b.grants("t", "p").is_ok()).await;
-        assert!(b.grants("t", "p").unwrap().present);
-        assert!(other.grants("t", "p").is_err());
+        let ticket = a.grants("t", &p).unwrap_err();
+        a.keep_grants("t", &p, ticket, present.clone()).await;
+        assert_eq!(a.grants("t", &p), Ok(present.clone()));
+        until("host b sees the grants", || b.grants("t", &p).is_ok()).await;
+        assert!(b.grants("t", &p).unwrap().present);
+        assert!(other.grants("t", &p).is_err());
 
-        let ticket = other.grants("u", "p").unwrap_err();
-        other.keep_grants("u", "p", ticket, present.clone()).await;
+        let ticket = other.grants("u", &p).unwrap_err();
+        other.keep_grants("u", &p, ticket, present.clone()).await;
         let ticket = other.environment_inactive("u").unwrap_err();
         other.keep_environment_inactive("u", ticket, true).await;
-        assert_eq!(other.grants("u", "p"), Ok(present.clone()));
+        assert_eq!(other.grants("u", &p), Ok(present.clone()));
         assert_eq!(other.environment_inactive("u"), Ok(true));
 
         // A writer's delete reaches both hosts.
         let mut drops = AuthDrops::default();
-        drops.principal("t", "p");
+        drops.principal("t", &p);
         writer.publish(drops).await;
-        until("host a drops the grants", || a.grants("t", "p").is_err()).await;
-        until("host b drops the grants", || b.grants("t", "p").is_err()).await;
+        until("host a drops the grants", || a.grants("t", &p).is_err()).await;
+        until("host b drops the grants", || b.grants("t", &p).is_err()).await;
 
         // A delete during a read refuses the put of the read.
-        let ticket = a.grants("t", "p").unwrap_err();
+        let ticket = a.grants("t", &p).unwrap_err();
         let mut drops = AuthDrops::default();
-        drops.principal("t", "p");
+        drops.principal("t", &p);
         writer.publish(drops).await;
-        a.keep_grants("t", "p", ticket, present.clone()).await;
-        assert!(a.grants("t", "p").is_err());
+        a.keep_grants("t", &p, ticket, present.clone()).await;
+        assert!(a.grants("t", &p).is_err());
 
         // A project change deletes every key of the project.
         until("host a sees the second delete", || {
-            a.memory.ticket(&principal_key("t", "p")) != ticket
+            a.memory.ticket(&principal_key("t", &p)) != ticket
         })
         .await;
-        let ticket = a.grants("t", "p").unwrap_err();
-        a.keep_grants("t", "p", ticket, present.clone()).await;
+        let ticket = a.grants("t", &p).unwrap_err();
+        a.keep_grants("t", &p, ticket, present.clone()).await;
         let ticket = a.environment_inactive("t").unwrap_err();
         a.keep_environment_inactive("t", ticket, false).await;
         until("host b sees the environment", || {
-            b.environment_inactive("t") == Ok(false) && b.grants("t", "p").is_ok()
+            b.environment_inactive("t") == Ok(false) && b.grants("t", &p).is_ok()
         })
         .await;
         let mut drops = AuthDrops::default();
         drops.project_env_key("t");
         writer.publish(drops).await;
         until("host b drops the project", || {
-            b.environment_inactive("t").is_err() && b.grants("t", "p").is_err()
+            b.environment_inactive("t").is_err() && b.grants("t", &p).is_err()
         })
         .await;
 
-        assert_eq!(other.grants("u", "p"), Ok(present.clone()));
+        assert_eq!(other.grants("u", &p), Ok(present.clone()));
         assert_eq!(other.environment_inactive("u"), Ok(true));
 
         // An identity change drops the session of its principal on every
@@ -494,18 +504,18 @@ pub mod tests {
         a.keep_session_active(
             a.identity_ticket(),
             "token-p",
-            "p",
+            &p,
             SystemTime::now() + Duration::from_secs(3600),
         );
         a.keep_session_active(
             a.identity_ticket(),
             "token-q",
-            "q",
+            &q,
             SystemTime::now() + Duration::from_secs(3600),
         );
         let read = b.identity_ticket();
         let mut drops = AuthDrops::default();
-        drops.identity("p");
+        drops.identity(&p);
         writer.publish(drops).await;
         until("host a drops the session of p", || {
             !a.session_active("token-p")
@@ -519,7 +529,7 @@ pub mod tests {
         b.keep_session_active(
             read,
             "token-p",
-            "p",
+            &p,
             SystemTime::now() + Duration::from_secs(3600),
         );
         assert!(!b.session_active("token-p"));
@@ -531,14 +541,14 @@ pub mod tests {
 /// permissions of `role` only, and `admin` only when `role` is `admin`. None
 /// when the principal does not hold `role`.
 pub fn role_caller(
-    principal_id: &str,
+    principal_id: &wamn_identity_protocol::PrincipalId,
     role: &str,
     held: &std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
 ) -> Option<wamn_engine::flow_http_routing::AuthenticatedCaller> {
     let permissions = held.get(role)?;
     Some(wamn_engine::flow_http_routing::AuthenticatedCaller::new(
         "workflow",
-        principal_id,
+        *principal_id,
         wamn_engine::flow_http_routing::CredentialType::QueuedService,
         role == wamn_identity_protocol::ADMIN_ROLE,
         permissions.iter().cloned().collect(),

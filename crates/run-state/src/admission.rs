@@ -31,11 +31,11 @@ pub struct RunAdmission<'a> {
     pub workflow_id: &'a str,
     pub workflow_version: i32,
     pub wiring_hash: &'a wamn_digest::Digest,
-    pub execution_principal_id: &'a str,
+    pub execution_principal_id: &'a wamn_identity_protocol::PrincipalId,
     pub execution_role: &'a str,
     pub trigger: RunTrigger,
     pub invoked_by: &'a str,
-    pub invoked_by_user_id: Option<&'a str>,
+    pub invoked_by_user_id: Option<&'a wamn_identity_protocol::PrincipalId>,
     pub node_digests: &'a serde_json::Value,
     pub idempotency_key: &'a str,
     pub input: &'a serde_json::Value,
@@ -203,7 +203,7 @@ pub async fn event_workflows(
 pub async fn history_actor(
     connection: &mut sqlx::PgConnection,
     envelope: &wamn_event_wire::Envelope,
-) -> Result<Option<String>, ProductionLeaseError> {
+) -> Result<Option<wamn_identity_protocol::PrincipalId>, ProductionLeaseError> {
     let schemas = sqlx::query("SELECT n.nspname::text FROM pg_namespace n JOIN pg_class c ON c.relnamespace = n.oid WHERE c.relname = 'wamn_entities' AND c.relkind = 'r' ORDER BY 1").fetch_all(&mut *connection).await
         .map_err(|error| ProductionLeaseError::postgres("read entity map schemas", &error))?;
     for row in schemas {
@@ -259,7 +259,7 @@ pub async fn history_actor(
             postgres_protocol::escape::escape_identifier(&table)
         );
         let sql = format!(
-            "WITH image AS (SELECT to_jsonb(jsonb_populate_record(NULL::{table}, $3::text::jsonb)) AS value) SELECT h.changed_by::text FROM {history} h WHERE h.transaction_id % 4294967296 = $1 AND h.type = $2 AND h.row_key = (SELECT jsonb_object_agg(a.attname, CASE WHEN a.atttypid = 'timestamptz'::regtype AND isfinite((image.value ->> a.attname)::timestamptz) THEN to_jsonb(to_char((image.value ->> a.attname)::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) ELSE image.value -> a.attname END) FROM image, pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = $4 AND i.indisprimary) ORDER BY h.position DESC LIMIT 1"
+            "WITH image AS (SELECT to_jsonb(jsonb_populate_record(NULL::{table}, $3::text::jsonb)) AS value) SELECT h.changed_by FROM {history} h WHERE h.transaction_id % 4294967296 = $1 AND h.type = $2 AND h.row_key = (SELECT jsonb_object_agg(a.attname, CASE WHEN a.atttypid = 'timestamptz'::regtype AND isfinite((image.value ->> a.attname)::timestamptz) THEN to_jsonb(to_char((image.value ->> a.attname)::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) ELSE image.value -> a.attname END) FROM image, pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = $4 AND i.indisprimary) ORDER BY h.position DESC LIMIT 1"
         );
         return sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
             .bind(i64::from(envelope.txid))

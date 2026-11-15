@@ -16,7 +16,7 @@ async fn targeted_issuer_grants_execute_on_postgres() -> anyhow::Result<()> {
         .execute(&mut admin)
         .await?;
     let mut url = url::Url::parse(database.url())?;
-    url.set_username(&role).unwrap();
+    url.set_username(role.as_str()).unwrap();
     url.set_password(Some("fixture-password")).unwrap();
     let mut issuer = wamn_postgres::connect(url.as_str()).await?;
     let restricted: bool = sqlx::query_scalar("SELECT NOT rolsuper AND NOT rolbypassrls AND NOT rolcreaterole FROM pg_roles WHERE rolname=current_user").fetch_one(&mut issuer).await?;

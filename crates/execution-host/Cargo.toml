@@ -23,7 +23,7 @@ wamn-control-provision = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-identity-client = { workspace = true }
-wamn-identity-protocol = { workspace = true }
+wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-authority = { workspace = true }
 wamn-connections = { workspace = true }
 wamn-sql = { workspace = true, features = ["wasm_component_model_implements"] }
@@ -75,7 +75,7 @@ wamn-sql = { workspace = true, features = ["test-util"] }
 wamn-http = { workspace = true, features = ["test-util"] }
 wamn-blobstore = { workspace = true, features = ["test-util"] }
 wamn-authentication = { workspace = true, features = ["test-util"] }
-wamn-identity-protocol = { workspace = true }
+wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 wamn-component-composer = { workspace = true }

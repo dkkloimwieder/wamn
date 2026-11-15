@@ -203,7 +203,9 @@ impl Fixture {
     ) -> Result<(), AuthorWorkflowError> {
         let mut transaction = wamn_test_postgres::transaction(
             &mut self.project,
-            ALICE,
+            &ALICE
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
             "admin:author-workflow-fixture",
         )
         .await
@@ -219,7 +221,9 @@ impl Fixture {
                 document,
                 trigger,
                 execution,
-                created_by: ALICE,
+                created_by: &ALICE
+                    .parse::<wamn_identity_protocol::PrincipalId>()
+                    .unwrap(),
                 manifest_digest: &self.digest,
             },
         )
@@ -256,7 +260,9 @@ impl Fixture {
             &triple(),
             &mut self.project,
             &key(id, version),
-            enabler,
+            &enabler
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
             &digest,
             &declared(),
             None,
@@ -442,7 +448,7 @@ async fn enable_requires_the_role_of_the_enabler_and_of_the_workflow_user(pool: 
         "SELECT count(*), min(type), min(email), min(display_name) FROM platform.\"user\" \
               WHERE id = $1::text::uuid",
     )
-    .bind(&wamn_identity_protocol::workflow_user_id().to_string())
+    .bind(&wamn_identity_protocol::workflow_user_id())
     .fetch_one(&mut fixture.project)
     .await
     .unwrap();
@@ -688,7 +694,9 @@ async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool)
         &target,
         &mut fixture.project,
         &key("changed", 1),
-        ALICE,
+        &ALICE
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
         &fixture.digest,
         &declared(),
         Some(&events),
@@ -740,7 +748,9 @@ async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool)
         &target,
         &mut fixture.project,
         &key("changed", 1),
-        ALICE,
+        &ALICE
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
         &fixture.digest,
         &declared(),
         Some(&events),

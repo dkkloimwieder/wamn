@@ -151,12 +151,12 @@ pub async fn session_is_active(
 ) -> Result<bool, IdentityError> {
     let SessionAuthority::Login(login) = &claims.authority;
     sqlx::query("SELECT EXISTS (SELECT 1 FROM identity.principals p \
-                  WHERE p.id=$1::text::uuid AND p.type='user' AND p.status='active' \
+                  WHERE p.id=$1 AND p.type='user' AND p.status='active' \
          AND identity.has_project_access(p.id,$2,$4,$3) \
          AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=$2 AND om.status='active') AND \
-         EXISTS (SELECT 1 FROM identity.password_logins l WHERE l.id=$5::text::uuid \
+         EXISTS (SELECT 1 FROM identity.password_logins l WHERE l.id=$5 \
          AND l.principal_id=p.id AND l.issuer=$6 AND l.audience=$7 AND l.revoked_at IS NULL \
-         AND l.expires_at>clock_timestamp() AND l.renewal_expires_at>clock_timestamp()))").bind(claims.sub.to_string()).bind(&claims.org).bind(project).bind(environment).bind(login.to_string()).bind(&claims.iss).bind(&claims.aud).fetch_one(&mut *client)
+         AND l.expires_at>clock_timestamp() AND l.renewal_expires_at>clock_timestamp()))").bind(claims.sub).bind(&claims.org).bind(project).bind(environment).bind(login).bind(&claims.iss).bind(&claims.aud).fetch_one(&mut *client)
         .await
         .map_err(key_database_error)?
         .try_get(0)

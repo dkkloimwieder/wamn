@@ -176,7 +176,11 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     .await
 }
 
-fn generation(family: WorkloadRoleFamily, project_env_key: &str, database: &str) -> String {
+fn generation(
+    family: WorkloadRoleFamily,
+    project_env_key: &str,
+    database: &str,
+) -> wamn_identity_protocol::LoginName {
     workload_login(
         family,
         WorkloadRoleIdentity::ProjectEnvKey {
@@ -187,7 +191,7 @@ fn generation(family: WorkloadRoleFamily, project_env_key: &str, database: &str)
     .unwrap_or_else(|error| panic!("derive the {} generation identity: {error}", family.label()))
 }
 
-async fn drop_generation_role(admin: &mut Client, role: &str) {
+async fn drop_generation_role(admin: &mut Client, role: &wamn_identity_protocol::LoginName) {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "DO $record_retention$ BEGIN \
@@ -206,7 +210,12 @@ async fn drop_generation_role(admin: &mut Client, role: &str) {
 }
 
 /// Mint one generation through the production prepare builder.
-async fn mint(admin: &mut Client, family: WorkloadRoleFamily, database: &str, role: &str) {
+async fn mint(
+    admin: &mut Client,
+    family: WorkloadRoleFamily,
+    database: &str,
+    role: &wamn_identity_protocol::LoginName,
+) {
     drop_generation_role(admin, role).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::login_sql(
@@ -334,9 +343,9 @@ async fn assert_refused(url: &str, project_env_key: &str, label: &str) {
 }
 
 /// Re-point a connection URL at another role, keeping host, port, and database.
-fn replace_role(url: &str, role: &str, password: &str) -> String {
+fn replace_role(url: &str, role: &wamn_identity_protocol::LoginName, password: &str) -> String {
     let mut input = url::Url::parse(url).expect("parse fixture input");
-    input.set_username(role).unwrap();
+    input.set_username(role.as_str()).unwrap();
     input.set_password(Some(password)).unwrap();
     input.into()
 }

@@ -304,9 +304,7 @@ async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> any
     let plugin = &fixture.plugin;
     // Admission already binds the executor in its existing transaction.
 
-    let actor = wamn_identity_protocol::PlatformComponent::Executor
-        .principal_id()
-        .to_string();
+    let actor = wamn_identity_protocol::PlatformComponent::Executor.principal_id();
     let admitted = plugin
         .executor_write("default", PROJECT_ENV_KEY, async |connection| {
             wamn_events::admission::admit_manual_run(
@@ -358,9 +356,7 @@ async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> any
         admin,
         "wamn_run.run_queue",
         "run_id='history-lease'",
-        &wamn_identity_protocol::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_identity_protocol::PlatformComponent::Provisioning.principal_id(),
         &actor,
     )
     .await;

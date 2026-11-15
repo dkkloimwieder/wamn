@@ -165,7 +165,7 @@ pub async fn database_login(
         .await?;
     }
     let mut url = url::Url::parse(input)?;
-    url.set_username(&login)
+    url.set_username(login.as_str())
         .map_err(|()| anyhow::anyhow!("fixture login"))?;
     url.set_password(Some("database-interface-only"))
         .map_err(|()| anyhow::anyhow!("fixture password"))?;

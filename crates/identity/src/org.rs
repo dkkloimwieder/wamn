@@ -20,20 +20,20 @@ pub const ORG_ADMIN_ROLE: &str = "org-admin";
 
 /// Create the active membership, or make an inactive membership active.
 const ACTIVATE_MEMBERSHIP_SQL: &str = "INSERT INTO identity.org_memberships \
-    (principal_id, org, status) VALUES ($1::text::uuid, $2, 'active') \
+    (principal_id, org, status) VALUES ($1, $2, 'active') \
     ON CONFLICT (principal_id, org) DO UPDATE SET status = 'active' \
     WHERE identity.org_memberships.status <> 'active'";
 
 const ACTIVE_MEMBER_SQL: &str = "SELECT status FROM identity.org_memberships \
-    WHERE principal_id = $1::text::uuid AND org = $2 FOR UPDATE";
+    WHERE principal_id = $1 AND org = $2 FOR UPDATE";
 
 const PROJECT_IN_ORG_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_PROJECT_IN_ORG_SQL;
 
 const ORG_ROLE_SQL: &str = "INSERT INTO identity.org_roles (principal_id, org, role) \
-    VALUES ($1::text::uuid, $2, $3) ON CONFLICT DO NOTHING";
+    VALUES ($1, $2, $3) ON CONFLICT DO NOTHING";
 
 const PROJECT_ADMIN_SQL: &str = "INSERT INTO identity.project_roles \
-    (principal_id, org, project, role) VALUES ($1::text::uuid, $2, $4, $3) ON CONFLICT DO NOTHING";
+    (principal_id, org, project, role) VALUES ($1, $2, $4, $3) ON CONFLICT DO NOTHING";
 
 /// Create the user's active membership of `org`, or make an inactive
 /// membership active. It restores no project, environment or role access.
@@ -44,7 +44,7 @@ pub async fn activate_org_membership(
 ) -> Result<(), IdentityError> {
     let org = require_target_segment("org", org)?;
     sqlx::query(ACTIVATE_MEMBERSHIP_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(&org)
         .execute(&mut *client)
         .await
@@ -60,8 +60,7 @@ pub async fn grant_org_admin(
     org: &str,
 ) -> Result<(), IdentityError> {
     let org = active_member(client, principal_id, org).await?;
-    let principal_text = principal_id.to_string();
-    let principal = principal_text.as_str();
+    let principal = principal_id;
     sqlx::query(ORG_ROLE_SQL)
         .bind(principal)
         .bind(&org)
@@ -96,8 +95,7 @@ pub async fn grant_project_admin(
             format!("project {project} is not a project of org {org}"),
         ));
     }
-    let principal_text = principal_id.to_string();
-    let principal = principal_text.as_str();
+    let principal = principal_id;
     let one = Some(project.as_str());
     sqlx::query(PROJECT_ADMIN_SQL)
         .bind(principal)
@@ -144,7 +142,7 @@ pub async fn grant_member(
 }
 
 const HOLDS_ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles \
-    WHERE principal_id = $1::text::uuid AND org = $2 AND role = $3)";
+    WHERE principal_id = $1 AND org = $2 AND role = $3)";
 
 /// Revoke a membership of one environment. The user's org membership and
 /// other environments stay. While `org-admin` or `project-admin` covers the
@@ -178,7 +176,7 @@ pub async fn revoke_member(
 }
 
 const DROP_PROJECT_ADMIN_SQL: &str = "DELETE FROM identity.project_roles \
-    WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND role = $4";
+    WHERE principal_id = $1 AND org = $2 AND project = $3 AND role = $4";
 
 /// Revoke `project-admin` in one project. Environment memberships stay.
 /// While the user holds `org-admin`, the revoke is refused.
@@ -193,9 +191,9 @@ pub async fn revoke_project_admin(
     lock_membership(client, principal_id, &org).await?;
     let project = require_target_segment("project", project)?;
     refuse_under_org_admin(client, principal_id, &org).await?;
-    drops.identity(principal_id.to_string().as_str());
+    drops.identity(principal_id);
     sqlx::query(DROP_PROJECT_ADMIN_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(&org)
         .bind(&project)
         .bind(control::PROJECT_ADMIN_ROLE)
@@ -213,7 +211,7 @@ async fn refuse_under_org_admin(
     org: &str,
 ) -> Result<(), IdentityError> {
     let covered: bool = sqlx::query(HOLDS_ORG_ADMIN_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(org)
         .bind(ORG_ADMIN_ROLE)
         .fetch_one(&mut *client)
@@ -281,27 +279,27 @@ pub(crate) async fn active_member(
 }
 
 const REACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET status = 'active' \
-    WHERE principal_id = $1::text::uuid AND org = $2 AND status <> 'active'";
+    WHERE principal_id = $1 AND org = $2 AND status <> 'active'";
 
 const DROP_ENV_MEMBERSHIPS_SQL: &str = "DELETE FROM identity.project_env_memberships \
-    WHERE principal_id = $1::text::uuid AND org = $2";
+    WHERE principal_id = $1 AND org = $2";
 
 /// Every project role in the org, or only `$3` when it names one.
 const DROP_PROJECT_ROLES_SQL: &str = "DELETE FROM identity.project_roles \
-    WHERE principal_id = $1::text::uuid AND org = $2 AND ($3::text IS NULL OR role = $3)";
+    WHERE principal_id = $1 AND org = $2 AND ($3::text IS NULL OR role = $3)";
 
 /// Every org role in the org, or only `$3` when it names one.
 const DROP_ORG_ROLES_SQL: &str = "DELETE FROM identity.org_roles \
-    WHERE principal_id = $1::text::uuid AND org = $2 AND ($3::text IS NULL OR role = $3)";
+    WHERE principal_id = $1 AND org = $2 AND ($3::text IS NULL OR role = $3)";
 
 const DEACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET status = 'inactive' \
-    WHERE principal_id = $1::text::uuid AND org = $2 AND status <> 'inactive'";
+    WHERE principal_id = $1 AND org = $2 AND status <> 'inactive'";
 
-const ORG_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name, m.status, \
+const ORG_USERS_SQL: &str = "SELECT p.id, p.email, p.display_name, m.status, \
     EXISTS (SELECT 1 FROM identity.org_roles o \
         WHERE o.principal_id = p.id AND o.org = $1 AND o.role = $2) \
     FROM identity.org_memberships m JOIN identity.principals p ON p.id = m.principal_id \
-    WHERE m.org = $1 AND ($3::text IS NULL OR (p.email, p.id) > ($3, $4::text::uuid)) \
+    WHERE m.org = $1 AND ($3::text IS NULL OR (p.email, p.id) > ($3, $4)) \
     ORDER BY p.email, p.id LIMIT $5";
 
 /// The grants an invitation asks for, beside the org membership.
@@ -346,7 +344,7 @@ pub async fn reactivate_org_membership(
 ) -> Result<(), IdentityError> {
     let org = member(client, principal_id, org).await?;
     sqlx::query(REACTIVATE_MEMBERSHIP_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(&org)
         .execute(&mut *client)
         .await
@@ -366,8 +364,7 @@ pub async fn deactivate_org_membership(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = member(client, principal_id, org).await?;
-    let principal_text = principal_id.to_string();
-    let principal = principal_text.as_str();
+    let principal = principal_id;
     drops.identity(principal);
     let every: Option<&str> = None;
     sqlx::query(DROP_ENV_MEMBERSHIPS_SQL)
@@ -385,15 +382,13 @@ pub async fn deactivate_org_membership(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    sqlx::query(
-        "DELETE FROM identity.environment_roles WHERE principal_id=$1::text::uuid AND org=$2",
-    )
-    .bind(principal)
-    .bind(&org)
-    .execute(&mut *client)
-    .await
-    .map(|result| result.rows_affected())
-    .map_err(|error| database_error(&error))?;
+    sqlx::query("DELETE FROM identity.environment_roles WHERE principal_id=$1 AND org=$2")
+        .bind(principal)
+        .bind(&org)
+        .execute(&mut *client)
+        .await
+        .map(|result| result.rows_affected())
+        .map_err(|error| database_error(&error))?;
     sqlx::query(DROP_ORG_ROLES_SQL)
         .bind(principal)
         .bind(&org)
@@ -421,8 +416,7 @@ pub async fn revoke_org_admin(
 ) -> Result<(), IdentityError> {
     let org = require_target_segment("org", org)?;
     lock_membership(client, principal_id, &org).await?;
-    let principal_text = principal_id.to_string();
-    let principal = principal_text.as_str();
+    let principal = principal_id;
     drops.identity(principal);
     sqlx::query(DROP_ORG_ROLES_SQL)
         .bind(principal)
@@ -439,7 +433,7 @@ pub async fn revoke_org_admin(
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct OrgUser {
     /// The user principal.
-    pub principal_id: String,
+    pub principal_id: wamn_identity_protocol::PrincipalId,
     /// The user's email.
     pub email: String,
     /// The user's display name.
@@ -463,7 +457,7 @@ pub async fn org_users_page(
     client: &mut sqlx::PgConnection,
     org: &str,
     after: Option<&str>,
-    after_id: Option<&str>,
+    after_id: Option<&PrincipalId>,
     limit: Option<i64>,
 ) -> Result<Vec<OrgUser>, IdentityError> {
     let org = require_target_segment("org", org)?;
@@ -622,7 +616,7 @@ pub async fn set_environment_status(
 }
 
 const USER_CONTACT_SQL: &str = "SELECT email, display_name FROM identity.principals \
-    WHERE id = $1::text::uuid AND type = 'user'";
+    WHERE id = $1 AND type = 'user'";
 
 /// The email and display name of a user principal, which its application
 /// rows carry.
@@ -631,7 +625,7 @@ pub async fn user_contact(
     principal_id: &PrincipalId,
 ) -> Result<(String, String), IdentityError> {
     let row = sqlx::query(USER_CONTACT_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -699,7 +693,7 @@ const PROJECT_MEMBERS_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ProjectMember {
     /// The user principal.
-    pub principal_id: String,
+    pub principal_id: wamn_identity_protocol::PrincipalId,
     /// The user's email.
     pub email: String,
     /// The user's display name.
@@ -729,7 +723,7 @@ pub async fn project_members_page(
     project: &str,
     environment: Option<&str>,
     after: Option<&str>,
-    after_id: Option<&str>,
+    after_id: Option<&PrincipalId>,
     limit: Option<i64>,
 ) -> Result<Vec<ProjectMember>, IdentityError> {
     let org = require_target_segment("org", org)?;
@@ -789,7 +783,7 @@ pub async fn lock_membership(
     org: &str,
 ) -> Result<Option<String>, IdentityError> {
     sqlx::query(ACTIVE_MEMBER_SQL)
-        .bind(principal.to_string().as_str())
+        .bind(principal)
         .bind(org)
         .fetch_optional(&mut *client)
         .await
@@ -816,7 +810,7 @@ pub async fn grant_environment_admin(
 ) -> Result<(), IdentityError> {
     let org = active_member(client, principal, org).await?;
     let env = require_target_segment("environment", env)?;
-    sqlx::query("INSERT INTO identity.environment_roles (principal_id,org,env,role) VALUES ($1::text::uuid,$2,$3,'environment-admin') ON CONFLICT DO NOTHING").bind(principal.to_string()).bind(&org).bind(&env).execute(&mut *client).await.map(|result| result.rows_affected()).map_err(|error| database_error(&error))?;
+    sqlx::query("INSERT INTO identity.environment_roles (principal_id,org,env,role) VALUES ($1,$2,$3,'environment-admin') ON CONFLICT DO NOTHING").bind(principal).bind(&org).bind(&env).execute(&mut *client).await.map(|result| result.rows_affected()).map_err(|error| database_error(&error))?;
     Ok(())
 }
 /// Revoke only the explicit environment grant.
@@ -830,7 +824,16 @@ pub async fn revoke_environment_admin(
     let org = require_target_segment("org", org)?;
     let env = require_target_segment("environment", env)?;
     lock_membership(client, principal, &org).await?;
-    sqlx::query("DELETE FROM identity.environment_roles WHERE principal_id=$1::text::uuid AND org=$2 AND env=$3").bind(principal.to_string()).bind(&org).bind(&env).execute(&mut *client).await.map(|result| result.rows_affected()).map_err(|error| database_error(&error))?;
-    drops.identity(principal.to_string().as_str());
+    sqlx::query(
+        "DELETE FROM identity.environment_roles WHERE principal_id=$1 AND org=$2 AND env=$3",
+    )
+    .bind(principal)
+    .bind(&org)
+    .bind(&env)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())
+    .map_err(|error| database_error(&error))?;
+    drops.identity(principal);
     Ok(())
 }

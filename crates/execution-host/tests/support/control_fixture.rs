@@ -77,7 +77,7 @@ pub(super) async fn install(admin: &mut Client, admin_url: &str) -> anyhow::Resu
     .await
     .map(drop)?;
     let mut url = url::Url::parse(admin_url)?;
-    url.set_username(&role)
+    url.set_username(role.as_str())
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;
     url.set_password(Some(PASSWORD))
         .map_err(|()| anyhow::anyhow!("set fixture password"))?;
@@ -168,7 +168,7 @@ pub(super) async fn project_database(
         "INSERT INTO platform.\"user\" (id, type, email, display_name) \
              VALUES ($1::text::uuid, 'platform', 'provisioning@example.test', $2)",
     )
-    .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+    .bind(&PlatformComponent::Provisioning.principal_id())
     .bind(&PlatformComponent::Provisioning.principal_name())
     .execute(&mut target)
     .await

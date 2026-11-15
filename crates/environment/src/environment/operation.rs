@@ -95,7 +95,6 @@ pub async fn execute(
     );
     wamn_control_provision::validate_project_env(request.org, request.project, request.env)?;
     let triple = wamn_registry::Triple::new(request.org, request.env, request.project);
-    let actor = actor.to_string();
     match request.operation {
         "deploy" => {
             let analysis = super::apply_selection(
@@ -107,7 +106,7 @@ pub async fn execute(
                 super::document::ReleaseChange::Deploy(
                     request.release.context("deploy requires a release")?,
                 ),
-                Some(&actor),
+                Some(actor),
             )
             .await?;
             Ok(json!({"notices":analysis.notices,"plan":analysis.plan}))
@@ -120,7 +119,7 @@ pub async fn execute(
                     .application
                     .context("rollback requires an application")?,
                 super::document::ReleaseChange::Rollback(request.release),
-                Some(&actor),
+                Some(actor),
             )
             .await?;
             Ok(json!({"notices":analysis.notices,"plan":analysis.plan}))
@@ -133,7 +132,7 @@ pub async fn execute(
                     .application
                     .context("stop requires an application")?,
                 super::document::ReleaseChange::Stop,
-                Some(&actor),
+                Some(actor),
             )
             .await?;
             Ok(json!({"notices":analysis.notices,"plan":analysis.plan}))

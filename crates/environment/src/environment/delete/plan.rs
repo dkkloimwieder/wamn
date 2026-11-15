@@ -25,14 +25,14 @@ pub fn instance_roles(
     triple: &Triple,
     instance: &str,
     project_env_key: &str,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<Vec<wamn_identity_protocol::LoginName>> {
     let (org, project, env) = (
         triple.org.as_str(),
         triple.project.as_str(),
         triple.env.as_str(),
     );
     let database = project_env_database_name(org, project, env, instance);
-    let mut roles = vec![cdc_object_name(org, project, env, instance)];
+    let mut roles = vec![cdc_object_name(org, project, env, instance).parse()?];
     for family in instance_families() {
         let target = match family.identity_type() {
             WorkloadRoleIdentityType::ProjectEnvKey => WorkloadRoleIdentity::ProjectEnvKey {

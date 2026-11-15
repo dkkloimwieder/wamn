@@ -62,7 +62,7 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
     let executor_provision = wamn_control_provision::test_database::login_sql(
         WorkloadRoleFamily::ExecutorPlatform,
         &database,
-        EXECUTOR_LOGIN,
+        &EXECUTOR_LOGIN.parse().unwrap(),
         "executor-test-password",
     );
     success(

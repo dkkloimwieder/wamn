@@ -28,7 +28,7 @@ wamn-authority = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-connections = { workspace = true }
 wamn-engine = { workspace = true }
-wamn-identity-protocol = { workspace = true }
+wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-package-artifact = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-registry = { workspace = true }

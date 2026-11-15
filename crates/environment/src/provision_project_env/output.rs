@@ -112,9 +112,9 @@ pub struct ProvisionedRoute {
     pub database_url: String,
     pub token: String,
     pub token_prefix: String,
-    pub principal_subject: String,
+    pub principal_subject: wamn_identity_protocol::PrincipalId,
     pub management_token: Option<String>,
-    pub management_principal_subject: Option<String>,
+    pub management_principal_subject: Option<wamn_identity_protocol::PrincipalId>,
 }
 
 pub fn read_json(path: &Path) -> anyhow::Result<Value> {

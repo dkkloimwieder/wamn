@@ -63,7 +63,7 @@ impl Fixture {
             .await
             .map(drop)
             .unwrap();
-        let principal: String = sqlx::query("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'").fetch_one(&mut self.credentials.admin).await.unwrap().get(0);
+        let principal: wamn_identity_protocol::PrincipalId = sqlx::query("SELECT c.service_principal_id FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'").fetch_one(&mut self.credentials.admin).await.unwrap().get(0);
         sqlx::raw_sql("RESET ROLE")
             .execute(&mut self.credentials.admin)
             .await
@@ -77,8 +77,8 @@ impl Fixture {
             .execute(&mut client)
             .await
             .expect("begin fixture transaction");
-        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:connection-principal')").bind(&principal).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
-        sqlx::query("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','webhook@example.test') ON CONFLICT DO NOTHING").bind(&principal).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','fixture','admin:connection-principal')").bind(&principal).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+        sqlx::query("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1,'service','webhook@example.test') ON CONFLICT DO NOTHING").bind(&principal).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
         sqlx::raw_sql("COMMIT")
             .execute(&mut client)
             .await
@@ -395,7 +395,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
         .memory
         .connection(PROJECT_ENV_KEY, &connection)
         .unwrap();
-    assert_eq!(old.service_principal_id.to_string(), caller.principal_id());
+    assert_eq!(&old.service_principal_id, caller.principal_id());
 
     // A repeated request needs neither Postgres connection reads nor the store.
     sqlx::raw_sql("REVOKE EXECUTE ON FUNCTION registry.read_env_connections(text,text,text), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_secret(text,text,text,uuid) FROM wamn_conn_reader").execute(&mut fixture.credentials.admin).await.map(drop).unwrap();
@@ -471,7 +471,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(caller.principal_id(), new.service_principal_id.to_string());
+    assert_eq!(caller.principal_id(), &new.service_principal_id);
 }
 
 #[tokio::test]
@@ -490,7 +490,7 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
     )
     .with_authenticator(Arc::<PlatformRouteAuthenticator>::clone(&authenticator));
     let pat = routing_policy(json!({"modes":["pat"]})).with_authenticator(authenticator);
-    let principal: String = sqlx::query("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'").fetch_one(&mut fixture.credentials.admin).await.unwrap().get(0);
+    let principal: wamn_identity_protocol::PrincipalId = sqlx::query("SELECT c.service_principal_id FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'").fetch_one(&mut fixture.credentials.admin).await.unwrap().get(0);
     sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
         .execute(&mut fixture.credentials.admin)
         .await
@@ -506,10 +506,10 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
     .await
     .map(drop)
     .unwrap();
-    sqlx::query("INSERT INTO identity.project_roles(principal_id,org,project,role) VALUES ($1::text::uuid,'acme','host-project','admin')").bind(&principal).execute(&mut fixture.credentials.admin).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("INSERT INTO identity.project_roles(principal_id,org,project,role) VALUES ($1,'acme','host-project','admin')").bind(&principal).execute(&mut fixture.credentials.admin).await.map(|result| result.rows_affected()).unwrap();
     let token = wamn_platform_identity::issue_pat(
         &mut fixture.credentials.admin,
-        &principal.parse().unwrap(),
+        &principal,
         "connection fixture",
         std::time::Duration::from_secs(3600),
     )
@@ -535,7 +535,7 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
                 .unwrap()
                 .unwrap()
                 .principal_id(),
-            principal
+            &principal
         );
     }
     for disable in [

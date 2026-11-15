@@ -12,7 +12,7 @@ pub(super) async fn delete_control_roles(
     admin_url: &str,
     triple: &Triple,
     platform: &crate::environment::Platform,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<Vec<wamn_identity_protocol::LoginName>> {
     let mut admin = connect(admin_url).await?;
     let database: String = sqlx::query("SELECT current_database()")
         .fetch_one(&mut admin)
@@ -59,7 +59,7 @@ pub(super) async fn delete_control_roles(
         let mut owner = connect(&connection.to_json()?).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "DROP OWNED BY {}",
-            postgres_protocol::escape::escape_identifier(&username)
+            postgres_protocol::escape::escape_identifier(username.as_str())
         )))
         .execute(&mut owner)
         .await?;

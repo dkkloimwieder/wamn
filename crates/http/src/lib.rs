@@ -414,11 +414,7 @@ impl ConnectionHttp {
             .postgres
             .scopes
             .read::<wamn_sql::invocation::Authority, _>(component_id, |record| {
-                record
-                    .identity
-                    .user_id
-                    .as_deref()
-                    .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                record.identity.user_id
             })
             .flatten()
             .ok_or(ConnectionError::AttestationInvalid)?;
@@ -447,7 +443,7 @@ impl ConnectionHttp {
     async fn oauth2_token(
         &self,
         facts: &ConnectionFacts,
-        (identity, principal): (&ClientIdentity, uuid::Uuid),
+        (identity, principal): (&ClientIdentity, wamn_identity_protocol::PrincipalId),
         authority: &HttpConnectionAuthority,
         (auth_type, parameters, material): (&str, &serde_json::Value, Option<&str>),
         key: &wamn_connections::oauth_token::CacheKey,

@@ -18,7 +18,7 @@ const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.p
     ON r.user_id = u.id \
     LEFT JOIN platform.permission p \
     ON p.role_name = r.role_name \
-    WHERE u.id = $1::text::uuid";
+    WHERE u.id = $1";
 
 const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_role.role_name, permission.permission \
     FROM platform.\"user\" AS \"user\" \
@@ -26,7 +26,7 @@ const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_role.role_name, permis
       ON user_role.user_id = \"user\".id \
     LEFT JOIN platform.permission AS permission \
       ON permission.role_name = user_role.role_name \
-    WHERE \"user\".id = $1::text::uuid AND \"user\".status = 'active'";
+    WHERE \"user\".id = $1 AND \"user\".status = 'active'";
 
 fn principal_grants_from_rows(
     rows: &[sqlx::postgres::PgRow],
@@ -49,7 +49,7 @@ fn principal_grants_from_rows(
 /// Read the current user, roles and permissions without choosing the transaction identity.
 pub async fn principal_grants(
     connection: &mut sqlx::PgConnection,
-    user_id: &str,
+    user_id: &wamn_identity_protocol::PrincipalId,
 ) -> Result<PrincipalGrants, sqlx::Error> {
     let rows = sqlx::query(PRINCIPAL_GRANTS_SQL)
         .bind(user_id)
@@ -61,7 +61,7 @@ pub async fn principal_grants(
 /// Read the active user's role and permission rows for a host route.
 pub async fn user_operation_permissions(
     connection: &mut sqlx::PgConnection,
-    user_id: &str,
+    user_id: &wamn_identity_protocol::PrincipalId,
 ) -> Result<HeldOperationGrants, sqlx::Error> {
     let rows = sqlx::query(USER_OPERATION_PERMISSIONS_SQL)
         .bind(user_id)

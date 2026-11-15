@@ -11,7 +11,7 @@ use wamn_control_provision::{
 pub struct Fixture {
     pub admin: sqlx::PgConnection,
     pub url: String,
-    pub login: String,
+    pub login: wamn_identity_protocol::LoginName,
 }
 
 pub async fn execute(connection: &mut sqlx::PgConnection, statement: &str) {
@@ -78,7 +78,7 @@ pub async fn prepare(pool: &sqlx::PgPool, family: WorkloadRoleFamily) -> Fixture
         .await;
     }
     let mut url = url;
-    url.set_username(&login).unwrap();
+    url.set_username(login.as_str()).unwrap();
     url.set_password(Some("grants-test")).unwrap();
     Fixture {
         admin,
@@ -127,7 +127,7 @@ pub async fn rules(fixture: &mut Fixture, family: WorkloadRoleFamily) {
             &fixture.url,
             &format!(
                 "ALTER ROLE {} {attribute}",
-                escape_identifier(&fixture.login)
+                escape_identifier(fixture.login.as_str())
             ),
         )
         .await;

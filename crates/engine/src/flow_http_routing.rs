@@ -48,7 +48,7 @@ const ENVIRONMENT_INACTIVE_CODE: &str = "environment-inactive";
 #[derive(Clone)]
 pub struct AuthenticatedCaller {
     attachment_id: Box<str>,
-    principal_id: Box<str>,
+    principal_id: wamn_identity_protocol::PrincipalId,
     credential_type: CredentialType,
     admin: bool,
     permissions: Arc<HashSet<String>>,
@@ -91,7 +91,7 @@ impl AuthenticatedCaller {
     /// (docs/architecture/execution.md#environment-workflows).
     pub fn new(
         attachment_id: impl Into<Box<str>>,
-        principal_id: impl Into<Box<str>>,
+        principal_id: wamn_identity_protocol::PrincipalId,
         credential_type: CredentialType,
         admin: bool,
         permissions: HashSet<String>,
@@ -99,7 +99,7 @@ impl AuthenticatedCaller {
     ) -> Self {
         Self {
             attachment_id: attachment_id.into(),
-            principal_id: principal_id.into(),
+            principal_id,
             credential_type,
             admin,
             permissions: Arc::new(permissions),
@@ -113,7 +113,7 @@ impl AuthenticatedCaller {
     }
 
     /// Return the opaque platform principal used by router traces and refusals.
-    pub fn principal_id(&self) -> &str {
+    pub fn principal_id(&self) -> &wamn_identity_protocol::PrincipalId {
         &self.principal_id
     }
 
@@ -817,7 +817,7 @@ mod tests {
     fn originating_caller_holds_its_references_or_admin() {
         let caller = AuthenticatedCaller {
             attachment_id: "widget-http".into(),
-            principal_id: "11111111-1111-4111-8111-111111111111".into(),
+            principal_id: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
             credential_type: CredentialType::Pat,
             admin: false,
             permissions: Arc::new(HashSet::from(["platform-fixture:widget/get".to_string()])),
@@ -826,7 +826,9 @@ mod tests {
         assert_eq!(caller.attachment_id(), "widget-http");
         assert_eq!(
             caller.principal_id(),
-            "11111111-1111-4111-8111-111111111111"
+            &"11111111-1111-4111-8111-111111111111"
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap()
         );
         // A stored reference holds the operation at any served version.
         assert!(caller.permits("platform-fixture:widget/get@1.0.0"));

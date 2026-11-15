@@ -122,7 +122,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let executor_generation = wamn_control_provision::test_database::login_sql(
         WorkloadRoleFamily::ExecutorPlatform,
         &database,
-        EXECUTOR_LOGIN,
+        &EXECUTOR_LOGIN.parse().unwrap(),
         "transitions-test-password",
     );
     success(
@@ -160,9 +160,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         ),
     );
 
-    let actor = wamn_identity_protocol::PlatformComponent::Executor
-        .principal_id()
-        .to_string();
+    let actor = wamn_identity_protocol::PlatformComponent::Executor.principal_id();
     let mut admin = wamn_postgres::connect(&url).await?;
     let mut worker = wamn_postgres::connect(&url).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
@@ -595,9 +593,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         .await?;
     let mut retention = wamn_test_postgres::transaction(
         &mut admin,
-        &wamn_identity_protocol::PlatformComponent::AuditRetention
-            .principal_id()
-            .to_string(),
+        &wamn_identity_protocol::PlatformComponent::AuditRetention.principal_id(),
         "admin:prune-run-history",
     )
     .await?;

@@ -207,28 +207,23 @@ fn a_serving_host_refuses_an_invalid_declared_project() {
 // wamn-cjv.2 — the in-band identity/role mutation guard.
 #[test]
 fn validate_identity_rejects_malformed_identities() {
-    const U1: &str = "11111111-1111-4111-8111-111111111111";
     assert!(
         validate_session_identity(
             "test--dev--fixture",
             Some("public"),
             Some("owner-1"),
             Some("inspector"),
-            Some(U1),
             Some("platform-fixture:widget/update@1.0.0"),
-            Some("platform_fixture"),
+            Some("platform_fixture")
         )
         .is_ok()
     );
-    assert!(
-        validate_session_identity("test--dev--fixture", None, None, None, None, None, None).is_ok()
-    );
-    assert!(validate_session_identity("bad'project", None, None, None, None, None, None).is_err());
+    assert!(validate_session_identity("test--dev--fixture", None, None, None, None, None).is_ok());
+    assert!(validate_session_identity("bad'project", None, None, None, None, None).is_err());
     assert!(
         validate_session_identity(
             "test--dev--fixture",
             Some("has-hyphen"),
-            None,
             None,
             None,
             None,
@@ -243,62 +238,21 @@ fn validate_identity_rejects_malformed_identities() {
             Some("bad;runner"),
             None,
             None,
-            None,
             None
         )
         .is_err()
     );
     // `''` is the base denial policy, never an identity.
     assert!(
-        validate_session_identity("test--dev--fixture", None, None, Some(""), None, None, None)
-            .is_err()
-    );
-    // A non-uuid user id would raise 22P02 inside every ownership predicate.
-    assert!(
-        validate_session_identity(
-            "test--dev--fixture",
-            None,
-            None,
-            None,
-            Some("not-a-uuid"),
-            None,
-            None
-        )
-        .is_err()
-    );
-    assert!(
-        validate_session_identity(
-            "test--dev--fixture",
-            None,
-            None,
-            None,
-            Some(&U1[..35]),
-            None,
-            None
-        )
-        .is_err()
-    );
-    assert!(
-        validate_session_identity(
-            "test--dev--fixture",
-            None,
-            None,
-            None,
-            Some(&format!("{U1}-1")),
-            None,
-            None
-        )
-        .is_err()
+        validate_session_identity("test--dev--fixture", None, None, Some(""), None, None).is_err()
     );
     // `''` is the unbound operation, never an identity.
     assert!(
-        validate_session_identity("test--dev--fixture", None, None, None, None, Some(""), None)
-            .is_err()
+        validate_session_identity("test--dev--fixture", None, None, None, Some(""), None).is_err()
     );
     // `''` is the unbound application, never an identity.
     assert!(
-        validate_session_identity("test--dev--fixture", None, None, None, None, None, Some(""))
-            .is_err()
+        validate_session_identity("test--dev--fixture", None, None, None, None, Some("")).is_err()
     );
 }
 
@@ -449,7 +403,7 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
         pg.set_schema(c, "s_run").unwrap();
         pg.set_runner(c, "owner-1").unwrap();
         pg.set_role(c, "inspector").unwrap();
-        pg.set_user_id(c, "6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b")
+        pg.set_user_id(c, &"6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b".parse().unwrap())
             .unwrap();
         pg.set_operation(c, "platform-fixture:widget/update@1.0.0")
             .unwrap();
@@ -504,8 +458,8 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
         Some("inspector")
     );
     assert_eq!(
-        pg.user_id_for("wl-b-component-0").as_deref(),
-        Some("6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b")
+        pg.user_id_for("wl-b-component-0"),
+        Some("6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b".parse().unwrap())
     );
     assert_eq!(
         pg.operation_for("wl-b-component-0").as_deref(),
@@ -782,7 +736,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller(pool: sqlx::P
     pg.set_project_env_key(COMPONENT, PROJECT_ENV_KEY).unwrap();
     pg.set_schema(COMPONENT, &schema).unwrap();
     pg.set_role(COMPONENT, "inspector").unwrap();
-    pg.set_user_id(COMPONENT, U1).unwrap();
+    pg.set_user_id(COMPONENT, &U1.parse().unwrap()).unwrap();
 
     // CONTROL: the table is REACHABLE on this path — an aggregate returns its
     // one row however many rows RLS filtered away, and a wrong search_path or
@@ -880,7 +834,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_identity(pool: sql
     pg.set_project_env_key(COMPONENT, PROJECT_ENV_KEY).unwrap();
     pg.set_schema(COMPONENT, &schema).unwrap();
     pg.set_role(COMPONENT, "inspector").unwrap();
-    pg.set_user_id(COMPONENT, U1).unwrap();
+    pg.set_user_id(COMPONENT, &U1.parse().unwrap()).unwrap();
 
     // The real transaction keeps its caller even when guest SQL sets a role.
     let (mut conn, _pp) = pg
@@ -895,7 +849,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_identity(pool: sql
         Some(&schema),
         None,
         Some("inspector"),
-        Some(U1),
+        Some(&U1.parse().unwrap()),
         None,
         None,
         None,
@@ -1283,7 +1237,7 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     let identity = |project_env_key: &str| SessionIdentity {
         project_env_key: project_env_key.to_string(),
         schema: Some(schema.clone()),
-        user_id: Some(LIVE_PRINCIPAL.into()),
+        user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
         ..SessionIdentity::default()
     };
     pg.bind_session_identity(scope_a, &identity(PROJECT_ENV_KEY_A))
@@ -1438,7 +1392,7 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sql
         &SessionIdentity {
             project_env_key: PROJECT_ENV_KEY.to_string(),
             schema: Some(schema.clone()),
-            user_id: Some(LIVE_PRINCIPAL.to_string()),
+            user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
             ..SessionIdentity::default()
         },
     )
@@ -1502,7 +1456,7 @@ async fn live_reads_and_writes_bind_the_executing_principal(pool: sqlx::PgPool) 
         scope,
         &SessionIdentity {
             project_env_key: PROJECT_ENV_KEY.to_string(),
-            user_id: Some(LIVE_PRINCIPAL.to_string()),
+            user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
             ..SessionIdentity::default()
         },
     )
@@ -1539,7 +1493,7 @@ async fn live_reads_and_writes_bind_the_executing_principal(pool: sqlx::PgPool) 
         scope,
         &SessionIdentity {
             project_env_key: PROJECT_ENV_KEY.into(),
-            user_id: Some(PRINCIPAL_B.into()),
+            user_id: Some(PRINCIPAL_B.parse().unwrap()),
             ..SessionIdentity::default()
         },
     )
@@ -1604,37 +1558,42 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row(pool: sqlx::PgPool) {
     })
     .expect("the plugin builds from the guest generation's url");
     let scope = "unprovisioned-instance-0";
-    let identity = |principal: &str| SessionIdentity {
+    let identity = |principal: wamn_identity_protocol::PrincipalId| SessionIdentity {
         project_env_key: PROJECT_ENV_KEY.to_string(),
-        user_id: Some(principal.to_string()),
+        user_id: Some(principal),
         ..SessionIdentity::default()
     };
 
     let refused = pg
-        .bind_session_identity(scope, &identity(ABSENT_PRINCIPAL))
+        .bind_session_identity(scope, &identity(ABSENT_PRINCIPAL.parse().unwrap()))
         .await
         .expect_err("a principal with no user row is refused");
     let denial = refused
         .downcast_ref::<UnprovisionedPrincipal>()
         .expect("the refusal names the missing user row");
-    assert_eq!(denial.principal_id(), ABSENT_PRINCIPAL);
+    assert_eq!(
+        denial.principal_id(),
+        &ABSENT_PRINCIPAL
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap()
+    );
     assert_eq!(denial.project_env_key(), PROJECT_ENV_KEY);
     assert_eq!(denial.project(), DEFAULT_PROJECT);
 
     // CONTROL: the provisioned principal binds.
-    pg.bind_session_identity(scope, &identity(LIVE_PRINCIPAL))
+    pg.bind_session_identity(scope, &identity(LIVE_PRINCIPAL.parse().unwrap()))
         .await
         .expect("a provisioned principal binds");
-    assert_eq!(pg.user_id_for(scope), Some(LIVE_PRINCIPAL.to_string()));
+    assert_eq!(pg.user_id_for(scope), Some(LIVE_PRINCIPAL.parse().unwrap()));
     pg.revoke_session_identity(scope);
 
     // And a platform principal is a principal like any other.
-    pg.bind_session_identity(scope, &identity(LIVE_PLATFORM_PRINCIPAL))
+    pg.bind_session_identity(scope, &identity(LIVE_PLATFORM_PRINCIPAL.parse().unwrap()))
         .await
         .expect("the platform principal's own row binds");
     assert_eq!(
         pg.user_id_for(scope),
-        Some(LIVE_PLATFORM_PRINCIPAL.to_string())
+        Some(LIVE_PLATFORM_PRINCIPAL.parse().unwrap())
     );
 
     drop(pg);
@@ -1688,7 +1647,7 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears(pool: sq
     let scope = "removed-instance-0";
     let identity = SessionIdentity {
         project_env_key: PROJECT_ENV_KEY.to_string(),
-        user_id: Some(LIVE_PRINCIPAL.to_string()),
+        user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
         ..SessionIdentity::default()
     };
     pg.bind_session_identity(scope, &identity)
@@ -1696,9 +1655,15 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears(pool: sq
         .expect("the provisioned principal binds");
 
     let mut admin = connect_raw(admin_url).await;
-    let mut removal = wamn_test_postgres::transaction(&mut admin, LIVE_PRINCIPAL, "admin:fixture")
-        .await
-        .unwrap();
+    let mut removal = wamn_test_postgres::transaction(
+        &mut admin,
+        &LIVE_PRINCIPAL
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
+        "admin:fixture",
+    )
+    .await
+    .unwrap();
     sqlx::query("DELETE FROM platform.\"user\" WHERE id = $1::text::uuid")
         .bind(&LIVE_PRINCIPAL)
         .execute(&mut *removal)
@@ -1708,7 +1673,7 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears(pool: sq
     removal.commit().await.unwrap();
     assert_eq!(
         pg.user_id_for(scope),
-        Some(LIVE_PRINCIPAL.to_string()),
+        Some(LIVE_PRINCIPAL.parse().unwrap()),
         "the live binding still carries the principal it read"
     );
 
@@ -1769,7 +1734,7 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgP
     let scope = "dropped-instance-0";
     let identity = SessionIdentity {
         project_env_key: PROJECT_ENV_KEY.to_string(),
-        user_id: Some(LIVE_PRINCIPAL.to_string()),
+        user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
         ..SessionIdentity::default()
     };
     let cached_at = std::time::Instant::now();
@@ -1778,7 +1743,7 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgP
         .expect("the provisioned principal binds");
     assert_eq!(
         pg.auth_cache()
-            .grants(PROJECT_ENV_KEY, LIVE_PRINCIPAL)
+            .grants(PROJECT_ENV_KEY, &LIVE_PRINCIPAL.parse().unwrap())
             .unwrap()
             .present,
         true,
@@ -1786,10 +1751,13 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgP
     );
 
     let mut admin = connect_raw(admin_url).await;
-    let mut removal =
-        wamn_test_postgres::transaction(&mut admin, LIVE_PRINCIPAL, "admin:remove-user")
-            .await
-            .expect("bind the fixture principal");
+    let mut removal = wamn_test_postgres::transaction(
+        &mut admin,
+        &LIVE_PRINCIPAL.parse().unwrap(),
+        "admin:remove-user",
+    )
+    .await
+    .expect("bind the fixture principal");
     sqlx::query("DELETE FROM platform.\"user\" WHERE id = $1::text::uuid")
         .bind(&LIVE_PRINCIPAL)
         .execute(&mut *removal)
@@ -1798,11 +1766,11 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgP
         .expect("remove the user row after issuance");
     removal.commit().await.expect("commit the removed user");
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
-    drops.principal(PROJECT_ENV_KEY, LIVE_PRINCIPAL);
+    drops.principal(PROJECT_ENV_KEY, &LIVE_PRINCIPAL.parse().unwrap());
     writer.publish(drops).await;
     wamn_authority::auth_cache::test_util::until("the drop reaches the memory", || {
         pg.auth_cache()
-            .grants(PROJECT_ENV_KEY, LIVE_PRINCIPAL)
+            .grants(PROJECT_ENV_KEY, &LIVE_PRINCIPAL.parse().unwrap())
             .is_err()
     })
     .await;
@@ -1911,7 +1879,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     let scope = "operation-instance-1";
     let identity = SessionIdentity {
         project_env_key: PROJECT_ENV_KEY.to_string(),
-        user_id: Some(LIVE_PRINCIPAL.to_string()),
+        user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
         operation: Some(OPERATION.to_string()),
         ..SessionIdentity::default()
     };
@@ -2055,7 +2023,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
     .expect("the plugin builds from the guest generation's url");
     let identity = |application: &str| SessionIdentity {
         project_env_key: PROJECT_ENV_KEY.to_string(),
-        user_id: Some(LIVE_PRINCIPAL.to_string()),
+        user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
         application: Some(application.to_string()),
         ..SessionIdentity::default()
     };
@@ -2155,7 +2123,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot(pool: sqlx::PgPoo
         scope,
         &SessionIdentity {
             project_env_key: PROJECT_ENV_KEY.to_string(),
-            user_id: Some(LIVE_PRINCIPAL.into()),
+            user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
             ..SessionIdentity::default()
         },
     )
@@ -2317,13 +2285,17 @@ async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_u
     ))).execute(&mut admin).await.map(drop).unwrap();
     let user = wamn_authentication::authorization::principal_grants(
         &mut admin,
-        "00000000-0000-4000-8000-000000000081",
+        &"00000000-0000-4000-8000-000000000081"
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
     )
     .await
     .unwrap();
     let service = wamn_authentication::authorization::principal_grants(
         &mut admin,
-        "00000000-0000-4000-8000-000000000082",
+        &"00000000-0000-4000-8000-000000000082"
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
     )
     .await
     .unwrap();
@@ -2355,7 +2327,9 @@ async fn workflow_caller_retains_typed_connection_unavailable() -> anyhow::Resul
         .workflow_node_caller(
             "default",
             "org--dev--a",
-            "00000000-0000-4000-8000-000000000081",
+            &"00000000-0000-4000-8000-000000000081"
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
             "reader",
         )
         .await
@@ -2400,7 +2374,7 @@ async fn live_operation_reads_keep_identity_and_refuse_writes(pool: sqlx::PgPool
         SCOPE,
         &SessionIdentity {
             project_env_key: PROJECT.into(),
-            user_id: Some(LIVE_PRINCIPAL.into()),
+            user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
             operation: Some("admin:read-probe".into()),
             application: Some("fixture".into()),
             ..SessionIdentity::default()

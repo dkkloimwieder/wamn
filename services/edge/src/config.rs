@@ -201,7 +201,7 @@ pub struct DeviceConfig {
     /// records and must name no idempotency key.
     pub attachment: String,
     /// The fixed local principal of every device call.
-    pub principal: String,
+    pub principal: wamn_identity_protocol::PrincipalId,
     /// The role in `grants.json` whose permissions the principal holds.
     pub role: String,
     pub serial: SerialConfig,

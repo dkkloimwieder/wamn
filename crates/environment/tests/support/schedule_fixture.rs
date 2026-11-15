@@ -336,7 +336,7 @@ pub async fn targeted_postgres(admin: &mut Client, url: &str) -> (Arc<WamnPostgr
         .map(drop)
         .unwrap();
         let mut login = url::Url::parse(url).unwrap();
-        login.set_username(&role).unwrap();
+        login.set_username(role.as_str()).unwrap();
         login.set_password(Some(PASSWORD)).unwrap();
         if family == WorkloadRoleFamily::ExecutorPlatform {
             executor_url = login.to_string();
@@ -402,7 +402,9 @@ impl Fixture {
                 document: &document,
                 trigger,
                 execution,
-                created_by: READER,
+                created_by: &READER
+                    .parse::<wamn_identity_protocol::PrincipalId>()
+                    .unwrap(),
                 manifest_digest: &self.digest,
             },
         )
@@ -423,7 +425,9 @@ impl Fixture {
                 workflow_id: id,
                 version: 1,
             },
-            enabler,
+            &enabler
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
             &self.digest,
             &declared(),
             None,

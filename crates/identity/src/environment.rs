@@ -25,30 +25,37 @@ pub async fn fill(
     fill_platform(&mut project, &domain).await?;
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     let mut principals = BTreeSet::new();
-    for row in sqlx::query("SELECT DISTINCT p.id::text, p.subject, p.display_name FROM identity.project_roles r JOIN identity.principals p ON p.id=r.principal_id WHERE r.org=$1 AND r.project=$2 AND p.type='service' AND p.status='active'")
+    for row in sqlx::query("SELECT DISTINCT p.id, p.subject, p.display_name FROM identity.project_roles r JOIN identity.principals p ON p.id=r.principal_id WHERE r.org=$1 AND r.project=$2 AND p.type='service' AND p.status='active'")
         .bind(target.org).bind(target.project).fetch_all(&mut *system).await? {
-        let id: String = row.get(0);
-        let principal_id = id.parse()?;
+        let principal_id: wamn_identity_protocol::PrincipalId = row.get(0);
         let subject: String = row.get(1);
         let display_name: String = row.get(2);
-        let present: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM platform.\"user\" WHERE id=$1::text::uuid)")
-            .bind(&id).fetch_one(&mut *project).await?;
+        let present: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM platform.\"user\" WHERE id=$1)")
+            .bind(principal_id).fetch_one(&mut *project).await?;
         if !present {
             application::write_service(&mut project, target.project_env_key, ApplicationUser { principal_id: &principal_id, email: &format!("{subject}@{domain}"), display_name: &display_name }, &mut drops).await?;
         }
-        principals.insert(id);
+        principals.insert(principal_id);
     }
-    principals.extend(sqlx::query_scalar::<_, String>("SELECT id::text FROM identity.principals WHERE identity.has_project_access(id,$1,$2,$3)").bind(target.org).bind(target.env).bind(target.project).fetch_all(&mut *system).await?);
     principals.extend(
-        sqlx::query_scalar::<_, String>(
-            "SELECT id::text FROM platform.\"user\" WHERE type IN ('user','service')",
+        sqlx::query_scalar::<_, wamn_identity_protocol::PrincipalId>(
+            "SELECT id FROM identity.principals WHERE identity.has_project_access(id,$1,$2,$3)",
+        )
+        .bind(target.org)
+        .bind(target.env)
+        .bind(target.project)
+        .fetch_all(&mut *system)
+        .await?,
+    );
+    principals.extend(
+        sqlx::query_scalar::<_, wamn_identity_protocol::PrincipalId>(
+            "SELECT id FROM platform.\"user\" WHERE type IN ('user','service')",
         )
         .fetch_all(&mut *project)
         .await?,
     );
     for id in principals {
-        application::project_authority(&mut system, &mut project, target, &id.parse()?, &mut drops)
-            .await?;
+        application::project_authority(&mut system, &mut project, target, &id, &mut drops).await?;
     }
     ensure!(
         !target.project_env_key.is_empty(),

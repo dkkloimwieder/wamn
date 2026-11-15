@@ -422,9 +422,15 @@ async fn generation(
     }
     let result = result?;
     drops.identity(
-        context["principal_id"]
+        &context["principal_id"]
             .as_str()
-            .expect("database principal"),
+            .expect("database principal")
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .map_err(|source| ConnectionError {
+                code: "invalid_input",
+                field: "principal_id",
+                source: Some(Box::new(source)),
+            })?,
     );
     Ok(result)
 }

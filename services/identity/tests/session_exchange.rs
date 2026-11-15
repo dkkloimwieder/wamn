@@ -78,7 +78,7 @@ struct Fixture {
     environments: Vec<Database>,
     targets: Vec<SessionTarget>,
     issuer_url: String,
-    issuer_role: String,
+    issuer_role: wamn_identity_protocol::LoginName,
     roles: Vec<String>,
 }
 
@@ -204,7 +204,10 @@ async fn verify_response(
     claims
 }
 
-async fn wait_for_blocked_issuer(system: &mut Client, issuer_role: &str) {
+async fn wait_for_blocked_issuer(
+    system: &mut Client,
+    issuer_role: &wamn_identity_protocol::LoginName,
+) {
     tokio::time::timeout(HANG_GUARD, async {
         loop {
             sqlx::query("SELECT pg_stat_clear_snapshot()").fetch_one(&mut *system).await.expect_redacted("refresh backend observation");
@@ -219,7 +222,9 @@ async fn wait_for_blocked_issuer(system: &mut Client, issuer_role: &str) {
 async fn seed_user(client: &mut Client, principal: &Principal, role: &str) {
     let mut transaction = wamn_test_postgres::transaction(
         client,
-        FIXTURE_PRINCIPAL,
+        &FIXTURE_PRINCIPAL
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
         "admin:session-exchange-fixture",
     )
     .await
@@ -259,7 +264,7 @@ async fn setup(raw: &str) -> Fixture {
     assert!(safe, "test needs dedicated PostgreSQL 18 superuser setup");
     let issuer_role = identity_issuer_login(ISSUER).expect_redacted("issuer role");
     let mut roles = vec![
-        issuer_role.clone(),
+        issuer_role.to_string(),
         IDENTITY_ISSUER_ROLE.to_owned(),
         WorkloadRoleFamily::SessionRoleReader.acl_role().to_owned(),
     ];
@@ -290,7 +295,7 @@ async fn setup(raw: &str) -> Fixture {
         )
         .expect_redacted("production target capability");
         assert!(!format!("{target:?}").contains(PASSWORD));
-        roles.push(role);
+        roles.push(role.to_string());
         targets.push(target);
     }
     let databases: Vec<String> = targets
@@ -416,7 +421,7 @@ async fn setup(raw: &str) -> Fixture {
             (&wamn_control_provision::test_database::login_sql(
                 WorkloadRoleFamily::SessionRoleReader,
                 target.connection().database().unwrap().as_str(),
-                target.connection().username().unwrap().as_str(),
+                &target.connection().username().unwrap(),
                 PASSWORD,
             ))
                 .to_string(),
@@ -530,10 +535,11 @@ async fn connect(url: &str) -> Database {
     }
 }
 
-fn login_url(admin: &url::Url, database: &str, role: &str) -> String {
+fn login_url(admin: &url::Url, database: &str, role: &wamn_identity_protocol::LoginName) -> String {
     let mut url = admin.clone();
     url.set_path(&format!("/{database}"));
-    url.set_username(role).expect_redacted("targeted role");
+    url.set_username(role.as_str())
+        .expect_redacted("targeted role");
     url.set_password(Some(PASSWORD))
         .expect_redacted("fixture password");
     url.set_fragment(None);
@@ -604,11 +610,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     .expect_redacted("password user");
     seed_user(&mut fixture.environments[0].client, &alice, "receiver").await;
     grant(&mut fixture.system.client, &alice, "demo", "dev").await;
-    let actor = PlatformComponent::Provisioning
-        .principal_id()
-        .to_string()
-        .parse()
-        .unwrap();
+    let actor = PlatformComponent::Provisioning.principal_id();
     let mut issuer = connect(&fixture.issuer_url).await;
     let invitation = issue_invitation(&mut issuer.client, &actor, alice.id())
         .await
@@ -799,11 +801,7 @@ async fn password_environment_discovery_requires_current_authority() {
     for database in &mut fixture.environments {
         seed_user(&mut database.client, &alice, "receiver").await;
     }
-    let actor = PlatformComponent::Provisioning
-        .principal_id()
-        .to_string()
-        .parse()
-        .unwrap();
+    let actor = PlatformComponent::Provisioning.principal_id();
     let mut issuer = connect(&fixture.issuer_url).await;
     let invitation = issue_invitation(&mut issuer.client, &actor, alice.id())
         .await

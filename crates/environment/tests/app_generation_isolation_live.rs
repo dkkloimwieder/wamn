@@ -67,9 +67,17 @@ async fn connect(url: &str) -> Client {
 /// It returns the server's own error, so the refusal arm reads a SQLSTATE
 /// instead of matching text. A helper that panicked on failure cannot assert the
 /// outcome this test exists for.
-async fn dial(url: &str, database: &str, role: &str, password: &str) -> anyhow::Result<Client> {
+async fn dial(
+    url: &str,
+    database: &str,
+    role: &wamn_identity_protocol::LoginName,
+    password: &str,
+) -> anyhow::Result<Client> {
     let mut config: sqlx::postgres::PgConnectOptions = url.parse().expect("parse the server URL");
-    config = config.database(database).username(role).password(password);
+    config = config
+        .database(database)
+        .username(role.as_str())
+        .password(password);
     let client = wamn_postgres::connect(config.clone()).await?;
 
     Ok(client)
@@ -130,7 +138,7 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
     let mut session = dial(&url, &home, &generation, GENERATION_PROBE_PASSWORD)
         .await
         .expect("the minted generation must open a session on its OWN database");
-    let who: String = sqlx::query("SELECT current_user::text")
+    let who: wamn_identity_protocol::LoginName = sqlx::query("SELECT current_user::text")
         .fetch_one(&mut session)
         .await
         .expect("read the authenticated role")

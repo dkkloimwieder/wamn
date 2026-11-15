@@ -36,6 +36,7 @@ struct Cursor {
 pub struct ListPage {
     limit: Option<usize>,
     cursor: Cursor,
+    after_principal: Option<PrincipalId>,
 }
 
 fn invalid(field: &'static str) -> IdentityError {
@@ -46,19 +47,18 @@ fn invalid(field: &'static str) -> IdentityError {
     )
 }
 
-fn valid_key(order: Order, key: &Value) -> bool {
-    let Some(key) = key.as_array() else {
-        return false;
-    };
+fn parse_key(order: Order, key: &Value) -> Result<Option<PrincipalId>, IdentityError> {
+    let key = key.as_array().ok_or_else(|| invalid("cursor"))?;
     let text = |value: &Value| value.as_str().is_some_and(|text| !text.contains('\0'));
-    match (order, key.as_slice()) {
+    let valid = match (order, key.as_slice()) {
         (Order::Project | Order::Environment, [name]) => text(name),
-        (Order::Principal, [email, id]) => {
-            text(email)
-                && id.as_str().is_some_and(|id| {
-                    id.parse::<PrincipalId>()
-                        .is_ok_and(|parsed| parsed.to_string().as_str() == id)
-                })
+        (Order::Principal, [email, id]) if text(email) => {
+            return id
+                .as_str()
+                .ok_or_else(|| invalid("cursor"))?
+                .parse()
+                .map(Some)
+                .map_err(|_| invalid("cursor"));
         }
         (Order::Audience, [type_, audience]) => {
             matches!(type_.as_u64(), Some(0 | 1))
@@ -70,6 +70,11 @@ fn valid_key(order: Order, key: &Value) -> bool {
                         .is_some())
         }
         _ => false,
+    };
+    if valid {
+        Ok(None)
+    } else {
+        Err(invalid("cursor"))
     }
 }
 
@@ -103,8 +108,8 @@ impl ListPage {
             order,
             key: Value::Null,
         };
-        let cursor = match cursor {
-            None => expected,
+        let (cursor, after_principal) = match cursor {
+            None => (expected, None),
             Some(value) => {
                 let encoded = value
                     .as_str()
@@ -119,17 +124,21 @@ impl ListPage {
                     || decoded.operation != expected.operation
                     || decoded.binding != expected.binding
                     || decoded.order != order
-                    || !valid_key(order, &decoded.key)
                     || URL_SAFE_NO_PAD.encode(canonical_json_bytes(
                         &serde_json::to_value(&decoded).expect("cursor serializes"),
                     )) != encoded
                 {
                     return Err(invalid("cursor"));
                 }
-                decoded
+                let principal = parse_key(order, &decoded.key)?;
+                (decoded, principal)
             }
         };
-        Ok(Self { limit, cursor })
+        Ok(Self {
+            limit,
+            cursor,
+            after_principal,
+        })
     }
 
     /// The extra row establishes whether another page exists. Null means all rows.
@@ -141,6 +150,11 @@ impl ListPage {
     /// The text at a validated key position, or none on the first page.
     pub fn after(&self, index: usize) -> Option<&str> {
         self.cursor.key.get(index).and_then(Value::as_str)
+    }
+
+    /// The principal at the end of the previous page.
+    pub fn after_principal(&self) -> Option<&PrincipalId> {
+        self.after_principal.as_ref()
     }
 
     /// The audience type, or none on the first page.

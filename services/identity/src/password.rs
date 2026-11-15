@@ -71,7 +71,7 @@ use wamn_identity_protocol::wire::{InvitationRequest, UserRequest, UserResponse}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EnrollmentRequest {
-    principal_id: String,
+    principal_id: wamn_identity_protocol::PrincipalId,
     invitation: String,
     password: String,
 }
@@ -319,13 +319,13 @@ async fn handle(
             let principal = request.principal_id;
             let Ok(mut read) = wamn_platform_identity::transaction::read_connection(
                 &mut database.client,
-                &PlatformComponent::Provisioning.principal_id().to_string(),
+                &PlatformComponent::Provisioning.principal_id(),
             )
             .await
             else {
                 return unavailable();
             };
-            let Ok(row) = sqlx::query("SELECT email FROM identity.principals WHERE id = $1::text::uuid AND type = 'user' AND status = 'active'").bind(principal.to_string().as_str()).fetch_optional(&mut *read).await else { return unavailable(); };
+            let Ok(row) = sqlx::query("SELECT email FROM identity.principals WHERE id = $1 AND type = 'user' AND status = 'active'").bind(principal).fetch_optional(&mut *read).await else { return unavailable(); };
             if read.commit().await.is_err() {
                 return unavailable();
             }
@@ -334,11 +334,7 @@ async fn handle(
                 return invalid();
             };
             let email: String = row.get(0);
-            let actor: PrincipalId = PlatformComponent::Provisioning
-                .principal_id()
-                .to_string()
-                .parse()
-                .expect("platform principal");
+            let actor: PrincipalId = PlatformComponent::Provisioning.principal_id();
             let invitation = match issue_invitation(&mut database.client, &actor, &principal).await
             {
                 Ok(value) => value,
@@ -348,7 +344,7 @@ async fn handle(
                 .mail
                 .invite(
                     &email,
-                    principal.to_string().as_str(),
+                    &principal,
                     invitation.secret(),
                     invitation.expires_at(),
                 )
@@ -359,8 +355,8 @@ async fn handle(
                 // Consume only this invitation; earlier operator invitations stay valid.
                 let hash = wamn_digest::bytes_sha256(invitation.secret().as_bytes());
                 if let Ok(mut tx) = database.client.begin().await {
-                    let _ = sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','identity','wamn:provisioning')")
-                        .bind(actor.to_string().as_str())
+                    let _ = sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')")
+                        .bind(actor)
                         .execute(&mut *tx)
                         .await
                         .map(|result| result.rows_affected());
@@ -379,9 +375,7 @@ async fn handle(
                 return invalid();
             };
             let secret = Zeroizing::new(request.invitation);
-            let Ok(principal) = request.principal_id.parse::<PrincipalId>() else {
-                return invalid();
-            };
+            let principal = request.principal_id;
             let password = match Password::new(request.password) {
                 Ok(value) => value,
                 Err(error) => {
@@ -457,7 +451,7 @@ async fn handle(
             }
             let Ok(mut read) = wamn_platform_identity::transaction::read_connection(
                 &mut database.client,
-                &PlatformComponent::Provisioning.principal_id().to_string(),
+                &PlatformComponent::Provisioning.principal_id(),
             )
             .await
             else {
@@ -491,8 +485,8 @@ async fn handle(
             let Ok(mut tx) = database.client.begin().await else {
                 return unavailable();
             };
-            if sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','identity','wamn:provisioning')")
-                .bind(id.to_string()).execute(&mut *tx).await.is_err() { return unavailable(); }
+            if sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')")
+                .bind(id).execute(&mut *tx).await.is_err() { return unavailable(); }
             if password_login::lock_principal(&mut tx, &id).await.is_err() {
                 return unavailable();
             }
@@ -639,13 +633,13 @@ async fn handle(
             let action = async {
                 let Ok(mut read) = wamn_platform_identity::transaction::read_connection(
                     &mut database.client,
-                    &PlatformComponent::Provisioning.principal_id().to_string(),
+                    &PlatformComponent::Provisioning.principal_id(),
                 )
                 .await
                 else {
                     return unavailable();
                 };
-                let Ok(row) = sqlx::query("SELECT p.id::text FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.type='user' AND p.status='active'").bind(&email).fetch_optional(&mut *read).await else { return unavailable(); };
+                let Ok(row) = sqlx::query("SELECT p.id FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.type='user' AND p.status='active'").bind(&email).fetch_optional(&mut *read).await else { return unavailable(); };
                 if read.commit().await.is_err() {
                     return unavailable();
                 }
@@ -653,9 +647,7 @@ async fn handle(
                     tracing::info!(email = %email, cause = %RefusalCause::NoSuchAccount, "password request refused");
                     return invalid();
                 };
-                let Ok(principal) = row.get::<String, _>(0).parse::<PrincipalId>() else {
-                    return unavailable();
-                };
+                let principal: PrincipalId = row.get(0);
                 if let Some((secret, password)) = reset {
                     let password = match Password::new(password) {
                         Ok(value) => value,
@@ -678,11 +670,7 @@ async fn handle(
                     let notified = state.mail.password_changed(&email).await.is_ok();
                     return response(StatusCode::OK, "application/json", serde_json::to_vec(&serde_json::json!({"status":"password_reset", "notification": if notified { "accepted_for_delivery" } else { "unavailable" }})).expect("fixed response"));
                 }
-                let actor: PrincipalId = PlatformComponent::Provisioning
-                    .principal_id()
-                    .to_string()
-                    .parse()
-                    .expect("platform principal");
+                let actor: PrincipalId = PlatformComponent::Provisioning.principal_id();
                 let token =
                     match issue_reset(&mut database.client, &actor, &principal, &email).await {
                         Ok(token) => token,
@@ -699,7 +687,7 @@ async fn handle(
                 {
                     let hash = wamn_digest::bytes_sha256(token.secret().as_bytes());
                     if let Ok(mut tx) = database.client.begin().await
-                        && sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','identity','wamn:provisioning')").bind(actor.to_string().as_str()).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok()
+                        && sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')").bind(actor).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok()
                         && sqlx::query("UPDATE identity.password_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1 AND consumed_at IS NULL").bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok() { let _ = tx.commit().await; }
                 }
                 response(StatusCode::ACCEPTED, "application/json", Vec::new())
@@ -992,9 +980,9 @@ async fn admit(
     issuer: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let mut tx = client.begin().await?;
-    let actor = PlatformComponent::Provisioning.principal_id().to_string();
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','identity','wamn:provisioning')")
-        .bind(&actor)
+    let actor = PlatformComponent::Provisioning.principal_id();
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')")
+        .bind(actor)
         .execute(&mut *tx)
         .await
         .map(|result| result.rows_affected())?;
@@ -1043,13 +1031,12 @@ async fn enrollment_refusal(
 ) -> Response<Full<Bytes>> {
     if let Some(cause) = error.cause() {
         let Ok(mut read) =
-            wamn_platform_identity::transaction::read_connection(client, &principal.to_string())
-                .await
+            wamn_platform_identity::transaction::read_connection(client, principal).await
         else {
             return password_failure(error);
         };
-        match sqlx::query("SELECT email FROM identity.principals WHERE id = $1::text::uuid")
-            .bind(principal.to_string().as_str())
+        match sqlx::query("SELECT email FROM identity.principals WHERE id = $1")
+            .bind(principal)
             .fetch_optional(&mut *read)
             .await
         {
@@ -1079,12 +1066,12 @@ async fn create_user(
     request: &UserRequest,
     changes: &wamn_broker::Publisher,
 ) -> Response<Full<Bytes>> {
-    let actor = PlatformComponent::Provisioning.principal_id().to_string();
+    let actor = PlatformComponent::Provisioning.principal_id();
     let Ok(mut tx) = client.begin().await else {
         return unavailable();
     };
-    if sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','identity','wamn:provisioning')")
-        .bind(&actor)
+    if sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')")
+        .bind(actor)
         .execute(&mut *tx)
         .await
         .map(|result| result.rows_affected())
@@ -1108,7 +1095,7 @@ async fn create_user(
         return unavailable();
     }
     let mut drops = AuthDrops::default();
-    drops.identity(account.principal_id.to_string().as_str());
+    drops.identity(&account.principal_id);
     changes.publish(drops).await;
     let body = UserResponse {
         principal_id: account.principal_id,
@@ -1329,7 +1316,7 @@ mod tests {
                     .unwrap()
             );
         }
-        let actor = PlatformComponent::Provisioning.principal_id().to_string();
+        let actor = PlatformComponent::Provisioning.principal_id();
         wamn_test_infrastructure::record_history::assert_stamp(
             &mut client,
             "identity.password_attempts",
@@ -1425,9 +1412,9 @@ mod tests {
         .await
         .map(drop)
         .unwrap();
-        let actor = PlatformComponent::Provisioning.principal_id().to_string();
-        sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-            .bind(&actor).execute(&mut admin.client).await.unwrap();
+        let actor = PlatformComponent::Provisioning.principal_id();
+        sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+            .bind(actor).execute(&mut admin.client).await.unwrap();
 
         let alice = wamn_platform_identity::create_user(
             &mut admin.client,
@@ -1446,7 +1433,7 @@ mod tests {
         .await
         .unwrap();
         let mut url = url::Url::parse(db.url()).unwrap();
-        url.set_username(&identity_issuer_login(issuer).unwrap())
+        url.set_username(identity_issuer_login(issuer).unwrap().as_str())
             .unwrap();
         url.set_password(Some("fixture-password")).unwrap();
         let mut service = IdentityService::connect(
@@ -1601,7 +1588,7 @@ mod tests {
         assert!(users[4].1["error"].is_string());
         let row = sqlx::query(
             "SELECT subject, email, display_name, updated_by::text \
-                 FROM identity.principals WHERE id = $1::text::uuid",
+                 FROM identity.principals WHERE id = $1",
         )
         .bind(&carol)
         .fetch_one(&mut admin.client)
@@ -1613,7 +1600,7 @@ mod tests {
                 "carol@example.invalid",
                 "carol@example.invalid",
                 "Carol",
-                actor.as_str()
+                &actor.to_string()
             ]
         );
         wamn_platform_identity::disable_principal(

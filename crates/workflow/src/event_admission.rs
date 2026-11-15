@@ -95,7 +95,7 @@ pub async fn admit_event_batch(
                 .map(|parent| i32::try_from(parent.depth + 1))
                 .transpose()
                 .map_err(|error| ProductionLeaseError::invalid("decode event depth", error))?;
-            let principal = workflow_user_id().to_string();
+            let principal = workflow_user_id();
             let delivery = format!("event:{}", admission.source_event_id);
             for (row, event, input) in matches {
                 let key = serde_json::json!([
@@ -147,7 +147,7 @@ pub async fn admit_event_batch(
                         execution_role: &role,
                         trigger: RunTrigger::Event,
                         invoked_by: &delivery,
-                        invoked_by_user_id: actor.as_deref(),
+                        invoked_by_user_id: actor.as_ref(),
                         node_digests: &digests,
                         idempotency_key: &key,
                         input: &input,

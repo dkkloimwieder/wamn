@@ -74,7 +74,7 @@ fn current_database(url: &str) -> String {
 /// test. The fixture writes as U1, its test principal, whose row stamps itself,
 /// under an administrative operation, and both bindings stay for the probes.
 /// Returns the generation name for the probes' `current_user`.
-fn prelude(url: &str) -> (String, String) {
+fn prelude(url: &str) -> (wamn_identity_protocol::LoginName, String) {
     let database = current_database(url);
     let app_generation = workload_login(
         WorkloadRoleFamily::App,

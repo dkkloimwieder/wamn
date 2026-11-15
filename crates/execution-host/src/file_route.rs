@@ -750,11 +750,8 @@ impl FileRoutes {
         if !caller.permits(operation) {
             return Err(refused(FileRefusal::PermissionDenied, "operation"));
         }
-        let principal: PrincipalId = caller
-            .principal_id()
-            .parse()
-            .map_err(|error| failed("principal", error))?;
-        let row = self.record(&principal, application, id, "get").await?;
+        let principal = caller.principal_id();
+        let row = self.record(principal, application, id, "get").await?;
         let pin = Some(row.connection_id.as_str());
         let connection = self.connections.lookup(application, None, pin).await?;
         require_binding(&self.release, application, None, pin, &connection, false)?;
@@ -935,10 +932,7 @@ fn principal(caller: &AuthenticatedCaller, action: &str) -> Result<PrincipalId, 
     if !caller.permits(&format!("wamn-control:file/{action}")) {
         return Err(refused(FileRefusal::PermissionDenied, "operation"));
     }
-    caller
-        .principal_id()
-        .parse()
-        .map_err(|error| failed("principal", error))
+    Ok(*caller.principal_id())
 }
 
 fn declares_store(
@@ -1269,7 +1263,7 @@ mod tests {
     ) -> AuthenticatedCaller {
         AuthenticatedCaller::new(
             "wamn-control-file-get-http",
-            "22222222-2222-4222-8222-222222222222",
+            "22222222-2222-4222-8222-222222222222".parse().unwrap(),
             credential,
             admin,
             action

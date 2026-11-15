@@ -19,10 +19,10 @@ pub struct ManualRunAdmission<'a> {
     pub workflow_id: &'a str,
     pub workflow_version: i32,
     pub wiring_hash: &'a wamn_digest::Digest,
-    pub execution_principal_id: &'a str,
+    pub execution_principal_id: &'a wamn_identity_protocol::PrincipalId,
     pub execution_role: &'a str,
     /// The session or PAT user that started the run.
-    pub invoked_by_user_id: &'a str,
+    pub invoked_by_user_id: &'a wamn_identity_protocol::PrincipalId,
     /// `{node id: component digest}`.
     pub node_digests: &'a serde_json::Value,
     /// A repeated key with the same input admits no second run.

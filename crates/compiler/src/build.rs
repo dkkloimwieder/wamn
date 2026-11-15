@@ -369,8 +369,8 @@ async fn pass_one_and_two(
 
 async fn register_verification_principal(connection: &mut sqlx::PgConnection) -> Result<()> {
     let component = wamn_identity_protocol::PlatformComponent::ApplyPackage;
-    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES (current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-        .bind(component.principal_id().to_string())
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES (current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(component.principal_id())
         .execute(connection)
         .await?;
     Ok(())

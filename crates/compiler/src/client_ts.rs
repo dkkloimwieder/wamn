@@ -474,7 +474,7 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
     }
     writeln!(
         source,
-        "\n/** The saved row shape of this model. */\nexport const {}_SHAPE_DIGEST = {:?};",
+        "\n/** The saved row shape of this model. */\nexport const {}_SHAPE_DIGEST = \"{}\";",
         model.name.to_uppercase(),
         shape_digest(model),
     )

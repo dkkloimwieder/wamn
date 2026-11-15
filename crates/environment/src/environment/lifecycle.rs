@@ -10,7 +10,7 @@ pub async fn configure(
     application: Option<&str>,
     disposable: Option<bool>,
     system_owner: &str,
-    actor: &str,
+    actor: &wamn_identity_protocol::PrincipalId,
 ) -> anyhow::Result<()> {
     if let Some(application) = application {
         ensure!(

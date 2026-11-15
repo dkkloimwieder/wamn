@@ -1,11 +1,14 @@
 //! Validated principal identities and role names.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{fmt, str::FromStr};
 use uuid::Uuid;
 
-/// A principal UUID. Parsing does not authenticate its owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// A principal UUID in lowercase hyphenated wire form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+#[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
+#[cfg_attr(feature = "sqlx", sqlx(transparent))]
 pub struct PrincipalId(Uuid);
 
 impl fmt::Display for PrincipalId {
@@ -17,33 +20,35 @@ impl fmt::Display for PrincipalId {
 impl FromStr for PrincipalId {
     type Err = ParseIdentityError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let id = Uuid::try_parse(value).map_err(|_| ParseIdentityError {
+        let invalid = || ParseIdentityError {
             field: "principal_id",
-            message: "principal ID must be a hyphenated UUID",
-        })?;
-        if !id.hyphenated().to_string().eq_ignore_ascii_case(value) {
-            return Err(ParseIdentityError {
-                field: "principal_id",
-                message: "principal ID must be a hyphenated UUID",
-            });
+            message: "principal ID must be a lowercase hyphenated UUID",
+        };
+        let id = Uuid::try_parse(value).map_err(|_| invalid())?;
+        let mut canonical = Uuid::encode_buffer();
+        if id.hyphenated().encode_lower(&mut canonical) != value {
+            return Err(invalid());
         }
         Ok(Self(id))
     }
 }
 
-impl Serialize for PrincipalId {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
+impl TryFrom<String> for PrincipalId {
+    type Error = ParseIdentityError;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
     }
 }
-impl<'de> Deserialize<'de> for PrincipalId {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        let id: Self = value.parse().map_err(serde::de::Error::custom)?;
-        if id.to_string() != value {
-            return Err(serde::de::Error::custom("principal ID must be canonical"));
-        }
-        Ok(id)
+
+impl From<Uuid> for PrincipalId {
+    fn from(value: Uuid) -> Self {
+        Self(value)
+    }
+}
+
+impl From<PrincipalId> for String {
+    fn from(value: PrincipalId) -> Self {
+        value.to_string()
     }
 }
 
@@ -119,17 +124,39 @@ impl std::error::Error for ParseIdentityError {}
 mod tests {
     use super::*;
     #[test]
-    fn principal_and_role_parsers_refuse_invalid_values() {
-        let id: PrincipalId = "A56F21C8-591A-4B4B-B4E9-15357C0B4A81".parse().unwrap();
-        assert_eq!(id, id.to_string().parse().unwrap());
-        for value in [
-            "",
-            "author@example.com",
-            "a56f21c8591a4b4bb4e915357c0b4a81",
-            "a56f21c8-591a-4b4b-b4e9-15357c0b4a8z",
+    fn principal_parse_rule() {
+        for (value, valid) in [
+            ("00000000-0000-0000-0000-000000000000", true),
+            ("a56f21c8-591a-4b4b-b4e9-15357c0b4a81", true),
+            ("", false),
+            ("author@example.com", false),
+            ("A56F21C8-591A-4B4B-B4E9-15357C0B4A81", false),
+            ("a56f21c8591a4b4bb4e915357c0b4a81", false),
+            ("{a56f21c8-591a-4b4b-b4e9-15357c0b4a81}", false),
+            ("urn:uuid:a56f21c8-591a-4b4b-b4e9-15357c0b4a81", false),
+            ("a56f21c8-591a-4b4b-b4e9-15357c0b4a8z", false),
+            (" a56f21c8-591a-4b4b-b4e9-15357c0b4a81", false),
         ] {
-            assert!(value.parse::<PrincipalId>().is_err());
+            let parsed = value.parse::<PrincipalId>();
+            assert_eq!(parsed.is_ok(), valid, "{value:?}");
+            assert_eq!(PrincipalId::try_from(value.to_owned()).is_ok(), valid);
+            assert_eq!(
+                serde_json::from_value::<PrincipalId>(serde_json::json!(value)).is_ok(),
+                valid
+            );
+            if let Ok(id) = parsed {
+                assert_eq!(id.to_string(), value);
+                assert_eq!(
+                    serde_json::from_value::<PrincipalId>(serde_json::to_value(id).unwrap())
+                        .unwrap(),
+                    id
+                );
+            }
         }
+    }
+
+    #[test]
+    fn role_parser_refuses_invalid_values() {
         for value in ["", "two words", "_admin", "-admin"] {
             assert!(value.parse::<RoleName>().is_err());
         }

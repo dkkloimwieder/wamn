@@ -55,8 +55,8 @@ impl PlatformComponent {
 
     /// The `platform."user"` id: the UUIDv5 of [`Self::principal_name`] under
     /// [`WAMN_NAMESPACE`].
-    pub fn principal_id(self) -> uuid::Uuid {
-        uuid::Uuid::new_v5(&WAMN_NAMESPACE, self.principal_name().as_bytes())
+    pub fn principal_id(self) -> crate::PrincipalId {
+        uuid::Uuid::new_v5(&WAMN_NAMESPACE, self.principal_name().as_bytes()).into()
     }
 }
 
@@ -67,8 +67,8 @@ pub const WORKFLOW_USER_NAME: &str = "workflow";
 
 /// The `platform."user"` id of the workflow user: the UUIDv5 of
 /// [`WORKFLOW_USER_NAME`] under [`WAMN_NAMESPACE`].
-pub fn workflow_user_id() -> uuid::Uuid {
-    uuid::Uuid::new_v5(&WAMN_NAMESPACE, WORKFLOW_USER_NAME.as_bytes())
+pub fn workflow_user_id() -> crate::PrincipalId {
+    uuid::Uuid::new_v5(&WAMN_NAMESPACE, WORKFLOW_USER_NAME.as_bytes()).into()
 }
 
 /// The built-in role with all served operations.

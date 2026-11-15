@@ -217,7 +217,7 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
                 application.as_deref(),
                 disposable,
                 &system,
-                &actor.to_string(),
+                &actor,
             )
             .await?;
             Ok(json!({"configured":true}))

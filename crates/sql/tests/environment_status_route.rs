@@ -140,7 +140,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     .await
     .map(drop)?;
     let mut url = url::Url::parse(admin_url)?;
-    url.set_username(&generation)
+    url.set_username(generation.as_str())
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;
     url.set_password(Some(PASSWORD))
         .map_err(|()| anyhow::anyhow!("set fixture password"))?;

@@ -165,16 +165,16 @@ async fn push(
         .as_array()
         .context("connection principal projection")?
     {
-        let id = text(row, "id")?;
+        let id: wamn_identity_protocol::PrincipalId = text(row, "id")?.parse()?;
         let connection_id = text(row, "connection_id")?;
         let email = format!(
             "{}@{}",
             text(row, "subject")?,
             text(row, "platform_domain")?
         );
-        let changed = sqlx::query("INSERT INTO platform.\"user\"(id,type,email,display_name,status) VALUES ($1::text::uuid,'service',$2,$3,$4) \
+        let changed = sqlx::query("INSERT INTO platform.\"user\"(id,type,email,display_name,status) VALUES ($1,'service',$2,$3,$4) \
              ON CONFLICT (id) DO UPDATE SET email=EXCLUDED.email, display_name=EXCLUDED.display_name, status=EXCLUDED.status \
-             WHERE (\"user\".email,\"user\".display_name,\"user\".status) IS DISTINCT FROM (EXCLUDED.email,EXCLUDED.display_name,EXCLUDED.status)").bind(&id).bind(&email).bind(&text(row, "display_name")?).bind(&text(row, "status")?).execute(&mut **target).await.map(|result| result.rows_affected())?;
+             WHERE (\"user\".email,\"user\".display_name,\"user\".status) IS DISTINCT FROM (EXCLUDED.email,EXCLUDED.display_name,EXCLUDED.status)").bind(id).bind(&email).bind(&text(row, "display_name")?).bind(&text(row, "status")?).execute(&mut **target).await.map(|result| result.rows_affected())?;
         if changed != 0 || disabled.contains(&connection_id) {
             drops.principal(&project_env_key, &id);
         }

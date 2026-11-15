@@ -101,7 +101,7 @@ async fn operations_refuse_unrelated_project_authority_before_execution() -> any
                 },
                 Some(AuthenticatedCaller::new(
                     id,
-                    other.to_string(),
+                    other,
                     CredentialType::Session,
                     false,
                     HashSet::new(),

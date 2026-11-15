@@ -70,7 +70,10 @@ pub fn invocation_span(
         wamn.attachment_id = tracing::field::Empty,
     );
     if let Some(caller) = site.caller {
-        span.record("wamn.caller_principal_id", caller.principal_id());
+        span.record(
+            "wamn.caller_principal_id",
+            tracing::field::display(caller.principal_id()),
+        );
         span.record(
             "wamn.caller_credential_type",
             match caller.credential_type() {

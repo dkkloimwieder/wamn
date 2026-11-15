@@ -63,7 +63,7 @@ pub fn system_reader_login(
     project: &str,
     environment: &str,
     database: &str,
-) -> String {
+) -> wamn_identity_protocol::LoginName {
     workload_login(
         reader.family(),
         WorkloadRoleIdentity::Control {

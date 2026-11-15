@@ -5,7 +5,7 @@ pub(in super::super) fn render_pat_secret(
     triple: &Triple,
     namespace: &str,
     purpose: PatPurpose,
-    principal_id: &str,
+    principal_id: &wamn_identity_protocol::PrincipalId,
     token: &str,
     prefix: &str,
     expires_at: &str,

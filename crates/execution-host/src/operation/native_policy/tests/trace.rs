@@ -52,7 +52,7 @@ impl TraceCapture {
                 "wamn.component.invoke",
                 wamn.operation = ROOT,
                 wamn.component_digest = %fixture.root.component_digest,
-                wamn.caller_principal_id = caller.principal_id(),
+                wamn.caller_principal_id = %caller.principal_id(),
                 wamn.caller_credential_type = "session",
             )
         });
@@ -114,8 +114,10 @@ impl TraceCapture {
         {
             let invocation = root;
             assert_eq!(
-                attribute(invocation, "wamn.caller_principal_id"),
-                Some(caller.principal_id())
+                attribute(invocation, "wamn.caller_principal_id").map(|value| value
+                    .parse::<wamn_identity_protocol::PrincipalId>()
+                    .unwrap()),
+                Some(*caller.principal_id())
             );
             assert_eq!(
                 attribute(invocation, "wamn.caller_credential_type"),

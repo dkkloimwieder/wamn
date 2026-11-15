@@ -39,7 +39,7 @@ async fn dedicated_session_reader_columns_execute_on_postgres(
         }
     }
     let mut url = url::Url::parse(database.as_str())?;
-    url.set_username(&role).unwrap();
+    url.set_username(role.as_str()).unwrap();
     url.set_password(Some("fixture-password")).unwrap();
     let mut reader = wamn_postgres::connect(url.as_str()).await?;
     assert!(

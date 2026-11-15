@@ -46,7 +46,7 @@ pub struct ConnectionFact {
     pub status: ConnectionStatus,
     /// The credential of the active generation, when it has one.
     pub credential_id: Option<uuid::Uuid>,
-    pub service_principal_id: uuid::Uuid,
+    pub service_principal_id: wamn_identity_protocol::PrincipalId,
     pub exclusive: bool,
     pub target_id: uuid::Uuid,
     pub resource_key: Option<String>,
@@ -321,7 +321,7 @@ mod tests {
             active_generation: generation,
             status: ConnectionStatus::Active,
             credential_id: Some(uuid::Uuid::new_v4()),
-            service_principal_id: uuid::Uuid::new_v4(),
+            service_principal_id: uuid::Uuid::new_v4().into(),
             exclusive: false,
             target_id: uuid::Uuid::new_v4(),
             resource_key: None,

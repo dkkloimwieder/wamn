@@ -65,7 +65,7 @@ Each library has one concern. Package names remain independent of directory name
 | `crates/authentication` | `wamn-authentication`: route authentication and session verification |
 | `crates/identity` | `wamn-platform-identity`: identity authority and its SQL |
 | `crates/identity-client` | `wamn-identity-client`: HTTPS client for identity administration |
-| `crates/identity-protocol` | `wamn-identity-protocol`: principals, roles, credential formats, and session tokens |
+| `crates/identity-protocol` | `wamn-identity-protocol`: principal IDs, database login names, roles, credential formats, and session tokens |
 | `crates/data-access` | `wamn-data-access`: guest cursors, pages, and scalar conversion |
 | `crates/postgres-statements` | `wamn-postgres-statements`: guest operation SQL and document numbering |
 | `crates/record-history` | `wamn-record-history`: reconstruction of a row from its history |

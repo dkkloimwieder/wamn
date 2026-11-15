@@ -174,7 +174,7 @@ pub(crate) struct ControlRoutes<'a> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PrincipalRequest {
-    principal_id: String,
+    principal_id: wamn_identity_protocol::PrincipalId,
 }
 
 /// The project that a project route names, read before its own request.
@@ -202,7 +202,7 @@ struct ProjectRequest {
 #[serde(deny_unknown_fields)]
 struct ProjectPrincipalRequest {
     project: String,
-    principal_id: String,
+    principal_id: wamn_identity_protocol::PrincipalId,
 }
 
 #[derive(Deserialize)]
@@ -210,7 +210,7 @@ struct ProjectPrincipalRequest {
 struct MemberRequest {
     project: String,
     env: String,
-    principal_id: String,
+    principal_id: wamn_identity_protocol::PrincipalId,
 }
 
 #[derive(Deserialize)]
@@ -353,7 +353,7 @@ impl ControlRoutes<'_> {
                             connection,
                             self.org,
                             page.after(0),
-                            page.after(1),
+                            page.after_principal(),
                             page.read_limit(),
                         )
                         .await?)
@@ -384,7 +384,7 @@ impl ControlRoutes<'_> {
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 reactivate_org_membership(&mut transaction, &principal, self.org).await?;
                 let mut drops = AuthDrops::default();
-                drops.identity(principal.to_string().as_str());
+                drops.identity(&principal);
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
                 Ok(json!({ "principal_id": principal.to_string().as_str(), "status": "active" }))
@@ -409,7 +409,7 @@ impl ControlRoutes<'_> {
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 grant_org_admin(&mut transaction, &principal, self.org).await?;
                 let mut drops = AuthDrops::default();
-                drops.identity(principal.to_string().as_str());
+                drops.identity(&principal);
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
                 let environments = self.environments(caller, None).await?;
@@ -482,11 +482,9 @@ impl ControlRoutes<'_> {
                     application_counts(&logins[0], caller).await
                 };
                 let memberships = async {
-                    let mut transaction = wamn_platform_identity::transaction::read_pool(
-                        self.control,
-                        &caller.to_string(),
-                    )
-                    .await?;
+                    let mut transaction =
+                        wamn_platform_identity::transaction::read_pool(self.control, caller)
+                            .await?;
                     let row = sqlx::query(
                         "SELECT count(*)::int4 FROM identity.project_env_memberships \
                          WHERE org = $1 AND project = $2 AND env = $3",
@@ -563,7 +561,7 @@ impl ControlRoutes<'_> {
                             &request.project,
                             request.environment.as_str(),
                             page.after(0),
-                            page.after(1),
+                            page.after_principal(),
                             page.read_limit(),
                         )
                         .await?)
@@ -575,7 +573,7 @@ impl ControlRoutes<'_> {
             }
             HostHandler::MemberGrant => {
                 let request: MemberRequest = parse(payload)?;
-                let principal: PrincipalId = request.principal_id.parse()?;
+                let principal: PrincipalId = request.principal_id;
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self
                     .begin_in_environment(
@@ -595,14 +593,14 @@ impl ControlRoutes<'_> {
                 )
                 .await?;
                 let mut drops = AuthDrops::default();
-                drops.identity(principal.to_string().as_str());
+                drops.identity(&principal);
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
                 let environment = [(request.project.clone(), request.env.clone())];
                 self.write_applications(&mut writer, attachment, caller, &principal, &environment)
                     .await?;
                 Ok(json!({
-                    "principal_id": principal.to_string().as_str(),
+                    "principal_id": &principal,
                     "project": request.project,
                     "env": request.env,
                     "member": true,
@@ -610,7 +608,7 @@ impl ControlRoutes<'_> {
             }
             HostHandler::MemberRevoke => {
                 let request: MemberRequest = parse(payload)?;
-                let principal: PrincipalId = request.principal_id.parse()?;
+                let principal: PrincipalId = request.principal_id;
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self
                     .begin_in_environment(
@@ -637,7 +635,7 @@ impl ControlRoutes<'_> {
                 self.write_applications(&mut writer, attachment, caller, &principal, &environment)
                     .await?;
                 Ok(json!({
-                    "principal_id": principal.to_string().as_str(),
+                    "principal_id": &principal,
                     "project": request.project,
                     "env": request.env,
                     "member": false,
@@ -645,7 +643,7 @@ impl ControlRoutes<'_> {
             }
             HostHandler::ProjectAdminGrant => {
                 let request: ProjectPrincipalRequest = parse(payload)?;
-                let principal: PrincipalId = request.principal_id.parse()?;
+                let principal: PrincipalId = request.principal_id;
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
@@ -653,21 +651,21 @@ impl ControlRoutes<'_> {
                 grant_project_admin(&mut transaction, &principal, self.org, &request.project)
                     .await?;
                 let mut drops = AuthDrops::default();
-                drops.identity(principal.to_string().as_str());
+                drops.identity(&principal);
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
                 let environments = self.environments(caller, Some(&request.project)).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
                 Ok(json!({
-                    "principal_id": principal.to_string().as_str(),
+                    "principal_id": &principal,
                     "project": request.project,
                     "project_admin": true,
                 }))
             }
             HostHandler::ProjectAdminRevoke => {
                 let request: ProjectPrincipalRequest = parse(payload)?;
-                let principal: PrincipalId = request.principal_id.parse()?;
+                let principal: PrincipalId = request.principal_id;
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
@@ -687,7 +685,7 @@ impl ControlRoutes<'_> {
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
                 Ok(json!({
-                    "principal_id": principal.to_string().as_str(),
+                    "principal_id": &principal,
                     "project": request.project,
                     "project_admin": false,
                 }))
@@ -736,8 +734,15 @@ impl ControlRoutes<'_> {
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 create_project(&mut transaction, self.org, &request.project).await?;
                 let mut drops = AuthDrops::default();
-                for row in sqlx::query("SELECT principal_id::text FROM identity.project_roles WHERE org=$1 AND project=$2").bind(self.org).bind(&request.project).fetch_all(&mut *transaction).await? {
-                    drops.identity(row.get(0));
+                for row in sqlx::query(
+                    "SELECT principal_id FROM identity.project_roles WHERE org=$1 AND project=$2",
+                )
+                .bind(self.org)
+                .bind(&request.project)
+                .fetch_all(&mut *transaction)
+                .await?
+                {
+                    drops.identity(&row.get(0));
                 }
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
@@ -793,7 +798,7 @@ impl ControlRoutes<'_> {
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
         invite_member(&mut transaction, &user.principal_id, self.org, &grants).await?;
         let mut drops = AuthDrops::default();
-        drops.identity(user.principal_id.to_string().as_str());
+        drops.identity(&user.principal_id);
         transaction.commit().await?;
         self.changes.publish(drops).await;
         let mut environments: std::collections::BTreeSet<(String, String)> =
@@ -934,10 +939,7 @@ impl ControlRoutes<'_> {
         &self,
         caller: &PrincipalId,
     ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, Refusal> {
-        Ok(
-            wamn_platform_identity::transaction::read_pool(self.control, &caller.to_string())
-                .await?,
-        )
+        Ok(wamn_platform_identity::transaction::read_pool(self.control, caller).await?)
     }
 
     async fn read<T>(
@@ -974,8 +976,8 @@ impl ControlRoutes<'_> {
     ) -> Result<(), Refusal> {
         let logins = self.logins(environments)?;
         let mut system = writer.begin().await?;
-        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','',$2)")
-            .bind(caller.to_string()).bind(&attachment.operation).execute(&mut *system).await?;
+        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)")
+            .bind(caller).bind(&attachment.operation).execute(&mut *system).await?;
         wamn_platform_identity::org::lock_membership(&mut system, principal, self.org).await?;
         let mut completed = Vec::new();
         for ((project, env), url) in environments.iter().zip(logins) {
@@ -1038,9 +1040,9 @@ impl ControlRoutes<'_> {
     ) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
         let mut transaction = writer.begin().await?;
         sqlx::query(
-            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','',$2)",
+            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)",
         )
-        .bind(caller.to_string().as_str())
+        .bind(caller)
         .bind(&attachment.operation)
         .execute(&mut *transaction)
         .await
@@ -1101,8 +1103,7 @@ const APPLICATION_COUNTS_SQL: &str = "SELECT \
 async fn application_counts(url: &str, caller: &PrincipalId) -> anyhow::Result<(i32, i32)> {
     let mut client = wamn_postgres::connect(url).await?;
     let mut transaction =
-        wamn_platform_identity::transaction::read_connection(&mut client, &caller.to_string())
-            .await?;
+        wamn_platform_identity::transaction::read_connection(&mut client, caller).await?;
     let row = sqlx::query(APPLICATION_COUNTS_SQL)
         .fetch_one(&mut *transaction)
         .await?;
@@ -1167,7 +1168,7 @@ async fn write_application(
 
     let result = async {
         let mut transaction = client.begin().await?;
-        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','',$2)").bind(caller.to_string().as_str()).bind(&attachment.operation).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)").bind(caller).bind(&attachment.operation).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
         require_platform_rows(&mut transaction).await?;
         let mut drops = AuthDrops::default();
         project_authority(system, &mut transaction, target, principal, &mut drops).await?;
@@ -1202,8 +1203,7 @@ async fn release_profile(
         .context("connect the administration login")?;
 
     let mut transaction =
-        wamn_platform_identity::transaction::read_connection(&mut client, &caller.to_string())
-            .await?;
+        wamn_platform_identity::transaction::read_connection(&mut client, caller).await?;
     let result = async {
         let Some(row) = sqlx::query(RELEASE_SQL)
             .bind(digest)
@@ -1253,9 +1253,9 @@ async fn write_status(
     let result = async {
         let mut transaction = client.begin().await?;
         sqlx::query(
-            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','',$2)",
+            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)",
         )
-        .bind(caller.to_string().as_str())
+        .bind(caller)
         .bind(&attachment.operation)
         .execute(&mut *transaction)
         .await
@@ -1321,7 +1321,7 @@ pub(crate) fn parse<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, 
 fn principal(payload: &str) -> Result<PrincipalId, Refusal> {
     let request: PrincipalRequest = serde_json::from_str(payload)
         .map_err(|_| Refusal::Delivery(DeliveryError::InvalidPayload))?;
-    Ok(request.principal_id.parse()?)
+    Ok(request.principal_id)
 }
 
 /// The refusal of a write whose application rows stopped at `project/env`,

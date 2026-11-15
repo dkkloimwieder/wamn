@@ -458,7 +458,7 @@ async fn targeted_postgres(admin: &mut Client, url: &str) -> Arc<WamnPostgres> {
         .map(drop)
         .unwrap();
         let mut login = url::Url::parse(url).unwrap();
-        login.set_username(&role).unwrap();
+        login.set_username(role.as_str()).unwrap();
         login.set_password(Some(PASSWORD)).unwrap();
         credentials = credentials.with_class(class, login.to_string());
     }
@@ -545,7 +545,9 @@ impl Fixture {
                 document,
                 trigger: WorkflowTrigger::Manual,
                 execution: WorkflowExecution::Invoker,
-                created_by: READER,
+                created_by: &READER
+                    .parse::<wamn_identity_protocol::PrincipalId>()
+                    .unwrap(),
                 manifest_digest: &self.digest,
             },
         )
@@ -566,7 +568,9 @@ impl Fixture {
                 workflow_id: WORKFLOW,
                 version,
             },
-            enabler,
+            &enabler
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
             &self.digest,
             &declared(),
             None,
@@ -606,7 +610,7 @@ impl Fixture {
             .expect("read the session grants");
         AuthenticatedCaller::new(
             start_attachment(),
-            user,
+            user.parse().unwrap(),
             CredentialType::Session,
             held.admin,
             held.references.iter().cloned().collect::<HashSet<_>>(),
@@ -906,9 +910,13 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution(pool: sql
                     workflow_id: WORKFLOW,
                     workflow_version: 2,
                     wiring_hash: &wrong,
-                    execution_principal_id: READER,
+                    execution_principal_id: &READER
+                        .parse::<wamn_identity_protocol::PrincipalId>()
+                        .unwrap(),
                     execution_role: "reader",
-                    invoked_by_user_id: READER,
+                    invoked_by_user_id: &READER
+                        .parse::<wamn_identity_protocol::PrincipalId>()
+                        .unwrap(),
                     node_digests: &node_digests,
                     idempotency_key: "manual:wrong-run",
                     input: &input,

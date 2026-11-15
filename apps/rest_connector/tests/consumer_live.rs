@@ -60,11 +60,16 @@ pub async fn execution_role(
         .await
         .map(|result| result.rows_affected())?;
     }
-    let workflow_user = wamn_identity_protocol::workflow_user_id().to_string();
-    for user in [ENABLER, workflow_user.as_str()] {
+    let workflow_user = wamn_identity_protocol::workflow_user_id();
+    for user in [
+        ENABLER
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
+        workflow_user,
+    ] {
         sqlx::query(
             "INSERT INTO platform.user_role (user_id, role_name) \
-                 VALUES ($1::text::uuid, $2)",
+                 VALUES ($1, $2)",
         )
         .bind(&user)
         .bind(&role)
@@ -94,9 +99,7 @@ pub async fn workflow_host(
         PROJECT_ENV_KEY,
         &digest,
         manifest,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     let mut credentials = ClassCredentials::default();
@@ -132,7 +135,7 @@ pub async fn workflow_host(
         .await
         .map(drop)?;
         let mut login = url::Url::parse(database.as_str())?;
-        login.set_username(&role).unwrap();
+        login.set_username(role.as_str()).unwrap();
         login.set_password(Some(PASSWORD)).unwrap();
         credentials = credentials.with_class(class, login.to_string());
     }
@@ -217,7 +220,9 @@ pub async fn schedule_run(
             document,
             trigger: WorkflowTrigger::Schedule("* * * * *"),
             execution: WorkflowExecution::Role(role),
-            created_by: ENABLER,
+            created_by: &ENABLER
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
             manifest_digest: &digest,
         },
     )
@@ -234,7 +239,9 @@ pub async fn schedule_run(
             workflow_id: &document.wiring_id,
             version: document.version,
         },
-        ENABLER,
+        &ENABLER
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
         &digest,
         &declared,
         None,
@@ -270,16 +277,15 @@ pub async fn run_caller(
     role: &str,
 ) -> anyhow::Result<wamn_engine::flow_http_routing::AuthenticatedCaller> {
     let row = sqlx::query(
-        "SELECT execution_principal_id::text, execution_role FROM wamn_run.runs WHERE run_id=$1",
+        "SELECT execution_principal_id, execution_role FROM wamn_run.runs WHERE run_id=$1",
     )
     .bind(&run)
     .fetch_one(&mut *admin)
     .await?;
-    let principal: String = row.get(0);
+    let principal: wamn_identity_protocol::PrincipalId = row.get(0);
     let execution_role: String = row.get(1);
     anyhow::ensure!(
-        principal == wamn_identity_protocol::workflow_user_id().to_string()
-            && execution_role == role,
+        principal == wamn_identity_protocol::workflow_user_id() && execution_role == role,
         "the schedule run executes as {principal} with {execution_role}, not the workflow user with {role}"
     );
     host.workflow_node_caller("test", PROJECT_ENV_KEY, &principal, &execution_role)
@@ -433,7 +439,7 @@ pub async fn install(
         "consumer SQL role={role}, schema=rest_consumer_fixture; item SELECT(key,external_system_id,external_id), INSERT(key,name,external_system_id,external_id); write_log SELECT/INSERT/DELETE, UPDATE(result)"
     );
     let mut url = url::Url::parse(database.as_str())?;
-    url.set_username(&role).unwrap();
+    url.set_username(role.as_str()).unwrap();
     url.set_password(Some(PASSWORD)).unwrap();
     Ok(url.into())
 }

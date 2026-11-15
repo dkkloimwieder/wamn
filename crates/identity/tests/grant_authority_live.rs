@@ -305,7 +305,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
         "test",
         GrantAuthority::Provisioning,
         GrantChange::UserRole {
-            user_id: actor.to_string().as_str(),
+            user_id: &actor,
             role: "delegated",
             grant: true,
         },
@@ -330,7 +330,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
             "test",
             GrantAuthority::User(&actor),
             GrantChange::UserRole {
-                user_id: target.to_string().as_str(),
+                user_id: &target,
                 role: "admin",
                 grant,
             },

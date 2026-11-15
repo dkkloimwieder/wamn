@@ -119,7 +119,7 @@ pub struct WamnPostgres {
 pub struct UnprovisionedPrincipal {
     project_env_key: String,
     project: String,
-    principal_id: String,
+    principal_id: wamn_identity_protocol::PrincipalId,
 }
 
 impl UnprovisionedPrincipal {
@@ -137,7 +137,7 @@ impl UnprovisionedPrincipal {
 
     /// The caller identity that named no row.
     #[must_use]
-    pub fn principal_id(&self) -> &str {
+    pub fn principal_id(&self) -> &wamn_identity_protocol::PrincipalId {
         &self.principal_id
     }
 }
@@ -165,7 +165,6 @@ fn validate_session_identity(
     schema: Option<&str>,
     runner: Option<&str>,
     role: Option<&str>,
-    user_id: Option<&str>,
     operation: Option<&str>,
     application: Option<&str>,
 ) -> Result<(), PgError> {
@@ -201,14 +200,6 @@ fn validate_session_identity(
             "invalid caller role".to_string(),
         )));
     }
-    if let Some(user_id) = user_id
-        && !valid_user_id(user_id)
-    {
-        return Err(PgError::QueryError((
-            "WAMN0".to_string(),
-            "invalid caller user id".to_string(),
-        )));
-    }
     if let Some(operation) = operation
         && !valid_operation(operation)
     {
@@ -240,19 +231,6 @@ fn valid_operation(operation: &str) -> bool {
 /// not an identity.
 fn valid_application(application: &str) -> bool {
     !application.is_empty()
-}
-
-/// A caller's canonical `8-4-4-4-12` UUID. The value binds as a parameter
-/// and is stored in the transaction identity's UUID column.
-fn valid_user_id(user_id: &str) -> bool {
-    let mut groups = user_id.split('-');
-    for len in [8, 4, 4, 4, 12] {
-        match groups.next() {
-            Some(g) if g.len() == len && g.bytes().all(|b| b.is_ascii_hexdigit()) => {}
-            _ => return false,
-        }
-    }
-    groups.next().is_none()
 }
 
 impl WamnPostgres {
@@ -543,20 +521,23 @@ impl WamnPostgres {
 
     /// Register the executing principal for a component id.
     /// Each transaction records it for the record history triggers.
-    pub fn set_user_id(&self, component_id: &str, user_id: &str) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            valid_user_id(user_id),
-            "invalid caller user id {user_id:?}: a canonical 8-4-4-4-12 uuid is required"
-        );
+    pub fn set_user_id(
+        &self,
+        component_id: &str,
+        user_id: &wamn_identity_protocol::PrincipalId,
+    ) -> anyhow::Result<()> {
         self.scopes.update::<Authority, _>(component_id, |record| {
-            record.identity.user_id = Some(user_id.to_string());
+            record.identity.user_id = Some(*user_id);
         });
         Ok(())
     }
 
-    pub(super) fn user_id_for(&self, component_id: &str) -> Option<String> {
+    pub(super) fn user_id_for(
+        &self,
+        component_id: &str,
+    ) -> Option<wamn_identity_protocol::PrincipalId> {
         self.scopes
-            .read::<Authority, _>(component_id, |record| record.identity.user_id.clone())
+            .read::<Authority, _>(component_id, |record| record.identity.user_id)
             .flatten()
     }
 
@@ -696,7 +677,7 @@ impl WamnPostgres {
         // An acquisition that names no principal reads nothing. The
         // record-history triggers already refuse such a write with
         // actor-required.
-        if let Some(user_id) = identity.user_id.as_deref() {
+        if let Some(user_id) = identity.user_id.as_ref() {
             let project = identity.project.as_deref().unwrap_or(DEFAULT_PROJECT);
             self.require_provisioned_principal(&identity.project_env_key, project, user_id)
                 .await?;
@@ -736,7 +717,7 @@ impl WamnPostgres {
         let identity = self
             .session_identity(scope)
             .ok_or_else(|| anyhow::anyhow!("invocation scope was revoked"))?;
-        if let Some(user) = identity.user_id.as_deref() {
+        if let Some(user) = identity.user_id.as_ref() {
             self.require_provisioned_principal(
                 &identity.project_env_key,
                 identity.project.as_deref().unwrap_or(DEFAULT_PROJECT),
@@ -764,16 +745,13 @@ impl WamnPostgres {
         &self,
         project_env_key: &str,
         project: &str,
-        principal_id: &str,
+        principal_id: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<()> {
-        let principal = principal_id
-            .parse()
-            .context("invalid executing principal id")?;
         let grants = self
             .read_principal_grants(
                 project,
                 project_env_key,
-                &principal,
+                principal_id,
                 AuthorityClass::GuestSql,
             )
             .await
@@ -790,7 +768,7 @@ impl WamnPostgres {
             tracing::warn!(
                 project_env_key,
                 project,
-                principal_id,
+                %principal_id,
                 "wamn:postgres: refusing a bind for a principal with no platform.\"user\" row"
             );
             return Err(UnprovisionedPrincipal {
@@ -1143,10 +1121,7 @@ impl WamnPostgres {
             valid_project_env_key(project_env_key),
             "invalid operation-permission project_env_key"
         );
-        let ticket = match self
-            .auth
-            .grants(project_env_key, principal.to_string().as_str())
-        {
+        let ticket = match self.auth.grants(project_env_key, principal) {
             Ok(grants) => return Ok(grants),
             Err(ticket) => ticket,
         };
@@ -1154,12 +1129,10 @@ impl WamnPostgres {
             AuthorityClass::GuestSql => self.checkout_guest(project, project_env_key).await?,
             _ => self.checkout_platform(project, class).await?,
         };
-        let result = wamn_authentication::authorization::principal_grants(
-            &mut connection,
-            principal.to_string().as_str(),
-        )
-        .instrument(tracing::info_span!("wamn.auth.perm.query"))
-        .await;
+        let result =
+            wamn_authentication::authorization::principal_grants(&mut connection, principal)
+                .instrument(tracing::info_span!("wamn.auth.perm.query"))
+                .await;
         let grants = match result {
             Ok(grants) => grants,
             Err(error) => {
@@ -1168,12 +1141,7 @@ impl WamnPostgres {
             }
         };
         self.auth
-            .keep_grants(
-                project_env_key,
-                principal.to_string().as_str(),
-                ticket,
-                grants.clone(),
-            )
+            .keep_grants(project_env_key, principal, ticket, grants.clone())
             .await;
         Ok(grants)
     }
@@ -1197,7 +1165,7 @@ impl WamnPostgres {
                 async |client| {
                     wamn_authentication::authorization::user_operation_permissions(
                         client,
-                        principal_id.to_string().as_str(),
+                        principal_id,
                     )
                     .await
                     .context("read held operation grants")
@@ -1279,7 +1247,7 @@ impl WamnPostgres {
                 None,
                 None,
                 None,
-                Some(principal_id.to_string().as_str()),
+                Some(principal_id),
                 Some(operation),
                 None,
                 None,
@@ -1308,32 +1276,23 @@ impl WamnPostgres {
         &self,
         project: &str,
         project_env_key: &str,
-        principal_id: &str,
+        principal_id: &wamn_identity_protocol::PrincipalId,
         role: &str,
     ) -> anyhow::Result<Option<wamn_engine::flow_http_routing::AuthenticatedCaller>> {
-        let principal: wamn_identity_protocol::PrincipalId = principal_id
-            .parse()
-            .context("the run's principal is not a principal id")?;
         let grants = self
             .read_principal_grants(
                 project,
                 project_env_key,
-                &principal,
+                principal_id,
                 AuthorityClass::GuestSql,
             )
             .await?;
         let grants = self
-            .inherited_grants(project_env_key, &principal, grants)
+            .inherited_grants(project_env_key, principal_id, grants)
             .await?;
         Ok(grants
             .active
-            .then(|| {
-                wamn_authority::auth_cache::role_caller(
-                    principal.to_string().as_str(),
-                    role,
-                    &grants.roles,
-                )
-            })
+            .then(|| wamn_authority::auth_cache::role_caller(principal_id, role, &grants.roles))
             .flatten())
     }
 
@@ -1406,10 +1365,6 @@ pub(crate) fn validate_identity(identity: &SessionIdentity) -> anyhow::Result<()
             .parse::<wamn_identity_protocol::RoleName>()
             .is_ok_and(|parsed| parsed.as_str() == role)),
         "invalid role"
-    );
-    anyhow::ensure!(
-        identity.user_id.as_deref().is_none_or(valid_user_id),
-        "invalid principal"
     );
     anyhow::ensure!(
         identity.operation.as_deref().is_none_or(valid_operation),

@@ -57,7 +57,7 @@ async fn begin_bound(client: &mut Client) -> anyhow::Result<()> {
         .execute(&mut *client)
         .await
         .map(drop)?;
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture',$2)").bind(&wamn_control_provision::PlatformComponent::Executor.principal_id().to_string()).bind(&wamn_control_provision::PlatformComponent::Executor.principal_name()).execute(&mut *client).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture',$2)").bind(&wamn_control_provision::PlatformComponent::Executor.principal_id()).bind(&wamn_control_provision::PlatformComponent::Executor.principal_name()).execute(&mut *client).await.map(|result| result.rows_affected())?;
     Ok(())
 }
 
@@ -121,7 +121,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
         (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::ExecutorPlatform,
             &database,
-            GENERATION,
+            &GENERATION.parse().unwrap(),
             GENERATION_PASSWORD,
         ))
             .to_string(),
@@ -257,9 +257,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
     })?;
     plugin.set_user_id(
         COMPONENT,
-        &wamn_control_provision::PlatformComponent::Executor
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Executor.principal_id(),
     )?;
     plugin.set_operation(
         COMPONENT,

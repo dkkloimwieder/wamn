@@ -97,7 +97,7 @@ pub async fn connection(
             &triple.env,
             &instance,
         ),
-        "wamn_apply".into(),
+        "wamn_apply".parse()?,
         "wamn-apply".into(),
     ))
 }
@@ -117,7 +117,8 @@ pub async fn capture_connection(
         &triple.project,
         &triple.env,
         &instance,
-    );
+    )
+    .parse()?;
     config.credentials.name = wamn_control_provision::project_env_cdc_secret_name(
         &triple.org,
         &triple.project,
@@ -237,7 +238,7 @@ pub async fn initialize(
         .strip_suffix("-ca")
         .context("project cluster CA")?;
     let mut bootstrap = connection.clone();
-    bootstrap.username = "postgres".into();
+    bootstrap.username = "postgres".parse()?;
     bootstrap.credentials.name = format!("{cluster}-superuser");
     let name = format!(
         "bootstrap-{}",

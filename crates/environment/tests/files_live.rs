@@ -98,9 +98,14 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     .execute(&mut fixture.guest)
     .await
     .map(|result| result.rows_affected())?;
-    let mut writer =
-        wamn_test_postgres::transaction(&mut fixture.writer, files::CALLER, "admin:file-fixture")
-            .await?;
+    let mut writer = wamn_test_postgres::transaction(
+        &mut fixture.writer,
+        &files::CALLER
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
+        "admin:file-fixture",
+    )
+    .await?;
     sqlx::query("UPDATE platform.connection SET status='disabled' WHERE id=$1::text::uuid")
         .bind(&files::CONNECTION)
         .execute(&mut *writer)
@@ -115,9 +120,14 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     .await?;
     assert_eq!(row.get::<String, _>(0), "disabled");
     assert_eq!(row.get::<String, _>(1), files::CONNECTION);
-    let mut writer =
-        wamn_test_postgres::transaction(&mut fixture.writer, files::CALLER, "admin:file-fixture")
-            .await?;
+    let mut writer = wamn_test_postgres::transaction(
+        &mut fixture.writer,
+        &files::CALLER
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
+        "admin:file-fixture",
+    )
+    .await?;
     let error = sqlx::query("DELETE FROM platform.file WHERE id=$1::text::uuid")
         .bind(&files::FILE)
         .execute(&mut *writer)
@@ -143,9 +153,14 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
             .get::<i64, _>(0),
         1
     );
-    let mut writer =
-        wamn_test_postgres::transaction(&mut fixture.writer, files::CALLER, "admin:file-fixture")
-            .await?;
+    let mut writer = wamn_test_postgres::transaction(
+        &mut fixture.writer,
+        &files::CALLER
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
+        "admin:file-fixture",
+    )
+    .await?;
     assert_eq!(
         sqlx::query("DELETE FROM platform.file WHERE id=$1::text::uuid")
             .bind(&files::FILE)
@@ -375,9 +390,14 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
             response.text().await?
         );
     }
-    let mut transaction =
-        wamn_test_postgres::transaction(&mut metadata.writer, files::CALLER, "admin:file-fixture")
-            .await?;
+    let mut transaction = wamn_test_postgres::transaction(
+        &mut metadata.writer,
+        &files::CALLER
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
+        "admin:file-fixture",
+    )
+    .await?;
     sqlx::query("UPDATE platform.file SET size=$1,sha256=$2 WHERE id=$3::text::uuid")
         .bind(&i64::try_from(b"aged fixture bytes".len())?)
         .bind(&wamn_digest::bytes_sha256(b"aged fixture bytes"))

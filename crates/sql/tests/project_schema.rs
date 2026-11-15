@@ -56,7 +56,7 @@ fn current_database(url: &str) -> String {
     database.to_owned()
 }
 
-fn app_generation(database: &str, project_env_key: &str) -> String {
+fn app_generation(database: &str, project_env_key: &str) -> wamn_identity_protocol::LoginName {
     workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {

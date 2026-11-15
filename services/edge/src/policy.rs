@@ -251,7 +251,7 @@ mod tests {
             deadline: Instant::now() + Duration::from_secs(60),
             facts: EdgeFacts::entry(Some(AuthenticatedCaller::new(
                 "record-http",
-                "principal",
+                "00000000-0000-4000-8000-000000000001".parse().unwrap(),
                 CredentialType::Session,
                 false,
                 [wamn_catalog::sealed_operation_reference(OPERATION).to_owned()].into(),
@@ -285,7 +285,7 @@ mod tests {
         policy.authorize("bound", &request).unwrap();
         request.facts = EdgeFacts::entry(Some(AuthenticatedCaller::new(
             "record-http",
-            "principal",
+            "00000000-0000-4000-8000-000000000001".parse().unwrap(),
             CredentialType::Session,
             false,
             HashSet::new(),

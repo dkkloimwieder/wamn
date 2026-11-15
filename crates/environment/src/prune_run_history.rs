@@ -131,7 +131,7 @@ async fn verify_retention_identity(
             .fetch_one(&mut *client)
             .await
             .context("read connected retention identity")?;
-    let role: String = row.get("role");
+    let role: wamn_identity_protocol::LoginName = row.get("role");
     let database: String = row.get("database");
 
     let target = WorkloadRoleIdentity::ProjectEnvKey {

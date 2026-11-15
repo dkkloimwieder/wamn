@@ -35,11 +35,11 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
         .await?;
     let component = wamn_control_provision::PlatformComponent::ApplyPackage;
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-        .bind(component.principal_id().to_string())
+        .bind(component.principal_id())
         .execute(&mut admin)
         .await?;
     let table = migration::history_table("fixture--dev--one", "orders");
-    migration::prepare_history(&mut admin, &table, "postgres").await?;
+    migration::prepare_history(&mut admin, &table, &"postgres".parse().unwrap()).await?;
     let first = source(
         10,
         "CREATE TABLE public.migration_effect(id int PRIMARY KEY, created_at timestamptz NOT NULL, created_by uuid NOT NULL, updated_at timestamptz NOT NULL, updated_by uuid NOT NULL);
@@ -95,7 +95,7 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
             .fetch_one(&mut admin)
             .await?;
     assert!(actors);
-    let principal: uuid::Uuid =
+    let principal: wamn_identity_protocol::PrincipalId =
         sqlx::query_scalar("SELECT updated_by FROM public.migration_effect WHERE id=1")
             .fetch_one(&mut admin)
             .await?;
@@ -208,12 +208,12 @@ async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic
         .await?;
     let database_name = wamn_postgres::identity(database.as_str())?.1;
     let login = migration::login("fixture--dev--one", &database_name)?;
-    let role = postgres_protocol::escape::escape_identifier(&login);
+    let role = postgres_protocol::escape::escape_identifier(login.as_str());
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE ROLE {role} LOGIN PASSWORD 'migration-test' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; CREATE SCHEMA application AUTHORIZATION {role}; GRANT CONNECT ON DATABASE {} TO {role}", postgres_protocol::escape::escape_identifier(&database_name))))
         .execute(&mut admin).await?;
     let options = wamn_postgres::connect_options(database.as_str())
         .await?
-        .username(&login)
+        .username(login.as_str())
         .password("migration-test");
     let mut executor = wamn_postgres::connect(options).await?;
     migration::require_login(&mut executor, "fixture--dev--one").await?;

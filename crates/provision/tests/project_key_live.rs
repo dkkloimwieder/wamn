@@ -271,9 +271,9 @@ async fn the_guest_may_execute_the_derivation_and_may_not_replace_it(pool: sqlx:
 const PROBE_PASSWORD: &str = "project-key-probe";
 
 /// Rewrite an admin URL onto another role and database.
-fn role_url(admin_url: &str, role: &str, database: &str) -> String {
+fn role_url(admin_url: &str, role: &wamn_identity_protocol::LoginName, database: &str) -> String {
     let mut url = url::Url::parse(admin_url).unwrap();
-    url.set_username(role).unwrap();
+    url.set_username(role.as_str()).unwrap();
     url.set_password(Some(PROBE_PASSWORD)).unwrap();
     url.set_path(database);
     url.into()
@@ -308,8 +308,8 @@ async fn the_session_derivation_returns_the_key_of_the_connected_guest_login(poo
     // between a derivation and a cross-project read: without `^` a crafted role
     // could carry a victim's key as a suffix, without `$` as a prefix. Both
     // names are legal identifiers, so nothing but the anchors refuses them.
-    let head_attack = format!("x{login}");
-    let tail_attack = format!("{login}x");
+    let head_attack: wamn_identity_protocol::LoginName = format!("x{login}").parse().unwrap();
+    let tail_attack: wamn_identity_protocol::LoginName = format!("{login}x").parse().unwrap();
     for role in [&login, &head_attack, &tail_attack] {
         psql_file(
             &admin,

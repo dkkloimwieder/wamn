@@ -1009,7 +1009,7 @@ async fn run_case(pool: &sqlx::PgPool, case: Case) {
             if !matches!(case, Case::Cancellation) {
                 assert_eq!(
                     identity.user_id,
-                    Some(PlatformComponent::Executor.principal_id().to_string()),
+                    Some(PlatformComponent::Executor.principal_id()),
                     "a callerless delivery binds its platform principal"
                 );
                 assert_eq!(

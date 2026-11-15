@@ -96,7 +96,7 @@ pub fn sqlstate(url: &str, statement: &str) -> Option<String> {
         .or_else(|| panic!("no SQLSTATE in psql stderr:\n{err}"))
 }
 
-pub fn generation(family: WorkloadRoleFamily, database: &str) -> String {
+pub fn generation(family: WorkloadRoleFamily, database: &str) -> wamn_identity_protocol::LoginName {
     workload_login(
         family,
         WorkloadRoleIdentity::ProjectEnvironment {
@@ -110,9 +110,13 @@ pub fn generation(family: WorkloadRoleFamily, database: &str) -> String {
 }
 
 /// The admin URL with its userinfo replaced by one role's login.
-pub fn role_url(admin_url: &str, role: &str, password: &str) -> String {
+pub fn role_url(
+    admin_url: &str,
+    role: &wamn_identity_protocol::LoginName,
+    password: &str,
+) -> String {
     let mut url = Url::parse(admin_url).expect("the test database URL is a URL");
-    url.set_username(role).expect("set the probe role");
+    url.set_username(role.as_str()).expect("set the probe role");
     url.set_password(Some(password)).expect("set the password");
     url.into()
 }
@@ -126,8 +130,8 @@ pub fn role_url(admin_url: &str, role: &str, password: &str) -> String {
 /// this bead depend on being impossible.
 pub fn reset(admin_url: &str, database: &str) {
     let mut roles = vec![
-        generation(WorkloadRoleFamily::ExecutorPlatform, database),
-        generation(WorkloadRoleFamily::HttpAdmitter, database),
+        generation(WorkloadRoleFamily::ExecutorPlatform, database).to_string(),
+        generation(WorkloadRoleFamily::HttpAdmitter, database).to_string(),
         WorkloadRoleFamily::ExecutorPlatform.acl_role().to_owned(),
         WorkloadRoleFamily::HttpAdmitter.acl_role().to_owned(),
     ];

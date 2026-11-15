@@ -28,7 +28,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
             &["host-project"],
         )
         .await;
-    let principal: String = sqlx::query("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'").fetch_one(&mut fixture.admin).await.unwrap().get(0);
+    let principal: wamn_identity_protocol::PrincipalId = sqlx::query("SELECT c.service_principal_id FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'").fetch_one(&mut fixture.admin).await.unwrap().get(0);
     let database = url::Url::parse(server.create_database("project").await.unwrap().url()).unwrap();
     let mut project = connect(database.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -76,14 +76,21 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .execute(&mut project)
         .await
         .expect("begin fixture transaction");
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:connection-principal')").bind(&principal).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
-    sqlx::query("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','webhook@example.test')").bind(&principal).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','fixture','admin:connection-principal')").bind(&principal).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query(
+        "INSERT INTO platform.\"user\"(id,type,email) VALUES ($1,'service','webhook@example.test')",
+    )
+    .bind(&principal)
+    .execute(&mut project)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
     sqlx::raw_sql("COMMIT")
         .execute(&mut project)
         .await
         .expect("commit fixture transaction");
     let mut reader = url::Url::parse(database.as_str()).unwrap();
-    reader.set_username(&role).unwrap();
+    reader.set_username(role.as_str()).unwrap();
     reader.set_password(Some("fixture-password")).unwrap();
     let base = WamnPostgresConfig {
         credentials: None,
@@ -161,20 +168,18 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(caller.principal_id(), principal);
+    assert_eq!(caller.principal_id(), &principal);
     assert_eq!(caller.credential_type(), CredentialType::Connection);
     assert!(!caller.admin());
     assert!(caller.active_role().is_none());
     assert!(!caller.permits("fixture:item/read@1.0.0"));
     sqlx::raw_sql("INSERT INTO platform.role(name) VALUES ('source-reader'); INSERT INTO platform.permission(role_name,permission) VALUES ('source-reader','fixture:item/read')").execute(&mut project).await.map(drop).unwrap();
-    sqlx::query(
-        "INSERT INTO platform.user_role(user_id,role_name) VALUES ($1::text::uuid,'source-reader')",
-    )
-    .bind(&principal)
-    .execute(&mut project)
-    .await
-    .map(|result| result.rows_affected())
-    .unwrap();
+    sqlx::query("INSERT INTO platform.user_role(user_id,role_name) VALUES ($1,'source-reader')")
+        .bind(&principal)
+        .execute(&mut project)
+        .await
+        .map(|result| result.rows_affected())
+        .unwrap();
     postgres.auth_cache().clear();
     let caller = routing
         .authenticate_request_for_test("orders", &headers, super::signature::BODY)
@@ -219,8 +224,21 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     .await
     .unwrap();
     tx.commit().await.unwrap();
-    sqlx::query("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','api@example.test')").bind(service.id().to_string()).execute(&mut project).await.unwrap();
-    sqlx::query(sqlx::AssertSqlSafe(("INSERT INTO platform.user_role(user_id,role_name) VALUES ($1::text::uuid,'source-reader')").to_string())).bind(&service.id().to_string()).execute(&mut project).await.unwrap();
+    sqlx::query(
+        "INSERT INTO platform.\"user\"(id,type,email) VALUES ($1,'service','api@example.test')",
+    )
+    .bind(service.id())
+    .execute(&mut project)
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(
+        ("INSERT INTO platform.user_role(user_id,role_name) VALUES ($1,'source-reader')")
+            .to_string(),
+    ))
+    .bind(service.id())
+    .execute(&mut project)
+    .await
+    .unwrap();
     let bearer = format!("Bearer {}", pat.token());
     let pat_routing = super::routing(&json!(["pat"])).with_authenticator(authentication);
     let api = pat_routing
@@ -228,11 +246,11 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(api.principal_id(), service.id().to_string());
+    assert_eq!(api.principal_id(), service.id());
     assert!(!api.admin());
     assert!(api.permits("fixture:item/read@1.0.0"));
     assert!(!api.permits("fixture:item/write@1.0.0"));
-    sqlx::query("UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid")
+    sqlx::query("UPDATE platform.\"user\" SET status='disabled' WHERE id=$1")
         .bind(&principal)
         .execute(&mut project)
         .await
@@ -247,13 +265,13 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
             .0,
         401
     );
-    sqlx::query("UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid")
+    sqlx::query("UPDATE platform.\"user\" SET status='active' WHERE id=$1")
         .bind(&principal)
         .execute(&mut project)
         .await
         .map(|result| result.rows_affected())
         .unwrap();
-    sqlx::query("UPDATE platform.\"user\" SET type='user' WHERE id=$1::text::uuid")
+    sqlx::query("UPDATE platform.\"user\" SET type='user' WHERE id=$1")
         .bind(&principal)
         .execute(&mut project)
         .await
@@ -379,13 +397,13 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "BEGIN; SET LOCAL ROLE \"{administration}\"; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{live_platform_principal}'::text::uuid,'','fixture','admin:seed-pat-drop-fixture');"
     ))).execute(&mut project_admin).await.map(drop).unwrap();
-    sqlx::query("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1::text::uuid, 'service', 'pat-drop@example.test')").bind(&principal.id().to_string().as_str()).execute(&mut project_admin).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1, 'service', 'pat-drop@example.test')").bind(principal.id()).execute(&mut project_admin).await.map(|result| result.rows_affected()).unwrap();
     sqlx::raw_sql("COMMIT")
         .execute(&mut project_admin)
         .await
         .unwrap();
     let mut http_url = url::Url::parse(project.as_str()).unwrap();
-    http_url.set_username(&http).unwrap();
+    http_url.set_username(http.as_str()).unwrap();
     http_url.set_password(Some("pat-drop")).unwrap();
     let config = WamnPostgresConfig {
         credentials: None,
@@ -449,7 +467,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     let request = || route.authenticate_authorization_for_test("orders", Some(&authorization));
     let cached_at = std::time::Instant::now();
     let caller = request().await.unwrap().unwrap();
-    assert_eq!(caller.principal_id(), principal.id().to_string().as_str());
+    assert_eq!(caller.principal_id(), principal.id());
     assert!(pg.auth_cache().pat(issued.token()).is_some());
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     revoke_pat(&mut admin, issued.record().prefix(), &mut drops)

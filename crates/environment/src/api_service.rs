@@ -107,9 +107,14 @@ pub async fn create(
     .await?;
     let mut drops = AuthDrops::default();
     // Existing service rows and grants stay. This makes a retry after an issuer failure safe.
-    let principal_id = principal.id().to_string();
-    let present: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM platform.\"user\" WHERE id=$1::text::uuid AND type='service')")
-        .bind(&principal_id).fetch_one(&mut *tx).await?.get(0);
+    let principal_id = principal.id();
+    let present: bool = sqlx::query(
+        "SELECT EXISTS (SELECT 1 FROM platform.\"user\" WHERE id=$1 AND type='service')",
+    )
+    .bind(principal_id)
+    .fetch_one(&mut *tx)
+    .await?
+    .get(0);
     if !present {
         write_service(
             &mut tx,
@@ -129,7 +134,7 @@ pub async fn create(
             &key,
             GrantAuthority::Provisioning,
             GrantChange::UserRole {
-                user_id: &principal_id,
+                user_id: principal_id,
                 role: role.as_str(),
                 grant: true,
             },

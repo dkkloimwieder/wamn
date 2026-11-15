@@ -22,7 +22,7 @@ pub struct ConnectionConfig {
     pub host: String,
     pub port: u16,
     pub database: String,
-    pub username: String,
+    pub username: wamn_identity_protocol::LoginName,
     pub credentials: SecretRef,
     pub server_ca: SecretRef,
 }
@@ -44,7 +44,7 @@ pub fn configuration(input: &str) -> anyhow::Result<Cow<'_, str>> {
 }
 
 /// Resolve public identity without loading credentials or opening a session.
-pub fn identity(input: &str) -> anyhow::Result<(String, String)> {
+pub fn identity(input: &str) -> anyhow::Result<(wamn_identity_protocol::LoginName, String)> {
     let input = configuration(input)?;
     if input.trim_start().starts_with('{') {
         let config: ConnectionConfig = serde_json::from_str(&input)?;
@@ -52,7 +52,7 @@ pub fn identity(input: &str) -> anyhow::Result<(String, String)> {
     } else {
         let options: PgConnectOptions = input.parse()?;
         Ok((
-            options.get_username().into(),
+            options.get_username().parse()?,
             options.get_database().context("database is absent")?.into(),
         ))
     }
@@ -89,7 +89,12 @@ pub async fn connect_options<'a>(
     input: impl Into<ConnectionInput<'a>>,
 ) -> anyhow::Result<PgConnectOptions> {
     let input = match input.into() {
-        ConnectionInput::Options(options) => return Ok((*options).ssl_mode(PgSslMode::VerifyFull)),
+        ConnectionInput::Options(options) => {
+            let username: wamn_identity_protocol::LoginName = options.get_username().parse()?;
+            return Ok((*options)
+                .username(username.as_str())
+                .ssl_mode(PgSslMode::VerifyFull));
+        }
         ConnectionInput::Configuration(input) => input,
     };
     let input = configuration(input)?;
@@ -110,7 +115,8 @@ pub async fn connect_options<'a>(
             secret["type"] == "kubernetes.io/basic-auth",
             "database credential is not a basic-auth Secret"
         );
-        let username = String::from_utf8(data(&secret, "username")?)?;
+        let username: wamn_identity_protocol::LoginName =
+            String::from_utf8(data(&secret, "username")?)?.parse()?;
         let password = String::from_utf8(data(&secret, "password")?)?;
         anyhow::ensure!(
             username == config.username,
@@ -121,16 +127,19 @@ pub async fn connect_options<'a>(
             .host(&config.host)
             .port(config.port)
             .database(&config.database)
-            .username(&username)
+            .username(username.as_str())
             .password(&password)
             .ssl_root_cert_from_pem(data(&ca, "ca.crt")?)
     } else {
         let explicit = url::Url::parse(&input)?;
+        // SQLx supplies a default login when the URL omits it.
         anyhow::ensure!(
             !explicit.username().is_empty() && !explicit.path().trim_matches('/').is_empty(),
             "explicit database login and database are required"
         );
-        input.parse::<PgConnectOptions>()?
+        let options: PgConnectOptions = input.parse()?;
+        let username: wamn_identity_protocol::LoginName = options.get_username().parse()?;
+        options.username(username.as_str())
     };
     Ok(options.ssl_mode(PgSslMode::VerifyFull))
 }
@@ -222,7 +231,7 @@ mod tests {
 /// An explicit connection names another role or database than its consumer.
 #[derive(Debug)]
 pub struct IdentityMismatch {
-    pub username: String,
+    pub username: wamn_identity_protocol::LoginName,
     pub database: String,
 }
 impl std::fmt::Display for IdentityMismatch {
@@ -233,9 +242,13 @@ impl std::fmt::Display for IdentityMismatch {
 impl std::error::Error for IdentityMismatch {}
 
 /// Check component authority before opening a socket or reading credential material.
-pub fn require_identity(input: &str, username: &str, database: &str) -> anyhow::Result<()> {
+pub fn require_identity(
+    input: &str,
+    username: &wamn_identity_protocol::LoginName,
+    database: &str,
+) -> anyhow::Result<()> {
     let (actual_user, actual_database) = identity(input)?;
-    if actual_user != username || actual_database != database {
+    if &actual_user != username || actual_database != database {
         return Err(IdentityMismatch {
             username: actual_user,
             database: actual_database,

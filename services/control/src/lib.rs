@@ -116,7 +116,7 @@ impl Configuration {
             "control credentials must belong to the org namespace"
         );
         ensure!(
-            config.apply_database.username == wamn_control_provision::apply::APPLY_ROLE,
+            config.apply_database.username.as_str() == wamn_control_provision::apply::APPLY_ROLE,
             "operation configuration requires the apply role"
         );
         let expected_control = wamn_control_provision::workload_login(

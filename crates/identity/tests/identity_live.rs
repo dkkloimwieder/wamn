@@ -491,11 +491,7 @@ async fn project_environment_membership_round_trip(
 /// the row stamps itself.
 async fn provisioning_principal_is_seeded(client: &mut sqlx::PgConnection) -> PrincipalId {
     let component = PlatformComponent::Provisioning;
-    let id: PrincipalId = component
-        .principal_id()
-        .to_string()
-        .parse()
-        .expect("a derived id is a principal id");
+    let id: PrincipalId = component.principal_id();
     let row = sqlx::query(
         "SELECT subject, display_name, created_by::text, updated_by::text, \
                     (SELECT count(*) FROM identity.principals) \
@@ -579,43 +575,67 @@ async fn platform_principal_constraint_refuses_other_rows(client: &mut sqlx::PgC
     for (type_, id, subject, email, display_name) in [
         (
             "platform",
-            OTHER.to_owned(),
+            OTHER.parse::<PrincipalId>().unwrap(),
             provisioning.principal_name().as_str(),
             None,
             provisioning.principal_name().as_str(),
         ),
         (
             "platform",
-            executor.principal_id().to_string(),
+            executor.principal_id(),
             provisioning.principal_name().as_str(),
             None,
             provisioning.principal_name().as_str(),
         ),
         (
             "platform",
-            executor.principal_id().to_string(),
+            executor.principal_id(),
             executor.principal_name().as_str(),
             None,
             executor.principal_name().as_str(),
         ),
         (
             "platform",
-            provisioning.principal_id().to_string(),
+            provisioning.principal_id(),
             provisioning.principal_name().as_str(),
             None,
             "Provisioning",
         ),
-        ("user", OTHER.to_owned(), "user", ADDRESS, "wamn:user"),
-        ("service", OTHER.to_owned(), "station", None, "wamn:station"),
         (
             "user",
-            OTHER.to_owned(),
+            OTHER.parse::<PrincipalId>().unwrap(),
+            "user",
+            ADDRESS,
+            "wamn:user",
+        ),
+        (
+            "service",
+            OTHER.parse::<PrincipalId>().unwrap(),
+            "station",
+            None,
+            "wamn:station",
+        ),
+        (
+            "user",
+            OTHER.parse::<PrincipalId>().unwrap(),
             provisioning.principal_name().as_str(),
             ADDRESS,
             "User",
         ),
-        ("user", OTHER.to_owned(), "mailless", None, "Mailless"),
-        ("service", OTHER.to_owned(), "mailed", ADDRESS, "Mailed"),
+        (
+            "user",
+            OTHER.parse::<PrincipalId>().unwrap(),
+            "mailless",
+            None,
+            "Mailless",
+        ),
+        (
+            "service",
+            OTHER.parse::<PrincipalId>().unwrap(),
+            "mailed",
+            ADDRESS,
+            "Mailed",
+        ),
     ] {
         let error = sqlx::query(
             "INSERT INTO identity.principals (id, type, subject, email, display_name) \

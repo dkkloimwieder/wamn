@@ -89,11 +89,8 @@ impl ControlRoutes<'_> {
             let logins = self.logins(&[(project.into(), env.into())])?;
             let mut client = wamn_postgres::connect(&logins[0]).await?;
 
-            let mut transaction = wamn_platform_identity::transaction::read_connection(
-                &mut client,
-                caller.to_string().as_str(),
-            )
-            .await?;
+            let mut transaction =
+                wamn_platform_identity::transaction::read_connection(&mut client, caller).await?;
             let published = Value::Object(
                 versions
                     .iter()

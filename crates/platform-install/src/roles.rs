@@ -18,7 +18,11 @@ pub fn platform(namespace: &str, cluster: &str, database: &str) -> anyhow::Resul
     Ok(BTreeMap::from([(
         cluster.to_owned(),
         vec![
-            managed_role("wamn_apply".into(), "wamn_db_owner", "wamn-apply".into()),
+            managed_role(
+                "wamn_apply".parse().expect("platform login"),
+                "wamn_db_owner",
+                "wamn-apply".into(),
+            ),
             MigrationDatabase::System.managed_role(database),
             managed_role(
                 wamn_control_provision::identity_role::identity_issuer_login(
@@ -166,9 +170,9 @@ fn project(
         declarations.entry(owner.into()).or_default().push(role);
     }
     let roles = declarations.entry(cluster.into()).or_default();
-    if !roles.iter().any(|role| role.name == "wamn_apply") {
+    if !roles.iter().any(|role| role.name.as_str() == "wamn_apply") {
         roles.push(managed_role(
-            "wamn_apply".into(),
+            "wamn_apply".parse().expect("platform login"),
             "wamn_db_owner",
             "wamn-apply".into(),
         ));
@@ -180,7 +184,9 @@ fn project(
             &triple.project,
             &triple.env,
             instance,
-        ),
+        )
+        .parse()
+        .expect("derived capture login"),
         wamn_control_provision::project_env_cdc_secret_name(
             &triple.org,
             &triple.project,
@@ -216,7 +222,9 @@ pub fn values(declarations: &Declarations) -> anyhow::Result<Value> {
         }
         let migrations = logins
             .iter()
-            .filter(|login| login.ensure == "present" && login.name.starts_with("wamn_migration_"))
+            .filter(|login| {
+                login.ensure == "present" && login.name.as_str().starts_with("wamn_migration_")
+            })
             .map(|login| login.name.as_str())
             .collect::<Vec<_>>();
         let mut roles = roles.into_values().collect::<Vec<_>>();

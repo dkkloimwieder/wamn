@@ -45,7 +45,7 @@ SELECT graph_json::text, wiring_hash, execution_role, trigger, source_package, e
 const HOLDS_ROLE_SQL: &str = "\
 SELECT EXISTS (\
     SELECT 1 FROM platform.user_role \
-     WHERE user_id = $1::text::uuid AND role_name = ANY($2)\
+     WHERE user_id = $1 AND role_name = ANY($2)\
     )";
 
 /// Params `$1` to `$5`: the version that stays or becomes enabled.
@@ -172,7 +172,7 @@ pub use plan::WorkflowVersion;
 
 /// Enable `workflow` under the lifecycle lock of `triple`, validated against
 /// the release `manifest_digest` the environment serves and the authority of
-/// `enabler` (the text of its `platform."user"` id). The graph conditions within
+/// `enabler` (its `platform."user"` id). The graph conditions within
 /// the packages `declared` names for the workflow's application first.
 ///
 /// # Errors
@@ -188,7 +188,7 @@ pub async fn enable_workflow(
     triple: &Triple,
     project: &mut Client,
     workflow: &WorkflowVersion<'_>,
-    enabler: &str,
+    enabler: &wamn_identity_protocol::PrincipalId,
     manifest_digest: &wamn_digest::Digest,
     declared: &wamn_catalog::EnvironmentApplications,
     events: Option<&wamn_broker::EventBroker>,
@@ -309,7 +309,7 @@ async fn commit(
 async fn enable_in(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     workflow: &WorkflowVersion<'_>,
-    enabler: &str,
+    enabler: &wamn_identity_protocol::PrincipalId,
     manifest_digest: &wamn_digest::Digest,
     packages: &std::collections::BTreeSet<String>,
     declared: &wamn_catalog::EnvironmentApplications,
@@ -370,7 +370,7 @@ async fn enable_in(
                 format!("the enabler holds neither role {role:?} nor {ADMIN_ROLE:?}"),
             ));
         }
-        let workflow_user = workflow_user_id().to_string();
+        let workflow_user = workflow_user_id();
         if !holds_role(transaction, &workflow_user, &[role]).await? {
             return Err(WorkflowLifecycleError::new(
                 WorkflowLifecycleErrorType::RoleNotHeldByWorkflowUser,
@@ -470,7 +470,7 @@ async fn enable_in(
 
 async fn holds_role(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    user_id: &str,
+    user_id: &wamn_identity_protocol::PrincipalId,
     roles: &[&str],
 ) -> Result<bool, WorkflowLifecycleError> {
     Ok(sqlx::query(HOLDS_ROLE_SQL)

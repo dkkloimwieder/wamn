@@ -80,7 +80,7 @@ pub async fn install_schema(client: &mut Client) -> anyhow::Result<()> {
 async fn install_executor(
     client: &mut Client,
     admin_url: &str,
-) -> anyhow::Result<(String, String)> {
+) -> anyhow::Result<(String, wamn_identity_protocol::LoginName)> {
     use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 
     let database: String = sqlx::query("SELECT current_database()::text")
@@ -112,7 +112,7 @@ async fn install_executor(
     .await
     .map(drop)?;
     let mut url = Url::parse(admin_url)?;
-    url.set_username(&role)
+    url.set_username(role.as_str())
         .map_err(|()| anyhow::anyhow!("set executor username"))?;
     url.set_password(Some(EXECUTOR_PASSWORD))
         .map_err(|()| anyhow::anyhow!("set executor password"))?;
@@ -262,7 +262,7 @@ pub const RUNTIME_APPLICATION_NAME: &str = "production-lease-live-runtime";
 pub struct LiveFixture {
     pub admin: Client,
     pub plugin: Arc<WamnPostgres>,
-    executor_role: String,
+    executor_role: wamn_identity_protocol::LoginName,
 }
 
 /// Install the schema, the executor credential, and pod identities.
@@ -282,7 +282,7 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
     })?);
     let executor = wamn_identity_protocol::PlatformComponent::Executor;
     for component in [COMPONENT, ROLLED_COMPONENT] {
-        plugin.set_user_id(component, &executor.principal_id().to_string())?;
+        plugin.set_user_id(component, &executor.principal_id())?;
         plugin.set_operation(component, &executor.principal_name())?;
     }
     plugin.set_project_env_key(COMPONENT, PROJECT_ENV_KEY)?;

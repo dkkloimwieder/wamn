@@ -81,7 +81,7 @@ impl SessionConnection {
     pub fn database(&self) -> anyhow::Result<String> {
         Ok(wamn_postgres::identity(&self.input()?)?.1)
     }
-    pub fn username(&self) -> anyhow::Result<String> {
+    pub fn username(&self) -> anyhow::Result<wamn_identity_protocol::LoginName> {
         Ok(wamn_postgres::identity(&self.input()?)?.0)
     }
 }

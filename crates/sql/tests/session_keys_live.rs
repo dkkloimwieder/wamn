@@ -26,9 +26,7 @@ async fn session_key_lifecycle_on_postgres(pool: sqlx::PgPool) {
     let second = publish_session_key(&mut admin, ISSUER).await.unwrap();
     let third = publish_session_key(&mut admin, ISSUER).await.unwrap();
     let other = publish_session_key(&mut admin, OTHER_ISSUER).await.unwrap();
-    let actor = wamn_control_provision::PlatformComponent::Provisioning
-        .principal_id()
-        .to_string();
+    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
     for relation in ["identity.session_keys", "identity.session_signing_state"] {
         wamn_test_infrastructure::record_history::assert_stamp(
             &mut admin, relation, "true", &actor, &actor,

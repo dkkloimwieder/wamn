@@ -85,7 +85,7 @@ pub(super) async fn dynamic_query<T: 'static + Send>(
                         schema.as_deref(),
                         runner.as_deref(),
                         role.as_deref(),
-                        user.as_deref(),
+                        user.as_ref(),
                         operation.as_deref(),
                         application.as_deref(),
                         None,
@@ -105,7 +105,7 @@ pub(super) async fn dynamic_query<T: 'static + Send>(
 
 pub(super) async fn transaction_query<T: 'static + Send>(
     accessor: &Accessor<T, SharedCtx>,
-    rep: Resource<PgStatementTransaction>,
+    rep: &Resource<PgStatementTransaction>,
     sql: String,
     params: Vec<SqlValue>,
 ) -> QueryResult {
@@ -139,11 +139,11 @@ pub(super) async fn transaction_query<T: 'static + Send>(
 
 fn transaction_state<T: 'static>(
     accessor: &Accessor<T, SharedCtx>,
-    rep: Resource<PgStatementTransaction>,
+    rep: &Resource<PgStatementTransaction>,
 ) -> WasmResult<(SharedTxnState, Arc<std::sync::atomic::AtomicU64>)> {
     accessor.with(|mut access| {
         let ctx = access.get();
-        let handle = ctx.table.get(&rep)?;
+        let handle = ctx.table.get(rep)?;
         wash_runtime::wasmtime::ensure!(
             handle.owner_scope == ctx.component_id.as_ref(),
             "SQL transaction belongs to a different invocation"
@@ -157,7 +157,7 @@ fn transaction_state<T: 'static>(
 
 pub(super) async fn transaction_batch<T: 'static + Send>(
     accessor: &Accessor<T, SharedCtx>,
-    rep: Resource<PgStatementTransaction>,
+    rep: &Resource<PgStatementTransaction>,
     sql: String,
 ) -> WasmResult<Result<(), PgError>> {
     let (state, destroyed) = transaction_state(accessor, rep)?;

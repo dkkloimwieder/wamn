@@ -13,6 +13,7 @@ name = "wamn-test-postgres"
 path = "postgres-run.rs"
 
 [dependencies]
+wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 tokio = { workspace = true, features = ["macros", "rt", "process", "signal", "time"] }
 rustix.workspace = true
 rcgen.workspace = true

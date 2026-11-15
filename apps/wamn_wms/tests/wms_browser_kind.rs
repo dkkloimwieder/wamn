@@ -99,7 +99,7 @@ async fn run(scenario: &str) -> anyhow::Result<()> {
                 .env("WAMN_ENDPOINT", &application.routes.endpoint)
                 .env("WAMN_ROUTE_HOST", &application.routes.host)
                 .env("WAMN_BEARER", &application.routes.bearer)
-                .env("WAMN_USER_ID", application.caller.as_str())
+                .env("WAMN_USER_ID", application.caller.to_string())
                 .env("WAMN_AUD", audience)
                 .env("WAMN_LOCATION_ID", LOCATION_A_ID)
                 .env("WAMN_FIRST_ID", PACKAGING_ID)

@@ -532,9 +532,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             &b.digest(),
             &b,
             &[b_package.clone(), base_package.clone()],
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         )
         .await
         .is_err()
@@ -666,9 +664,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &old_a.digest(),
         &old_a,
         &old_packages,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     expand::prepare(
@@ -678,9 +674,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &b.digest(),
         &b,
         &[b_package, base_package.clone()],
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     for (target_type, target_id, seconds) in [
@@ -750,7 +744,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
                     .membership(),
             ),
     )?;
-    let b_permissions = permissions(&mut observer, b_user.id().to_string().as_str()).await?;
+    let b_permissions = permissions(&mut observer, b_user.id()).await?;
     document.applications.get_mut("a").unwrap().current =
         wamn_environment::environment::document::DeclaredRelease::Digest(new_a.digest());
     document
@@ -784,9 +778,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &new_a.digest(),
         &new_a,
         &candidate_packages,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     expand::prepare(
@@ -796,14 +788,12 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &new_a.digest(),
         &new_a,
         &candidate_packages,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
 
     assert_eq!(before_sql, continuity(&mut observer).await?);
-    let b_after = permissions(&mut observer, b_user.id().to_string().as_str()).await?;
+    let b_after = permissions(&mut observer, b_user.id()).await?;
     for operation in candidate_packages[1]
         .models
         .values()
@@ -866,7 +856,12 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         PROJECT_ENV_KEY,
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
-            user_id: b_user.id().to_string().as_str(),
+            user_id: &b_user
+                .id()
+                .to_string()
+                .as_str()
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
             role: "application-a",
             grant: true,
         },
@@ -882,9 +877,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             &failed_release.digest(),
             &failed_release,
             &failed_packages,
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         )
         .await
         .is_err()
@@ -928,7 +921,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .await?
         .is_some()
     );
-    let caller = permissions(&mut observer, a_user.id().to_string().as_str()).await?;
+    let caller = permissions(&mut observer, a_user.id()).await?;
     assert!(caller.contains("wamn-integration:data/get"));
     assert!(caller.contains("wamn-integration:data/update"));
     let connection = &old_a.components.first().unwrap().descriptor;
@@ -1005,7 +998,12 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
                 PROJECT_ENV_KEY,
                 wamn_platform_identity::application::GrantAuthority::Provisioning,
                 wamn_platform_identity::application::GrantChange::UserRole {
-                    user_id: b_user.id().to_string().as_str(),
+                    user_id: &b_user
+                        .id()
+                        .to_string()
+                        .as_str()
+                        .parse::<wamn_identity_protocol::PrincipalId>()
+                        .unwrap(),
                     role: "application-a",
                     grant: false,
                 },
@@ -1055,10 +1053,10 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
                 .collect::<Vec<_>>(),
             if pinned { vec!["old-work"] } else { vec![] }
         );
-        let caller = permissions(&mut observer, a_user.id().to_string().as_str()).await?;
+        let caller = permissions(&mut observer, a_user.id()).await?;
         assert_eq!(caller.contains("wamn-integration:data/get"), live || pinned);
         assert!(caller.contains("wamn-integration:data/update"));
-        let b_after = permissions(&mut observer, b_user.id().to_string().as_str()).await?;
+        let b_after = permissions(&mut observer, b_user.id()).await?;
         for operation in candidate_packages[1]
             .models
             .values()
@@ -1098,9 +1096,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &old_a.digest(),
         &old_a,
         &old_packages,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     assert!(
@@ -1108,7 +1104,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             .await?
             .is_some()
     );
-    let caller = permissions(&mut observer, a_user.id().to_string().as_str()).await?;
+    let caller = permissions(&mut observer, a_user.id()).await?;
     assert!(caller.contains("wamn-integration:data/get"));
 
     assert_eq!(before_sql, continuity(&mut observer).await?);
@@ -1117,8 +1113,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
 
 async fn permissions(
     client: &mut sqlx::PgConnection,
-    principal: &str,
+    principal: &wamn_identity_protocol::PrincipalId,
 ) -> anyhow::Result<std::collections::BTreeSet<String>> {
-    Ok(sqlx::query("SELECT p.permission FROM platform.user_role r JOIN platform.permission p USING(role_name) WHERE r.user_id=$1::text::uuid")
+    Ok(sqlx::query("SELECT p.permission FROM platform.user_role r JOIN platform.permission p USING(role_name) WHERE r.user_id=$1")
         .bind(principal).fetch_all(client).await?.into_iter().map(|row| row.get(0)).collect())
 }

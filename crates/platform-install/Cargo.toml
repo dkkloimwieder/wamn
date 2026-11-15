@@ -31,7 +31,7 @@ wamn-postgres.workspace = true
 wamn-registry.workspace = true
 wamn-control-provision.workspace = true
 wamn-platform-identity.workspace = true
-wamn-identity-protocol.workspace = true
+wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-package-artifact.workspace = true
 wamn-release-control.workspace = true
 wamn-compiler.workspace = true

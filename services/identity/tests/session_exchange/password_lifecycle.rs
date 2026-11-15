@@ -14,7 +14,7 @@ async fn fixture_transaction(
 ) -> sqlx::Transaction<'_, sqlx::Postgres> {
     wamn_test_postgres::transaction(
         connection,
-        &PlatformComponent::Provisioning.principal_id().to_string(),
+        &PlatformComponent::Provisioning.principal_id(),
         "admin:password-lifecycle",
     )
     .await
@@ -27,11 +27,7 @@ async fn enroll(fixture: &mut Fixture, email: &str, password: &str) -> Principal
         .expect_redacted("user");
     seed_user(&mut fixture.environments[0].client, &user, "receiver").await;
     grant(&mut fixture.system.client, &user, "demo", "dev").await;
-    let actor = PlatformComponent::Provisioning
-        .principal_id()
-        .to_string()
-        .parse()
-        .unwrap();
+    let actor = PlatformComponent::Provisioning.principal_id();
     let mut issuer = connect(&fixture.issuer_url).await;
     let invitation = issue_invitation(&mut issuer.client, &actor, user.id())
         .await
@@ -749,11 +745,7 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
 
     let before_reset = login(&https, &fixture).await;
     let mut reset_connection = connect(&fixture.issuer_url).await;
-    let actor = PlatformComponent::Provisioning
-        .principal_id()
-        .to_string()
-        .parse()
-        .unwrap();
+    let actor = PlatformComponent::Provisioning.principal_id();
     let reset_secret = wamn_platform_identity::password::issue_reset(
         &mut reset_connection.client,
         &actor,

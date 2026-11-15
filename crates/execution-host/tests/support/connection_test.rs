@@ -162,7 +162,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     call(
         &delivery,
         "integration/write",
-        boss.to_string().as_str(),
+        boss,
         json!({"project":"billing","name":"api","integration_type":"http","auth_type":"api_key"}),
     )
     .await
@@ -173,7 +173,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         call(
             &delivery,
             "connection/test",
-            "00000000-0000-4000-8000-000000000099",
+            "00000000-0000-4000-8000-000000000099".parse().unwrap(),
             request.clone()
         )
         .await
@@ -182,50 +182,30 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     );
     assert_eq!(requests.load(Ordering::SeqCst), 0);
     {
-        let observed = &(call(
-            &delivery,
-            "connection/test",
-            boss.to_string().as_str(),
-            request.clone(),
-        )
-        .await
-        .unwrap());
+        let observed = &(call(&delivery, "connection/test", boss, request.clone())
+            .await
+            .unwrap());
         assert_eq!(observed["ok"], serde_json::json!(true));
     };
     status.store(401, Ordering::SeqCst);
-    let refused = call(
-        &delivery,
-        "connection/test",
-        boss.to_string().as_str(),
-        request.clone(),
-    )
-    .await
-    .unwrap();
+    let refused = call(&delivery, "connection/test", boss, request.clone())
+        .await
+        .unwrap();
     assert_eq!(refused["ok"], false);
     assert!(refused["error"].is_string());
     assert!(!refused.to_string().contains(SECRET));
     assert_eq!(requests.load(Ordering::SeqCst), 2);
     status.store(0, Ordering::SeqCst);
-    let timed_out = call(
-        &delivery,
-        "connection/test",
-        boss.to_string().as_str(),
-        request.clone(),
-    )
-    .await
-    .unwrap();
+    let timed_out = call(&delivery, "connection/test", boss, request.clone())
+        .await
+        .unwrap();
     assert_eq!(timed_out["ok"], false);
     assert!(!timed_out.to_string().contains(SECRET));
     request["parameters"]["unknown"] = true.into();
     assert_eq!(
-        call(
-            &delivery,
-            "connection/test",
-            boss.to_string().as_str(),
-            request
-        )
-        .await
-        .unwrap()["ok"],
+        call(&delivery, "connection/test", boss, request)
+            .await
+            .unwrap()["ok"],
         false
     );
     assert_eq!(counts(&mut admin).await?, before);
@@ -234,7 +214,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     call(
         &delivery,
         "integration/write",
-        boss.to_string().as_str(),
+        boss,
         json!({"project":"billing","name":"meter","integration_type":"modbus","auth_type":"none"}),
     )
     .await
@@ -266,14 +246,9 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     let request = json!({"project":"billing","env":"dev","name":"meter","parameters":{"authority":address.to_string()}});
     let before = counts(&mut admin).await?;
     {
-        let observed = &(call(
-            &delivery,
-            "connection/test",
-            boss.to_string().as_str(),
-            request.clone(),
-        )
-        .await
-        .unwrap());
+        let observed = &(call(&delivery, "connection/test", boss, request.clone())
+            .await
+            .unwrap());
         assert_eq!(observed["ok"], serde_json::json!(true));
     };
     let unused = tokio::net::TcpListener::bind((ip, 0)).await?;
@@ -281,9 +256,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     bad["parameters"]["authority"] = unused.local_addr()?.to_string().into();
     drop(unused);
     assert_eq!(
-        call(&delivery, "connection/test", boss.to_string().as_str(), bad)
-            .await
-            .unwrap()["ok"],
+        call(&delivery, "connection/test", boss, bad).await.unwrap()["ok"],
         false
     );
     assert_eq!(counts(&mut admin).await?, before);
@@ -320,18 +293,13 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         .await?;
     sqlx::raw_sql("INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES('native-meter','native',false); INSERT INTO registry.integration_type_auth(integration_type,auth_type) VALUES('native-meter','none')").execute(&mut admin).await.map(drop)?;
     sqlx::query("SELECT registry.publish_integration('native-meter',1,$1,$2,'wamn:modbus/client@1.0.0',$3,$4)").bind(&native_digest).bind(&schema).bind(&vec!["wamn:modbus/read@1.0.0","wamn:modbus/write@1.0.0","wamn:integration/health@0.1.0"]).bind(&vec!["wamn:modbus/write@1.0.0"]).execute(&mut admin).await.map(|result| result.rows_affected())?;
-    call(&delivery,"integration/write",boss.to_string().as_str(),json!({"project":"billing","name":"native-meter","integration_type":"native-meter","auth_type":"none"})).await.unwrap();
+    call(&delivery,"integration/write",boss,json!({"project":"billing","name":"native-meter","integration_type":"native-meter","auth_type":"none"})).await.unwrap();
     let mut native_request = request.clone();
     native_request["name"] = "native-meter".into();
     {
-        let observed = &(call(
-            &delivery,
-            "connection/test",
-            boss.to_string().as_str(),
-            native_request,
-        )
-        .await
-        .unwrap());
+        let observed = &(call(&delivery, "connection/test", boss, native_request)
+            .await
+            .unwrap());
         assert_eq!(observed["ok"], serde_json::json!(true));
     };
     assert_eq!(counts(&mut admin).await?, before);
@@ -355,53 +323,33 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     .await
     .map(|result| result.rows_affected())?;
     assert_eq!(
-        call(
-            &delivery,
-            "connection/test",
-            boss.to_string().as_str(),
-            request.clone()
-        )
-        .await
-        .unwrap()["ok"],
+        call(&delivery, "connection/test", boss, request.clone())
+            .await
+            .unwrap()["ok"],
         false
     );
     let mut explicit = request.clone();
     explicit["version"] = 2.into();
     {
-        let observed = &(call(
-            &delivery,
-            "connection/test",
-            boss.to_string().as_str(),
-            explicit,
-        )
-        .await
-        .unwrap());
+        let observed = &(call(&delivery, "connection/test", boss, explicit)
+            .await
+            .unwrap());
         assert_eq!(observed["ok"], serde_json::json!(true));
     };
     assert_eq!(counts(&mut admin).await?, before);
     // A live release takes precedence over the newest published version.
-    let connection = call(
-        &delivery,
-        "connection/write",
-        boss.to_string().as_str(),
-        request.clone(),
-    )
-    .await
-    .unwrap();
+    let connection = call(&delivery, "connection/write", boss, request.clone())
+        .await
+        .unwrap();
     let canonical = b"{}".as_slice();
     let digest: wamn_digest::Digest = sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,'sha256:'||encode(sha256($2::bytea),'hex'),$2) RETURNING manifest_digest").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&canonical).fetch_one(&mut billing).await?.get(0);
     sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,2)").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&digest).bind(&connection["id"].as_str().unwrap()).execute(&mut billing).await.map(|result| result.rows_affected())?;
     *live.0.lock().await = Some(digest);
     let before = counts(&mut admin).await?;
     {
-        let observed = &(call(
-            &delivery,
-            "connection/test",
-            boss.to_string().as_str(),
-            request,
-        )
-        .await
-        .unwrap());
+        let observed = &(call(&delivery, "connection/test", boss, request)
+            .await
+            .unwrap());
         assert_eq!(observed["ok"], serde_json::json!(true));
     };
     assert_eq!(counts(&mut admin).await?, before);

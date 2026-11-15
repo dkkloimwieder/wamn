@@ -54,22 +54,18 @@ async fn application_routes_answer_through_the_generated_client() -> anyhow::Res
     } = &mut host;
     let mut setup = wamn_test_postgres::transaction(
         admin,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         "admin:client-admin",
     )
     .await?;
     // The admin also holds project-admin, so its own admin row stays.
-    sqlx::query(
-        "INSERT INTO identity.project_roles VALUES ($1::text::uuid, $2, $3, 'project-admin')",
-    )
-    .bind(&first.as_str())
-    .bind(&ORG)
-    .bind(&PROJECT)
-    .execute(&mut *setup)
-    .await
-    .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO identity.project_roles VALUES ($1, $2, $3, 'project-admin')")
+        .bind(&*first)
+        .bind(&ORG)
+        .bind(&PROJECT)
+        .execute(&mut *setup)
+        .await
+        .map(|result| result.rows_affected())?;
 
     setup.commit().await?;
 
@@ -87,7 +83,7 @@ async fn application_routes_answer_through_the_generated_client() -> anyhow::Res
         &[
             ("WAMN_CONTROL_CLIENT_BASE_URL", endpoint),
             ("WAMN_CONTROL_CLIENT_ADMIN_TOKEN", token(&admin_claims)),
-            ("WAMN_CONTROL_CLIENT_ADMIN_ID", first.clone()),
+            ("WAMN_CONTROL_CLIENT_ADMIN_ID", first.to_string()),
             ("WAMN_CONTROL_CLIENT_MEMBER_TOKEN", token(&member_claims)),
             ("WAMN_CONTROL_CLIENT_MEMBER_ID", MEMBER.to_owned()),
         ],
@@ -139,9 +135,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
 
     let mut setup = wamn_test_postgres::transaction(
         &mut admin,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         "admin:control-client-users",
     )
     .await?;
@@ -184,8 +178,8 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
     for principal in [&boss, &cat] {
         sqlx::query("INSERT INTO identity.password_logins \
                    (id, principal_id, issuer, audience, authenticated_at, expires_at, renewal_expires_at) \
-                 VALUES ($1::text::uuid, $1::text::uuid, $2, $3, now(), now() + interval '8 hours', \
-                   now() + interval '30 minutes')").bind(&principal.to_string().as_str()).bind(&ISSUER).bind(&audience).execute(&mut *setup).await.map(|result| result.rows_affected())?;
+                 VALUES ($1, $1, $2, $3, now(), now() + interval '8 hours', \
+                   now() + interval '30 minutes')").bind(principal).bind(&ISSUER).bind(&audience).execute(&mut *setup).await.map(|result| result.rows_affected())?;
     }
 
     setup.commit().await?;

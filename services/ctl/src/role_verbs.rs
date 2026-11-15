@@ -21,7 +21,7 @@ pub struct UserRoleArgs {
     pub environment: EnvironmentArgs,
     /// The user principal UUID.
     #[arg(long)]
-    pub user_id: String,
+    pub user_id: wamn_identity_protocol::PrincipalId,
     /// The authored role.
     #[arg(long)]
     pub role: String,

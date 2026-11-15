@@ -53,7 +53,7 @@ pub(super) fn administrator(job: &mut Value, namespace: &str) -> anyhow::Result<
         database_host(namespace),
         5432,
         "wamn_system".into(),
-        "postgres".into(),
+        "postgres".parse()?,
         "wamn-pg-superuser".into(),
     );
     let spec = &mut job["spec"]["template"]["spec"];

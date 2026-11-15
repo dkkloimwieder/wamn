@@ -53,7 +53,7 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
             "the creates were numbered {numbers:?}"
         );
         let caller = &application.caller;
-        let rows = sqlx::query("SELECT purchase_order_number, created_by::text, updated_by::text \
+        let rows = sqlx::query("SELECT purchase_order_number, created_by, updated_by \
                  FROM receiving.purchase_order ORDER BY purchase_order_number").fetch_all(&mut client)
             .await?;
         let actors = rows
@@ -61,8 +61,8 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
             .map(|row| {
                 (
                     row.get::<String, _>(0),
-                    row.get::<String, _>(1),
-                    row.get::<String, _>(2),
+                    row.get::<wamn_identity_protocol::PrincipalId, _>(1),
+                    row.get::<wamn_identity_protocol::PrincipalId, _>(2),
                 )
             })
             .collect::<Vec<_>>();
@@ -74,8 +74,9 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
                     .collect::<Vec<_>>(),
             "the orders do not name the caller {caller}: {actors:?}"
         );
+        let caller_text = caller.to_string();
         for (field, value) in [
-            ("created_by", caller.as_str()),
+            ("created_by", caller_text.as_str()),
             ("purchase_order_number", "FORGED"),
         ] {
             let response = http

@@ -10,7 +10,7 @@ async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor(poo
     wamn_control_provision::test_database::system(database.as_str()).await;
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
-    let actor = PlatformComponent::Provisioning.principal_id().to_string();
+    let actor = PlatformComponent::Provisioning.principal_id();
     sqlx::raw_sql("BEGIN").execute(&mut client).await.unwrap();
     sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:fixture')")
         .bind(&actor)

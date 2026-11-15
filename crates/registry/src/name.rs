@@ -357,8 +357,13 @@ pub fn service_resource(stem: &str, org: &str, project: &str, env: &str) -> Stri
     format!("{stem}-{}", project_env_key(org, project, env))
 }
 /// A login name derived from its credential identity.
-pub fn credential_login(prefix: &str, identity_hash: &str) -> String {
+///
+/// # Panics
+/// Panics if the prefix and hash cannot form a PostgreSQL login name.
+pub fn credential_login(prefix: &str, identity_hash: &str) -> wamn_identity_protocol::LoginName {
     format!("{prefix}_{identity_hash}")
+        .parse()
+        .expect("derived login fits PostgreSQL identifiers")
 }
 /// The audience of one project database instance.
 pub fn project_audience(org: &str, project: &str, env: &str, instance: &str) -> String {

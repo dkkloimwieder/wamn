@@ -67,7 +67,7 @@ pub fn start(
 ) -> anyhow::Result<DeviceLoop> {
     let caller = AuthenticatedCaller::new(
         config.attachment.as_str(),
-        config.principal.as_str(),
+        config.principal,
         CredentialType::QueuedService,
         false,
         release

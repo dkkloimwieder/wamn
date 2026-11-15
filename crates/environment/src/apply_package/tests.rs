@@ -118,12 +118,19 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
     let cache = Arc::new(AuthCache::with_ttl(Duration::from_secs(3600)));
     let changes = watched(&nats, Some("apply-drops--dev--fixture"), Arc::clone(&cache)).await;
     let ticket = cache
-        .grants("apply-drops--dev--fixture", "principal")
+        .grants(
+            "apply-drops--dev--fixture",
+            &"00000000-0000-0000-0000-000000000001"
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
+        )
         .unwrap_err();
     cache
         .keep_grants(
             "apply-drops--dev--fixture",
-            "principal",
+            &"00000000-0000-0000-0000-000000000001"
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
             ticket,
             PrincipalGrants {
                 user: false,
@@ -133,7 +140,12 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
         .await;
     assert!(
         cache
-            .grants("apply-drops--dev--fixture", "principal")
+            .grants(
+                "apply-drops--dev--fixture",
+                &"00000000-0000-0000-0000-000000000001"
+                    .parse::<wamn_identity_protocol::PrincipalId>()
+                    .unwrap()
+            )
             .is_ok()
     );
     let shipped = std::env::temp_dir().join(format!("wamn-local-shipped-{}", std::process::id()));
@@ -152,7 +164,12 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
     .unwrap();
     until("package apply publishes the admin role drop", || {
         cache
-            .grants("apply-drops--dev--fixture", "principal")
+            .grants(
+                "apply-drops--dev--fixture",
+                &"00000000-0000-0000-0000-000000000001"
+                    .parse::<wamn_identity_protocol::PrincipalId>()
+                    .unwrap(),
+            )
             .is_err()
     })
     .await;

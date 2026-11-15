@@ -7,6 +7,9 @@ use std::fmt;
 /// stored in the clear as the index key, the whole string only as a digest.
 pub const PAT_TOKEN_PREFIX: &str = "wamn_pat_";
 
+mod login;
+pub use login::{LoginName, ParseLoginNameError};
+
 mod principal;
 pub use principal::{ParseIdentityError, PrincipalId, RoleName};
 pub mod secret;

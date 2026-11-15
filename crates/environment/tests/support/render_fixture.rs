@@ -417,7 +417,7 @@ pub fn credential_secrets(triple: &wamn_registry::Triple, namespace: &str) -> Ve
             host: "database".into(),
             port: 5432,
             database: "render".into(),
-            username: "render".into(),
+            username: "render".parse().unwrap(),
             credentials: wamn_postgres::SecretRef {
                 namespace: namespace.into(),
                 name,

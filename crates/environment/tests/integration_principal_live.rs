@@ -53,9 +53,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
 
     let mut setup = wamn_test_postgres::transaction(
         &mut admin,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         "admin:integration-packages",
     )
     .await?;
@@ -150,9 +148,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             PROJECT_ENV_KEY,
             &digest,
             &manifest,
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         )
         .await?;
         materialize_application_principals(
@@ -167,16 +163,16 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     }
     // The workflow user is the other service row
     // (docs/architecture/execution.md#environment-workflows).
-    let workflow_user = wamn_identity_protocol::workflow_user_id().to_string();
+    let workflow_user = wamn_identity_protocol::workflow_user_id();
     let row = sqlx::query(
-        "SELECT count(*), min(id::text) FROM platform.\"user\" \
-             WHERE type='service' AND id::text <> $1",
+        "SELECT count(*), min(id::text)::uuid FROM platform.\"user\" \
+             WHERE type='service' AND id <> $1",
     )
     .bind(&workflow_user)
     .fetch_one(&mut admin)
     .await?;
     assert_eq!(row.get::<i64, _>(0), 1);
-    let principal: String = row.get(1);
+    let principal: wamn_identity_protocol::PrincipalId = row.get(1);
     let mut identity = connect(system.as_str()).await?;
     assert_eq!(
         sqlx::query("SELECT count(*) FROM identity.principals WHERE type='service'")
@@ -221,8 +217,8 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
 
 async fn permissions(
     client: &mut sqlx::PgConnection,
-    principal: &str,
+    principal: &wamn_identity_protocol::PrincipalId,
 ) -> anyhow::Result<std::collections::BTreeSet<String>> {
-    Ok(sqlx::query("SELECT p.permission FROM platform.user_role r JOIN platform.permission p USING(role_name) WHERE r.user_id=$1::text::uuid")
+    Ok(sqlx::query("SELECT p.permission FROM platform.user_role r JOIN platform.permission p USING(role_name) WHERE r.user_id=$1")
         .bind(principal).fetch_all(client).await?.into_iter().map(|row| row.get(0)).collect())
 }

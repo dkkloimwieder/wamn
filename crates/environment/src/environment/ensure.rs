@@ -663,12 +663,13 @@ pub(super) async fn prepare_cdc(
     let mut project_admin = connect(project_admin_url).await?;
     let instance =
         read_project_env_instance(&platform.system_database_url, &document.triple()).await?;
-    let role = wamn_control_provision::cdc_object_name(
+    let role: wamn_identity_protocol::LoginName = wamn_control_provision::cdc_object_name(
         &document.org,
         &document.project,
         &document.env,
         &instance,
-    );
+    )
+    .parse()?;
     let cluster = super::sql::reset::recorded_cluster(platform, document).await?;
     let secret_name = wamn_control_provision::project_env_cdc_secret_name(
         &document.org,
@@ -706,7 +707,7 @@ pub(super) async fn prepare_cdc(
     ).await?;
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::create_failover_slot_sql(&role),
+        wamn_control_provision::sql::create_failover_slot_sql(role.as_str()),
     ))
     .execute(&mut project_admin)
     .await
@@ -1260,15 +1261,16 @@ pub(super) async fn prepare_cdc_with_connection(
 ) -> anyhow::Result<()> {
     let instance =
         read_project_env_instance(&platform.system_database_url, &document.triple()).await?;
-    let role = wamn_control_provision::cdc_object_name(
+    let role: wamn_identity_protocol::LoginName = wamn_control_provision::cdc_object_name(
         &document.org,
         &document.project,
         &document.env,
         &instance,
-    );
+    )
+    .parse()?;
     let mut connection = connect(capture).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::create_failover_slot_sql(&role),
+        wamn_control_provision::sql::create_failover_slot_sql(role.as_str()),
     ))
     .execute(&mut connection)
     .await?;

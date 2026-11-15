@@ -75,8 +75,8 @@ impl Execution {
             let mut tx = application
                 .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
                 .await?;
-            sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','','admin:workflow-list')")
-                .bind(caller.to_string()).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','','admin:workflow-list')")
+                .bind(caller).execute(&mut *tx).await?;
             sqlx::query("SET TRANSACTION READ ONLY")
                 .execute(&mut *tx)
                 .await?;
@@ -90,7 +90,6 @@ impl Execution {
             .application
             .as_deref()
             .context("application is absent")?;
-        let actor = caller.to_string();
         if operation == "workflow.author" {
             anyhow::ensure!(
                 request.source_package.is_some()
@@ -142,7 +141,7 @@ impl Execution {
                     document: &document,
                     trigger,
                     execution,
-                    created_by: &actor,
+                    created_by: caller,
                     manifest_digest: &digest,
                 },
             )
@@ -171,7 +170,7 @@ impl Execution {
                     &triple,
                     &mut application,
                     &version,
-                    &actor,
+                    caller,
                     &digest,
                     &declared,
                     platform.events.as_ref(),

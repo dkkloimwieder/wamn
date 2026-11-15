@@ -45,7 +45,9 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
         .unwrap();
     postgres.set_application("application", "dynamic").unwrap();
     let user = "00000000-0000-4000-8000-000000000031";
-    postgres.set_user_id("application", user).unwrap();
+    postgres
+        .set_user_id("application", &user.parse().unwrap())
+        .unwrap();
     let (mut store, instance) = guest(Arc::clone(&postgres), "application", QUERY_GUEST).await;
     let query = instance
         .get_typed_func::<(String, Vec<SqlValue>), (QueryResponse,)>(&mut store, "query")
@@ -176,7 +178,12 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
     );
     postgres.set_project_env_key(SCOPE, PROJECT).unwrap();
     postgres
-        .set_user_id(SCOPE, crate::session_identity::tests::LIVE_PRINCIPAL)
+        .set_user_id(
+            SCOPE,
+            &crate::session_identity::tests::LIVE_PRINCIPAL
+                .parse()
+                .unwrap(),
+        )
         .unwrap();
     let (mut store, instance) = guest(Arc::clone(&postgres), SCOPE, TRANSACTION_GUEST).await;
     let open = instance
@@ -308,10 +315,15 @@ async fn live_an_invalid_timezone_setting_is_refused(pool: sqlx::PgPool) {
     ensure_live_user_rows(database.as_str(), &[LIVE_PRINCIPAL]).await;
     let app_url = live_guest_url(database.as_str(), PROJECT).await;
     let mut admin = pool.acquire().await.unwrap();
-    let mut seed =
-        wamn_test_postgres::transaction(&mut admin, LIVE_PRINCIPAL, "admin:numbering-refusal")
-            .await
-            .unwrap();
+    let mut seed = wamn_test_postgres::transaction(
+        &mut admin,
+        &LIVE_PRINCIPAL
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
+        "admin:numbering-refusal",
+    )
+    .await
+    .unwrap();
     sqlx::raw_sql(
         "INSERT INTO platform.number_sequence(application,name,pattern) VALUES \
         ('numbering','dated','D-{date:YYYY}-{seq:n}'), ('numbering','bare','N-{seq:n}'); \
@@ -334,7 +346,9 @@ async fn live_an_invalid_timezone_setting_is_refused(pool: sqlx::PgPool) {
     );
     postgres.set_project_env_key(SCOPE, PROJECT).unwrap();
     postgres.set_application(SCOPE, "numbering").unwrap();
-    postgres.set_user_id(SCOPE, LIVE_PRINCIPAL).unwrap();
+    postgres
+        .set_user_id(SCOPE, &LIVE_PRINCIPAL.parse().unwrap())
+        .unwrap();
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
@@ -358,10 +372,15 @@ async fn live_an_invalid_timezone_setting_is_refused(pool: sqlx::PgPool) {
         ("<foo bar>+5", false),
     ];
     for (zone, invalid) in zones {
-        let mut setup =
-            wamn_test_postgres::transaction(&mut admin, LIVE_PRINCIPAL, "admin:numbering-timezone")
-                .await
-                .unwrap();
+        let mut setup = wamn_test_postgres::transaction(
+            &mut admin,
+            &LIVE_PRINCIPAL
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
+            "admin:numbering-timezone",
+        )
+        .await
+        .unwrap();
         sqlx::query("UPDATE platform.setting SET value=$1 WHERE target_type='application' AND target_id='numbering' AND key='timezone'")
             .bind(serde_json::json!(zone)).execute(&mut *setup).await.unwrap();
         setup.commit().await.unwrap();

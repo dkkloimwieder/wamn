@@ -143,7 +143,7 @@ async fn operator_pat_issuance_over_https() {
     let role = identity_issuer_login(ISSUER).expect_redacted("issuer role");
     let exists: bool =
         sqlx::query("SELECT EXISTS (SELECT FROM pg_roles WHERE rolname=ANY($1::text[]))")
-            .bind(&vec![role.clone(), IDENTITY_ISSUER_ROLE.to_owned()])
+            .bind(&vec![role.clone(), IDENTITY_ISSUER_ROLE.parse().unwrap()])
             .fetch_one(&mut system)
             .await
             .expect_redacted("fixture role absence")
@@ -193,7 +193,7 @@ async fn operator_pat_issuance_over_https() {
     .expect_redacted("provision issuer credential");
     let mut targeted = parsed.clone();
     targeted
-        .set_username(&role)
+        .set_username(role.as_str())
         .expect_redacted("targeted login");
     targeted
         .set_password(Some(PASSWORD))
@@ -523,7 +523,7 @@ async fn operator_pat_issuance_over_https() {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "DROP OWNED BY {role}; DROP ROLE {role}; DROP OWNED BY {stable}; DROP ROLE {stable};",
-            role = escape_identifier(&role),
+            role = escape_identifier(role.as_str()),
             stable = escape_identifier(IDENTITY_ISSUER_ROLE)
         ))
             .to_string(),
@@ -607,9 +607,18 @@ async fn success(
     );
     assert_eq!(record.get::<String, _>(2), label.trim());
     assert_eq!(record.get::<i64, _>(3), 3600);
-    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
+    let provisioning = PlatformComponent::Provisioning.principal_id();
     assert!(
-        record.get::<String, _>(4) == provisioning && record.get::<String, _>(5) == provisioning,
+        record
+            .get::<String, _>(4)
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap()
+            == provisioning
+            && record
+                .get::<String, _>(5)
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap()
+                == provisioning,
         "the identity service issues the token as wamn:provisioning"
     );
     for field in ["created_at", "expires_at"] {
@@ -793,7 +802,7 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
     )
     .expect_redacted("unused reader target");
     let mut url = admin.clone();
-    url.set_username(&role)
+    url.set_username(role.as_str())
         .expect_redacted("unused reader login");
     url.set_password(Some(PASSWORD))
         .expect_redacted("unused reader password");

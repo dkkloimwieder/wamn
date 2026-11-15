@@ -435,7 +435,7 @@ async fn apply_selection(
     triple: &wamn_registry::Triple,
     application: &str,
     change: document::ReleaseChange<'_>,
-    actor: Option<&str>,
+    actor: Option<&wamn_identity_protocol::PrincipalId>,
 ) -> anyhow::Result<Analysis> {
     let private = ensure::PrivateDirectory::create()?;
     let mut platform = platform.clone();
@@ -498,7 +498,7 @@ async fn apply_selection(
                 .await?;
             let mut analysis = analyse::analyse(&platform, &document, Some(application)).await?;
             if let Some(actor) = actor {
-                analysis.actor = actor.to_owned();
+                analysis.actor = actor.to_string();
             }
             let prepared = match &analysis.authorities.release {
                 Some(release) => {
@@ -510,9 +510,8 @@ async fn apply_selection(
             let publisher = if let Some(actor) = actor {
                 actor
             } else {
-                provisioning = wamn_identity_protocol::PlatformComponent::Provisioning
-                    .principal_id()
-                    .to_string();
+                provisioning =
+                    wamn_identity_protocol::PlatformComponent::Provisioning.principal_id();
                 &provisioning
             };
             expand::expand(&platform, &document, &analysis, publisher)

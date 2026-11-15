@@ -62,7 +62,7 @@ pub fn select_production_lease_sql() -> String {
                 r.input_json::text AS input_json, \
                 r.wiring_id, r.wiring_version, \
                 r.wiring_hash, r.package_id, \
-                r.execution_principal_id::text, r.execution_role, \
+                r.execution_principal_id, r.execution_role, \
                 r.node_digests_json::text, r.event_root_run_id, r.event_depth \
            FROM candidate \
            JOIN runs AS r \

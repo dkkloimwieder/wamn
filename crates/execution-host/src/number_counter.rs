@@ -148,7 +148,7 @@ pub async fn set_number_counter(
     postgres: &WamnPostgres,
     project: &str,
     project_env_key: &str,
-    user_id: &str,
+    user_id: &wamn_identity_protocol::PrincipalId,
     operation: &str,
     request_id: &str,
     set: &CounterSet,

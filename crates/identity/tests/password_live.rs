@@ -17,11 +17,7 @@ fn password() -> Password {
     Password::new(PASSWORD.to_owned()).unwrap()
 }
 fn actor() -> PrincipalId {
-    PlatformComponent::Provisioning
-        .principal_id()
-        .to_string()
-        .parse()
-        .unwrap()
+    PlatformComponent::Provisioning.principal_id()
 }
 async fn connect(url: &str) -> Client {
     let mut client = wamn_postgres::connect(url).await.unwrap();

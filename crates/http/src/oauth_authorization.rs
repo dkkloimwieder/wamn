@@ -102,7 +102,7 @@ impl Authorization {
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         context: &Value,
-        caller: uuid::Uuid,
+        caller: wamn_identity_protocol::PrincipalId,
     ) -> Result<String, Error> {
         let connection = context["id"]
             .as_str()
@@ -181,7 +181,7 @@ impl Authorization {
             return Err(refused("expired state"));
         }
         sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','','connection.oauth_callback')")
-            .bind(row.get::<uuid::Uuid, _>("created_by"))
+            .bind(row.get::<wamn_identity_protocol::PrincipalId, _>("created_by"))
             .execute(&mut **tx)
             .await
             .map_err(|error| failed("callback identity failed", error))?;

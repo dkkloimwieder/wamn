@@ -575,17 +575,17 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         assert_eq!(observed["granted"], serde_json::json!(true));
     };
     let stamp = sqlx::query(
-        "SELECT operation, changed_by::text FROM platform.user_role_history \
+        "SELECT operation, changed_by FROM platform.user_role_history \
              WHERE (after ->> 'role_name') = 'clerk'",
     )
     .fetch_one(&mut *admin)
     .await?;
     assert_eq!(
-        (stamp.get::<String, _>(0), stamp.get::<String, _>(1)),
         (
-            "wamn-control:user-role/grant@0.9.0".to_owned(),
-            first.clone()
-        )
+            stamp.get::<String, _>(0),
+            stamp.get::<wamn_identity_protocol::PrincipalId, _>(1)
+        ),
+        ("wamn-control:user-role/grant@0.9.0".to_owned(), first)
     );
     let stranger = "9b0c3a5e-6f0e-4c1e-8f33-1d5b2b7a6c11";
     {
@@ -1211,7 +1211,7 @@ async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> 
         "--token",
         &token,
         "--user-id",
-        &host.first,
+        &host.first.to_string(),
         "--role",
         "admin",
     ])

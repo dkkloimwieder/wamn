@@ -21,7 +21,7 @@ async fn identity_issuer_refusals_and_catalog_rules() {
     .await;
     let login = wamn_control_provision::identity_role::identity_issuer_login(issuer).unwrap();
     let mut url = url::Url::parse(database.url()).unwrap();
-    url.set_username(&login).unwrap();
+    url.set_username(login.as_str()).unwrap();
     url.set_password(Some("issuer-test")).unwrap();
     let mut connection = wamn_postgres::connect(url.as_str()).await.unwrap();
     let restricted: bool = sqlx::query_scalar("SELECT NOT (rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication) FROM pg_roles WHERE rolname=current_user")
@@ -52,7 +52,7 @@ async fn identity_issuer_refusals_and_catalog_rules() {
             url.as_str(),
             &format!(
                 "ALTER ROLE {} {attribute}",
-                postgres_protocol::escape::escape_identifier(&login)
+                postgres_protocol::escape::escape_identifier(login.as_str())
             ),
         )
         .await;

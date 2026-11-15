@@ -43,7 +43,7 @@ pub struct WorkflowRunRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkflowIdentity {
-    pub principal_id: String,
+    pub principal_id: wamn_identity_protocol::PrincipalId,
     pub role: String,
 }
 

@@ -35,9 +35,7 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     let mut authority_connection = wamn_postgres::connect(system.as_str()).await?;
     let mut authority = wamn_test_postgres::transaction(
         &mut authority_connection,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         "admin:environment-fill",
     )
     .await?;
@@ -129,9 +127,7 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     let mut authority = wamn_test_postgres::transaction(
         &mut authority_connection,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         "admin:revoke-environment-member",
     )
     .await?;

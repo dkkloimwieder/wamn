@@ -29,9 +29,9 @@ pub async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-fn login(url: &str, role: &str) -> anyhow::Result<String> {
+fn login(url: &str, role: &wamn_identity_protocol::LoginName) -> anyhow::Result<String> {
     let mut url = url::Url::parse(url)?;
-    url.set_username(role)
+    url.set_username(role.as_str())
         .map_err(|()| anyhow::anyhow!("fixture username"))?;
     url.set_password(Some("file-fixture-only"))
         .map_err(|()| anyhow::anyhow!("fixture password"))?;
@@ -107,7 +107,11 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     .execute(&mut observer)
     .await
     .map(drop)?;
-    let mut migrator = connect(&login(database.url(), "file_fixture_migrator")?).await?;
+    let mut migrator = connect(&login(
+        database.url(),
+        &"file_fixture_migrator".parse().unwrap(),
+    )?)
+    .await?;
     sqlx::raw_sql(DOCUMENTS)
         .execute(&mut migrator)
         .await
@@ -173,8 +177,14 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
 
 /// Seed metadata for schema tests, without asserting that an object was uploaded.
 pub async fn metadata(writer: &mut Client) -> anyhow::Result<()> {
-    let mut transaction =
-        wamn_test_postgres::transaction(writer, CALLER, "admin:file-fixture").await?;
+    let mut transaction = wamn_test_postgres::transaction(
+        writer,
+        &CALLER
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
+        "admin:file-fixture",
+    )
+    .await?;
     sqlx::query(
         "INSERT INTO platform.file \
          (id,application,connection_id,name,media_type,size,sha256,blob_key) \
@@ -224,9 +234,7 @@ impl Registry {
         payload["env"] = "dev".into();
         let mut tx = wamn_test_postgres::transaction(
             &mut self.control,
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
             "wamn:provisioning",
         )
         .await?;
@@ -251,9 +259,7 @@ impl Registry {
     ) -> anyhow::Result<()> {
         let mut tx = wamn_test_postgres::transaction(
             &mut self.control,
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
             "wamn:provisioning",
         )
         .await?;
@@ -304,7 +310,7 @@ pub async fn registry(
     .execute(&mut bootstrap)
     .await
     .map(drop)?;
-    let mut owner = connect(&login(database.url(), "wamn_system")?).await?;
+    let mut owner = connect(&login(database.url(), &"wamn_system".parse().unwrap())?).await?;
     sqlx::raw_sql(wamn_control_provision::SYSTEM_SCHEMA_SQL)
         .execute(&mut owner)
         .await
@@ -427,9 +433,7 @@ pub async fn registry(
         }
         let mut tx = wamn_test_postgres::transaction(
             &mut fixture.control,
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
             "wamn:provisioning",
         )
         .await?;
@@ -616,7 +620,11 @@ pub async fn age_metadata(fixture: &mut Fixture) -> anyhow::Result<()> {
     .execute(&mut fixture.observer)
     .await
     .map(drop)?;
-    let mut importer = connect(&login(fixture.database.url(), "file_aged_owner")?).await?;
+    let mut importer = connect(&login(
+        fixture.database.url(),
+        &"file_aged_owner".parse().unwrap(),
+    )?)
+    .await?;
     let identity =
         sqlx::query("SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user")
             .fetch_one(&mut importer)

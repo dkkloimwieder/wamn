@@ -113,7 +113,7 @@ async fn principal_rows_and_transaction_bindings_execute(pool: sqlx::PgPool) -> 
         sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(component)))
             .execute(&mut *transaction)
             .await?;
-        let (actor, operation): (uuid::Uuid, String) = sqlx::query_as(
+        let (actor, operation): (wamn_identity_protocol::PrincipalId, String) = sqlx::query_as(
             "SELECT wamn_authority.current_principal_id(), (wamn_authority.current_identity()).operation",
         )
         .fetch_one(&mut *transaction)

@@ -100,7 +100,7 @@ pub struct ProjectEnvMembershipArgs {
 
     /// Existing user principal UUID from the system database.
     #[arg(long)]
-    pub principal_id: String,
+    pub principal_id: wamn_identity_protocol::PrincipalId,
 }
 
 /// Run one identity credential generation action and print what it did.
@@ -284,7 +284,10 @@ mod tests {
         assert_eq!(args.token, "session");
         assert_eq!(args.project, "billing");
         assert_eq!(args.env, "dev");
-        assert_eq!(args.principal_id, "00112233-4455-6677-8899-aabbccddeeff");
+        assert_eq!(
+            args.principal_id,
+            "00112233-4455-6677-8899-aabbccddeeff".parse().unwrap()
+        );
     }
 
     #[test]

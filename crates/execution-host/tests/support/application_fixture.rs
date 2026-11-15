@@ -36,16 +36,22 @@ pub(super) async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-pub(super) fn login(admin_url: &str, role: &str) -> anyhow::Result<String> {
+pub(super) fn login(
+    admin_url: &str,
+    role: &wamn_identity_protocol::LoginName,
+) -> anyhow::Result<String> {
     let mut url = url::Url::parse(admin_url)?;
-    url.set_username(role)
+    url.set_username(role.as_str())
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;
     url.set_password(Some(PASSWORD))
         .map_err(|()| anyhow::anyhow!("set fixture password"))?;
     Ok(url.into())
 }
 
-pub(super) fn generation(family: WorkloadRoleFamily, database: &str) -> anyhow::Result<String> {
+pub(super) fn generation(
+    family: WorkloadRoleFamily,
+    database: &str,
+) -> anyhow::Result<wamn_identity_protocol::LoginName> {
     Ok(workload_login(
         family,
         WorkloadRoleIdentity::ProjectEnvironment {
@@ -63,7 +69,10 @@ pub(super) async fn install(
     admin: &mut Client,
     database: &str,
     admin_url: &str,
-) -> anyhow::Result<(String, String)> {
+) -> anyhow::Result<(
+    wamn_identity_protocol::LoginName,
+    wamn_identity_protocol::LoginName,
+)> {
     wamn_control_provision::test_database::system_schema(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
@@ -169,7 +178,10 @@ pub(super) async fn install(
 /// The App generation of the fixture project_env_key, as provisioning prepares it:
 /// the guest authority that `number_counter.set` runs under. Returns its
 /// login name.
-pub(super) async fn app_generation(admin: &mut Client, database: &str) -> anyhow::Result<String> {
+pub(super) async fn app_generation(
+    admin: &mut Client,
+    database: &str,
+) -> anyhow::Result<wamn_identity_protocol::LoginName> {
     let role = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
@@ -212,7 +224,7 @@ pub(super) fn credentials(
         executor.path().trim_start_matches('/'),
     )?;
     executor
-        .set_username(&role)
+        .set_username(role.as_str())
         .map_err(|()| anyhow::anyhow!("fixture executor login"))?;
     let mut classes = json!({
         (AuthorityClass::CallableHttp.as_str()): admitter,
@@ -268,7 +280,7 @@ pub(super) struct ApplicationHost {
     pub(super) server: Server,
     pub(super) routing: Arc<FlowHttpRouting>,
     pub(super) delivery: Arc<HostRouteDelivery>,
-    pub(super) first: String,
+    pub(super) first: wamn_identity_protocol::PrincipalId,
     _clocks: (
         wamn_identity_protocol::verifier::SessionTestClock,
         wamn_authentication::session_keys::TestClock,
@@ -361,7 +373,7 @@ pub(super) async fn application_host_with_release(
             server,
             routing: Arc::new(routing),
             delivery: Arc::new(delivery),
-            first,
+            first: first.parse()?,
             _clocks: (token_clock, key_clock),
             _database: test_database,
             _postgres: postgres,

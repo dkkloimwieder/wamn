@@ -20,23 +20,23 @@ const PLATFORM_ROWS_SQL: &str =
     "SELECT EXISTS (SELECT FROM platform.\"user\" WHERE type = 'platform')";
 
 const USER_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
-    (id, type, email, display_name) VALUES ($1::text::uuid, 'user', $2, $3) \
+    (id, type, email, display_name) VALUES ($1, 'user', $2, $3) \
     ON CONFLICT (id) DO NOTHING";
 
 const SERVICE_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
-    (id, type, email, display_name) VALUES ($1::text::uuid, 'service', $2, $3)";
+    (id, type, email, display_name) VALUES ($1, 'service', $2, $3)";
 
 const ROLE_SQL: &str = "INSERT INTO platform.role (name) VALUES ($1) \
     ON CONFLICT (name) DO NOTHING";
 
 const USER_ROLE_SQL: &str = "INSERT INTO platform.user_role (user_id, role_name) \
-    VALUES ($1::text::uuid, $2) ON CONFLICT DO NOTHING";
+    VALUES ($1, $2) ON CONFLICT DO NOTHING";
 
 const DROP_USER_ROLE_SQL: &str = "DELETE FROM platform.user_role \
-    WHERE user_id = $1::text::uuid AND role_name = $2";
+    WHERE user_id = $1 AND role_name = $2";
 
 const DROP_USER_ROW_SQL: &str = "DELETE FROM platform.\"user\" \
-    WHERE id = $1::text::uuid AND type = 'user'";
+    WHERE id = $1 AND type = 'user'";
 
 /// The status row of the environment. No row means active.
 const ENVIRONMENT_STATUS_ROW_SQL: &str = "INSERT INTO platform.environment \
@@ -97,14 +97,14 @@ pub async fn write_user(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     sqlx::query(USER_ROW_SQL)
-        .bind(user.principal_id.to_string().as_str())
+        .bind(user.principal_id)
         .bind(user.email)
         .bind(user.display_name)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.principal(project_env_key, user.principal_id.to_string().as_str());
+    drops.principal(project_env_key, user.principal_id);
     Ok(())
 }
 
@@ -116,14 +116,14 @@ pub async fn write_service(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     sqlx::query(SERVICE_ROW_SQL)
-        .bind(service.principal_id.to_string().as_str())
+        .bind(service.principal_id)
         .bind(service.email)
         .bind(service.display_name)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.principal(project_env_key, service.principal_id.to_string().as_str());
+    drops.principal(project_env_key, service.principal_id);
     Ok(())
 }
 
@@ -135,13 +135,13 @@ pub async fn remove_admin(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     sqlx::query(DROP_USER_ROLE_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(ADMIN_ROLE)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.principal(project_env_key, principal_id.to_string().as_str());
+    drops.principal(project_env_key, principal_id);
     Ok(())
 }
 
@@ -154,12 +154,12 @@ pub async fn remove_user(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     sqlx::query(DROP_USER_ROW_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.principal(project_env_key, principal_id.to_string().as_str());
+    drops.principal(project_env_key, principal_id);
     Ok(())
 }
 
@@ -181,10 +181,14 @@ pub enum AdministrationRefusal {
     /// The operation is fixed to `admin` or to every member (§2.5).
     NotGrantable { reference: String },
     /// The environment has no application user with the id.
-    UserNotFound { user_id: String },
+    UserNotFound {
+        user_id: wamn_identity_protocol::PrincipalId,
+    },
     /// `admin` stays while the user holds `project-admin` in the project,
     /// including administration inherited from its org or environment.
-    AdminCovered { user_id: String },
+    AdminCovered {
+        user_id: wamn_identity_protocol::PrincipalId,
+    },
     /// The role does not hold the operation.
     NotHeld { role: String, reference: String },
 }
@@ -404,7 +408,7 @@ async fn revoke_permission(
 async fn grant_user_role(
     client: &mut sqlx::PgConnection,
     project_env_key: &str,
-    user_id: &str,
+    user_id: &wamn_identity_protocol::PrincipalId,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
@@ -424,7 +428,7 @@ async fn grant_user_role(
 async fn revoke_user_role(
     client: &mut sqlx::PgConnection,
     project_env_key: &str,
-    user_id: &str,
+    user_id: &wamn_identity_protocol::PrincipalId,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
@@ -440,9 +444,9 @@ async fn revoke_user_role(
 }
 
 const USER_EXISTS_SQL: &str = "SELECT 1 FROM platform.\"user\" \
-    WHERE id = $1::text::uuid AND type IN ('user', 'service')";
+    WHERE id = $1 AND type IN ('user', 'service')";
 
-const USER_LIST_SQL: &str = "SELECT u.id::text, u.email, u.display_name, \
+const USER_LIST_SQL: &str = "SELECT u.id, u.email, u.display_name, \
     COALESCE(array_agg(r.role_name ORDER BY r.role_name) \
              FILTER (WHERE r.role_name IS NOT NULL), '{}') \
     FROM platform.\"user\" u \
@@ -458,7 +462,7 @@ const PERMISSION_LIST_SQL: &str = "SELECT permission FROM platform.permission \
 /// One application user with the roles it holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApplicationUserRow {
-    pub id: String,
+    pub id: PrincipalId,
     pub email: String,
     pub display_name: Option<String>,
     pub roles: Vec<String>,
@@ -467,7 +471,7 @@ pub struct ApplicationUserRow {
 /// Refuse unless the database has the application user `user_id`.
 pub async fn require_user(
     client: &mut sqlx::PgConnection,
-    user_id: &str,
+    user_id: &wamn_identity_protocol::PrincipalId,
 ) -> Result<(), AdministrationError> {
     let exists = sqlx::query(USER_EXISTS_SQL)
         .bind(user_id)
@@ -548,7 +552,7 @@ pub async fn project_authority(
          identity.has_project_access(p.id,$2,$4,$3), \
          EXISTS (SELECT 1 FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$2 AND r.project=$3 AND r.role='project-admin') \
          OR identity.is_project_admin(p.id,$2,$4,$3) \
-         FROM identity.principals p WHERE p.id=$1::text::uuid").bind(principal.to_string().as_str()).bind(coordinate.org).bind(coordinate.project).bind(coordinate.env).fetch_optional(&mut **system).await.map_err(|error| database_error(&error))?;
+         FROM identity.principals p WHERE p.id=$1").bind(principal).bind(coordinate.org).bind(coordinate.project).bind(coordinate.env).fetch_optional(&mut **system).await.map_err(|error| database_error(&error))?;
     let Some(row) = row else {
         return remove_user(target, coordinate.project_env_key, principal, drops).await;
     };
@@ -557,8 +561,8 @@ pub async fn project_authority(
     let admin: bool = row.get(7);
     if type_ == "service" {
         // Services derive administration from their project role, without user membership.
-        let present = sqlx::query("SELECT 1 FROM platform.\"user\" WHERE id=$1::text::uuid")
-            .bind(principal.to_string().as_str())
+        let present = sqlx::query("SELECT 1 FROM platform.\"user\" WHERE id=$1")
+            .bind(principal)
             .fetch_optional(&mut *target)
             .await
             .map_err(|error| database_error(&error))?
@@ -592,13 +596,13 @@ pub async fn project_authority(
                 .map(|result| result.rows_affected())
                 .map_err(|error| database_error(&error))?;
             sqlx::query(USER_ROLE_SQL)
-                .bind(principal.to_string().as_str())
+                .bind(principal)
                 .bind(ADMIN_ROLE)
                 .execute(&mut *target)
                 .await
                 .map(|result| result.rows_affected())
                 .map_err(|error| database_error(&error))?;
-            drops.principal(coordinate.project_env_key, principal.to_string().as_str());
+            drops.principal(coordinate.project_env_key, principal);
         } else {
             remove_admin(target, coordinate.project_env_key, principal, drops).await?;
         }
@@ -637,7 +641,7 @@ pub enum GrantAuthority<'a> {
 #[derive(Debug, Clone, Copy)]
 pub enum GrantChange<'a> {
     UserRole {
-        user_id: &'a str,
+        user_id: &'a wamn_identity_protocol::PrincipalId,
         role: &'a str,
         grant: bool,
     },
@@ -701,7 +705,7 @@ pub async fn mutate_grant(
             .into());
     }
     if grant && let GrantAuthority::User(actor) = authority {
-            let admin: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin')").bind(actor.to_string().as_str()).fetch_one(&mut *client).await.map_err(|error| database_error(&error))?.get(0);
+            let admin: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1 AND role_name='admin')").bind(actor).fetch_one(&mut *client).await.map_err(|error| database_error(&error))?.get(0);
             if !admin {
                 let required = match change {
                     GrantChange::Permission { reference, .. } => vec![reference.to_owned()],
@@ -709,7 +713,7 @@ pub async fn mutate_grant(
                 };
                 for reference in required {
                     let held: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM platform.user_role r JOIN platform.permission p ON p.role_name=r.role_name \
-                         WHERE r.user_id=$1::text::uuid AND p.permission=$2)").bind(actor.to_string().as_str()).bind(&reference).fetch_one(&mut *client).await.map_err(|error| database_error(&error))?.get(0);
+                         WHERE r.user_id=$1 AND p.permission=$2)").bind(actor).bind(&reference).fetch_one(&mut *client).await.map_err(|error| database_error(&error))?.get(0);
                     if !held || !permission_is_grantable(&reference) {
                         return Err(AdministrationRefusal::NotGrantable { reference }.into());
                     }

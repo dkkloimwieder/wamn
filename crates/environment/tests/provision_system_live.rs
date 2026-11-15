@@ -55,9 +55,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain(pool: sql
     provision_system(&request)
         .await
         .expect("the first run installs the control store");
-    let actor = wamn_control_provision::PlatformComponent::Provisioning
-        .principal_id()
-        .to_string();
+    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
     wamn_test_infrastructure::record_history::assert_stamp(
         &mut client,
         "registry.meta",

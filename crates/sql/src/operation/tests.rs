@@ -128,7 +128,7 @@ impl GuestCall for Run {
                 let (run, caller) = accessor.with(|mut access| {
                     let caller = access.get().table.push(AuthenticatedCaller::new(
                         "entry",
-                        LIVE_PRINCIPAL,
+                        LIVE_PRINCIPAL.parse().unwrap(),
                         CredentialType::Pat,
                         false,
                         if self.mode == 3 {
@@ -370,7 +370,7 @@ async fn unavailable_principal_database_returns_connection_unavailable(pool: sql
             "unavailable-principal",
             &SessionIdentity {
                 project_env_key: PROJECT_ENV_KEY.into(),
-                user_id: Some(LIVE_PRINCIPAL.into()),
+                user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
                 ..SessionIdentity::default()
             },
         )

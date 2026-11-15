@@ -256,8 +256,8 @@ async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Resu
             }])).await?;
             let row = &answer[0]["value"];
             assert_eq!(row["number"], number);
-            assert_eq!(row["created_by"], caller.as_str());
-            assert_eq!(row["updated_by"], caller.as_str());
+            assert_eq!(row["created_by"], caller.to_string());
+            assert_eq!(row["updated_by"], caller.to_string());
         }
         Ok(())
     }.await;

@@ -254,7 +254,7 @@ pub(super) async fn prepare_statement_transaction(
         schema.as_deref(),
         runner.as_deref(),
         role.as_deref(),
-        user_id.as_deref(),
+        user_id.as_ref(),
         operation.as_deref(),
         application.as_deref(),
         None,
@@ -302,14 +302,14 @@ impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx
         sql: String,
         params: Vec<SqlValue>,
     ) -> super::query::QueryResult {
-        super::query::transaction_query(accessor, rep, sql, params).await
+        super::query::transaction_query(accessor, &rep, sql, params).await
     }
     async fn query_batch(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
         sql: String,
     ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
-        super::query::transaction_batch(accessor, rep, sql).await
+        super::query::transaction_batch(accessor, &rep, sql).await
     }
 }
 
@@ -410,7 +410,7 @@ impl<T: 'static + Send>
         sql: String,
         params: Vec<SqlValue>,
     ) -> super::query::QueryResult {
-        super::query::transaction_query(accessor, rep, sql, params).await
+        super::query::transaction_query(accessor, &rep, sql, params).await
     }
     async fn query_batch(
         accessor: &Accessor<T, Self>,
@@ -418,7 +418,7 @@ impl<T: 'static + Send>
         rep: Resource<PgStatementTransaction>,
         sql: String,
     ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
-        super::query::transaction_batch(accessor, rep, sql).await
+        super::query::transaction_batch(accessor, &rep, sql).await
     }
 }
 #[cfg(feature = "wasm_component_model_implements")]

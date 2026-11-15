@@ -163,7 +163,7 @@ fn retain_until(started: Instant, seconds_left: f64) -> Option<Instant> {
 pub struct Request<'a> {
     pub reader: &'a ConnectionCredentials,
     /// The host-attested executing principal of this call.
-    pub principal: uuid::Uuid,
+    pub principal: wamn_identity_protocol::PrincipalId,
     pub project: &'a str,
     pub environment: &'a str,
     pub connection: uuid::Uuid,

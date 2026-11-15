@@ -174,7 +174,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
           "descriptor": wamn_catalog::ComponentDescriptor::new(admitted, Vec::new())}],
         "routes":[],"attachments":{},"host-routes":["application"]
     }))?;
-    let workflow_user = wamn_identity_protocol::workflow_user_id().to_string();
+    let workflow_user = wamn_identity_protocol::workflow_user_id();
     sqlx::query(
         "INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'automation')",
     )
@@ -253,7 +253,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
         .await
         .map(drop)?;
         let mut url = url::Url::parse(database.as_str())?;
-        url.set_username(&role).unwrap();
+        url.set_username(role.as_str()).unwrap();
         url.set_password(Some("automation-test-only")).unwrap();
         credentials = credentials.with_class(class, url.to_string());
     }
@@ -276,7 +276,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
                 project: Some("default".to_owned()),
                 schema: Some("wamn_run".to_owned()),
                 runner: Some("automation-live".to_owned()),
-                user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
+                user_id: Some(PlatformComponent::Executor.principal_id()),
                 operation: Some(PlatformComponent::Executor.principal_name()),
                 release: Some(ReleaseIdentity::for_test(release.release().manifest_digest)),
                 ..SessionIdentity::default()
@@ -415,7 +415,7 @@ impl WorkflowsFixture {
         let active_role = held.pat_role();
         let caller = wamn_engine::flow_http_routing::AuthenticatedCaller::new(
             attachment.clone(),
-            SERVICE,
+            SERVICE.parse().unwrap(),
             CredentialType::Pat,
             held.admin,
             held.references.into_iter().collect(),
@@ -522,7 +522,7 @@ async fn event_run(
         "the queue leases the released event run"
     );
     let stored = sqlx::query(
-        "SELECT status, result_json::text, trigger_source, execution_principal_id::text FROM wamn_run.runs WHERE run_id = $1",
+        "SELECT status, result_json::text, trigger_source, execution_principal_id FROM wamn_run.runs WHERE run_id = $1",
     )
     .bind(&run)
     .fetch_one(&mut *admin)
@@ -533,8 +533,8 @@ async fn event_run(
     assert_eq!(result["new"]["value"], json!(7));
     assert_eq!(stored.get::<String, _>(2), "event");
     assert_eq!(
-        stored.get::<String, _>(3),
-        wamn_identity_protocol::workflow_user_id().to_string()
+        stored.get::<wamn_identity_protocol::PrincipalId, _>(3),
+        wamn_identity_protocol::workflow_user_id()
     );
     assert_eq!(
         workflows.park(&run).await.unwrap_err().error_type(),

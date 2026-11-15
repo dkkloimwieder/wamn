@@ -20,11 +20,11 @@ use url::Url;
 /// Begin a fixture write under its principal and operation.
 pub async fn transaction<'connection>(
     connection: &'connection mut sqlx::PgConnection,
-    principal: &str,
+    principal: &wamn_identity_protocol::PrincipalId,
     operation: &str,
 ) -> Result<sqlx::Transaction<'connection, sqlx::Postgres>, sqlx::Error> {
     let mut transaction = sqlx::Connection::begin(connection).await?;
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture',$2)")
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','fixture',$2)")
         .bind(principal).bind(operation).execute(&mut *transaction).await?;
     Ok(transaction)
 }

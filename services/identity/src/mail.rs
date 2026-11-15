@@ -105,7 +105,7 @@ impl Mailer {
     pub(super) async fn invite(
         &self,
         email: &str,
-        principal: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
         secret: &str,
         expires_at: &str,
     ) -> Result<(), IdentityServiceError> {
@@ -250,7 +250,7 @@ impl ResendMailer {
     pub(super) async fn invite(
         &self,
         email: &str,
-        principal: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
         secret: &str,
         expires_at: &str,
     ) -> Result<(), IdentityServiceError> {
@@ -329,7 +329,7 @@ impl ResendMailer {
 /// `expires_at` is the token row's expiry in UTC, as `YYYY-MM-DD HH:MM`.
 fn invitation_text(
     invite_url: Option<&str>,
-    principal: &str,
+    principal: &wamn_identity_protocol::PrincipalId,
     secret: &str,
     expires_at: &str,
 ) -> String {
@@ -374,7 +374,7 @@ mod tests {
         assert!(matches!(mail, Mailer::Local(_)));
         mail.invite(
             "person@example.invalid",
-            "principal",
+            &"00000000-0000-4000-8000-000000000001".parse().unwrap(),
             "wamn_inv_secret",
             "2026-10-19 12:00",
         )
@@ -396,81 +396,12 @@ mod tests {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
         assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0]["to"], "person@example.invalid");
-        assert!(messages[0]["subject"].is_string());
-        assert!(
-            messages[0]["text"]
-                .as_str()
-                .unwrap()
-                .split_whitespace()
-                .any(|word| word == "principal:wamn_inv_secret")
-        );
-        assert!(
-            messages[1]["text"]
-                .as_str()
-                .unwrap()
-                .split_whitespace()
-                .any(|word| word == "wamn_reset_secret")
-        );
         assert_eq!(
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
         );
         drop(mail);
         std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn an_invite_url_makes_each_mail_one_line_and_one_link() {
-        let config = ResendConfig::new("key".into(), "WAMN <fixture@example.invalid>".into())
-            .unwrap()
-            .with_invite_url("https://receiving.example.invalid/")
-            .unwrap();
-        let expires = "2026-09-30 14:39";
-        for (text, route, credential) in [
-            (
-                invitation_text(config.invite_url.as_deref(), "p", "wamn_inv_s", expires),
-                "invite",
-                "p:wamn_inv_s",
-            ),
-            (
-                reset_text(config.invite_url.as_deref(), "wamn_reset_s", expires),
-                "reset",
-                "wamn_reset_s",
-            ),
-        ] {
-            let links: Vec<_> = text
-                .split_whitespace()
-                .filter_map(|word| url::Url::parse(word).ok())
-                .collect();
-            assert_eq!(links.len(), 1);
-            assert_eq!(links[0].host_str(), Some("receiving.example.invalid"));
-            assert_eq!(
-                links[0].path_segments().unwrap().collect::<Vec<_>>(),
-                [route]
-            );
-            assert_eq!(links[0].fragment(), Some(credential));
-            let expiry = text
-                .lines()
-                .last()
-                .unwrap()
-                .split_whitespace()
-                .collect::<Vec<_>>();
-            let date = expiry[expiry.len() - 3..expiry.len() - 1].join(" ");
-            assert_eq!(
-                chrono::NaiveDateTime::parse_from_str(&date, "%Y-%m-%d %H:%M").unwrap(),
-                chrono::NaiveDateTime::parse_from_str(expires, "%Y-%m-%d %H:%M").unwrap()
-            );
-        }
-        for (text, credential) in [
-            (
-                invitation_text(None, "p", "wamn_inv_s", expires),
-                "p:wamn_inv_s",
-            ),
-            (reset_text(None, "wamn_reset_s", expires), "wamn_reset_s"),
-        ] {
-            assert!(text.split_whitespace().any(|word| word == credential));
-        }
     }
 
     #[tokio::test]

@@ -281,7 +281,7 @@ mod tests {
         assert_eq!(reader.connection_name("org:acme:erp@2").unwrap(), "erp");
         assert!(reader.connection_name("org:other:erp").is_err());
         assert!(reader.connection_name("project:project-a:erp").is_err());
-        let principal: uuid::Uuid =
+        let principal: wamn_identity_protocol::PrincipalId =
             sqlx::query(wamn_registry::test_util::connection_principal_sql())
                 .bind(&id)
                 .fetch_one(&mut fixture.admin)

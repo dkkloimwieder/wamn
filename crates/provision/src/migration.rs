@@ -7,7 +7,10 @@ pub const OWNER_ROLE: &str = "wamn_app_owner";
 pub const LOGIN_PREFIX: &str = "wamn_migration";
 
 /// Derive the single migration identity from the database and environment.
-pub fn login(project_env_key: &str, database: &str) -> anyhow::Result<String> {
+pub fn login(
+    project_env_key: &str,
+    database: &str,
+) -> anyhow::Result<wamn_identity_protocol::LoginName> {
     Ok(crate::workload_login(
         WorkloadRoleFamily::Migration,
         WorkloadRoleIdentity::ProjectEnvKey {
@@ -44,8 +47,13 @@ pub fn configuration(
 pub async fn require_login(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
-) -> anyhow::Result<String> {
-    let (session, current, database, restricted): (String, String, String, bool) = sqlx::query_as(
+) -> anyhow::Result<wamn_identity_protocol::LoginName> {
+    let (session, current, database, restricted): (
+        wamn_identity_protocol::LoginName,
+        wamn_identity_protocol::LoginName,
+        String,
+        bool,
+    ) = sqlx::query_as(
         "SELECT session_user::text, current_user::text, current_database()::text, \
          NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls) \
          FROM pg_roles WHERE rolname = session_user",
@@ -73,8 +81,8 @@ pub fn history_table(project_env_key: &str, package: &str) -> String {
 }
 
 /// Grant runtime access to objects created by the package migration login.
-pub(crate) fn default_privileges_sql(login: &str) -> String {
-    let role = postgres_protocol::escape::escape_identifier(login);
+pub(crate) fn default_privileges_sql(login: &wamn_identity_protocol::LoginName) -> String {
+    let role = postgres_protocol::escape::escape_identifier(login.as_str());
     format!(
         "ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO wamn_app; \
          ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT USAGE ON SCHEMAS TO wamn_app, wamn_query; \
@@ -85,8 +93,8 @@ pub(crate) fn default_privileges_sql(login: &str) -> String {
 }
 
 /// Trusted grants required by compiler-generated history and proper foreign keys.
-pub fn grants_sql(login: &str) -> String {
-    let role = postgres_protocol::escape::escape_identifier(login);
+pub fn grants_sql(login: &wamn_identity_protocol::LoginName) -> String {
+    let role = postgres_protocol::escape::escape_identifier(login.as_str());
     format!(
         "GRANT USAGE, CREATE ON SCHEMA wamn_history TO {role}; \
         GRANT USAGE ON SCHEMA platform, wamn_authority TO {role}; \
@@ -97,7 +105,7 @@ pub fn grants_sql(login: &str) -> String {
           wamn_history.create_history_table(text,text,boolean), \
           wamn_history.row_image(record), wamn_history.timestamptz_image(timestamptz), \
           wamn_history.log_row_change() TO {role};",
-        login = postgres_protocol::escape::escape_literal(login),
+        login = postgres_protocol::escape::escape_literal(login.as_str()),
         principal = crate::PlatformComponent::ApplyPackage.principal_id(),
     )
 }
@@ -107,7 +115,7 @@ pub fn grants_sql(login: &str) -> String {
 pub async fn prepare_history(
     connection: &mut sqlx::PgConnection,
     table: &str,
-    login: &str,
+    login: &wamn_identity_protocol::LoginName,
 ) -> anyhow::Result<()> {
     let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
         .bind(table)
@@ -132,7 +140,7 @@ pub async fn prepare_history(
             FOR EACH ROW EXECUTE FUNCTION wamn_history.guard_sqlx_migration();")))
             .execute(&mut *connection).await?;
     }
-    let role = postgres_protocol::escape::escape_identifier(login);
+    let role = postgres_protocol::escape::escape_identifier(login.as_str());
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "GRANT SELECT, INSERT, UPDATE (execution_time) ON {table} TO {role}"
     )))

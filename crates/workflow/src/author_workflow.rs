@@ -40,7 +40,7 @@ const INSERT_WORKFLOW_SQL: &str = "\
 INSERT INTO catalog.workflows (\
        project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, \
        trigger, execution_type, execution_role, created_by, schedule, source_package, entity, ops, condition\
-     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9, $10, $11::text::uuid, $12, $13, $14, $15, $16) \
+     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
 ON CONFLICT DO NOTHING";
 
 /// The stored version carries exactly this definition. The author is not part
@@ -203,8 +203,8 @@ pub struct AuthorWorkflowRequest<'a> {
     pub document: &'a WiringDocument,
     pub trigger: WorkflowTrigger<'a>,
     pub execution: WorkflowExecution<'a>,
-    /// The authoring principal, as the text of its `platform."user"` id.
-    pub created_by: &'a str,
+    /// The authoring principal from its `platform."user"` id.
+    pub created_by: &'a wamn_identity_protocol::PrincipalId,
     /// The manifest digest of the release the environment serves.
     pub manifest_digest: &'a wamn_digest::Digest,
 }

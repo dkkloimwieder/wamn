@@ -43,7 +43,7 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: s
             SCOPE,
             &SessionIdentity {
                 project_env_key: "test--dev--writelogtx".into(),
-                user_id: Some(LIVE_PRINCIPAL.into()),
+                user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
                 operation: Some(OPERATION.into()),
                 ..SessionIdentity::default()
             },
@@ -161,7 +161,7 @@ async fn known_results_finish_at_host_commit_and_a_missing_finish_rolls_back(poo
             SCOPE,
             &SessionIdentity {
                 project_env_key: "test--dev--writelogtx".into(),
-                user_id: Some(LIVE_PRINCIPAL.into()),
+                user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
                 operation: Some(OPERATION.into()),
                 ..SessionIdentity::default()
             },
@@ -222,14 +222,14 @@ async fn model_versions_follow_wal_without_a_counter(pool: sqlx::PgPool) {
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "{} CREATE ROLE {} LOGIN PASSWORD 'wal-reader'; {}",
         wamn_control_provision::sql::ensure_workload_acl_role_sql(family),
-        postgres_protocol::escape::escape_identifier(&role),
+        postgres_protocol::escape::escape_identifier(role.as_str()),
         wamn_control_provision::test_database::membership_sql(family, &role, true),
     )))
     .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
     .await
     .unwrap();
     let mut reader_url = url::Url::parse(database.as_str()).unwrap();
-    reader_url.set_username(&role).unwrap();
+    reader_url.set_username(role.as_str()).unwrap();
     reader_url.set_password(Some("wal-reader")).unwrap();
     let postgres = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::default().with_class(
@@ -375,7 +375,7 @@ async fn cancellation_retains_external_claims_and_rolls_back_transactional_claim
                 scope: format!("cancellation-{key}"),
                 identity: SessionIdentity {
                     project_env_key: "test--dev--writelogtx".into(),
-                    user_id: Some(LIVE_PRINCIPAL.into()),
+                    user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
                     operation: Some(OPERATION.into()),
                     ..SessionIdentity::default()
                 },

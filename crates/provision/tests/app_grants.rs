@@ -42,7 +42,10 @@ async fn application_logins_cannot_reach_mapped_platform_logins(pool: sqlx::PgPo
     .await
     .unwrap();
 
-    let violations: Vec<(String, String)> = sqlx::query_as(
+    let violations: Vec<(
+        wamn_identity_protocol::LoginName,
+        wamn_identity_protocol::LoginName,
+    )> = sqlx::query_as(
         "WITH RECURSIVE reachable(application_login, reachable_role) AS (\
            SELECT login.oid, membership.roleid FROM pg_roles login \
            JOIN pg_auth_members membership ON membership.member=login.oid \
