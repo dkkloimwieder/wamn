@@ -320,7 +320,6 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
 #[derive(Debug)]
 pub(crate) struct SqlCorpus {
     pub(crate) statements: BTreeMap<String, Vec<u8>>,
-    pub(crate) relations: BTreeMap<String, Vec<wamn_catalog::profile::RelationProfile>>,
     model_paths: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     custom_operations: BTreeMap<String, crate::manifest::CustomOperationDeclaration>,
 }
@@ -358,76 +357,8 @@ pub(crate) fn sql_corpus(
             custom_operations.insert(name.clone(), prepared);
         }
     }
-    let mut available = input
-        .catalog
-        .tables()
-        .iter()
-        .map(|table| {
-            (
-                table.name().to_owned(),
-                table
-                    .columns()
-                    .iter()
-                    .map(|column| column.name().to_owned())
-                    .collect::<BTreeSet<_>>(),
-            )
-        })
-        .chain(input.catalog.views().iter().map(|view| {
-            (
-                view.name().to_owned(),
-                view.columns()
-                    .iter()
-                    .map(|column| column.name().to_owned())
-                    .collect(),
-            )
-        }))
-        .collect::<BTreeMap<_, _>>();
-    for (_, table) in logged_history_tables(manifest) {
-        available.insert(
-            table,
-            wamn_record_history::HISTORY_COLUMNS
-                .iter()
-                .map(|(name, _)| (*name).to_owned())
-                .collect(),
-        );
-    }
-    available.insert(
-        "wamn_history.pruning_watermarks".into(),
-        BTreeSet::from(["history_table".into(), "transaction_id".into()]),
-    );
-    let relations = statements
-        .iter()
-        .map(|(path, bytes)| {
-            let effects =
-                crate::sql_analysis::relation_access(bytes, &available).map_err(|detail| {
-                    GenerateError::for_path(
-                        GenerateErrorType::InvalidOperation,
-                        detail,
-                        path.as_str(),
-                    )
-                })?;
-            Ok((
-                path.clone(),
-                effects
-                    .into_iter()
-                    .map(|(table, access)| wamn_catalog::profile::RelationProfile {
-                        table,
-                        reads: access.select_fields.into_iter().collect(),
-                        writes: access
-                            .insert_fields
-                            .union(&access.update_fields)
-                            .cloned()
-                            .collect(),
-                        deletes: access.delete,
-                        locks: access.lock,
-                    })
-                    .collect(),
-            ))
-        })
-        .collect::<Result<BTreeMap<_, _>, GenerateError>>()?;
     Ok(SqlCorpus {
         statements,
-        relations,
         model_paths,
         custom_operations,
     })
@@ -1273,30 +1204,13 @@ mod tests {
             compiled.models["record"].fields["created_by"].role,
             Some(FieldRole::Actor)
         );
-        let generated = super::generate(&super::GenerationInput::new(
+        super::generate(&super::GenerationInput::new(
             &catalog,
             &bytes,
             &[],
             &super::StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
         ))
         .unwrap();
-        let contract = &generated.operations()["record.get"].operation;
-        let relations: Vec<wamn_catalog::profile::RelationProfile> =
-            contract.statements[0].relations.clone();
-        assert_eq!(
-            relations[0]
-                .reads
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-            catalog.tables()[0]
-                .columns()
-                .iter()
-                .map(|column| column.name())
-                .collect::<Vec<_>>()
-        );
-        assert!(relations[0].writes.is_empty());
-        assert!(!relations[0].deletes);
         assert_eq!(
             super::derive_manifest(&catalog, &authored, &[], &[])
                 .unwrap_err()

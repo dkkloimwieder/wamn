@@ -306,7 +306,7 @@ pub(super) fn wamn_api(
                             false,
                         )
                     })
-                    // The numbered field binds the text `next-number` returned.
+                    // The numbered field binds the text guest numbering SQL returned.
                     .chain(model.number_field().map(|(field, _)| {
                         accessor_bind(
                             &rust_identifier(field)

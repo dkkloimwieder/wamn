@@ -1,11 +1,8 @@
 //! Streaming SQL and handles borrowed from the host operation transaction.
 
-use super::numbering::{NumberCall, statement_number};
 use super::pool::{Object, destroy_connection};
 use super::types::map_pg_error;
-use super::{
-    PgError, SqlValue, StatementError, WAMN_POSTGRES_ID, WamnPostgres, client, statement_wit,
-};
+use super::{PgError, SqlValue, WAMN_POSTGRES_ID, WamnPostgres, client, statement_wit};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use wamn_capability_authority::effect_span::{
@@ -294,21 +291,6 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, PgError>> {
         lend_operation_transaction(accessor).await
     }
-    async fn next_number(
-        accessor: &Accessor<T, Self>,
-        name: String,
-        keys: Vec<(String, Option<String>)>,
-    ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
-        statement_number(accessor, name, keys, NumberCall::Next).await
-    }
-
-    async fn peek_number(
-        accessor: &Accessor<T, Self>,
-        name: String,
-        keys: Vec<(String, Option<String>)>,
-    ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
-        statement_number(accessor, name, keys, NumberCall::Peek).await
-    }
 }
 
 impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx {
@@ -412,23 +394,6 @@ impl<T: 'static + Send> super::bindings::named_imports::wamn::postgres::statemen
         _id: super::NamedStatements,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, PgError>> {
         lend_operation_transaction(accessor).await
-    }
-    async fn next_number(
-        accessor: &Accessor<T, Self>,
-        _id: super::NamedStatements,
-        name: String,
-        keys: Vec<(String, Option<String>)>,
-    ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
-        statement_number(accessor, name, keys, NumberCall::Next).await
-    }
-
-    async fn peek_number(
-        accessor: &Accessor<T, Self>,
-        _id: super::NamedStatements,
-        name: String,
-        keys: Vec<(String, Option<String>)>,
-    ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
-        statement_number(accessor, name, keys, NumberCall::Peek).await
     }
 }
 #[cfg(feature = "wasm_component_model_implements")]

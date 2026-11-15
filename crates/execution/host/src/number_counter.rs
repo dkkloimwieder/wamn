@@ -22,9 +22,11 @@ use sha2::{Digest as _, Sha256};
 use sqlx::{Row as _, Statement as _};
 use wamn_number_pattern::Policy;
 
-use super::super::write_log::Claim;
-use super::super::{SessionIdentity, WamnPostgres};
-use super::SEQUENCE_SQL;
+use wamn_capability_authority::identity::SessionIdentity;
+use wamn_postgres_capability::WamnPostgres;
+use wamn_postgres_capability::write_log::Claim;
+const SEQUENCE_SQL: &str =
+    "SELECT id::text, pattern FROM platform.number_sequence WHERE application = $1 AND name = $2";
 
 /// One set of one counter of a number sequence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -82,16 +84,6 @@ impl CounterSetError {
             CounterSetErrorType::Failed => None,
         }
     }
-
-    /// The requested counter and value.
-    pub fn set(&self) -> &CounterSet {
-        &self.set
-    }
-
-    /// The request id that identifies the write log claim.
-    pub fn request_id(&self) -> &str {
-        &self.request_id
-    }
 }
 
 impl std::fmt::Display for CounterSetError {
@@ -142,154 +134,151 @@ fn failed(
 /// The write of the route.
 const SET_SQL: &str = "SELECT platform.set_counter($1::text::uuid, $2, $3, $4)";
 
-impl WamnPostgres {
-    /// Set one counter of a sequence of `set.application` for the caller
-    /// `user_id`, in one operation transaction of the guest authority of
-    /// `project_env_key` in `project`, logged in the write log under `operation` and
-    /// `request_id`. Returns the value the counter renders next. A retry of a
-    /// committed set answers its stored value.
-    ///
-    /// # Errors
-    ///
-    /// [`CounterSetError::refusal`] identifies a refused set. Other errors
-    /// retain the cause of a failed statement or transaction.
-    /// Neither commits anything.
-    pub async fn set_number_counter(
-        &self,
-        project: &str,
-        project_env_key: &str,
-        user_id: &str,
-        operation: &str,
-        request_id: &str,
-        set: &CounterSet,
-    ) -> Result<i64, CounterSetError> {
-        if set.value < 1 {
-            return Err(refused(
-                set,
-                request_id,
-                CounterSetRefusal::InvalidInput { field: "value" },
-            ));
-        }
-        if request_id.is_empty() {
-            return Err(refused(
-                set,
-                request_id,
-                CounterSetRefusal::InvalidInput {
-                    field: "request_id",
-                },
-            ));
-        }
-        let scope = format!("wamn:number-counter-set:{}", uuid::Uuid::new_v4());
-        let identity = SessionIdentity {
-            project_env_key: project_env_key.to_owned(),
-            project: Some(project.to_owned()),
-            user_id: Some(user_id.to_owned()),
-            operation: Some(operation.to_owned()),
-            application: Some(set.application.clone()),
-            ..SessionIdentity::default()
-        };
-        let result = async {
-            self.bind_session_identity(&scope, &identity)
-                .await
-                .map_err(|error| {
-                    failed(
-                        set,
-                        request_id,
-                        "bind the set's session identity",
-                        Some(error),
-                    )
-                })?;
-            self.set_in_transaction(&scope, operation, request_id, set)
-                .await
-        }
-        .await;
-        self.revoke_session_identity(&scope);
-        result
+/// Set one counter of a sequence of `set.application` for the caller
+/// `user_id`, in one operation transaction of the guest authority of
+/// `project_env_key` in `project`, logged in the write log under `operation` and
+/// `request_id`. Returns the value the counter renders next. A retry of a
+/// committed set answers its stored value.
+///
+/// # Errors
+///
+/// [`CounterSetError::refusal`] identifies a refused set. Other errors
+/// retain the cause of a failed statement or transaction.
+/// Neither commits anything.
+pub async fn set_number_counter(
+    postgres: &WamnPostgres,
+    project: &str,
+    project_env_key: &str,
+    user_id: &str,
+    operation: &str,
+    request_id: &str,
+    set: &CounterSet,
+) -> Result<i64, CounterSetError> {
+    if set.value < 1 {
+        return Err(refused(
+            set,
+            request_id,
+            CounterSetRefusal::InvalidInput { field: "value" },
+        ));
     }
+    if request_id.is_empty() {
+        return Err(refused(
+            set,
+            request_id,
+            CounterSetRefusal::InvalidInput {
+                field: "request_id",
+            },
+        ));
+    }
+    let scope = format!("wamn:number-counter-set:{}", uuid::Uuid::new_v4());
+    let identity = SessionIdentity {
+        project_env_key: project_env_key.to_owned(),
+        project: Some(project.to_owned()),
+        user_id: Some(user_id.to_owned()),
+        operation: Some(operation.to_owned()),
+        application: Some(set.application.clone()),
+        ..SessionIdentity::default()
+    };
+    let result = async {
+        postgres
+            .bind_session_identity(&scope, &identity)
+            .await
+            .map_err(|error| {
+                failed(
+                    set,
+                    request_id,
+                    "bind the set's session identity",
+                    Some(error),
+                )
+            })?;
+        set_in_transaction(postgres, &scope, operation, request_id, set).await
+    }
+    .await;
+    postgres.revoke_session_identity(&scope);
+    result
+}
 
-    async fn set_in_transaction(
-        &self,
-        scope: &str,
-        operation: &str,
-        request_id: &str,
-        set: &CounterSet,
-    ) -> Result<i64, CounterSetError> {
-        let with_source =
-            |context: &str, error: anyhow::Error| failed(set, request_id, context, Some(error));
-        let transaction = self
-            .begin_operation_transaction(scope)
-            .await
-            .map_err(|error| with_source("begin the set's transaction", error.into()))?
-            .with_known_result(serde_json::json!({ "value": set.value }).to_string());
-        let request =
-            Sha256::digest(serde_json::to_vec(set).expect("a counter set serializes to JSON"))
-                .to_vec();
-        let begun = match transaction
-            .begin_opaque(operation, request_id, request)
-            .await
-        {
-            Ok(begun) => begun,
-            Err(error) => {
-                let _ = transaction.rollback().await;
-                return Err(with_source(
-                    "claim the request id in the write log",
-                    error.into(),
-                ));
-            }
-        };
-        let stored = match begun {
-            Claim::New => None,
-            Claim::Finished(result) => Some(result),
-            Claim::Conflict => {
-                let _ = transaction.rollback().await;
-                return Err(refused(
-                    set,
-                    request_id,
-                    CounterSetRefusal::IdempotencyConflict,
-                ));
-            }
-            Claim::InProgress | Claim::OutcomeUnknown => {
-                let _ = transaction.rollback().await;
-                return Err(failed(
-                    set,
-                    request_id,
-                    format!("the write log holds an unfinished claim of request {request_id}"),
-                    None,
-                ));
-            }
-        };
-        if let Some(result) = stored {
+async fn set_in_transaction(
+    postgres: &WamnPostgres,
+    scope: &str,
+    operation: &str,
+    request_id: &str,
+    set: &CounterSet,
+) -> Result<i64, CounterSetError> {
+    let with_source =
+        |context: &str, error: anyhow::Error| failed(set, request_id, context, Some(error));
+    let transaction = postgres
+        .begin_operation_transaction(scope)
+        .await
+        .map_err(|error| with_source("begin the set's transaction", error.into()))?
+        .with_known_result(serde_json::json!({ "value": set.value }).to_string());
+    let request =
+        Sha256::digest(serde_json::to_vec(set).expect("a counter set serializes to JSON")).to_vec();
+    let begun = match transaction
+        .begin_opaque(operation, request_id, request)
+        .await
+    {
+        Ok(begun) => begun,
+        Err(error) => {
             let _ = transaction.rollback().await;
-            let context = format!("the stored result of request {request_id} names no value");
-            let result = serde_json::from_str::<serde_json::Value>(&result)
-                .map_err(|error| with_source(&context, error.into()))?;
-            return result["value"]
-                .as_i64()
-                .ok_or_else(|| failed(set, request_id, context, None));
+            return Err(with_source(
+                "claim the request id in the write log",
+                error.into(),
+            ));
         }
-        let outcome = transaction
-            .with_host_connection(|mut connection| async move {
-                let result = set_counter(connection.connection(), set, request_id).await;
-                (connection, result)
-            })
-            .await;
-        match outcome {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                let _ = transaction.rollback().await;
-                return Err(error);
-            }
-            Err(error) => {
-                let _ = transaction.rollback().await;
-                return Err(with_source("set the counter", error.into()));
-            }
+    };
+    let stored = match begun {
+        Claim::New => None,
+        Claim::Finished(result) => Some(result),
+        Claim::Conflict => {
+            let _ = transaction.rollback().await;
+            return Err(refused(
+                set,
+                request_id,
+                CounterSetRefusal::IdempotencyConflict,
+            ));
         }
-        transaction
-            .commit()
-            .await
-            .map_err(|error| with_source("commit the set", error.into()))?;
-        Ok(set.value)
+        Claim::InProgress | Claim::OutcomeUnknown => {
+            let _ = transaction.rollback().await;
+            return Err(failed(
+                set,
+                request_id,
+                format!("the write log holds an unfinished claim of request {request_id}"),
+                None,
+            ));
+        }
+    };
+    if let Some(result) = stored {
+        let _ = transaction.rollback().await;
+        let context = format!("the stored result of request {request_id} names no value");
+        let result = serde_json::from_str::<serde_json::Value>(&result)
+            .map_err(|error| with_source(&context, error.into()))?;
+        return result["value"]
+            .as_i64()
+            .ok_or_else(|| failed(set, request_id, context, None));
     }
+    let outcome = transaction
+        .with_host_connection(|mut connection| async move {
+            let result = set_counter(connection.connection(), set, request_id).await;
+            (connection, result)
+        })
+        .await;
+    match outcome {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            let _ = transaction.rollback().await;
+            return Err(error);
+        }
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            return Err(with_source("set the counter", error.into()));
+        }
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|error| with_source("commit the set", error.into()))?;
+    Ok(set.value)
 }
 
 /// Set the counter under its row lock. The caller rolls back a refusal.
@@ -307,14 +296,13 @@ async fn set_counter(
     let row = sqlx::query(statement.sql().clone())
         .bind(&set.application)
         .bind(&set.sequence)
-        .fetch_one(&mut *connection)
+        .fetch_optional(&mut *connection)
         .await?;
-    let (Some(sequence), Some(pattern)) = (
-        row.get::<Option<String>, _>(0),
-        row.get::<Option<String>, _>(1),
-    ) else {
+    let Some(row) = row else {
         return Ok(Err(refused(CounterSetRefusal::SequenceNotFound)));
     };
+    let sequence: String = row.get(0);
+    let pattern: String = row.get(1);
     // A stored pattern that does not parse has no counter to set.
     let pattern = match wamn_number_pattern::parse(&pattern) {
         Ok(pattern) => pattern,
@@ -353,3 +341,7 @@ async fn set_counter(
 
     Ok(Ok(()))
 }
+
+#[cfg(test)]
+#[path = "number_counter_tests.rs"]
+mod tests;

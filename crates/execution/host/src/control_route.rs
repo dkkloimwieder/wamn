@@ -36,9 +36,8 @@
 //! control store through its existing connection. Count failures answer null.
 //!
 //! `release.profile` reads one installed release of one environment of the
-//! project from its `catalog.releases`, and the columns of its application
-//! tables from `pg_catalog`, on the environment's administration login, and
-//! answers the release's effect profile, with the operations each role of the
+//! project from its `catalog.releases` on the environment's administration login.
+//! It answers the release's exported operations and the operations each role of the
 //! environment holds (`admin` holds every operation of the release), from its
 //! `platform.role` and `platform.permission`. It writes nothing.
 
@@ -1138,40 +1137,7 @@ async fn write_application(
 const RELEASE_SQL: &str =
     "SELECT canonical_bytes FROM catalog.releases WHERE manifest_digest = $1 LIMIT 1";
 
-/// Recorded view dependencies in the environment's application schemas.
-const VIEW_DEPENDENCIES_SQL: &str = "WITH RECURSIVE view_dependencies AS ( \
-     SELECT rewrite.ev_class AS view_oid, dependency.refobjid AS relation_oid, \
-            dependency.refobjsubid AS column_number \
-     FROM pg_catalog.pg_rewrite AS rewrite \
-     JOIN pg_catalog.pg_depend AS dependency \
-       ON dependency.classid = 'pg_rewrite'::regclass AND dependency.objid = rewrite.oid \
-      AND dependency.refclassid = 'pg_class'::regclass \
-      AND dependency.refobjid <> rewrite.ev_class \
-     WHERE rewrite.rulename = '_RETURN' \
-     UNION \
-     SELECT parent.view_oid, dependency.refobjid, dependency.refobjsubid \
-     FROM view_dependencies AS parent \
-     JOIN pg_catalog.pg_rewrite AS rewrite ON rewrite.ev_class = parent.relation_oid \
-     JOIN pg_catalog.pg_depend AS dependency \
-       ON dependency.classid = 'pg_rewrite'::regclass AND dependency.objid = rewrite.oid \
-      AND dependency.refclassid = 'pg_class'::regclass \
-      AND dependency.refobjid <> rewrite.ev_class \
-     WHERE rewrite.rulename = '_RETURN' \
-     ) \
-     SELECT c.relname::text, base.relname::text, base_column.attname::text \
-     FROM pg_catalog.pg_class AS c \
-     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-     LEFT JOIN view_dependencies AS dependency ON dependency.view_oid = c.oid \
-     LEFT JOIN pg_catalog.pg_class AS base \
-       ON base.oid = dependency.relation_oid AND base.relkind IN ('r', 'p') \
-     LEFT JOIN pg_catalog.pg_attribute AS base_column \
-       ON base_column.attrelid = base.oid AND base_column.attnum = dependency.column_number \
-      AND base_column.attnum > 0 AND NOT base_column.attisdropped \
-     WHERE c.relkind = 'v' \
-       AND n.nspname NOT IN ('information_schema', 'catalog', 'platform') \
-       AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname NOT LIKE 'wamn\\_%'";
-
-/// The effect profile of the installed release `digest`
+/// The exported operations of the installed release `digest`
 /// (docs/architecture/execution.md#host-run-routes) and the operations each
 /// role of the environment holds, or `None` when the environment has no such
 /// release. `admin` holds every operation of the release. It writes nothing.
@@ -1199,20 +1165,7 @@ async fn release_profile(
         let (manifest, _) =
             wamn_catalog::ServingManifest::from_canonical_bytes(&row.get::<Vec<u8>, _>(0))
                 .context("decode the release manifest")?;
-        let mut views = BTreeMap::<String, wamn_catalog::profile::ViewRelation>::new();
-        for row in sqlx::query(VIEW_DEPENDENCIES_SQL)
-            .fetch_all(&mut client)
-            .await?
-        {
-            let view = views.entry(row.get(0)).or_default();
-            if let Some(table) = row.get::<Option<String>, _>(1) {
-                let columns = view.base_tables.entry(table).or_default();
-                if let Some(column) = row.get(2) {
-                    columns.insert(column);
-                }
-            }
-        }
-        let profile = wamn_catalog::profile::release_profile(&manifest.components, &views);
+        let profile = wamn_catalog::profile::release_profile(&manifest.components);
         require_platform_rows(&mut client).await?;
         let mut roles = BTreeMap::new();
         for role in role_names(&mut client).await? {

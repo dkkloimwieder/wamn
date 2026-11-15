@@ -28,7 +28,7 @@ The application selects each page from the returned rows and limits the current 
 These APIs return complete arrays without server pagination: `project.list`, `user.list`, `environment.list`, `member.list`, `control.mine`, `environment.status`, and `release.profile`.
 The identity endpoint `/password/environments` also lacks server pagination.
 Workloads, conditions, and live releases come from `environment.status`.
-Operations, roles, reaches, statements, and relations come from `release.profile`.
+Operations and roles come from `release.profile`.
 Membership and audience tables use the same pagination.
 Refresh requests fresh data from each table’s owning API, including `control.mine` for project administrators.
 
@@ -55,8 +55,7 @@ A viewer with one held project opens that project directly when entering Control
 The Users group contains Project access and Memberships links for the addressed user.
 
 Tables with actions retain separate screens with `scroll="content"` and no outer padding.
-Read-only reference tables expand through wfe `rowDetails`: conditions under Workloads, operations under Roles, and reaches under Operations.
-Reaches expand to operations and statements. Statements expand to relations, which expand to read and write fields.
+Read-only reference tables expand through wfe `rowDetails`: conditions under Workloads and operations under Roles.
 These reference tables have no separate screens or routes.
 Child tables use wfe defaults without controls or refresh. A child with more than 25 rows shows the shared pagination footer.
 Each column shows one fact. Parent tables show counts for growing lists.

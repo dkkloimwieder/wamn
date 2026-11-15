@@ -1,6 +1,6 @@
 //! Queue calls over the runtime's authorized transaction transport.
 
-use super::{ReleaseIdentity, WamnPostgres};
+use crate::database::ConnectionGuard;
 use wamn_run_state::persistence::{self, LeaseTurn};
 pub use wamn_run_state::persistence::{ProductionLeaseResult, ProductionWorkflow};
 pub use wamn_run_state::run_store::{
@@ -8,42 +8,66 @@ pub use wamn_run_state::run_store::{
     ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionReapResult,
 };
 
-impl WamnPostgres {
-    /// Whether a released invocation still retains this deployment.
-    pub fn release_in_use(&self, release: &wamn_engine::release_manifest::LoadedRelease) -> bool {
-        self.scopes.any::<crate::invocation::Authority>(|record| {
-            record.invocation.is_some()
-                && record
-                    .context
-                    .as_ref()
-                    .is_some_and(|context| std::ptr::eq(context.release.as_ref(), release))
-        })
+/// The existing database transport supplies the bound executor identity.
+pub trait ExecutorDatabase: Send + Sync {
+    /// Open a transaction with the identity already bound to this component.
+    fn bound_connection(
+        &self,
+        component: &str,
+    ) -> impl std::future::Future<Output = Result<ConnectionGuard, ProductionLeaseError>> + Send;
+    /// The host-bound queue runner for this component.
+    fn runner(&self, component: &str) -> Option<String>;
+    /// The release that this component serves.
+    fn manifest_digest(&self, component: &str) -> Option<String>;
+}
+
+/// Queue leases over the host's existing authorized connections.
+pub struct ProductionLeases<'a, D> {
+    database: &'a D,
+}
+
+impl<D> std::fmt::Debug for ProductionLeases<'_, D> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProductionLeases")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
+    /// Borrow the host's existing executor transport.
+    pub fn new(database: &'a D) -> Self {
+        Self { database }
     }
 
-    /// Read restart pins through this project's executor credential.
-    pub async fn unfinished_releases(
+    async fn executor_bound<T>(
         &self,
-        project: &str,
-        project_env_key: &str,
-        environment: &str,
-    ) -> anyhow::Result<Vec<(String, String, String)>> {
-        self.executor_read(project, project_env_key, async |connection| {
-            Ok(persistence::unfinished_releases(connection, project_env_key, environment).await?)
-        })
-        .await
-    }
-
-    /// Load immutable catalog bytes through the owning project's executor credential.
-    pub async fn release_bytes(
-        &self,
-        project: &str,
-        project_env_key: &str,
-        digest: &str,
-    ) -> anyhow::Result<Vec<u8>> {
-        self.executor_read(project, project_env_key, async |connection| {
-            Ok(sqlx::query_scalar("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2")
-                .bind(project_env_key).bind(digest).fetch_one(connection).await?)
-        }).await
+        component: &str,
+        work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, ProductionLeaseError>,
+    ) -> Result<T, ProductionLeaseError> {
+        let mut connection = self.database.bound_connection(component).await?;
+        match work(connection.connection()).await {
+            Ok(value) => {
+                sqlx::raw_sql("COMMIT")
+                    .execute(connection.connection())
+                    .await
+                    .map_err(|error| {
+                        ProductionLeaseError::postgres("commit executor transaction", &error)
+                    })?;
+                connection.repool();
+                Ok(value)
+            }
+            Err(error) => {
+                if sqlx::raw_sql("ROLLBACK")
+                    .execute(connection.connection())
+                    .await
+                    .is_ok()
+                {
+                    connection.repool();
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Run lease next under the bound executor identity.
@@ -54,18 +78,15 @@ impl WamnPostgres {
         environment: &str,
         lease_ttl_ms: i64,
     ) -> Result<ProductionLeaseResult, ProductionLeaseError> {
-        let runner = self.runner_for(component_id).ok_or_else(|| {
+        let runner = self.database.runner(component_id).ok_or_else(|| {
             ProductionLeaseError::new(
                 ProductionLeaseErrorType::Identity,
                 "resolve runner",
                 "component has no host-injected runner",
             )
         })?;
-        let release = self.release_identity_for(component_id);
-        let digest = release
-            .as_ref()
-            .map(ReleaseIdentity::manifest_digest)
-            .map(wamn_catalog::ManifestDigest::as_str);
+        let digest = self.database.manifest_digest(component_id);
+        let digest = digest.as_deref();
         let result = self
             .executor_bound(component_id, async |connection| {
                 persistence::lease_next(
@@ -109,7 +130,7 @@ impl WamnPostgres {
         lease_generation: i64,
         lease_ttl_ms: i64,
     ) -> Result<ProductionLeaseRenewal, ProductionLeaseError> {
-        let runner = self.runner_for(component_id).ok_or_else(|| {
+        let runner = self.database.runner(component_id).ok_or_else(|| {
             ProductionLeaseError::new(
                 ProductionLeaseErrorType::Identity,
                 "resolve runner",
@@ -133,7 +154,7 @@ impl WamnPostgres {
         lease_generation: i64,
         completion: &ProductionCompletion,
     ) -> Result<ProductionCompletionResult, ProductionLeaseError> {
-        let runner = self.runner_for(component_id).ok_or_else(|| {
+        let runner = self.database.runner(component_id).ok_or_else(|| {
             ProductionLeaseError::new(
                 ProductionLeaseErrorType::Identity,
                 "resolve runner",
@@ -157,7 +178,7 @@ impl WamnPostgres {
         lease_generation: i64,
         adjustments: &serde_json::Value,
     ) -> Result<bool, ProductionLeaseError> {
-        let runner = self.runner_for(component_id).ok_or_else(|| {
+        let runner = self.database.runner(component_id).ok_or_else(|| {
             ProductionLeaseError::new(
                 ProductionLeaseErrorType::Identity,
                 "resolve runner",
@@ -186,7 +207,7 @@ impl WamnPostgres {
         run_id: &str,
         lease_generation: i64,
     ) -> Result<bool, ProductionLeaseError> {
-        let runner = self.runner_for(component_id).ok_or_else(|| {
+        let runner = self.database.runner(component_id).ok_or_else(|| {
             ProductionLeaseError::new(
                 ProductionLeaseErrorType::Identity,
                 "resolve runner",
@@ -208,11 +229,8 @@ impl WamnPostgres {
         package_ids: &[String],
         environment: &str,
     ) -> Result<bool, ProductionLeaseError> {
-        let release = self.release_identity_for(component_id);
-        let digest = release
-            .as_ref()
-            .map(ReleaseIdentity::manifest_digest)
-            .map(wamn_catalog::ManifestDigest::as_str);
+        let digest = self.database.manifest_digest(component_id);
+        let digest = digest.as_deref();
         let Some(digest) = digest else {
             return Ok(false);
         };

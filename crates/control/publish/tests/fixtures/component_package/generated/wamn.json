@@ -51,17 +51,6 @@
             ],
             "name": "get",
             "path": "generated/sql/item/get.sql",
-            "relations": [
-              {
-                "deletes": false,
-                "locks": false,
-                "reads": [
-                  "id"
-                ],
-                "table": "item",
-                "writes": []
-              }
-            ],
             "transactional": false
           }
         ],

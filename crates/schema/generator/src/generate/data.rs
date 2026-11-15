@@ -300,7 +300,7 @@ fn emit_create(
         )
         .collect::<Vec<_>>();
     let refuse = statement_error(CrudAction::Create, &constraints(CrudAction::Create));
-    // The first of two statements: the host renders the number from the
+    // The first of two statements: guest SQL renders the number from the
     // model's fields that the pattern names, passed as the keys, and the
     // insert writes the text.
     if let Some((field, sequence, pattern)) = number {
@@ -321,7 +321,7 @@ fn emit_create(
         let target = field_name(field);
         writeln!(
             body,
-            "let {target} = wamn_postgres_statements::next_number({sequence:?}, &[{keys}]).await.map_err({refuse})?;"
+            "let {target} = wamn_postgres_statements::next_number(transaction, {sequence:?}, &[{keys}]).await.map_err({refuse})?;"
         )
         .expect("writing to a String cannot fail");
         arguments.push(target);
@@ -341,7 +341,7 @@ fn emit_create(
     .expect("writing to a String cannot fail");
 }
 
-/// The key value `next-number` takes for one parsed statement value, the
+/// The key value number SQL takes for one parsed statement value, the
 /// text of its one spelling, or `None` for a null.
 fn key_text(ty: SqlValueType, value: &str, nullable: bool) -> String {
     let text = |value: &str| match ty {
@@ -909,14 +909,16 @@ fn emit_sequences(sequences: &[(&String, &crate::manifest::SequenceDeclaration)]
              ///\n/// # Errors\n///\n/// The host's refusal.\n\
              pub async fn next({parameter}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
              {bind}\
-             wamn_postgres_statements::next_number({name:?}, &[{keys}]).await\n\
+             let mut transaction = wamn_postgres_statements::operation_transaction().await?;\n\
+             wamn_postgres_statements::next_number(&mut transaction, {name:?}, &[{keys}]).await\n\
              }}\n\n\
              /// The current number, the last one issued for the key, with no\n\
              /// lock and no advance. Never for assignment.\n\
              ///\n/// # Errors\n///\n/// The host's refusal, and SQLSTATE `P0002` when no number was\n/// issued yet.\n\
              pub async fn peek({parameter}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
              {bind}\
-             wamn_postgres_statements::peek_number({name:?}, &[{keys}]).await\n\
+             let mut transaction = wamn_postgres_statements::operation_transaction().await?;\n\
+             wamn_postgres_statements::peek_number(&mut transaction, {name:?}, &[{keys}]).await\n\
              }}\n\
              }}",
             sequence.pattern.escape_debug(),

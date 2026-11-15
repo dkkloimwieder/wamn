@@ -8,15 +8,15 @@ use tracing::Instrument as _;
 use wash_runtime::host::probes::Liveness;
 
 use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
+use wamn_connections::production_lease::{
+    ProductionCompletionResult, ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult,
+};
 use wamn_engine::native_routes::{OperationRefusal, OperationRefusalType};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_events_capability::{DerivedPublishRequest, WamnJetstream};
 use wamn_identity_protocol::PlatformComponent;
-use wamn_postgres_capability::{
-    ProductionCompletionResult, ProductionLeaseRenewal, ProductionLeaseResult,
-    ProductionReapResult, WamnPostgres,
-};
+use wamn_postgres_capability::WamnPostgres;
 use wamn_run_state::FailType;
 
 use crate::resolution::{WorkflowResolutionError, WorkflowResolutionErrorType};
@@ -137,14 +137,15 @@ impl QueueService {
             },
             || {
                 Box::pin(async {
-                    Ok(self
-                        .postgres
-                        .pinned_backlog(
-                            &self.target.invocation,
-                            &self.target.package_ids,
-                            &self.target.environment,
-                        )
-                        .await?)
+                    Ok(wamn_connections::production_lease::ProductionLeases::new(
+                        self.postgres.as_ref(),
+                    )
+                    .pinned_backlog(
+                        &self.target.invocation,
+                        &self.target.package_ids,
+                        &self.target.environment,
+                    )
+                    .await?)
                 })
             },
         )
@@ -222,7 +223,7 @@ async fn drain_one(
     lease_ttl_ms: i64,
     liveness: &Liveness,
 ) -> anyhow::Result<bool> {
-    match postgres
+    match wamn_connections::production_lease::ProductionLeases::new(postgres)
         .reap_exhausted(
             &target.invocation,
             &target.package_ids,
@@ -237,7 +238,7 @@ async fn drain_one(
         ProductionReapResult::Empty => {}
     }
 
-    match postgres
+    match wamn_connections::production_lease::ProductionLeases::new(postgres)
         .lease_next(
             &target.invocation,
             &target.package_ids,
@@ -332,8 +333,7 @@ async fn drive_lease(
         tokio::select! {
             delivery = &mut execute => break delivery,
             _ = heartbeat.tick() => {
-                match postgres
-                    .renew(
+                match wamn_connections::production_lease::ProductionLeases::new(postgres).renew(
                         &target.invocation,
                         run_id,
                         lease_generation,
@@ -353,7 +353,7 @@ async fn drive_lease(
 
     let (delivery, adjustments) = delivery;
     if !adjustments.is_empty()
-        && !postgres
+        && !wamn_connections::production_lease::ProductionLeases::new(postgres)
             .record_deadline_adjustments(
                 &target.invocation,
                 run_id,
@@ -375,7 +375,9 @@ async fn drive_lease(
                     target,
                     run_id,
                     lease_generation,
-                    &wamn_postgres_capability::ProductionCompletion::failed(result, fail_type),
+                    &wamn_connections::production_lease::ProductionCompletion::failed(
+                        result, fail_type,
+                    ),
                 )
                 .await?;
                 return Ok(());
@@ -437,7 +439,7 @@ async fn drive_lease(
                 target,
                 run_id,
                 lease_generation,
-                &wamn_postgres_capability::ProductionCompletion::completed(event),
+                &wamn_connections::production_lease::ProductionCompletion::completed(event),
             )
             .await?;
         }
@@ -493,9 +495,9 @@ async fn commit_completion(
     target: &QueueTarget,
     run_id: &str,
     lease_generation: i64,
-    completion: &wamn_postgres_capability::ProductionCompletion,
+    completion: &wamn_connections::production_lease::ProductionCompletion,
 ) -> anyhow::Result<()> {
-    let result = postgres
+    let result = wamn_connections::production_lease::ProductionLeases::new(postgres)
         .complete(&target.invocation, run_id, lease_generation, completion)
         .await?;
     match result {

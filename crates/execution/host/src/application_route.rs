@@ -19,7 +19,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_broker::Publisher;
+use wamn_events::admission::{ManualRunAdmission, ManualRunAdmitted};
 
+use crate::number_counter::{CounterSet, CounterSetRefusal};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection as Client;
@@ -38,9 +40,7 @@ use wamn_platform_identity::application::{
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
 };
 use wamn_platform_identity::control::is_project_admin;
-use wamn_postgres_capability::{
-    CounterSet, CounterSetRefusal, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
-};
+use wamn_postgres_capability::WamnPostgres;
 
 use crate::control_route::{Refusal, parse};
 
@@ -195,13 +195,16 @@ impl ApplicationRoutes<'_> {
         let packages = &declared.packages;
         let workflow = self
             .postgres
-            .enabled_workflow(
-                self.project,
-                project_env_key,
-                &target.environment,
-                application,
-                &request.workflow_id,
-            )
+            .executor_read(self.project, project_env_key, async |connection| {
+                wamn_events::admission::enabled_workflow(
+                    connection,
+                    project_env_key,
+                    &target.environment,
+                    application,
+                    &request.workflow_id,
+                )
+                .await
+            })
             .await?
             .ok_or_else(|| start_refusal("workflow_not_enabled", "workflow_id"))?;
         let not_served = |_| start_refusal("workflow_not_served", "workflow_id");
@@ -245,24 +248,27 @@ impl ApplicationRoutes<'_> {
         let node_digests = Value::Object(node_digests);
         let admitted = self
             .postgres
-            .admit_manual_run(
-                self.project,
-                project_env_key,
-                &ManualRunAdmission {
-                    package_id: application,
-                    manifest_digest: self.release.release().manifest_digest.as_str(),
-                    environment: &target.environment,
-                    workflow_id: &request.workflow_id,
-                    workflow_version: workflow.version,
-                    wiring_hash: &workflow.wiring_hash,
-                    execution_principal_id: &principal,
-                    execution_role: &role,
-                    invoked_by_user_id: user,
-                    node_digests: &node_digests,
-                    idempotency_key: &idempotency_key,
-                    input: &request.input_json,
-                },
-            )
+            .executor_write(self.project, project_env_key, async |connection| {
+                wamn_events::admission::admit_manual_run(
+                    connection,
+                    project_env_key,
+                    &ManualRunAdmission {
+                        package_id: application,
+                        manifest_digest: self.release.release().manifest_digest.as_str(),
+                        environment: &target.environment,
+                        workflow_id: &request.workflow_id,
+                        workflow_version: workflow.version,
+                        wiring_hash: &workflow.wiring_hash,
+                        execution_principal_id: &principal,
+                        execution_role: &role,
+                        invoked_by_user_id: user,
+                        node_digests: &node_digests,
+                        idempotency_key: &idempotency_key,
+                        input: &request.input_json,
+                    },
+                )
+                .await
+            })
             .await
             .map_err(|error| Refusal::Failed(anyhow::anyhow!(error.to_string())))?;
         match admitted {
@@ -484,21 +490,20 @@ impl ApplicationRoutes<'_> {
             key: request.key,
             value: request.value,
         };
-        let value = self
-            .postgres
-            .set_number_counter(
-                self.project,
-                self.release.target().project_env_key.as_str(),
-                principal.to_string().as_str(),
-                &attachment.operation,
-                request_id.unwrap_or_default(),
-                &set,
-            )
-            .await
-            .map_err(|error| match error.refusal() {
-                Some(refusal) => counter_set_refusal(refusal),
-                None => Refusal::Failed(error.into()),
-            })?;
+        let value = crate::number_counter::set_number_counter(
+            self.postgres,
+            self.project,
+            self.release.target().project_env_key.as_str(),
+            principal.to_string().as_str(),
+            &attachment.operation,
+            request_id.unwrap_or_default(),
+            &set,
+        )
+        .await
+        .map_err(|error| match error.refusal() {
+            Some(refusal) => counter_set_refusal(refusal),
+            None => Refusal::Failed(error.into()),
+        })?;
         Ok(json!({ "value": value }))
     }
 

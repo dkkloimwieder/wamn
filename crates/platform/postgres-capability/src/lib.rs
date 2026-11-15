@@ -15,16 +15,10 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Component, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-mod credential_exactness;
-/// Host admission of an event-started workflow run.
-mod event_admission;
 mod executor;
-mod file_collection;
-mod numbering;
 mod operation;
 mod operation_transaction;
 mod pool;
-mod production_lease;
 mod query;
 #[cfg(test)]
 mod query_tests;
@@ -32,28 +26,15 @@ mod resources;
 mod session_identity;
 mod types;
 pub mod write_log;
-pub use file_collection::FileCollection;
 
-pub use credential_exactness::{
-    AclExpectation, AclTarget, AmbientCredentialState, CredentialConnectionType,
-    CredentialExactnessProbe, CredentialProbeError, CredentialProbeErrorType,
-    CredentialProbePredicate, ExpectedCredentialIdentity, ExplicitCredentialSource,
-    MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
-};
-pub use event_admission::{EnabledWorkflow, ManualRunAdmission, ManualRunAdmitted};
-pub use numbering::{CounterSet, CounterSetError, CounterSetRefusal};
 pub use operation::OperationInvoker;
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};
 pub use pool::{
     CheckoutProbe, ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
     StaticCredentialProvider, WamnPostgresConfig,
 };
-pub use production_lease::{
-    ProductionCompletion, ProductionCompletionResult, ProductionLeaseError,
-    ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult,
-    ProductionWorkflow,
-};
 pub use resources::{PgStatementTransaction, PgTransaction};
+pub use session_identity::{UnprovisionedPrincipal, WamnPostgres};
 pub use types::canonical_timestamptz;
 /// Re-exported because [`ClassCredentials::with_class`] and
 /// [`ClassCredentials::without_class`] TAKE one: a composer outside this
@@ -124,7 +105,6 @@ pub struct NamedStatements;
 use bindings::wamn::postgres::client;
 use bindings::wamn::postgres::statements as statement_wit;
 use bindings::wamn::postgres::types::{PgError, SqlValue};
-use statement_wit::StatementError;
 
 pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 

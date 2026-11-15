@@ -393,45 +393,6 @@ mod tests {
 
     use super::*;
 
-    fn fixture_component() -> AdmittedComponent {
-        let mut document: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/component_package/component.json"
-        ))
-        .expect("fixture component declaration is JSON");
-        document["target"]["project_env_key"] = serde_json::json!("org-a");
-        let declaration: ComponentDeclaration =
-            serde_json::from_value(document).expect("fixture component declaration parses");
-        AdmittedComponent {
-            target: declaration.target,
-            component: declaration.component,
-            interface_version: declaration.interface_version,
-            operations: declaration
-                .operations
-                .into_iter()
-                .map(|(export, operation)| {
-                    (
-                        export,
-                        AdmittedComponentOperation {
-                            connections: operation.connections,
-                            committed_result_schema: operation
-                                .committed_result_schema
-                                .map(|schema| wamn_catalog::ComponentSchema { schema }),
-                            registered_operation: operation.registered_operation,
-                            host_transaction: false,
-                            input_ports: Vec::new(),
-                            output_ports: Vec::new(),
-                            parameters: Vec::new(),
-                        },
-                    )
-                })
-                .collect(),
-            component_digest: format!("sha256:{}", "c".repeat(64)),
-            imports: Vec::new(),
-            imports_fingerprint: format!("sha256:{}", "d".repeat(64)),
-            effects: Vec::new(),
-        }
-    }
-
     #[test]
     fn private_manifest_operation_cannot_cross_component_ownership() {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(

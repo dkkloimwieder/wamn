@@ -1196,7 +1196,15 @@ mod tests {
             descriptor: ComponentDescriptor {
                 operations: BTreeMap::from([(
                     operation.into(),
-                    admitted_operation(operation, None),
+                    crate::AdmittedComponentOperation {
+                        connections: Vec::new(),
+                        registered_operation: Some(operation.into()),
+                        committed_result_schema: None,
+                        host_transaction: false,
+                        input_ports: Vec::new(),
+                        output_ports: Vec::new(),
+                        parameters: Vec::new(),
+                    },
                 )]),
                 ..ComponentDescriptor::named(component, "0.1", digest)
             },
@@ -1489,31 +1497,6 @@ mod tests {
 
         assert_eq!(forward.canonical_bytes(), reversed.canonical_bytes());
         assert_eq!(forward.digest(), reversed.digest());
-    }
-
-    fn admitted(
-        package_id: &str,
-        package_version: &str,
-        digest: &str,
-        operations: Vec<(&str, crate::AdmittedComponentOperation)>,
-    ) -> AdmittedComponent {
-        AdmittedComponent {
-            target: crate::ComponentPackageCoordinate {
-                project_env_key: "t1".into(),
-                package_id: package_id.into(),
-                package_version: package_version.into(),
-            },
-            component: package_id.into(),
-            interface_version: "0.1".into(),
-            operations: operations
-                .into_iter()
-                .map(|(name, operation)| (name.to_owned(), operation))
-                .collect(),
-            component_digest: digest.into(),
-            imports: Vec::new(),
-            imports_fingerprint: digest.into(),
-            effects: Vec::new(),
-        }
     }
 
     #[test]

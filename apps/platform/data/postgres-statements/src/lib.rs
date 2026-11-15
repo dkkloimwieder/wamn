@@ -1,4 +1,4 @@
-//! Typed access to SQL in the host operation transaction.
+//! SQL in the host operation transaction and document numbering in the guest.
 
 #[expect(
     clippy::same_length_and_capacity,
@@ -246,38 +246,8 @@ async fn collect(
     })
 }
 
-/// The next number of sequence `name`, rendered by the host from `keys`:
-/// the values its pattern names (`per=`, `reset=` and `{field:}`), each as
-/// its text or `None` for a null. A bare `{seq}` or `{date:}` pattern takes
-/// no keys. The counter advances in the operation transaction, so a rollback
-/// leaves the number unconsumed.
-pub async fn next_number(
-    name: &str,
-    keys: &[(&str, Option<String>)],
-) -> Result<String, StatementError> {
-    host::next_number(name.to_string(), key_list(keys))
-        .await
-        .map_err(|host::StatementError::Postgres(error)| StatementError::from_postgres(error))
-}
-
-/// The current number of sequence `name` for `keys`: the last number
-/// issued, rendered by the host with no lock and no advance. Never for
-/// assignment. `keys` is as for [`next_number`]. The host answers SQLSTATE
-/// `P0002` when no number was issued yet.
-pub async fn peek_number(
-    name: &str,
-    keys: &[(&str, Option<String>)],
-) -> Result<String, StatementError> {
-    host::peek_number(name.to_string(), key_list(keys))
-        .await
-        .map_err(|host::StatementError::Postgres(error)| StatementError::from_postgres(error))
-}
-
-fn key_list(keys: &[(&str, Option<String>)]) -> Vec<(String, Option<String>)> {
-    keys.iter()
-        .map(|(name, value)| ((*name).to_owned(), value.clone()))
-        .collect()
-}
+mod numbering;
+pub use numbering::{next_number, peek_number};
 
 /// Convert one generated accessor argument into the frozen WIT value vocabulary.
 pub fn into_sql_value(value: impl IntoSqlValue) -> SqlValue {

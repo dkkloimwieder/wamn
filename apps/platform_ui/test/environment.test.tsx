@@ -50,22 +50,6 @@ function fixture(initial: "active" | "inactive" = "active", digest: string | nul
                   package: "acme",
                   component: "receiving",
                   operation: "acme:receiving/record",
-                  reaches: [
-                    {
-                      package: "acme",
-                      operations: ["acme:receiving/record"],
-                      imprecise: false,
-                      statements: [
-                        {
-                          path: "record.sql",
-                          refused: null,
-                          relations: [
-                            { table: "receipt", reads: ["id"], writes: ["quantity"], locks: true, deletes: false },
-                          ],
-                        },
-                      ],
-                    },
-                  ],
                 },
               ],
               roles: [{ role: "clerk", operations: ["acme:receiving/record"] }],
@@ -109,15 +93,15 @@ describe("Environment", () => {
     expect(opened).toBe("projects/widgets/dev");
   });
 
-  it("shows status and the selected release profile", async () => {
+  it("shows status and selects an application release", async () => {
     const data = fixture();
     mount(data);
-    await screen.findByRole("region", { name: "Release profile" });
+    await screen.findByRole("combobox", { name: "Application release" });
     expect(screen.getByRole("group", { name: "Workloads" }).textContent).toContain("1 ready");
     fireEvent.change(screen.getByRole("combobox", { name: "Application release" }), {
       target: { value: "receiving@sha256:other" },
     });
-    await waitFor(() => expect(screen.getByRole("region", { name: "Release profile" }).textContent).toContain("sha256:other"));
+    await waitFor(() => expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(2));
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.queryByRole("navigation", { name: "Environment tables" })).toBeNull();
     expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(2);
@@ -125,7 +109,7 @@ describe("Environment", () => {
     expect(screen.getByRole("group", { name: "Roles" }).textContent).toContain("4");
   });
 
-  it("expands read-only tables under workloads, roles and operations without changing the address", async () => {
+  it("expands workload and role details and opens Operations without changing the address", async () => {
     const data = fixture();
     const session = identity(true);
     const base = `/${CONTROL}/projects/widgets/dev`;
@@ -161,21 +145,7 @@ describe("Environment", () => {
     ).toBeTruthy();
     expect(window.location.pathname).toBe(`${base}/roles`);
     fireEvent.click(screen.getByRole("link", { name: "Operations" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Expand details for row acme:receiving/record" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Expand details for row acme" }));
-    expect(await screen.findByRole("table", { name: "Reach operations" })).toBeTruthy();
-    fireEvent.click(await screen.findByRole("button", { name: "Expand details for row record.sql" }));
-    const relations = within(await screen.findByRole("table", { name: "Relations" }));
-    expect(relations.getByRole("cell", { name: "receipt" })).toBeTruthy();
-    expect(relations.getByRole("img", { name: "Yes" })).toBeTruthy();
-    expect(relations.getByRole("img", { name: "No" })).toBeTruthy();
-    fireEvent.click(relations.getByRole("button", { name: "Expand details for row receipt" }));
-    expect(
-      within(await screen.findByRole("table", { name: "Read fields" })).getByRole("cell", { name: "id" }),
-    ).toBeTruthy();
-    expect(
-      within(screen.getByRole("table", { name: "Write fields" })).getByRole("cell", { name: "quantity" }),
-    ).toBeTruthy();
+    await screen.findByRole("table", { name: "Operations" });
     expect(window.location.pathname).toBe(`${base}/operations`);
     expect(screen.getAllByRole("button", { name: "Refresh results" })).toHaveLength(1);
     expect(screen.getAllByRole("navigation", { name: "Table pages" })).toHaveLength(1);
@@ -220,10 +190,7 @@ describe("Environment", () => {
   it.each([
     "workloads/missing",
     "roles/missing",
-    "operations/acme%3Areceiving%2Frecord/reaches/acme/statements/record.sql/relations/missing/reads",
     "operations/missing",
-    "operations/acme%3Areceiving%2Frecord/reaches/missing",
-    "operations/acme%3Areceiving%2Frecord/reaches/acme/statements/missing.sql",
   ])("rejects removed reference routes: %s", async (path) => {
     const data = fixture();
     const session = identity(true);
@@ -311,7 +278,6 @@ describe("Environment", () => {
     mount(data);
     await screen.findByRole("button", { name: "Activate environment" });
     expect(screen.getByRole("group", { name: "Resident releases" }).textContent).toContain("0 loaded");
-    expect(screen.queryByRole("region", { name: "Release profile" })).toBeNull();
     expect(data.calls.some((path) => path.includes("/release/profile"))).toBe(false);
   });
 
@@ -337,7 +303,7 @@ describe("Environment", () => {
   it("lets a project admin read its environment but offers no status writes", async () => {
     const data = fixture();
     mount(data, false);
-    await screen.findByRole("region", { name: "Release profile" });
+    await screen.findByRole("combobox", { name: "Application release" });
     expect(screen.queryByRole("button", { name: /environment$/ })).toBeNull();
   });
 
@@ -499,7 +465,7 @@ describe("environment operation controls", () => {
     "hides controls without authority for the target: %j",
     async (options) => {
       operationsFixture(options);
-      await screen.findByRole("region", { name: "Release profile" });
+      await screen.findByRole("combobox", { name: "Application release" });
       expect(screen.queryByRole("region", { name: "Deployment controls" })).toBeNull();
     },
   );

@@ -5,6 +5,7 @@ use wamn_environment::environment::{
     self,
     document::{DeclaredRelease, EnvironmentDocument},
 };
+use wamn_events::admission::{ManualRunAdmission, ManualRunAdmitted};
 use wamn_publish::publish_release::compose_application;
 
 use anyhow::{Context as _, ensure};
@@ -717,8 +718,7 @@ pub mod workflow {
         key: &str,
     ) -> anyhow::Result<String> {
         use wamn_postgres_capability::{
-            AuthorityClass, ClassCredentials, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
-            WamnPostgresConfig,
+            AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
         };
 
         let bytes: Vec<u8> = sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2").bind(&environment.project_env_key).bind(&environment.digest).fetch_one(&mut *project)
@@ -737,13 +737,16 @@ pub mod workflow {
             row_limit: 10_000,
         })?;
         let workflow = postgres
-            .enabled_workflow(
-                "default",
-                environment.project_env_key,
-                environment.target.env.as_str(),
-                application,
-                workflow_id,
-            )
+            .executor_read("default", environment.project_env_key, async |connection| {
+                wamn_events::admission::enabled_workflow(
+                    connection,
+                    environment.project_env_key,
+                    environment.target.env.as_str(),
+                    application,
+                    workflow_id,
+                )
+                .await
+            })
             .await?
             .context("the workflow is enabled")?;
         let role = workflow
@@ -767,24 +770,28 @@ pub mod workflow {
             .map(|(node, component)| (node, Value::String(component.component_digest)))
             .collect();
         let admitted = postgres
-            .admit_manual_run(
-                "default",
-                environment.project_env_key,
-                &ManualRunAdmission {
-                    package_id: application,
-                    manifest_digest: environment.digest,
-                    environment: environment.target.env.as_str(),
-                    workflow_id,
-                    workflow_version: workflow.version,
-                    wiring_hash: &workflow.wiring_hash,
-                    execution_principal_id: &wamn_identity_protocol::workflow_user_id().to_string(),
-                    execution_role: role,
-                    invoked_by_user_id: ENABLER,
-                    node_digests: &Value::Object(node_digests),
-                    idempotency_key: &format!("manual:{ENABLER}:{workflow_id}:{key}"),
-                    input,
-                },
-            )
+            .executor_write("default", environment.project_env_key, async |connection| {
+                wamn_events::admission::admit_manual_run(
+                    connection,
+                    environment.project_env_key,
+                    &ManualRunAdmission {
+                        package_id: application,
+                        manifest_digest: environment.digest,
+                        environment: environment.target.env.as_str(),
+                        workflow_id,
+                        workflow_version: workflow.version,
+                        wiring_hash: &workflow.wiring_hash,
+                        execution_principal_id: &wamn_identity_protocol::workflow_user_id()
+                            .to_string(),
+                        execution_role: role,
+                        invoked_by_user_id: ENABLER,
+                        node_digests: &Value::Object(node_digests),
+                        idempotency_key: &format!("manual:{ENABLER}:{workflow_id}:{key}"),
+                        input,
+                    },
+                )
+                .await
+            })
             .await
             .map_err(|error| anyhow::anyhow!("{error:?}"))?;
         let ManualRunAdmitted::Queued { run_id } = admitted else {

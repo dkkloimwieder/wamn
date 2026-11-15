@@ -167,10 +167,13 @@ impl Releases {
             let mut bytes = self.bytes.lock().unwrap_or_else(|error| error.into_inner());
             Arc::clone(bytes.entry(digest.to_owned()).or_default())
         };
-        let authorized = r
-            .postgres
-            .release_bytes(&r.configuration.project, &r.target.project_env_key, digest)
-            .await?;
+        let authorized = wamn_workflow::run_queue::release_bytes(
+            &r.postgres,
+            &r.configuration.project,
+            &r.target.project_env_key,
+            digest,
+        )
+        .await?;
         let (manifest, _) = ServingManifest::from_canonical_bytes(&authorized)?;
         anyhow::ensure!(
             manifest.digest().as_str() == digest,
@@ -359,14 +362,13 @@ impl Releases {
 
     async fn refresh(&self) -> anyhow::Result<BTreeMap<ReleaseKey, Vec<String>>> {
         let r = &self.resources;
-        let pins = r
-            .postgres
-            .unfinished_releases(
-                &r.configuration.project,
-                &r.target.project_env_key,
-                &r.target.environment,
-            )
-            .await?;
+        let pins = wamn_workflow::run_queue::unfinished_releases(
+            &r.postgres,
+            &r.configuration.project,
+            &r.target.project_env_key,
+            &r.target.environment,
+        )
+        .await?;
         let selected = match self.selected().await {
             Ok(selected) => selected,
             Err(error) => {
@@ -438,14 +440,13 @@ impl Releases {
         &self,
     ) -> anyhow::Result<Vec<wamn_kubernetes::environment_state::ReleaseResidency>> {
         let r = &self.resources;
-        let pins = r
-            .postgres
-            .unfinished_releases(
-                &r.configuration.project,
-                &r.target.project_env_key,
-                &r.target.environment,
-            )
-            .await?;
+        let pins = wamn_workflow::run_queue::unfinished_releases(
+            &r.postgres,
+            &r.configuration.project,
+            &r.target.project_env_key,
+            &r.target.environment,
+        )
+        .await?;
         let mut releases: BTreeMap<
             ReleaseKey,
             wamn_kubernetes::environment_state::ReleaseResidency,

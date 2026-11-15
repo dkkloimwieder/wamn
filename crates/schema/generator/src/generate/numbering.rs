@@ -211,7 +211,7 @@ fn validate_numbered_field(
         }
         if writable.is_some_and(|fields| !fields.iter().any(|candidate| candidate == name)) {
             return Err(invalid(format!(
-                "{model_name}.create does not write {name}, which sequence {sequence} names; the generated insert passes it to next-number, so make it writable"
+                "{model_name}.create does not write {name}, which sequence {sequence} names; the generated insert passes it to number SQL, so make it writable"
             )));
         }
     }

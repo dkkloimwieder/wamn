@@ -181,7 +181,7 @@ pub enum HostHandler {
     ProjectAdminGrant,
     /// Revoke `project-admin` in one project.
     ProjectAdminRevoke,
-    /// The effect profile of one release of an environment
+    /// The exported operations of one release of an environment
     /// (docs/architecture/execution.md#host-run-routes).
     ReleaseProfile,
     /// Make one environment active

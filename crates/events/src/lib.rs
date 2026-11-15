@@ -1,4 +1,5 @@
-//! CDC reader configuration, provisioning and capture recovery.
+//! Run admission, CDC reader configuration, provisioning and capture recovery.
+pub mod admission;
 pub mod capture_gap;
 pub mod lifecycle;
 pub mod reader;

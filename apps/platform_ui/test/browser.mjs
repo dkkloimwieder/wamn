@@ -539,10 +539,8 @@ try {
     assert.ok(Number.isInteger(observedRelease[count]) && observedRelease[count] >= 1, `${count} is answered`);
   }
   await assertTiles(page, observedRelease);
-  await page
-    .getByRole("region", { name: "Release profile" })
-    .getByText(fixture.releaseDigest, { exact: true })
-    .waitFor();
+  await page.getByRole("combobox", { name: "Application release" })
+    .locator("option").filter({ hasText: fixture.releaseDigest }).first().waitFor({ state: "attached" });
   assert.equal(await page.getByRole("table").count(), 0);
   assert.deepEqual(splashReads, [{ project: fixture.releaseProject, env: fixture.releaseEnv }]);
   await capture(page, "environment");
@@ -584,12 +582,6 @@ try {
     ["Operations", "operations"],
     ["Roles", "roles"],
   ]) {
-    const profileRead =
-      path === "operations"
-        ? page.waitForResponse((response) =>
-            new URL(response.url()).pathname.endsWith("/api/wamn_control/release/profile"),
-          )
-        : undefined;
     await page
       .getByRole("navigation", { name: "Primary navigation" })
       .getByRole("link", { name: label, exact: true })
@@ -603,37 +595,12 @@ try {
       label.toUpperCase(),
     );
     await capture(page, `environment-${path}`);
-    if (path === "workloads" || path === "operations") {
-      const profile = profileRead ? (await (await profileRead).json())[0].value : undefined;
-      const operation = profile?.operations.find((entry) =>
-        entry.reaches.some((reach) => reach.statements.some((statement) => statement.relations.length)),
-      );
-      if (path === "operations") {
-        assert.ok(operation, "the release has an operation with SQL relations");
-        await expandReference(table, operation.operation);
-      } else await table.locator("[data-subtable-toggle]").first().click();
-      await page
-        .getByRole("table", { name: path === "workloads" ? /^Conditions for / : "Reaches", exact: true })
-        .waitFor();
+    if (path === "workloads") {
+      await table.locator("[data-subtable-toggle]").first().click();
+      await page.getByRole("table", { name: /^Conditions for / }).waitFor();
       assert.equal(new URL(page.url()).pathname, `${environmentPathname}/${path}`);
       assert.ok((await page.locator("table table").count()) > 0);
-      if (path === "operations") {
-        const reaches = page.getByRole("table", { name: "Reaches", exact: true });
-        const reach = operation.reaches.find((entry) =>
-          entry.statements.some((statement) => statement.relations.length),
-        );
-        await expandReference(reaches, reach.package);
-        const statements = page.getByRole("table", { name: "Statements", exact: true });
-        await statements.waitFor();
-        const statement = reach.statements.find((entry) => entry.relations.length);
-        await expandReference(statements, statement.path);
-        const relations = page.getByRole("table", { name: "Relations", exact: true });
-        await relations.waitFor();
-        await relations.locator("[data-subtable-toggle]").first().click();
-        await page.getByRole("table", { name: "Read fields", exact: true }).waitFor();
-        await page.getByRole("table", { name: "Write fields", exact: true }).waitFor();
-      }
-      await capture(page, path === "workloads" ? "workload-conditions" : "operation-references");
+      await capture(page, "workload-conditions");
     }
     if (path === "roles" && (await table.locator("[data-subtable-toggle]").count())) {
       await table.locator("[data-subtable-toggle]").first().click();
@@ -686,7 +653,7 @@ try {
   assert.equal(await page.getByRole("button", { name: "Activate environment", exact: true }).count(), 0);
   await visit(page);
   await page.getByRole("button", { name: "Inactivate environment", exact: true }).waitFor();
-  await page.getByRole("region", { name: "Release profile" }).waitFor();
+  await page.getByRole("combobox", { name: "Application release" }).waitFor();
   assert.deepEqual(errors, []);
   console.log(
     "PASS: Environment navigation, local runtime status, release profile, single activate/inactivate action and reload state",

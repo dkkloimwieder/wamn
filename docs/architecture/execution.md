@@ -140,7 +140,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:environment/status@0.9.0` | Answers the shared host rollout, workload conditions, resident releases, and unfinished-run pins for one project of an environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
 | `wamn-control:connection/test@0.9.0` | Requires project-admin authority. Takes `project`, `env`, integration `name`, candidate `parameters`, optional `credential`, and optional `version`. Answers `{ok: true}` or `{ok: false, error}`. Writes nothing and stops after ten seconds. |
 | `wamn-control:project/create@0.9.0` | Creates a project with no environment. |
-| `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of a release installed in that environment. Answers `operations`: for each export of the release's components, the members it `reaches`, each with the exports it holds, `imprecise` when it is a base member's whole statement set, and per statement the relations it reads, writes, deletes and locks, derived from the release's SQL over the environment's relation columns, and `roles`: each role of the environment with the `operations` it holds, `admin` every operation of the release. A view read reports the view columns and each base table with the columns that the view depends on through `pg_depend`. Writes nothing. |
+| `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of an installed release. Answers its exported operations with their package and component, and the operations each role holds. The `admin` role holds every operation of the release. Writes nothing. |
 | `wamn-control:member/list@0.9.0` | Takes `project` and an optional `environment`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
 | `wamn-control:member/grant@0.9.0` | Takes `project`, `env` and `principal_id` of an active member, and writes the membership of that environment. |
 | `wamn-control:member/revoke@0.9.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while org, environment or project administration covers the membership. |
@@ -491,7 +491,7 @@ The `number_counter.set` route binds the requested application after it finds th
 Other host routes, host queue transactions, and platform reads bind no application.
 
 An absent application binds an empty value, so a pooled connection keeps no earlier application.
-The identity is for logs only. [Numbering](data-access.md#numbering) takes the application from host state, not from this identity.
+[Numbering](data-access.md#numbering) reads the host-bound application through `wamn_authority.current_application()` in the operation transaction.
 
 A platform identity transaction that only reads binds no principal and no operation.
 A bound principal alone does not move a read out of the autocommit path.

@@ -1,31 +1,4 @@
-//! Live acceptance test for the executor-platform credential's PLAN SUPPLY and
-//! its exact-credential probe (`wamn-0h0g.22.42`).
-//!
-//! Two things `wamn-0h0g.22.31` could not discharge live meet here because they
-//! need the same fixture: ONE provisioned executor-platform generation against
-//! the REAL `deploy/sql` schemas.
-//!
-//! PLAN SUPPLY. The released and candidate wiring statements execute here with
-//! bound parameters under the minted executor-platform generation. The tests
-//! test exact component facts and distinguish legitimate empty results from
-//! missing row-level access.
-//!
-//! The raw statements run without the resolution wrappers so lowering failures
-//! cannot hide which database access test failed.
-//!
-//! CREDENTIAL EXACTNESS. `credential_exactness_probe`'s wrong-database,
-//! wrong-project-binding and wrong-membership arms were unit-covered against a
-//! `FakeQueries` double; `PostgresQueryExecutor` — the half that actually asks
-//! PostgreSQL — had never run against a server at all. Each arm runs here on a
-//! real connection.
-//!
-//! *** UNDER FORCE RLS A PRINCIPAL THAT MATCHES NO POLICY READS ZERO ROWS WITH
-//! NO ERROR. *** Every refusal arm below therefore stands beside the same
-//! statement SUCCEEDING on the same connection, and asserts observed values
-//! rather than an exit status. The principal is asserted NOT `rolsuper` and NOT
-//! `rolbypassrls` before any of it runs: a superuser answers TRUE to every
-//! `pg_has_role` and reads every row, so it would satisfy the whole file while
-//! showing nothing.
+//! Live executor access and lease authority checks.
 
 use anyhow::Context as _;
 use sqlx::PgConnection as Client;
@@ -33,14 +6,12 @@ use sqlx::Row as _;
 
 use url::Url;
 use wamn_capability_authority::identity::ReleaseIdentity;
-use wamn_control_provision::{WorkloadRoleFamily, sql};
-use wamn_postgres_capability::{
-    AclExpectation, AclTarget, AmbientCredentialState, ClassCredentials, CredentialConnectionType,
-    CredentialProbeErrorType, CredentialProbePredicate, ExpectedCredentialIdentity,
-    MembershipExpectation, MembershipMode, ProductionCompletion, ProductionCompletionResult,
-    ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult, WamnPostgres,
-    WamnPostgresConfig, credential_exactness_probe, explicit_credential_source,
+use wamn_connections::production_lease::{
+    ProductionCompletion, ProductionCompletionResult, ProductionLeaseRenewal,
+    ProductionLeaseResult, ProductionReapResult,
 };
+use wamn_control_provision::{WorkloadRoleFamily, sql};
+use wamn_postgres_capability::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 
 /// The generation login every leg runs as.
 ///
@@ -50,9 +21,6 @@ use wamn_postgres_capability::{
 /// has to start here.
 const GENERATION: &str = "wamn_exec_platform_surface_live";
 const GENERATION_PASSWORD: &str = "executor-surface-test-password";
-
-/// The second database the wrong-`current_database` arm connects to.
-const ELSEWHERE: &str = "w68_execplat_elsewhere";
 
 const PROJECT_ENV_KEY: &str = "t1";
 const PACKAGE_ID: &str = "cat";
@@ -69,17 +37,13 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
     wamn_postgres::connect(url).await
 }
 
-/// Rewrite an admin url onto the generation's credential, optionally moving it
-/// to another database.
-fn generation_url(admin: &str, database: Option<&str>) -> anyhow::Result<String> {
+/// Rewrite an admin URL onto the generation's credential.
+fn generation_url(admin: &str) -> anyhow::Result<String> {
     let mut url = Url::parse(admin)?;
     url.set_username(GENERATION)
         .map_err(|()| anyhow::anyhow!("set the generation username"))?;
     url.set_password(Some(GENERATION_PASSWORD))
         .map_err(|()| anyhow::anyhow!("set the generation password"))?;
-    if let Some(database) = database {
-        url.set_path(&format!("/{database}"));
-    }
     Ok(url.into())
 }
 
@@ -119,21 +83,6 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
     let run_queue_ddl = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
         .context("read run-queue DDL")?;
 
-    // THE SECOND DATABASE GOES FIRST, AND THAT ORDER IS LOAD BEARING.
-    // `DROP OWNED BY` reaches only the current database, so a generation left
-    // behind by an earlier run still holds `CONNECT` on `ELSEWHERE` and
-    // `DROP ROLE` refuses with a DETAIL naming it. Dropping the database first
-    // removes that ACL entry with it. `CREATE`/`DROP DATABASE` cannot run
-    // inside a transaction block, so each is its own `batch_execute` — a
-    // multi-statement simple query is wrapped in an implicit transaction.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "DROP DATABASE IF EXISTS {ELSEWHERE}"
-    )))
-    .execute(&mut admin)
-    .await
-    .map(drop)
-    .context("drop the elsewhere database")?;
-
     // THE GENERATION IS DROPPED BEFORE IT IS MINTED, INSIDE AN EXISTENCE CHECK.
     // Roles are CLUSTER-wide, so a login left behind by an earlier run of this
     // suite satisfies every `IF NOT EXISTS` in the builder and would let a
@@ -164,12 +113,6 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
     .await
     .map(drop)
     .context("install the run and catalog planes")?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE DATABASE {ELSEWHERE}")))
-        .execute(&mut admin)
-        .await
-        .map(drop)
-        .context("create the elsewhere database")?;
-
     // ONE BUILDER CALL AND NOTHING ELSE. `test_database::login_sql`
     // carries `grant_executor_platform_surface_sql` as its stable surface, the
     // `wamn_platform` group edge, the generation role, its password and its
@@ -199,17 +142,6 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
     .await
     .map(drop)
     .context("ensure the http-admitter acl role")?;
-    // `CONNECT` on the second database is FIXTURE PLUMBING for the
-    // wrong-`current_database` arm — the ability to open a socket, not a
-    // run-plane authority. `ELSEWHERE` carries no schema, no relation and no
-    // grant that any statement in this file reads.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "GRANT CONNECT ON DATABASE {ELSEWHERE} TO \"{GENERATION}\";"
-    )))
-    .execute(&mut admin)
-    .await
-    .map(drop)
-    .context("let the generation reach the elsewhere database")?;
 
     // THE PRINCIPAL, ASSERTED BEFORE ANY LEG RUNS. A superuser or a BYPASSRLS
     // login satisfies every read below and every `pg_has_role` above while
@@ -282,7 +214,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
     let manifest_digest = wamn_digest::bytes_sha256(manifest_body.as_bytes());
 
     // ---- PLAN SUPPLY, LIVE UNDER THE CREDENTIAL ---------------------------
-    let platform_url = generation_url(admin_url, None)?;
+    let platform_url = generation_url(admin_url)?;
     let mut generation = connect(&platform_url).await?;
     begin_bound(&mut generation).await?;
 
@@ -320,225 +252,6 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
         "the ACL blindness leg needs the privilege it is blind about"
     );
 
-    // ---- CREDENTIAL EXACTNESS, LIVE ---------------------------------------
-    //
-    // The probe tests `session_user`, `current_user` and `current_database()`
-    // against the expectation, then asks the SERVER for each membership and
-    // each ACL fact. Only the source arms refuse before a socket exists; the
-    // rest are the server's own answers, and none of them had ever been asked.
-    let expected_identity = |database: &str, memberships, acl| {
-        ExpectedCredentialIdentity::new(
-            GENERATION,
-            GENERATION,
-            database,
-            PROJECT_ENV_KEY,
-            memberships,
-            acl,
-        )
-    };
-    let member_of_own_role = || {
-        vec![MembershipExpectation::new(
-            "wamn_executor_platform",
-            MembershipMode::Member,
-            true,
-        )]
-    };
-
-    // THE CONTROL ARM. Everything correct: the probe passes on a real
-    // connection, so every refusal below is the named predicate and not a
-    // probe that refuses whatever it is given.
-    let exact = credential_exactness_probe(
-        explicit_credential_source(
-            &platform_url,
-            PROJECT_ENV_KEY,
-            AmbientCredentialState::Absent,
-        )
-        .map_err(|error| anyhow::anyhow!("{error}"))?,
-        expected_identity(
-            &database,
-            member_of_own_role(),
-            vec![AclExpectation::new(
-                AclTarget::Table("wamn_run.runs".into()),
-                "INSERT",
-                false,
-            )],
-        ),
-    )
-    .map_err(|error| anyhow::anyhow!("{error}"))?;
-    exact
-        .probe_pooled(&mut generation)
-        .await
-        .map_err(|error| anyhow::anyhow!("the exact credential was refused: {error}"))?;
-
-    // WRONG `current_database`. Source and expectation must agree on the
-    // database name or the probe refuses before the socket, so the mismatch has
-    // to arrive the way it would in production: a connection that is not on the
-    // database the credential named. The refusal is therefore the SERVER's
-    // `current_database()`, and its connection type shows it was
-    // reached over the wire rather than decided from the url.
-    let elsewhere_url = generation_url(admin_url, Some(ELSEWHERE))?;
-    let mut elsewhere = connect(&elsewhere_url).await?;
-    let observed_elsewhere: String = sqlx::query("SELECT current_database()::text")
-        .fetch_one(&mut elsewhere)
-        .await?
-        .get(0);
-    assert_eq!(observed_elsewhere, ELSEWHERE);
-    let wrong_database = exact
-        .probe_pooled(&mut elsewhere)
-        .await
-        .expect_err("a connection on another database must be refused");
-    assert_eq!(
-        wrong_database.error_type(),
-        CredentialProbeErrorType::PredicateMismatch
-    );
-    assert_eq!(
-        wrong_database.predicate(),
-        CredentialProbePredicate::Database
-    );
-    assert_eq!(
-        wrong_database.connection_type(),
-        Some(CredentialConnectionType::Pooled),
-        "a database refusal decided without a connection does not test the server"
-    );
-
-    // WRONG MEMBERSHIP. Identity and database are exact, so the only thing left
-    // to refuse is the server's own `pg_has_role`. `wamn_app` is the guest ACL
-    // role this generation must never hold — the exact confusion that made the
-    // platform pool dial the guest url before `wamn-0h0g.22.31`.
-    let wrong_membership = credential_exactness_probe(
-        explicit_credential_source(
-            &platform_url,
-            PROJECT_ENV_KEY,
-            AmbientCredentialState::Absent,
-        )
-        .map_err(|error| anyhow::anyhow!("{error}"))?,
-        expected_identity(
-            &database,
-            vec![MembershipExpectation::new(
-                "wamn_app",
-                MembershipMode::Member,
-                true,
-            )],
-            Vec::new(),
-        ),
-    )
-    .map_err(|error| anyhow::anyhow!("{error}"))?
-    .probe_pooled(&mut generation)
-    .await
-    .expect_err("a membership the generation does not hold must be refused");
-    assert_eq!(
-        wrong_membership.error_type(),
-        CredentialProbeErrorType::PredicateMismatch
-    );
-    assert_eq!(
-        wrong_membership.predicate(),
-        CredentialProbePredicate::Membership
-    );
-    assert_eq!(
-        wrong_membership.connection_type(),
-        Some(CredentialConnectionType::Pooled)
-    );
-
-    // The other direction, and it is the arm a superuser would swallow: a
-    // FORBIDDEN membership the generation genuinely lacks must be reported as
-    // absent. `pg_has_role` answers TRUE for every role when asked about a
-    // superuser, so this passes only because the principal asserted above is
-    // not one.
-    credential_exactness_probe(
-        explicit_credential_source(
-            &platform_url,
-            PROJECT_ENV_KEY,
-            AmbientCredentialState::Absent,
-        )
-        .map_err(|error| anyhow::anyhow!("{error}"))?,
-        expected_identity(
-            &database,
-            vec![MembershipExpectation::new(
-                "wamn_http_admitter",
-                MembershipMode::Member,
-                false,
-            )],
-            Vec::new(),
-        ),
-    )
-    .map_err(|error| anyhow::anyhow!("{error}"))?
-    .probe_pooled(&mut generation)
-    .await
-    .map_err(|error| {
-        anyhow::anyhow!("a genuinely absent membership was reported present: {error}")
-    })?;
-
-    // WRONG ACL. `wamn_run.runs` is SELECT plus a COLUMN-grain UPDATE for this
-    // family and INSERT for nothing, so an expectation that declares INSERT is
-    // refused by the server's `has_table_privilege`, not by this test.
-    let wrong_acl = credential_exactness_probe(
-        explicit_credential_source(
-            &platform_url,
-            PROJECT_ENV_KEY,
-            AmbientCredentialState::Absent,
-        )
-        .map_err(|error| anyhow::anyhow!("{error}"))?,
-        expected_identity(
-            &database,
-            member_of_own_role(),
-            vec![AclExpectation::new(
-                AclTarget::Table("wamn_run.runs".into()),
-                "INSERT",
-                true,
-            )],
-        ),
-    )
-    .map_err(|error| anyhow::anyhow!("{error}"))?
-    .probe_pooled(&mut generation)
-    .await
-    .expect_err("an ACL fact the family does not hold must be refused");
-    assert_eq!(
-        wrong_acl.error_type(),
-        CredentialProbeErrorType::PredicateMismatch
-    );
-    assert_eq!(wrong_acl.predicate(), CredentialProbePredicate::Acl);
-    assert_eq!(
-        wrong_acl.connection_type(),
-        Some(CredentialConnectionType::Pooled)
-    );
-
-    // WRONG PROJECT BINDING. This arm refuses BEFORE a socket exists, and that
-    // is the whole point: the binding is lifecycle metadata minted beside the
-    // credential, so a selector pairing this credential with another project's
-    // expectation never gets to open a connection at all. `connection_type()`
-    // is `None` — the evidence that no server was consulted — while the
-    // control arm above, differing only in this value, connected and read rows.
-    let wrong_binding = credential_exactness_probe(
-        explicit_credential_source(
-            &platform_url,
-            PROJECT_ENV_KEY,
-            AmbientCredentialState::Absent,
-        )
-        .map_err(|error| anyhow::anyhow!("{error}"))?,
-        ExpectedCredentialIdentity::new(
-            GENERATION,
-            GENERATION,
-            database.as_str(),
-            "t2",
-            member_of_own_role(),
-            Vec::new(),
-        ),
-    )
-    .expect_err("a credential paired with another project's expectation must be refused");
-    assert_eq!(
-        wrong_binding.error_type(),
-        CredentialProbeErrorType::PredicateMismatch
-    );
-    assert_eq!(
-        wrong_binding.predicate(),
-        CredentialProbePredicate::ProjectBinding
-    );
-    assert_eq!(
-        wrong_binding.connection_type(),
-        None,
-        "the project binding must refuse before a connection is used"
-    );
-
     // Warm the real executor pool before revoking membership on its existing connection.
     let plugin = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(platform_url)),
@@ -568,13 +281,15 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
         ReleaseIdentity::for_test(wamn_catalog::ManifestDigest::parse(&manifest_digest)?),
     )?;
     assert_eq!(
-        plugin.renew(COMPONENT, "absent", 1, 30_000).await?,
+        wamn_connections::production_lease::ProductionLeases::new(&plugin)
+            .renew(COMPONENT, "absent", 1, 30_000)
+            .await?,
         ProductionLeaseRenewal::FenceLost
     );
     let packages = [PACKAGE_ID.to_string()];
     let completion = ProductionCompletion::completed(serde_json::json!({"done": true}));
     assert_eq!(
-        plugin
+        wamn_connections::production_lease::ProductionLeases::new(&plugin)
             .reap_exhausted(COMPONENT, &packages, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Empty
@@ -583,7 +298,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
         run_id,
         lease_generation,
         ..
-    } = plugin
+    } = wamn_connections::production_lease::ProductionLeases::new(&plugin)
         .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
         .await?
     else {
@@ -592,13 +307,13 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
     assert_eq!(run_id, "run-1");
     assert_eq!(lease_generation, 1);
     assert_eq!(
-        plugin
+        wamn_connections::production_lease::ProductionLeases::new(&plugin)
             .renew(COMPONENT, &run_id, lease_generation, 30_000)
             .await?,
         ProductionLeaseRenewal::Renewed
     );
     assert_eq!(
-        plugin
+        wamn_connections::production_lease::ProductionLeases::new(&plugin)
             .complete(COMPONENT, &run_id, lease_generation, &completion)
             .await?,
         ProductionCompletionResult::Terminalized

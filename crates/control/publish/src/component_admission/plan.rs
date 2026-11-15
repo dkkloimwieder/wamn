@@ -340,3 +340,25 @@ pub(super) fn insert_expected_operation(
     }
     Ok(())
 }
+
+pub(super) fn ensure_component_package_matches(
+    component: &AdmittedComponent,
+    package: &wamn_catalog::PackageCoordinate,
+) -> anyhow::Result<()> {
+    if component.target.package_id != package.package_id()
+        || component.target.package_version != package.package_version()
+    {
+        return Err(ComponentProjectionError::new(
+            ComponentProjectionErrorType::PackageCoordinateMismatch,
+            format!(
+                "declaration names {}@{} but package directory names {}@{}",
+                component.target.package_id,
+                component.target.package_version,
+                package.package_id(),
+                package.package_version()
+            ),
+        )
+        .into());
+    }
+    Ok(())
+}

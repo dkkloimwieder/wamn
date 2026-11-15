@@ -326,14 +326,6 @@ export function Environment(
           </Show>
           <EnvironmentTiles status={status()} />
           <OperationControls {...props} />
-          <Show when={profile()}>
-            {(current) => (
-              <DashboardPanel role="region" aria-label="Release profile">
-                <h2>Release profile</h2>
-                <p>{current().digest}</p>
-              </DashboardPanel>
-            )}
-          </Show>
         </Page>
       </Show>
       <Show when={props.table === "workloads" && status()}>
@@ -400,86 +392,6 @@ export function Environment(
               { id: "package", header: "Package", accessorKey: "package", size: 250 },
               { id: "component", header: "Component", accessorKey: "component", size: 250 },
             ]}
-            details={(cell) => (
-              <Records
-                refresh={refresh}
-                id="reaches"
-                title="Reaches"
-                rows={cell.row.reaches}
-                rowKey={(entry) => entry.package}
-                columns={[
-                  { id: "package", header: "Package", accessorKey: "package" },
-                  {
-                    id: "precision",
-                    header: "Precision",
-                    accessorFn: (entry) => (entry.imprecise ? "Imprecise" : "Precise"),
-                  },
-                  { id: "operations", header: "Operations", accessorFn: (entry) => entry.operations.length },
-                  { id: "statements", header: "Statements", accessorFn: (entry) => entry.statements.length },
-                ]}
-                details={(reach) => (
-                  <>
-                    <Records
-                      refresh={refresh}
-                      id="reach-operations"
-                      title="Reach operations"
-                      rows={reach.row.operations}
-                      rowKey={(entry) => entry}
-                      columns={[{ id: "operation", header: "Operation", accessorFn: (entry) => entry }]}
-                    />
-                    <Records
-                      refresh={refresh}
-                      id="statements"
-                      title="Statements"
-                      rows={reach.row.statements}
-                      rowKey={(entry) => entry.path}
-                      columns={[
-                        { id: "path", header: "Statement", accessorKey: "path", size: 300 },
-                        { id: "refused", header: "Refusal", accessorKey: "refused", size: 300 },
-                        { id: "relations", header: "Relations", accessorFn: (entry) => entry.relations.length },
-                      ]}
-                      details={(statement) => (
-                        <Records
-                          refresh={refresh}
-                          id="relations"
-                          title="Relations"
-                          rows={statement.row.relations}
-                          rowKey={(entry) => entry.table}
-                          columns={[
-                            { id: "table", header: "Relation", accessorKey: "table" },
-                            { id: "reads", header: "Read fields", accessorFn: (entry) => entry.reads.length },
-                            { id: "writes", header: "Write fields", accessorFn: (entry) => entry.writes.length },
-                            { id: "locks", header: "Locks", accessorKey: "locks" },
-                            { id: "deletes", header: "Deletes", accessorKey: "deletes" },
-                          ]}
-                          formats={{ locks: "boolean-symbol", deletes: "boolean-symbol" }}
-                          details={(relation) => (
-                            <>
-                              <Records
-                                refresh={refresh}
-                                id="read-fields"
-                                title="Read fields"
-                                rows={relation.row.reads}
-                                rowKey={(entry) => entry}
-                                columns={[{ id: "field", header: "Field", accessorFn: (entry) => entry }]}
-                              />
-                              <Records
-                                refresh={refresh}
-                                id="write-fields"
-                                title="Write fields"
-                                rows={relation.row.writes}
-                                rowKey={(entry) => entry}
-                                columns={[{ id: "field", header: "Field", accessorFn: (entry) => entry }]}
-                              />
-                            </>
-                          )}
-                        />
-                      )}
-                    />
-                  </>
-                )}
-              />
-            )}
           />
         </div>
       </Show>

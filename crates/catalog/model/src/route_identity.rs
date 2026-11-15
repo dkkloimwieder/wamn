@@ -103,7 +103,6 @@ pub struct StatementDescription {
     pub path: String,
     pub binds: Vec<StatementValue>,
     pub columns: Vec<StatementValue>,
-    pub relations: Vec<crate::profile::RelationProfile>,
     pub transactional: bool,
 }
 

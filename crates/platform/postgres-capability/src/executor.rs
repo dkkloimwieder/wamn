@@ -67,40 +67,6 @@ impl WamnPostgres {
         .await
     }
 
-    pub(super) async fn executor_bound<T>(
-        &self,
-        component: &str,
-        work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, ProductionLeaseError>,
-    ) -> Result<T, ProductionLeaseError> {
-        let project_env_key = self.project_env_key_for(component).ok_or_else(|| {
-            ProductionLeaseError::new(
-                ProductionLeaseErrorType::Identity,
-                "resolve executor identity",
-                "component has no host-injected project",
-            )
-        })?;
-        let project = self.project_for(component);
-        let schema = self.schema_for(component);
-        let runner = self.runner_for(component);
-        let user = self.user_id_for(component);
-        let operation = self.operation_for(component);
-        let application = self.application_for(component);
-        self.executor_transaction(
-            &project,
-            ExecutorIdentity {
-                project_env_key: &project_env_key,
-                schema: schema.as_deref(),
-                runner: runner.as_deref(),
-                user: user.as_deref(),
-                operation: operation.as_deref(),
-                application: application.as_deref(),
-            },
-            false,
-            work,
-        )
-        .await
-    }
-
     async fn executor_transaction<T, E>(
         &self,
         project: &str,
@@ -198,5 +164,74 @@ impl wamn_connections::database::ProjectDatabase for WamnPostgres {
         )
         .await
         .map_err(Into::into)
+    }
+}
+
+impl WamnPostgres {
+    /// Whether a released invocation still retains this deployment.
+    pub fn release_in_use(&self, release: &wamn_engine::release_manifest::LoadedRelease) -> bool {
+        self.scopes.any::<crate::invocation::Authority>(|record| {
+            record.invocation.is_some()
+                && record
+                    .context
+                    .as_ref()
+                    .is_some_and(|context| std::ptr::eq(context.release.as_ref(), release))
+        })
+    }
+}
+
+impl wamn_connections::production_lease::ExecutorDatabase for WamnPostgres {
+    async fn bound_connection(
+        &self,
+        component: &str,
+    ) -> Result<StatementConnectionGuard, ProductionLeaseError> {
+        let project_env_key = self.project_env_key_for(component).ok_or_else(|| {
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
+                "resolve executor identity",
+                "component has no host-injected project",
+            )
+        })?;
+        let project = self.project_for(component);
+        let schema = self.schema_for(component);
+        let runner = self.runner_for(component);
+        let user = self.user_id_for(component);
+        let operation = self.operation_for(component);
+        let application = self.application_for(component);
+        self.open_executor_transaction(
+            &project,
+            ExecutorIdentity {
+                project_env_key: &project_env_key,
+                schema: schema.as_deref(),
+                runner: runner.as_deref(),
+                user: user.as_deref(),
+                operation: operation.as_deref(),
+                application: application.as_deref(),
+            },
+            false,
+        )
+        .await
+    }
+    fn runner(&self, component: &str) -> Option<String> {
+        self.runner_for(component)
+    }
+    fn manifest_digest(&self, component: &str) -> Option<String> {
+        self.release_identity_for(component)
+            .map(|release| release.manifest_digest().as_str().to_owned())
+    }
+}
+
+impl WamnPostgres {
+    /// Check out the application's existing SQL pool without starting a transaction.
+    pub async fn application_connection(
+        &self,
+        project: &str,
+        project_env_key: &str,
+    ) -> anyhow::Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
+        let (connection, _) = self
+            .checkout_guest(project, project_env_key)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        Ok(connection)
     }
 }

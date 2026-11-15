@@ -23,10 +23,6 @@ pub struct OperationTransaction {
     pub(super) finish: Arc<Mutex<Option<[String; 3]>>>,
     pub(super) known_result: Option<String>,
     causation: Option<wamn_event_wire::Causation>,
-    /// The declared application that the transaction binds as
-    /// `app.application`, read from host state at begin. Numbering resolves
-    /// its sequences by it, never by the identity.
-    pub(super) application: Option<String>,
 }
 
 /// Why a commit of an [`OperationTransaction`] did not succeed.
@@ -85,9 +81,8 @@ impl OperationTransaction {
         Ok(())
     }
 
-    /// Run host statements of the plugin with this transaction's connection,
-    /// under its identity, as `resources::with_txn_conn` runs them.
-    pub(super) async fn with_host_connection<T, F, Fut>(&self, op: F) -> Result<T, PgError>
+    /// Run host SQL with this transaction's connection and caller identity.
+    pub async fn with_host_connection<T, F, Fut>(&self, op: F) -> Result<T, PgError>
     where
         F: FnOnce(StatementConnectionGuard) -> Fut,
         Fut: std::future::Future<Output = (StatementConnectionGuard, Result<T, sqlx::Error>)>,
@@ -239,7 +234,6 @@ impl WamnPostgres {
             } else {
                 self.current_run_for(scope)
             },
-            application: self.application_for(scope),
         };
         transaction.start().await?;
         Ok(transaction)

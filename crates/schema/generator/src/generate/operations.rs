@@ -407,7 +407,6 @@ fn statement_contract(
         path: path.to_owned(),
         binds,
         columns,
-        relations: sql_corpus.relations[path].clone(),
         transactional: transactional.needs_transaction(path),
     })
 }
