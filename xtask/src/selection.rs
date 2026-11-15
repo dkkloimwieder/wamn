@@ -782,7 +782,25 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
         .map(|job| runner.job(job, &metadata, &selection))
         .buffer_unordered(concurrency);
     let serial = stream::iter(serial).then(|job| runner.job(job, &metadata, &selection));
-    let mut results = std::pin::pin!(parallel.chain(serial));
+    // A named resource keeps a command suite out of the independent stream.
+    let commands = stream::iter(suites.iter().filter(|suite| {
+        !cluster
+            && suite.execution == "commands"
+            && suite.mode == "local"
+            && suite.resource_lock.is_empty()
+    }))
+    .map(|suite| async {
+        (
+            None,
+            runner
+                .suite_commands(suite)
+                .await
+                .map(|()| false)
+                .with_context(|| suite.id.clone()),
+        )
+    })
+    .buffer_unordered(concurrency);
+    let mut results = std::pin::pin!(stream::select(parallel.chain(serial), commands));
     while let Some((suite, result)) = results.next().await {
         match result {
             Ok(ran) => {
@@ -806,10 +824,11 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
             }
         }
     }
-    for suite in suites
-        .iter()
-        .filter(|suite| suite.execution == "commands" && suite.mode == "local")
-    {
+    for suite in suites.iter().filter(|suite| {
+        suite.execution == "commands"
+            && suite.mode == "local"
+            && (cluster || !suite.resource_lock.is_empty())
+    }) {
         if let Err(error) = runner.suite_commands(suite).await {
             failed.push(format!("{}: {error:#}", suite.id));
             if cluster {
@@ -1047,6 +1066,8 @@ impl Runner<'_> {
     }
 
     async fn suite_commands(&self, suite: &Suite) -> anyhow::Result<()> {
+        let started = Instant::now();
+        println!("start command suite: {}", suite.id);
         let mut errors = Vec::new();
         let _lock = self
             .resource_lock(&suite.resource_lock, self.deadline)
@@ -1059,6 +1080,11 @@ impl Runner<'_> {
                 }
             }
         }
+        println!(
+            "finished command suite ({:.2}s): {}",
+            started.elapsed().as_secs_f64(),
+            suite.id
+        );
         ensure!(errors.is_empty(), "{}", errors.join("\n"));
         Ok(())
     }
