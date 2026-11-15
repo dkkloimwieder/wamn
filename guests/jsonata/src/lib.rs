@@ -1,18 +1,15 @@
 //! `jsonata` — evaluate one JSONata expression on the node input.
 //!
 //! The expression is the wiring parameter `expression`: configuration, not
-//! input. It runs here, in the guest sandbox, and never in the host
-//! (docs/architecture/execution.md#environment-workflows). The node imports nothing, so it holds
-//! no authority, and its effect projection is empty.
+//! input. Deliveries evaluate it in the guest sandbox. Publication uses the
+//! shared evaluator for bounded samples. The node holds no effect authority.
 //!
 //! The node emits the expression's result as it is. A result that JSONata
 //! calls undefined, for example a path that matches nothing, emits `null`.
 //!
-//! The result leaves on port `main`, whose schema admits any JSON. With the
-//! optional parameter `port` set to `items`, it leaves on port `items`, whose
-//! schema is the request element array that palette nodes such as `label-render` take:
-//! a wiring edge joins two ports only when their schemas are the same, and
-//! the node refuses a result that is not an array there.
+//! The wiring declares `output-schema`, the exact schema the result promises.
+//! Publication checks sample evaluations with the shared engine. Each target
+//! input port checks an arriving value against its schema before invocation.
 //!
 //! An input that is not JSON is `invalid-input`. An expression that does not
 //! parse is a configuration fault, and an evaluation failure repeats on a
@@ -32,67 +29,7 @@ mod bindings {
 
 use bindings::exports::wamn::node::handler::{Emission, Guest, NodeContext, NodeError};
 use bindings::wamn::node::types::ErrorDetail;
-use jsonata_core::evaluator::{Context, Evaluator};
-use jsonata_core::parser;
-use jsonata_core::value::JValue;
-
-/// Why an evaluation failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EvaluationErrorType {
-    /// The expression does not parse.
-    Expression,
-    /// The expression parsed and failed on this input.
-    Evaluation,
-}
-
-/// A failed evaluation, with the engine's message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EvaluationError {
-    type_: EvaluationErrorType,
-    message: String,
-}
-
-impl EvaluationError {
-    pub fn error_type(&self) -> EvaluationErrorType {
-        self.type_
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-/// Evaluate `expression` on `input` and return the result as JSON text.
-pub fn evaluate(expression: &str, input: &serde_json::Value) -> Result<String, EvaluationError> {
-    evaluate_with_parameters(expression, input, &serde_json::Value::Null)
-}
-
-/// Evaluate with the node's optional parameters bound to `$parameters`.
-pub fn evaluate_with_parameters(
-    expression: &str,
-    input: &serde_json::Value,
-    parameters: &serde_json::Value,
-) -> Result<String, EvaluationError> {
-    let ast = parser::parse(expression).map_err(|error| EvaluationError {
-        type_: EvaluationErrorType::Expression,
-        message: error.to_string(),
-    })?;
-    let data = JValue::from(input.clone());
-    let mut context = Context::new();
-    if !parameters.is_null() {
-        context.bind("parameters".to_owned(), JValue::from(parameters.clone()));
-    }
-    let result = Evaluator::with_context(context)
-        .evaluate(&ast, &data)
-        .map_err(|error| EvaluationError {
-            type_: EvaluationErrorType::Evaluation,
-            message: error.message().to_owned(),
-        })?;
-    result.to_json_string().map_err(|error| EvaluationError {
-        type_: EvaluationErrorType::Evaluation,
-        message: format!("the result is not JSON: {error}"),
-    })
-}
+pub use wamn_jsonata::{EvaluationError, EvaluationErrorType, evaluate, evaluate_with_parameters};
 
 struct Component;
 
@@ -142,12 +79,6 @@ impl Guest for Component {
         )?;
         let selected_port = select_port(&config, &payload)?;
         let port = selected_port.as_deref().or(port);
-        if port == Some(REQUEST_ELEMENTS_PORT) && !is_request_element_array(&payload) {
-            return Err(terminal(
-                "not_an_item_array",
-                "the result on port items must be an array".to_owned(),
-            ));
-        }
         Ok(Emission {
             payload,
             port: port.map(str::to_owned),
@@ -181,15 +112,10 @@ fn select_port(config: &serde_json::Value, payload: &str) -> Result<Option<Strin
     Ok(Some(port.to_owned()))
 }
 
-/// The output port whose schema admits any JSON.
+/// The default output port.
 use wamn_catalog::MAIN_PORT;
-/// The output port whose schema is an array of request elements.
+/// The alternate output port.
 const REQUEST_ELEMENTS_PORT: &str = "items";
-
-/// Whether an emitted payload fits the `items` port schema.
-fn is_request_element_array(payload: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(payload).is_ok_and(|value| value.is_array())
-}
 
 fn terminal(code: &str, message: String) -> NodeError {
     NodeError::Terminal(ErrorDetail {
@@ -205,7 +131,7 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{EvaluationErrorType, evaluate, is_request_element_array};
+    use super::{EvaluationErrorType, evaluate};
 
     #[test]
     fn parameters_are_bound_without_changing_the_input() {
@@ -286,16 +212,6 @@ mod tests {
             let observed = &(result(SHAPE, &row));
             assert!(observed.as_array().expect("array").is_empty());
         };
-    }
-
-    #[test]
-    fn only_an_array_fits_the_items_port() {
-        let row = json!({"event": "insert", "new": {"id": "m-2", "type": "receive"}});
-        assert!(is_request_element_array(&evaluate(SHAPE, &row).unwrap()));
-        assert!(!is_request_element_array(&evaluate("new", &row).unwrap()));
-        assert!(!is_request_element_array(
-            &evaluate("absent", &row).unwrap()
-        ));
     }
 
     #[test]

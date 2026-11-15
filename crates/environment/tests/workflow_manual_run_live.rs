@@ -194,7 +194,7 @@ fn workflow(version: u32, operation: &str) -> WiringDocument {
             "read": {"component": "orders_data", "interface-version": "0.1.0",
                      "operation": operation, "params": {}},
             "shape": {"component": "jsonata", "interface-version": "0.1.0",
-                      "operation": JSONATA_OPERATION, "params": {"expression": SHAPE}}
+                      "operation": JSONATA_OPERATION, "params": {"expression": SHAPE, "output-schema": {}}}
         },
         "edges": [{"from": "read", "to": "shape", "to-port": "input"}]
     }))

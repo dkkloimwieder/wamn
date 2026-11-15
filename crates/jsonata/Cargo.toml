@@ -1,0 +1,13 @@
+[package]
+name = "wamn-jsonata"
+description = "JSONata evaluation shared by publication and the palette guest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+jsonata-core = { version = "=2.2.11", default-features = false }
+serde_json.workspace = true
+
+[lints]
+workspace = true

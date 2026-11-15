@@ -140,7 +140,9 @@ The input remains unchanged.
 Its optional `port-input-pointer` selects `main` or `items` from the expression result through a JSON pointer.
 A missing target, a non-string target, or an unknown port returns a terminal error.
 Without that pointer, the existing `port` parameter supplies the output port.
-The `items` output still requires an array.
+The required `output-schema` declares the result schema for the selected output port.
+A dynamic port selector uses the same promised schema for both outputs.
+Admission checks sample evaluations. Each target port checks each arriving value once before invocation.
 The `items` input port accepts an array with the same handler as `input`.
 Edges into either input port name that port explicitly.
 

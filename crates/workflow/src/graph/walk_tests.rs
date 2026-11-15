@@ -67,7 +67,8 @@ fn wiring(entry: &str, nodes: Vec<(String, WiringNode)>, edges: Vec<WiringEdge>)
         "format-version": "0.1", "wiring-id": "test", "version": 1,
         "entry": entry, "nodes": nodes.into_iter().collect::<std::collections::BTreeMap<_, _>>(), "edges": edges,
     })).expect("catalog fixture admits");
-    Wiring::compile(document, &std::collections::BTreeMap::new()).expect("graph indexes")
+    let components = super::components(&document);
+    Wiring::compile(document, &components).expect("graph indexes")
 }
 
 struct Trace<'a> {
@@ -656,4 +657,42 @@ fn a_wiring_that_uses_exactly_the_hop_limit_completes() {
     assert_eq!(trace.status, WalkStatus::Completed);
     assert_eq!(trace.walk.hops(), DEFAULT_HOP_LIMIT);
     assert!(trace.walk.failure().is_none());
+}
+
+#[test]
+fn target_port_refuses_a_value_before_invocation() {
+    let document = wamn_catalog::WiringDocument::new(
+        "typed",
+        1,
+        "source",
+        [node("source", "emit"), node("target", "consume")]
+            .into_iter()
+            .collect(),
+        vec![edge("source", "target")],
+    )
+    .unwrap();
+    let mut components = super::components(&document);
+    components
+        .get_mut("target")
+        .unwrap()
+        .operations
+        .get_mut("consume")
+        .unwrap()
+        .input_ports[0]
+        .schema
+        .schema = json!({"type": "integer"});
+    let wiring = Wiring::compile(document, &components).unwrap();
+    let valid = run(&wiring, "delivery", json!({}), |_| {
+        NodeOutcome::ok(json!(42))
+    });
+    assert_eq!(valid.status, WalkStatus::Completed);
+    let trace = run(&wiring, "delivery", json!({}), |_| {
+        NodeOutcome::ok(json!({"unexpected": true}))
+    });
+    assert_eq!(trace.status, WalkStatus::Failed);
+    assert!(trace.invoked.iter().all(|call| call.input_port.is_none()));
+    assert_eq!(
+        trace.walk.failure().unwrap().type_,
+        FailureType::InvalidInput
+    );
 }

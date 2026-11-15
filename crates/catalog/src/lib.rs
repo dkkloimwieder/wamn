@@ -19,6 +19,7 @@ mod serving_manifest;
 mod signed_file_read;
 mod wiring;
 mod wiring_compatibility;
+mod wiring_jsonata;
 mod workflow_condition;
 
 /// Test databases with the project catalog minimum.

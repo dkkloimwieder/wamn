@@ -1056,9 +1056,9 @@ dependencies = [
 name = "jsonata-expression"
 version = "0.1.0"
 dependencies = [
- "jsonata-core",
  "serde_json",
  "wamn-catalog",
+ "wamn-jsonata",
  "wit-bindgen 0.62.0",
 ]
 
@@ -2164,6 +2164,7 @@ dependencies = [
  "wamn-component-policy",
  "wamn-digest",
  "wamn-event-wire",
+ "wamn-jsonata",
  "wamn-record-history",
  "wamn-registry",
  "wamn-scalar",
@@ -2232,6 +2233,14 @@ dependencies = [
  "wamn-data-access",
  "wamn-postgres-statements",
  "wit-bindgen 0.62.0",
+]
+
+[[package]]
+name = "wamn-jsonata"
+version = "0.1.0"
+dependencies = [
+ "jsonata-core",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,14 +1,21 @@
 //! Index the catalog graph without copying its nodes or edges.
+use anyhow::Context as _;
+use boon::{Compiler, Draft, SchemaIndex, Schemas};
 use std::collections::{BTreeMap, HashMap};
 use wamn_catalog::{AdmittedComponent, WiringDocument, WiringEdge, WiringNode, resolve_input_port};
 
 pub(super) const DEFAULT_HOP_LIMIT: u64 = 10_000;
 
-#[derive(Debug)]
 pub(crate) struct Wiring {
     document: WiringDocument,
     out: HashMap<String, Vec<usize>>,
     inferred_ports: HashMap<usize, String>,
+    input_schemas: HashMap<String, HashMap<String, InputSchema>>,
+}
+
+struct InputSchema {
+    schemas: Schemas,
+    index: SchemaIndex,
 }
 
 impl Wiring {
@@ -29,11 +36,67 @@ impl Wiring {
                 inferred_ports.insert(index, port.name.clone());
             }
         }
+        let mut input_schemas = HashMap::new();
+        for (node_id, node) in &document.nodes {
+            let operation = components
+                .get(node_id)
+                .and_then(|component| component.operation(&node.operation))
+                .with_context(|| format!("node {node_id:?} has no admitted operation"))?;
+            let mut ports = HashMap::new();
+            for port in &operation.input_ports {
+                let uri = "mem://wamn-port.json";
+                let mut schemas = Schemas::new();
+                let mut compiler = Compiler::new();
+                compiler.set_default_draft(Draft::V2020_12);
+                compiler
+                    .add_resource(uri, port.schema.schema.clone())
+                    .map_err(|error| anyhow::anyhow!("node {node_id:?} input schema: {error}"))?;
+                let index = compiler
+                    .compile(uri, &mut schemas)
+                    .map_err(|error| anyhow::anyhow!("node {node_id:?} input schema: {error}"))?;
+                ports.insert(port.name.clone(), InputSchema { schemas, index });
+            }
+            input_schemas.insert(node_id.clone(), ports);
+        }
         Ok(Self {
             document,
             out,
             inferred_ports,
+            input_schemas,
         })
+    }
+
+    pub(super) fn validate_input(
+        &self,
+        node: &str,
+        port: Option<&str>,
+        payload: &serde_json::Value,
+    ) -> Result<(), super::ErrorDetail> {
+        let ports = &self.input_schemas[node];
+        let selected = port.and_then(|name| ports.get(name)).or_else(|| {
+            if port.is_none() && ports.len() == 1 {
+                ports.values().next()
+            } else if port.is_none() {
+                ports.get("input")
+            } else {
+                None
+            }
+        });
+        let Some(schema) = selected else {
+            return Err(super::ErrorDetail::coded(
+                "invalid-input-port",
+                "no target input port",
+            ));
+        };
+        schema
+            .schemas
+            .validate(payload, schema.index)
+            .map_err(|error| {
+                super::ErrorDetail::coded(
+                    "schema-invalid",
+                    format!("node {node:?} input does not match its port schema: {error}"),
+                )
+            })
     }
 
     pub(super) fn entry(&self) -> &str {
@@ -62,5 +125,14 @@ impl Wiring {
                     )
                 })
             })
+    }
+}
+
+impl std::fmt::Debug for Wiring {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Wiring")
+            .field("document", &self.document)
+            .finish_non_exhaustive()
     }
 }
