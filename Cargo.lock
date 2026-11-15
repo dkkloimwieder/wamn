@@ -6293,6 +6293,7 @@ name = "wamn-identity"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "chrono",
  "clap",
  "dotenvy",
  "hex",

@@ -158,7 +158,10 @@ describe("the open receipt lines screen", () => {
     ));
     const table = await record("3");
     await waitFor(() => expect(within(table).getAllByText("5.000").length).toBe(2));
-    await waitFor(() => expect(screen.getByLabelText("Sync status").textContent).toContain("Pending: 1"));
+    await waitFor(() => {
+      const status = screen.getByLabelText("Sync status").textContent!;
+      expect(Number(status.match(/Pending:\s*(\d+)/)?.[1])).toBe(1);
+    });
     // The panel closes once the outbox holds the receipt, before any host answer.
     await waitFor(() => expect(screen.queryByRole("form", { name: "Record a receipt" })).toBeNull());
     await waitFor(() => expect(h.receipts.length).toBeGreaterThan(0));
@@ -185,9 +188,10 @@ describe("the open receipt lines screen", () => {
 
   it("puts a refused receipt in the not uploaded panel and resubmits a correction under the same line", async () => {
     let refuse = true;
+    const refusal = { status: "refused", code: "quantity_exceeds_remaining", text: "Too many.", detail: null } as const;
     const h = host(() =>
       refuse
-        ? { status: "refused", code: "quantity_exceeds_remaining", text: "Too many.", detail: null }
+        ? refusal
         : {
             status: "completed",
             value: { receipt_id: "r-1", purchase_order_id: "order-1", purchase_order_status: "open", row_version: 4 },
@@ -200,8 +204,8 @@ describe("the open receipt lines screen", () => {
     ));
     await record("30");
     const panel = await screen.findByRole("region", { name: "Not uploaded" });
-    await within(panel).findByText("Too many.");
-    expect(within(panel).getByText(/Record id: line-1/)).toBeDefined();
+    await within(panel).findByText(refusal.text);
+    expect(within(panel).getByText(/Record id:/).textContent).toContain(line.line_id);
     refuse = false;
     const corrected = (within(panel).getByLabelText("Corrected request") as HTMLTextAreaElement).value.replace(
       '"quantity": "30"',
@@ -212,6 +216,6 @@ describe("the open receipt lines screen", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "Resubmit" }));
     await waitFor(() => expect(h.receipts.length).toBe(2));
     expect((h.receipts[1]!.items[0] as { value: { line: { quantity: string }[] } }).value.line[0]!.quantity).toBe("3");
-    await waitFor(() => expect(within(panel).queryByText("Too many.")).toBeNull());
+    await waitFor(() => expect(within(panel).queryByText(refusal.text)).toBeNull());
   });
 });

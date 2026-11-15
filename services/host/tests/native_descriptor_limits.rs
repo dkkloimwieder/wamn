@@ -16,6 +16,7 @@ async fn startup_limits(soft: u64, hard: u64) {
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("TOKIO_WORKER_THREADS", "2")
+        .env("TMPDIR", files.path())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)

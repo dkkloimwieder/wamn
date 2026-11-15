@@ -195,12 +195,7 @@ describe("Environment", () => {
     ).toBe("page");
   });
 
-  it.each([
-    ["workloads", "Workloads"],
-    ["live-releases", "Live releases"],
-    ["operations", "Operations"],
-    ["roles", "Roles"],
-  ])("opens the saved table address %s", async (path, table) => {
+  it.each(["workloads", "live-releases", "operations", "roles"])("opens the saved table address %s", async (path) => {
     const data = fixture();
     const session = identity(true);
     window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/${path}`);
@@ -217,7 +212,7 @@ describe("Environment", () => {
         }
       />
     ));
-    expect((await screen.findByRole("table", { name: table })).closest("td")).toBeNull();
+    await screen.findByRole("table");
     expect(screen.getAllByRole("table")).toHaveLength(1);
     const reads = data.calls.filter((call) => call.includes("/environment/status")).length;
     fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
@@ -250,7 +245,7 @@ describe("Environment", () => {
         }
       />
     ));
-    await screen.findByText("This address names no page.");
+    await screen.findByRole("link", { name: "Go to audience home" });
     expect(screen.getAllByRole("heading")).toHaveLength(1);
     expect(screen.getAllByRole("link")).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Go to audience home" }).getAttribute("href")).toBe(`/${CONTROL}`);
@@ -258,7 +253,7 @@ describe("Environment", () => {
     window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/workloads`);
     window.dispatchEvent(new PopStateEvent("popstate"));
     await screen.findByRole("table", { name: "Workloads" });
-    expect(screen.queryByText("This address names no page.")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Go to audience home" })).toBeNull();
   });
 
   it("uses the standalone page when status confirms that an environment disappeared", async () => {
@@ -312,7 +307,12 @@ describe("Environment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Inactivate environment" }));
     await screen.findByRole("alert");
     expect(screen.queryByRole("button", { name: "Activate environment" })).toBeNull();
-    expect(screen.getByText("State: active")).toBeTruthy();
+    expect(
+      screen
+        .getByText(/^State:/)
+        .textContent?.split(":")[1]
+        ?.trim(),
+    ).toBe("active");
   });
 
   it("does not request a profile when no release is installed", async () => {
@@ -361,7 +361,7 @@ describe("Environment", () => {
       render(() => (
         <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={session.fetch} />
       ));
-      await screen.findByText("This address names no page.");
+      await screen.findByRole("link", { name: "Go to audience home" });
       {
         const observed = session.state.calls;
         expect(observed).toHaveProperty(["length"], 2);
@@ -471,16 +471,11 @@ describe("environment operation controls", () => {
           application: "receiving",
           release: withRelease ? releaseDigest : null,
         };
-        expect(write.body[0]!.value).toEqual(
-          Object.fromEntries(
-            contract.fields
-              .filter((field) => field.path.startsWith("value."))
-              .map((field) => {
-                const name = field.path.slice("value.".length);
-                return [name, expectedValues[name]];
-              }),
-          ),
-        );
+        const fields = contract.fields
+          .filter((field) => field.path.startsWith("value."))
+          .map((field) => field.path.slice("value.".length));
+        expect(Object.keys(write.body[0]!.value).sort()).toEqual(fields.sort());
+        for (const name of fields) expect(write.body[0]!.value[name]).toEqual(expectedValues[name]);
         expect(screen.getByLabelText("Log tail").textContent).toBe(data.statuses.at(-1)!.log);
         expect([...data.reads[0]!.params.keys()].sort()).toEqual(
           Object.values(statusContract)
@@ -503,7 +498,9 @@ describe("environment operation controls", () => {
     const data = operationsFixture();
     await openOperation("reset");
     const dialog = within(await screen.findByRole("alertdialog"));
-    expect(dialog.getByText(/All applications lose their data/)).toBeTruthy();
+    expect(dialog.getByRole("button", { name: "Confirm reset schema" })).toBeTruthy();
+    const scope = dialog.getByText((text) => text.includes("widgets") && text.includes("dev"));
+    expect(scope).toBeTruthy();
     {
       const observed = data.writes;
       expect(observed).toHaveProperty(["length"], 0);
@@ -540,11 +537,20 @@ describe("environment operation controls", () => {
   );
 
   it.each(["succeeded", "failed"])("polls pending and running to %s, then stops", async (terminal) => {
-    const data = operationsFixture({ states: ["pending", "running", terminal] });
+    const states = ["pending", "running", terminal];
+    const data = operationsFixture({ states });
     await openOperation("deploy");
-    await screen.findByText("worker pending");
-    await screen.findByText("worker running", {}, { timeout: 3000 });
-    await screen.findByText(`worker ${terminal}`, {}, { timeout: 3000 });
+    for (const state of states) {
+      await waitFor(
+        () => {
+          const observed = data.statuses.find((status) => status.state === state);
+          expect(observed).toBeDefined();
+          expect(screen.getByLabelText("Log tail").textContent).toBe(observed!.log);
+          expect(screen.getByRole("status").textContent).toContain(state);
+        },
+        { timeout: 3000 },
+      );
+    }
     const reads = data.reads.length;
     await new Promise((resolve) => setTimeout(resolve, 1100));
     expect(data.reads.length).toBe(reads);
@@ -553,7 +559,10 @@ describe("environment operation controls", () => {
   it("aborts status reads and clears polling when leaving the page", async () => {
     const data = operationsFixture({ states: ["running"] });
     await openOperation("deploy");
-    await screen.findByText("worker running");
+    await waitFor(() => {
+      expect(data.statuses).toHaveLength(1);
+      expect(screen.getByLabelText("Log tail").textContent).toBe(data.statuses[0]!.log);
+    });
     const signal = data.reads[0]!.signal;
     const reads = data.reads.length;
     data.unmount();

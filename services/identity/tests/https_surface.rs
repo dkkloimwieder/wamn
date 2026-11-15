@@ -1,7 +1,7 @@
 //! Actual identity CLI and HTTPS routes on a disposable test DB.
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -73,7 +73,7 @@ fn cli_and_validated_configuration_debug_do_not_disclose_database_credentials() 
 #[ignore = "requires: postgres"]
 async fn identity_https_has_only_public_jwks_and_health() {
     let mut postgres = wamn_test_postgres::start(&[]).expect("start the test PostgreSQL server");
-    let mut system = postgres
+    let system = postgres
         .create_database("wamn_system")
         .await
         .expect("create the wamn_system test database");
@@ -488,6 +488,7 @@ async fn dotenv_loading_precedence_and_secret_redaction() {
             .current_dir(directory.path())
             .env_clear()
             .env("TOKIO_WORKER_THREADS", "2")
+            .env("TMPDIR", directory.path())
             .args([
                 "--issuer",
                 ISSUER,

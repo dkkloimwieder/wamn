@@ -20,7 +20,7 @@ import {
   type PackagingCreateRequest,
 } from "../src/generated/wamn_wms/packaging.js";
 import { packagingCollection, packagingKey, type PackagingRow } from "../src/generated/wamn_wms/packaging.js";
-import { packagingAddress } from "../src/packaging-writes.js";
+import * as packaging from "../src/packaging-writes.js";
 import { PackagingScreen } from "../src/packaging-screen.js";
 import { makeRows } from "../src/fake.js";
 
@@ -93,6 +93,7 @@ async function mounted(restored?: { call: OperationCall; row: PackagingRow; list
   }
   const o = outbox({ database, send, probe: async () => net.up });
   await o.replay();
+  const inspect = vi.spyOn(packaging, "packagingWrites");
   const view = render(() => (
     <Loading>
       <PackagingScreen collection={c} outbox={o} shellResult={shellResult} />
@@ -118,6 +119,7 @@ async function mounted(restored?: { call: OperationCall; row: PackagingRow; list
     c,
     o,
     shellResult,
+    optimistic: inspect.mock.results.at(-1)!.value.rows,
     row,
     submit,
     changes,
@@ -141,7 +143,7 @@ function counts(o: Outbox): OutboxCounts {
 }
 
 it("takes the project and environment from the application route and the id from the session", () => {
-  const route = packagingAddress("/urn:wamn:project-env:acme:wms:dev:instance/live.html");
+  const route = packaging.packagingAddress("/urn:wamn:project-env:acme:wms:dev:instance/live.html");
   {
     const observed = route;
     expect(observed).toHaveProperty(["aud"], "urn:wamn:project-env:acme:wms:dev:instance");
@@ -151,7 +153,7 @@ it("takes the project and environment from the application route and the id from
   expect(outboxDatabase(route.application, route.environment, "signed-in-user")).toBe(
     "wamn-outbox:wms:dev:signed-in-user",
   );
-  expect(() => packagingAddress("/live.html")).toThrow();
+  expect(() => packaging.packagingAddress("/live.html")).toThrow();
 });
 
 it("enables repeated offline creates before any upload", async () => {
@@ -164,7 +166,7 @@ it("enables repeated offline creates before any upload", async () => {
     expect((within(form).getByRole("button", { name: "Create packaging" }) as HTMLButtonElement).disabled).toBe(false);
     {
       expect(h.row(entry.expect.id)?.textContent).toContain(`OFFLINE-${count}`);
-      expect(h.row(entry.expect.id)?.textContent).toContain("tentative");
+      expect(h.optimistic[entry.expect.id]?.$tentative).toBe(true);
     }
   }
   {
@@ -190,7 +192,7 @@ it("records a UUIDv7 create, keeps it tentative after send, and confirms after a
   expect(entry.request_hash).toBe(await requestHash(entry.request));
   await waitFor(() => {
     expect(h.row(id)?.textContent).toContain("PK-NEW");
-    expect(h.row(id)?.textContent).toContain("tentative");
+    expect(h.optimistic[id]?.$tentative).toBe(true);
   });
   expect(counts(h.o).pending).toBe(1);
   expect(counts(h.o).refused).toBe(0);
@@ -204,14 +206,14 @@ it("records a UUIDv7 create, keeps it tentative after send, and confirms after a
   await h.o.replay();
   expect(h.o.entries()).toHaveLength(0);
   flush();
-  expect(h.row(id)?.textContent).toContain("tentative");
+  expect(h.optimistic[id]?.$tentative).toBe(true);
   expect(Number.isNaN(Date.parse(counts(h.o).lastSentAt!))).toBe(false);
   const data = { ...makeRows(1)[0]!, ...(entry.request as object), id };
   h.changes.push({ id, row_version: 1, deleted: false, data });
   await h.c.utils.pull();
   await waitFor(() => {
     expect(h.row(id)?.textContent).toContain("PK-NEW");
-    expect(h.row(id)?.textContent).not.toContain("tentative");
+    expect(h.optimistic[id]?.$tentative).not.toBe(true);
   });
   // An empty feed reply updates the time without a row change or a refresh timer.
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -229,16 +231,13 @@ it("records a UUIDv7 create, keeps it tentative after send, and confirms after a
 it("shows a refused request beside the current row and discards it", async () => {
   const h = await mounted();
   const entry = await h.submit();
-  h.answer({
-    ok: false,
-    retriable: false,
-    refusal: { code: "unique_violation", text: "Packaging code already exists" },
-  });
+  const refusal = { code: "unique_violation", text: "Packaging code already exists" };
+  h.answer({ ok: false, retriable: false, refusal });
   h.net.up = true;
   await h.o.replay();
   await waitFor(() => expect(h.row(entry.expect.id)).toBeNull());
   const panel = within(h.getByRole("region", { name: "Not uploaded" }));
-  expect(panel.getByText("Packaging code already exists")).toBeTruthy();
+  expect(panel.getByText(refusal.text)).toBeTruthy();
   expect(panel.getByText(/Operation:/).textContent).toContain(entry.operation);
   expect(panel.getByText(/Record id:/).textContent).toContain(entry.expect.id);
   expect(counts(h.o).refused).toBe(1);
@@ -255,7 +254,7 @@ it("shows a refused request beside the current row and discards it", async () =>
   );
   fireEvent.click(panel.getByRole("button", { name: "Discard" }));
   await waitFor(() => expect(h.o.entries()).toHaveLength(0));
-  await waitFor(() => expect(panel.queryByText("Packaging code already exists")).toBeNull());
+  await waitFor(() => expect(panel.queryByText(refusal.text)).toBeNull());
   expect(h.row(data.id)?.textContent).toContain("CURRENT");
 });
 
@@ -268,7 +267,7 @@ it("waits through a failed follow pass and confirms without a result row", async
   h.failRead(new Error("offline"));
   await h.c.utils.pull();
   flush();
-  expect(h.row(id)?.textContent).toContain("tentative");
+  expect(h.optimistic[id]?.$tentative).toBe(true);
   h.failRead(undefined);
   await h.c.utils.pull();
   await waitFor(() => expect(h.row(id)).toBeNull());
@@ -288,7 +287,7 @@ it("keeps a create tentative when its feed echo arrives before the successful re
   await h.c.utils.pull();
   await waitFor(() => {
     expect(h.row(id)?.textContent).toContain("LOST-REPLY");
-    expect(h.row(id)?.textContent).toContain("tentative");
+    expect(h.optimistic[id]?.$tentative).toBe(true);
   });
   expect(h.o.entries()).toHaveLength(1);
   expect(h.o.entries()[0]?.state).toBe("pending");
@@ -296,9 +295,12 @@ it("keeps a create tentative when its feed echo arrives before the successful re
   h.answer({ ok: true });
   await h.o.replay();
   flush();
-  expect(h.row(id)?.textContent).toContain("tentative");
+  expect(h.optimistic[id]?.$tentative).toBe(true);
   await h.c.utils.pull();
-  await waitFor(() => expect(h.row(id)?.textContent).not.toContain("tentative"));
+  await waitFor(() => {
+    expect(h.optimistic[id]).toBeDefined();
+    expect(h.optimistic[id]?.$tentative).not.toBe(true);
+  });
   expect(h.send).toHaveBeenCalledTimes(2);
 });
 
@@ -324,7 +326,7 @@ it("records the edited create with the same id before discarding the refusal, wi
     rowBeforeDiscard = h.row(old.expect.id);
     {
       expect(rowBeforeDiscard?.textContent).toContain("CORRECTED");
-      expect(rowBeforeDiscard?.textContent).toContain("tentative");
+      expect(h.optimistic[old.expect.id]?.$tentative).toBe(true);
     }
     await discard(seq);
     flush();
@@ -425,7 +427,7 @@ it("paints saved rows and recovered tentative creates before the list resolves, 
   await waitFor(() => expect(h.row(row.id)?.textContent).toContain(row.packagingCode));
   await waitFor(() => {
     expect(h.row(id)?.textContent).toContain("RECOVERED");
-    expect(h.row(id)?.textContent).toContain("tentative");
+    expect(h.optimistic[id]?.$tentative).toBe(true);
   });
   expect(h.send).not.toHaveBeenCalled();
   expect(h.c.utils.currentAt()).toBeUndefined();
@@ -435,18 +437,21 @@ it("paints saved rows and recovered tentative creates before the list resolves, 
   await waitFor(() => expect(h.row(row.id)?.textContent).toContain(row.packagingCode));
   {
     expect(h.row(id)?.textContent).toContain("RECOVERED");
-    expect(h.row(id)?.textContent).toContain("tentative");
+    expect(h.optimistic[id]?.$tentative).toBe(true);
   }
   h.failRead(undefined);
   h.changes.push({ id, row_version: 1, deleted: false, data: { ...row, ...(call.request as object), id } });
   await h.c.utils.pull();
-  await waitFor(() => expect(h.row(id)?.textContent).toContain("tentative"));
+  await waitFor(() => expect(h.optimistic[id]?.$tentative).toBe(true));
   h.net.up = true;
   await h.o.replay();
   flush();
-  expect(h.row(id)?.textContent).toContain("tentative");
+  expect(h.optimistic[id]?.$tentative).toBe(true);
   await h.c.utils.pull();
-  await waitFor(() => expect(h.row(id)?.textContent).not.toContain("tentative"));
+  await waitFor(() => {
+    expect(h.optimistic[id]).toBeDefined();
+    expect(h.optimistic[id]?.$tentative).not.toBe(true);
+  });
   expect(h.send).toHaveBeenCalledOnce();
   h.changes.push({ id, row_version: 2, deleted: true });
   await h.c.utils.pull();

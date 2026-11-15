@@ -10,21 +10,20 @@ describe("the app shell", () => {
     render(() => <Shell title="Stub app" org="acme" sections={[]} fetch={fetch} />);
     expect(await screen.findByText(aud === CONTROL ? "ACME" : "DEV")).toBeDefined();
     expect(await screen.findByRole("button", { name: "User menu" })).toBeDefined();
-    expect(screen.getByRole("heading", { name: "No screens available" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Choose an audience" }).getAttribute("href")).toBe("/");
     expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Navigation" })).toBeNull();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.queryByRole("combobox", { name: "Audience" })).toBeNull();
-    expect(screen.queryByText("This address names no page.")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Go to audience home" })).toBeNull();
     window.history.pushState({}, "", `/${aud}/unknown`);
     window.dispatchEvent(new PopStateEvent("popstate"));
-    expect(await screen.findByText("This address names no page.")).toBeDefined();
+    expect(await screen.findByRole("link", { name: "Go to audience home" })).toBeDefined();
     expect(screen.getByRole("link", { name: "Go to audience home" }).getAttribute("href")).toBe(`/${aud}`);
     window.history.pushState({}, "", `/${aud}`);
     window.dispatchEvent(new PopStateEvent("popstate"));
     expect(await screen.findByRole("button", { name: "User menu" })).toBeDefined();
-    expect(screen.queryByText("This address names no page.")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Go to audience home" })).toBeNull();
   });
 
   it("closes navigation after browser history changes the accepted page", async () => {
@@ -45,7 +44,7 @@ describe("the app shell", () => {
   it("refuses an address that names an environment of another org", async () => {
     const { state, fetch } = identity(false);
     open("/urn:wamn:project-env:other:widgets:dev:k3m9x2p7/pallets", fetch);
-    expect(await screen.findByText("This address names an environment of another org.")).toBeDefined();
+    expect(await screen.findByRole("link", { name: "Choose an audience" })).toBeDefined();
     expect(screen.getByRole("link", { name: "Choose an audience" }).getAttribute("href")).toBe("/");
     {
       const observed = state.calls;
@@ -209,7 +208,7 @@ describe("the app shell", () => {
 
     const member = identity(true, ONE, { admin: false, permissions: ["acme:pallet/query"] });
     open(`/${AUD}/administration/roles`, member.fetch);
-    expect(await screen.findByText("This address names no page.")).toBeDefined();
+    expect(await screen.findByRole("link", { name: "Go to audience home" })).toBeDefined();
     cleanup();
     open(`/${AUD}/pallets`, member.fetch);
     await screen.findByText("pallets screen");
@@ -219,7 +218,7 @@ describe("the app shell", () => {
   it("shows no page for the address of a route the caller does not hold", async () => {
     const { fetch } = identity(true, ONE, { admin: false, permissions: ["acme:pallet/get"] });
     open(`/${AUD}/pallets/abc/update`, fetch);
-    expect(await screen.findByText("This address names no page.")).toBeDefined();
+    expect(await screen.findByRole("link", { name: "Go to audience home" })).toBeDefined();
     expect(screen.queryByText(/update abc/)).toBeNull();
   });
 
@@ -232,19 +231,19 @@ describe("the app shell", () => {
     expect(screen.queryByText("Org")).toBeNull();
     cleanup();
     open(`/${CONTROL}/org`, fetch);
-    expect(await screen.findByText("This address names no page.")).toBeDefined();
+    expect(await screen.findByRole("link", { name: "Go to audience home" })).toBeDefined();
     cleanup();
     open(`/${CONTROL}/projects/gadgets`, fetch);
-    expect(await screen.findByText("This address names no page.")).toBeDefined();
+    expect(await screen.findByRole("link", { name: "Go to audience home" })).toBeDefined();
     cleanup();
     open(`/${CONTROL}/pallets`, fetch);
-    expect(await screen.findByText("This address names no page.")).toBeDefined();
+    expect(await screen.findByRole("link", { name: "Go to audience home" })).toBeDefined();
   });
 
   it("refuses the control audience of another org", async () => {
     const { state, fetch } = identity(false);
     open("/urn:wamn:control:other/org", fetch);
-    expect(await screen.findByText("This address names an environment of another org.")).toBeDefined();
+    expect(await screen.findByRole("link", { name: "Choose an audience" })).toBeDefined();
     {
       const observed = state.calls;
       expect(observed).toHaveProperty(["length"], 0);

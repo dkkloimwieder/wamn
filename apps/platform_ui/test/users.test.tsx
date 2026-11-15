@@ -53,7 +53,7 @@ describe("Users authority", () => {
       render(() => (
         <Shell title="WAMN" org="acme" sections={[]} controlSections={userSections} fetch={session.fetch} />
       ));
-      await screen.findByText("This address names no page.");
+      await screen.findByRole("link", { name: "Go to audience home" });
       expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
       {
         const observed = session.state.calls;
@@ -252,7 +252,12 @@ describe("Users decisions", () => {
     render(() => <User {...props} params={{ principal: principalId }} transport={transport} />);
     fireEvent.click(await screen.findByRole("button", { name: "Inactivate user" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
-    expect(screen.getByText("State: active")).toBeTruthy();
+    expect(
+      screen
+        .getByText(/^State:/)
+        .textContent?.split(":")[1]
+        ?.trim(),
+    ).toBe("active");
     expect(screen.queryByRole("button", { name: "Activate user" })).toBeNull();
   });
 });
@@ -352,7 +357,12 @@ describe("User decisions", () => {
     ));
     await screen.findByRole("heading", { name: person.display_name });
     expect(screen.getByText(person.email)).toBeTruthy();
-    expect(screen.getByText("State: active")).toBeTruthy();
+    expect(
+      screen
+        .getByText(/^State:/)
+        .textContent?.split(":")[1]
+        ?.trim(),
+    ).toBe("active");
     expect(screen.getByTitle(principalId)).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
     fireEvent.click(screen.getByRole("link", { name: "Project access" }));

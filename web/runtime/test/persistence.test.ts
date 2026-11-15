@@ -38,7 +38,15 @@ it("drops obsolete model shapes, keeps unchanged rows and leaves the outbox inta
   const after = outbox(options);
   try {
     await vi.waitFor(() => expect(after.entries()).toHaveLength(1));
-    expect(after.entries()[0]).toMatchObject({ ...entry, state: "pending" });
+    const restored = after.entries()[0]!;
+    expect(restored.seq).toBe(entry.seq);
+    expect(restored.operation).toBe(entry.operation);
+    expect(restored.request).toEqual(entry.request);
+    expect(restored.request_hash).toBe(entry.request_hash);
+    expect(restored.expect).toEqual(entry.expect);
+    expect(restored.recorded_at).toBe(entry.recorded_at);
+    expect(restored.append_only).toBe(entry.append_only);
+    expect(restored.state).toBe("pending");
   } finally {
     after.close();
   }

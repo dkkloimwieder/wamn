@@ -354,12 +354,14 @@ describe("Receiving descriptions and bindings", () => {
     expect(input.value).toBe("SUPPLIER-BROWSER");
     fireEvent.submit(screen.getByRole("button", { name: PurchaseOrderUpdateForm.submit.label }).closest("form")!);
     await waitFor(() => expect(view.open).toHaveBeenCalledWith("purchase-orders"));
-    expect(invoke).toHaveBeenLastCalledWith({
-      ...PURCHASE_ORDER_UPDATE_ROUTE,
-      items: [
-        { request_id: expect.any(String), id: orderId, expected_row_version: 1, change: { supplier_id: supplierId } },
-      ],
-    });
+    const request = invoke.mock.lastCall![0];
+    for (const [field, value] of Object.entries(PURCHASE_ORDER_UPDATE_ROUTE))
+      expect(request).toHaveProperty(field, value);
+    expect(request.items).toHaveLength(1);
+    expect(request.items[0]).toHaveProperty("request_id", expect.any(String));
+    expect(request.items[0]).toHaveProperty("id", orderId);
+    expect(request.items[0]).toHaveProperty("expected_row_version", 1);
+    expect(request.items[0]).toHaveProperty(["change", "supplier_id"], supplierId);
   });
 
   it("puts route actions in the header, follows record links, and pages server cursors without losing prior rows", async () => {
@@ -424,7 +426,7 @@ describe("Receiving descriptions and bindings", () => {
     ));
     await screen.findByText("PO-1");
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
-    await screen.findByText(/Disconnected/);
+    expect((await screen.findByRole("alert")).textContent).not.toBe("");
     expect(screen.getByText("PO-1")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledTimes(3));
@@ -502,23 +504,21 @@ describe("Receiving descriptions and bindings", () => {
     render(() => <SupplierForm {...view} />);
     expectFormActions(SupplierCreateForm.title);
     fireEvent.submit(screen.getByRole("button", { name: SupplierCreateForm.title }).closest("form")!);
-    await screen.findByText("Enter a value.");
+    expect((await screen.findByRole("alert")).textContent).not.toBe("");
     expect(invoke).not.toHaveBeenCalled();
     fireEvent.input(screen.getByLabelText("Supplier name"), { target: { value: "BROWSER-NEW-SUPPLIER" } });
     flush();
     fireEvent.submit(screen.getByRole("button", { name: SupplierCreateForm.title }).closest("form")!);
     await waitFor(() => expect(view.open).toHaveBeenCalledWith("suppliers"));
-    expect(invoke).toHaveBeenCalledWith({
-      ...SUPPLIER_CREATE_ROUTE,
-      items: [
-        {
-          id: expect.any(String),
-          name: "BROWSER-NEW-SUPPLIER",
-          request_id: expect.any(String),
-          idempotency_key: expect.any(String),
-        },
-      ],
-    });
+    const creates = invoke.mock.calls.filter(([request]) => request.operation === SUPPLIER_CREATE_ROUTE.operation);
+    expect(creates).toHaveLength(1);
+    const request = creates[0]![0];
+    for (const [field, value] of Object.entries(SUPPLIER_CREATE_ROUTE)) expect(request).toHaveProperty(field, value);
+    expect(request.items).toHaveLength(1);
+    expect(request.items[0]).toHaveProperty("id", expect.any(String));
+    expect(request.items[0]).toHaveProperty("name", "BROWSER-NEW-SUPPLIER");
+    expect(request.items[0]).toHaveProperty("request_id", expect.any(String));
+    expect(request.items[0]).toHaveProperty("idempotency_key", expect.any(String));
   });
   it("keeps the supplier key on retry and replaces it when the name changes", async () => {
     const invoke = vi
@@ -532,11 +532,11 @@ describe("Receiving descriptions and bindings", () => {
     fireEvent.input(screen.getByLabelText("Supplier name"), { target: { value: "New supplier" } });
     flush();
     submit();
-    await screen.findByText("Disconnected");
+    expect((await screen.findByRole("alert")).textContent).not.toBe("");
     expect(view.open).not.toHaveBeenCalled();
     submit();
     await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
-    await screen.findByText("Disconnected");
+    expect((await screen.findByRole("alert")).textContent).not.toBe("");
     const writes = () => invoke.mock.calls.map(([request]) => request.items[0] as Record<string, JsonValue>);
     expect(writes()[0]!.idempotency_key).toEqual(expect.any(String));
     expect(writes()[1]!.idempotency_key).toBe(writes()[0]!.idempotency_key);
@@ -576,10 +576,10 @@ describe("Receiving descriptions and bindings", () => {
     const submit = () => fireEvent.submit(screen.getByRole("button", { name: "Record a receipt" }).closest("form")!);
     expectFormActions("Record a receipt");
     submit();
-    await screen.findByText("Try again");
+    expect((await screen.findByRole("alert")).textContent).not.toBe("");
     submit();
     await waitFor(() => expect(writes).toHaveLength(2));
-    await screen.findByText("Try again");
+    expect((await screen.findByRole("alert")).textContent).not.toBe("");
     const values = () => writes.map((write) => (write as { value: Record<string, JsonValue> }).value);
     expect(values()[0]).toEqual(values()[1]);
     {

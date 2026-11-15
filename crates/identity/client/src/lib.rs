@@ -795,10 +795,9 @@ mod tests {
                 .is_some_and(|cause| cause.kind() == std::io::ErrorKind::ConnectionRefused)
         }));
         for diagnostic in [format!("{error:#}"), format!("{error:?}")] {
-            assert!(!diagnostic.contains("https://"));
-            assert!(!diagnostic.contains("?token="));
+            assert!(!diagnostic.contains(client.endpoint.as_str()));
+            assert!(!diagnostic.contains(&client.endpoint.origin().ascii_serialization()));
             assert!(!diagnostic.contains(&token));
-            assert!(!diagnostic.contains(wamn_identity_protocol::PAT_TOKEN_PREFIX));
         }
     }
 

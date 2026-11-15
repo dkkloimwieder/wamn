@@ -100,7 +100,8 @@ it("fills the filter filter and the whole location model, then follows both feed
   expect(result.packaging.count).toBe(1);
   expect(result.location.count).toBe(1);
   expect(h.packaging.list).toHaveBeenLastCalledWith(filter);
-  expect(h.location.list).toHaveBeenCalledExactlyOnceWith({});
+  expect(h.location.list).toHaveBeenCalledTimes(1);
+  expect(Object.keys(vi.mocked(h.location.list).mock.calls[0]![0])).toHaveLength(0);
   {
     const observed = h.saved.get(packagingKey(filter))?.rows;
     expect(observed).toHaveProperty(["length"], 1);

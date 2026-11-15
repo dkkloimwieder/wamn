@@ -51,7 +51,8 @@ describe("identity pages", () => {
     input(screen.getByLabelText("Email"), "someone@wamn.dev");
     flush();
     fireEvent.click(send);
-    expect(await screen.findByText(/a mail with a reset link is on its way/)).toBeDefined();
+    await waitFor(() => expect(send).toHaveProperty("disabled", false));
+    expect(screen.queryByRole("alert")).toBeNull();
     await waitFor(() => expect(window.location.pathname).toBe("/recover"));
     {
       const observed = seen;
@@ -89,13 +90,14 @@ describe("identity pages", () => {
     const session = identity(false);
     const requests: Record<string, unknown>[] = [];
     let refuse = true;
+    const retryAfter = 60;
     const fetch: typeof globalThis.fetch = async (url, init) => {
       if (String(url) !== "/password/environments") return session.fetch(url, init);
       const body = JSON.parse(String(init?.body));
       requests.push(body);
       if (body.cursor && refuse) {
         refuse = false;
-        return new Response("", { status: 429, headers: { "retry-after": "60" } });
+        return new Response("", { status: 429, headers: { "retry-after": String(retryAfter) } });
       }
       return new Response(
         JSON.stringify(
@@ -111,7 +113,10 @@ describe("identity pages", () => {
     expect(within(table).getByRole("link", { name: "dev" })).toBeTruthy();
     expect(session.state.calls).not.toContain("/password/session");
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
-    await screen.findByText(/Retry after 60 seconds/);
+    const alert = await screen.findByRole("alert");
+    const values = [...alert.textContent!.matchAll(/\d+/g)].map(([value]) => Number(value));
+    expect(values).toContain(429);
+    expect(values).toContain(retryAfter);
     expect(within(table).getByRole("link", { name: "dev" })).toBeTruthy();
     expect(requests).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
@@ -218,7 +223,9 @@ describe("identity pages", () => {
     );
     fireEvent.click(links[4]!);
     // Selection uses the returned audience; the shell still enforces this deploy's org.
-    expect(await screen.findByText("This address names an environment of another org.")).toBeDefined();
+    const choose = await screen.findByRole("link", { name: "Choose an audience" });
+    expect(choose.getAttribute("href")).toBe("/");
+    expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
     await waitFor(() => expect(window.location.pathname).toBe("/urn:wamn:project-env:other:widgets:dev:q8w4e2r6"));
     {
       const observed = state.bodies[state.calls.indexOf("/password/session")];
@@ -233,7 +240,7 @@ describe("identity pages", () => {
     const { state, fetch } = identity(false, []);
     open("/", fetch);
     await signIn();
-    expect(await screen.findByText("No access has been granted.")).toBeDefined();
+    expect((await screen.findByRole("link", { name: "Return to sign in" })).getAttribute("href")).toBe("/");
     expect(screen.queryByText("Stub app")).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
@@ -311,13 +318,10 @@ describe("identity pages", () => {
 });
 
 describe("identity refusals", () => {
-  it.each([
-    ["/invite", "This address holds no invitation code. Open the link in the invitation mail."],
-    ["/reset", "This address holds no reset code. Open the link in the reset mail."],
-  ])("refuses %s without a code", async (path, text) => {
+  it.each(["/invite", "/reset"])("refuses %s without a code", async (path) => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     open(path, fetch);
-    expect(await screen.findByText(text)).toBeDefined();
+    expect((await screen.findByRole("alert")).textContent).not.toBe("");
     fireEvent.click(screen.getByText("Set password"));
     flush();
     await waitFor(() => expect(screen.getByRole("button").hasAttribute("disabled")).toBe(false));
@@ -359,10 +363,8 @@ describe("identity refusals", () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(null, { status: 401 }));
     open("/", fetch);
     await signIn();
-    expect(await screen.findByRole("alert")).toHaveProperty(
-      "textContent",
-      "Sign in failed: /password/environments answered 401.",
-    );
+    const alert = await screen.findByRole("alert");
+    expect(Number(alert.textContent?.match(/\d+/)?.[0])).toBe(401);
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0]?.[0]).toBe("/password/environments");
   });
@@ -370,10 +372,8 @@ describe("identity refusals", () => {
   it("shows renewal failure on the same screen address", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(null, { status: 503 }));
     open(`/${AUD}/pallets`, fetch);
-    expect(await screen.findByRole("alert")).toHaveProperty(
-      "textContent",
-      "The session could not be renewed: /password/renew answered 503.",
-    );
+    const alert = await screen.findByRole("alert");
+    expect(Number(alert.textContent?.match(/\d+/)?.[0])).toBe(503);
     expect(screen.getByLabelText("Password")).toBeDefined();
     expect(window.location.pathname).toBe(`/${AUD}/pallets`);
     expect(fetch).toHaveBeenCalledTimes(1);

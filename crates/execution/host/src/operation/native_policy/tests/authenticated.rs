@@ -8,7 +8,7 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
-use tokio::time::{Instant, timeout};
+use tokio::time::Instant;
 
 use tracing::{Instrument as _, instrument::WithSubscriber as _};
 use wamn_authentication::route_authentication::PlatformRouteAuthenticator;

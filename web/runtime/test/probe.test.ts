@@ -9,12 +9,15 @@ describe("probe", () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(null, { status }));
     const transport = createTransport({ baseUrl: "https://app.test", credential: "secret", fetch });
     expect(await transport.probe()).toBe(status === 204);
-    expect(fetch).toHaveBeenCalledWith("https://app.test/api/health", {
-      method: "HEAD",
-      cache: "no-store",
-      credentials: "omit",
-      signal: expect.any(AbortSignal),
-    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, options] = fetch.mock.calls[0]!;
+    expect(String(url)).toBe("https://app.test/api/health");
+    expect(options?.method).toBe("HEAD");
+    expect(options?.cache).toBe("no-store");
+    expect(options?.credentials).toBe("omit");
+    expect(options?.signal).toBeInstanceOf(AbortSignal);
+    expect(options?.body).toBeUndefined();
+    expect(new Headers(options?.headers).has("authorization")).toBe(false);
   });
 
   it("omits cookies and never reads the CSRF cookie", async () => {

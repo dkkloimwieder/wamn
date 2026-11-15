@@ -126,7 +126,7 @@ fn respond_node_attribution_is_wiring_owned_not_guest_echoed() {
         let Some(Verdict::Respond { payload, node_id }) = walk.verdict() else {
             panic!("unexpected outcome")
         };
-        assert_eq!(payload, forged);
+        assert_eq!(payload, &forged);
         assert_eq!(node_id, "terminal-owned");
     };
 }

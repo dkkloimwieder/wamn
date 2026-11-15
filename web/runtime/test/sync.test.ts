@@ -145,7 +145,16 @@ describe("send", () => {
       const queued = await box.enqueue(stored);
       await vi.waitFor(() => {
         expect(fetch).toHaveBeenCalledTimes(1);
-        expect(box.entries()).toEqual([{ ...queued, state: "pending" }]);
+        expect(box.entries()).toHaveLength(1);
+        const restored = box.entries()[0]!;
+        expect(restored.seq).toBe(queued.seq);
+        expect(restored.operation).toBe(queued.operation);
+        expect(restored.request).toEqual(queued.request);
+        expect(restored.request_hash).toBe(queued.request_hash);
+        expect(restored.expect).toEqual(queued.expect);
+        expect(restored.recorded_at).toBe(queued.recorded_at);
+        expect(restored.append_only).toBe(queued.append_only);
+        expect(restored.state).toBe("pending");
       });
       await box.replay();
       expect(fetch).toHaveBeenCalledTimes(2);
@@ -297,7 +306,16 @@ describe("send", () => {
       await replay;
       expect(await send.mock.results[0]!.value).toEqual(retriable);
       expect(renew).toHaveBeenCalledTimes(renewed ? 1 : 0);
-      expect(box.entries()).toEqual([{ ...queued, state: "pending" }]);
+      expect(box.entries()).toHaveLength(1);
+      const restored = box.entries()[0]!;
+      expect(restored.seq).toBe(queued.seq);
+      expect(restored.operation).toBe(queued.operation);
+      expect(restored.request).toEqual(queued.request);
+      expect(restored.request_hash).toBe(queued.request_hash);
+      expect(restored.expect).toEqual(queued.expect);
+      expect(restored.recorded_at).toBe(queued.recorded_at);
+      expect(restored.append_only).toBe(queued.append_only);
+      expect(restored.state).toBe("pending");
 
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open(database);
@@ -310,7 +328,16 @@ describe("send", () => {
           request.onsuccess = () => resolve(request.result as OutboxEntry[]);
           request.onerror = () => reject(request.error);
         });
-        expect(stored).toEqual([{ ...queued, state: "pending" }]);
+        expect(stored).toHaveLength(1);
+        const restored = stored[0]!;
+        expect(restored.seq).toBe(queued.seq);
+        expect(restored.operation).toBe(queued.operation);
+        expect(restored.request).toEqual(queued.request);
+        expect(restored.request_hash).toBe(queued.request_hash);
+        expect(restored.expect).toEqual(queued.expect);
+        expect(restored.recorded_at).toBe(queued.recorded_at);
+        expect(restored.append_only).toBe(queued.append_only);
+        expect(restored.state).toBe("pending");
       } finally {
         db.close();
       }

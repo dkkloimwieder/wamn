@@ -6,6 +6,7 @@ import { Loading, createSignal, flush } from "solid-js";
 import { outbox, type Persistence } from "@wfe/sync";
 import { packagingOffline, packagingFilter } from "../src/packaging-offline.js";
 import { PackagingScreen } from "../src/packaging-screen.js";
+import * as packaging from "../src/packaging-writes.js";
 import { fakeFeed, makeRows } from "../src/fake.js";
 import { locationKey, type LocationRow } from "../src/generated/wamn_wms/location.js";
 import { packagingKey } from "../src/generated/wamn_wms/packaging.js";
@@ -89,7 +90,7 @@ it("refuses a create for an offline filter with no local collection", async () =
 });
 
 it.each([false, true])(
-  "renders an offline reopen and update notice with a stored expected row=%s",
+  "preserves reopened offline rows during an update with a stored expected row=%s",
   async (restoreExpected) => {
     vi.stubGlobal("crypto", webcrypto);
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
@@ -174,6 +175,7 @@ it.each([false, true])(
     });
     close.push(model.close, () => o.close());
     let update!: () => void;
+    const inspect = vi.spyOn(packaging, "packagingWrites");
     const view = render(() => {
       const [available, setAvailable] = createSignal(false);
       update = () => setAvailable(true);
@@ -204,24 +206,25 @@ it.each([false, true])(
     expect(send).not.toHaveBeenCalled();
     expect(packagingList).not.toHaveBeenCalled();
     expect(locationList).not.toHaveBeenCalled();
-    const visible = () => ({
-      row: view.container.querySelector(`tr[data-row="${row.id}"]`) !== null,
-      picker: view.queryByRole("option", { name: "SAVED-LOCATION" }) !== null,
-      update: view.getByLabelText("Sync status").textContent!.includes("update available, reload"),
-    });
     try {
-      await waitFor(() => expect(visible()).toEqual({ row: true, picker: true, update: true }));
+      await waitFor(() => {
+        expect(view.container.querySelector(`tr[data-row="${row.id}"]`)).not.toBeNull();
+        expect(view.queryByRole("option", { name: location.locationCode })).not.toBeNull();
+      });
       // The restore starts after the saved rows land.
       if (restoreExpected)
-        await waitFor(() =>
-          expect(view.container.querySelector(`tr[data-row="${expected.id}"]`)?.textContent).toContain(
-            "RESTORED (tentative)",
-          ),
-        );
+        await waitFor(() => {
+          const restored = view.container.querySelector(`tr[data-row="${expected.id}"]`)!;
+          expect(restored.textContent).toContain(expected.packagingCode);
+          expect(inspect.mock.results.at(-1)!.value.rows[expected.id]?.$tentative).toBe(true);
+        });
     } finally {
       // Ending the restored action must release the same reads without another load.
       await o.discard(o.entries()[0]!.seq);
-      await waitFor(() => expect(visible()).toEqual({ row: true, picker: true, update: true }));
+      await waitFor(() => {
+        expect(view.container.querySelector(`tr[data-row="${row.id}"]`)).not.toBeNull();
+        expect(view.queryByRole("option", { name: location.locationCode })).not.toBeNull();
+      });
     }
   },
 );

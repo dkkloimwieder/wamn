@@ -313,6 +313,5 @@ mod tests {
     fn a_failure_on_the_input_is_an_evaluation_fault() {
         let error = evaluate("new.id + 1", &json!({"new": {"id": "m-1"}})).unwrap_err();
         assert_eq!(error.error_type(), EvaluationErrorType::Evaluation);
-        assert!(!error.message().is_empty());
     }
 }

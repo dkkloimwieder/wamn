@@ -101,6 +101,7 @@ async function switcher(name: string) {
 }
 function disclose(label: string) {
   fireEvent.click(within(screen.getByRole("navigation", { name: "Primary navigation" })).getByText(label));
+  flush();
 }
 
 describe("control hierarchy navigation", () => {
@@ -318,12 +319,14 @@ describe("control hierarchy navigation", () => {
     expect(screen.getByRole("textbox", { name: "User ID" })).toHaveProperty("value", "alex");
     expect(screen.queryByRole("button", { name: "Environment" })).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Grant membership" }));
-    await waitFor(() =>
-      expect(writes, document.querySelector("form")?.textContent).toEqual([
-        { project: "widgets", env: "dev", principal_id: "alex" },
-        { project: "widgets", env: "dev", principal_id: "alex" },
-      ]),
-    );
+    await waitFor(() => {
+      expect(writes).toHaveLength(2);
+      for (const write of writes) {
+        expect(write).toHaveProperty("project", "widgets");
+        expect(write).toHaveProperty("env", "dev");
+        expect(write).toHaveProperty("principal_id", "alex");
+      }
+    });
     await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/projects/widgets/dev/members`));
     await switcher("Environment widgets/dev");
   });

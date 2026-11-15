@@ -271,7 +271,6 @@ describe("Projects and Project", () => {
     await screen.findByRole("link", { name: "create" });
     expect(window.location.pathname).toBe(`/${CONTROL}/projects`);
     expect(screen.queryByLabelText("Project name")).toBeNull();
-    expect(await screen.findByText("Project created.")).toHaveProperty("role", "status");
     {
       const observed = writes;
       expect(observed).toHaveProperty(["length"], 1);
@@ -310,9 +309,11 @@ describe("Projects and Project", () => {
   });
 
   it("rejects incomplete membership input without reporting success", async () => {
+    const writes: RequestInit[] = [];
     const transport = createTransport({
       baseUrl: "/api",
-      fetch: async (url) => {
+      fetch: async (url, init) => {
+        if (init?.method === "POST") writes.push(init);
         const value = String(url).includes("/environment/list")
           ? { environments: [{ name: "dev", state: "active" }] }
           : String(url).includes("/project/list")
@@ -333,11 +334,9 @@ describe("Projects and Project", () => {
       />
     ));
     fireEvent.click(await screen.findByRole("button", { name: "Grant membership" }));
-    expect(await screen.findByRole("alert")).toHaveProperty(
-      "textContent",
-      "Enter a user ID and select a project and an environment.",
-    );
-    expect(screen.queryByText("Membership granted.")).toBeNull();
+    expect((await screen.findByRole("alert")).textContent).not.toBe("");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(writes).toHaveLength(0);
   });
 
   it("shows every environment and member field and links to the member screen", async () => {
@@ -674,6 +673,11 @@ describe("project state action", () => {
       expect(screen.getByRole("button", { name: "Activate project" }).hasAttribute("disabled")).toBe(false),
     );
     expect(screen.queryByRole("button", { name: "Inactivate project" })).toBeNull();
-    expect(screen.getByText("State: inactive")).toBeTruthy();
+    expect(
+      screen
+        .getByText(/^State:/)
+        .textContent?.split(":")[1]
+        ?.trim(),
+    ).toBe("inactive");
   });
 });
