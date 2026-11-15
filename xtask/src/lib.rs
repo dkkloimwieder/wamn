@@ -46,6 +46,8 @@ enum Task {
         #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
         database_url: String,
     },
+    /// Build one component through the shared guest compiler.
+    BuildComponent { manifest: PathBuf },
     /// Generate TypeScript clients for native host routes.
     HostRouteClients,
     /// Print guest compiler flags.
@@ -150,6 +152,15 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                     record.package.id, record.package.version, record.outputs.manifest
                 );
             }
+            Ok(())
+        }
+        Task::BuildComponent { manifest } => {
+            println!(
+                "{}",
+                wamn_build::build_component(&root, &manifest)
+                    .await?
+                    .display()
+            );
             Ok(())
         }
         Task::HostRouteClients => wamn_compiler::materialize_host_route_client(

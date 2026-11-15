@@ -80,12 +80,19 @@ Cargo writes the guests to `CARGO_TARGET_DIR`. If that variable is unset, it wri
 `cargo xtask guest-rustflags` prints the RUSTFLAGS used by the shared xtask build library.
 It maps the repository to `/wamn` and the Cargo home to `/cargo`, so no guest carries a local path.
 It also maps the toolchain's `rust-src` tree to `/rustc/<commit-hash>`, so a toolchain with and without `rust-src` gives one digest.
-`wamn build` calls it. The platform producer uses that same component builder.
+`wamn build` and the platform producer use the same component builder.
+That builder creates a source view under `CARGO_TARGET_DIR/wamn-guest`.
+Every compiled local package sits below the build workspace in that view.
+Cargo then hashes relative package paths, including packages outside `apps/`.
+The builder preserves dependency declarations and remaps the source view to `/wamn`.
+The same sources, lockfile and toolchain produce the same bytes in different checkouts.
+`cargo xtask build-component guests/http-route/Cargo.toml` uses that path for one guest.
 The build refuses a built guest that contains `/home/`, the Cargo home, or the repository path.
 A guest crate can hold a pin file beside its `Cargo.toml`, named for the artifact, for example `http_route.wasm.sha256`.
 The build and the Dockerfile stage refuse a guest that does not match its pin.
 If you change the router on purpose, write its new digest to `guests/http-route/http_route.wasm.sha256`.
-A plain `cargo build` of a guest does not use the guest RUSTFLAGS, so its bytes depend on the machine. Do not pin such a guest.
+A plain `cargo build` bypasses the source view, so its bytes can depend on the checkout path.
+Use the component builder when you update a pin.
 The release publisher also needs the pinned `http-route` guest.
 The ctl image carries it at `/usr/local/share/wamn/http_route.wasm`.
 For native publication, set `WAMN_FLOW_HTTP_COMPONENT` to the built guest and `WAMN_COMPONENT_ARTIFACT_BASE` to the component repository.
