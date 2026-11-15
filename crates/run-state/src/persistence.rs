@@ -213,10 +213,6 @@ fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionLeas
 }
 
 /// Lease one run. The caller commits both `Leased` and `GrantRefused` turns.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the queue binds its project and each independent lease coordinate"
-)]
 pub async fn lease_next(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,

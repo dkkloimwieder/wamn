@@ -64,7 +64,7 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let route = serde_json::json!({"host":host,"release":"unused","api":format!("http://{service}"),"files":""});
-        let objects = serde_json::json!({"items":[{"metadata":{"name":"route"},"data":{"route.json":route.to_string()}}]}).to_string();
+        let objects = serde_json::json!({"items":[{"metadata":{"name":"route","namespace":"hosts"},"data":{"route.json":route.to_string()}}]}).to_string();
         tasks.spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();

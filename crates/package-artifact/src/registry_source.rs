@@ -19,6 +19,15 @@ pub struct RegistrySource {
 }
 
 impl RegistrySource {
+    pub(crate) async fn tags(
+        &self,
+        reference: &oci_client::Reference,
+        auth: &RegistryAuth,
+    ) -> anyhow::Result<Vec<String>> {
+        let http = crate::http_client::HttpClient::with_extra_roots(&self.ca_bundles)?;
+        crate::registry_transport::tags(&http, self.insecure, reference, auth, self.timeout).await
+    }
+
     /// Delete one manifest digest with this source's trust and authorization.
     pub async fn delete_manifest(
         &self,

@@ -15,8 +15,7 @@ pub(crate) async fn delete_manifest(
     timeout: std::time::Duration,
 ) -> anyhow::Result<()> {
     use anyhow::{Context as _, ensure};
-    use bytes::Bytes;
-    use hyper::{Method, Request, StatusCode};
+    use hyper::{Method, StatusCode};
 
     let scheme = if insecure { "http" } else { "https" };
     let uri = format!(
@@ -25,62 +24,16 @@ pub(crate) async fn delete_manifest(
         reference.repository()
     );
     tokio::time::timeout(timeout, async {
-        let request = authorized(Request::delete(&uri), auth).body(Bytes::new())?;
-        let mut response = http.send(request, timeout, 65_536).await?;
-        if response.status() == StatusCode::UNAUTHORIZED {
-            let challenge = response
-                .headers()
-                .get(hyper::header::WWW_AUTHENTICATE)
-                .context("registry omitted delete authorization")?
-                .to_str()?;
-            let challenge = http_auth::parser::ChallengeParser::new(challenge)
-                .filter_map(Result::ok)
-                .find(|challenge| challenge.scheme.eq_ignore_ascii_case("Bearer"))
-                .context("registry did not offer Bearer authorization")?;
-            let mut realm = None;
-            let mut service = None;
-            for (name, value) in &challenge.params {
-                if name.eq_ignore_ascii_case("realm") {
-                    realm = Some(value.to_unescaped());
-                }
-                if name.eq_ignore_ascii_case("service") {
-                    service = Some(value.to_unescaped());
-                }
-            }
-            let mut realm =
-                url::Url::parse(&realm.context("registry authorization has no realm")?)?;
-            ensure!(
-                realm.scheme() == "https" || insecure,
-                "registry authorization requires HTTPS"
-            );
-            realm.query_pairs_mut().append_pair(
-                "scope",
-                &format!("repository:{}:delete", reference.repository()),
-            );
-            if let Some(service) = service {
-                realm.query_pairs_mut().append_pair("service", &service);
-            }
-            let request = authorized(
-                Request::builder().method(Method::GET).uri(realm.as_str()),
-                auth,
-            )
-            .body(Bytes::new())?;
-            let token = http.send(request, timeout, 65_536).await?;
-            ensure!(
-                token.status().is_success(),
-                "registry delete authorization refused"
-            );
-            let token: serde_json::Value = serde_json::from_slice(token.body())?;
-            let token = token
-                .get("token")
-                .or_else(|| token.get("access_token"))
-                .and_then(serde_json::Value::as_str)
-                .context("registry authorization returned no token")?;
-            let request = Request::delete(&uri)
-                .header(hyper::header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Bytes::new())?;
-            response = http.send(request, timeout, 65_536).await?;
-        }
+        let response = send(
+            http,
+            insecure,
+            reference,
+            auth,
+            Method::DELETE,
+            &uri,
+            timeout,
+        )
+        .await?;
         ensure!(
             matches!(
                 response.status(),
@@ -93,6 +46,180 @@ pub(crate) async fn delete_manifest(
     })
     .await
     .context("registry manifest deletion deadline exceeded")?
+}
+
+/// Enumerate tags through the response links, including pages shorter than requested.
+pub(crate) async fn tags(
+    http: &crate::http_client::HttpClient,
+    insecure: bool,
+    reference: &oci_client::Reference,
+    auth: &oci_client::secrets::RegistryAuth,
+    timeout: std::time::Duration,
+) -> anyhow::Result<Vec<String>> {
+    use anyhow::{Context as _, ensure};
+    use hyper::{Method, StatusCode};
+
+    let scheme = if insecure { "http" } else { "https" };
+    let mut uri = url::Url::parse(&format!(
+        "{scheme}://{}/v2/{}/tags/list?n=100",
+        reference.resolve_registry(),
+        reference.repository()
+    ))?;
+    tokio::time::timeout(timeout, async {
+        let mut tags = Vec::new();
+        loop {
+            let response = send(
+                http,
+                insecure,
+                reference,
+                auth,
+                Method::GET,
+                uri.as_str(),
+                timeout,
+            )
+            .await?;
+            if response.status() == StatusCode::NOT_FOUND && tags.is_empty() {
+                return Ok(tags);
+            }
+            ensure!(
+                response.status().is_success(),
+                "registry refused tag listing: {}",
+                response.status()
+            );
+            let page: oci_client::client::TagResponse = serde_json::from_slice(response.body())?;
+            let next = response
+                .headers()
+                .get_all(hyper::header::LINK)
+                .iter()
+                .map(|value| value.to_str())
+                .collect::<Result<Vec<_>, _>>()?;
+            let next = next
+                .iter()
+                .flat_map(|value| value.split(','))
+                .find_map(|link| {
+                    let (target, parameters) = link.split_once(';')?;
+                    parameters
+                        .split(';')
+                        .any(|parameter| {
+                            parameter
+                                .trim()
+                                .split_once('=')
+                                .is_some_and(|(name, value)| {
+                                    name.trim() == "rel"
+                                        && value
+                                            .trim()
+                                            .trim_matches('"')
+                                            .split_ascii_whitespace()
+                                            .any(|value| value == "next")
+                                })
+                        })
+                        .then_some(target.trim())
+                });
+            ensure!(
+                next.is_none()
+                    || (!page.tags.is_empty()
+                        && tags
+                            .last()
+                            .is_none_or(|last| page.tags.last().is_some_and(|next| next > last))),
+                "registry tag pagination did not advance"
+            );
+            tags.extend(page.tags);
+            let Some(next) = next else {
+                return Ok(tags);
+            };
+            let next = uri.join(
+                next.strip_prefix('<')
+                    .and_then(|next| next.strip_suffix('>'))
+                    .context("invalid registry pagination link")?,
+            )?;
+            ensure!(
+                next.origin() == uri.origin() && next.path() == uri.path() && next != uri,
+                "registry tag pagination left its repository or did not advance"
+            );
+            uri = next;
+        }
+    })
+    .await
+    .context("registry tag listing deadline exceeded")?
+}
+
+async fn send(
+    http: &crate::http_client::HttpClient,
+    insecure: bool,
+    reference: &oci_client::Reference,
+    auth: &oci_client::secrets::RegistryAuth,
+    method: hyper::Method,
+    uri: &str,
+    timeout: std::time::Duration,
+) -> anyhow::Result<hyper::Response<bytes::Bytes>> {
+    use anyhow::{Context as _, ensure};
+    use bytes::Bytes;
+    use hyper::{Method, Request, StatusCode};
+
+    let action = if method == Method::DELETE {
+        "delete"
+    } else {
+        "pull"
+    };
+    let request =
+        authorized(Request::builder().method(method.clone()).uri(uri), auth).body(Bytes::new())?;
+    let mut response = http.send(request, timeout, 65_536).await?;
+    if response.status() == StatusCode::UNAUTHORIZED {
+        let challenge = response
+            .headers()
+            .get(hyper::header::WWW_AUTHENTICATE)
+            .context("registry omitted authorization")?
+            .to_str()?;
+        let challenge = http_auth::parser::ChallengeParser::new(challenge)
+            .filter_map(Result::ok)
+            .find(|challenge| challenge.scheme.eq_ignore_ascii_case("Bearer"))
+            .context("registry did not offer Bearer authorization")?;
+        let mut realm = None;
+        let mut service = None;
+        for (name, value) in &challenge.params {
+            if name.eq_ignore_ascii_case("realm") {
+                realm = Some(value.to_unescaped());
+            }
+            if name.eq_ignore_ascii_case("service") {
+                service = Some(value.to_unescaped());
+            }
+        }
+        let mut realm = url::Url::parse(&realm.context("registry authorization has no realm")?)?;
+        ensure!(
+            realm.scheme() == "https" || insecure,
+            "registry authorization requires HTTPS"
+        );
+        realm.query_pairs_mut().append_pair(
+            "scope",
+            &format!("repository:{}:{action}", reference.repository()),
+        );
+        if let Some(service) = service {
+            realm.query_pairs_mut().append_pair("service", &service);
+        }
+        let request = authorized(
+            Request::builder().method(Method::GET).uri(realm.as_str()),
+            auth,
+        )
+        .body(Bytes::new())?;
+        let token = http.send(request, timeout, 65_536).await?;
+        ensure!(
+            token.status().is_success(),
+            "registry authorization refused"
+        );
+        let token: serde_json::Value = serde_json::from_slice(token.body())?;
+        let token = token
+            .get("token")
+            .or_else(|| token.get("access_token"))
+            .and_then(serde_json::Value::as_str)
+            .context("registry authorization returned no token")?;
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(hyper::header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Bytes::new())?;
+        response = http.send(request, timeout, 65_536).await?;
+    }
+    Ok(response)
 }
 
 fn authorized(

@@ -96,6 +96,7 @@ On timeout or interruption, it ends and reaps all descendants, including separat
 Guest compiler flag lookups use the selection deadline and the same process cleanup.
 
 The tool builds the guests that selected suites need.
+The `edge-samples` suite builds `apps/edge_samples` through `wamn build` before it compiles the `samples` target.
 `cargo xtask repo-lint` also compiles guest targets that disable Cargo tests.
 A passing workspace test result does not establish compilation of those guest targets.
 The platform producer builds both role components through the package component builder.
@@ -247,6 +248,7 @@ The typed call test also needs Docker, the `registry:2` image, and the generated
 It tests replacement connection Y after disabling X, plus two hosts sharing X for the 30-second refusal.
 The rollout test drives two host owners in one process through the host shutdown function and a real SIGTERM.
 It serves the native `/readyz` endpoint while the second host waits for its lease.
+It checks that the second holder acquires only after the first holder releases its call.
 Run these tests with the build environment in [building](building.md):
 
 ```bash

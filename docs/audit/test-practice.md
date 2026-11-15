@@ -114,7 +114,6 @@ Each of the 20 additions is a prerequisite. None is a bead quarantine or a disab
 | `crates/control/lib/tests/release_chart_render.rs:231` | `web_only_changes_leave_all_workloads_byte_equal` | Helm | Keep. Helm is real, and this file is the chart's own test. |
 | `crates/control/lib/tests/support/exclusive_resources.rs:274` | `exclusive_calls_wait_serialize_and_transfer_to_replacement` | PostgreSQL, NATS, Docker, guests | Keep |
 | `crates/execution/host/tests/control_route_live.rs:1630` | `connection_routes_refuse_mismatches_and_project_only_enabled_rows` | NATS | Keep, and move the target to live-nats |
-| `crates/execution/host/tests/control_route_live.rs:1921` | `delayed_grant_cannot_restore_revoked_admin` | NATS | Keep, and move the target to live-nats |
 | `crates/execution/host/tests/host_route_live.rs:1044` | `cli_admin_revoke_reaches_the_same_http_refusal` | A built CLI | Keep |
 | `crates/execution/host/tests/support/connection_test.rs:40` | `candidate_http_and_modbus_health_commit_nothing` | PostgreSQL, NATS, Docker, guests | Keep, and move the target to live-nats |
 | `crates/execution/host/tests/support/oauth_authorization.rs:12` | `project_admin_authorize_and_public_pkce_callback` | NATS | Keep, and move the target to live-nats |

@@ -102,7 +102,6 @@ pub(super) async fn build(root: &Path, names: &[&str], server_url: &str) -> anyh
         .arg("build")
         .args(names.iter().map(|name| package(root, name)))
         .env("DATABASE_URL", server.as_str())
-        .env("CARGO_TARGET_DIR", root.join("apps/target"))
         .current_dir(root)
         .kill_on_drop(true)
         .output()
@@ -114,9 +113,9 @@ pub(super) async fn build(root: &Path, names: &[&str], server_url: &str) -> anyh
     )?;
     ensure!(
         output.status.success(),
-        "wamn build of the package copies exited {}; see {}",
+        "wamn build of the package copies exited {}: {}",
         output.status,
-        root.join("build.log").display()
+        String::from_utf8_lossy(&output.stderr)
     );
     Ok(())
 }

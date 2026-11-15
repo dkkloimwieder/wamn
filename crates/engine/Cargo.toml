@@ -12,8 +12,8 @@ wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements
 
 [dependencies]
 wamn-digest.workspace = true
-# No `oci` feature here: the registry source lives in wamn-component-artifact.
-wash-runtime = { workspace = true }
+# The pinned runtime's shared multiplexing code needs OCI's SHA-256 dependency.
+wash-runtime = { workspace = true, features = ["oci"] }
 wasmtime = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-component-policy = { workspace = true }

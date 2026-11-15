@@ -11,14 +11,17 @@ use wamn_compiler::build_record::{BUILD_RECORD_FILE, BuildRecord};
 
 /// Build a standalone component crate through the shared guest compiler.
 pub async fn build_component(repository: &Path, manifest: &Path) -> Result<std::path::PathBuf> {
+    let manifest = manifest.canonicalize()?;
     let metadata = cargo_metadata::MetadataCommand::new()
-        .manifest_path(manifest)
+        .manifest_path(&manifest)
         .no_deps()
         .exec()?;
     let package = metadata
-        .root_package()
-        .context("component manifest has no root package")?;
-    build_guest(repository, manifest, package.name.as_str(), None).await
+        .packages
+        .iter()
+        .find(|package| package.manifest_path.as_std_path() == manifest)
+        .context("component manifest has no package")?;
+    build_guest(repository, &manifest, package.name.as_str(), None).await
 }
 
 /// Build into the package workspace output and write one completed record.

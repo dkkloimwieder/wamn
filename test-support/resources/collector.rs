@@ -14,8 +14,9 @@ pub fn deployed_collector(repository: &Path) -> anyhow::Result<Vec<Value>> {
         {"name":"CLUSTER","value":"fixture"},{"name":"PROJECT","value":"fixture"},
         {"name":"REGION","value":"us-central1"},{"name":"BUCKET","value":"fixture"}
     ]);
+    let metadata: Value = serde_yaml::from_slice(&std::fs::read(chart.join("Chart.yaml"))?)?;
     wamn_kubernetes::helm::template(
-        &json!({"chart":chart,"name":"wamn","namespace":"platform","values":values}),
+        &json!({"chart":chart,"version":metadata["version"],"name":"wamn","namespace":"platform","values":values}),
     )
 }
 

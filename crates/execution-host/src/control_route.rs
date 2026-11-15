@@ -167,8 +167,6 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) org: &'a str,
     /// Publishes each user row and status change of an environment.
     pub(crate) changes: &'a Publisher,
-    #[cfg(feature = "test-util")]
-    pub(crate) projection_pause: Option<&'a ProjectionPause>,
     pub(crate) oauth: Option<&'a wamn_http_capability::oauth_authorization::Authorization>,
     pub(crate) connection_health: Option<&'a crate::connection_health::ConnectionHealth>,
 }
@@ -975,18 +973,10 @@ impl ControlRoutes<'_> {
         environments: &[(String, String)],
     ) -> Result<(), Refusal> {
         let logins = self.logins(environments)?;
-        #[cfg(feature = "test-util")]
-        if let Some(pause) = self.projection_pause {
-            pause.arrive(principal, false).await;
-        }
         let mut system = writer.begin().await?;
         sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','',$2)")
             .bind(caller.to_string()).bind(&attachment.operation).execute(&mut *system).await?;
         wamn_platform_identity::org::lock_membership(&mut system, principal, self.org).await?;
-        #[cfg(feature = "test-util")]
-        if let Some(pause) = self.projection_pause {
-            pause.arrive(principal, true).await;
-        }
         let mut completed = Vec::new();
         for ((project, env), url) in environments.iter().zip(logins) {
             let project_env_key = project_env_key(self.org, project, env);
@@ -1556,42 +1546,5 @@ mod tests {
             assert_eq!(observed["roles"], serde_json::json!(null));
             assert_eq!(observed["memberships"], serde_json::json!(null));
         };
-    }
-}
-
-/// A per-host pause for deterministic projection ordering tests.
-#[cfg(feature = "test-util")]
-#[derive(Debug)]
-pub struct ProjectionPause {
-    principal: PrincipalId,
-    after_lock: bool,
-    entered: tokio::sync::Notify,
-    resumed: tokio::sync::Notify,
-}
-
-#[cfg(feature = "test-util")]
-impl ProjectionPause {
-    pub fn new(principal: PrincipalId, after_lock: bool) -> Self {
-        Self {
-            principal,
-            after_lock,
-            entered: tokio::sync::Notify::new(),
-            resumed: tokio::sync::Notify::new(),
-        }
-    }
-
-    pub async fn entered(&self) {
-        self.entered.notified().await;
-    }
-
-    pub fn resume(&self) {
-        self.resumed.notify_one();
-    }
-
-    async fn arrive(&self, principal: &PrincipalId, after_lock: bool) {
-        if principal == &self.principal && after_lock == self.after_lock {
-            self.entered.notify_one();
-            self.resumed.notified().await;
-        }
     }
 }

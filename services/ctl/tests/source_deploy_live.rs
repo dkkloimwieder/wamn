@@ -10,6 +10,26 @@ use wamn_compiler::build_record;
 use wamn_environment::environment::document::EnvironmentDocument;
 
 fn package(root: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
+    if !root.join("Cargo.toml").is_file() {
+        std::fs::create_dir_all(root.join("component/src"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nresolver='2'\nmembers=['component']\n",
+        )?;
+        std::fs::write(
+            root.join("component/Cargo.toml"),
+            "[package]\nname='fixture'\nversion='0.1.0'\nedition='2024'\n[lib]\ncrate-type=['cdylib']\n",
+        )?;
+        std::fs::write(root.join("component/src/lib.rs"), "")?;
+        ensure!(
+            Command::new("cargo")
+                .args(["generate-lockfile", "--offline", "--manifest-path"])
+                .arg(root.join("Cargo.toml"))
+                .status()?
+                .success(),
+            "generate the fixture workspace lock"
+        );
+    }
     let root = root.join(id);
     std::fs::create_dir_all(root.join("migrations"))?;
     std::fs::write(
@@ -43,6 +63,12 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+    let sources = scratch.path().join("apps");
+    std::fs::create_dir(&sources)?;
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rust-toolchain.toml"),
+        scratch.path().join("rust-toolchain.toml"),
+    )?;
     let database = wamn_test_postgres::url(&pool);
     let mut client = wamn_postgres::connect(database.as_str()).await?;
 
@@ -112,28 +138,28 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure(
         eprintln!("{}", String::from_utf8_lossy(&output.stderr));
         ensure!(
             !output.status.success(),
-            "the source fixture has no compiled component to publish"
+            "the source fixture has no reachable registry or control service"
         );
         Ok(())
     };
-    let b = package(scratch.path(), "appb", "1.0.0")?;
+    let b = package(&sources, "appb", "1.0.0")?;
     deploy(&b, false, false)?;
     let b_output = wamn_compiler::output_root(&b);
     build_record::read(&b_output)?;
     // B's source is unavailable while A builds.
     std::fs::remove_dir_all(&b)?;
-    let a = package(scratch.path(), "appa", "1.0.0")?;
+    let a = package(&sources, "appa", "1.0.0")?;
     deploy(&a, false, false)?;
     let output = wamn_compiler::output_root(&a);
     build_record::read(&output)?;
-    package(scratch.path(), "appa", "2.0.0")?;
+    package(&sources, "appa", "2.0.0")?;
     deploy(&a, false, false)?;
     build_record::read(&b_output)?;
-    // Generation succeeds, but publication refuses the absent component.
+    // The failed publication keeps the completed build record.
     build_record::read(&output)?;
     // Source schema apply uses the same builder before publication can fail.
     let schema_version = "3.0.0";
-    package(scratch.path(), "appa", schema_version)?;
+    package(&sources, "appa", schema_version)?;
     deploy(&a, true, false)?;
     let schema_build = build_record::read(&output)?;
     assert_eq!(schema_build.package.version, schema_version);

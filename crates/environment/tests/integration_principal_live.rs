@@ -51,9 +51,18 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     .await
     .map(drop)?;
 
+    let mut setup = wamn_test_postgres::transaction(
+        &mut admin,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "admin:integration-packages",
+    )
+    .await?;
     for package in ["consumer", "integration"] {
-        sqlx::query("INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( $1,$2,'1.0.0',$3)").bind(&PROJECT_ENV_KEY).bind(&package).bind(&format!("sha256:{}", "a".repeat(64))).execute(&mut admin).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( $1,$2,'1.0.0',$3)").bind(&PROJECT_ENV_KEY).bind(&package).bind(&format!("sha256:{}", "a".repeat(64))).execute(&mut *setup).await.map(|result| result.rows_affected())?;
     }
+    setup.commit().await?;
     let mut manifest: ServingManifest = serde_json::from_value(json!({
         "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [
@@ -103,7 +112,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     application.descriptor.component = "integration".into();
     application.descriptor.operations.clear();
     application.descriptor.operations.insert(
-        "integration:sync/finish@1.0.0".into(),
+        wamn_catalog::operation_token("wamn_integration", "1.0.0", "setting", "read"),
         serde_json::from_value(json!({
             "input-ports": [], "output-ports": [], "parameters": []
         }))?,

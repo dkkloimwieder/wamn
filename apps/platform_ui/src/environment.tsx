@@ -14,6 +14,7 @@ import type { ScreenProps } from "./shell";
 
 const operationActions = {
   deploy: { label: "Deploy release", route: application.APPLICATION_DEPLOY_ROUTE, effect: "" },
+  stop: { label: "Stop application", route: application.APPLICATION_STOP_ROUTE, effect: "" },
   rollback: {
     label: "Rollback application",
     route: application.APPLICATION_ROLLBACK_ROUTE,
@@ -81,8 +82,8 @@ function OperationControls(props: ScreenProps) {
             const defaults = { application: "", release: "" };
             const [values, setValues] = createSignal(defaults);
             const [confirmation, setConfirmation] = createSignal<typeof defaults>();
-            const needsApplication = selected === "rollback" || selected === "diff" || selected === "apply";
-            const needsRelease = selected === "deploy" || needsApplication;
+            const needsApplication = selected !== "reset";
+            const needsRelease = selected !== "stop" && selected !== "reset";
             const start = async (snapshot: typeof defaults) => {
               if (busy() || controller.signal.aborted || !props.holds(entry.route.operation, config.project)) return;
               setBusy(true);
@@ -101,16 +102,22 @@ function OperationControls(props: ScreenProps) {
                   await (selected === "deploy"
                     ? application.deploy(
                         props.transport,
-                        [{ requestId, value: { ...config, release: snapshot.release.trim() } }],
+                        [{ requestId, value: { ...target, release: snapshot.release.trim() } }],
                         options,
                       )
-                    : selected === "rollback"
-                      ? application.rollback(props.transport, [{ requestId, value: target }], options)
-                      : selected === "diff"
-                        ? schema.diff(props.transport, [{ requestId, value: target }], options)
-                        : selected === "apply"
-                          ? schema.apply(props.transport, [{ requestId, value: target }], options)
-                          : schema.reset(props.transport, [{ requestId, value: config }], options)),
+                    : selected === "stop"
+                      ? application.stop(
+                          props.transport,
+                          [{ requestId, value: { ...config, application: target.application } }],
+                          options,
+                        )
+                      : selected === "rollback"
+                        ? application.rollback(props.transport, [{ requestId, value: target }], options)
+                        : selected === "diff"
+                          ? schema.diff(props.transport, [{ requestId, value: target }], options)
+                          : selected === "apply"
+                            ? schema.apply(props.transport, [{ requestId, value: target }], options)
+                            : schema.reset(props.transport, [{ requestId, value: config }], options)),
                 );
                 if (controller.signal.aborted) return;
                 setObserved({ job: result.job, state: "pending", log: "" });
@@ -283,7 +290,9 @@ export function Environment(
   return (
     <Show when={!missing()} fallback={<MissingPage />}>
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
-      <Show when={(!props.table || props.table === "operations" || props.table === "roles") && status()?.residency.length}>
+      <Show
+        when={(!props.table || props.table === "operations" || props.table === "roles") && status()?.residency.length}
+      >
         <label>
           Application release
           <select
@@ -296,7 +305,11 @@ export function Environment(
             }}
           >
             <For each={status()?.residency}>
-              {(entry) => <option value={selectionKey(entry)}>{entry.application}: {entry.manifestDigest}</option>}
+              {(entry) => (
+                <option value={selectionKey(entry)}>
+                  {entry.application}: {entry.manifestDigest}
+                </option>
+              )}
             </For>
           </select>
         </label>
@@ -372,7 +385,7 @@ export function Environment(
             columns={[
               { id: "application", header: "Application", accessorKey: "application" },
               { id: "manifestDigest", header: "Release", accessorKey: "manifestDigest", size: 150 },
-              { id: "loaded", header: "Loaded", accessorFn: (entry) => entry.loaded ? "Yes" : "No" },
+              { id: "loaded", header: "Loaded", accessorFn: (entry) => (entry.loaded ? "Yes" : "No") },
               { id: "runs", header: "Run pins", accessorFn: (entry) => entry.runs.join(", ") },
             ]}
             formats={{ manifestDigest: "short-hash" }}

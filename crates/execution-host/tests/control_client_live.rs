@@ -52,6 +52,14 @@ async fn application_routes_answer_through_the_generated_client() -> anyhow::Res
         first,
         ..
     } = &mut host;
+    let mut setup = wamn_test_postgres::transaction(
+        admin,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "admin:client-admin",
+    )
+    .await?;
     // The admin also holds project-admin, so its own admin row stays.
     sqlx::query(
         "INSERT INTO identity.project_roles VALUES ($1::text::uuid, $2, $3, 'project-admin')",
@@ -59,9 +67,11 @@ async fn application_routes_answer_through_the_generated_client() -> anyhow::Res
     .bind(&first.as_str())
     .bind(&ORG)
     .bind(&PROJECT)
-    .execute(&mut *admin)
+    .execute(&mut *setup)
     .await
     .map(|result| result.rows_affected())?;
+
+    setup.commit().await?;
 
     let (endpoint, _task) = serve(Arc::clone(routing), Arc::clone(delivery)).await?;
 
@@ -127,6 +137,14 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
     let control_url = control_fixture::install(&mut admin, admin_url).await?;
     let audience = wamn_platform_identity::control::control_audience(ORG)?;
 
+    let mut setup = wamn_test_postgres::transaction(
+        &mut admin,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "admin:control-client-users",
+    )
+    .await?;
     // The users and their grants, written as provisioning, and one password
     // login of each admin for the control audience.
     let mut ids = Vec::new();
@@ -137,7 +155,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
         ("dan@example.test", "Dan"),
     ] {
         ids.push(
-            create_or_reuse_user(&mut admin, email, name)
+            create_or_reuse_user(&mut setup, email, name)
                 .await?
                 .principal_id,
         );
@@ -161,14 +179,16 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
         (&ann, MemberGrants::default()),
     ];
     for (principal, grants) in &grants {
-        invite_member(&mut admin, principal, ORG, grants).await?;
+        invite_member(&mut setup, principal, ORG, grants).await?;
     }
     for principal in [&boss, &cat] {
         sqlx::query("INSERT INTO identity.password_logins \
                    (id, principal_id, issuer, audience, authenticated_at, expires_at, renewal_expires_at) \
                  VALUES ($1::text::uuid, $1::text::uuid, $2, $3, now(), now() + interval '8 hours', \
-                   now() + interval '30 minutes')").bind(&principal.to_string().as_str()).bind(&ISSUER).bind(&audience).execute(&mut admin).await.map(|result| result.rows_affected())?;
+                   now() + interval '30 minutes')").bind(&principal.to_string().as_str()).bind(&ISSUER).bind(&audience).execute(&mut *setup).await.map(|result| result.rows_affected())?;
     }
+
+    setup.commit().await?;
 
     let control = wamn_postgres::pool(&control_url, 4).await?;
     let writer = Arc::new(tokio::sync::Mutex::new(

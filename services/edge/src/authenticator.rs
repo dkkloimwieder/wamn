@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use wamn_engine::flow_http_routing::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, RouteAuthenticator,
-    RouteCredential, authentication_unavailable, require_csrf, route_credential, unauthorized,
+    RouteCredential, require_csrf, route_credential, unauthorized,
 };
 use wamn_identity_protocol::file_keys::FileKeys;
 use wamn_identity_protocol::verifier::SessionVerifier;
@@ -45,9 +45,8 @@ impl RouteAuthenticator for EdgeAuthenticator {
         &self,
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        // An empty cloud authenticator answers a PAT the same way.
         let RouteCredential::Session { token, csrf } = route_credential(&request)? else {
-            return Err(authentication_unavailable());
+            return Err(unauthorized());
         };
         let session = self
             .verifier

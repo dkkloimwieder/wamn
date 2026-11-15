@@ -138,6 +138,7 @@ function applicationView(saved: SavedView, sections: readonly ShellSection[]): V
 export function controlHolds(mine: Pick<control.ControlMineResult, "orgAdmin" | "projects">): Holds {
   const projectOperations = new Set([
     application.APPLICATION_DEPLOY_ROUTE.operation,
+    application.APPLICATION_STOP_ROUTE.operation,
     application.APPLICATION_ROLLBACK_ROUTE.operation,
     schema.SCHEMA_DIFF_ROUTE.operation,
     schema.SCHEMA_APPLY_ROUTE.operation,
