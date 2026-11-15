@@ -678,6 +678,12 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
     );
 
     let as_login = role_url(&admin, &login, GENERATION_PW);
+    for statement in [
+        "SELECT name FROM platform.role",
+        "SELECT created_by FROM catalog.workflows",
+    ] {
+        assert_eq!(sqlstate(&as_login, statement).as_deref(), Some("42501"));
+    }
     assert!(
         !query(
             &as_login,

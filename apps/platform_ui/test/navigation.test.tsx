@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
-import { flush } from "solid-js";
+import { createSignal, flush } from "solid-js";
 import { describe, expect, it } from "vitest";
 import { createTransport } from "@wamn/web-runtime";
 import { createAddress, matchPath } from "../src/address";
@@ -99,6 +99,48 @@ function mount(path: string, orgAdmin = true, projects = ["widgets", "gadgets"])
 async function switcher(name: string) {
   return screen.findByRole("button", { name: `Change context: ${name}` });
 }
+function mountNavigation(path: string) {
+  window.history.pushState({}, "", `/${CONTROL}/${path}`);
+  const params = [...controlSections, ...userSections]
+    .flatMap((section) => [...section.screens, ...(section.routes ?? [])])
+    .map((route) => matchPath(route.path, path))
+    .find((params) => params !== undefined)!;
+  const transport = createTransport({
+    baseUrl: "http://localhost",
+    fetch: async () => new Response(JSON.stringify([{ value: { environments: [{ name: "dev", state: "active" }] } }])),
+  });
+  const [compact, setCompact] = createSignal(false);
+  render(() => (
+    <nav aria-label="Primary navigation">
+      <ControlNavigation
+        org="acme"
+        aud={CONTROL}
+        mine={{ orgAdmin: true, projects: ["widgets", "gadgets"].map((project) => ({ project, projectAdmin: true })) }}
+        holds={() => true}
+        params={params}
+        address={createAddress()}
+        transport={transport}
+        navigation={{ compact, close: () => {}, mobile: () => false }}
+      />
+    </nav>
+  ));
+  return { setCompact };
+}
+
+async function selectedTarget(name: string) {
+  await waitFor(() => {
+    const pane = within(screen.getByRole("navigation", { name: "Primary navigation" }));
+    const selected = [
+      ...pane.queryAllByRole("link", { current: "page" }),
+      ...pane.queryAllByRole("button", { pressed: true }),
+    ];
+    expect(selected).toHaveLength(1);
+    const target =
+      pane.queryByRole("link", { name, current: "page" }) ?? pane.getByRole("button", { name, pressed: true });
+    expect(selected[0]).toBe(target);
+  });
+}
+
 function disclose(label: string) {
   fireEvent.click(within(screen.getByRole("navigation", { name: "Primary navigation" })).getByText(label));
   flush();
@@ -132,13 +174,17 @@ describe("control hierarchy navigation", () => {
     ["projects/widgets/dev/members/alex", "Environment widgets/dev", "Members"],
     ["projects/widgets/dev/members/alex/grant", "Environment widgets/dev", "Members"],
   ])("opens the route context and its navigation controls at %s", async (path, context, selected) => {
-    mount(path);
+    const { setCompact } = mountNavigation(path);
     await switcher(context);
-    await waitFor(() =>
-      expect(
-        within(screen.getByRole("navigation", { name: "Primary navigation" })).getAllByText(selected).length,
-      ).toBeGreaterThan(0),
-    );
+    if (selected === "Projects" || selected === "Environments" || (selected === "Users" && path.startsWith("users/"))) {
+      setCompact(true);
+      flush();
+      await selectedTarget(selected);
+      setCompact(false);
+      flush();
+    } else {
+      await selectedTarget(selected);
+    }
     if (context === "Organization acme") {
       const pane = within(screen.getByRole("navigation", { name: "Primary navigation" }));
       expect(pane.getByRole("link", { name: "widgets" }).closest("details")?.open).toBe(true);
@@ -151,48 +197,33 @@ describe("control hierarchy navigation", () => {
     ["projects/widgets/dev", "Environment widgets/dev", "Environments", "dev"],
     ["users/alex/projects/widgets", "Organization acme", "Users", "Project access"],
   ])("collapses and reopens the current group at %s", async (path, context, group, selected) => {
-    window.history.pushState({}, "", `/${CONTROL}/${path}`);
-    const params = [...controlSections, ...userSections]
-      .flatMap((section) => [...section.screens, ...(section.routes ?? [])])
-      .map((route) => matchPath(route.path, path))
-      .find((params) => params !== undefined)!;
-    const transport = createTransport({
-      baseUrl: "http://localhost",
-      fetch: async () =>
-        new Response(JSON.stringify([{ value: { environments: [{ name: "dev", state: "active" }] } }])),
-    });
-    render(() => (
-      <nav aria-label="Primary navigation">
-        <ControlNavigation
-          org="acme"
-          aud={CONTROL}
-          mine={{ orgAdmin: true, projects: [{ project: "widgets", projectAdmin: true }] }}
-          holds={() => true}
-          params={params}
-          address={createAddress()}
-          transport={transport}
-          navigation={{ compact: () => false, close: () => {}, mobile: () => false }}
-        />
-      </nav>
-    ));
+    const { setCompact } = mountNavigation(path);
     await switcher(context);
-    await waitFor(() =>
-      expect(
-        within(screen.getByRole("navigation", { name: "Primary navigation" })).getAllByText(selected).length,
-      ).toBeGreaterThan(0),
-    );
+    await selectedTarget(selected);
     disclose(group);
     expect(
       within(screen.getByRole("navigation", { name: "Primary navigation" }))
         .getByText(group)
         .closest("details")?.open,
     ).toBe(false);
+    setCompact(true);
+    flush();
+    await selectedTarget(group);
+    setCompact(false);
+    flush();
+    expect(
+      within(screen.getByRole("navigation", { name: "Primary navigation" }))
+        .getByText(group)
+        .closest("details")?.open,
+    ).toBe(false);
     disclose(group);
-    await waitFor(() =>
-      expect(
-        within(screen.getByRole("navigation", { name: "Primary navigation" })).getAllByText(selected).length,
-      ).toBeGreaterThan(0),
-    );
+    await selectedTarget(selected);
+    setCompact(true);
+    flush();
+    await selectedTarget(group);
+    setCompact(false);
+    flush();
+    await selectedTarget(selected);
   });
 
   it.each([
@@ -201,9 +232,7 @@ describe("control hierarchy navigation", () => {
   ])("opens the current context before its list includes it at %s", async (path, context, selected) => {
     mount(path);
     await switcher(context);
-    expect(
-      within(screen.getByRole("navigation", { name: "Primary navigation" })).getAllByText(selected).length,
-    ).toBeGreaterThan(0);
+    await selectedTarget(selected);
   });
 
   it("expands held projects and switches project and environment contexts with searchable siblings and parents", async () => {
@@ -211,11 +240,9 @@ describe("control hierarchy navigation", () => {
     await switcher("Organization acme");
     const pane = within(screen.getByRole("navigation", { name: "Primary navigation" }));
     expect(pane.getByRole("link", { name: "Users" })).toBeTruthy();
-    expect(
-      within(screen.getByRole("navigation", { name: "Primary navigation" })).getAllByText("Projects").length,
-    ).toBeGreaterThan(0);
     fireEvent.click(pane.getByRole("link", { name: "widgets" }));
     await switcher("Project widgets");
+    await selectedTarget("widgets");
     expect(pane.queryByRole("link", { name: "Users" })).toBeNull();
     expect(pane.getByRole("link", { name: "Members" }).getAttribute("href")).toBe(
       `/${CONTROL}/projects/widgets/members`,
@@ -254,11 +281,7 @@ describe("control hierarchy navigation", () => {
     window.history.pushState({}, "", `/${CONTROL}/projects/gadgets/prod/operations`);
     window.dispatchEvent(new PopStateEvent("popstate"));
     await switcher("Environment gadgets/prod");
-    const pane = within(screen.getByRole("navigation", { name: "Primary navigation" }));
-    expect(pane.getByRole("link", { name: "Operations" }).getAttribute("aria-current")).toBe("page");
-    expect(
-      within(screen.getByRole("navigation", { name: "Primary navigation" })).getAllByText("Operations").length,
-    ).toBeGreaterThan(0);
+    await selectedTarget("Operations");
   });
 
   it("opens the Control splash for multiple held projects", async () => {
@@ -267,27 +290,21 @@ describe("control hierarchy navigation", () => {
     expect(window.location.pathname).toBe(`/${CONTROL}`);
     await screen.findByRole("region", { name: "widgets" });
     await screen.findByRole("region", { name: "gadgets" });
-    expect(
-      within(screen.getByRole("navigation", { name: "Primary navigation" })).getAllByText("Control home").length,
-    ).toBeGreaterThan(0);
+    await selectedTarget("Control home");
   });
 
   it.each([true, false])("opens one held project directly (org admin: %s), and allows return to org", async (admin) => {
     const { calls } = mount("", admin, ["widgets"]);
     await screen.findByRole("heading", { name: "widgets" });
     expect(window.location.pathname).toBe(`/${CONTROL}/projects/widgets`);
-    expect(
-      within(screen.getByRole("navigation", { name: "Primary navigation" })).getAllByText("widgets").length,
-    ).toBeGreaterThan(0);
+    await selectedTarget("widgets");
     fireEvent.click(await switcher("Project widgets"));
     fireEvent.click(await screen.findByRole("button", { name: "Up one level: Organization acme" }));
     await screen.findByRole("heading", { name: "Control" });
     expect(window.location.pathname).toBe(`/${CONTROL}`);
     const pane = within(screen.getByRole("navigation", { name: "Primary navigation" }));
     expect(!!pane.queryByRole("link", { name: "Users" })).toBe(admin);
-    expect(
-      within(screen.getByRole("navigation", { name: "Primary navigation" })).getAllByText("Control home").length,
-    ).toBeGreaterThan(0);
+    await selectedTarget("Control home");
     if (!admin) expect(calls.some((path) => path.endsWith("/project/list"))).toBe(false);
   });
 

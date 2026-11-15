@@ -91,6 +91,7 @@ describe("a draft member", () => {
     const draft = { change: { code: "priority", note: "keep" } };
     {
       const observed = clearMember(draft, ["change", "note"]);
+      expect(observed).not.toHaveProperty(["change", "note"]);
       expect(observed).toHaveProperty(["change", "code"], "priority");
     }
   });
@@ -109,6 +110,7 @@ describe("a draft member", () => {
     const one = writeControl(two, ["filter", "note"], []);
     {
       const observed = one;
+      expect(observed).not.toHaveProperty(["filter", "note"]);
       expect(observed).toHaveProperty(["filter", "code", "length"], 1);
       expect(observed).toHaveProperty(["filter", "code", "0"], "A-1");
     }
@@ -125,6 +127,7 @@ describe("a draft member", () => {
     expect(completePair(both, field, direction)).toBe(both);
     {
       const observed = completePair({ sort: { direction: "ascending" }, limit: 5 }, field, direction);
+      expect(observed).not.toHaveProperty("sort");
       expect(observed).toHaveProperty(["limit"], 5);
     }
     expect(completePair({ sort: { field: "created_at" } }, field, direction)).toEqual({});

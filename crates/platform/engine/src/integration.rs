@@ -749,6 +749,7 @@ mod declaration_tests {
                     &(serde_json::from_str::<serde_json::Value>(&binding.parameters).unwrap());
                 assert_eq!(observed["authority"], serde_json::json!("example.com:443"));
                 assert_eq!(observed["sample-count"], serde_json::json!(3));
+                assert!(observed.get("auth").is_none());
             };
             assert_eq!(
                 binding.credential.as_deref(),

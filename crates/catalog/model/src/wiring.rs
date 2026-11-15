@@ -507,6 +507,7 @@ mod tests {
             let observed = &(wire["edges"][0]);
             assert_eq!(observed["from"], serde_json::json!("in"));
             assert_eq!(observed["to"], serde_json::json!("write"));
+            assert!(observed.get("from-port").is_none());
         };
         assert_eq!(
             WiringDocument::parse(&wire).expect("the exact document parses"),

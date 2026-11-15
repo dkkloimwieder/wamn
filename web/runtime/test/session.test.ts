@@ -90,6 +90,7 @@ describe("the transport carrier", () => {
       cookies: () => "theme=dark; __Host-wamn-csrf=c5rf; other=x",
     });
     expect(call?.init.credentials).toBe("include");
+    expect(new Headers(call?.init.headers).has("authorization")).toBe(false);
     {
       const observed = headersOf(call);
       expect(observed).toHaveProperty(["content-type"], "application/json");
@@ -119,7 +120,9 @@ describe("the transport carrier", () => {
 
   it("sends no CSRF header when the cookie is absent, and the router decides", async () => {
     const call = await send({ cookie: true, cookies: () => "theme=dark" });
+    expect(new Headers(call?.init.headers).has("x-wamn-csrf")).toBe(false);
     expect(call?.init.credentials).toBe("include");
+    expect(new Headers(call?.init.headers).has("authorization")).toBe(false);
     {
       const observed = headersOf(call);
       expect(observed).toHaveProperty(["content-type"], "application/json");
@@ -129,6 +132,7 @@ describe("the transport carrier", () => {
   it("sends the bearer token and no cookies in bearer mode", async () => {
     const call = await send({ credential: "token" });
     expect(call?.init.credentials).toBeUndefined();
+    expect(new Headers(call?.init.headers).has("x-wamn-csrf")).toBe(false);
     {
       const observed = headersOf(call);
       expect(observed).toHaveProperty(["content-type"], "application/json");
@@ -138,7 +142,9 @@ describe("the transport carrier", () => {
 
   it("sends no credential when a bearer caller holds none", async () => {
     const call = await send({});
+    expect(new Headers(call?.init.headers).has("authorization")).toBe(false);
     expect(call?.init.credentials).toBeUndefined();
+    expect(new Headers(call?.init.headers).has("x-wamn-csrf")).toBe(false);
     {
       const observed = headersOf(call);
       expect(observed).toHaveProperty(["content-type"], "application/json");
@@ -167,7 +173,10 @@ describe("the transport carrier", () => {
     expect(call?.init.method).toBe("GET");
     expect(call?.init.body).toBeUndefined();
     expect(call?.init.credentials).toBe("include");
-    expect(headersOf(call)).toEqual({});
+    expect(new Headers(call?.init.headers).has("authorization")).toBe(false);
+    const headers = new Headers(call?.init.headers);
+    expect(headers.has("x-wamn-csrf")).toBe(false);
+    expect(headers.has("content-type")).toBe(false);
     // A read carries no request identity, so an outcome with one matches nothing.
     expect((await transport.invoke(read)).status).toBe("uncertain");
   });
