@@ -5,7 +5,7 @@
 //! Tokens and database credentials must never appear in assertion diagnostics.
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wamn_broker::auth_changes::AuthDrops;
@@ -498,7 +498,7 @@ async fn start_config(config: IdentityConfig) -> Https {
         service,
         tls_config(&certificate, &private).expect_redacted("production TLS"),
     ));
-    let mut client = HttpClient::builder()
+    let client = HttpClient::builder()
         .https_only(true)
         .redirects(Redirects::None)
         .timeout(Duration::from_secs(10))

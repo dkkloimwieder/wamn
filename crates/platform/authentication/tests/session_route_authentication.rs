@@ -6,7 +6,7 @@
 #![cfg(feature = "test-util")]
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,7 +47,7 @@ const SECOND_PRINCIPAL: &str = "34f2085c-19d8-474f-b87a-2a29a5357b9b";
 const PASSWORD: &str = "session-route-test-only";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let mut client = wamn_postgres::connect(url).await?;
+    let client = wamn_postgres::connect(url).await?;
 
     Ok(client)
 }

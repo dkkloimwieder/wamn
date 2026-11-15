@@ -1,6 +1,5 @@
 //! Generate real exclusion diagnostics and run the Receiving error-mapping test.
 
-use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;

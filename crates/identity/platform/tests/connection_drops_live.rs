@@ -3,7 +3,7 @@
 //! Each writer runs once on real PostgreSQL, its caller deletes the drops it
 //! recorded from a private bucket, and the test tests the keys that went.
 
-use sqlx::{Connection as _, Row as _};
+use sqlx::Connection as _;
 use std::collections::BTreeSet;
 use std::sync::Mutex;
 use wamn_broker::Publisher;

@@ -33,6 +33,7 @@ wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-platform-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
+wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

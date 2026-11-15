@@ -2,7 +2,6 @@
 
 use super::*;
 use sha2::{Digest as _, Sha256};
-use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeMap;
 use wamn_package_artifact::http_client::HttpRequest;
 use wamn_platform_identity::password::{

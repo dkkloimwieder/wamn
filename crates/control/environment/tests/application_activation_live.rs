@@ -355,11 +355,6 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let new_a = release(&mut objects, new_component, "1.0.0")?;
     let failed_component = component(&mut objects, "a", &["upstream", "extra", "failed"])?;
     let failed_release = release(&mut objects, failed_component, "1.0.0")?;
-    let mut missing_objects = objects.clone();
-    missing_objects.remove("/v2/packages/manifests/b-1.0.0");
-    let missing_root = scratch.path().join("missing-registry");
-    std::fs::create_dir(&missing_root)?;
-    let missing_registry = Registry::start(&missing_root, missing_objects).await?;
     let registry = Registry::start(scratch.path(), objects).await?;
     let mut postgres = wamn_test_postgres::start(&[("wal_level", "logical")])?;
     let system = postgres.create_database("wamn_system").await?;
@@ -396,7 +391,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .map(drop)?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;", wamn_control_provision::test_database::seed_org_project_env_sql("acme","apps","dev")))).execute(&mut admin).await.map(drop)?;
     let apply_input = wamn_test_infrastructure::credentials::apply_login(system.url()).await?;
-    let mut platform = Platform {
+    let platform = Platform {
         system_database_url: apply_input,
         target: wamn_release_control::release_chart::Target {
             kubeconfig: PathBuf::new(),

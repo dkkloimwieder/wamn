@@ -6,7 +6,7 @@
 //! installer creates cluster-wide roles.
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeSet;
 use wamn_broker::auth_changes::AuthDrops;
 
@@ -59,14 +59,12 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
     let mut drops = AuthDrops::default();
 
-    let refused =
-        change!(client, |tx| create_role(&mut tx, "t1", "admin", &mut drops)).unwrap_err();
-    let refused =
-        change!(client, |tx| create_role(&mut tx, "t1", "Clerk", &mut drops)).unwrap_err();
+    change!(client, |tx| create_role(&mut tx, "t1", "admin", &mut drops)).unwrap_err();
+    change!(client, |tx| create_role(&mut tx, "t1", "Clerk", &mut drops)).unwrap_err();
     assert!(change!(client, |tx| create_role(&mut tx, "t1", "clerk", &mut drops)).unwrap());
     assert!(!change!(client, |tx| create_role(&mut tx, "t1", "clerk", &mut drops)).unwrap());
 
-    let refused = change!(client, |tx| {
+    change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
             &mut tx,
             "t1",
@@ -166,7 +164,7 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
         rows(&mut client).await,
         set(&["shop:order/delete", "shop:report/run"])
     );
-    let refused = change!(client, |tx| {
+    change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
             &mut tx,
             "t1",
@@ -181,8 +179,7 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     })
     .unwrap_err();
 
-    let refused =
-        change!(client, |tx| delete_role(&mut tx, "t1", "admin", &mut drops)).unwrap_err();
+    change!(client, |tx| delete_role(&mut tx, "t1", "admin", &mut drops)).unwrap_err();
     assert!(change!(client, |tx| delete_role(&mut tx, "t1", "clerk", &mut drops)).unwrap());
     assert!(
         rows(&mut client).await.is_empty(),

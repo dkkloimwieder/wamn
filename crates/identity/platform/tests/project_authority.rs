@@ -29,7 +29,7 @@
 
 use std::fmt::Write as _;
 
-use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 
 /// The project every probe runs under, and the user its seeded rows belong to.
 const PROJECT_ENV_KEY: &str = "t1";

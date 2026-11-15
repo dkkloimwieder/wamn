@@ -4,7 +4,7 @@
 //! another coordinate is not blocked, and closing the holder's connection
 //! releases the lock.
 
-use sqlx::{Connection as _, Row as _};
+use sqlx::Row as _;
 use std::time::Duration;
 use tokio::{
     net::{TcpListener, TcpStream},

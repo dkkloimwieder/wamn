@@ -41,7 +41,7 @@ use wamn_engine::engine::{
     build_engine_with_host_memory_and_compilation_cache,
 };
 use wamn_engine::flow_http_routing::FlowHttpRouting;
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_http_capability::transport::HttpTransport;
 use wamn_identity_protocol::verifier::SessionVerifier;
 use wamn_postgres_capability::AuthorityClass;
@@ -1228,6 +1228,7 @@ mod lease_tests;
 #[cfg(test)]
 mod tests {
     use clap::Parser as _;
+    use wamn_engine::release_manifest::ReleaseTarget;
 
     use super::*;
 

@@ -1,6 +1,5 @@
 //! Generate real exclusion diagnostics and run the fixture error-mapping test.
 
-use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -122,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
         std::fs::copy(root.join(name), destination)?;
     }
     let mut server = postgres::start(&[])?;
-    let mut database = server.create_database("exclusion_diagnostics").await?;
+    let database = server.create_database("exclusion_diagnostics").await?;
     let mut client = wamn_postgres::connect(database.url()).await?;
 
     sqlx::raw_sql("CREATE SCHEMA inventory; CREATE EXTENSION btree_gist; CREATE ROLE wamn_app; GRANT USAGE ON SCHEMA inventory TO wamn_app;").execute(&mut client).await.map(drop)?;

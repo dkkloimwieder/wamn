@@ -1,7 +1,7 @@
 //! Real-PostgreSQL test for the personal-access-token presenter.
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
 use wamn_broker::auth_changes::AuthDrops;
 

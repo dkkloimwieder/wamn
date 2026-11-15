@@ -4,7 +4,7 @@
 //! ignore it. FIFO order, lease recovery, crash accounting,
 //! and release pins retain their standard behavior.
 
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};

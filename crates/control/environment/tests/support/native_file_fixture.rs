@@ -1,14 +1,12 @@
 //! File package assembly over an owned database.
 use super::release_documents::{ORG, PROJECT};
-use anyhow::{Context as _, ensure};
-use serde_json::json;
+use anyhow::Context as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 pub const COMPONENT_INPUT: &str = "WAMN_BLOB_PUT_COMPONENT";
 
 pub async fn build_fixture(
     work: &Path,
-    kubeconfig: &Path,
     repository: &Path,
     database_url: &str,
 ) -> anyhow::Result<(
@@ -131,21 +129,4 @@ pub fn release_request() -> anyhow::Result<wamn_publish::publish_release::Publis
             "0.1.0",
         )?],
     })
-}
-async fn run(kubeconfig: &Path, program: &str, args: &[&str]) -> anyhow::Result<String> {
-    let output = tokio::process::Command::new(program)
-        .args(args)
-        .env("KUBECONFIG", kubeconfig)
-        .kill_on_drop(true)
-        .output()
-        .await
-        .with_context(|| format!("start {program}"))?;
-    ensure!(
-        output.status.success(),
-        "{program} {} exited {}: {}",
-        args.join(" "),
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(String::from_utf8(output.stdout)?)
 }

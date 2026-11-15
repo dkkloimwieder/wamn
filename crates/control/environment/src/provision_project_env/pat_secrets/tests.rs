@@ -42,7 +42,7 @@ async fn fixed_service_id(system: &url::Url) {
 #[sqlx::test(migrations = false)]
 async fn auth_drops_create_service_records_the_created_identity(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut system = wamn_test_postgres::url(&pool);
+    let system = wamn_test_postgres::url(&pool);
     wamn_control_provision::test_database::system(system.as_str()).await;
     fixed_service_id(&system).await;
     let mut client = system_client(system.as_str()).await;
@@ -67,7 +67,7 @@ async fn auth_drops_create_service_records_the_created_identity(pool: sqlx::PgPo
 #[sqlx::test(migrations = false)]
 async fn auth_drops_assign_project_role_records_the_changed_identity(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut system = wamn_test_postgres::url(&pool);
+    let system = wamn_test_postgres::url(&pool);
     wamn_control_provision::test_database::system(system.as_str()).await;
     fixed_service_id(&system).await;
     let mut client = system_client(system.as_str()).await;
@@ -112,7 +112,7 @@ async fn auth_drops_resolve_or_create_service_returns_only_the_created_identity(
     pool: sqlx::PgPool,
 ) {
     let _lock = wamn_test_postgres::lock();
-    let mut system = wamn_test_postgres::url(&pool);
+    let system = wamn_test_postgres::url(&pool);
     wamn_control_provision::test_database::system(system.as_str()).await;
     fixed_service_id(&system).await;
     let mut client = system_client(system.as_str()).await;

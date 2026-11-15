@@ -5406,7 +5406,6 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
- "futures-util",
  "hex",
  "hmac 0.13.0",
  "http-route",
@@ -5421,7 +5420,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
- "tracing-subscriber",
  "url",
  "uuid",
  "wamn-authentication",
@@ -5432,14 +5430,12 @@ dependencies = [
  "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
- "wamn-environment",
  "wamn-identity-protocol",
  "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-postgres-capability",
  "wamn-registry",
- "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wat",
 ]
@@ -6743,6 +6739,7 @@ dependencies = [
  "wamn-postgres",
  "wamn-registry",
  "wamn-test-infrastructure",
+ "wamn-test-postgres",
 ]
 
 [[package]]

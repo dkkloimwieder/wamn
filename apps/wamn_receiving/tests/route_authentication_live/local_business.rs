@@ -4,13 +4,10 @@ use sqlx::Row as _;
 #[path = "../../../../services/ctl/src/read_query.rs"]
 mod read_query;
 
-use std::fs;
-
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_package_artifact::http_client::HttpClient;
 use wamn_test_application::Application;
-use wamn_test_infrastructure::scratch::ScratchRoot;
 
 const INSPECTION: &str = "command/record_receipt/record_inspection.sql";
 const LOCK: &str = "command/record_receipt/lock_purchase_order.sql";
@@ -21,12 +18,10 @@ const RECEIVING_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
 #[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn command_histories() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let scratch = ScratchRoot::create()?;
     let application = start().await?;
     let project_url = application.database_url().await?;
-    let system_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")?;
     let result = async {
-        histories(&application, &system_url, &project_url, scratch.path()).await?;
+        histories().await?;
         acme_inspection(&application, &project_url).await?;
         reads(&application).await
     }
@@ -40,10 +35,8 @@ async fn command_histories() -> anyhow::Result<()> {
 #[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let scratch = ScratchRoot::create()?;
     let application = start().await?;
     let project_url = application.database_url().await?;
-    let system_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")?;
     let result = async {
         let mut client = wamn_postgres::connect(&project_url).await?;
 
@@ -116,10 +109,8 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
 #[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let scratch = ScratchRoot::create()?;
     let application = start().await?;
     let project_url = application.database_url().await?;
-    let system_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")?;
     let result = async {
         let mut client = wamn_postgres::connect(&project_url).await?;
 
@@ -223,113 +214,10 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
     result
 }
 
-/// A write-log entry is keyed by the versionless operation, so a key stored
-/// through Acme under one release answers the stored result under the next
-/// (docs/architecture/data-access.md#the-write-log). The local runtime installs
-/// one release per database, so the second release serves a second database
-/// that carries the first one's write-log row and none of its business rows: a
-/// replay that ran again would find no purchase order.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
-async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
-    let _lock = wamn_test_postgres::lock();
-    let scratch = ScratchRoot::create()?;
-    for name in ["first", "second"] {
-        fs::create_dir(scratch.path().join(name))?;
-    }
-    let connect = async |url: &str| -> anyhow::Result<sqlx::PgConnection> {
-        let client = wamn_postgres::connect(url).await?;
-
-        Ok(client)
-    };
-    let release = async |client: &mut sqlx::PgConnection| -> anyhow::Result<String> {
-        Ok(sqlx::query("SELECT manifest_digest FROM catalog.releases")
-            .fetch_one(&mut *client)
-            .await?
-            .get(0))
-    };
-    let key = "release-key";
-    let request_element = async |application: &Application| {
-        record(
-            application,
-            "/acme/acme/record_receipt",
-            key,
-            key,
-            "00000000-0000-0000-0000-000000000721",
-            "00000000-0000-0000-0000-000000000821",
-        )
-        .await
-    };
-
-    let first: Application = panic!("wamn-eulfr.12.9: no product write-log import across releases");
-    let first_url = first.database_url().await?;
-    let mut first_client = connect(&first_url).await?;
-    let stored = async {
-        super::bind_fixture_principal(&mut first_client).await?;
-        seed_acme_orders(&mut first_client).await?;
-        request_element(&first).await
-    }
-    .await;
-    let stored = stored?;
-    ensure!(
-        stored[0]["value"]["receipt_id"].is_string(),
-        "the first release did not record the receipt: {stored}"
-    );
-    let claim = sqlx::query(
-        "SELECT request, result FROM platform.write_log \
-             WHERE operation = $1 AND idempotency_key = $2",
-    )
-    .bind(&ACME_OPERATION)
-    .bind(&key)
-    .fetch_one(&mut first_client)
-    .await?;
-    let (request, result): (Vec<u8>, Option<String>) = (claim.get(0), claim.get(1));
-
-    let second = start_with().await?;
-    let second_url = second.database_url().await?;
-    let mut second_client = connect(&second_url).await?;
-    let replayed = async {
-        ensure!(
-            release(&mut second_client).await? != release(&mut first_client).await?,
-            "the second start serves the first release"
-        );
-        sqlx::query(
-            "INSERT INTO platform.write_log (operation, idempotency_key, request, result) \
-                 VALUES ($1, $2, $3, $4)",
-        )
-        .bind(&ACME_OPERATION)
-        .bind(&key)
-        .bind(&request)
-        .bind(&result)
-        .execute(&mut second_client)
-        .await
-        .map(|result| result.rows_affected())?;
-        request_element(&second).await
-    }
-    .await;
-    let replayed = replayed?;
-    ensure!(
-        replayed[0]["value"] == stored[0]["value"],
-        "the replay under the next release did not answer the stored result: {replayed}"
-    );
-    ensure!(
-        sqlx::query("SELECT NOT EXISTS (SELECT 1 FROM receiving.receipt)")
-            .fetch_one(&mut second_client)
-            .await?
-            .get::<bool, _>(0),
-        "the replay under the next release ran again"
-    );
-    Ok(())
-}
-
 /// Serve Receiving and Acme on the local runtime with the record, read and
 /// Acme routes, under a PAT caller that holds `admin`.
 async fn start() -> anyhow::Result<Application> {
     panic!("wamn-eulfr.12.9: no product Receiving data import");
-}
-
-async fn start_with() -> anyhow::Result<Application> {
-    panic!("wamn-eulfr.12.5: no product fixture route override");
 }
 
 async fn record(
@@ -756,40 +644,6 @@ async fn reads(application: &Application) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn histories(
-    _application: &Application,
-    _system_url: &str,
-    _database_url: &str,
-    evidence: &std::path::Path,
-) -> anyhow::Result<()> {
-    let path = evidence.join("receiving-correctness.jsonl");
-    let inputs = panic!("wamn-eulfr.12.10: no product command-history fault fixture");
-    let cancellation = pg_walstream::CancellationToken::new();
-    let _cancel_on_exit = cancellation.clone().drop_guard();
-    tokio::task::spawn_blocking(move || {
-        super::command_histories::assert_histories_with_cancellation(&inputs, &cancellation)
-    })
-    .await
-    .context("join the Receiving command histories")??;
-    let summaries = fs::read_to_string(path)?
-        .lines()
-        .map(serde_json::from_str::<Value>)
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .filter(|row| row["case"] == "summary")
-        .collect::<Vec<_>>();
-    ensure!(
-        summaries.len() == 1
-            && summaries[0]["result"] == "pass"
-            && summaries[0]["generated_cases"] == 16
-            && summaries[0]["boundary_cases"] == 7
-            && summaries[0]["explicit_histories"]
-                .as_u64()
-                .is_some_and(|count| count > 0)
-            && summaries[0]
-                .get("reproduction")
-                .is_none_or(|value| value == false),
-        "Receiving command history results are absent or incomplete"
-    );
-    Ok(())
+async fn histories() -> anyhow::Result<()> {
+    panic!("wamn-eulfr.12.10: no product command-history fault fixture");
 }

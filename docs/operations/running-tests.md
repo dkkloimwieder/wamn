@@ -571,9 +571,6 @@ Each case creates its memory buckets through the production function and needs p
 Use the installed disposable platform's broker and its normal platform NATS inputs.
 The [development loop](development-loop.md) does not provision a private broker.
 
-`production_operator_authentication_and_operation_authorization` keeps `identity.log` and `test.log` in a new `wamn-route-auth-*` directory under `${TMPDIR:-/var/tmp}`.
-A failure prints both paths.
-
 ### Record history retention test
 
 `crates/control/environment/tests/history_retention_live.rs` tests record retention through the owning library.

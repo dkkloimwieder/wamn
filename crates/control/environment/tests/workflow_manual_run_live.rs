@@ -398,7 +398,7 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
 /// application login for guest SQL, the executor for admission and the
 /// queue, and the admitter for the session permission reads.
 async fn targeted_postgres(admin: &mut Client, url: &str) -> Arc<WamnPostgres> {
-    let mut database: String = sqlx::query("SELECT current_database()")
+    let database: String = sqlx::query("SELECT current_database()")
         .fetch_one(&mut *admin)
         .await
         .unwrap()

@@ -1,7 +1,7 @@
 //! The native identity process issues PATs only to verified TLS operators.
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::collections::BTreeSet;
 use std::io::Write as _;
 use std::net::SocketAddr;
@@ -123,7 +123,7 @@ fn operator_ca_configuration_refuses_missing_or_malformed_roots() {
 async fn operator_pat_issuance_over_https() {
     let mut postgres =
         wamn_test_postgres::start(&[]).expect_redacted("start the test PostgreSQL server");
-    let mut database = postgres
+    let database = postgres
         .create_database("wamn_system")
         .await
         .expect_redacted("create the wamn_system test database");
