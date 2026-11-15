@@ -33,7 +33,7 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file in a Cargo package selects that package and its dependents in every workspace that resolves it: normal and build dependents transitively, then one development dependent.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
-- Any `Cargo.toml` or `Cargo.lock` also runs `cargo xtask compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it.
+- Any `Cargo.toml` or `Cargo.lock` also runs `cargo xtask compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it. The command prints the elapsed time for each isolated package check.
 - Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies.
 - A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
 - A path that no package owns and no rule names selects every applicable workspace and suite.
@@ -65,10 +65,33 @@ Other declared needs select contract when they need no database, broker, or clus
 An `input:ID` need selects the named preparation recipe when it has no environment output.
 An `env:NAME` need selects its output recipe and requires a nonempty variable after preparation.
 A `bin:PROGRAM` need requires an executable on `PATH` or at the given absolute path.
+For `bin:kcl`, the selector checks `WAMN_KCL`, the pinned installation under `.tools/kcl/`, then `PATH`.
 The selector runs ignored cases only when it can supply their declared inputs.
 An explicit suite fails when a selected case lacks an input.
 Selected suites own their named cases or filters, so dependency selection runs each case once.
+
+The selector builds all selected test executables together, once per Cargo workspace.
+It combines their package features and target selectors in that build.
+Cargo keeps compiling independent packages after a build failure. The runner still runs the executables that built.
 The selector preserves the features of the Cargo build when it runs its test executable.
+
+After preparation and compilation, independent targets run in parallel, up to the number of available CPU cores.
+Each target keeps one test thread and, when needed, its own PostgreSQL server.
+Native test processes receive `WASH_ABANDONED_CALL_GRACE_SECS=0` before startup, matching the WAMN engine policy.
+Targets with a `resource_lock`, a cluster need, Docker, or an environment input without a preparation owner run alone.
+This keeps shared brokers, fixed ports, and external fixtures serial. Command suites also run alone.
+A cluster selection stays serial and stops at its first failure. Other selections collect every failure.
+
+Each native test target has a ten-minute deadline, including discovery and waiting for its resource lock.
+The whole selection has a thirty-minute deadline, including preparation and compilation.
+Preparation commands, workspace builds, and targets print their elapsed time.
+Build diagnostics remain visible, while Cargo artifact JSON stays out of the run log.
+The runner buffers each target's output and prints it together under its target label.
+Failure reports include that output, including output captured before a timeout.
+A separate supervisor owns each command and adopts its orphaned descendants.
+On timeout or interruption, it ends and reaps all descendants, including separate process groups.
+Guest compiler flag lookups use the selection deadline and the same process cleanup.
+
 The tool builds the guests that selected suites need.
 `cargo xtask repo-lint` also compiles guest targets that disable Cargo tests.
 A passing workspace test result does not establish compilation of those guest targets.
@@ -95,7 +118,7 @@ Prepare generated application inputs through their owning build commands before 
 The tool builds native binaries, application packages, and guests only when selected cases need them.
 The selection file names each preparation step, its output variables, and its commands.
 The runner keeps nonempty overrides and skips their preparation commands.
-The pinned HTTP guest keeps its required release artifact. Other native and standalone guest inputs use debug mode.
+The pinned HTTP guest keeps its required release artifact. Edge tests read that prepared artifact from `WAMN_FLOW_HTTP_COMPONENT`. Other native and standalone guest inputs use debug mode.
 The `jsonata` recipe builds the platform `jsonata-expression` guest directly.
 It builds applications through a private PostgreSQL database.
 Root workspace targets compile without `apps/target/wamn`.
@@ -152,7 +175,7 @@ In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this che
 | `WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM` | `ROOT/apps/target/wamn/platform_fixture_overlay/components/fixture_overlay.wasm` |
 | `WAMN_GENERATED_WIDGET_UPDATE_SCHEMA` | `ROOT/apps/target/wamn/platform_fixture/routes/widget/update.json` |
 | `WAMN_RECEIVING_DEV_BIN` | `TARGET/debug/wamn-ctl` |
-| `WAMN_FLOW_HTTP_COMPONENT` | `TARGET/apps/wasm32-wasip2/release/http_route.wasm` |
+| `WAMN_FLOW_HTTP_COMPONENT` | `TARGET/wasm32-wasip2/release/http_route.wasm` |
 | `WAMN_BLOB_PUT_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/blob_put.wasm` |
 | `WAMN_SYNC_BENCH_DIST` | `TARGET/sync-bench/web` |
 | `WAMN_HOST_LIVE_NATS_SERVER_BIN` | Same input as `WAMN_NATIVE_C_NATS_BIN` |
@@ -172,7 +195,7 @@ Each required command must report at least one executed passing case and exit su
 Missing packages and targets fail selection.
 Exact test names must appear in the compiled binary before that binary runs.
 The same rule applies to the component contract and upstream release commands.
-`cargo xtask require-test-result` streams child output and checks the libtest summary after completion.
+`cargo xtask require-test-result` prints the captured child output and checks the libtest summary after completion.
 It preserves command failures and refuses absent or entirely ignored test results.
 An explicit dry run or a change set with no selected tests remains a planning result.
 It records no permanent result.
@@ -409,8 +432,8 @@ A library can contain cases from several tiers.
 Unit and contract run per issue, live tiers run per merge, and kind runs per epic.
 `platform_apply_kind` runs once at each epic close and once on `main` before a GCP build.
 It never runs for a single fix.
-Both runners use the shared process boundary in `cargo xtask require-test-result`. `WAMN_TEST_SILENCE_SECONDS` sets its silence limit, with a default of 1800 seconds. Output on either stream resets the limit. Silence past the limit stops the child process group, names the stage, and fails the run.
-It gives no expected duration.
+Both runners use the shared process boundary in `cargo xtask require-test-result`. `WAMN_TEST_SILENCE_SECONDS` sets its silence limit, with a default of 120 seconds. Output on either stream resets the limit. Silence past the limit stops the child process group, names the stage, and fails the run.
+The silence limit and the absolute deadline apply independently. Output cannot extend a deadline.
 The epoch interruption case lives in `wamn-engine --test deadline`.
 Pure calendar scheduling decisions live in `wamn-workflow --test schedule_decisions`.
 Admission authority stays in `wamn-run-state --test admission_live`.

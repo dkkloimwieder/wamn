@@ -3,6 +3,7 @@
 use sqlx::{Connection as _, Row as _};
 use std::collections::VecDeque;
 use std::convert::Infallible;
+use std::sync::OnceLock;
 
 use http_body_util::{BodyExt as _, Full};
 use hyper::service::service_fn;
@@ -54,7 +55,7 @@ pub(super) struct Fixture {
     observed: Arc<Mutex<Vec<Observed>>>,
     task: JoinHandle<()>,
     credentials: wamn_connections::connection_credentials::test_util::Fixture,
-    server: wamn_test_postgres::OwnedPostgres,
+    server: &'static tokio::sync::Mutex<wamn_test_postgres::OwnedPostgres>,
     pause: Arc<Mutex<Option<ResponsePause>>>,
     key: tempfile::NamedTempFile,
     token_pause: Arc<Mutex<Option<ResponsePause>>>,
@@ -71,8 +72,20 @@ impl Fixture {
         api: Vec<u16>,
         assertion_verifier: Option<AssertionVerifier>,
     ) -> Self {
-        let mut server = wamn_test_postgres::start(&[]).unwrap();
-        let control = server.create_database("control").await.unwrap();
+        // Keep one server across cases, with separate databases for each fixture.
+        // Its watcher stops and removes it when this test process exits.
+        static SERVER: OnceLock<tokio::sync::Mutex<wamn_test_postgres::OwnedPostgres>> =
+            OnceLock::new();
+        let server = SERVER.get_or_init(|| {
+            // These disposable databases need transaction visibility, without disk flush waits.
+            tokio::sync::Mutex::new(wamn_test_postgres::start(&[("fsync", "off")]).unwrap())
+        });
+        let control = server
+            .lock()
+            .await
+            .create_database(&format!("control_{}", uuid::Uuid::new_v4().simple()))
+            .await
+            .unwrap();
         let control = url::Url::parse(control.url()).unwrap();
         let listener = TcpListener::bind((super::interface_address(), 0))
             .await
@@ -366,6 +379,8 @@ impl Fixture {
         for project in ["project-a", "project-b"] {
             let database = url::Url::parse(
                 self.server
+                    .lock()
+                    .await
                     .create_database(&format!("project_{}", uuid::Uuid::new_v4().simple()))
                     .await
                     .unwrap()

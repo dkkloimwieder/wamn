@@ -1,5 +1,7 @@
 # Suites record id, tier, workspace, package, target, tests, features,
 # prerequisites, inputs (path regexes), execution, and resource_lock.
+# A resource_lock makes its suite exclusive. Cluster needs, Docker, and external
+# environment inputs without a preparation owner also require exclusive execution.
 # Empty package means a tool command. Empty target means package defaults.
 # Rules describe non-Cargo readers. Cargo still discovers package dependencies.
 documentation = ['^docs/', '^\.beads/', '^[^/]+\.md$']

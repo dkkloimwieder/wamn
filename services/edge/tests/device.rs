@@ -54,7 +54,7 @@ async fn pending(samples: &SampleStore, count: usize) -> Vec<Sample> {
 /// frame and the pending samples while the edge runs, and is gone after it
 /// stops.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: input:edge-application, bin:cargo, bin:rustc"]
+#[ignore = "requires: input:edge-application, env:WAMN_FLOW_HTTP_COMPONENT"]
 async fn each_frame_is_one_call_one_intent_and_one_sample() {
     let (_, public) = key("key-one", 1);
     let (directory, digest) = bundle("device", &public);

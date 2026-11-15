@@ -154,10 +154,18 @@ pub async fn packages(root: &Path, manifest: Option<&Path>) -> anyhow::Result<()
         let mut command = Command::new("cargo");
         command
             .current_dir(root)
-            .args(["check", "--locked", "--quiet", "--manifest-path"])
+            .args(["check", "--locked", "--manifest-path"])
             .arg(manifest)
             .args(["-p", package.name.as_ref()]);
-        if let Err(error) = process::execute(&mut command).await {
+        let started = std::time::Instant::now();
+        println!("start isolated package check: {}", package.name);
+        let result = process::execute(&mut command).await;
+        println!(
+            "finished isolated package check ({:.2}s): {}",
+            started.elapsed().as_secs_f64(),
+            package.name
+        );
+        if let Err(error) = result {
             failures.push(format!("{}: {error:#}", package.name));
         }
     }
