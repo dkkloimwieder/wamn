@@ -18,10 +18,9 @@ fn document() -> EnvironmentDocument {
         "integrations":{"erp":{"version":1}},
         "applications": {"app":{"revocation_seconds":5,"hostname": "one.example","connections":{"upstream":"erp"}}}})).unwrap()).unwrap();
     let selection = document.applications.get_mut("app").unwrap();
-    selection.current = wamn_environment::environment::document::DeclaredRelease::Digest(format!(
-        "sha256:{:064x}",
-        1
-    ));
+    selection.current = wamn_environment::environment::document::DeclaredRelease::Digest(
+        format!("sha256:{:064x}", 1).parse().unwrap(),
+    );
     selection.packages.insert("fixture".to_owned());
     document
 }
@@ -384,7 +383,9 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
         .unwrap()
         .get(0);
     // The sha256 of the canonical bytes `{}`, which catalog.releases tests.
-    let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+    let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+        .parse::<wamn_digest::Digest>()
+        .unwrap();
     sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES('acme--dev--one',$1,$2)").bind(&digest).bind(&b"{}".as_slice()).execute(&mut environment).await.map(|result| result.rows_affected()).unwrap();
     sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES('acme--dev--one',$1,$2::text::uuid,2)").bind(&digest).bind(&connection).execute(&mut environment).await.map(|result| result.rows_affected()).unwrap();
     sqlx::raw_sql("COMMIT")
@@ -574,7 +575,7 @@ async fn publish_refuses_wasm_and_native_worlds_without_health(pool: sqlx::PgPoo
     let mut client = connect(database.as_str()).await;
     sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('native-health','native',false); SET ROLE wamn_control").execute(&mut client).await.map(drop).unwrap();
     for code in ["modbus", "native-health"] {
-        let result = sqlx::query("SELECT registry.publish_integration($1,2,$2,$3,$4,$5,'{}')").bind(&code).bind(&format!("sha256:{}", "a".repeat(64))).bind(&json!({"type":"object","properties":{"authority":{"type":"string","immutable":true}},"required":["authority"]})).bind(&"wamn:modbus/client@1.0.0").bind(&vec!["wamn:modbus/read@1.0.0".to_owned()]).fetch_one(&mut client).await;
+        let result = sqlx::query("SELECT registry.publish_integration($1,2,$2,$3,$4,$5,'{}')").bind(&code).bind(&(format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap()).bind(&json!({"type":"object","properties":{"authority":{"type":"string","immutable":true}},"required":["authority"]})).bind(&"wamn:modbus/client@1.0.0").bind(&vec!["wamn:modbus/read@1.0.0".to_owned()]).fetch_one(&mut client).await;
         assert!(result.is_err());
     }
 }
@@ -828,7 +829,9 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state(po
     .map(drop)
     .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE; ALTER DATABASE {} OWNER TO wamn_db_owner; ALTER SCHEMA catalog OWNER TO wamn_db_owner; GRANT USAGE ON SCHEMA platform TO wamn_db_owner; GRANT SELECT ON ALL TABLES IN SCHEMA catalog, platform TO wamn_db_owner", postgres_protocol::escape::escape_identifier(database.path().trim_start_matches('/'))))).execute(&mut client).await.map(drop).unwrap();
-    let fingerprint = format!("sha256:{}", "a".repeat(64));
+    let fingerprint = (format!("sha256:{}", "a".repeat(64)))
+        .parse::<wamn_digest::Digest>()
+        .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "BEGIN; {}",

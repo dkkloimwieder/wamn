@@ -21,7 +21,7 @@ use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
 use wamn_compiler::build_record::{self, BuildRecord};
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
-use wamn_package_artifact::{Repository, ensure_digest, ensure_tag, registry_auth};
+use wamn_package_artifact::{Repository, ensure_tag, registry_auth};
 
 use crate::package_artifact::PackageRegistry;
 
@@ -46,7 +46,7 @@ pub struct WebManifest {
     /// `<package id>@<package version>` from the package build record.
     pub package: String,
     /// `outputs.manifest`, the digest of the compiled canonical `wamn.json`.
-    pub contract_digest: String,
+    pub contract_digest: wamn_digest::Digest,
 }
 
 impl WebManifest {
@@ -143,7 +143,7 @@ pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtif
 #[derive(Debug)]
 pub struct PackedWebArtifact {
     pub tag: String,
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
     pub manifest: Vec<u8>,
     pub tar: Vec<u8>,
 }
@@ -180,7 +180,7 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
         "web.json has no client_package"
     );
     ensure!(!metadata.version.is_empty(), "web.json has no version");
-    ensure_digest(&metadata.contract_digest)?;
+
     let (package, version) = metadata
         .package
         .split_once('@')
@@ -273,7 +273,7 @@ pub enum WebPushDisposition {
 #[derive(Debug)]
 pub struct PushedWebArtifact {
     pub tag: String,
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
     pub disposition: WebPushDisposition,
 }
 
@@ -319,7 +319,7 @@ pub async fn push_archive(
             None => {
                 for bytes in [&packed.tar[..], EMPTY_CONFIG] {
                     repository.client
-                        .push_blob(&repository.reference, bytes.to_vec(), &bytes_sha256(bytes))
+                        .push_blob(&repository.reference, bytes.to_vec(), &bytes_sha256(bytes).to_string())
                         .await
                         .with_context(|| format!("push a blob of web artifact {}", repository.reference))?;
                 }
@@ -333,10 +333,10 @@ pub async fn push_archive(
                     .with_context(|| format!("push web artifact {}", repository.reference))?;
                 let pulled = repository.manifest().await?;
                 ensure!(
-                    pulled.as_ref().map(|(_, digest)| digest.as_str()) == Some(packed.digest.as_str()),
+                    pulled.as_ref().map(|(_, digest)| *digest) == Some(packed.digest),
                     "pushed web artifact {} reads back as {}, not {}",
                     repository.reference,
-                    pulled.as_ref().map_or("nothing", |(_, digest)| digest.as_str()),
+                    pulled.as_ref().map_or_else(|| "nothing".to_owned(), |(_, digest)| digest.to_string()),
                     packed.digest
                 );
                 WebPushDisposition::Pushed
@@ -344,7 +344,7 @@ pub async fn push_archive(
         };
         Ok(PushedWebArtifact {
             tag: packed.tag.clone(),
-            digest: packed.digest.clone(),
+            digest: packed.digest,
             disposition,
         })
     }.await.map_err(|source| WebArtifactError {
@@ -361,7 +361,7 @@ pub async fn push_archive(
 /// Refuses an absent artifact, a digest mismatch, or invalid web metadata.
 pub async fn pull_web_artifact(
     registry: &PackageRegistry,
-    digest: &str,
+    digest: &wamn_digest::Digest,
 ) -> Result<WebManifest, WebArtifactError> {
     pull_web(registry, digest)
         .await
@@ -370,7 +370,7 @@ pub async fn pull_web_artifact(
 
 async fn pull_web(
     registry: &PackageRegistry,
-    digest: &str,
+    digest: &wamn_digest::Digest,
 ) -> Result<(WebManifest, Vec<u8>), WebArtifactError> {
     async {
         let tar = pull_archive(registry, digest, WEB_ARTIFACT_TYPE).await?;
@@ -386,17 +386,16 @@ async fn pull_web(
 
 async fn pull_archive(
     registry: &PackageRegistry,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     artifact_type: &str,
 ) -> anyhow::Result<Vec<u8>> {
-    ensure_digest(digest)?;
     let repository = Repository::open(registry, digest)?;
     let (bytes, _) = repository
         .manifest()
         .await?
         .with_context(|| format!("web artifact {digest} does not exist"))?;
     ensure!(
-        bytes_sha256(&bytes) == digest,
+        bytes_sha256(&bytes) == *digest,
         "web artifact manifest does not hash to {digest}"
     );
     let manifest: OciImageManifest = serde_json::from_slice(&bytes)?;
@@ -417,7 +416,7 @@ async fn pull_archive(
     )
     .await?;
     ensure!(
-        bytes_sha256(&tar) == layer.digest,
+        bytes_sha256(&tar) == layer.digest.parse::<wamn_digest::Digest>()?,
         "web artifact {digest} layer does not hash to {}",
         layer.digest
     );
@@ -439,7 +438,7 @@ pub struct UploadedClient {
 /// Refuses invalid artifacts, registry failures, or conflicting bucket objects.
 pub async fn upload_web_artifact(
     registry: &PackageRegistry,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     bucket: &str,
 ) -> Result<UploadedClient, WebArtifactError> {
     async {
@@ -463,14 +462,14 @@ pub async fn upload_web_artifact(
 
 pub async fn upload_web_to_store(
     registry: &PackageRegistry,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     prefix: &str,
     store: &dyn ObjectStore,
 ) -> anyhow::Result<(String, String, bool)> {
     let (metadata, tar) = pull_web(registry, digest).await?;
     let (package, _) = metadata.package.split_once('@').expect("verified web.json");
     ensure_tag(package)?;
-    let root = [prefix.trim_matches('/'), "clients", package, &digest[7..]]
+    let root = [prefix.trim_matches('/'), "clients", package, &digest.hex()]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
@@ -705,14 +704,22 @@ fs.copyFileSync('index.html', dist + '/index.html');
         let second = pack_web_artifact(&output).unwrap();
 
         assert_ne!(
-            wamn_catalog::ArtifactHash::parse(first.digest.to_string()).unwrap(),
-            wamn_catalog::ArtifactHash::parse(second.digest.to_string()).unwrap()
+            (first.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            (second.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap()
         );
         let metadata = read_web_manifest(&second.tar).unwrap();
 
         assert_eq!(
-            wamn_catalog::ArtifactHash::parse(metadata.contract_digest.to_string()).unwrap(),
-            wamn_catalog::ArtifactHash::parse(record.outputs.manifest.to_string()).unwrap()
+            (metadata.contract_digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            (record.outputs.manifest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap()
         );
 
         assert_eq!(
@@ -870,8 +877,12 @@ fs.copyFileSync('index.html', dist + '/index.html');
             .unwrap();
         assert_eq!(result.disposition, WebPushDisposition::AlreadyPresent);
         assert_eq!(
-            wamn_catalog::ArtifactHash::parse(result.digest.to_string()).unwrap(),
-            wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap()
+            (result.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            (packed.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap()
         );
         assert_eq!(server.requests(), 1);
     }
@@ -884,8 +895,12 @@ fs.copyFileSync('index.html', dist + '/index.html');
         fs::write(scratch.path().join("dist/index.html"), "other").unwrap();
         let changed = pack_web_artifact(scratch.path()).unwrap();
         assert_ne!(
-            wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap(),
-            wamn_catalog::ArtifactHash::parse(changed.digest.to_string()).unwrap()
+            (packed.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            (changed.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap()
         );
         let server = Server::start(vec![(200, packed.manifest.clone())]).await;
         let _error = push_web_artifact(&changed, &fixture_registry(&scratch, &server))

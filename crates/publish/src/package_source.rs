@@ -13,13 +13,13 @@ use wamn_catalog::package_schema::{MigrationSource, PackageDirectory};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageRoot {
     pub path: PathBuf,
-    pub artifact_digest: Option<String>,
+    pub artifact_digest: Option<wamn_digest::Digest>,
 }
 
 /// Read the exact package bytes of `root`, with the artifact digest it carries.
 pub fn read_package_root(root: &PackageRoot) -> anyhow::Result<PackageDirectory> {
     Ok(PackageDirectory {
-        artifact_digest: root.artifact_digest.clone(),
+        artifact_digest: root.artifact_digest,
         ..read_package_directory(&root.path)?
     })
 }
@@ -47,7 +47,7 @@ pub fn migration_root(root: &Path) -> PathBuf {
 fn read_migrations(
     root: &Path,
     manifest_bytes: Vec<u8>,
-    artifact_digest: Option<String>,
+    artifact_digest: Option<wamn_digest::Digest>,
 ) -> anyhow::Result<PackageDirectory> {
     let mut migrations = Vec::new();
     for relative in ["migrations", "history"] {

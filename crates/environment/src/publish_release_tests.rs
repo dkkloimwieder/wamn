@@ -26,7 +26,9 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
         }
         let mut component = closure_component("application", None);
         component.target.package_id = package.to_owned();
-        component.component_digest = format!("sha256:{}", digest_byte.to_string().repeat(64));
+        component.component_digest = format!("sha256:{}", digest_byte.to_string().repeat(64))
+            .parse()
+            .unwrap();
         let operation = format!("{package}:job/run@1.0.0");
         let mut export = component.operations.remove("run").unwrap();
         for (ports, name) in [
@@ -80,7 +82,7 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
         row: None,
         project: Some(ProjectState::default()),
         release: Some(ReleaseFacts {
-            digest: published.digest.to_string(),
+            digest: published.digest,
             manifest: published.manifest,
             required_connections: BTreeSet::new(),
         }),

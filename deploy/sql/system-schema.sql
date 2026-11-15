@@ -503,7 +503,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- services use headlessly. No token material is stored.
 -- `token_prefix` is the non-secret lookup half (hex of the token's random
 -- lookup bytes, UNIQUE so verification is a single index probe);
--- `token_hash` is the hex SHA-256 of the WHOLE token string, which is
+-- `token_hash` is the canonical SHA-256 digest of the WHOLE token string, which is
 -- high-entropy random material, so a plain digest is the correct rest form.
 -- Expiry is mandatory (no immortal tokens) and revocation is a one-way stamp.
 -- The principal FK is deliberately RESTRICT, not CASCADE: a token row is audit
@@ -530,7 +530,7 @@ CREATE TABLE identity.pats (
     CONSTRAINT pats_token_prefix_check
         CHECK (token_prefix ~ '^[0-9a-f]{16}$'),
     CONSTRAINT pats_token_hash_check
-        CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+        CHECK (token_hash ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT pats_label_check
         CHECK (btrim(label) <> '' AND char_length(label) <= 200),
     CONSTRAINT pats_expiry_check
@@ -567,7 +567,7 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE TABLE identity.password_tokens (
-    token_hash bytea PRIMARY KEY CHECK (octet_length(token_hash) = 32),
+    token_hash text PRIMARY KEY CHECK (token_hash ~ '^sha256:[0-9a-f]{64}$'),
     principal_id uuid NOT NULL,
     principal_type text NOT NULL DEFAULT 'user' CHECK (principal_type = 'user'),
     purpose text NOT NULL CHECK (purpose IN ('invitation', 'reset')),
@@ -616,7 +616,7 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE TABLE identity.renewal_credentials (
-    token_hash bytea PRIMARY KEY CHECK (octet_length(token_hash) = 32),
+    token_hash text PRIMARY KEY CHECK (token_hash ~ '^sha256:[0-9a-f]{64}$'),
     login_id uuid NOT NULL REFERENCES identity.password_logins (id) ON DELETE CASCADE,
     consumed_at timestamptz,
     created_at timestamptz NOT NULL,

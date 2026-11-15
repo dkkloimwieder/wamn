@@ -29,7 +29,7 @@ use serde_json::Value;
 /// Closed event operation used by an admitted Emit selector.
 pub type WiringEventOperation = wamn_event_wire::Op;
 
-use crate::{CatalogIdentityError, DefinitionHash, validate_text};
+use crate::{CatalogIdentityError, validate_text};
 
 /// One authored invocation through a package-manifest base dependency alias.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,9 +248,8 @@ impl WiringDocument {
     }
 
     /// The definition hash over this document's RFC 8785 canonical JSON.
-    pub fn wiring_hash(&self) -> DefinitionHash {
-        DefinitionHash::parse(wamn_digest::canonical_json_sha256(&self.as_value()))
-            .expect("the shared canonicalizer emits a canonical sha256 digest")
+    pub fn wiring_hash(&self) -> wamn_digest::Digest {
+        wamn_digest::canonical_json_sha256(&self.as_value())
     }
 
     fn as_value(&self) -> Value {

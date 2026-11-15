@@ -79,11 +79,11 @@ pub struct ComponentArtifactConfig {
     /// Exact config layout version.
     pub format_version: String,
     /// SHA-256 identity of the component layer bytes.
-    pub component_digest: String,
+    pub component_digest: wamn_digest::Digest,
     /// Sorted, deduplicated imports extracted from the component bytes.
     pub imports: Vec<String>,
     /// RFC 8785 SHA-256 identity of `imports`.
-    pub imports_fingerprint: String,
+    pub imports_fingerprint: wamn_digest::Digest,
 }
 
 /// Canonical OCI config bytes for an admitted component.
@@ -94,9 +94,9 @@ pub struct ComponentArtifactConfig {
 pub fn component_artifact_config_bytes(component: &AdmittedComponent) -> Vec<u8> {
     let config = ComponentArtifactConfig {
         format_version: COMPONENT_CONFIG_FORMAT_VERSION.to_owned(),
-        component_digest: component.component_digest.clone(),
+        component_digest: component.component_digest,
         imports: component.imports.clone(),
-        imports_fingerprint: component.imports_fingerprint.clone(),
+        imports_fingerprint: component.imports_fingerprint,
     };
     let value = serde_json::to_value(config).expect("a component artifact config serializes");
     wamn_digest::canonical_json_bytes(&value)
@@ -139,7 +139,9 @@ mod tests {
                     },
                 )]),
             },
-            format!("sha256:{}", "a".repeat(64)),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             ["wasi:io/streams@0.2.3".to_owned()],
             Vec::new(),
         )

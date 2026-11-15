@@ -66,10 +66,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             std::fs::write(
                 components.path().join(format!(
                     "{}.wasm",
-                    component
-                        .declaration
-                        .component_digest
-                        .trim_start_matches("sha256:")
+                    component.declaration.component_digest.hex()
                 )),
                 &bytes,
             )?;
@@ -134,7 +131,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 "--cache-to",
                 &format!("type=registry,ref={cache},mode=max"),
                 "--build-arg",
-                &format!("WAMN_CHECKOUT_KEY={}", &key[7..23]),
+                &format!("WAMN_CHECKOUT_KEY={}", &key.hex()[..16]),
                 "--build-context",
                 &format!("components={}", components.path().display()),
             ]);
@@ -200,10 +197,9 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             )
             .await?;
             std::fs::write(
-                components.path().join(format!(
-                    "{}.wasm",
-                    descriptor.component_digest.trim_start_matches("sha256:")
-                )),
+                components
+                    .path()
+                    .join(format!("{}.wasm", descriptor.component_digest.hex())),
                 bytes,
             )?;
             palette_pins.insert(name, serde_json::json!({"artifact": format!("{repository}@{digest}"), "descriptor": descriptor}));
@@ -299,7 +295,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         values["platform"][if name == "edge-web" { "edge" } else { name }]["image"] =
             reference.into();
     }
-    values["platformUi"] = ui_digest.unwrap_or_default().into();
+    values["platformUi"] = serde_json::to_value(ui_digest)?;
     std::fs::write(path, serde_yaml::to_string(&values)?)?;
     wamn_platform_install::platform::artifact_plan::prepare_payload(&root, &stamped)?;
     println!("{}", stamped.display());
@@ -349,7 +345,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn inspect(root: &std::path::Path, reference: &str) -> anyhow::Result<String> {
+async fn inspect(root: &std::path::Path, reference: &str) -> anyhow::Result<wamn_digest::Digest> {
     let json = process::output(
         root,
         "docker",
@@ -367,16 +363,7 @@ async fn inspect(root: &std::path::Path, reference: &str) -> anyhow::Result<Stri
     let digest = value["digest"]
         .as_str()
         .context("registry returned no digest")?;
-    ensure!(
-        digest
-            .strip_prefix("sha256:")
-            .is_some_and(|hex| hex.len() == 64
-                && hex
-                    .bytes()
-                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())),
-        "registry returned invalid digest for {reference}"
-    );
-    Ok(digest.to_owned())
+    Ok(digest.parse()?)
 }
 
 fn loopback(registry: &str) -> bool {

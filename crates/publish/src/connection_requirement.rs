@@ -134,10 +134,10 @@ pub async fn prepare_release(
                         wamn_compiler::manifest::ConnectionMode::Write => "write",
                     };
                     sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING")
-                    .bind(project_env_key).bind(&component.descriptor.component_digest).bind(owner)
+                    .bind(project_env_key).bind(component.descriptor.component_digest).bind(owner)
                     .bind(alias).bind(&interface).bind(mode).execute(&mut **tx).await?;
                     let exact: bool = sqlx::query("SELECT EXISTS(SELECT FROM catalog.connection_requirement WHERE project_env_key=$1 AND component_digest=$2 AND package_id=$3 AND name=$4 AND interface=$5 AND mode=$6)")
-                    .bind(project_env_key).bind(&component.descriptor.component_digest).bind(owner)
+                    .bind(project_env_key).bind(component.descriptor.component_digest).bind(owner)
                     .bind(alias).bind(&interface).bind(mode).fetch_one(&mut **tx).await?.get(0);
                     ensure!(
                         exact,
@@ -186,13 +186,13 @@ pub async fn write(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     manifest: &PackageManifest,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     connections: &[String],
     bytes: &[u8],
 ) -> anyhow::Result<u64> {
     let mut written = 0;
     ensure!(
-        wamn_digest::bytes_sha256(bytes) == digest,
+        wamn_digest::bytes_sha256(bytes) == *digest,
         "component differs from its admitted digest {digest}"
     );
     let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?

@@ -13,7 +13,7 @@ pub async fn schema(
     platform: &Platform,
     triple: &wamn_registry::Triple,
     application: &str,
-    release: Option<&str>,
+    release: Option<&wamn_digest::Digest>,
     apply: bool,
 
     credentials: Option<&sql::reset::Credentials>,
@@ -30,7 +30,7 @@ pub async fn schema(
     if apply {
         let release = diff
             .release
-            .as_deref()
+            .as_ref()
             .context("schema apply needs a published release")?;
         let credentials = credentials.context("schema apply requires its owning credentials")?;
         if diff.mode == super::document::SchemaMode::Reset {
@@ -73,7 +73,7 @@ pub struct Request<'a> {
     pub project: &'a str,
     pub env: &'a str,
     pub application: Option<&'a str>,
-    pub release: Option<&'a str>,
+    pub release: Option<&'a wamn_digest::Digest>,
 }
 
 /// Execute one operation with platform configuration and credentials supplied by control.

@@ -249,7 +249,7 @@ mod tests {
         .unwrap();
         let reference = format!("{address}/components:fixture").parse().unwrap();
         let descriptor = OciDescriptor {
-            digest: bytes_sha256(b"component"),
+            digest: bytes_sha256(b"component").to_string(),
             ..OciDescriptor::default()
         };
         let result = blob(
@@ -274,7 +274,7 @@ mod tests {
             let server = Server::start(responses).await;
             let repository = repository(&server);
             let descriptor = OciDescriptor {
-                digest: bytes_sha256(&body),
+                digest: bytes_sha256(&body).to_string(),
                 ..OciDescriptor::default()
             };
             let result = blob(
@@ -290,7 +290,7 @@ mod tests {
         let server = Server::start(vec![(200, b"wrong".to_vec())]).await;
         let repository = repository(&server);
         let descriptor = OciDescriptor {
-            digest: bytes_sha256(b"expected"),
+            digest: bytes_sha256(b"expected").to_string(),
             ..OciDescriptor::default()
         };
         assert!(matches!(

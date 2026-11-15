@@ -180,7 +180,7 @@ fn component(
     artifact(
         objects,
         "components",
-        &descriptor.component_digest[7..],
+        &descriptor.component_digest.hex(),
         serde_json::to_vec(&image)?,
         [bytes, config],
     );
@@ -290,7 +290,7 @@ fn release(
     artifact(
         objects,
         "releases",
-        &manifest.digest().as_str()[7..],
+        &manifest.digest().hex(),
         serde_json::to_vec(&image)?,
         [layer.data.to_vec(), config.data.to_vec()],
     );
@@ -306,9 +306,8 @@ fn document(a: &ServingManifest, b: &ServingManifest) -> anyhow::Result<Environm
     }}))?)?;
     for (name, manifest) in [("a", a), ("b", b)] {
         let application = document.applications.get_mut(name).unwrap();
-        application.current = wamn_environment::environment::document::DeclaredRelease::Digest(
-            manifest.digest().to_string(),
-        );
+        application.current =
+            wamn_environment::environment::document::DeclaredRelease::Digest(manifest.digest());
         application.packages = manifest
             .release
             .packages
@@ -530,7 +529,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             &platform,
             &document,
             "b",
-            b.digest().as_str(),
+            &b.digest(),
             &b,
             &[b_package.clone(), base_package.clone()],
             &wamn_control_provision::PlatformComponent::Provisioning
@@ -546,8 +545,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         wamn_environment::environment::document::DeclaredRelease::None,
     );
     let (candidate_release, candidates) =
-        sql::schema::release_candidates(&platform, &document, "b", Some(b.digest().as_str()))
-            .await?;
+        sql::schema::release_candidates(&platform, &document, "b", Some(&b.digest())).await?;
     let state = sql::schema::state(&platform, &document).await?;
     let diff =
         sql::schema::plan(&document, "b", Some(candidate_release), &candidates, &state).await?;
@@ -558,14 +556,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     );
     // Published SQL remains executable after its source directory disappears.
     std::fs::remove_dir_all(scratch.path().join("b"))?;
-    sql::schema::apply(
-        &platform,
-        &document,
-        "b",
-        b.digest().as_str(),
-        &migration_input,
-    )
-    .await?;
+    sql::schema::apply(&platform, &document, "b", &b.digest(), &migration_input).await?;
     let installed = sql::schema::state(&platform, &document).await?;
     for (id, package) in &diff.packages {
         assert_eq!(
@@ -672,7 +663,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &platform,
         &document,
         "a",
-        old_a.digest().as_str(),
+        &old_a.digest(),
         &old_a,
         &old_packages,
         &wamn_control_provision::PlatformComponent::Provisioning
@@ -684,7 +675,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &platform,
         &document,
         "b",
-        b.digest().as_str(),
+        &b.digest(),
         &b,
         &[b_package, base_package.clone()],
         &wamn_control_provision::PlatformComponent::Provisioning
@@ -761,9 +752,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     )?;
     let b_permissions = permissions(&mut observer, b_user.id().to_string().as_str()).await?;
     document.applications.get_mut("a").unwrap().current =
-        wamn_environment::environment::document::DeclaredRelease::Digest(
-            new_a.digest().as_str().into(),
-        );
+        wamn_environment::environment::document::DeclaredRelease::Digest(new_a.digest());
     document
         .applications
         .get_mut("a")
@@ -792,7 +781,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &platform,
         &document,
         "a",
-        new_a.digest().as_str(),
+        &new_a.digest(),
         &new_a,
         &candidate_packages,
         &wamn_control_provision::PlatformComponent::Provisioning
@@ -804,7 +793,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &platform,
         &document,
         "a",
-        new_a.digest().as_str(),
+        &new_a.digest(),
         &new_a,
         &candidate_packages,
         &wamn_control_provision::PlatformComponent::Provisioning
@@ -832,14 +821,12 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     for release in [&old_a, &new_a] {
         for component in &release.components {
             for connection in &component.descriptor.connections {
-                assert!(sqlx::query("SELECT 1 FROM catalog.connection_binding WHERE project_env_key=$1 AND manifest_digest=$2 AND component_digest=$3 AND package_id=$4 AND name=$5").bind(&PROJECT_ENV_KEY).bind(&release.digest().as_str()).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(connection.store_alias.name().expect("fixture connection has a literal alias")).fetch_optional(&mut observer).await?.is_some());
+                assert!(sqlx::query("SELECT 1 FROM catalog.connection_binding WHERE project_env_key=$1 AND manifest_digest=$2 AND component_digest=$3 AND package_id=$4 AND name=$5").bind(&PROJECT_ENV_KEY).bind(&release.digest()).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(connection.store_alias.name().expect("fixture connection has a literal alias")).fetch_optional(&mut observer).await?.is_some());
             }
         }
     }
     document.applications.get_mut("a").unwrap().current =
-        wamn_environment::environment::document::DeclaredRelease::Digest(
-            failed_release.digest().as_str().into(),
-        );
+        wamn_environment::environment::document::DeclaredRelease::Digest(failed_release.digest());
     document
         .applications
         .get_mut("a")
@@ -892,7 +879,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             &platform,
             &document,
             "a",
-            failed_release.digest().as_str(),
+            &failed_release.digest(),
             &failed_release,
             &failed_packages,
             &wamn_control_provision::PlatformComponent::Provisioning
@@ -923,12 +910,12 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     assert_eq!(
         resolved
             .iter()
-            .map(|component| component.component_digest.as_str())
+            .map(|component| &component.component_digest)
             .collect::<BTreeSet<_>>(),
         old_a
             .components
             .iter()
-            .map(|component| component.descriptor.component_digest.as_str())
+            .map(|component| &component.descriptor.component_digest)
             .collect(),
     );
     assert!(
@@ -936,7 +923,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             "SELECT 1 FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2"
         )
         .bind(&PROJECT_ENV_KEY)
-        .bind(&failed_release.digest().as_str())
+        .bind(&failed_release.digest())
         .fetch_optional(&mut observer)
         .await?
         .is_some()
@@ -945,29 +932,23 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     assert!(caller.contains("wamn-integration:data/get"));
     assert!(caller.contains("wamn-integration:data/update"));
     let connection = &old_a.components.first().unwrap().descriptor;
-    assert!(sqlx::query("SELECT 1 FROM catalog.connection_binding WHERE manifest_digest=$1 AND component_digest=$2 AND name='upstream'").bind(&old_a.digest().as_str()).bind(&connection.component_digest).fetch_optional(&mut observer).await?.is_some());
+    assert!(sqlx::query("SELECT 1 FROM catalog.connection_binding WHERE manifest_digest=$1 AND component_digest=$2 AND name='upstream'").bind(&old_a.digest()).bind(&connection.component_digest).fetch_optional(&mut observer).await?.is_some());
     // Retention uses the production owner role and retains live releases and unfinished runs.
     sqlx::raw_sql("SET ROLE wamn_db_owner")
         .execute(&mut project)
         .await
         .map(drop)?;
     let releases = BTreeMap::from([
-        (
-            old_a.digest().to_string(),
-            (old_a.clone(), old_packages.to_vec()),
-        ),
-        (
-            new_a.digest().to_string(),
-            (new_a.clone(), candidate_packages.to_vec()),
-        ),
+        (old_a.digest(), (old_a.clone(), old_packages.to_vec())),
+        (new_a.digest(), (new_a.clone(), candidate_packages.to_vec())),
     ]);
     let mut tx = project.begin().await?;
     sqlx::query(wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
         .bind(&PROJECT_ENV_KEY)
         .fetch_one(&mut *tx)
         .await?;
-    let retained: BTreeSet<String> = sqlx::query_scalar("SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest<>$2")
-        .bind(PROJECT_ENV_KEY).bind(old_a.digest().as_str()).fetch_all(&mut *tx).await?.into_iter().collect();
+    let retained: BTreeSet<wamn_digest::Digest> = sqlx::query_scalar("SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest<>$2")
+        .bind(PROJECT_ENV_KEY).bind(&old_a.digest()).fetch_all(&mut *tx).await?.into_iter().collect();
     let retired = wamn_environment::environment::retention::prune_releases(
         &mut tx,
         PROJECT_ENV_KEY,
@@ -989,12 +970,12 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     );
     tx.rollback().await?;
     assert!(
-        sqlx::query("SELECT 1 FROM catalog.connection_binding WHERE project_env_key=$1 AND manifest_digest=$2").bind(&PROJECT_ENV_KEY).bind(&old_a.digest().as_str()).fetch_optional(&mut observer)
+        sqlx::query("SELECT 1 FROM catalog.connection_binding WHERE project_env_key=$1 AND manifest_digest=$2").bind(&PROJECT_ENV_KEY).bind(&old_a.digest()).fetch_optional(&mut observer)
             .await?
             .is_some()
     );
-    sqlx::query("INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, manifest_digest, wiring_id, wiring_version, wiring_hash, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) VALUES ($1, 'old-work', 'a', 'dev', 'dispatched', $2, 'work', 1, $2, 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}')").bind(&PROJECT_ENV_KEY).bind(&old_a.digest().as_str()).execute(&mut observer).await.map(|result| result.rows_affected())?;
-    sqlx::query("INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, manifest_digest, wiring_id, wiring_version, wiring_hash, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) VALUES ($1, 'b-work', 'b', 'dev', 'dispatched', $2, 'work', 1, $2, 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}')").bind(&PROJECT_ENV_KEY).bind(&b.digest().as_str()).execute(&mut observer).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, manifest_digest, wiring_id, wiring_version, wiring_hash, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) VALUES ($1, 'old-work', 'a', 'dev', 'dispatched', $2, 'work', 1, $2, 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}')").bind(&PROJECT_ENV_KEY).bind(&old_a.digest()).execute(&mut observer).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, manifest_digest, wiring_id, wiring_version, wiring_hash, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) VALUES ($1, 'b-work', 'b', 'dev', 'dispatched', $2, 'work', 1, $2, 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}')").bind(&PROJECT_ENV_KEY).bind(&b.digest()).execute(&mut observer).await.map(|result| result.rows_affected())?;
     for (live, pinned) in [(true, true), (false, true), (false, false)] {
         if !pinned {
             sqlx::query("UPDATE wamn_run.runs SET status='completed' WHERE run_id='old-work'")
@@ -1032,10 +1013,10 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             )
             .await?;
         }
-        let mut retained: BTreeSet<String> = sqlx::query_scalar("SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest<>$2")
-            .bind(PROJECT_ENV_KEY).bind(old_a.digest().as_str()).fetch_all(&mut *tx).await?.into_iter().collect();
+        let mut retained: BTreeSet<wamn_digest::Digest> = sqlx::query_scalar("SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest<>$2")
+            .bind(PROJECT_ENV_KEY).bind(&old_a.digest()).fetch_all(&mut *tx).await?.into_iter().collect();
         if live {
-            retained.insert(old_a.digest().to_string());
+            retained.insert(old_a.digest());
         }
         let retired = wamn_environment::environment::retention::prune_releases(
             &mut tx,
@@ -1061,9 +1042,9 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             "dev",
             Some(&["a".to_owned()]),
             &BTreeMap::from([
-                (("a".into(), new_a.digest().to_string()), 1),
+                (("a".into(), new_a.digest()), 1),
                 // Another application loading the old digest cannot serve a's pinned run.
-                (("b".into(), old_a.digest().to_string()), 1),
+                (("b".into(), old_a.digest()), 1),
             ]),
         )
         .await?;
@@ -1097,9 +1078,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     }
     // A rollback recreates A0's retired bindings and permissions before code can start.
     document.applications.get_mut("a").unwrap().current =
-        wamn_environment::environment::document::DeclaredRelease::Digest(
-            old_a.digest().to_string(),
-        );
+        wamn_environment::environment::document::DeclaredRelease::Digest(old_a.digest());
     document
         .applications
         .get_mut("a")
@@ -1116,7 +1095,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &platform,
         &document,
         "a",
-        old_a.digest().as_str(),
+        &old_a.digest(),
         &old_a,
         &old_packages,
         &wamn_control_provision::PlatformComponent::Provisioning
@@ -1125,7 +1104,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     )
     .await?;
     assert!(
-        sqlx::query("SELECT 1 FROM catalog.connection_binding WHERE project_env_key=$1 AND manifest_digest=$2").bind(&PROJECT_ENV_KEY).bind(&old_a.digest().as_str()).fetch_optional(&mut observer)
+        sqlx::query("SELECT 1 FROM catalog.connection_binding WHERE project_env_key=$1 AND manifest_digest=$2").bind(&PROJECT_ENV_KEY).bind(&old_a.digest()).fetch_optional(&mut observer)
             .await?
             .is_some()
     );

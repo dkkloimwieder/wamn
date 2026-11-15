@@ -52,7 +52,7 @@ const BOB: &str = "22222222-2222-2222-2222-222222222222";
 struct Fixture {
     project: Client,
     project_url: String,
-    digest: String,
+    digest: wamn_digest::Digest,
     _database: url::Url,
 }
 
@@ -85,16 +85,20 @@ fn release() -> ServingManifest {
                 parameters: Vec::new(),
             },
         )]),
-        component_digest: format!("sha256:{}", "1".repeat(64)),
+        component_digest: (format!("sha256:{}", "1".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap(),
         imports: Vec::new(),
-        imports_fingerprint: format!("sha256:{}", "6".repeat(64)),
+        imports_fingerprint: (format!("sha256:{}", "6".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap(),
         effects: Vec::new(),
     };
     ServingManifest::new(
         ServingRelease {
             packages: BTreeSet::from([PackageCoordinate::new(APPLICATION, "1.0.0").unwrap()]),
         },
-        BTreeSet::from([ServingComponent::project(&fact, Vec::new()).unwrap()]),
+        BTreeSet::from([ServingComponent::project(&fact, Vec::new())]),
         BTreeSet::new(),
         BTreeMap::new(),
     )
@@ -133,7 +137,7 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
         .bind("770df186-ac15-579e-b46b-c297cae2011b").execute(&mut project).await.unwrap();
     let manifest = release();
     let bytes = manifest.canonical_bytes();
-    let digest = manifest.digest().as_str().to_owned();
+    let digest = manifest.digest();
     sqlx::query(
         "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",

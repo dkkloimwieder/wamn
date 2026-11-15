@@ -12,8 +12,8 @@ use wamn_sql::WamnPostgres;
 pub struct ResolvedActiveWiring {
     pub version: u32,
     /// The release the wiring resolved under, as its manifest digest.
-    pub manifest_digest: String,
-    pub graph_hash: Arc<str>,
+    pub manifest_digest: wamn_digest::Digest,
+    pub graph_hash: wamn_digest::Digest,
     pub package_version: String,
     pub document: WiringDocument,
     /// Complete admitted facts selected by each exact wiring node.
@@ -34,10 +34,10 @@ pub struct WorkflowRunKey<'a> {
     pub workflow_id: &'a str,
     pub version: u32,
     /// The release the run pins.
-    pub manifest_digest: &'a str,
-    pub wiring_hash: &'a str,
+    pub manifest_digest: &'a wamn_digest::Digest,
+    pub wiring_hash: &'a wamn_digest::Digest,
     /// The component digest admission froze for each node.
-    pub node_digests: &'a BTreeMap<String, String>,
+    pub node_digests: &'a BTreeMap<String, wamn_digest::Digest>,
 }
 
 /// Stable predicate that refused one workflow resolution.
@@ -99,9 +99,9 @@ pub fn resolve_workflow_in_release(
     run: &WorkflowRunKey<'_>,
     components: &Arc<[AdmittedComponent]>,
     document: WiringDocument,
-    stored_hash: &str,
+    stored_hash: &wamn_digest::Digest,
 ) -> Result<ResolvedActiveWiring, WorkflowResolutionError> {
-    if stored_hash != run.wiring_hash || document.wiring_hash().as_str() != stored_hash {
+    if stored_hash != run.wiring_hash || document.wiring_hash() != *stored_hash {
         return Err(WorkflowResolutionError::new(
             WorkflowResolutionErrorType::HashMismatch,
             format!(
@@ -168,7 +168,7 @@ pub fn resolve_workflow_in_release(
     Ok(ResolvedActiveWiring {
         version: run.version,
         manifest_digest: run.manifest_digest.to_owned(),
-        graph_hash: std::sync::Arc::from(stored_hash),
+        graph_hash: *stored_hash,
         package_version: String::new(),
         document,
         node_components: std::sync::Arc::new(node_components),
@@ -186,7 +186,7 @@ pub async fn resolve_workflow(
     anyhow::ensure!(
         release.target().project_env_key == run.project_env_key
             && release.target().environment == run.environment
-            && release.release().manifest_digest.as_str() == run.manifest_digest,
+            && &release.release().manifest_digest == run.manifest_digest,
         "workflow run release differs from the loaded release"
     );
     let version = i32::try_from(run.version).context("workflow version exceeds int")?;
@@ -232,9 +232,21 @@ mod tests {
 
     const APPLICATION: &str = "orders";
     const ORDERS_GET: &str = "orders:order/get@1.0.0";
-    const DIGEST: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
-    const OTHER: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
-    const RELEASE: &str = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
+    static DIGEST: std::sync::LazyLock<wamn_digest::Digest> = std::sync::LazyLock::new(|| {
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+            .parse()
+            .unwrap()
+    });
+    static OTHER: std::sync::LazyLock<wamn_digest::Digest> = std::sync::LazyLock::new(|| {
+        "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            .parse()
+            .unwrap()
+    });
+    static RELEASE: std::sync::LazyLock<wamn_digest::Digest> = std::sync::LazyLock::new(|| {
+        "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+            .parse()
+            .unwrap()
+    });
 
     fn manifest() -> ServingManifest {
         let fact = AdmittedComponent {
@@ -256,16 +268,18 @@ mod tests {
                     parameters: Vec::new(),
                 },
             )]),
-            component_digest: DIGEST.to_owned(),
+            component_digest: *DIGEST,
             imports: Vec::new(),
-            imports_fingerprint: format!("sha256:{}", "6".repeat(64)),
+            imports_fingerprint: (format!("sha256:{}", "6".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             effects: Vec::new(),
         };
         ServingManifest::new(
             ServingRelease {
                 packages: BTreeSet::from([PackageCoordinate::new(APPLICATION, "1.0.0").unwrap()]),
             },
-            BTreeSet::from([ServingComponent::project(&fact, Vec::new()).unwrap()]),
+            BTreeSet::from([ServingComponent::project(&fact, Vec::new())]),
             BTreeSet::new(),
             BTreeMap::new(),
         )
@@ -293,7 +307,10 @@ mod tests {
         .expect("the fixture workflow is structurally valid")
     }
 
-    fn run<'a>(hash: &'a str, node_digests: &'a BTreeMap<String, String>) -> WorkflowRunKey<'a> {
+    fn run<'a>(
+        hash: &'a wamn_digest::Digest,
+        node_digests: &'a BTreeMap<String, wamn_digest::Digest>,
+    ) -> WorkflowRunKey<'a> {
         static PACKAGES: std::sync::LazyLock<BTreeSet<String>> =
             std::sync::LazyLock::new(|| BTreeSet::from([APPLICATION.to_owned()]));
         WorkflowRunKey {
@@ -303,7 +320,7 @@ mod tests {
             application_packages: &PACKAGES,
             workflow_id: "nightly",
             version: 1,
-            manifest_digest: RELEASE,
+            manifest_digest: &RELEASE,
             wiring_hash: hash,
             node_digests,
         }
@@ -312,8 +329,8 @@ mod tests {
     #[test]
     fn a_run_resolves_each_node_to_its_frozen_digest() {
         let document = document();
-        let hash = document.wiring_hash().as_str().to_owned();
-        let digests = BTreeMap::from([("node".to_owned(), DIGEST.to_owned())]);
+        let hash = document.wiring_hash();
+        let digests = BTreeMap::from([("node".to_owned(), *DIGEST)]);
         let resolved = resolve_workflow_in_release(
             &run(&hash, &digests),
             &manifest().admitted_components("t1").unwrap().into(),
@@ -321,23 +338,20 @@ mod tests {
             &hash,
         )
         .expect("the frozen digest is a component of the release");
-        assert_eq!(resolved.node_components["node"].component_digest, DIGEST);
-        assert_eq!(resolved.manifest_digest, RELEASE);
+        assert_eq!(resolved.node_components["node"].component_digest, *DIGEST);
+        assert_eq!(resolved.manifest_digest, *RELEASE);
         assert_eq!(resolved.package_version, "");
-        assert_eq!(resolved.graph_hash.as_ref(), hash);
+        assert_eq!(resolved.graph_hash, hash);
     }
 
     #[test]
     fn a_node_digest_the_release_does_not_carry_refuses() {
         let document = document();
-        let hash = document.wiring_hash().as_str().to_owned();
+        let hash = document.wiring_hash();
         for digests in [
-            BTreeMap::from([("node".to_owned(), OTHER.to_owned())]),
+            BTreeMap::from([("node".to_owned(), *OTHER)]),
             BTreeMap::new(),
-            BTreeMap::from([
-                ("node".to_owned(), DIGEST.to_owned()),
-                ("extra".to_owned(), DIGEST.to_owned()),
-            ]),
+            BTreeMap::from([("node".to_owned(), *DIGEST), ("extra".to_owned(), *DIGEST)]),
         ] {
             let refusal = resolve_workflow_in_release(
                 &run(&hash, &digests),
@@ -356,11 +370,11 @@ mod tests {
     #[test]
     fn a_hash_mismatch_refuses() {
         let document = document();
-        let hash = document.wiring_hash().as_str().to_owned();
-        let digests = BTreeMap::from([("node".to_owned(), DIGEST.to_owned())]);
+        let hash = document.wiring_hash();
+        let digests = BTreeMap::from([("node".to_owned(), *DIGEST)]);
         // The stored row carries another hash than the run.
         let refusal = resolve_workflow_in_release(
-            &run(OTHER, &digests),
+            &run(&OTHER, &digests),
             &manifest().admitted_components("t1").unwrap().into(),
             document.clone(),
             &hash,
@@ -372,10 +386,10 @@ mod tests {
         );
         // The stored graph does not hash to its row.
         let refusal = resolve_workflow_in_release(
-            &run(OTHER, &digests),
+            &run(&OTHER, &digests),
             &manifest().admitted_components("t1").unwrap().into(),
             document,
-            OTHER,
+            &OTHER,
         )
         .expect_err("a graph that does not hash to its row refuses");
         assert_eq!(

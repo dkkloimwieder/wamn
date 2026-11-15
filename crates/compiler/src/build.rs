@@ -118,7 +118,7 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
                     bail!("development base {package} requires one built component");
                 };
                 dependency["version"] = built.package.version.into();
-                dependency["digest"] = component.sha256.as_str().into();
+                dependency["digest"] = component.sha256.to_string().into();
             }
         }
     }

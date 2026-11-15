@@ -191,7 +191,7 @@ pub async fn enable_workflow(
     project: &mut Client,
     workflow: &WorkflowVersion<'_>,
     enabler: &str,
-    manifest_digest: &str,
+    manifest_digest: &wamn_digest::Digest,
     declared: &wamn_catalog::EnvironmentApplications,
     events: Option<&wamn_broker::EventBroker>,
 ) -> Result<(), WorkflowLifecycleError> {
@@ -319,7 +319,7 @@ async fn enable_in(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     workflow: &WorkflowVersion<'_>,
     enabler: &str,
-    manifest_digest: &str,
+    manifest_digest: &wamn_digest::Digest,
     packages: &std::collections::BTreeSet<String>,
     declared: &wamn_catalog::EnvironmentApplications,
     triple: &Triple,
@@ -338,7 +338,7 @@ async fn enable_in(
         .map_err(|error| storage("read the workflow version", error))?
         .ok_or_else(|| workflow.not_found())?;
     let graph_json: String = row.get(0);
-    let stored_hash: String = row.get(1);
+    let stored_hash: wamn_digest::Digest = row.get(1);
     let execution_role: Option<String> = row.get(2);
     let trigger: String = row.get(3);
 
@@ -354,14 +354,12 @@ async fn enable_in(
     )
     .await
     .map_err(WorkflowLifecycleError::condition)?;
-    if hash.as_str() != stored_hash {
+    if hash != stored_hash {
         return Err(WorkflowLifecycleError::new(
             WorkflowLifecycleErrorType::Condition,
             format!(
                 "workflow {:?} version {} stores hash {stored_hash}, and its graph hashes to {}",
-                workflow.workflow_id,
-                workflow.version,
-                hash.as_str()
+                workflow.workflow_id, workflow.version, hash
             ),
         ));
     }

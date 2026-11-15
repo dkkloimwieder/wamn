@@ -135,7 +135,7 @@ impl Configuration {
             .image
             .rsplit_once('@')
             .context("worker image must be pinned")?;
-        wamn_package_artifact::ensure_digest(digest)?;
+        digest.parse::<wamn_digest::Digest>()?;
         Ok(config)
     }
 
@@ -185,7 +185,7 @@ pub struct Operation {
     #[arg(long)]
     application: Option<String>,
     #[arg(long)]
-    release: Option<String>,
+    release: Option<wamn_digest::Digest>,
 }
 
 /// Execute one authorized operation in its Job, with no nested SQL Job.
@@ -255,7 +255,7 @@ pub async fn execute(config: &Configuration, operation: Operation) -> anyhow::Re
             project: &operation.project,
             env: &operation.env,
             application: operation.application.as_deref(),
-            release: operation.release.as_deref(),
+            release: operation.release.as_ref(),
         },
         &actor,
         credentials.as_ref(),

@@ -259,7 +259,10 @@ impl ConnectionFacts {
     }
 
     /// The connection map of the release `manifest_digest`.
-    pub async fn release(&self, manifest_digest: &str) -> anyhow::Result<ReleaseFact> {
+    pub async fn release(
+        &self,
+        manifest_digest: &wamn_digest::Digest,
+    ) -> anyhow::Result<ReleaseFact> {
         match self.memory.release(&self.project_env_key, manifest_digest) {
             Ok(fact) => Ok(fact),
             Err(ticket) => {
@@ -403,8 +406,8 @@ impl ConnectionFacts {
     /// errors, while an ordinary unbound requirement is `Ok(false)`.
     pub async fn release_component_bindings_ready(
         &self,
-        manifest_digest: &str,
-        component_digests: &[String],
+        manifest_digest: &wamn_digest::Digest,
+        component_digests: &[wamn_digest::Digest],
     ) -> anyhow::Result<bool> {
         if component_digests.is_empty() {
             return Ok(true);

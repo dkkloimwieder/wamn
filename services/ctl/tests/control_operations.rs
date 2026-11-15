@@ -111,7 +111,9 @@ fn run(
 #[test]
 fn route_denials_and_failed_jobs_exit_nonzero() -> anyhow::Result<()> {
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
-    let digest = format!("sha256:{}", "a".repeat(64));
+    let digest = (format!("sha256:{}", "a".repeat(64)))
+        .parse::<wamn_digest::Digest>()
+        .unwrap();
     for responses in [
         vec![(403, json!({"error":{"code":"forbidden"}}))],
         vec![(200, json!({"error":{"code":"project_admin_required"}}))],
@@ -129,7 +131,13 @@ fn route_denials_and_failed_jobs_exit_nonzero() -> anyhow::Result<()> {
     ] {
         let (output, _) = run(
             scratch.path(),
-            &["deploy", "--application", "a", "--release", &digest],
+            &[
+                "deploy",
+                "--application",
+                "a",
+                "--release",
+                &digest.to_string(),
+            ],
             responses,
         )?;
         assert!(!output.status.success());

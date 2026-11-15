@@ -60,10 +60,10 @@ struct Route {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LiveRelease {
     host: String,
-    digest: String,
+    digest: wamn_digest::Digest,
     clients: BTreeMap<String, String>,
-    webs: BTreeMap<String, String>,
-    platform_ui: String,
+    webs: BTreeMap<String, wamn_digest::Digest>,
+    platform_ui: Option<wamn_digest::Digest>,
     org: String,
     project: String,
 }
@@ -71,34 +71,21 @@ struct LiveRelease {
 impl LiveRelease {
     fn root(&self, host: &str) -> anyhow::Result<String> {
         ensure!(self.host == host, "the release does not serve this host");
-        if !self.platform_ui.is_empty() {
-            return Ok(format!(
-                "platform-ui/sha256-{}",
-                digest_hex(&self.platform_ui)?
-            ));
+        if let Some(platform_ui) = &self.platform_ui {
+            return Ok(format!("platform-ui/sha256-{}", platform_ui.hex()));
         }
         let package = self
             .clients
             .get(host)
             .context("the host has no web client")?;
         ensure!(segment(package), "invalid client package");
-        let hex = digest_hex(self.webs.get(host).context("the host has no web client")?)?;
+        let hex = self
+            .webs
+            .get(host)
+            .context("the host has no web client")?
+            .hex();
         Ok(format!("clients/{package}/{hex}"))
     }
-}
-
-fn digest_hex(digest: &str) -> anyhow::Result<&str> {
-    let hex = digest
-        .strip_prefix("sha256:")
-        .context("invalid web digest")?;
-    ensure!(
-        hex.len() == 64
-            && hex
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-        "invalid web digest"
-    );
-    Ok(hex)
 }
 
 fn segment(value: &str) -> bool {
@@ -210,7 +197,7 @@ impl Web {
         let config = file == "config.json";
         let file = if config {
             ensure!(segment(&row.org), "invalid web org");
-            let target = if row.platform_ui.is_empty() {
+            let target = if row.platform_ui.is_none() {
                 ensure!(segment(&row.project), "invalid web project");
                 serde_json::json!({"org":row.org,"project":row.project,
                     "release":row.digest,"web":row.webs[host]})
@@ -564,7 +551,7 @@ pub async fn probe(path: &Path) -> anyhow::Result<()> {
     let client: Client<HttpConnector, Empty<Bytes>> = http_transport::http_client();
     for (host, route) in releases.routes().await? {
         let row = releases.read(&route.namespace, &route.release).await?;
-        if row.platform_ui.is_empty() && !row.clients.contains_key(&host) {
+        if row.platform_ui.is_none() && !row.clients.contains_key(&host) {
             continue;
         }
         for path in ["/", "/config.json"] {
@@ -597,14 +584,18 @@ mod tests {
     fn row(digit: char) -> LiveRelease {
         LiveRelease {
             host: "app.example.com".into(),
-            digest: format!("sha256:{}", "c".repeat(64)),
+            digest: (format!("sha256:{}", "c".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             clients: [("app.example.com".into(), "app".into())].into(),
             webs: [(
                 "app.example.com".into(),
-                format!("sha256:{}", digit.to_string().repeat(64)),
+                format!("sha256:{}", digit.to_string().repeat(64))
+                    .parse()
+                    .unwrap(),
             )]
             .into(),
-            platform_ui: String::new(),
+            platform_ui: None,
             org: "acme".into(),
             project: "app".into(),
         }
@@ -645,8 +636,8 @@ mod tests {
             let config: serde_json::Value = serde_json::from_slice(&body(response).await).unwrap();
             assert_eq!(config["org"], "acme");
             assert_eq!(config["project"], "app");
-            assert_eq!(config["release"], first.digest);
-            assert_eq!(config["web"], row.webs[&row.host]);
+            assert_eq!(config["release"], serde_json::json!(first.digest));
+            assert_eq!(config["web"], serde_json::json!(row.webs[&row.host]));
         }
     }
 
@@ -656,9 +647,11 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let route = json!({"host":"app.example", "release":"app", "api":endpoint, "files":""});
-        let web_digest = format!("sha256:{}", "a".repeat(64));
-        let release = json!({"host":"app.example", "digest":"release", "clients":{"app.example":"client"},
-            "webs":{"app.example":web_digest}, "platformUi":"", "org":"acme", "project":"app"});
+        let web_digest = (format!("sha256:{}", "a".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap();
+        let release = json!({"host":"app.example", "digest":wamn_digest::bytes_sha256(b"release"), "clients":{"app.example":"client"},
+            "webs":{"app.example":web_digest}, "platformUi":null, "org":"acme", "project":"app"});
         let mut tasks = tokio::task::JoinSet::new();
         tasks.spawn(async move {
             loop {
@@ -732,8 +725,11 @@ mod tests {
                 assert_eq!(response.status(), StatusCode::OK);
                 let bytes = response.into_body().collect().await.unwrap().to_bytes();
                 let config: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-                assert_eq!(config["release"], "release");
-                assert_eq!(config["web"], web_digest);
+                assert_eq!(
+                    config["release"],
+                    serde_json::json!(wamn_digest::bytes_sha256(b"release"))
+                );
+                assert_eq!(config["web"], serde_json::json!(web_digest));
             }
         }
         tasks.shutdown().await;
@@ -746,7 +742,11 @@ mod tests {
             store: Some(Arc::<InMemory>::clone(&store)),
         };
         let mut row = row('a');
-        row.platform_ui = format!("sha256:{}", "a".repeat(64));
+        row.platform_ui = Some(
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+        );
         row.org = "acme".into();
         let root = row.root(&row.host).unwrap();
         row.webs.clear();
@@ -760,15 +760,19 @@ mod tests {
         assert_eq!(config["org"], row.org);
         assert!(config.get("project").is_none());
         let original_root = root;
-        row.platform_ui = format!("sha256:{}", "b".repeat(64));
+        row.platform_ui = Some(
+            (format!("sha256:{}", "b".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+        );
         let root = row.root(&row.host).unwrap();
         assert_ne!(original_root, root);
         put(&store, &root, "index.html", "new platform").await;
-        for digest in ["0.1.68", "sha256:short", "../../config.json"] {
-            row.platform_ui = digest.into();
-            assert!(row.root(&row.host).is_err());
-        }
-        row.platform_ui = format!("sha256:{}", "b".repeat(64));
+        row.platform_ui = Some(
+            (format!("sha256:{}", "b".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+        );
         assert!(
             web.answer(&row, "other.example.com", "/", &Method::GET)
                 .await

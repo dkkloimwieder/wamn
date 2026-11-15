@@ -81,10 +81,7 @@ pub(super) async fn publish(
     let credentials =
         read_registry_push_credentials(&registry.registry_auth_file, base.registry())?;
     wash_runtime::oci::set_extra_ca_certificates(&registry.oci_ca_paths)?;
-    let reference = format!(
-        "{repository}:{}",
-        entry.digest().trim_start_matches("sha256:")
-    );
+    let reference = format!("{repository}:{}", entry.digest().hex());
     let config = || wash_runtime::oci::OciConfig {
         credentials: credentials.as_ref().map(|credential| {
             (

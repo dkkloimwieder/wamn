@@ -33,8 +33,10 @@ pub fn interface_address() -> std::net::IpAddr {
     socket.local_addr().expect("interface address").ip()
 }
 
-pub fn digest(byte: char) -> String {
+pub fn digest(byte: char) -> wamn_digest::Digest {
     format!("sha256:{}", byte.to_string().repeat(64))
+        .parse()
+        .unwrap()
 }
 
 pub fn invocation() -> ConnectionInvocation {
@@ -66,11 +68,8 @@ pub fn invocation() -> ConnectionInvocation {
     }
 }
 
-pub fn fixture_wiring_hash() -> String {
-    wamn_catalog::fixture_graph("orders", 3)
-        .wiring_hash()
-        .as_str()
-        .to_owned()
+pub fn fixture_wiring_hash() -> wamn_digest::Digest {
+    wamn_catalog::fixture_graph("orders", 3).wiring_hash()
 }
 
 pub fn snapshot() -> ConnectionEffectSnapshot {
@@ -127,7 +126,7 @@ pub fn manifest() -> ServingManifest {
                         .interface_version
                         .clone()
                         .expect("interface version"),
-                    invocation.component_digest.clone(),
+                    invocation.component_digest,
                 );
                 descriptor.operations = BTreeMap::from([(
                     snapshot.operation.expect("operation"),
@@ -490,8 +489,8 @@ impl Fixture {
             .collect();
         if let Some(bytes) = component_bytes {
             let digest = wamn_digest::bytes_sha256(bytes);
-            component.descriptor.component_digest = digest.clone();
-            invocation.component_digest = digest.clone();
+            component.descriptor.component_digest = digest;
+            invocation.component_digest = digest;
             invocation.origin.component_digest = digest;
             component.descriptor.imports = vec!["wamn:connection/http@0.1.0".into()];
             component.descriptor.effects = vec![wamn_catalog::AdmittedComponentEffect {
@@ -525,7 +524,7 @@ impl Fixture {
             )
             .unwrap(),
         );
-        let manifest_digest = release.release().manifest_digest.as_str();
+        let manifest_digest = release.release().manifest_digest;
         let mut projects = HashMap::new();
         let mut primary_database = None;
         for project in ["project-a", "project-b"] {

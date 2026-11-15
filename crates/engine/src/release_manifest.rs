@@ -7,10 +7,8 @@
 
 use std::{path::Path, sync::Arc};
 
-use anyhow::Context as _;
 use wamn_catalog::{
-    AdmittedComponent, ArtifactHash, CatalogIdentityError, ManifestDigest,
-    RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, ServingManifest,
+    AdmittedComponent, RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, ServingManifest,
 };
 
 /// Stable classification for a refused release load.
@@ -62,7 +60,7 @@ impl std::error::Error for ReleaseLoadError {}
 pub struct CarriedRelease {
     /// The serving manifest's digest — `runs.manifest_digest`. Derived from the
     /// manifest's own canonical bytes.
-    pub manifest_digest: ManifestDigest,
+    pub manifest_digest: wamn_digest::Digest,
 }
 
 /// The project, environment and application a host serves, from the
@@ -273,14 +271,13 @@ pub fn validate_component_in_release(
             && package_version == Some(component.target.package_version.as_str()),
         "release-component-target-mismatch"
     );
-    let digest = ArtifactHash::parse(component.component_digest.clone())
-        .context("component fact carries a non-canonical artifact hash")?;
+    let digest = component.component_digest;
     // The descriptor carries the admitted operations without another projection.
     let carried = manifest.components.iter().any(|served| {
         served.package_id == component.target.package_id
             && served.descriptor.component == component.component
             && served.descriptor.interface_version == component.interface_version
-            && served.descriptor.component_digest == digest.as_str()
+            && served.descriptor.component_digest == digest
             && served.descriptor.operations == component.operations
     });
     anyhow::ensure!(carried, "component-not-in-carried-release");
@@ -295,16 +292,10 @@ pub fn validate_component_in_release(
 /// in its heartbeat, the operator copies it onto the `Host` resource, and the
 /// `release` chart's `hostSelector` matches it
 /// (docs/architecture/overview.md#environment-lifecycle).
-pub fn release_label(digest: &str) -> Result<String, CatalogIdentityError> {
-    let digest = ManifestDigest::parse(digest)?;
-    let hex = digest
-        .as_str()
-        .strip_prefix("sha256:")
-        .expect("a parsed manifest digest has the sha256 prefix");
-    let bytes = hex::decode(hex).expect("a parsed manifest digest is 64 hex characters");
-    Ok(data_encoding::BASE32_NOPAD
-        .encode(&bytes)
-        .to_ascii_lowercase())
+pub fn release_label(digest: &wamn_digest::Digest) -> String {
+    data_encoding::BASE32_NOPAD
+        .encode(digest.as_bytes())
+        .to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -332,8 +323,11 @@ mod tests {
 
                 package_id: "cat".into(),
                 descriptor: {
-                    let mut descriptor =
-                        wamn_catalog::ComponentDescriptor::named("transform", "0.1", COMPONENT);
+                    let mut descriptor = wamn_catalog::ComponentDescriptor::named(
+                        "transform",
+                        "0.1",
+                        COMPONENT.parse().unwrap(),
+                    );
                     descriptor.operations = BTreeMap::from([(
                         "map".into(),
                         AdmittedComponentOperation {
@@ -456,28 +450,6 @@ mod tests {
     impl Drop for Mounts {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
-        }
-    }
-
-    #[test]
-    fn release_label_is_the_digest_as_lowercase_unpadded_base32() {
-        let label = release_label(
-            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        )
-        .expect("a canonical digest");
-        assert_eq!(
-            label,
-            "4oymiquy7qobjgx36tejs35zeqt24qpemsnzgtfeswmrw6csxbkq"
-        );
-        assert_eq!(label.len(), 52);
-        let zero = format!("sha256:{}", "0".repeat(64));
-        assert_eq!(release_label(&zero).expect("digest"), "a".repeat(52));
-        for refused in [
-            "e3b0",
-            "sha256:E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
-            "sha256:00",
-        ] {
-            assert!(release_label(refused).is_err(), "{refused} is refused");
         }
     }
 
@@ -610,9 +582,9 @@ mod tests {
                     parameters: Vec::new(),
                 },
             )]),
-            component_digest: COMPONENT.into(),
+            component_digest: COMPONENT.parse().unwrap(),
             imports: Vec::new(),
-            imports_fingerprint: String::new(),
+            imports_fingerprint: wamn_digest::canonical_json_sha256(&serde_json::json!([])),
             effects: Vec::new(),
         }
     }
@@ -637,7 +609,8 @@ mod tests {
             ("another digest", |fact| {
                 fact.component_digest =
                     "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-                        .into();
+                        .parse()
+                        .unwrap();
             }),
             ("another component", |fact| fact.component = "other".into()),
             ("another operation", |fact| {

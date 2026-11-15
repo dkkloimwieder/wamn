@@ -121,7 +121,7 @@ pub async fn admit_event_batch(
                 }
                 let version: i32 = row.get(7);
                 let graph_json: String = row.get(8);
-                let hash: String = row.get(9);
+                let hash: wamn_digest::Digest = row.get(9);
                 let role = row
                     .get::<Option<String>, _>(10)
                     .unwrap_or_else(|| ADMIN_ROLE.to_owned());
@@ -132,7 +132,7 @@ pub async fn admit_event_batch(
                     node_digests(release, &event.application, &graph, &hash).map_err(|error| {
                         ProductionLeaseError::invalid("resolve event workflow", error)
                     })?;
-                let digest = release.release().manifest_digest.as_str();
+                let digest = &release.release().manifest_digest;
                 if admission::admit_run(
                     connection,
                     &RunAdmission {

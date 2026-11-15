@@ -4,7 +4,7 @@ use wamn_catalog::AdmittedComponentOperation;
 
 use super::{
     AdmittedComponent, BTreeMap, BTreeSet, DependencyDigestRule, PublishManifestError,
-    PublishManifestErrorType, ServingAttachment, ServingComponent,
+    PublishManifestErrorType, ServingAttachment,
 };
 
 pub(super) fn resolve_component_dependency_closure(
@@ -13,7 +13,7 @@ pub(super) fn resolve_component_dependency_closure(
     package_manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
     rule: DependencyDigestRule,
 ) -> Result<Vec<AdmittedComponent>, PublishManifestError> {
-    let mut closure = BTreeMap::<(String, String, String), AdmittedComponent>::new();
+    let mut closure = BTreeMap::<(String, String, wamn_digest::Digest), AdmittedComponent>::new();
     let mut visited = BTreeSet::new();
     for component in roots.values() {
         insert_closure_component(&mut closure, component)?;
@@ -34,13 +34,13 @@ pub(super) fn resolve_component_dependency_closure(
 }
 
 fn insert_closure_component(
-    closure: &mut BTreeMap<(String, String, String), AdmittedComponent>,
+    closure: &mut BTreeMap<(String, String, wamn_digest::Digest), AdmittedComponent>,
     component: &AdmittedComponent,
 ) -> Result<(), PublishManifestError> {
     let key = (
         component.target.package_id.clone(),
         component.target.package_version.clone(),
-        component.component_digest.clone(),
+        component.component_digest,
     );
     match closure.get(&key) {
         Some(existing) if existing != component => Err(PublishManifestError::new(
@@ -63,7 +63,7 @@ fn visit_base_dependencies(
     rule: DependencyDigestRule,
     path: &mut Vec<(String, String)>,
     visited: &mut BTreeSet<(String, String)>,
-    closure: &mut BTreeMap<(String, String, String), AdmittedComponent>,
+    closure: &mut BTreeMap<(String, String, wamn_digest::Digest), AdmittedComponent>,
 ) -> Result<(), PublishManifestError> {
     let coordinate = (package.to_owned(), version.to_owned());
     if path.contains(&coordinate) {
@@ -137,27 +137,6 @@ fn resolve_base_dependency<'a>(
         ));
     }
     Ok(matches)
-}
-
-/// Project one release component.
-///
-/// The bases of a composed component run inside its own bytes, so the
-/// manifest lists only the component itself. The component carries its
-/// descriptor: `fact` with its `connections`.
-pub(super) fn project_serving_component(
-    fact: &AdmittedComponent,
-    connections: Vec<wamn_catalog::ComponentConnection>,
-) -> Result<ServingComponent, PublishManifestError> {
-    ServingComponent::project(fact, connections).map_err(|error| {
-        PublishManifestError::with_source(
-            PublishManifestErrorType::Component,
-            format!(
-                "component {:?} does not project into one release component",
-                fact.component
-            ),
-            error,
-        )
-    })
 }
 
 pub(super) fn resolve_route_component<'a>(

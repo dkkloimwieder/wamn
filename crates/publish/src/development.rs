@@ -10,13 +10,12 @@ use wamn_package_artifact::{
 };
 
 /// Select the immutable development version for an authored version and content digest.
-pub fn version(authored: &str, digest: &str) -> anyhow::Result<String> {
-    wamn_package_artifact::ensure_digest(digest)?;
+pub fn version(authored: &str, digest: &wamn_digest::Digest) -> anyhow::Result<String> {
     let base = authored
         .split(['-', '+'])
         .next()
         .context("authored package version")?;
-    let version = format!("{base}-dev.h{}", &digest[7..19]);
+    let version = format!("{base}-dev.h{}", &digest.hex()[..12]);
     wamn_package_artifact::ensure_tag(&version)?;
     Ok(version)
 }
@@ -80,6 +79,5 @@ mod tests {
         let digest = wamn_digest::bytes_sha256(b"source");
         let version = super::version("1.0.0", &digest).unwrap();
         assert!(wamn_package_artifact::is_dev_tag(&version));
-        assert!(super::version("1.0.0", "invalid").is_err());
     }
 }

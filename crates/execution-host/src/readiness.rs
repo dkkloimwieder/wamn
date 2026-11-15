@@ -11,17 +11,14 @@ pub async fn prepare_release(operations: &OperationHost) -> anyhow::Result<()> {
     let components = operations.release.components();
     let digests: Vec<_> = components
         .iter()
-        .map(|component| component.component_digest.clone())
+        .map(|component| component.component_digest)
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
     let bound = operations
         .context
         .connections
-        .release_component_bindings_ready(
-            operations.release.release().manifest_digest.as_str(),
-            &digests,
-        )
+        .release_component_bindings_ready(&operations.release.release().manifest_digest, &digests)
         .await?;
     anyhow::ensure!(bound, "release-component-requirement-unbound");
     operations.prepare_released(components).await?;

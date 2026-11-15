@@ -20,7 +20,7 @@ pub trait ExecutorDatabase: Send + Sync {
     /// The host-bound queue runner for this component.
     fn runner(&self, component: &str) -> Option<String>;
     /// The release that this component serves.
-    fn manifest_digest(&self, component: &str) -> Option<String>;
+    fn manifest_digest(&self, component: &str) -> Option<wamn_digest::Digest>;
 }
 
 /// Queue leases over the host's existing authorized connections.
@@ -95,7 +95,7 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
             )
         })?;
         let digest = self.database.manifest_digest(component_id);
-        let digest = digest.as_deref();
+        let digest = digest.as_ref();
         let result = self
             .executor_bound(component_id, async |connection, project_env_key| {
                 persistence::lease_next(
@@ -269,7 +269,7 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
         environment: &str,
     ) -> Result<bool, ProductionLeaseError> {
         let digest = self.database.manifest_digest(component_id);
-        let digest = digest.as_deref();
+        let digest = digest.as_ref();
         let Some(digest) = digest else {
             return Ok(false);
         };

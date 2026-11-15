@@ -189,7 +189,10 @@ mod tests {
         else {
             panic!("deploy");
         };
-        assert_eq!(deploy.release.as_deref(), Some(digest.as_str()));
+        assert_eq!(
+            deploy.release.as_ref(),
+            Some(&digest.parse::<wamn_digest::Digest>().unwrap())
+        );
         assert_eq!(deploy.env, std::path::Path::new("environment.k"));
         let Command::Rollback(rollback) =
             Cli::try_parse_from(["wamn", "rollback", "orders", "--env", "environment.k"])
@@ -215,7 +218,10 @@ mod tests {
         else {
             panic!("rollback with explicit release");
         };
-        assert_eq!(rollback.release.as_deref(), Some(digest.as_str()));
+        assert_eq!(
+            rollback.release.as_ref(),
+            Some(&digest.parse::<wamn_digest::Digest>().unwrap())
+        );
         let Command::Status(status) =
             Cli::try_parse_from(["wamn", "status", "--env", "environment.k"])
                 .unwrap()
@@ -287,7 +293,10 @@ mod tests {
             };
             assert_eq!(args.application, "orders");
             assert_eq!(args.env, std::path::Path::new("environment.k"));
-            assert_eq!(args.release.as_deref(), Some(digest.as_str()));
+            assert_eq!(
+                args.release.as_ref(),
+                Some(&digest.parse::<wamn_digest::Digest>().unwrap())
+            );
             assert!(Cli::try_parse_from(["wamn", "schema", verb, "orders"]).is_err());
             assert!(
                 Cli::try_parse_from(["wamn", "schema", verb, "orders", "--env", "environment.k"])

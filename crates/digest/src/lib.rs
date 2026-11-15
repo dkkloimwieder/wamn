@@ -1,15 +1,149 @@
 //! Canonical JSON bytes and SHA-256 identities.
 
-use std::fmt::Write as _;
+use std::{fmt, str::FromStr};
+
+use serde::{Deserialize, Serialize};
 
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
+
+/// A SHA-256 identity, serialized as `sha256:<64 lowercase hex digits>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Digest([u8; 32]);
+
+/// A refusal to parse a canonical SHA-256 identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseDigestError;
+
+impl fmt::Display for ParseDigestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("expected sha256:<64 lowercase hex digits>")
+    }
+}
+
+impl std::error::Error for ParseDigestError {}
+
+impl FromStr for Digest {
+    type Err = ParseDigestError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let hex = value.strip_prefix("sha256:").ok_or(ParseDigestError)?;
+        if hex.len() != 64
+            || !hex
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(ParseDigestError);
+        }
+        let mut bytes = [0; 32];
+        for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().as_chunks::<2>().0) {
+            let digit = |value: u8| {
+                if value <= b'9' {
+                    value - b'0'
+                } else {
+                    value - b'a' + 10
+                }
+            };
+            *byte = digit(pair[0]) * 16 + digit(pair[1]);
+        }
+        Ok(Self(bytes))
+    }
+}
+
+impl TryFrom<String> for Digest {
+    type Error = ParseDigestError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
+impl From<[u8; 32]> for Digest {
+    fn from(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<Digest> for String {
+    fn from(digest: Digest) -> Self {
+        digest.to_string()
+    }
+}
+
+impl From<Digest> for Value {
+    fn from(digest: Digest) -> Self {
+        Self::String(digest.to_string())
+    }
+}
+
+impl Digest {
+    /// The raw SHA-256 bytes.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// Lowercase hexadecimal digits for an OCI tag or an object path.
+    pub fn hex(&self) -> String {
+        use fmt::Write as _;
+        let mut hex = String::with_capacity(64);
+        for byte in self.0 {
+            write!(hex, "{byte:02x}").expect("writing to String cannot fail");
+        }
+        hex
+    }
+}
+
+impl fmt::Display for Digest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("sha256:")?;
+        for byte in self.0 {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "sqlx")]
+impl sqlx::Type<sqlx::Postgres> for Digest {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+#[cfg(feature = "sqlx")]
+impl sqlx::postgres::PgHasArrayType for Digest {
+    fn array_type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::postgres::PgHasArrayType>::array_type_info()
+    }
+}
+
+#[cfg(feature = "sqlx")]
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for Digest {
+    fn encode_by_ref(
+        &self,
+        buffer: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <String as sqlx::Encode<'q, sqlx::Postgres>>::encode(self.to_string(), buffer)
+    }
+}
+
+#[cfg(feature = "sqlx")]
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for Digest {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        Ok(<&str as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?.parse()?)
+    }
+}
 
 /// `sha256:<hex>` over the canonical representation of arbitrary JSON.
 ///
 /// This is the stable identity used when a durable boundary must compare a
 /// replayed JSON body with the outcome that previously committed.
-pub fn canonical_json_sha256(value: &Value) -> String {
+pub fn canonical_json_sha256(value: &Value) -> Digest {
     bytes_sha256(&canonical_json_bytes(value))
 }
 
@@ -66,7 +200,7 @@ impl serde::Serialize for SortedKeys<'_> {
 /// build-record digests all use it. [`canonical_json_sha256`] is the same
 /// spelling over canonical JSON bytes.
 ///
-pub fn bytes_sha256(bytes: &[u8]) -> String {
+pub fn bytes_sha256(bytes: &[u8]) -> Digest {
     format_sha256(&sha256(bytes))
 }
 
@@ -99,13 +233,8 @@ impl Hasher {
 }
 
 /// Format a SHA-256 result as `sha256:<lowercase hex>`.
-pub fn format_sha256(digest: &[u8; 32]) -> String {
-    let mut hash = String::with_capacity("sha256:".len() + digest.len() * 2);
-    hash.push_str("sha256:");
-    for byte in digest {
-        write!(&mut hash, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    hash
+pub fn format_sha256(digest: &[u8; 32]) -> Digest {
+    Digest(*digest)
 }
 
 #[cfg(test)]
@@ -116,20 +245,53 @@ mod tests {
     use super::{canonical_json_bytes, canonical_json_sha256};
 
     #[test]
+    fn parse_rule() {
+        for (value, valid) in [
+            (format!("sha256:{}", "0".repeat(64)), true),
+            (format!("sha256:{}", "0123456789abcdef".repeat(4)), true),
+            (String::new(), false),
+            ("0".repeat(64), false),
+            (format!("sha256:{}", "a".repeat(63)), false),
+            (format!("sha256:{}", "a".repeat(65)), false),
+            (format!("sha256:{}", "A".repeat(64)), false),
+            (format!("sha256:{}", "g".repeat(64)), false),
+            (format!("sha256:{}", "é".repeat(32)), false),
+            (format!("sha512:{}", "a".repeat(64)), false),
+        ] {
+            let parsed = value.parse::<super::Digest>();
+            assert_eq!(parsed.is_ok(), valid);
+            if let Ok(digest) = parsed {
+                assert_eq!(digest.to_string(), value);
+                assert_eq!(
+                    serde_json::from_value::<super::Digest>(serde_json::to_value(digest).unwrap())
+                        .unwrap(),
+                    digest
+                );
+            }
+        }
+    }
+
+    #[test]
     fn raw_byte_digests_match_fixed_sha256_vectors() {
         let binary: Vec<u8> = (0..=255).collect();
 
         assert_eq!(
             bytes_sha256(b""),
             "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                .parse::<super::Digest>()
+                .unwrap()
         );
         assert_eq!(
             bytes_sha256(&binary),
             "sha256:40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880"
+                .parse::<super::Digest>()
+                .unwrap()
         );
         assert_eq!(
             bytes_sha256("wamn ✓\n".as_bytes()),
             "sha256:b6f49645cc50cf7d007a270a1ee823cc1c8ccd47e3ee4fd281ed6800409229be"
+                .parse::<super::Digest>()
+                .unwrap()
         );
     }
 
@@ -151,8 +313,6 @@ mod tests {
 
         assert_eq!(left, reordered);
         assert_ne!(left, changed);
-        assert!(left.starts_with("sha256:"));
-        assert_eq!(left.len(), "sha256:".len() + 64);
     }
 
     #[test]

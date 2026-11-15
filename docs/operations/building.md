@@ -313,7 +313,7 @@ The publication owner verifies each component and package artifact.
 Layer 0 of a package artifact is the canonical `wamn.json` of the package.
 `wamn inspect <digest>` prints layer 0 of the pushed artifact, byte for byte.
 `wamn diff <digest> <digest>` prints each JSON pointer where layer 0 of the two artifacts differs.
-Each argument is the full package artifact digest that source publication prints, `sha256:` and 64 hex digits, or the tag `<package_id>-<version>`.
+Each argument is the full package artifact digest that source publication prints, `sha256:` and 64 lowercase hex digits, or the tag `<package_id>-<version>`.
 A digest prefix is refused.
 A line that starts with `-` shows the value in the first artifact, and a line that starts with `+` shows the value in the second.
 Identical documents print nothing.

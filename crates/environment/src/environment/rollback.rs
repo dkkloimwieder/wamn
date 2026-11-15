@@ -8,7 +8,7 @@ pub async fn rollback(
     platform: &Platform,
     triple: &Triple,
     application: &str,
-    release: Option<&str>,
+    release: Option<&wamn_digest::Digest>,
 ) -> anyhow::Result<Analysis> {
     super::apply_selection(
         platform,

@@ -62,7 +62,7 @@ pub struct ProjectState {
 /// The release the document names, as OCI holds it.
 #[derive(Debug, Clone)]
 pub struct ReleaseFacts {
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
     pub manifest: ServingManifest,
     /// The store aliases the release's components require.
     pub required_connections: BTreeSet<String>,
@@ -75,12 +75,13 @@ pub struct Revision {
     pub status: String,
     pub chart: String,
     pub values: Value,
+    manifest_digest: Option<wamn_digest::Digest>,
 }
 
 impl Revision {
     /// The release digest the revision installed.
-    pub fn manifest_digest(&self) -> Option<&str> {
-        self.values["release"]["manifestDigest"].as_str()
+    pub fn manifest_digest(&self) -> Option<&wamn_digest::Digest> {
+        self.manifest_digest.as_ref()
     }
     /// The web selection written with this release revision.
     pub fn client(&self) -> anyhow::Result<Option<super::document::Client>> {
@@ -93,21 +94,21 @@ impl Revision {
         ) {
             (None, None) => Ok(None),
             (Some(package), Some(web)) => {
-                wamn_package_artifact::ensure_digest(web)?;
+                let web = web.parse::<wamn_digest::Digest>()?;
                 Ok(Some(super::document::Client {
                     package: package.to_owned(),
-                    web: web.to_owned(),
+                    web,
                 }))
             }
             _ => anyhow::bail!("Helm revision has an incomplete web client selection"),
         }
     }
 
-    fn pin(&self) -> anyhow::Result<(&str, Option<super::document::Client>)> {
+    fn pin(&self) -> anyhow::Result<(&wamn_digest::Digest, Option<super::document::Client>)> {
         let digest = self
             .manifest_digest()
             .context("Helm revision has no release digest")?;
-        wamn_package_artifact::ensure_digest(digest)?;
+
         Ok((digest, self.client()?))
     }
 }
@@ -125,7 +126,7 @@ pub struct Authorities {
     pub release: Option<ReleaseFacts>,
     pub revision: Option<Revision>,
     /// Loaded application and digest pairs observed from the environment hosts.
-    pub live: BTreeMap<(String, String), usize>,
+    pub live: BTreeMap<(String, wamn_digest::Digest), usize>,
 }
 
 /// The result of analysis: the authorities and the differences to apply.
@@ -499,7 +500,7 @@ pub async fn read_project(
 /// When the manifest cannot be pulled or does not hash to `digest`.
 pub async fn pull_release_manifest(
     platform: &Platform,
-    digest: &str,
+    digest: &wamn_digest::Digest,
 ) -> anyhow::Result<ServingManifest> {
     let source = if platform.registry_token_metadata {
         ReleaseManifestSource::with_registry_token_metadata(
@@ -525,7 +526,10 @@ pub async fn pull_release_manifest(
     Ok(manifest)
 }
 
-async fn read_release(platform: &Platform, digest: &str) -> anyhow::Result<ReleaseFacts> {
+async fn read_release(
+    platform: &Platform,
+    digest: &wamn_digest::Digest,
+) -> anyhow::Result<ReleaseFacts> {
     let manifest = pull_release_manifest(platform, digest).await?;
     // The admitted descriptors the manifest carries name the release's
     // connections (R2 (3)).
@@ -709,14 +713,20 @@ async fn read_history_revision(
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
+    let values: Value = serde_json::from_slice(&output.stdout).context("decode helm values")?;
+    let manifest_digest = values["release"]["manifestDigest"]
+        .as_str()
+        .map(str::parse)
+        .transpose()?;
     Ok(Revision {
+        manifest_digest,
         number,
         status: entry["status"]
             .as_str()
             .context("Helm revision has no status")?
             .to_owned(),
         chart: entry["chart"].as_str().unwrap_or_default().to_owned(),
-        values: serde_json::from_slice(&output.stdout).context("decode helm values")?,
+        values,
     })
 }
 
@@ -889,6 +899,11 @@ mod tests {
     #[test]
     fn rollback_uses_the_failed_head_and_the_web_selection() -> anyhow::Result<()> {
         let revision = |number, status: &str, code: u8, web: Option<u8>| Revision {
+            manifest_digest: Some(
+                format!("sha256:{}", code.to_string().repeat(64))
+                    .parse()
+                    .unwrap(),
+            ),
             number,
             status: status.to_owned(),
             chart: String::new(),

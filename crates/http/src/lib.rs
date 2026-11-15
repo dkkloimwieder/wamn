@@ -333,18 +333,18 @@ impl ConnectionHttp {
                 instance: connection.to_string().into(),
             },
             package: invocation.package_id.clone().into(),
-            component_digest: invocation.component_digest.clone().into(),
+            component_digest: invocation.component_digest,
             requirement: request.requirement.clone().into(),
             binding_hash: snapshot
                 .validation_hash
-                .as_deref()
+                .as_ref()
                 .ok_or(ConnectionError::Unbound)?
-                .into(),
+                .to_owned(),
             definition_hash: snapshot
                 .definition_hash
-                .as_deref()
+                .as_ref()
                 .ok_or(ConnectionError::CredentialUnavailable)?
-                .into(),
+                .to_owned(),
             generation,
         };
         let configuration = facts
@@ -1193,16 +1193,16 @@ mod tests {
         let mut admitted = invocation();
         let binding = CandidateConnectionBinding {
             read_only: snapshot.read_only,
-            component_digest: admitted.component_digest.clone(),
+            component_digest: admitted.component_digest,
             store_alias: "erp".into(),
-            requirement_hash: snapshot.requirement_hash.clone().unwrap(),
+            requirement_hash: snapshot.requirement_hash.unwrap(),
             instance_id: snapshot.instance_id.clone().unwrap(),
             instance_revision: snapshot.instance_revision.unwrap(),
             requirement_type: snapshot.requirement_type.clone().unwrap(),
             contract: snapshot.contract.clone().unwrap(),
-            validation_hash: snapshot.validation_hash.clone().unwrap(),
+            validation_hash: snapshot.validation_hash.unwrap(),
             generation: snapshot.generation.unwrap(),
-            definition_hash: snapshot.definition_hash.clone().unwrap(),
+            definition_hash: snapshot.definition_hash.unwrap(),
             credential_set_handle: snapshot.credential_handle.clone(),
         };
         admitted.closure = ConnectionExecutionClosure::Candidate {

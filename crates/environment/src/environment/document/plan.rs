@@ -81,7 +81,7 @@ pub enum DeclaredRelease {
     #[default]
     None,
     /// `sha256:` and 64 lowercase hex characters.
-    Digest(String),
+    Digest(wamn_digest::Digest),
 }
 
 impl DeclaredRelease {
@@ -89,17 +89,7 @@ impl DeclaredRelease {
         if text == "none" {
             return Ok(Self::None);
         }
-        let hex = text
-            .strip_prefix("sha256:")
-            .with_context(|| format!("release {text:?} is neither none nor a sha256: digest"))?;
-        ensure!(
-            hex.len() == 64
-                && hex
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-            "release {text:?} is not sha256: and 64 lowercase hex characters"
-        );
-        Ok(Self::Digest(text.to_owned()))
+        Ok(Self::Digest(text.parse()?))
     }
 }
 
@@ -107,7 +97,7 @@ impl fmt::Display for DeclaredRelease {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::None => formatter.write_str("none"),
-            Self::Digest(digest) => formatter.write_str(digest),
+            Self::Digest(digest) => digest.fmt(formatter),
         }
     }
 }
@@ -174,10 +164,6 @@ impl EnvironmentDocument {
                     && !hostname.ends_with(['.', '-']),
                 "application {name}: hostname {hostname:?} is not a lowercase DNS name"
             );
-            if let Some(client) = &application.client {
-                wamn_package_artifact::ensure_digest(&client.web)
-                    .with_context(|| format!("application {name}: client.web"))?;
-            }
             ensure!(!name.is_empty(), "an application has an empty name");
         }
         ensure!(!self.target.trim().is_empty(), "target is empty");
@@ -303,7 +289,7 @@ impl EnvironmentDocument {
                 lines.push(format!(
                     "            client = {{package = {}, web = {}}}",
                     quote(&client.package),
-                    quote(&client.web)
+                    quote(&client.web.to_string())
                 ));
             }
             lines.push("        }".to_owned());

@@ -31,21 +31,21 @@ impl Candidate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchemaSource {
     pub version: String,
-    pub artifact: Option<String>,
+    pub artifact: Option<wamn_digest::Digest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PackageDiff {
     pub installed: Option<String>,
     pub candidate: String,
-    pub source_artifact: Option<String>,
+    pub source_artifact: Option<wamn_digest::Digest>,
     pub migrations: crate::migrations::SchemaReport,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diff {
     pub application: String,
-    pub release: Option<String>,
+    pub release: Option<wamn_digest::Digest>,
     pub mode: SchemaMode,
     pub disposable: Option<bool>,
     pub packages: BTreeMap<String, PackageDiff>,
@@ -105,8 +105,8 @@ pub async fn release_candidates(
     platform: &Platform,
     document: &EnvironmentDocument,
     application: &str,
-    release: Option<&str>,
-) -> anyhow::Result<(String, Vec<Candidate>)> {
+    release: Option<&wamn_digest::Digest>,
+) -> anyhow::Result<(wamn_digest::Digest, Vec<Candidate>)> {
     ensure!(
         document.applications.contains_key(application),
         "application {application} is not declared"
@@ -143,13 +143,13 @@ pub(super) async fn open(
     platform: &Platform,
     id: &str,
     version: &str,
-    digest: Option<&str>,
+    digest: Option<&wamn_digest::Digest>,
 ) -> anyhow::Result<Candidate> {
     let artifact = stage::open(platform, id, version).await?;
     let root = artifact.package_root();
     if let Some(digest) = digest {
         ensure!(
-            root.artifact_digest.as_deref() == Some(digest),
+            root.artifact_digest.as_ref() == Some(digest),
             "installed schema source for {id}@{version} differs from recorded artifact {digest}"
         );
     }
@@ -170,7 +170,7 @@ pub(super) async fn open(
 pub async fn plan(
     document: &EnvironmentDocument,
     application: &str,
-    release: Option<String>,
+    release: Option<wamn_digest::Digest>,
     candidates: &[Candidate],
     state: &State,
 ) -> anyhow::Result<Diff> {
@@ -188,7 +188,7 @@ pub async fn plan(
                 id.clone(),
                 SchemaSource {
                     version: applied.coordinate.package_version().to_owned(),
-                    artifact: applied.artifact_digest.clone(),
+                    artifact: applied.artifact_digest,
                 },
             )
         })
@@ -232,7 +232,7 @@ pub async fn plan(
                     .get(id)
                     .map(|p| p.coordinate.package_version().to_owned()),
                 candidate: metadata.coordinate.package_version().to_owned(),
-                source_artifact: candidate.root.artifact_digest.clone(),
+                source_artifact: candidate.root.artifact_digest,
                 migrations,
             },
         );
@@ -240,7 +240,7 @@ pub async fn plan(
             id.to_owned(),
             SchemaSource {
                 version: metadata.coordinate.package_version().to_owned(),
-                artifact: candidate.root.artifact_digest.clone(),
+                artifact: candidate.root.artifact_digest,
             },
         );
     }
@@ -282,7 +282,7 @@ pub async fn reset_candidates(
         }
         let digest = source
             .artifact
-            .as_deref()
+            .as_ref()
             .with_context(|| format!("retained package {id} has no published source"))?;
         selected.push(open(platform, id, &source.version, Some(digest)).await?);
     }
@@ -353,7 +353,7 @@ pub async fn apply(
     platform: &Platform,
     document: &EnvironmentDocument,
     application: &str,
-    release: &str,
+    release: &wamn_digest::Digest,
     migration_database_url: &str,
 ) -> anyhow::Result<()> {
     let (_, candidates) =

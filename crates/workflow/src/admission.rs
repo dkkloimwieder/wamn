@@ -41,7 +41,7 @@ pub(crate) fn node_digests(
     release: &LoadedRelease,
     application: &str,
     graph: &WiringDocument,
-    hash: &str,
+    hash: &wamn_digest::Digest,
 ) -> anyhow::Result<serde_json::Value> {
     let target = release.target();
     let packages = &target
@@ -55,7 +55,7 @@ pub(crate) fn node_digests(
         release.manifest(),
         graph,
     )?;
-    anyhow::ensure!(actual.as_str() == hash, "stored workflow hash differs");
+    anyhow::ensure!(&actual == hash, "stored workflow hash differs");
     let components = wamn_catalog::resolve_workflow_components(
         &target.project_env_key,
         packages,
@@ -65,7 +65,12 @@ pub(crate) fn node_digests(
     Ok(serde_json::Value::Object(
         components
             .into_iter()
-            .map(|(node, component)| (node, serde_json::Value::String(component.component_digest)))
+            .map(|(node, component)| {
+                (
+                    node,
+                    serde_json::Value::String(component.component_digest.to_string()),
+                )
+            })
             .collect(),
     ))
 }
@@ -118,7 +123,7 @@ pub async fn admit_schedule_run(
             }
             let version: i32 = row.get(0);
             let graph_json: String = row.get(1);
-            let hash: String = row.get(2);
+            let hash: wamn_digest::Digest = row.get(2);
             let role: Option<String> = row.get(3);
             let graph = parse_graph(&graph_json).map_err(|error| {
                 ProductionLeaseError::with_source(
@@ -138,7 +143,7 @@ pub async fn admit_schedule_run(
                     &RunAdmission {
                         project_env_key: &target.project_env_key,
                         application,
-                        manifest_digest: release.release().manifest_digest.as_str(),
+                        manifest_digest: &release.release().manifest_digest,
                         environment: &target.environment,
                         workflow_id,
                         workflow_version: version,

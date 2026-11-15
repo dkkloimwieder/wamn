@@ -38,10 +38,10 @@ pub enum ProductionLeaseResult {
 /// executes as, its one active role, and the component digest of every node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductionWorkflow {
-    pub wiring_hash: String,
+    pub wiring_hash: wamn_digest::Digest,
     pub execution_principal_id: String,
     pub execution_role: String,
-    pub node_digests: std::collections::BTreeMap<String, String>,
+    pub node_digests: std::collections::BTreeMap<String, wamn_digest::Digest>,
     pub causation: Option<wamn_event_wire::Causation>,
 }
 
@@ -220,7 +220,7 @@ pub async fn lease_next(
     package_ids: &[String],
     environment: &str,
     lease_ttl_ms: i64,
-    manifest_digest: Option<&str>,
+    manifest_digest: Option<&wamn_digest::Digest>,
 ) -> Result<LeaseTurn, ProductionLeaseError> {
     validate_target(package_ids, environment)?;
     validate_duration(lease_ttl_ms)?;
@@ -453,12 +453,12 @@ fn decode_selected_lease(row: &Row) -> Result<SelectedLease, ProductionLeaseErro
         row_value(row, 5, "wiring version")?,
     )?;
     let payload: String = row_value(row, 3, "input")?;
-    let digests: String = row_value(row, 10, "node digests")?;
+    let encoded_nodes: String = row_value(row, 10, "node digests")?;
     let mut workflow = ProductionWorkflow {
         wiring_hash: row_value(row, 6, "wiring hash")?,
         execution_principal_id: row_value(row, 8, "execution principal")?,
         execution_role: row_value(row, 9, "execution role")?,
-        node_digests: serde_json::from_str(&digests).map_err(|error| {
+        node_digests: serde_json::from_str(&encoded_nodes).map_err(|error| {
             ProductionLeaseError::with_source(
                 ProductionLeaseErrorType::Contract,
                 "decode frozen node digests",
@@ -569,7 +569,7 @@ pub async fn unfinished_releases(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
     environment: &str,
-) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+) -> Result<Vec<(String, wamn_digest::Digest, String)>, sqlx::Error> {
     sqlx::query_as(
         "SELECT package_id, manifest_digest, run_id FROM wamn_run.runs \
          WHERE project_env_key=$1 AND environment=$2 AND status IN ('dispatched','running') \
@@ -587,7 +587,7 @@ pub async fn pinned_backlog(
     project_env_key: &str,
     applications: &[String],
     environment: &str,
-    manifest_digest: &str,
+    manifest_digest: &wamn_digest::Digest,
 ) -> Result<bool, ProductionLeaseError> {
     validate_target(applications, environment)?;
     let sql = format!(

@@ -9,6 +9,7 @@ license.workspace = true
 test-util = ["wamn-engine/test-util", "wamn-authority/test-util", "wamn-sql/test-util"]
 
 [dependencies]
+wamn-digest = { workspace = true, features = ["sqlx"] }
 tokio = { workspace = true, features = ["time"] }
 wamn-run-state = { workspace = true }
 wamn-kubernetes = { workspace = true }

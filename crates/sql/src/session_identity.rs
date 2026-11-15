@@ -606,7 +606,7 @@ impl WamnPostgres {
     /// digest is derived from verified manifest content. Absent leaves the identity
     /// verifying nothing.
     ///
-    /// The digest arrives as [`ManifestDigest`], so its shape is already validated.
+    /// The digest arrives as [`wamn_digest::Digest`], so its shape is already validated.
     ///
     /// # Why effect authority needs no equality test against this record
     ///
@@ -875,7 +875,7 @@ impl WamnPostgres {
             .iter()
             .find(|component| {
                 component.package_id == lookup.package_id
-                    && component.descriptor.component_digest == lookup.component_digest
+                    && component.descriptor.component_digest == *lookup.component_digest
                     && component.descriptor.component == invocation.component
             })
             .context("release does not carry the executing component")?;
@@ -898,10 +898,10 @@ impl WamnPostgres {
         };
         if !entry_matches
             || lookup.package_id != invocation.package_id
-            || lookup.component_digest != invocation.component_digest
+            || *lookup.component_digest != invocation.component_digest
             || lookup.operation != invocation.operation
             || lookup.origin_package_id != invocation.origin.package_id
-            || lookup.origin_component_digest != invocation.origin.component_digest
+            || *lookup.origin_component_digest != invocation.origin.component_digest
             || lookup.origin_component != invocation.origin.component
             || lookup.origin_interface_version != invocation.origin.interface_version
             || lookup.origin_operation != invocation.origin.operation
@@ -917,7 +917,7 @@ impl WamnPostgres {
         );
         let release = facts.release(lookup.manifest_digest).await?;
         let mut bindings = release.bindings.iter().filter(|binding| {
-            binding.component_digest == lookup.component_digest
+            binding.component_digest == *lookup.component_digest
                 && binding.name == lookup.store_alias
                 && packages.contains(&binding.package_id)
                 && (lookup.package_id == wamn_catalog::PALETTE_PACKAGE_ID
@@ -974,7 +974,7 @@ impl WamnPostgres {
             .map(wamn_catalog::RequirementType::descriptor);
         let requirement = descriptor.as_ref().map(|descriptor| {
             wamn_catalog::ComponentConnectionRequirement::new(
-                lookup.component_digest,
+                *lookup.component_digest,
                 lookup.store_alias,
                 descriptor.clone(),
             )
@@ -1019,7 +1019,7 @@ impl WamnPostgres {
             wiring_hash: invocation
                 .entry
                 .wiring()
-                .map(|position| position.wiring_hash.clone()),
+                .map(|position| position.wiring_hash),
             component: Some(component.descriptor.component.clone()),
             interface_version: Some(component.descriptor.interface_version.clone()),
             operation: Some(lookup.operation.to_owned()),

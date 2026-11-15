@@ -74,13 +74,13 @@ impl Drop for ScratchCredential {
 #[test]
 fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
     let bytes = br#"{"format-version":1}"#;
-    let (layer, _, manifest) = release_manifest_artifact_layout(bytes);
-    let digest = layer.sha256_digest();
+    let (_, _, manifest) = release_manifest_artifact_layout(bytes);
+    let digest = bytes_sha256(bytes);
 
     // The publisher declares the size it just wrote; a puller has only the name.
     let blobs = verify_release_manifest_artifact_layout(&manifest, &digest, None)
         .expect("the published layout verifies for a puller");
-    assert_eq!(blobs.layer.digest, digest);
+    assert_eq!(blobs.layer.digest, digest.to_string());
     assert_eq!(
         blobs.layer.size,
         i64::try_from(bytes.len()).expect("fixture length fits")
@@ -97,7 +97,9 @@ fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
 
     // The digest a pod template names is the whole binding. Bytes published
     // under any other name are a different release, never this one.
-    let other = format!("sha256:{}", "c".repeat(64));
+    let other = (format!("sha256:{}", "c".repeat(64)))
+        .parse::<wamn_digest::Digest>()
+        .unwrap();
     assert_eq!(
         verify_release_manifest_artifact_layout(&manifest, &other, None)
             .expect_err("a foreign layer digest refuses")
@@ -134,7 +136,7 @@ fn pulled_bytes_load_the_release_naming_their_carrier() {
         LoadedRelease::load_canonical_bytes(canonical, ARTIFACT_BASE, target(canonical))
             .expect("verified canonical bytes load without a mount");
     assert_eq!(
-        loaded_release.release().manifest_digest.as_str(),
+        loaded_release.release().manifest_digest,
         bytes_sha256(canonical)
     );
 
@@ -176,28 +178,6 @@ fn a_missing_pull_credential_refuses_before_any_transport() {
     );
 }
 
-#[tokio::test]
-async fn a_digest_that_cannot_name_an_artifact_refuses_before_any_transport() {
-    let credential = ScratchCredential::write();
-    let source = ReleaseManifestSource::new(ARTIFACT_BASE, true, credential.path())
-        .expect("an explicit base and a complete credential configure");
-
-    // A pod template that names anything but one exact content digest is not
-    // naming a release, so no request is worth making.
-    let unprefixed = "a".repeat(64);
-    for digest in ["latest", "sha256:short", unprefixed.as_str()] {
-        let error = source
-            .pull_verified(digest)
-            .await
-            .expect_err("a digest that is not `sha256:<64 lowercase hex>` refuses");
-        assert_eq!(
-            error.error_type(),
-            ReleaseManifestFetchErrorType::InvalidReference,
-            "accepted {digest:?}"
-        );
-    }
-}
-
 /// One required live-leg fact, or a failure naming the variable and its shape.
 ///
 /// `#[ignore]` conditions *selection*; once a run has selected this leg, an absent
@@ -229,7 +209,9 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
     let manifest_digest = live_env(
         "WAMN_RELEASE_MANIFEST_DIGEST",
         "the published manifest digest, sha256:<64 lowercase hex>",
-    );
+    )
+    .parse::<wamn_digest::Digest>()
+    .expect("published digest");
 
     // The registry-backed host loads through these calls. The conformance guard
     // `release_load_precedes_component_binding` keeps startup ahead of binding
@@ -253,10 +235,7 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
     // The identity comes out of the transferred content, and it agrees with
     // the name the pod template gave — the test the mount carrier cannot
     // make, made here against a third party that stored the bytes.
-    assert_eq!(
-        loaded_release.release().manifest_digest.as_str(),
-        manifest_digest
-    );
+    assert_eq!(loaded_release.release().manifest_digest, manifest_digest);
     // Nothing was dropped on the way through the parse: the loaded document
     // re-encodes to the exact bytes the registry served.
     assert_eq!(
@@ -267,7 +246,9 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
 
     // A digest this repository does not hold is a refusal, never an empty
     // release — the same posture a pod pointed at a rolled-back tag must take.
-    let absent = format!("sha256:{}", "f".repeat(64));
+    let absent = (format!("sha256:{}", "f".repeat(64)))
+        .parse::<wamn_digest::Digest>()
+        .unwrap();
     assert_eq!(
         source
             .pull_verified(&absent)
@@ -363,10 +344,10 @@ async fn lying_registry(manifest_json: Vec<u8>, body: Vec<u8>) -> LyingRegistry 
 ///
 /// Built by the production layout function, so a test's lie is one edited field
 /// on a real envelope rather than a hand-copied wire format that could drift.
-fn published_artifact(canonical: &[u8]) -> (String, serde_json::Value) {
-    let (layer, _, manifest) = release_manifest_artifact_layout(canonical);
+fn published_artifact(canonical: &[u8]) -> (wamn_digest::Digest, serde_json::Value) {
+    let (_, _, manifest) = release_manifest_artifact_layout(canonical);
     let wire = serde_json::to_value(&manifest).expect("the published layout serializes");
-    (layer.sha256_digest(), wire)
+    (bytes_sha256(canonical), wire)
 }
 
 /// Configure the production source against a stub bound to an ephemeral port.

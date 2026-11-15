@@ -93,7 +93,7 @@ pub(super) fn bind_signed_file_results(
 /// descriptor is minted from the platform's own constructor, never authored, so
 /// field ownership and credential injection cannot be widened by a declaration.
 pub fn portable_requirement(
-    component_digest: &str,
+    component_digest: &wamn_digest::Digest,
     connection: &ComponentConnection,
     store_alias: &str,
 ) -> ComponentConnectionRequirement {
@@ -101,7 +101,7 @@ pub fn portable_requirement(
         ComponentConnectionType::Http => ConnectionTypeDescriptor::http_v1(),
         ComponentConnectionType::Blobstore => ConnectionTypeDescriptor::blobstore_v1(),
     };
-    ComponentConnectionRequirement::new(component_digest, store_alias, descriptor)
+    ComponentConnectionRequirement::new(*component_digest, store_alias, descriptor)
 }
 
 /// The exports among `selected` whose request element transaction the host begins, as

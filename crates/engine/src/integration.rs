@@ -121,9 +121,9 @@ fn integration_address_policy(authority: &hyper::http::uri::Authority) -> Egress
 
 struct AddressEngine {
     engine: Arc<Engine>,
-    admitted: Mutex<HashMap<String, WorkloadComponent>>,
+    admitted: Mutex<HashMap<wamn_digest::Digest, WorkloadComponent>>,
     #[cfg(any(test, feature = "test-util"))]
-    images: std::sync::Mutex<HashMap<String, HashSet<(usize, usize)>>>,
+    images: std::sync::Mutex<HashMap<wamn_digest::Digest, HashSet<(usize, usize)>>>,
 }
 
 static ADDRESS_ENGINES: OnceLock<std::sync::Mutex<HashMap<bool, Arc<AddressEngine>>>> =
@@ -156,7 +156,7 @@ fn address_engine(policy: EgressAddressPolicy) -> anyhow::Result<Arc<AddressEngi
 
 /// Distinct compiled code images of this digest across the two address classes.
 #[cfg(any(test, feature = "test-util"))]
-pub fn compile_count(digest: &str) -> usize {
+pub fn compile_count(digest: &wamn_digest::Digest) -> usize {
     let engines = ADDRESS_ENGINES
         .get_or_init(std::sync::Mutex::default)
         .lock()
@@ -176,13 +176,17 @@ pub fn compile_count(digest: &str) -> usize {
     count
 }
 
-fn code_workload(digest: &str, bytes: Vec<u8>, resources: LocalResources) -> Workload {
+fn code_workload(
+    digest: &wamn_digest::Digest,
+    bytes: Vec<u8>,
+    resources: LocalResources,
+) -> Workload {
     Workload {
         namespace: "wamn-integration".to_owned(),
-        name: digest.to_owned(),
+        name: digest.to_string(),
         components: vec![Component {
             name: "integration".to_owned(),
-            digest: Some(digest.to_owned()),
+            digest: Some(digest.to_string()),
             bytes: bytes.into(),
             local_resources: resources,
             ..Component::default()
@@ -241,7 +245,7 @@ struct IntegrationStore {
 /// One integration instance and one store, shared by its application calls.
 pub struct Integration {
     inner: Mutex<Option<IntegrationStore>>,
-    digest: String,
+    digest: wamn_digest::Digest,
     // Store host references are weak. Keep their owners across store retirement.
     workload: ResolvedWorkload,
     _egress: Arc<dyn HostHandler>,
@@ -271,11 +275,11 @@ impl Integration {
             (!admitted.contains_key(&digest)).then(|| Arc::new(std::sync::Mutex::new(None)));
         binding.preparation = preparation.clone();
         let engine = Arc::clone(&code.engine);
-        let identity = digest.clone();
+        let identity = digest;
         let authority = binding.authority.clone();
         let unresolved = tokio::task::spawn_blocking(move || {
             engine.initialize_workload(
-                &identity,
+                identity.to_string(),
                 code_workload(
                     &identity,
                     bytes,
@@ -312,7 +316,7 @@ impl Integration {
             code.images
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .entry(digest.clone())
+                .entry(digest)
                 .or_default()
                 .insert((image.start as usize, image.end as usize));
         }
@@ -333,7 +337,7 @@ impl Integration {
                 template.with_plugins(HashMap::new());
                 template
             };
-            admitted.insert(digest.clone(), template);
+            admitted.insert(digest, template);
         }
         drop(components);
         drop(admitted);
@@ -423,7 +427,7 @@ impl Integration {
 pub struct PreparedIntegration {
     workload: ResolvedWorkload,
     egress: Arc<dyn HostHandler>,
-    digest: String,
+    digest: wamn_digest::Digest,
 }
 
 impl std::fmt::Debug for PreparedIntegration {

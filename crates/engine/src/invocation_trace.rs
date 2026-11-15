@@ -43,7 +43,7 @@ pub struct InvocationSite<'a> {
     pub node_id: &'a str,
     pub input_port: Option<&'a str>,
     pub operation: &'a str,
-    pub component_digest: &'a str,
+    pub component_digest: &'a wamn_digest::Digest,
     pub caller: Option<&'a crate::flow_http_routing::AuthenticatedCaller>,
 }
 

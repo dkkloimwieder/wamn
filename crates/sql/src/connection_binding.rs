@@ -25,7 +25,7 @@ pub async fn resolve(
     );
     let (digest, environment, candidate) = match &invocation.closure {
         ConnectionExecutionClosure::Released => (
-            release.release().manifest_digest.as_str(),
+            &release.release().manifest_digest,
             release.target().environment.as_str(),
             None,
         ),
@@ -36,12 +36,12 @@ pub async fn resolve(
             ..
         } => {
             anyhow::ensure!(
-                manifest_digest == release.release().manifest_digest.as_str()
+                *manifest_digest == release.release().manifest_digest
                     && environment == &release.target().environment,
                 "admitted invocation release mismatch"
             );
             (
-                manifest_digest.as_str(),
+                manifest_digest,
                 environment.as_str(),
                 Some(
                     binding_world

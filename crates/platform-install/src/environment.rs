@@ -160,7 +160,7 @@ pub async fn provision(
         target,
         &chart.join("platform/environment"),
         &name,
-        json!({"database":{"name":connection.database,"cluster":cluster},"bootstrap":if initial { json!({"name":format!("bootstrap-{}",&wamn_digest::bytes_sha256(connection.database.as_bytes())[7..27]),"credential":format!("{cluster}-superuser"),"ca":connection.server_ca.name}) } else {Value::Null}}),
+        json!({"database":{"name":connection.database,"cluster":cluster},"bootstrap":if initial { json!({"name":format!("bootstrap-{}",&wamn_digest::bytes_sha256(connection.database.as_bytes()).hex()[..20]),"credential":format!("{cluster}-superuser"),"ca":connection.server_ca.name}) } else {Value::Null}}),
     )
     .await?;
     wamn_kubernetes::kubectl::wait(
@@ -241,7 +241,7 @@ pub async fn initialize(
     bootstrap.credentials.name = format!("{cluster}-superuser");
     let name = format!(
         "bootstrap-{}",
-        wamn_digest::bytes_sha256(connection.database.as_bytes())[7..27].to_owned()
+        wamn_digest::bytes_sha256(connection.database.as_bytes()).hex()[..20].to_owned()
     );
     let input = bootstrap.to_json()?;
     let mut job = wamn_kubernetes::job::manifest(

@@ -9,6 +9,7 @@ license.workspace = true
 test-util = ["dep:opentelemetry_sdk", "dep:tracing-subscriber", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", ]
 
 [dependencies]
+wamn-digest.workspace = true
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"], optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 anyhow = { workspace = true }
@@ -19,7 +20,6 @@ moka = { workspace = true, features = ["sync"] }
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }

@@ -298,7 +298,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         stopping.subscribe(),
     );
     tracing::info!(
-        bundle_digest = release.bundle_digest(),
+        bundle_digest = %release.bundle_digest(),
         %addr,
         status_socket = %status_socket.display(),
         device = config.device.is_some(),
@@ -334,13 +334,13 @@ fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartReq
             components: vec![Component {
                 name: INGRESS_WORKLOAD.to_owned(),
                 bytes: release.ingress().to_vec().into(),
-                digest: Some(bytes_sha256(release.ingress())),
+                digest: Some(bytes_sha256(release.ingress()).to_string()),
                 local_resources: LocalResources {
                     config: std::collections::BTreeMap::from([(
                         wamn_catalog::http_routes::HTTP_ROUTES_CONFIG.into(),
                         serde_json::to_string(&wamn_catalog::http_routes::route_data(
                             release.release().manifest(),
-                            release.release().release().manifest_digest.as_str(),
+                            &release.release().release().manifest_digest,
                         ))
                         .expect("release route data is JSON"),
                     )])

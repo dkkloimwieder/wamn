@@ -121,7 +121,7 @@ pub fn release_values(
     document: &EnvironmentDocument,
     application: &str,
     manifest: &wamn_catalog::ServingManifest,
-    manifest_digest: &str,
+    manifest_digest: &wamn_digest::Digest,
     artifact_base: &str,
     component_base: &str,
     actor: &str,

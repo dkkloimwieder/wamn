@@ -70,7 +70,7 @@ pub struct SelectedComponentArtifact {
     pub package_version: Box<str>,
     pub component: Box<str>,
     pub path: PathBuf,
-    pub digest: Box<str>,
+    pub digest: wamn_digest::Digest,
 }
 
 #[derive(Clone, Debug)]

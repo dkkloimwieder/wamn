@@ -143,7 +143,7 @@ pub(super) fn new_native_policy(
             .find(|served| {
                 served.package_id == fact.target.package_id
                     && served.descriptor.component == fact.component
-                    && served.descriptor.component_digest.as_str() == fact.component_digest
+                    && served.descriptor.component_digest == fact.component_digest
                     && served.descriptor.operations == fact.operations
             })
             .context("component-not-in-carried-release")
@@ -576,7 +576,7 @@ impl NativePolicy {
                 .iter()
                 .map(|member| {
                     (
-                        member.fact.component_digest.as_str(),
+                        &member.fact.component_digest,
                         member.fact.target.package_id.as_str(),
                     )
                 })

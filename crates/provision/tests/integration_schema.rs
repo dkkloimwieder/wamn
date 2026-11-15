@@ -269,13 +269,12 @@ async fn publish_refuses(
     pool: &sqlx::PgPool,
     schema: &str,
     operations: &str,
-    digest: &str,
     code: &str,
     message: &str,
 ) {
     run(wamn_test_postgres::url(pool), &format!("DO $$ BEGIN
         BEGIN
-            PERFORM registry.publish_integration('{code}',2,{digest},'{schema}'::jsonb,'{operations}',ARRAY['wamn:connection/http@0.1.0'],'{{}}');
+            PERFORM registry.publish_integration('{code}',2,NULL,'{schema}'::jsonb,'{operations}',ARRAY['wamn:connection/http@0.1.0'],'{{}}');
             ASSERT false, 'invalid publication must refuse';
         EXCEPTION WHEN invalid_parameter_value THEN
             ASSERT SQLERRM LIKE '{message}%', SQLERRM;
@@ -289,7 +288,6 @@ async fn publish_refuses_removal_before_deprecation(pool: sqlx::PgPool) {
         &pool,
         r#"{"type":"object","properties":{}}"#,
         "wamn:connection/http",
-        "NULL",
         "http",
         "field_removal_requires_deprecation",
     )
@@ -302,7 +300,6 @@ async fn publish_refuses_a_new_required_field(pool: sqlx::PgPool) {
         &pool,
         r#"{"type":"object","properties":{"primary-authority":{"type":"string","immutable":true},"tls-verification":{"type":"string"},"new":{"type":"string"}},"required":["new"]}"#,
         "wamn:connection/http",
-        "NULL",
         "http",
         "required_field_requires_optional_predecessor",
     ).await;
@@ -314,7 +311,6 @@ async fn publish_refuses_a_changed_json_type(pool: sqlx::PgPool) {
         &pool,
         r#"{"type":"object","properties":{"primary-authority":{"type":"integer","immutable":true},"tls-verification":{"type":"string"}}}"#,
         "wamn:connection/http",
-        "NULL",
         "http",
         "field_type_changed",
     ).await;
@@ -326,7 +322,6 @@ async fn publish_refuses_reserved_auth_parameters(pool: sqlx::PgPool) {
         &pool,
         r#"{"type":"object","properties":{"auth":{"type":"object"}}}"#,
         "wamn:connection/http",
-        "NULL",
         "http",
         "reserved_auth_field",
     )
@@ -339,7 +334,6 @@ async fn publish_refuses_http_auth_with_another_interface(pool: sqlx::PgPool) {
         &pool,
         r#"{"type":"object","properties":{}}"#,
         "example:serial/client",
-        "NULL",
         "http",
         "http_auth_requires_http_interface",
     )
@@ -352,7 +346,6 @@ async fn publish_refuses_wasm_without_a_digest(pool: sqlx::PgPool) {
         &pool,
         r#"{"type":"object","properties":{}}"#,
         "wamn:modbus/client",
-        "NULL",
         "modbus",
         "digest_required",
     )

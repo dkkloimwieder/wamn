@@ -420,10 +420,10 @@ fn identity(generation: i64) -> ClientIdentity {
             instance: "connection".into(),
         },
         package: "package".into(),
-        component_digest: "component".into(),
+        component_digest: wamn_digest::bytes_sha256(b"component"),
         requirement: "requirement".into(),
-        binding_hash: "binding".into(),
-        definition_hash: "definition".into(),
+        binding_hash: wamn_digest::bytes_sha256(b"binding"),
+        definition_hash: wamn_digest::bytes_sha256(b"definition"),
         generation,
     }
 }
@@ -717,16 +717,16 @@ async fn every_client_identity_field_and_peer_separates_pools() {
     changed.package = "other".into();
     variants.push(changed);
     let mut changed = initial.clone();
-    changed.component_digest = "other".into();
+    changed.component_digest = wamn_digest::bytes_sha256(b"other");
     variants.push(changed);
     let mut changed = initial.clone();
     changed.requirement = "other".into();
     variants.push(changed);
     let mut changed = initial.clone();
-    changed.binding_hash = "other".into();
+    changed.binding_hash = wamn_digest::bytes_sha256(b"other");
     variants.push(changed);
     let mut changed = initial.clone();
-    changed.definition_hash = "other".into();
+    changed.definition_hash = wamn_digest::bytes_sha256(b"other");
     variants.push(changed);
     let mut changed = initial.clone();
     changed.connection.instance = "other".into();

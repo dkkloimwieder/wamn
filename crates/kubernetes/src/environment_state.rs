@@ -64,14 +64,14 @@ pub struct EnvironmentState {
     /// Each WorkloadDeployment of the release, with its conditions.
     pub workloads: BTreeMap<String, BTreeMap<String, String>>,
     /// Release digest to the count of host pods that are not terminated.
-    pub live: BTreeMap<String, usize>,
+    pub live: BTreeMap<wamn_digest::Digest, usize>,
 }
 
 /// The digest and the rollout of the host Deployment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DeploymentStatus {
     /// The digest of the pod template's `wamn.release-digest` annotation.
-    pub manifest_digest: Option<String>,
+    pub manifest_digest: Option<wamn_digest::Digest>,
     pub replicas: u64,
     pub updated_replicas: u64,
     pub ready_replicas: u64,
@@ -147,7 +147,7 @@ pub fn deployment_status(deployment: &Value) -> DeploymentStatus {
         manifest_digest: deployment["spec"]["template"]["metadata"]["annotations"]
             [RELEASE_DIGEST_ANNOTATION]
             .as_str()
-            .map(str::to_owned),
+            .and_then(|value| value.parse().ok()),
         replicas: count("replicas"),
         updated_replicas: count("updatedReplicas"),
         ready_replicas: count("readyReplicas"),
@@ -190,7 +190,7 @@ pub fn workload_conditions(
 #[serde(deny_unknown_fields)]
 pub struct ReleaseResidency {
     pub application: String,
-    pub manifest_digest: String,
+    pub manifest_digest: wamn_digest::Digest,
     pub loaded: bool,
     pub runs: Vec<String>,
 }
@@ -252,7 +252,7 @@ pub fn project_residency(
     reports: Vec<Residency>,
     project: &str,
 ) -> anyhow::Result<Vec<ReleaseResidency>> {
-    let mut releases: BTreeMap<(String, String), ReleaseResidency> = BTreeMap::new();
+    let mut releases: BTreeMap<(String, wamn_digest::Digest), ReleaseResidency> = BTreeMap::new();
     for mut report in reports {
         let state = report
             .remove(project)
@@ -262,7 +262,7 @@ pub fn project_residency(
         }
         for release in state.releases {
             use std::collections::btree_map::Entry;
-            match releases.entry((release.application.clone(), release.manifest_digest.clone())) {
+            match releases.entry((release.application.clone(), release.manifest_digest)) {
                 Entry::Vacant(entry) => {
                     entry.insert(release);
                 }
@@ -323,7 +323,7 @@ mod tests {
         assert!(project_residency(vec![report.clone()], "billing").is_err());
         assert!(project_residency(vec![report], "foreign").is_err());
     }
-    fn wamn_digest_for_test() -> String {
-        format!("sha256:{}", "a".repeat(64))
+    fn wamn_digest_for_test() -> wamn_digest::Digest {
+        wamn_digest::bytes_sha256(b"residency")
     }
 }

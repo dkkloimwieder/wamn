@@ -43,7 +43,7 @@ pub async fn install(repository: &Path) -> Result<PathBuf> {
     );
     let bytes = fs::read(&archive)?;
     ensure!(
-        wamn_digest::bytes_sha256(&bytes) == checksum,
+        wamn_digest::bytes_sha256(&bytes) == checksum.parse::<wamn_digest::Digest>()?,
         "KCL archive differs from its pinned checksum"
     );
     let unpack = Command::new("tar")

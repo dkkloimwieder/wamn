@@ -5,7 +5,7 @@ use crate::identity::{
     CandidateBindingWorld, ConnectionEffectSnapshot, ConnectionEntryLookup, WiringLookup,
 };
 use std::sync::Arc;
-use wamn_catalog::{ArtifactHash, ConnectionTypeDescriptor, ServingComponent, ServingManifest};
+use wamn_catalog::{ConnectionTypeDescriptor, ServingComponent, ServingManifest};
 #[cfg(any(test, feature = "test-util"))]
 use wamn_engine::release_manifest::LoadedRelease;
 
@@ -33,7 +33,7 @@ pub struct ConnectionInvocation {
     /// Where the invocation entered the release, unchanged by nested calls.
     pub entry: InvocationEntry,
     pub package_id: String,
-    pub component_digest: String,
+    pub component_digest: wamn_digest::Digest,
     pub component: String,
     pub operation: String,
     pub closure: ConnectionExecutionClosure,
@@ -84,7 +84,7 @@ impl ConnectionInvocation {
             wiring_version,
             node_id,
             occurrence,
-            component_digest: &self.component_digest,
+            component_digest: Some(&self.component_digest),
             component_name: &self.component,
             operation: &self.operation,
         }
@@ -114,7 +114,7 @@ impl InvocationEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WiringPosition {
     /// The immutable graph hash frozen on the run.
-    pub wiring_hash: String,
+    pub wiring_hash: wamn_digest::Digest,
     /// The wiring can belong to a package that imports the root component.
     pub package_id: String,
     pub wiring_id: String,
@@ -128,7 +128,7 @@ pub struct WiringPosition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionOrigin {
     pub package_id: String,
-    pub component_digest: String,
+    pub component_digest: wamn_digest::Digest,
     pub component: String,
     pub interface_version: String,
     pub operation: String,
@@ -142,9 +142,9 @@ pub enum ConnectionExecutionClosure {
     /// Private admission froze an exact candidate wiring and binding world.
     Candidate {
         /// The release the candidate resolves under, as its manifest digest.
-        manifest_digest: String,
+        manifest_digest: wamn_digest::Digest,
         environment: String,
-        wiring_hash: String,
+        wiring_hash: wamn_digest::Digest,
         component: String,
         interface_version: String,
         binding_world: Arc<CandidateBindingWorld>,
@@ -258,8 +258,7 @@ pub fn authorize_release_closure(
     invocation: &ConnectionInvocation,
     snapshot: &ConnectionEffectSnapshot,
 ) -> Result<(), ConnectionError> {
-    let digest = ArtifactHash::parse(invocation.component_digest.clone())
-        .map_err(|_| ConnectionError::AttestationInvalid)?;
+    let digest = invocation.component_digest;
     let Some(((component, interface_version), operation)) = snapshot
         .component
         .as_ref()
@@ -275,7 +274,7 @@ pub fn authorize_release_closure(
         candidate.package_id == invocation.package_id
             && candidate.descriptor.component == *component
             && candidate.descriptor.interface_version == *interface_version
-            && candidate.descriptor.component_digest == digest.as_str()
+            && candidate.descriptor.component_digest == digest
     });
     let operation_admitted = component
         .and_then(|component| component.descriptor.operations.get(operation))
@@ -291,15 +290,14 @@ pub fn authorize_release_closure(
                 })
         }
         InvocationEntry::Wiring(position) => {
-            snapshot.node_permitted
-                && snapshot.wiring_hash.as_deref() == Some(position.wiring_hash.as_str())
+            snapshot.node_permitted && snapshot.wiring_hash.as_ref() == Some(&position.wiring_hash)
         }
     };
     let root = manifest.components.iter().find(|component| {
         component.package_id == origin.package_id
             && component.descriptor.component == origin.component
             && component.descriptor.interface_version == origin.interface_version
-            && component.descriptor.component_digest.as_str() == origin.component_digest
+            && component.descriptor.component_digest == origin.component_digest
     });
     if !operation_admitted
         || !entry_released
@@ -322,7 +320,7 @@ fn released_operation_reachable(
     root.descriptor.operations.contains_key(root_operation)
         && root.package_id == invocation.package_id
         && root.descriptor.component == invocation.component
-        && root.descriptor.component_digest.as_str() == invocation.component_digest
+        && root.descriptor.component_digest == invocation.component_digest
         && root_operation == invocation.operation
 }
 

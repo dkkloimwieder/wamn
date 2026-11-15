@@ -3,7 +3,6 @@
 use super::*;
 use base64::Engine as _;
 use http_body_util::{BodyExt as _, Full};
-use sha2::{Digest as _, Sha256};
 use wamn_package_artifact::http_client::HttpClient;
 use wash_runtime::host::http::{
     HostHandler as _, Ingress, IngressRoute, NormalizedPathPrefix, RouteScope, ServiceHttpJob,
@@ -52,7 +51,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
                     assert_eq!(form["code"],"accepted-code");
                     assert_eq!(form["client_id"],"admin-client");
                     assert_eq!(form["client_secret"],"private-secret");
-                    let actual = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(form["code_verifier"].as_bytes()));
+                    let actual = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(wamn_digest::sha256(form["code_verifier"].as_bytes()));
                     assert_eq!(expected.lock().unwrap().as_deref(),Some(actual.as_str()));
                     if let Some((arrived, resumed)) = pause.lock().await.take() {
                         arrived.send(()).unwrap();

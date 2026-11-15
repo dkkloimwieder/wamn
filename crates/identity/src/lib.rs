@@ -682,7 +682,7 @@ pub async fn issue_pat(
     let row = sqlx::query(INSERT_PAT_SQL)
         .bind(principal_id.to_string().as_str())
         .bind(prefix)
-        .bind(&token_hash)
+        .bind(token_hash)
         .bind(&label)
         .bind(ttl_seconds)
         .fetch_optional(&mut *client)
@@ -742,7 +742,8 @@ fn decide_pat(
             "stored token names a platform principal",
         ));
     }
-    let stored_hash: String = row.try_get(5).map_err(|error| database_error(&error))?;
+    let stored_hash: wamn_digest::Digest =
+        row.try_get(5).map_err(|error| database_error(&error))?;
     let usable: bool = row.try_get(6).map_err(|error| database_error(&error))?;
     if !token.matches(&stored_hash) || !usable || principal.status != PrincipalStatus::Active {
         return Ok(None);

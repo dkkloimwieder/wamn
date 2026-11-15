@@ -290,14 +290,14 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
     plugin.set_runner(COMPONENT, COMPONENT)?;
     plugin.set_release_identity(
         COMPONENT,
-        ReleaseIdentity::for_test(wamn_catalog::ManifestDigest::parse(POD_MANIFEST_DIGEST)?),
+        ReleaseIdentity::for_test((POD_MANIFEST_DIGEST).parse::<wamn_digest::Digest>()?),
     )?;
     plugin.set_project_env_key(ROLLED_COMPONENT, PROJECT_ENV_KEY)?;
     plugin.set_schema(ROLLED_COMPONENT, SCHEMA)?;
     plugin.set_runner(ROLLED_COMPONENT, ROLLED_COMPONENT)?;
     plugin.set_release_identity(
         ROLLED_COMPONENT,
-        ReleaseIdentity::for_test(wamn_catalog::ManifestDigest::parse(ROLLED_MANIFEST_DIGEST)?),
+        ReleaseIdentity::for_test((ROLLED_MANIFEST_DIGEST).parse::<wamn_digest::Digest>()?),
     )?;
 
     Ok(LiveFixture {

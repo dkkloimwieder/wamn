@@ -28,7 +28,11 @@ async fn fanout_is_atomic_idempotent_and_records_the_history_actor(pool: sqlx::P
         .map(drop)
         .unwrap();
     sqlx::query("UPDATE catalog.workflows SET wiring_hash = $1 WHERE workflow_id = 'z-invalid'")
-        .bind(&format!("sha256:{}", "0".repeat(64)))
+        .bind(
+            &(format!("sha256:{}", "0".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+        )
         .execute(&mut fixture.admin)
         .await
         .map(|result| result.rows_affected())

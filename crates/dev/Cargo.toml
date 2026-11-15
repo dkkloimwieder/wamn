@@ -15,7 +15,7 @@ url.workspace = true
 wamn-build.workspace = true
 wamn-catalog.workspace = true
 wamn-compiler.workspace = true
-wamn-digest.workspace = true
+wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-engine.workspace = true
 wamn-environment.workspace = true
 wamn-identity-protocol.workspace = true

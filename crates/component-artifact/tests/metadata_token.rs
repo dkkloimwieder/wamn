@@ -292,7 +292,7 @@ async fn an_unusable_answer_refuses_by_name_without_the_token(script: &Script) {
 
 async fn each_release_pull_asks_again_and_sends_its_token(script: &Script) {
     let canonical = br#"{"format-version":1}"#;
-    let (layer, _, manifest) = release_manifest_artifact_layout(canonical);
+    let (_, _, manifest) = release_manifest_artifact_layout(canonical);
     let (authority, registry) = challenging_registry(
         serde_json::to_vec(&manifest).expect("the layout serializes"),
         canonical.to_vec(),
@@ -310,7 +310,7 @@ async fn each_release_pull_asks_again_and_sends_its_token(script: &Script) {
 
     for _ in 0..2 {
         let pulled = source
-            .pull_verified(&layer.sha256_digest())
+            .pull_verified(&wamn_digest::bytes_sha256(canonical))
             .await
             .expect("a pull with a metadata token succeeds");
         assert_eq!(pulled, canonical);
@@ -324,7 +324,7 @@ async fn each_release_pull_asks_again_and_sends_its_token(script: &Script) {
 
 async fn a_failed_token_request_refuses_before_any_registry_request(script: &Script) {
     let canonical = br#"{"format-version":1}"#;
-    let (layer, _, manifest) = release_manifest_artifact_layout(canonical);
+    let (_, _, manifest) = release_manifest_artifact_layout(canonical);
     let (authority, registry) = challenging_registry(
         serde_json::to_vec(&manifest).expect("the layout serializes"),
         canonical.to_vec(),
@@ -336,7 +336,7 @@ async fn a_failed_token_request_refuses_before_any_registry_request(script: &Scr
         true,
     )
     .expect("an explicit base configures")
-    .pull_verified(&layer.sha256_digest())
+    .pull_verified(&wamn_digest::bytes_sha256(canonical))
     .await
     .expect_err("a pull without a token refuses");
     assert_eq!(

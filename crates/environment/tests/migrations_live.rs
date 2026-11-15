@@ -288,7 +288,11 @@ async fn package_apply_refuses_rebinding_an_existing_relation(
             )?;
             Ok(PackageRoot {
                 path: root,
-                artifact_digest: Some(format!("sha256:{}", "a".repeat(64))),
+                artifact_digest: Some(
+                    (format!("sha256:{}", "a".repeat(64)))
+                        .parse::<wamn_digest::Digest>()
+                        .unwrap(),
+                ),
             })
         };
     let request = |package| ApplyPackageRequest {

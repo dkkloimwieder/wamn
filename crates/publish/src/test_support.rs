@@ -43,9 +43,9 @@ pub fn closure_component(component: &str, registered_operation: Option<&str>) ->
                 parameters: Vec::new(),
             },
         )]),
-        component_digest: DIGEST.to_owned(),
+        component_digest: DIGEST.parse().unwrap(),
         imports: Vec::new(),
-        imports_fingerprint: DIGEST.to_owned(),
+        imports_fingerprint: DIGEST.parse().unwrap(),
         effects: Vec::new(),
     }
 }

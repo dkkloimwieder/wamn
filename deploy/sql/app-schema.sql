@@ -452,7 +452,7 @@ CREATE TABLE platform.file (
     name                  text NOT NULL CHECK (name <> ''),
     media_type            text NOT NULL CHECK (media_type <> ''),
     size                  bigint NOT NULL CHECK (size >= 0),
-    sha256                text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+    sha256                text NOT NULL CHECK (sha256 ~ '^sha256:[0-9a-f]{64}$'),
     blob_key              text NOT NULL UNIQUE,
     exposure              text NOT NULL DEFAULT 'application'
                               CHECK (exposure IN ('private', 'application', 'public')),

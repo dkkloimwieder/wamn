@@ -60,7 +60,7 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
                     wamn_catalog::http_routes::HTTP_ROUTES_CONFIG.into(),
                     serde_json::to_string(&wamn_catalog::http_routes::route_data(
                         manifest,
-                        manifest.digest().as_str(),
+                        &manifest.digest(),
                     ))
                     .expect("route data is JSON")
                     .into(),
@@ -78,7 +78,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         input.applications.len() == 1,
         "a release must select exactly one application"
     );
-    wamn_package_artifact::ensure_digest(&input.manifest_digest)?;
+
     let environment = wamn_registry::name::host_status(&input.org, &input.project, &input.env);
     let roles = input
         .roles
@@ -103,13 +103,13 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     values.insert(
         "release".into(),
         mapping([
-            ("manifestDigest", input.manifest_digest.clone()),
+            ("manifestDigest", input.manifest_digest.to_string()),
             ("artifactBase", input.artifact_base.clone()),
         ]),
     );
     values.insert("environment".into(), environment.into());
     values.insert("routeHost".into(), input.route_host.clone().into());
-    values.insert("platformUi".into(), "".into());
+    values.insert("platformUi".into(), Value::Null);
     values.insert(
         "applications".into(),
         serde_yaml::to_value(&input.applications).context("render the applications")?,
@@ -183,7 +183,7 @@ pub struct ValuesInput {
     pub project: String,
     pub env: String,
     /// `sha256:<hex>` of the release manifest.
-    pub manifest_digest: String,
+    pub manifest_digest: wamn_digest::Digest,
     pub artifact_base: String,
     pub route_host: String,
     /// Exactly one application's membership, retained in Helm values for status reads.

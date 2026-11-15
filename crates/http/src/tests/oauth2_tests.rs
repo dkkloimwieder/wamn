@@ -21,6 +21,7 @@ fn token(number: u8, expires_in: Option<u64>) -> (u16, String) {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn invocation_deadline_after_response_headers_keeps_response_lost() {
     let _lock = wamn_test_postgres::lock();
     let mut endpoint = invocation::Endpoint::start().await;

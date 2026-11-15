@@ -176,7 +176,7 @@ pub struct PackedLayer {
 /// Verified package content and the metadata of its published manifest.
 #[derive(Debug)]
 pub struct PulledPackage {
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
     pub layers: Vec<PackedLayer>,
     pub annotations: BTreeMap<String, String>,
 }
@@ -196,24 +196,6 @@ pub fn ensure_tag(tag: &str) -> anyhow::Result<()> {
                 .iter()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')),
         "package tag {tag:?} is not an OCI tag"
-    );
-    Ok(())
-}
-
-/// Refuse a package artifact digest that is not `sha256:` and 64 lowercase
-/// hex digits. A prefix is never resolved.
-///
-/// # Errors
-///
-/// When `digest` is not a full digest.
-pub fn ensure_digest(digest: &str) -> anyhow::Result<()> {
-    let hex = digest.strip_prefix("sha256:").unwrap_or_default();
-    ensure!(
-        hex.len() == 64
-            && hex
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
-        "{digest:?} is not a package artifact digest: give sha256: and all 64 lowercase hex digits, or the tag"
     );
     Ok(())
 }
@@ -248,6 +230,43 @@ pub fn registry_auth(credentials: Option<&RegistryCredentials>) -> RegistryAuth 
     })
 }
 
+/// A tag or a parsed immutable artifact identity.
+#[derive(Debug, Clone, Copy)]
+pub enum ArtifactReference<'a> {
+    Tag(&'a str),
+    Digest(wamn_digest::Digest),
+}
+
+impl<'a> ArtifactReference<'a> {
+    /// Read a full digest or an OCI tag at an input boundary.
+    pub fn parse(value: &'a str) -> anyhow::Result<Self> {
+        if value.starts_with("sha256:") {
+            Ok(Self::Digest(value.parse()?))
+        } else {
+            ensure_tag(value)?;
+            Ok(Self::Tag(value))
+        }
+    }
+}
+
+impl<'a> From<&'a str> for ArtifactReference<'a> {
+    fn from(tag: &'a str) -> Self {
+        Self::Tag(tag)
+    }
+}
+
+impl<'a> From<&'a String> for ArtifactReference<'a> {
+    fn from(tag: &'a String) -> Self {
+        Self::Tag(tag)
+    }
+}
+
+impl From<&wamn_digest::Digest> for ArtifactReference<'_> {
+    fn from(digest: &wamn_digest::Digest) -> Self {
+        Self::Digest(*digest)
+    }
+}
+
 /// One open registry repository and the tag or digest of one package.
 pub struct Repository {
     /// The registry client.
@@ -277,12 +296,10 @@ impl Repository {
     ///
     /// When the reference or the base is not valid, or the credential or the
     /// CA bundles cannot be read.
-    pub fn open(registry: &PackageRegistry, reference: &str) -> anyhow::Result<Self> {
-        if reference.starts_with("sha256:") {
-            ensure_digest(reference)?;
-        } else {
-            ensure_tag(reference)?;
-        }
+    pub fn open<'a>(
+        registry: &PackageRegistry,
+        reference: impl Into<ArtifactReference<'a>>,
+    ) -> anyhow::Result<Self> {
         let base = parse_component_artifact_base(&registry.artifact_base)?;
         let from_file;
         let credentials = if let Some(credentials) = &registry.credentials {
@@ -296,33 +313,29 @@ impl Repository {
     }
 
     /// Open a repository with a host-resolved credential, including metadata tokens.
-    pub fn with_auth(
+    pub fn with_auth<'a>(
         registry: &PackageRegistry,
-        reference: &str,
+        reference: impl Into<ArtifactReference<'a>>,
         auth: RegistryAuth,
     ) -> anyhow::Result<Self> {
-        let by_digest = reference.starts_with("sha256:");
-        if by_digest {
-            ensure_digest(reference)?;
-        } else {
-            ensure_tag(reference)?;
-        }
         let base = parse_component_artifact_base(&registry.artifact_base)
             .context("read the package artifact base")?;
         let ca_bundles = read_ca_bundles(&registry.oci_ca_paths)
             .with_context(|| format!("read CA bundles for registry {}", base.registry()))?;
-        let reference = if by_digest {
-            Reference::with_digest(
+        let reference = match reference.into() {
+            ArtifactReference::Digest(digest) => Reference::with_digest(
                 base.registry().to_owned(),
                 base.repository().to_owned(),
-                reference.to_owned(),
-            )
-        } else {
-            Reference::with_tag(
-                base.registry().to_owned(),
-                base.repository().to_owned(),
-                reference.to_owned(),
-            )
+                digest.to_string(),
+            ),
+            ArtifactReference::Tag(tag) => {
+                ensure_tag(tag)?;
+                Reference::with_tag(
+                    base.registry().to_owned(),
+                    base.repository().to_owned(),
+                    tag.to_owned(),
+                )
+            }
         };
         let source = RegistrySource::new(base, registry.insecure_registry, REGISTRY_IO_TIMEOUT)
             .with_ca_bundles(ca_bundles);
@@ -343,7 +356,7 @@ impl Repository {
     ///
     /// When the registry cannot be read, or the bytes do not hash to the
     /// digest it reports or to the digest the reference names.
-    pub async fn manifest(&self) -> anyhow::Result<Option<(Vec<u8>, String)>> {
+    pub async fn manifest(&self) -> anyhow::Result<Option<(Vec<u8>, wamn_digest::Digest)>> {
         self.manifest_before(tokio::time::Instant::now() + REGISTRY_IO_TIMEOUT)
             .await
     }
@@ -351,7 +364,7 @@ impl Repository {
     async fn manifest_before(
         &self,
         deadline: tokio::time::Instant,
-    ) -> anyhow::Result<Option<(Vec<u8>, String)>> {
+    ) -> anyhow::Result<Option<(Vec<u8>, wamn_digest::Digest)>> {
         match registry_pull::retry(
             &self.reference,
             deadline,
@@ -365,9 +378,13 @@ impl Repository {
         .await
         {
             Ok((bytes, digest)) => {
+                let digest: wamn_digest::Digest = digest.parse()?;
                 ensure!(
                     bytes_sha256(&bytes) == digest
-                        && self.reference.digest().is_none_or(|named| named == digest),
+                        && self
+                            .reference
+                            .digest()
+                            .is_none_or(|named| named == digest.to_string()),
                     "the manifest of package artifact {} does not hash to {digest}",
                     self.reference
                 );
@@ -425,7 +442,7 @@ impl Repository {
             .await
             .with_context(|| format!("pull a layer of package artifact {}", self.reference))?;
         ensure!(
-            bytes_sha256(&bytes) == layer.digest,
+            bytes_sha256(&bytes) == layer.digest.parse::<wamn_digest::Digest>()?,
             "a layer of package artifact {} does not hash to {}",
             self.reference,
             layer.digest
@@ -454,7 +471,7 @@ pub async fn pull_package(
     registry: &PackageRegistry,
     package_id: &str,
     version: &str,
-) -> anyhow::Result<(String, Vec<PackedLayer>)> {
+) -> anyhow::Result<(wamn_digest::Digest, Vec<PackedLayer>)> {
     Repository::open(registry, &format!("{package_id}-{version}"))?
         .pull()
         .await?
@@ -570,21 +587,6 @@ mod tests {
     }
 
     #[test]
-    fn a_digest_is_given_in_full() {
-        assert!(ensure_digest(&format!("sha256:{}", "a".repeat(64))).is_ok());
-        for refused in [
-            String::new(),
-            "sha256:".to_owned(),
-            "sha256:ab12".to_owned(),
-            "a".repeat(64),
-            format!("sha256:{}", "A".repeat(64)),
-            format!("sha256:{}", "a".repeat(65)),
-        ] {
-            assert!(ensure_digest(&refused).is_err(), "{refused:?}");
-        }
-    }
-
-    #[test]
     fn a_tag_follows_the_oci_grammar() {
         assert!(ensure_tag("wamn_wms-2.1.0").is_ok());
         assert!(ensure_tag("").is_err());
@@ -609,10 +611,10 @@ mod tests {
         let descriptor = serde_json::json!({
             "component": "entity",
             "interface-version": "0.1",
-            "component-digest": format!("sha256:{}", "1".repeat(64)),
+            "component-digest": (format!("sha256:{}", "1".repeat(64))).parse::<wamn_digest::Digest>().unwrap(),
             "operations": {},
             "imports": [],
-            "imports-fingerprint": format!("sha256:{}", "2".repeat(64)),
+            "imports-fingerprint": (format!("sha256:{}", "2".repeat(64))).parse::<wamn_digest::Digest>().unwrap(),
             "effects": [],
             "connections": [],
         });

@@ -15,7 +15,7 @@ pub struct MigrationSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppliedPackage {
     pub coordinate: PackageCoordinate,
-    pub artifact_digest: Option<String>,
+    pub artifact_digest: Option<wamn_digest::Digest>,
 }
 
 /// Exact inputs read from one verified package tree.
@@ -23,7 +23,7 @@ pub struct AppliedPackage {
 pub struct PackageDirectory {
     pub manifest_bytes: Vec<u8>,
     pub migrations: Vec<MigrationSource>,
-    pub artifact_digest: Option<String>,
+    pub artifact_digest: Option<wamn_digest::Digest>,
 }
 
 /// Sole package-local model-key to physical relation mapping.
@@ -91,7 +91,7 @@ pub fn package_metadata(directory: &PackageDirectory) -> anyhow::Result<PackageM
 /// Refuse a different artifact for an already recorded coordinate.
 pub fn validate_package_schema_source(
     coordinate: &PackageCoordinate,
-    artifact_digest: Option<&str>,
+    artifact_digest: Option<&wamn_digest::Digest>,
     existing: &AppliedPackage,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
@@ -99,8 +99,7 @@ pub fn validate_package_schema_source(
         "installed schema belongs to another package"
     );
     anyhow::ensure!(
-        existing.coordinate != *coordinate
-            || existing.artifact_digest.as_deref() == artifact_digest,
+        existing.coordinate != *coordinate || existing.artifact_digest.as_ref() == artifact_digest,
         "package-coordinate-content-conflict: {coordinate:?}"
     );
     Ok(())

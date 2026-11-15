@@ -275,7 +275,7 @@ struct Fixture {
     read: &'static wamn_catalog::AdmittedComponent,
     jsonata: &'static wamn_catalog::AdmittedComponent,
     release: Arc<LoadedRelease>,
-    digest: String,
+    digest: wamn_digest::Digest,
     delivery: HostRouteDelivery,
     _database: url::Url,
 }
@@ -364,7 +364,7 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     for (component, bytes) in [(read, read_bytes), (jsonata, jsonata_bytes)] {
         std::fs::write(
-            local_component_path(scratch.path(), &component.component_digest).unwrap(),
+            local_component_path(scratch.path(), &component.component_digest),
             bytes,
         )
         .unwrap();
@@ -372,7 +372,7 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
 
     let served = manifest(Some(read), jsonata);
     let release = load(&served);
-    let digest = release.release().manifest_digest.as_str().to_owned();
+    let digest = release.release().manifest_digest;
     sqlx::query(
         "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
@@ -812,7 +812,7 @@ async fn a_manual_run_reads_and_shapes_as_its_invoker_with_one_role(pool: sqlx::
     assert_eq!(row.get::<String, _>(2), "reader");
     assert_eq!(row.get::<String, _>(3), "manual");
     assert_eq!(row.get::<String, _>(4), READER);
-    assert_eq!(row.get::<String, _>(5), fixture.digest);
+    assert_eq!(row.get::<wamn_digest::Digest, _>(5), fixture.digest);
     {
         let observed = &(serde_json::from_str::<Value>(&row.get::<String, _>(6)).unwrap());
         assert_eq!(
@@ -855,7 +855,9 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution(pool: sql
 
     // A row written past authorship, enabled, under another graph's hash.
     let graph = serde_json::to_string(&workflow(1, READ)).unwrap();
-    let wrong = format!("sha256:{}", "e".repeat(64));
+    let wrong = (format!("sha256:{}", "e".repeat(64)))
+        .parse::<wamn_digest::Digest>()
+        .unwrap();
     sqlx::query(
         "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, \
                 version, graph_json, wiring_hash, trigger, execution_type, enabled, created_by) \
@@ -1027,7 +1029,7 @@ async fn a_host_of_another_release_cannot_lease_the_run(pool: sqlx::PgPool) {
     other_manifest.host_routes.clear();
     let other = load(&other_manifest);
     assert_ne!(
-        other.release().manifest_digest.as_str(),
+        other.release().manifest_digest,
         fixture.digest,
         "the other release has its own digest"
     );
@@ -1073,8 +1075,5 @@ async fn author_enable_and_start_leave_the_release_and_the_environment_unchanged
     fixture.drain(&fixture.release).await;
     assert_eq!(fixture.outcome(&run).await.0, "completed");
     assert_eq!(fixture.environment_facts().await, before, "after start");
-    assert_eq!(
-        fixture.release.release().manifest_digest.as_str(),
-        fixture.digest
-    );
+    assert_eq!(fixture.release.release().manifest_digest, fixture.digest);
 }

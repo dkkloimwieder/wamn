@@ -2,8 +2,6 @@
 
 use std::collections::BTreeSet;
 
-use wamn_catalog::ArtifactHash;
-
 /// Trust granted by the deployment owner, never by an application manifest.
 ///
 /// Each digest names reviewed code whose caller data and tasks are request-local.
@@ -26,16 +24,17 @@ impl Default for WarmReuse {
 
 impl WarmReuse {
     /// Read exact trusted digests and positive native limits from deployment inputs.
-    pub fn new(trusted: &[String], pool_size: i32, reclaim_seconds: i32) -> anyhow::Result<Self> {
+    pub fn new(
+        trusted: &[wamn_digest::Digest],
+        pool_size: i32,
+        reclaim_seconds: i32,
+    ) -> anyhow::Result<Self> {
         anyhow::ensure!(pool_size > 0, "component pool size must be positive");
         anyhow::ensure!(
             reclaim_seconds > 0,
             "component reclaim window must be positive"
         );
-        let trusted = trusted
-            .iter()
-            .map(|digest| ArtifactHash::parse(digest.clone()).map(|hash| hash.to_string()))
-            .collect::<Result<_, _>>()?;
+        let trusted = trusted.iter().map(ToString::to_string).collect();
         Ok(Self {
             trusted,
             pool_size,
@@ -65,19 +64,25 @@ mod tests {
 
     #[test]
     fn deployment_trust_requires_exact_digest_and_bounded_native_configuration() {
-        let digest = format!("sha256:{}", "a".repeat(64));
-        assert!(WarmReuse::new(&["unreviewed-name".into()], 1, 60).is_err());
+        let digest = (format!("sha256:{}", "a".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap();
         assert!(WarmReuse::new(&[], 0, 60).is_err());
         assert!(WarmReuse::new(&[], 1, 0).is_err());
         let policy =
             WarmReuse::new(std::slice::from_ref(&digest), 2, 30).expect("deployment trust");
         let mut component = wash_runtime::types::Component {
-            digest: Some(format!("sha256:{}", "b".repeat(64))),
+            digest: Some(
+                (format!("sha256:{}", "b".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap()
+                    .to_string(),
+            ),
             ..wash_runtime::types::Component::default()
         };
         policy.apply(&mut component);
         assert_eq!(component.pool_size, 0, "different bytes remain fresh");
-        component.digest = Some(digest);
+        component.digest = Some(digest.to_string());
         policy.apply(&mut component);
         assert_eq!(component.pool_size, 2);
         assert_eq!(component.max_concurrency, 1);

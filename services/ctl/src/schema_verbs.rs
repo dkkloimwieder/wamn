@@ -43,7 +43,7 @@ pub struct SchemaArgs {
     pub env: PathBuf,
     /// Select published application SQL instead of the configured current release. Conflicts with source input.
     #[arg(long)]
-    pub release: Option<String>,
+    pub release: Option<wamn_digest::Digest>,
 }
 
 #[derive(Debug, Args)]
@@ -81,7 +81,7 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
         let (application, digest) =
             crate::operation_verbs::publish(&input, std::path::Path::new(&args.application))
                 .await?;
-        (application, Some(digest.to_string()))
+        (application, Some(digest))
     } else {
         (args.application, args.release)
     };
@@ -96,9 +96,6 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
 async fn publish(args: PublishArgs) -> anyhow::Result<()> {
     let document = EnvironmentDocument::compile(&args.env)?;
     let (application, digest) = crate::operation_verbs::publish(&document, &args.package).await?;
-    println!(
-        "{}",
-        json!({"application":application, "release":digest.as_str()})
-    );
+    println!("{}", json!({"application":application, "release":digest}));
     Ok(())
 }

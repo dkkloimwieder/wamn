@@ -24,7 +24,7 @@ pub fn admit(
     package: &Path,
     name: &str,
     palette: Option<&str>,
-    bases: BTreeSet<String>,
+    bases: BTreeSet<wamn_digest::Digest>,
 ) -> ComponentAdmission {
     let target = ComponentPackageCoordinate {
         project_env_key: "rest--test--publication".into(),

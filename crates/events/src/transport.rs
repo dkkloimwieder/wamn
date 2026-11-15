@@ -322,7 +322,7 @@ fn js_span(
             wiring_version: wiring.wiring_version,
             node_id: &wiring.node_id,
             occurrence: 0,
-            component_digest: "",
+            component_digest: None,
             component_name: "",
             operation: "",
         }),

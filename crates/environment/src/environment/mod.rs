@@ -401,7 +401,7 @@ pub async fn deploy(
     platform: &Platform,
     triple: &wamn_registry::Triple,
     application: &str,
-    digest: &str,
+    digest: &wamn_digest::Digest,
 ) -> anyhow::Result<Analysis> {
     apply_selection(
         platform,
@@ -457,7 +457,6 @@ async fn apply_selection(
             match change {
                 document::ReleaseChange::Deploy(digest)
                 | document::ReleaseChange::Rollback(Some(digest)) => {
-                    wamn_package_artifact::ensure_digest(digest)?;
                     document
                         .applications
                         .get_mut(application)
@@ -469,7 +468,7 @@ async fn apply_selection(
                     let digest = revision
                         .manifest_digest()
                         .context("rollback revision has no release digest")?;
-                    wamn_package_artifact::ensure_digest(digest)?;
+
                     document
                         .applications
                         .get_mut(application)
@@ -522,7 +521,7 @@ async fn apply_selection(
             let selection = &document.applications[application];
             let release = match &selection.current {
                 document::DeclaredRelease::None => None,
-                document::DeclaredRelease::Digest(digest) => Some(digest.as_str()),
+                document::DeclaredRelease::Digest(digest) => Some(digest),
             };
             let mut connection = lock.client().await;
             let mut transaction =

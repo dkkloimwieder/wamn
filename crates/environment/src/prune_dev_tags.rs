@@ -2,7 +2,7 @@
 
 use anyhow::Context as _;
 use chrono::Utc;
-use wamn_package_artifact::{Repository, ensure_digest};
+use wamn_package_artifact::Repository;
 
 pub(crate) async fn prune_published(platform: &crate::environment::Platform) -> anyhow::Result<()> {
     let packages = platform
@@ -18,7 +18,7 @@ pub(crate) async fn prune_published(platform: &crate::environment::Platform) -> 
     let mut manifests = Vec::new();
     for tag in repository.tags().await? {
         let digest = format!("sha256:{tag}");
-        if ensure_digest(&digest).is_ok() {
+        if let Ok(digest) = digest.parse::<wamn_digest::Digest>() {
             manifests
                 .push(crate::environment::analyse::pull_release_manifest(platform, &digest).await?);
         }

@@ -73,7 +73,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             document,
             application,
             release,
-            release.digest().as_str(),
+            &release.digest(),
             "registry.invalid/wamn/releases",
             "registry.invalid/wamn/components",
             "render",
@@ -150,7 +150,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             );
         }
         let row: Value = serde_json::from_str(row["data"]["release.json"].as_str().unwrap())?;
-        assert_eq!(row["digest"].as_str(), Some(release.digest().as_str()));
+        assert_eq!(row["digest"], serde_json::json!(release.digest()));
         let expected = selection
             .client
             .as_ref()
@@ -179,7 +179,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
     release.composed_entry.as_mut().unwrap().reference =
         format!("entries@{}", wamn_digest::bytes_sha256(b"updated entry"));
     document.applications.get_mut("orders").unwrap().current =
-        DeclaredRelease::Digest(release.digest().to_string());
+        DeclaredRelease::Digest(release.digest());
     for (application, release) in &releases {
         let after = render(&document, application, release)?;
         let (before_digest, before_host, before_release) = &before[application];
@@ -235,11 +235,7 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
         ("west H", "west", &h, 70),
     ] {
         let manifest = manifest(bytes)?;
-        let document = fixture_document(
-            env,
-            &format!("{env}.orders.example"),
-            manifest.digest().as_str(),
-        );
+        let document = fixture_document(env, &format!("{env}.orders.example"), &manifest.digest());
         let group = fixture_host_group(&document, "registry.invalid");
         let path = work.path().join(format!("{env}-event-host-group.yaml"));
         std::fs::write(&path, serde_yaml::to_string(&group)?)?;
@@ -306,7 +302,7 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         org: "acme".into(),
         project: project.into(),
         env: "dev".into(),
-        manifest_digest: manifest.digest().as_str().into(),
+        manifest_digest: manifest.digest(),
         artifact_base: "registry.invalid/wamn/releases".into(),
         route_host: format!("{project}.example"),
         applications: [(

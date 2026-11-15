@@ -50,7 +50,7 @@ pub fn write_package(
     ingress: &Path,
     target: &EdgeTarget<'_>,
     out: &Path,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<wamn_digest::Digest> {
     let project_env_key = target.project_env_key();
     let document = render_package_declaration(package, component, &project_env_key)?;
     let declaration = TemporaryFile::write(&serde_json::to_vec(&document)?)?;
@@ -59,10 +59,7 @@ pub fn write_package(
         component_bytes: bytes.to_owned(),
         declaration: declaration.path().to_owned(),
         admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
-        base_digests: authored_base_digests(package)?
-            .into_values()
-            .map(String::from)
-            .collect(),
+        base_digests: authored_base_digests(package)?.into_values().collect(),
     })?;
     let request = PublishReleaseRequest {
         applications: [(
@@ -114,9 +111,9 @@ fn write_bundle(
     manifest_bytes: &[u8],
     facts: &[AdmittedComponent],
     entry: &ComposedApplication,
-    read_component: impl Fn(&str) -> anyhow::Result<Vec<u8>>,
+    read_component: impl Fn(&wamn_digest::Digest) -> anyhow::Result<Vec<u8>>,
     out: &Path,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<wamn_digest::Digest> {
     let (manifest, _) = ServingManifest::from_canonical_bytes(manifest_bytes)
         .context("the local release manifest is not canonical")?;
 
@@ -153,7 +150,7 @@ fn write_bundle(
     fs::create_dir(out).with_context(|| format!("create {}", out.display()))?;
     for (component, bytes) in facts.iter().zip(bodies) {
         fs::write(
-            local_component_path(out, &component.component_digest)?,
+            local_component_path(out, &component.component_digest),
             bytes,
         )?;
     }

@@ -9,6 +9,11 @@ The host reads that parameter from the pinned node configuration and checks the 
 The platform owns the component. The workflow application owns the connection authority.
 Components contain no deployment endpoint, database identity, or credential.
 
+`wamn-digest::Digest` owns every complete SHA-256 identity.
+It stores 32 bytes. JSON and database text use `sha256:` followed by 64 lowercase hex digits.
+Readers parse this form once at the input boundary. Internal calls carry `Digest`.
+OCI tags and object paths use its hex digits without the prefix.
+
 ## Grouping and publication
 
 `wamn-publish` owns package admission, artifact construction, and package and release publication.

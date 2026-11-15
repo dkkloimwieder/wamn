@@ -112,6 +112,8 @@ impl ControlRoutes<'_> {
             if selected.is_none() {
                 let status = self.status.read(self.org, project, env).await?;
                 if let Some(digest) = status["digest"].as_str() {
+                    let digest: wamn_digest::Digest =
+                        digest.parse().map_err(anyhow::Error::from)?;
                     selected = sqlx::query("SELECT version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2 AND connection_id=$3::text::uuid").bind(wamn_registry::project_env_key(self.org,project,env)).bind(digest).bind(connection).fetch_optional(&mut *transaction).await?.map(|row|row.get(0));
                 }
             }
@@ -173,6 +175,11 @@ impl ControlRoutes<'_> {
         let health = self
             .connection_health
             .ok_or_else(|| invalid("integration_type"))?;
+        let digest = version["digest"]
+            .as_str()
+            .map(str::parse::<wamn_digest::Digest>)
+            .transpose()
+            .map_err(anyhow::Error::from)?;
         let result = health
             .probe(
                 context["integration_type"]
@@ -181,7 +188,7 @@ impl ControlRoutes<'_> {
                 context["runtime_type"]
                     .as_str()
                     .ok_or_else(|| invalid("integration_type"))?,
-                version["digest"].as_str(),
+                digest.as_ref(),
                 &request["parameters"],
                 auth,
                 credential.as_deref(),

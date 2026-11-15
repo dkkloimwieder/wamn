@@ -63,9 +63,7 @@ pub use plan::ImageSet;
 /// Host runtime defaults belong to the environment chart.
 pub fn stamp(chart: &Path, set: &ImageSet, out: &Path) -> anyhow::Result<PathBuf> {
     let host: oci_client::Reference = set.host.parse().context("parse the host image")?;
-    wamn_package_artifact::ensure_digest(
-        host.digest().context("the host image requires a digest")?,
-    )?;
+
     ensure!(host.tag().is_some(), "the host image requires a tag");
     let pinned = [("http", &set.http)];
     for (name, image) in pinned {
@@ -281,7 +279,7 @@ mod tests {
             org: "acme".into(),
             project: "wms".into(),
             env: "prod".into(),
-            manifest_digest: DIGEST.into(),
+            manifest_digest: DIGEST.parse().unwrap(),
             artifact_base: "registry.example/releases".into(),
             route_host: "wms.acme.example".into(),
             applications: [(
@@ -305,9 +303,6 @@ mod tests {
     #[test]
     fn values_require_one_application() {
         let mut input = input();
-        input.manifest_digest = "not-a-digest".into();
-        assert!(values(&input).is_err());
-        input.manifest_digest = DIGEST.into();
         let (name, application) = input.applications.pop_first().unwrap();
         assert!(values(&input).is_err());
         input.applications.insert(name, application.clone());

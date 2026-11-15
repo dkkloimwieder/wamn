@@ -1631,7 +1631,7 @@ struct FixedStatus;
 impl wamn_execution_host::environment_status::StatusSource for FixedStatus {
     async fn read(&self, _: &str, _: &str, _: &str) -> anyhow::Result<Value> {
         Ok(
-            json!({"digest": "sha256:live", "rollout": {"replicas": 1}, "workloads": [], "live": []}),
+            json!({"digest": wamn_digest::Digest::from([1; 32]), "rollout": {"replicas": 1}, "workloads": [], "live": []}),
         )
     }
 }
@@ -1698,7 +1698,7 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
     );
     let payload = json!({"project": "billing", "env": "dev"});
     let runtime = |answer: &Value| {
-        assert_eq!(answer["digest"].as_str(), Some("sha256:live"));
+        assert_eq!(answer["digest"], json!(wamn_digest::Digest::from([1; 32])));
         assert_eq!(answer["rollout"]["replicas"].as_u64(), Some(1));
         assert!(
             answer["workloads"]
@@ -2114,7 +2114,9 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     .await
     .map(drop)?;
     // The sha256 of the canonical bytes `{}`, which catalog.releases tests.
-    let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+    let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+        .parse::<wamn_digest::Digest>()
+        .unwrap();
     sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&digest).bind(&b"{}".as_slice()).execute(&mut billing).await.map(|result| result.rows_affected())?;
     sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&digest).bind(&identity).execute(&mut billing).await.map(|result| result.rows_affected())?;
     sqlx::raw_sql("COMMIT")

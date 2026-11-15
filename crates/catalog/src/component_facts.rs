@@ -362,9 +362,9 @@ pub struct AdmittedComponent {
     pub component: String,
     pub interface_version: String,
     pub operations: BTreeMap<String, AdmittedComponentOperation>,
-    pub component_digest: String,
+    pub component_digest: wamn_digest::Digest,
     pub imports: Vec<String>,
-    pub imports_fingerprint: String,
+    pub imports_fingerprint: wamn_digest::Digest,
     pub effects: Vec<AdmittedComponentEffect>,
 }
 
@@ -387,7 +387,7 @@ pub struct AdmittedComponentFacts {
 }
 
 /// Fingerprint of the imported interfaces.
-fn imports_fingerprint(imports: &[String]) -> String {
+fn imports_fingerprint(imports: &[String]) -> wamn_digest::Digest {
     wamn_digest::canonical_json_sha256(
         &serde_json::to_value(imports).expect("a string list serializes"),
     )
@@ -402,10 +402,10 @@ fn imports_fingerprint(imports: &[String]) -> String {
 pub struct ComponentDescriptor {
     pub component: String,
     pub interface_version: String,
-    pub component_digest: String,
+    pub component_digest: wamn_digest::Digest,
     pub operations: BTreeMap<String, AdmittedComponentOperation>,
     pub imports: Vec<String>,
-    pub imports_fingerprint: String,
+    pub imports_fingerprint: wamn_digest::Digest,
     pub effects: Vec<AdmittedComponentEffect>,
     pub connections: Vec<ComponentConnection>,
 }
@@ -431,15 +431,15 @@ impl ComponentDescriptor {
     pub fn named(
         component: impl Into<String>,
         interface_version: impl Into<String>,
-        component_digest: impl Into<String>,
+        component_digest: wamn_digest::Digest,
     ) -> Self {
         Self {
             component: component.into(),
             interface_version: interface_version.into(),
-            component_digest: component_digest.into(),
+            component_digest,
             operations: BTreeMap::new(),
             imports: Vec::new(),
-            imports_fingerprint: String::new(),
+            imports_fingerprint: imports_fingerprint(&[]),
             effects: Vec::new(),
             connections: Vec::new(),
         }
@@ -470,7 +470,6 @@ pub enum ComponentFactErrorType {
     EmptyOperationSet,
     NonCanonicalIdentity,
     RegisteredOperationMismatch,
-    InvalidComponentDigest,
     OperationDependencyMismatch,
     DuplicateInputPort,
     DuplicateOutputPort,
@@ -521,7 +520,7 @@ impl std::error::Error for ComponentFactError {}
 /// imports account for each other in both directions.
 pub fn normalize_component_fact(
     declaration: ComponentDeclaration,
-    component_digest: String,
+    component_digest: wamn_digest::Digest,
     imports: impl IntoIterator<Item = String>,
     effects: Vec<AdmittedComponentEffect>,
 ) -> Result<AdmittedComponentFacts, ComponentFactError> {
@@ -542,12 +541,6 @@ pub fn normalize_component_fact(
         return Err(ComponentFactError::new(
             ComponentFactErrorType::EmptyOperationSet,
             "component operations must not be empty",
-        ));
-    }
-    if !valid_digest(&component_digest) {
-        return Err(ComponentFactError::new(
-            ComponentFactErrorType::InvalidComponentDigest,
-            "component-digest must be sha256:<64 lowercase hex digits>",
         ));
     }
 
@@ -971,15 +964,6 @@ fn validate_identity(value: &str, field: &str) -> Result<(), ComponentFactError>
     Ok(())
 }
 
-fn valid_digest(value: &str) -> bool {
-    value.strip_prefix("sha256:").is_some_and(|hex| {
-        hex.len() == 64
-            && hex
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -1043,7 +1027,9 @@ mod tests {
     fn normalization_is_sorted_and_carries_every_component_owned_fact() {
         let facts = normalize_component_fact(
             declaration(),
-            format!("sha256:{}", "a".repeat(64)),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             [
                 "wasi:io/streams@0.2.3".to_string(),
                 "wamn:postgres/client@0.1.0".to_string(),
@@ -1059,9 +1045,13 @@ mod tests {
         assert_eq!(operation.input_ports[0].name, "input");
         assert_eq!(operation.output_ports[0].name, "main");
         assert!(operation.parameters[0].required);
-        assert_eq!(fact.component_digest, format!("sha256:{}", "a".repeat(64)));
+        assert_eq!(
+            fact.component_digest,
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap()
+        );
         assert_eq!(fact.imports.len(), 2);
-        assert!(fact.imports_fingerprint.starts_with("sha256:"));
         assert_eq!(fact.effects, vec![postgres_effect()]);
         assert!(facts.connections.is_empty());
     }
@@ -1070,7 +1060,9 @@ mod tests {
     fn a_component_descriptor_drops_the_target_and_the_reader_supplies_it() {
         let facts = normalize_component_fact(
             declaration(),
-            format!("sha256:{}", "a".repeat(64)),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             ["wamn:postgres/client@0.1.0".to_string()],
             vec![postgres_effect()],
         )
@@ -1113,7 +1105,9 @@ mod tests {
     fn a_component_importing_no_authority_admits_as_pure() {
         let facts = normalize_component_fact(
             declaration(),
-            format!("sha256:{}", "a".repeat(64)),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             ["wasi:clocks/monotonic-clock@0.2.3".to_string()],
             Vec::new(),
         )
@@ -1130,7 +1124,9 @@ mod tests {
         assert_eq!(
             normalize_component_fact(
                 declaration(),
-                format!("sha256:{}", "a".repeat(64)),
+                (format!("sha256:{}", "a".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 ["platform-fixture:widget/record-batch@1.0.0".to_string()],
                 Vec::new(),
             )
@@ -1148,7 +1144,9 @@ mod tests {
         assert_eq!(
             normalize_component_fact(
                 palette.clone(),
-                format!("sha256:{}", "a".repeat(64)),
+                (format!("sha256:{}", "a".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 Vec::new(),
                 Vec::new(),
             )
@@ -1163,7 +1161,9 @@ mod tests {
         palette.operations.insert(registered.to_owned(), operation);
         let facts = normalize_component_fact(
             palette.clone(),
-            format!("sha256:{}", "a".repeat(64)),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             Vec::new(),
             Vec::new(),
         )
@@ -1194,7 +1194,9 @@ mod tests {
             assert_eq!(
                 normalize_component_fact(
                     palette.clone(),
-                    format!("sha256:{}", "a".repeat(64)),
+                    (format!("sha256:{}", "a".repeat(64)))
+                        .parse::<wamn_digest::Digest>()
+                        .unwrap(),
                     Vec::new(),
                     Vec::new(),
                 )
@@ -1216,7 +1218,9 @@ mod tests {
             .insert(registered.to_string(), operation);
         let facts = normalize_component_fact(
             declared,
-            format!("sha256:{}", "a".repeat(64)),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             ["wasi:clocks/monotonic-clock@0.2.3".to_string()],
             Vec::new(),
         )
@@ -1233,7 +1237,9 @@ mod tests {
         assert_eq!(
             normalize_component_fact(
                 malformed,
-                format!("sha256:{}", "a".repeat(64)),
+                (format!("sha256:{}", "a".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 ["wasi:clocks/monotonic-clock@0.2.3".to_string()],
                 Vec::new(),
             )
@@ -1248,7 +1254,9 @@ mod tests {
             assert_eq!(
                 normalize_component_fact(
                     mismatched,
-                    format!("sha256:{}", "a".repeat(64)),
+                    (format!("sha256:{}", "a".repeat(64)))
+                        .parse::<wamn_digest::Digest>()
+                        .unwrap(),
                     ["wasi:clocks/monotonic-clock@0.2.3".to_string()],
                     Vec::new(),
                 )
@@ -1264,7 +1272,9 @@ mod tests {
         assert_eq!(
             normalize_component_fact(
                 unequal,
-                format!("sha256:{}", "a".repeat(64)),
+                (format!("sha256:{}", "a".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 Vec::new(),
                 Vec::new(),
             )
@@ -1310,9 +1320,13 @@ mod tests {
                     parameters: Vec::new(),
                 },
             )]),
-            component_digest: format!("sha256:{}", "a".repeat(64)),
+            component_digest: (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             imports: imports.iter().map(|name| (*name).to_string()).collect(),
-            imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
+            imports_fingerprint: (format!("sha256:{}", "b".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             effects: Vec::new(),
         }
     }
@@ -1350,7 +1364,9 @@ mod tests {
     fn admission_refuses_an_effect_projection_narrower_than_the_imports() {
         let error = normalize_component_fact(
             declaration(),
-            format!("sha256:{}", "a".repeat(64)),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             ["wamn:postgres/client@0.1.0".to_string()],
             Vec::new(),
         )
@@ -1380,7 +1396,9 @@ mod tests {
         declared.connections = vec![connection.clone()];
         let facts = normalize_component_fact(
             declared.clone(),
-            format!("sha256:{}", "a".repeat(64)),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             imports.clone(),
             vec![http_effect.clone()],
         )
@@ -1393,7 +1411,9 @@ mod tests {
         assert_eq!(
             normalize_component_fact(
                 undeclared,
-                format!("sha256:{}", "b".repeat(64)),
+                (format!("sha256:{}", "b".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 imports.clone(),
                 vec![http_effect],
             )
@@ -1406,7 +1426,9 @@ mod tests {
         assert_eq!(
             normalize_component_fact(
                 declared.clone(),
-                format!("sha256:{}", "c".repeat(64)),
+                (format!("sha256:{}", "c".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 Vec::new(),
                 Vec::new(),
             )
@@ -1420,7 +1442,9 @@ mod tests {
         assert_eq!(
             normalize_component_fact(
                 duplicate,
-                format!("sha256:{}", "d".repeat(64)),
+                (format!("sha256:{}", "d".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 imports,
                 vec![AdmittedComponentEffect {
                     package: "wamn:connection".to_string(),
@@ -1443,7 +1467,9 @@ mod tests {
         assert_eq!(
             normalize_component_fact(
                 declaration(),
-                format!("sha256:{}", "a".repeat(64)),
+                (format!("sha256:{}", "a".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 ["wasi:io/streams@0.2.3".to_string()],
                 vec![postgres_effect()],
             )
@@ -1483,7 +1509,9 @@ mod tests {
 
         let left = normalize_component_fact(
             left,
-            format!("sha256:{}", "b".repeat(64)),
+            (format!("sha256:{}", "b".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             Vec::new(),
             Vec::new(),
         )
@@ -1491,7 +1519,9 @@ mod tests {
         .component;
         let right = normalize_component_fact(
             right,
-            format!("sha256:{}", "c".repeat(64)),
+            (format!("sha256:{}", "c".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             Vec::new(),
             Vec::new(),
         )
@@ -1513,7 +1543,9 @@ mod tests {
         assert_eq!(
             normalize_component_fact(
                 empty,
-                format!("sha256:{}", "c".repeat(64)),
+                (format!("sha256:{}", "c".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 Vec::new(),
                 Vec::new(),
             )
@@ -1530,7 +1562,9 @@ mod tests {
         assert_eq!(
             normalize_component_fact(
                 duplicate,
-                format!("sha256:{}", "d".repeat(64)),
+                (format!("sha256:{}", "d".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 Vec::new(),
                 Vec::new(),
             )
@@ -1545,7 +1579,9 @@ mod tests {
         assert_eq!(
             normalize_component_fact(
                 remote,
-                format!("sha256:{}", "e".repeat(64)),
+                (format!("sha256:{}", "e".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 Vec::new(),
                 Vec::new(),
             )

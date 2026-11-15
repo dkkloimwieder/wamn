@@ -73,7 +73,7 @@ impl EdgePolicy {
                 .find(|served| {
                     served.package_id == fact.target.package_id
                         && served.descriptor.component == fact.component
-                        && served.descriptor.component_digest.as_str() == fact.component_digest
+                        && served.descriptor.component_digest == fact.component_digest
                         && served.descriptor.operations == fact.operations
                 })
                 .context("component-not-in-carried-release")?;

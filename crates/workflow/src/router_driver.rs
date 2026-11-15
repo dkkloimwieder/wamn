@@ -35,8 +35,8 @@ pub struct WorkflowRunRequest {
     pub wiring_version: u32,
     pub delivery_id: String,
     pub payload: serde_json::Value,
-    pub wiring_hash: String,
-    pub node_digests: BTreeMap<String, String>,
+    pub wiring_hash: wamn_digest::Digest,
+    pub node_digests: BTreeMap<String, wamn_digest::Digest>,
     pub identity: WorkflowIdentity,
     pub causation: Option<Causation>,
 }
@@ -88,7 +88,7 @@ impl RouterDriver {
                     project_env_key: &request.project_env_key, environment: &request.environment,
                     application: &request.package_id, application_packages,
                     workflow_id: &request.wiring_id, version: request.wiring_version,
-                    manifest_digest: self.operations.release.release().manifest_digest.as_str(),
+                    manifest_digest: &self.operations.release.release().manifest_digest,
                     wiring_hash: &request.wiring_hash, node_digests: &request.node_digests,
                 }).instrument(tracing::info_span!("wamn.router.resolve")).await?;
             for component in node_components.values() {
@@ -130,7 +130,7 @@ impl RouterDriver {
                                     config: serde_json::to_string(&call.definition.params).context("encode node config")?,
                                 };
                                 let entry = InvocationEntry::Wiring(WiringPosition {
-                                    package_id: request.package_id.clone(), wiring_hash: graph_hash.to_string(),
+                                    package_id: request.package_id.clone(), wiring_hash: graph_hash,
                                     wiring_id: request.wiring_id.clone(), wiring_version: version, node_id: call.node.clone(), occurrence: call.occurrence,
                                     configuration: Arc::new(call.definition.params.clone()),
                                 });
