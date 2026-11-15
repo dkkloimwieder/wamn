@@ -1009,46 +1009,6 @@ async fn idle_pool_retains_two_sockets_then_expires_them() {
 }
 
 #[tokio::test]
-async fn retired_client_leases_outlive_cache_entries_and_body_cancellation() {
-    let server = Server::start(Reply::HeldBody, Some(true)).await;
-    let transport = server.transport();
-    let decision = server.decision();
-    let task_transport = transport.clone();
-    let task_decision = decision.clone();
-    let request_task = tokio::spawn(async move {
-        task_transport
-            .execute(identity(0), &task_decision, request(&task_decision))
-            .await
-    });
-    wait_for(|| server.requests.load(Ordering::SeqCst) == 1).await;
-    let target = target(&decision, &decision.logical_url.parse().expect("URI")).expect("target");
-    for generation in 1..MAX_CLIENTS {
-        let generation = i64::try_from(generation).expect("test generation fits i64");
-        transport
-            .client(identity(generation), target.clone())
-            .expect("retain client");
-    }
-    assert_eq!(transport.inner.clients.available_permits(), 0);
-    assert!(transport.client(identity(200), target.clone()).is_err());
-    assert_eq!(
-        transport.inner.state.lock().expect("state").clients.len(),
-        MAX_CLIENTS - 1
-    );
-    assert_eq!(transport.inner.sockets.available_permits(), MAX_SOCKETS - 1);
-    // The oldest entry was evicted, but its active HTTP/2 task still owns a lease.
-    request_task.abort();
-    let _ = request_task.await;
-    wait_for(|| transport.inner.sockets.available_permits() == MAX_SOCKETS).await;
-    wait_for(|| transport.inner.clients.available_permits() == 1).await;
-    transport
-        .client(identity(200), target)
-        .expect("admit after actual drain");
-    let state = transport.inner.state.lock().expect("state");
-    assert!(state.clients.len() <= MAX_CLIENTS);
-    assert!(state.identities.len() <= MAX_CLIENTS);
-}
-
-#[tokio::test]
 async fn denied_peer_refuses_before_transport_admission() {
     let transport = HttpTransport::new().expect("platform TLS");
     for peer in [

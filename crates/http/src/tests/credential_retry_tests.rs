@@ -1,4 +1,5 @@
 use base64::Engine as _;
+use sqlx::Connection as _;
 
 use super::*;
 use crate::test_util::Fixture;
@@ -26,12 +27,42 @@ async fn a_401_after_a_write_retries_once_with_the_new_basic_credential() {
     for second in [200, 401] {
         let mut fixture = Fixture::start(Vec::new(), vec![401, second]).await;
         let plugin = fixture.basic_plugin().await;
-        let (resume, arrival) = fixture.pause_next_response();
+        let (arrived, arrival) = tokio::sync::oneshot::channel();
+        let (resume, resumed) = tokio::sync::oneshot::channel();
+        *fixture.pause.lock().unwrap() = Some((arrived, resumed));
         let request = request();
         let (response, ()) = tokio::time::timeout(Duration::from_secs(10), async {
             tokio::join!(plugin.send(&plugin.scope, &request), async {
                 arrival.await.unwrap();
-                fixture.write_basic().await;
+                let mut tx = fixture.credentials.admin.begin().await.unwrap();
+                sqlx::raw_sql(sqlx::AssertSqlSafe(
+                    wamn_control_provision::bind_platform_principal_sql(
+                        wamn_control_provision::PlatformComponent::Provisioning,
+                    ),
+                ))
+                .execute(&mut *tx)
+                .await
+                .map(drop)
+                .unwrap();
+                sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+                    .execute(&mut *tx)
+                    .await
+                    .map(drop)
+                    .unwrap();
+                let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
+                wamn_platform_identity::connections::administration::execute_with_store(
+                    &mut tx, "acme", "connection.write",
+                    &serde_json::json!({
+                        "project":"project-a", "env":"dev", "name":"handle",
+                        "parameters":{"primary-authority":fixture.base,"tls-verification":"disabled","auth":{}},
+                        "credential":r#"{"username":"fixture","password":"new"}"#
+                    }).to_string(),
+                    &mut wamn_broker::auth_changes::AuthDrops::default(),
+                    &mut drops, Some(fixture.credentials.store.as_ref()),
+                ).await.unwrap();
+                tx.commit().await.unwrap();
+                assert!(!drops.is_empty());
+                wamn_broker::Publisher::default().publish(drops).await;
                 resume.send(()).unwrap();
             })
         })

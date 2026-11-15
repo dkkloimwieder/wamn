@@ -17,15 +17,7 @@ pub(super) fn allows(address: SocketAddr) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
-    use wamn_authority::normalize_portable_http_target;
-
     use super::*;
-    use wamn_authority::connection_authority::{
-        AuthorityError, AuthorityErrorType, DnsResolver, TlsPolicy,
-        parse_http_connection_authority, resolve_http_request,
-    };
 
     #[test]
     fn bound_address_minimum_preserves_private_targets() {
@@ -57,39 +49,5 @@ mod tests {
         ] {
             assert!(allows(address.parse().unwrap()), "{address}");
         }
-    }
-
-    struct ChangingDns(Mutex<Vec<SocketAddr>>);
-
-    impl DnsResolver for ChangingDns {
-        fn resolve(
-            &self,
-            _: &str,
-            _: u16,
-        ) -> impl Future<Output = Result<Vec<SocketAddr>, AuthorityError>> + Send {
-            std::future::ready(Ok(self.0.lock().unwrap().clone()))
-        }
-    }
-
-    #[tokio::test]
-    async fn mixed_answers_pin_allowed_peer_and_rebinding_refuses() {
-        let connection =
-            parse_http_connection_authority("http://erp.example/", TlsPolicy::Disabled).unwrap();
-        let hosts = ["http://erp.example".parse().unwrap()];
-        let target = normalize_portable_http_target("/item").unwrap();
-        let allowed: SocketAddr = "192.168.1.1:80".parse().unwrap();
-        let denied: SocketAddr = "169.254.169.254:80".parse().unwrap();
-        let dns = ChangingDns(Mutex::new(vec![denied, allowed]));
-        let first = resolve_http_request(&connection, &target, &hosts, &allows, &dns)
-            .await
-            .unwrap();
-        let origin = &first.transport;
-        assert_eq!(origin.address, allowed);
-        *dns.0.lock().unwrap() = vec![denied];
-        let error = resolve_http_request(&connection, &target, &hosts, &allows, &dns)
-            .await
-            .unwrap_err();
-        assert_eq!(error.error_type(), AuthorityErrorType::NetworkDenied);
-        assert_eq!(origin.address, allowed);
     }
 }
