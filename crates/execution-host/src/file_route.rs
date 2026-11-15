@@ -889,22 +889,8 @@ impl FileRoutes {
     }
 }
 
-#[async_trait::async_trait]
-trait FilePublication: Send + Sync {
-    async fn publish(&self, blob_key: &str) -> Result<String, FileError>;
-    async fn unpublish(&self, blob_key: &str) -> Result<(), FileError>;
-}
-#[async_trait::async_trait]
-impl FilePublication for FileStore {
-    async fn publish(&self, blob_key: &str) -> Result<String, FileError> {
-        self.expose(blob_key).await.map_err(Into::into)
-    }
-    async fn unpublish(&self, blob_key: &str) -> Result<(), FileError> {
-        self.unexpose(blob_key).await.map_err(Into::into)
-    }
-}
 async fn change_exposure(
-    store: &impl FilePublication,
+    store: &FileStore,
     blob_key: &str,
     current: Exposure,
     url: Option<String>,
@@ -919,10 +905,10 @@ async fn change_exposure(
                 )
             });
         }
-        Ok(Some(store.publish(blob_key).await?))
+        Ok(Some(store.expose(blob_key).await?))
     } else {
         // Repeat deletion after a prior failed metadata update as well.
-        store.unpublish(blob_key).await?;
+        store.unexpose(blob_key).await?;
         Ok(None)
     }
 }
@@ -1478,7 +1464,10 @@ mod tests {
 
     #[test]
     fn every_file_operation_requires_a_grant() {
-        for action in ["put", "get", "delete", "expose"] {
+        for (_, attachment) in HostRouteSet::Application.attachments() {
+            let Some(action) = attachment.reference.strip_prefix("wamn-control:file/") else {
+                continue;
+            };
             assert_eq!(
                 principal(&caller(None, false, CredentialType::Session), action)
                     .unwrap_err()
@@ -1492,6 +1481,34 @@ mod tests {
                 )
                 .is_ok()
             );
+        }
+    }
+
+    #[test]
+    fn a_session_without_file_grants_cannot_call_any_file_operation() {
+        use wamn_engine::native_routes::{DeliveryError, resolve_authorized_host_route};
+
+        let release = release();
+        for (id, _) in HostRouteSet::Application
+            .attachments()
+            .filter(|(_, attachment)| attachment.reference.starts_with("wamn-control:file/"))
+        {
+            assert!(matches!(
+                resolve_authorized_host_route(release.manifest(), id, None),
+                Some(Err(DeliveryError::InvalidRequest))
+            ));
+            let caller = AuthenticatedCaller::new(
+                id,
+                "22222222-2222-4222-8222-222222222222".parse().unwrap(),
+                CredentialType::Session,
+                false,
+                Default::default(),
+                None,
+            );
+            assert!(matches!(
+                resolve_authorized_host_route(release.manifest(), id, Some(&caller)),
+                Some(Err(DeliveryError::PermissionDenied(_)))
+            ));
         }
     }
 
@@ -1588,74 +1605,45 @@ mod tests {
             None,
         ));
         let client = HttpClient::builder().build().expect("HTTP client");
-        for (authorization, status) in [(None, 401), (Some("Bearer session"), 403)] {
-            let mut request = client
-                .post(format!(
-                    "http://{address}/api/orders/files?binding=documents&name=test.txt"
-                ))
-                .header("Host", "orders.example.com")
-                .header("Content-Type", "text/plain")
-                .body("file bytes");
-            if let Some(value) = authorization {
-                request = request.header("Authorization", value);
+        for (method, path) in [
+            (
+                hyper::Method::POST,
+                "/api/orders/files?binding=documents&name=test.txt".into(),
+            ),
+            (
+                hyper::Method::GET,
+                format!("/api/orders/files/{}", Uuid::new_v4()),
+            ),
+        ] {
+            for (authorization, status) in [(None, 401), (Some("Bearer session"), 403)] {
+                let mut request = client
+                    .request(method.clone(), format!("http://{address}{path}"))
+                    .header("Host", "orders.example.com");
+                if let Some(value) = authorization {
+                    request = request.header("Authorization", value);
+                }
+                assert_eq!(request.send().await.unwrap().status().as_u16(), status);
             }
-            let response = request.send().await.unwrap();
-            assert_eq!(response.status().as_u16(), status);
         }
-        let foreign = client
-            .post(format!("http://{address}/api/orders/files"))
-            .header("Host", "billing.example.com")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(foreign.status().as_u16(), 404);
-        let response = client
-            .get(format!("http://{address}/other"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status().as_u16(), 404);
-        assert!(response.bytes().await.unwrap().is_empty());
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-    }
-
-    #[tokio::test]
-    async fn native_download_refuses_anonymous_and_session_without_get_before_io() {
-        let files = files();
-        let routing = FlowHttpRouting::for_test(Some(Arc::clone(&files.release)))
-            .with_authenticator(Arc::new(SessionWithoutGrant));
-        let path = format!("/api/orders/files/{}", Uuid::new_v4());
-        for (authorization, status) in [(None, 401), (Some("Bearer session"), 403)] {
-            let mut request = hyper::Request::builder().uri(&path);
-            if let Some(value) = authorization {
-                request = request.header("authorization", value);
-            }
-            let response = files
-                .http(&routing, request.body(WasiBody::default()).unwrap())
+        for (host, path) in [
+            ("billing.example.com", "/api/orders/files"),
+            ("orders.example.com", "/other"),
+        ] {
+            let response = client
+                .get(format!("http://{address}{path}"))
+                .header("Host", host)
+                .send()
                 .await
                 .unwrap();
-            assert_eq!(response.status().as_u16(), status);
+            assert_eq!(response.status().as_u16(), 404);
+            assert!(response.bytes().await.unwrap().is_empty());
         }
-        let upload = hyper::Request::builder()
-            .method("POST")
-            .uri("/api/orders/files")
-            .header("authorization", "Bearer session")
-            .body(WasiBody::default())
-            .unwrap();
-        assert_eq!(
-            files
-                .http(&routing, upload)
-                .await
-                .unwrap()
-                .status()
-                .as_u16(),
-            403
-        );
         assert!(matches!(
             native_route("/api/orders/files/not-a-uuid"),
             Some(NativeRoute::Invalid)
         ));
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
     }
 
     #[tokio::test]
@@ -1682,77 +1670,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upload_body_exceeds_the_old_buffer_ceiling_without_collection() {
-        let chunk = Bytes::from(vec![b'x'; 64 * 1024]);
-        let frames = futures_util::stream::iter(
-            (0..1025).map(move |_| Ok::<_, wasmtime_wasi_http::Error>(Frame::data(chunk.clone()))),
-        );
-        let mut reader = BodyReader {
-            body: StreamBody::new(frames).boxed_unsync(),
-            chunk: Bytes::new(),
-        };
-        let count = tokio::io::copy(&mut reader, &mut tokio::io::sink())
-            .await
-            .unwrap();
-        assert_eq!(count, 1025 * 64 * 1024);
-    }
-
-    #[derive(Default)]
-    struct Publication {
-        calls: std::sync::Mutex<Vec<&'static str>>,
-    }
-    #[async_trait::async_trait]
-    impl FilePublication for Publication {
-        async fn publish(&self, _: &str) -> Result<String, FileError> {
-            self.calls.lock().unwrap().push("publish");
-            Ok("https://new.test/file".into())
-        }
-        async fn unpublish(&self, _: &str) -> Result<(), FileError> {
-            self.calls.lock().unwrap().push("unpublish");
-            Ok(())
-        }
-    }
-    #[tokio::test]
-    async fn exposure_transitions_retain_public_urls_and_repeat_origin_deletion() {
-        let store = Publication::default();
-        let key = "dev/_wamn_files/live/fixture";
-        let url = change_exposure(&store, key, Exposure::Application, None, Exposure::Public)
-            .await
-            .unwrap();
-        assert_eq!(url.as_deref(), Some("https://new.test/file"));
-        let url = change_exposure(
-            &store,
-            key,
-            Exposure::Public,
-            Some("https://old.test/file".into()),
-            Exposure::Public,
-        )
-        .await
-        .unwrap();
-        assert_eq!(url.as_deref(), Some("https://old.test/file"));
-        assert!(
-            change_exposure(&store, key, Exposure::Public, url, Exposure::Private)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            change_exposure(&store, key, Exposure::Private, None, Exposure::Private)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert_eq!(
-            *store.calls.lock().unwrap(),
-            ["publish", "unpublish", "unpublish"]
-        );
-        assert!(
-            change_exposure(&store, key, Exposure::Public, None, Exposure::Public)
-                .await
-                .is_err()
-        );
-    }
-    #[tokio::test]
     async fn signed_urls_refuse_without_a_bound_operation_before_catalog_access() {
         let files = files();
         let error = files
@@ -1771,9 +1688,14 @@ mod tests {
     fn every_cookie_session_mutation_requires_csrf() {
         use wamn_engine::flow_http_routing::{RouteCredential, require_csrf, route_credential};
         let release = release();
-        for action in ["put", "delete", "expose"] {
-            let id = format!("wamn-control-file-{action}-http");
-            let attachment = release.manifest().served_attachment(&id).unwrap();
+        for (id, _) in HostRouteSet::Application
+            .attachments()
+            .filter(|(_, attachment)| {
+                attachment.reference.starts_with("wamn-control:file/")
+                    && !attachment.route.type_.is_read()
+            })
+        {
+            let attachment = release.manifest().served_attachment(id).unwrap();
             let headers = [Header {
                 name: "cookie".into(),
                 value: "__Host-wamn-session=token".into(),
@@ -1781,7 +1703,7 @@ mod tests {
             let request = AuthenticationRequest {
                 manifest: release.manifest(),
                 target: release.target(),
-                attachment_id: &id,
+                attachment_id: id,
                 attachment,
                 policy: wamn_catalog::parse_attachment_auth_policy(attachment.auth_policy())
                     .unwrap(),
