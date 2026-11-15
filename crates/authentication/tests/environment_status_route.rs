@@ -70,10 +70,10 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
         wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "dev")
             .with_applications(
                 [(
-                    "purchasing".to_owned(),
+                    "purchasing".parse().unwrap(),
                     wamn_catalog::ApplicationDefinition {
                         connections: std::collections::BTreeMap::new(),
-                        packages: ["status_test".to_owned()].into(),
+                        packages: ["status_test".parse().unwrap()].into(),
                     },
                 )]
                 .into(),

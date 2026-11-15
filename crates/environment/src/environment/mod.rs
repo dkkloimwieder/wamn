@@ -295,7 +295,7 @@ pub fn kubernetes_target(namespace: String) -> anyhow::Result<release_chart::Tar
 pub async fn dry_run(
     platform: &Platform,
     file: &Path,
-    application: Option<&str>,
+    application: Option<&wamn_catalog::ApplicationName>,
 ) -> anyhow::Result<Analysis> {
     let mut document = EnvironmentDocument::compile(file)?;
     let private = ensure::PrivateDirectory::create()?;
@@ -327,7 +327,7 @@ pub async fn dry_run(
 pub async fn apply(
     platform: &Platform,
     file: &Path,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<Analysis> {
     let document = EnvironmentDocument::compile(file)?;
     let mut platform = platform.clone();
@@ -400,7 +400,7 @@ pub async fn apply(
 pub async fn deploy(
     platform: &Platform,
     triple: &wamn_registry::Triple,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     digest: &wamn_digest::Digest,
 ) -> anyhow::Result<Analysis> {
     apply_selection(
@@ -417,7 +417,7 @@ pub async fn deploy(
 pub async fn stop(
     platform: &Platform,
     triple: &wamn_registry::Triple,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<Analysis> {
     apply_selection(
         platform,
@@ -433,7 +433,7 @@ pub async fn stop(
 async fn apply_selection(
     platform: &Platform,
     triple: &wamn_registry::Triple,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     change: document::ReleaseChange<'_>,
     actor: Option<&str>,
 ) -> anyhow::Result<Analysis> {

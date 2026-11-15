@@ -212,7 +212,7 @@ impl std::error::Error for PublishManifestError {
 
 /// The facts a route takes from the generated contract of the operation it
 /// calls, keyed by package id and exact operation.
-pub type RouteContracts = BTreeMap<(String, String), RouteContract>;
+pub type RouteContracts = BTreeMap<(wamn_catalog::PackageName, String), RouteContract>;
 
 /// What a route takes from the generated contract `operation.json` of its
 /// operation: the type, the relations a read reads, and the revision field of
@@ -243,7 +243,7 @@ pub struct PublishReleaseRequest {
     /// Application membership from environment.k.
     pub applications: wamn_catalog::EnvironmentApplications,
     /// Selects one declared application; omitted for a one-application release.
-    pub application: Option<String>,
+    pub application: Option<wamn_catalog::ApplicationName>,
     /// Organization in the declared environment coordinate.
     pub org: String,
     pub project: String,
@@ -321,7 +321,7 @@ pub fn compose_application(
         bytes: route_bytes.into(),
         digest,
         application: wamn_catalog::ServingEntryMember {
-            package_id: application.target.package_id.as_str().to_owned(),
+            package_id: application.target.package_id.clone(),
             component: application.component.as_str().to_owned(),
             digest: application.component_digest,
         },
@@ -331,24 +331,28 @@ pub fn compose_application(
 
 fn select_application<'a>(
     applications: &'a wamn_catalog::EnvironmentApplications,
-    application: Option<&str>,
-) -> Result<(&'a str, &'a wamn_catalog::ApplicationDefinition), PublishManifestError> {
+    application: Option<&wamn_catalog::ApplicationName>,
+) -> Result<
+    (
+        &'a wamn_catalog::ApplicationName,
+        &'a wamn_catalog::ApplicationDefinition,
+    ),
+    PublishManifestError,
+> {
     let selected = match application {
         Some(name) => applications.get_key_value(name),
         None if applications.len() == 1 => applications.first_key_value(),
         None => None,
     };
-    selected
-        .map(|(name, definition)| (name.as_str(), definition))
-        .ok_or_else(|| {
-            PublishManifestError::new(
-                PublishManifestErrorType::ApplicationSelection,
-                format!(
-                    "select one application from environment.k: {:?}; requested {application:?}",
-                    applications.keys().collect::<Vec<_>>()
-                ),
-            )
-        })
+    selected.ok_or_else(|| {
+        PublishManifestError::new(
+            PublishManifestErrorType::ApplicationSelection,
+            format!(
+                "select one application from environment.k: {:?}; requested {application:?}",
+                applications.keys().collect::<Vec<_>>()
+            ),
+        )
+    })
 }
 
 /// Select the declared application's unique member covering its routes.
@@ -356,7 +360,7 @@ pub fn application_member<'a>(
     published: &PublishedRelease,
     candidates: &[(&'a AdmittedComponent, &'a [u8])],
     applications: &wamn_catalog::EnvironmentApplications,
-    application: Option<&str>,
+    application: Option<&wamn_catalog::ApplicationName>,
 ) -> anyhow::Result<(&'a AdmittedComponent, &'a [u8])> {
     let (name, definition) = select_application(applications, application)?;
     let mut covering = Vec::new();
@@ -440,7 +444,7 @@ pub fn assemble_release(
             fact.target.project_env_key == args.project_env_key()
                 && packages
                     .iter()
-                    .any(|package| package.package_id() == fact.target.package_id
+                    .any(|package| package.package_id() == &fact.target.package_id
                         && package.package_version() == fact.target.package_version),
             "local admission is outside package membership"
         );
@@ -497,7 +501,7 @@ async fn publish_candidate(
         !args.environment.is_empty(),
         "environment must not be empty"
     );
-    let (_, application) = select_application(&args.applications, args.application.as_deref())?;
+    let (_, application) = select_application(&args.applications, args.application.as_ref())?;
     let (coordinates, opened) =
         package_sources::open_application(registry, application, &args.packages).await?;
     let release_components = descriptor_components(&args.project_env_key(), &coordinates, &opened)?;
@@ -569,7 +573,7 @@ async fn publish_candidate(
         &release_components,
         registry,
         &args.applications,
-        args.application.as_deref(),
+        args.application.as_ref(),
         entry,
     )
     .await?;
@@ -587,7 +591,10 @@ async fn publish_candidate(
 pub fn publish_release_with_package_manifests(
     request: &PublishReleaseManifest<'_>,
     component_facts: &ReleaseComponents,
-    package_manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
+    package_manifests: &BTreeMap<
+        wamn_catalog::PackageName,
+        wamn_compiler::manifest::PackageManifest,
+    >,
     route_contracts: &RouteContracts,
 ) -> Result<PublishedRelease, PublishManifestError> {
     validate_request(request)?;
@@ -642,8 +649,8 @@ fn seal_release(projected: &ServingManifest) -> Result<PublishedRelease, Publish
 /// the release carries.
 #[derive(Debug, Default)]
 pub struct ReleaseComponents {
-    facts: BTreeMap<(String, String), Vec<AdmittedComponent>>,
-    connections: BTreeMap<(String, String), Vec<ComponentConnection>>,
+    facts: BTreeMap<(wamn_catalog::PackageName, String), Vec<AdmittedComponent>>,
+    connections: BTreeMap<(wamn_catalog::PackageName, String), Vec<ComponentConnection>>,
 }
 
 impl ReleaseComponents {
@@ -744,7 +751,7 @@ fn descriptor_components(
     for (package, opened) in packages.iter().zip(opened) {
         let target = ComponentPackageCoordinate::new(
             project_env_key,
-            package.package_id(),
+            package.package_id().clone(),
             package.package_version(),
         )
         .context("name the release component target")?;
@@ -767,17 +774,17 @@ fn descriptor_components(
 /// Bind release behavior and ownership to its verified package manifests.
 fn validate_release_package_manifests(
     request: &PublishReleaseManifest<'_>,
-    package_manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
+    package_manifests: &BTreeMap<
+        wamn_catalog::PackageName,
+        wamn_compiler::manifest::PackageManifest,
+    >,
 ) -> Result<(), PublishManifestError> {
     let expected_package_ids = request
         .packages
         .iter()
         .map(PackageCoordinate::package_id)
         .collect::<BTreeSet<_>>();
-    let presented_package_ids = package_manifests
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
+    let presented_package_ids = package_manifests.keys().collect::<BTreeSet<_>>();
     if presented_package_ids != expected_package_ids {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::PackageManifest,
@@ -798,7 +805,7 @@ fn validate_release_package_manifests(
                     ),
                 )
             })?;
-        if manifest.package.id != package.package_id()
+        if &manifest.package.id != package.package_id()
             || manifest.package.version != package.package_version()
         {
             return Err(PublishManifestError::new(
@@ -823,11 +830,14 @@ mod tests {
     fn one_application_release_has_one_digest_across_environments() {
         let manifest = source_manifest();
         let packages = BTreeSet::from([PackageCoordinate::new(
-            &manifest.package.id,
+            manifest.package.id.clone(),
             &manifest.package.version,
         )
         .unwrap()]);
-        let manifests = BTreeMap::from([(manifest.package.id.clone(), manifest)]);
+        let manifests: BTreeMap<
+            wamn_catalog::PackageName,
+            wamn_compiler::manifest::PackageManifest,
+        > = BTreeMap::from([(manifest.package.id.clone(), manifest)]);
         let publish = |environment| {
             let request = PublishReleaseManifest {
                 org: "acme",
@@ -838,7 +848,7 @@ mod tests {
                 environment_is_disposable: false,
             };
             let mut component = closure_component("source_fixture", None);
-            component.target.package_id = "source_fixture".to_owned();
+            component.target.package_id = "source_fixture".parse().unwrap();
             component.target.project_env_key = request.project_env_key();
             let mut components = ReleaseComponents::default();
             components.insert(component, Vec::new()).unwrap();
@@ -876,7 +886,7 @@ mod tests {
 
     fn package_http_attachment(
         attachment_id: &str,
-        package_id: &str,
+        package_id: &wamn_catalog::PackageName,
         component: &str,
         operation: &str,
         path: &str,
@@ -908,7 +918,7 @@ mod tests {
                 "first".to_owned(),
                 package_http_attachment(
                     "first",
-                    "source_fixture",
+                    &"source_fixture".parse().unwrap(),
                     "read",
                     "source-fixture:item/get@1.0.0",
                     "/items/get",
@@ -918,7 +928,7 @@ mod tests {
                 "second".to_owned(),
                 package_http_attachment(
                     "second",
-                    "source_fixture",
+                    &"source_fixture".parse().unwrap(),
                     "list",
                     "source-fixture:item/list@1.0.0",
                     "/items/list",
@@ -929,7 +939,7 @@ mod tests {
             "third".to_owned(),
             package_http_attachment(
                 "third",
-                "observer_fixture",
+                &"observer_fixture".parse().unwrap(),
                 "read",
                 "observer-fixture:item/get@3.0.0",
                 "/observed/get",
@@ -944,14 +954,14 @@ mod tests {
         assert_eq!(
             authored
                 .values()
-                .filter(|attachment| attachment.package_id == "source_fixture")
+                .filter(|attachment| attachment.package_id == "source_fixture".parse().unwrap())
                 .count(),
             2
         );
         assert_eq!(
             authored
                 .values()
-                .filter(|attachment| attachment.package_id == "observer_fixture")
+                .filter(|attachment| attachment.package_id == "observer_fixture".parse().unwrap())
                 .count(),
             1
         );
@@ -969,14 +979,14 @@ mod tests {
     fn package_attachment_documents_refuse_duplicate_identity() {
         let base = package_http_attachment(
             "fixture-http",
-            "source_fixture",
+            &"source_fixture".parse().unwrap(),
             "fixture_widget_update",
             "source-fixture:widget/update@1.0.0",
             "/widget/update",
         );
         let overlay = package_http_attachment(
             "fixture-http",
-            "observer_fixture",
+            &"observer_fixture".parse().unwrap(),
             "fixture_widget_update",
             "observer-fixture:widget/update@3.0.0",
             "/overlay/widget/update",
@@ -1003,14 +1013,14 @@ mod tests {
     fn package_attachment_route_collisions_use_the_existing_governor() {
         let first = package_http_attachment(
             "first-http",
-            "source_fixture",
+            &"source_fixture".parse().unwrap(),
             "widget_get",
             "source-fixture:widget/get@1.0.0",
             "/widget/{id}",
         );
         let second = package_http_attachment(
             "second-http",
-            "observer_fixture",
+            &"observer_fixture".parse().unwrap(),
             "quality_load_widget_detail",
             "observer-fixture:quality/load-widget-detail@3.0.0",
             "/widget/{widget_id}",
@@ -1042,7 +1052,7 @@ mod tests {
         let authored_hash = wamn_digest::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
             type_: wamn_catalog::AttachmentType::Http,
-            package_id: "source_fixture".to_owned(),
+            package_id: "source_fixture".parse().unwrap(),
             target: wamn_catalog::AttachmentTarget::Route {
                 component: "widget".to_owned(),
                 operation: "source-fixture:widget/get@1.0.0".to_owned(),
@@ -1131,7 +1141,13 @@ mod tests {
     #[test]
     fn release_publish_writes_the_method_from_the_operation_type() {
         let route = |id: &str, operation: &str, path: &str| {
-            let mut attachment = package_http_attachment(id, "source_fixture", id, operation, path);
+            let mut attachment = package_http_attachment(
+                id,
+                &"source_fixture".parse().unwrap(),
+                id,
+                operation,
+                path,
+            );
             attachment.target = wamn_catalog::AttachmentTarget::Route {
                 component: "widget".to_owned(),
                 operation: operation.to_owned(),
@@ -1164,7 +1180,7 @@ mod tests {
                 "wiring-http".to_owned(),
                 package_http_attachment(
                     "wiring-http",
-                    "source_fixture",
+                    &"source_fixture".parse().unwrap(),
                     "widget_flow",
                     "source-fixture:widget/flow@1.0.0",
                     "/widget/flow",
@@ -1183,7 +1199,7 @@ mod tests {
         .map(|(operation, type_)| {
             (
                 (
-                    "source_fixture".to_owned(),
+                    "source_fixture".parse().unwrap(),
                     format!("source-fixture:{operation}@1.0.0"),
                 ),
                 RouteContract::from(type_),
@@ -1248,7 +1264,7 @@ mod tests {
             .zip(&bytes)
             .map(|(package, bytes)| {
                 let mut fact = closure_component("entry", None);
-                fact.target.package_id = package.into();
+                fact.target.package_id = package.parse().unwrap();
                 fact.component_digest = wamn_digest::bytes_sha256(bytes);
                 fact
             })
@@ -1257,7 +1273,9 @@ mod tests {
             ServingRelease {
                 packages: facts
                     .iter()
-                    .map(|fact| PackageCoordinate::new(&fact.target.package_id, "1.0.0").unwrap())
+                    .map(|fact| {
+                        PackageCoordinate::new(fact.target.package_id.clone(), "1.0.0").unwrap()
+                    })
                     .collect(),
             },
             facts
@@ -1285,10 +1303,10 @@ mod tests {
             manifest,
         };
         let applications = [(
-            "orders".into(),
+            "orders".parse().unwrap(),
             wamn_catalog::ApplicationDefinition {
                 connections: std::collections::BTreeMap::new(),
-                packages: ["base".into(), "overlay".into()].into(),
+                packages: ["base".parse().unwrap(), "overlay".parse().unwrap()].into(),
             },
         )]
         .into();
@@ -1315,10 +1333,10 @@ mod tests {
 
         let mut two = applications.clone();
         two.insert(
-            "rest".into(),
+            "rest".parse().unwrap(),
             wamn_catalog::ApplicationDefinition {
                 connections: BTreeMap::new(),
-                packages: ["base".into()].into(),
+                packages: ["base".parse().unwrap()].into(),
             },
         );
         assert!(application_member(&published, &candidates(), &two, None).is_err());
@@ -1326,7 +1344,7 @@ mod tests {
         both.get_mut("rest")
             .unwrap()
             .packages
-            .insert("overlay".into());
+            .insert("overlay".parse().unwrap());
         let error = application_member(&published, &candidates(), &both, None).unwrap_err();
         assert_eq!(
             error
@@ -1341,7 +1359,7 @@ mod tests {
             .get_mut("orders")
             .unwrap()
             .packages
-            .insert("outer".into());
+            .insert("outer".parse().unwrap());
         let error = application_member(&published, &candidates(), &ambiguous, None).unwrap_err();
         let error = error.downcast_ref::<PublishManifestError>().unwrap();
         assert_eq!(
@@ -1388,12 +1406,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let packages = [PackageCoordinate::new("base", "1.0.0").unwrap()];
+        let packages = [PackageCoordinate::new("base".parse().unwrap(), "1.0.0").unwrap()];
         let project = |project_env_key: &str| {
             let components =
                 descriptor_components(project_env_key, &packages, std::slice::from_ref(&opened))
                     .unwrap();
-            let fact = &components.facts[&("base".to_owned(), "1.0.0".to_owned())][0];
+            let fact = &components.facts[&("base".parse().unwrap(), "1.0.0".to_owned())][0];
             ServingComponent::project(fact, components.connections(fact).unwrap())
         };
         let first = project("acme--dev--plant");
@@ -1450,7 +1468,7 @@ mod tests {
         application_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).unwrap();
         for model in manifest.models.values_mut() {
             model.schema = "base_schema".into();
-            model.owner = "base_package".into();
+            model.owner = "base_package".parse().unwrap();
         }
         application_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).unwrap();
         let mut extra = manifest.models.values().next().unwrap().clone();
@@ -1479,9 +1497,9 @@ mod tests {
     /// The manifest of package `id`@`version` with one base pinned at
     /// `digest`.
     fn pinning_manifest(
-        id: &str,
+        id: &wamn_catalog::PackageName,
         version: &str,
-        base: (&str, &str),
+        base: (&wamn_catalog::PackageName, &str),
         digest: &wamn_digest::Digest,
     ) -> wamn_compiler::manifest::PackageManifest {
         let mut document = serde_json::to_value(dependency_manifest(digest))
@@ -1497,27 +1515,34 @@ mod tests {
         let base_operation = "base:stock/record-widget@1.0.0";
         let overlay_operation = "overlay:stock/record-widget@3.0.0";
         let mut base = closure_component("base-component", Some(base_operation));
-        base.target.package_id = "base".to_owned();
+        base.target.package_id = "base".parse().unwrap();
         let mut overlay = closure_component("overlay-component", Some(overlay_operation));
-        overlay.target.package_id = "overlay".to_owned();
+        overlay.target.package_id = "overlay".parse().unwrap();
         overlay.target.package_version = "3.0.0".to_owned();
         overlay.component_digest = (format!("sha256:{}", "b".repeat(64)))
             .parse::<wamn_digest::Digest>()
             .unwrap();
         let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
-        let facts = BTreeMap::from([
-            (("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()]),
-            (
-                ("overlay".to_owned(), "3.0.0".to_owned()),
-                vec![overlay.clone()],
-            ),
-        ]);
-        let manifests = BTreeMap::from([(
-            "overlay".to_owned(),
+        let facts: BTreeMap<(wamn_catalog::PackageName, String), Vec<AdmittedComponent>> =
+            BTreeMap::from([
+                (
+                    ("base".parse().unwrap(), "1.0.0".to_owned()),
+                    vec![base.clone()],
+                ),
+                (
+                    ("overlay".parse().unwrap(), "3.0.0".to_owned()),
+                    vec![overlay.clone()],
+                ),
+            ]);
+        let manifests: BTreeMap<
+            wamn_catalog::PackageName,
+            wamn_compiler::manifest::PackageManifest,
+        > = BTreeMap::from([(
+            "overlay".parse().unwrap(),
             pinning_manifest(
-                "overlay",
+                &"overlay".parse().unwrap(),
                 "3.0.0",
-                ("base", "1.0.0"),
+                (&"base".parse().unwrap(), "1.0.0"),
                 &base.component_digest,
             ),
         )]);
@@ -1543,11 +1568,11 @@ mod tests {
 
         let mut cyclic = manifests;
         cyclic.insert(
-            "base".to_owned(),
+            "base".parse().unwrap(),
             pinning_manifest(
-                "base",
+                &"base".parse().unwrap(),
                 "1.0.0",
-                ("overlay", "3.0.0"),
+                (&"overlay".parse().unwrap(), "3.0.0"),
                 &overlay.component_digest,
             ),
         );
@@ -1573,9 +1598,9 @@ mod tests {
         let base_operation = "base:stock/record-widget@1.0.0";
         let overlay_operation = "overlay:stock/record-widget@3.0.0";
         let mut base = closure_component("base-component", Some(base_operation));
-        base.target.package_id = "base".to_owned();
+        base.target.package_id = "base".parse().unwrap();
         let mut overlay = closure_component("overlay-component", Some(overlay_operation));
-        overlay.target.package_id = "overlay".to_owned();
+        overlay.target.package_id = "overlay".parse().unwrap();
         overlay.target.package_version = "3.0.0".to_owned();
         overlay.component_digest = (format!("sha256:{}", "b".repeat(64)))
             .parse::<wamn_digest::Digest>()
@@ -1585,16 +1610,28 @@ mod tests {
             .unwrap();
         assert_ne!(stale_pin, base.component_digest);
         let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
-        let facts = BTreeMap::from([
-            (("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()]),
-            (
-                ("overlay".to_owned(), "3.0.0".to_owned()),
-                vec![overlay.clone()],
+        let facts: BTreeMap<(wamn_catalog::PackageName, String), Vec<AdmittedComponent>> =
+            BTreeMap::from([
+                (
+                    ("base".parse().unwrap(), "1.0.0".to_owned()),
+                    vec![base.clone()],
+                ),
+                (
+                    ("overlay".parse().unwrap(), "3.0.0".to_owned()),
+                    vec![overlay.clone()],
+                ),
+            ]);
+        let manifests: BTreeMap<
+            wamn_catalog::PackageName,
+            wamn_compiler::manifest::PackageManifest,
+        > = BTreeMap::from([(
+            "overlay".parse().unwrap(),
+            pinning_manifest(
+                &"overlay".parse().unwrap(),
+                "3.0.0",
+                (&"base".parse().unwrap(), "1.0.0"),
+                &stale_pin,
             ),
-        ]);
-        let manifests = BTreeMap::from([(
-            "overlay".to_owned(),
-            pinning_manifest("overlay", "3.0.0", ("base", "1.0.0"), &stale_pin),
         )]);
 
         let refusal = resolve_component_dependency_closure(

@@ -68,7 +68,7 @@ pub(crate) fn inherit_model_fields(
             if declared.number.is_none() && declared.role.is_none() {
                 continue;
             }
-            if model.field_owner(field) != model.owner {
+            if model.field_owner(field) != &model.owner {
                 return Err(invalid(format!(
                     "{name}.{field} belongs to {}, not to the relation owner {}; only the relation owner's fields are numbered or stamped",
                     model.field_owner(field),

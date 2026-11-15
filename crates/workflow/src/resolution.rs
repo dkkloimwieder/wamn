@@ -28,9 +28,9 @@ pub struct WorkflowRunKey<'a> {
     pub environment: &'a str,
     /// The application, by the name the environment declares: the run's
     /// package id.
-    pub application: &'a str,
+    pub application: &'a wamn_catalog::ApplicationName,
     /// The packages the environment declares for `application`.
-    pub application_packages: &'a BTreeSet<String>,
+    pub application_packages: &'a BTreeSet<wamn_catalog::PackageName>,
     pub workflow_id: &'a str,
     pub version: u32,
     /// The release the run pins.
@@ -252,7 +252,7 @@ mod tests {
         let fact = AdmittedComponent {
             target: ComponentPackageCoordinate {
                 project_env_key: "t1".to_owned(),
-                package_id: APPLICATION.to_owned(),
+                package_id: APPLICATION.parse().unwrap(),
                 package_version: "1.0.0".to_owned(),
             },
             component: "data".to_owned(),
@@ -277,7 +277,11 @@ mod tests {
         };
         ServingManifest::new(
             ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new(APPLICATION, "1.0.0").unwrap()]),
+                packages: BTreeSet::from([PackageCoordinate::new(
+                    APPLICATION.parse().unwrap(),
+                    "1.0.0",
+                )
+                .unwrap()]),
             },
             BTreeSet::from([ServingComponent::project(&fact, Vec::new())]),
             BTreeSet::new(),
@@ -311,12 +315,14 @@ mod tests {
         hash: &'a wamn_digest::Digest,
         node_digests: &'a BTreeMap<String, wamn_digest::Digest>,
     ) -> WorkflowRunKey<'a> {
-        static PACKAGES: std::sync::LazyLock<BTreeSet<String>> =
-            std::sync::LazyLock::new(|| BTreeSet::from([APPLICATION.to_owned()]));
+        static PACKAGES: std::sync::LazyLock<BTreeSet<wamn_catalog::PackageName>> =
+            std::sync::LazyLock::new(|| BTreeSet::from([APPLICATION.parse().unwrap()]));
+        static APPLICATION_NAME: std::sync::LazyLock<wamn_catalog::ApplicationName> =
+            std::sync::LazyLock::new(|| "erp".parse().unwrap());
         WorkflowRunKey {
             project_env_key: "t1",
             environment: "dev",
-            application: "erp",
+            application: &APPLICATION_NAME,
             application_packages: &PACKAGES,
             workflow_id: "nightly",
             version: 1,

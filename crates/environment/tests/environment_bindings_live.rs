@@ -21,7 +21,9 @@ fn document() -> EnvironmentDocument {
     selection.current = wamn_environment::environment::document::DeclaredRelease::Digest(
         format!("sha256:{:064x}", 1).parse().unwrap(),
     );
-    selection.packages.insert("fixture".to_owned());
+    selection
+        .packages
+        .insert("fixture".parse().expect("valid name"));
     document
 }
 fn package(integration_type: &str) -> PackageManifest {
@@ -91,7 +93,8 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions(pool: 
         wamn_environment::environment::document::Integration { version: 1 },
     );
     let mut unrelated = doc.applications["app"].clone();
-    unrelated.packages = std::collections::BTreeSet::from(["unrelated".into()]);
+    unrelated.packages =
+        std::collections::BTreeSet::from(["unrelated".parse().expect("valid name")]);
     unrelated.connections.insert(
         "upstream".into(),
         wamn_registry::configuration::ConnectionReference {
@@ -99,7 +102,8 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions(pool: 
             version: None,
         },
     );
-    doc.applications.insert("other".into(), unrelated);
+    doc.applications
+        .insert("other".parse().expect("valid name"), unrelated);
     let selected = bindings::analyse(&mut client, &doc, &packages)
         .await
         .unwrap();
@@ -231,7 +235,7 @@ async fn two_packages_can_bind_distinct_names_to_one_connection_without_authorit
         .get_mut("app")
         .unwrap()
         .packages
-        .insert("other".into());
+        .insert("other".parse().expect("valid name"));
     doc.applications.get_mut("app").unwrap().connections.insert(
         "second".into(),
         wamn_registry::configuration::ConnectionReference {
@@ -241,7 +245,7 @@ async fn two_packages_can_bind_distinct_names_to_one_connection_without_authorit
     );
     let first = package("http");
     let mut second = first.clone();
-    second.package.id = "other".into();
+    second.package.id = "other".parse().expect("valid name");
     let declaration = second.connections.remove("upstream").unwrap();
     second.connections.insert("second".into(), declaration);
     sqlx::raw_sql("SET ROLE wamn_db_owner")

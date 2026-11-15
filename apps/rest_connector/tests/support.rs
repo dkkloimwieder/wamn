@@ -28,7 +28,11 @@ pub fn admit(
 ) -> ComponentAdmission {
     let target = ComponentPackageCoordinate {
         project_env_key: "rest--test--publication".into(),
-        package_id: manifest(package)["package"]["id"].as_str().unwrap().into(),
+        package_id: manifest(package)["package"]["id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap(),
         package_version: "0.1.1".into(),
     };
     let declaration = match palette {

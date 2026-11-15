@@ -253,7 +253,7 @@ impl Authority {
             wamn_environment::environment::document::DeclaredRelease::Digest(digest.to_owned());
         selection.packages = [PACKAGE, "nested_origin", "nested_wiring"]
             .into_iter()
-            .map(str::to_owned)
+            .map(|package| package.parse().unwrap())
             .collect();
         document
     }
@@ -388,7 +388,7 @@ fn provision_project_components_for_http_manifest()
         },
     );
     [wamn_catalog::ServingComponent {
-        package_id: PACKAGE.into(),
+        package_id: PACKAGE.parse().unwrap(),
         runtime_schema: None,
         descriptor: {
             let mut descriptor = descriptor;
@@ -442,8 +442,12 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
     let components = provision_project_components_for_http_manifest();
     let manifest = wamn_catalog::ServingManifest::new(
         wamn_catalog::ServingRelease {
-            packages: [wamn_catalog::PackageCoordinate::new(PACKAGE, PACKAGE_VERSION).unwrap()]
-                .into(),
+            packages: [wamn_catalog::PackageCoordinate::new(
+                PACKAGE.parse().expect("valid fixture name"),
+                PACKAGE_VERSION,
+            )
+            .unwrap()]
+            .into(),
         },
         components,
         std::collections::BTreeSet::new(),
@@ -514,14 +518,14 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
     );
     let mut invocation = ConnectionInvocation {
         origin: ConnectionOrigin {
-            package_id: PACKAGE.into(),
+            package_id: PACKAGE.parse().unwrap(),
             component_digest: HTTP_SIDECAR.parse().unwrap(),
             component: "http-sidecar".into(),
             interface_version: "0.1.0".into(),
             operation: "wamn:node/handler@0.1.0".into(),
         },
         entry: InvocationEntry::Wiring(WiringPosition {
-            package_id: PACKAGE.into(),
+            application: PACKAGE.parse().unwrap(),
             wiring_id: "http_read".into(),
             wiring_version: 1,
             node_id: "read".into(),
@@ -529,7 +533,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
             configuration: Default::default(),
             wiring_hash: document.wiring_hash(),
         }),
-        package_id: PACKAGE.into(),
+        package_id: PACKAGE.parse().unwrap(),
         component_digest: HTTP_SIDECAR.parse().unwrap(),
         component: "http-sidecar".into(),
         operation: "wamn:node/handler@0.1.0".into(),
@@ -568,13 +572,13 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
             .await
             .is_err()
     );
-    let entry = wamn_capability_authority::identity::ConnectionEntryLookup {
-        package_id: PACKAGE,
-        wiring: Some(wamn_capability_authority::identity::WiringLookup {
+    let entry = wamn_capability_authority::identity::ConnectionEntryLookup::Wiring {
+        application: &PACKAGE.parse().unwrap(),
+        wiring: wamn_capability_authority::identity::WiringLookup {
             wiring_id: "http_read",
             wiring_version: 1,
             node_id: "read",
-        }),
+        },
     };
     let snapshot = postgres
         .connection_effect_snapshot(
@@ -582,12 +586,12 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
             PROJECT_ENV_KEY,
             &ConnectionEffectLookup {
                 entry,
-                origin_package_id: PACKAGE,
+                origin_package_id: &PACKAGE.parse().expect("valid fixture name"),
                 origin_component_digest: &HTTP_SIDECAR.parse().unwrap(),
                 origin_component: "http-sidecar",
                 origin_interface_version: "0.1.0",
                 origin_operation: "wamn:node/handler@0.1.0",
-                package_id: PACKAGE,
+                package_id: &PACKAGE.parse().expect("valid fixture name"),
                 operation: "wamn:node/handler@0.1.0",
                 manifest_digest: &manifest_digest,
                 environment: ENVIRONMENT,
@@ -697,7 +701,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
                 .into_iter()
                 .map(|package| {
                     (
-                        package.into(),
+                        package.parse().unwrap(),
                         BTreeMap::from([("labels".into(), ConnectionMode::Write)]),
                     )
                 })
@@ -709,12 +713,13 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
             packages: [PACKAGE, "nested_origin"]
                 .into_iter()
                 .map(|package| {
-                    wamn_catalog::PackageCoordinate::new(package, PACKAGE_VERSION).unwrap()
+                    wamn_catalog::PackageCoordinate::new(package.parse().unwrap(), PACKAGE_VERSION)
+                        .unwrap()
                 })
                 .collect(),
         },
         [wamn_catalog::ServingComponent {
-            package_id: PALETTE_PACKAGE_ID.into(),
+            package_id: PALETTE_PACKAGE_ID.parse().unwrap(),
             runtime_schema: None,
             descriptor,
         }]
@@ -734,12 +739,12 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     let mut authority = Authority::new("http://10.0.0.9:8080").await;
     let mut document = Authority::document(&digest);
     document.applications.get_mut(PACKAGE).unwrap().packages =
-        [PACKAGE.to_owned(), "nested_origin".into()].into();
+        [PACKAGE.parse().unwrap(), "nested_origin".parse().unwrap()].into();
     let packages: Vec<_> = [PACKAGE, "nested_origin"]
         .into_iter()
         .map(|package| {
             let mut declaration = declarations("s3", "write");
-            declaration.package.id = package.into();
+            declaration.package.id = package.parse().unwrap();
             declaration
         })
         .collect();
@@ -795,14 +800,14 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     .unwrap();
     let mut invocation = ConnectionInvocation {
         origin: ConnectionOrigin {
-            package_id: PALETTE_PACKAGE_ID.into(),
+            package_id: PALETTE_PACKAGE_ID.parse().unwrap(),
             component_digest: DIGEST.parse().unwrap(),
             component: "blob-put".into(),
             interface_version: "0.1.0".into(),
             operation: OPERATION.into(),
         },
         entry: InvocationEntry::Wiring(WiringPosition {
-            package_id: PACKAGE.into(),
+            application: PACKAGE.parse().unwrap(),
             wiring_id: "store_label".into(),
             wiring_version: 1,
             node_id: "store".into(),
@@ -810,7 +815,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
             configuration: Arc::new(wiring.nodes["store"].params.clone()),
             wiring_hash: wiring.wiring_hash(),
         }),
-        package_id: PALETTE_PACKAGE_ID.into(),
+        package_id: PALETTE_PACKAGE_ID.parse().unwrap(),
         component_digest: DIGEST.parse().unwrap(),
         component: "blob-put".into(),
         operation: OPERATION.into(),

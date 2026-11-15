@@ -49,14 +49,15 @@ pub use connection::{
     RuntimeType, org_credential_handle, parse_org_credential_handle,
 };
 pub use environment_application::{
-    ApplicationDefinition, EnvironmentApplications, application_for_package,
+    ApplicationDefinition, ApplicationName, EnvironmentApplications, ParseApplicationNameError,
+    application_for_package,
 };
 pub use host_route::{
     HostAttachment, HostHandler, HostRoute, HostRouteAuthority, HostRouteContractError,
     HostRouteSet, host_route_package, host_route_path_prefix, host_route_version,
     is_granted_host_route_operation, is_host_route_operation,
 };
-pub use package::PackageCoordinate;
+pub use package::{PackageCoordinate, PackageName, ParsePackageNameError};
 pub use route_identity::{
     OperationContract, OperationDescription, StatementDescription, StatementValue,
     operation_contract, operation_token, route_attachment_id, route_path,
@@ -133,12 +134,12 @@ pub enum CatalogIdentityError {
         attachment_id: String,
     },
     UnresolvableManifestWiring {
-        package_id: String,
+        package_id: crate::PackageName,
         wiring_id: String,
         wiring_version: u32,
     },
     UnresolvableManifestRoute {
-        package_id: String,
+        package_id: crate::PackageName,
         component: String,
         operation: String,
     },

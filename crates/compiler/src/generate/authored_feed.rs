@@ -320,7 +320,7 @@ pub async fn read(connection: &mut Connection, {input}: Input, part: Option<Feed
 
 fn emit_component(
     files: &mut BTreeMap<String, Vec<u8>>,
-    namespace: &str,
+    namespace: &wamn_catalog::PackageName,
     name: &str,
     compiled: &super::operations::CustomDescription<'_>,
     key_type: SqlValueType,
@@ -328,7 +328,7 @@ fn emit_component(
     let operation = compiled.declaration;
     let stem = custom_artifact_stem(name);
     let (group, local) = name.split_once('.').expect("validated operation");
-    let namespace = namespace.replace('-', "_");
+    let namespace = namespace.as_str();
     let group = group.replace('-', "_");
     let local_module = local.replace('-', "_");
     let ty = rust_type_identifier(local);

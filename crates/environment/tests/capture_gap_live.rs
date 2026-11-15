@@ -15,13 +15,14 @@ use wamn_kubernetes::{Target, kubectl};
 use async_nats::jetstream;
 use chrono::{DateTime, Utc};
 
+use wamn_catalog::WiringEventOperation as Op;
 use wamn_control_provision::{
     cdc_object_name, project_env_database_name, sql, validate_project_env_cdc,
 };
 use wamn_environment::environment::capture_gap::{
     CloseCaptureGapRequest, RecoverCaptureGapRequest, close, recover,
 };
-use wamn_event_wire::{Envelope, Op, msg_id, stream_subjects, subject};
+use wamn_event_wire::{Envelope, msg_id, stream_subjects, subject};
 use wamn_registry::sql::{
     stamp_env_policy_sql, upsert_event_reader_sql, upsert_org_sql,
     upsert_project_env_with_policy_sql, upsert_project_sql,
@@ -240,7 +241,7 @@ async fn recover_and_close_record_each_capture_gap() {
         op: Op::Insert,
         old: None,
         new: Some(serde_json::Map::new()),
-        package_id: "app".to_owned(),
+        package_id: "app".parse().unwrap(),
         entity: "widget".to_owned(),
         table: "widgets".to_owned(),
         identity: wamn_event_wire::CdcIdentity {

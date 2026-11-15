@@ -60,16 +60,20 @@ mod tests {
         let mut document = document();
         document.applications.get_mut("fixture").unwrap().client =
             Some(super::super::document::Client {
-                package: "receiving".into(),
+                package: "receiving".parse().unwrap(),
                 web: wamn_digest::bytes_sha256(b"web artifact"),
             });
         verify_client_package(
             &document.applications["fixture"],
-            ["wms", "receiving"].into_iter(),
+            ["wms".parse().unwrap(), "receiving".parse().unwrap()].iter(),
         )
         .unwrap();
         assert!(
-            verify_client_package(&document.applications["fixture"], ["wms"].into_iter()).is_err()
+            verify_client_package(
+                &document.applications["fixture"],
+                ["wms".parse().unwrap()].iter()
+            )
+            .is_err()
         );
     }
 
@@ -87,19 +91,19 @@ mod tests {
         }
         document.applications.get_mut("fixture").unwrap().client =
             Some(super::super::document::Client {
-                package: "web_fixture".into(),
+                package: "web_fixture".parse().unwrap(),
                 web: wamn_digest::bytes_sha256(b"web artifact"),
             });
         verify(
             &document.applications["fixture"],
             &web,
-            [("web_fixture", "2.0.0")].into_iter(),
+            [(&"web_fixture".parse().unwrap(), "2.0.0")].into_iter(),
         )
         .unwrap();
         verify(
             &document.applications["fixture"],
             &web,
-            [("web_fixture", "1.0.0")].into_iter(),
+            [(&"web_fixture".parse().unwrap(), "1.0.0")].into_iter(),
         )
         .unwrap();
         document
@@ -109,12 +113,12 @@ mod tests {
             .client
             .as_mut()
             .unwrap()
-            .package = "receiving".into();
+            .package = "receiving".parse().expect("valid name");
         assert!(
             verify(
                 &document.applications["fixture"],
                 &web,
-                [("web_fixture", "1.0.0")].into_iter()
+                [(&"web_fixture".parse().unwrap(), "1.0.0")].into_iter()
             )
             .is_err()
         );
@@ -125,7 +129,7 @@ mod tests {
             .client
             .as_mut()
             .unwrap()
-            .package = "web_fixture".into();
+            .package = "web_fixture".parse().expect("valid name");
         // DEP2-03 replaces the shared candidate with application publication.
         for application in document.applications.values_mut() {
             application.current = super::super::document::DeclaredRelease::None;

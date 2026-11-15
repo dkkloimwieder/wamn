@@ -16,7 +16,7 @@ enum Request {
         project: String,
         env: String,
         document: Option<Value>,
-        application: Option<String>,
+        application: Option<wamn_catalog::ApplicationName>,
         disposable: Option<bool>,
         #[serde(default)]
         data: bool,
@@ -214,7 +214,7 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
             wamn_environment::environment::lifecycle::configure(
                 &platform,
                 &document,
-                application.as_deref(),
+                application.as_ref(),
                 disposable,
                 &system,
                 &actor.to_string(),
@@ -337,7 +337,7 @@ impl Execution {
             project: String,
             env: String,
             document: Option<Value>,
-            application: Option<String>,
+            application: Option<wamn_catalog::ApplicationName>,
             disposable: Option<bool>,
             #[serde(default)]
             data: bool,

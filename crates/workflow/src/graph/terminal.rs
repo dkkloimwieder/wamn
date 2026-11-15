@@ -1,6 +1,6 @@
 //! Terminal verdicts carried to the queue owner.
 use serde_json::Value;
-use wamn_event_wire::Op;
+use wamn_catalog::WiringEventOperation as Op;
 
 /// The reserved field of an [`wamn_catalog::WiringTerminal::Emit`] node's emitted JSON object
 /// carrying the dedup id, e.g. `{"dedup-id": "...", ...}`.

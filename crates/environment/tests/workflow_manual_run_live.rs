@@ -225,10 +225,10 @@ fn manifest(
 /// its release.
 fn declared() -> wamn_catalog::EnvironmentApplications {
     [(
-        APP.to_owned(),
+        APP.parse().unwrap(),
         wamn_catalog::ApplicationDefinition {
             connections: std::collections::BTreeMap::new(),
-            packages: [APPLICATION.to_owned()].into(),
+            packages: [APPLICATION.parse().unwrap()].into(),
         },
     )]
     .into()
@@ -516,7 +516,7 @@ impl Fixture {
                 org: "manual-live",
                 project: "default",
                 environment: ENVIRONMENT,
-                application: APP,
+                application: &APP.parse().expect("valid fixture name"),
                 declared: &declared(),
                 document,
                 trigger: WorkflowTrigger::Manual,
@@ -538,7 +538,7 @@ impl Fixture {
                 org: "manual-live",
                 project: "default",
                 environment: ENVIRONMENT,
-                application: APP,
+                application: &APP.parse().expect("valid fixture name"),
                 workflow_id: WORKFLOW,
                 version,
             },
@@ -593,14 +593,20 @@ impl Fixture {
     /// Start the workflow through `delivery` as a session of `user`: the one
     /// outcome request element of the route, its `value` or its `error`.
     async fn start_on(&self, delivery: &HostRouteDelivery, user: &str, key: &str) -> Value {
-        self.start_in(delivery, APP, user, key).await
+        self.start_in(
+            delivery,
+            &APP.parse().expect("valid fixture name"),
+            user,
+            key,
+        )
+        .await
     }
 
     /// [`Self::start_on`] naming the application `application`.
     async fn start_in(
         &self,
         delivery: &HostRouteDelivery,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         user: &str,
         key: &str,
     ) -> Value {
@@ -822,7 +828,12 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution(pool: sql
     // An application the environment does not declare refuses before any
     // row is read.
     let request_element = fixture
-        .start_in(&fixture.delivery, "billing", READER, "undeclared")
+        .start_in(
+            &fixture.delivery,
+            &"billing".parse().expect("valid name"),
+            READER,
+            "undeclared",
+        )
         .await;
     assert_eq!(
         request_element["error"]["code"], "application_not_declared",
@@ -876,7 +887,7 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution(pool: sql
                 connection,
                 PROJECT_ENV_KEY,
                 &ManualRunAdmission {
-                    package_id: APP,
+                    application: &APP.parse().expect("valid fixture name"),
                     manifest_digest: &fixture.digest,
                     environment: ENVIRONMENT,
                     workflow_id: WORKFLOW,

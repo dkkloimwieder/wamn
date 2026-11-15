@@ -73,7 +73,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         "registered-operation": OPERATION, "input-ports": [], "output-ports": [], "parameters": []
     }))?);
     manifest.components.insert(wamn_catalog::ServingComponent {
-        package_id: "consumer".into(),
+        package_id: "consumer".parse().unwrap(),
         runtime_schema: None,
         descriptor: {
             let mut descriptor = descriptor;
@@ -94,14 +94,14 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     let mut package: wamn_compiler::manifest::PackageManifest = serde_json::from_str(
         include_str!("../../publish/tests/fixtures/observer_package/generated/wamn.json"),
     )?;
-    package.package.id = "integration".into();
+    package.package.id = "integration".parse().expect("valid name");
     package.package.version = "1.0.0".into();
     package.base_dependencies = serde_json::from_value(json!({
         "state": {"package":"wamn_integration", "version":"1.0.0", "digest":(format!("sha256:{}", "b".repeat(64))).parse::<wamn_digest::Digest>().unwrap(), "operations":[]},
         "consumer": {"package":"consumer", "version":"1.0.0", "digest":(format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(), "operations":["item.import"]}
     }))?;
     let mut application = manifest.components.iter().next().unwrap().clone();
-    application.package_id = "integration".into();
+    application.package_id = "integration".parse().expect("valid name");
     application.descriptor.component = "integration".into();
     application.descriptor.operations.clear();
     application.descriptor.operations.insert(
@@ -112,9 +112,9 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     );
     manifest.components.insert(application);
     let mut declaration_only = package.clone();
-    declaration_only.package.id = "declaration_only".into();
+    declaration_only.package.id = "declaration_only".parse().expect("valid name");
     let mut consumer = package.clone();
-    consumer.package.id = "consumer".into();
+    consumer.package.id = "consumer".parse().expect("valid name");
     consumer.base_dependencies.clear();
     let mut operation = consumer.custom_operations.values().next().unwrap().clone();
     operation.permission = Some("item.import".into());

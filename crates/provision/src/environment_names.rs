@@ -16,7 +16,7 @@ pub fn application_release_name(
     org: &str,
     project: &str,
     env: &str,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
 ) -> Result<String, ProvisionError> {
     validate_project_env(org, project, env)?;
     Ok(
@@ -30,13 +30,15 @@ mod tests {
     #[test]
     fn application_names_are_bounded_and_refuse_invalid_coordinates() {
         let env = "a".repeat(30);
-        let name = application_release_name("a", "wms", &env, "orders").unwrap();
+        let name = application_release_name("a", "wms", &env, &"orders".parse().unwrap()).unwrap();
         assert!(name.len() <= 47);
         assert_ne!(
             name,
-            application_release_name("a", "wms", &env, "receiving").unwrap()
+            application_release_name("a", "wms", &env, &"receiving".parse().unwrap()).unwrap()
         );
-        assert!(application_release_name("acme", "wms", "Bad Env", "orders").is_err());
+        assert!(
+            application_release_name("acme", "wms", "Bad Env", &"orders".parse().unwrap()).is_err()
+        );
         assert!(environment_resource_name("acme", "wms", "Bad Env").is_err());
     }
 }

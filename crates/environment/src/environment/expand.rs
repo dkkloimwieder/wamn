@@ -19,12 +19,10 @@ pub async fn expand(
     let selected = super::analyse::select_application(document, Some(&analysis.application))?;
     super::clients::verify_client_package(
         &selected.applications[&analysis.application],
-        analysis.packages.iter().filter_map(|package| {
-            package
-                .client_package
-                .as_ref()
-                .map(|_| package.package.id.as_str())
-        }),
+        analysis
+            .packages
+            .iter()
+            .filter_map(|package| package.client_package.as_ref().map(|_| &package.package.id)),
     )?;
     prepare(
         platform,
@@ -42,7 +40,7 @@ pub async fn expand(
 pub async fn prepare(
     platform: &Platform,
     document: &EnvironmentDocument,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     digest: &wamn_digest::Digest,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[wamn_compiler::manifest::PackageManifest],
@@ -85,7 +83,7 @@ pub async fn prepare(
 pub(super) async fn prepare_at(
     platform: &Platform,
     document: &EnvironmentDocument,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     digest: &wamn_digest::Digest,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[wamn_compiler::manifest::PackageManifest],

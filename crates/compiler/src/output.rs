@@ -55,8 +55,8 @@ pub fn package_workspace(package_root: &Path) -> PathBuf {
 }
 
 /// Resolve a base package beside its application consumer.
-pub(crate) fn dependency_root(package_root: &Path, package: &str) -> PathBuf {
-    package_workspace(package_root).join(package)
+pub(crate) fn dependency_root(package_root: &Path, package: &wamn_catalog::PackageName) -> PathBuf {
+    package_workspace(package_root).join(package.as_str())
 }
 
 /// The build output root of the host route clients in the repository at
@@ -92,8 +92,8 @@ mod tests {
         let repository = Path::new("/repository");
         let package = wamn_catalog::host_route_package();
         assert_eq!(
-            host_route_client_output_root(repository).join(package),
-            output_root(&repository.join("apps").join(package))
+            host_route_client_output_root(repository).join(package.as_str()),
+            output_root(&repository.join("apps").join(package.as_str()))
         );
     }
 

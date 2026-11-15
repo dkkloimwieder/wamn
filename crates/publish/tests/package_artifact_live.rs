@@ -95,7 +95,8 @@ impl Fixture {
         .expect("decode the descriptor");
         let (package_id, version) = tag.rsplit_once('-').expect("a tag names a version");
         let facts = descriptor.clone().into_admitted(
-            ComponentPackageCoordinate::new("org-a", package_id, version).expect("a target"),
+            ComponentPackageCoordinate::new("org-a", package_id.parse().unwrap(), version)
+                .expect("a target"),
         );
         let credentials =
             read_registry_credentials(&self.registry.registry_auth_file, &self.local.address)
@@ -162,9 +163,13 @@ async fn push_repeat_fetch_and_refusals() {
         .await
         .expect("pull by the digest")
         .expect("the digest exists");
-    let by_tag = pull_package(&fixture.registry, "wamn_receiving", tag_version(&first.tag))
-        .await
-        .expect("pull by the tag");
+    let by_tag = pull_package(
+        &fixture.registry,
+        &"wamn_receiving".parse().unwrap(),
+        tag_version(&first.tag),
+    )
+    .await
+    .expect("pull by the tag");
     assert_eq!(by_digest.digest, first.digest);
     assert_eq!(by_tag.0, first.digest);
     assert!(
@@ -174,9 +179,13 @@ async fn push_repeat_fetch_and_refusals() {
             .map(|layer| bytes_sha256(&layer.bytes))
             .eq(by_tag.1.iter().map(|layer| bytes_sha256(&layer.bytes)))
     );
-    let _absent = pull_package(&fixture.registry, "wamn_receiving", "0.0.0-absent")
-        .await
-        .expect_err("an absent tag refuses");
+    let _absent = pull_package(
+        &fixture.registry,
+        &"wamn_receiving".parse().unwrap(),
+        "0.0.0-absent",
+    )
+    .await
+    .expect_err("an absent tag refuses");
 }
 
 /// Tags are immutable. push-package reads the tag `<id>-<version>` before it

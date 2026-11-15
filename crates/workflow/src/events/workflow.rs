@@ -5,15 +5,16 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::decide::{Verdict, decide, serviceable};
-use wamn_event_wire::{Op, SourceEvent};
+use wamn_catalog::WiringEventOperation as Op;
+use wamn_event_wire::SourceEvent;
 const MAX_CAUSATION_DEPTH: u32 = 16;
 
 /// An enabled event trigger of an environment application.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventTrigger {
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     pub workflow_id: String,
-    pub source_package: String,
+    pub source_package: wamn_catalog::PackageName,
     pub entity: String,
     pub ops: Vec<Op>,
     pub condition: Option<String>,
@@ -48,7 +49,7 @@ impl EventTrigger {
         &self,
         event: &SourceEvent,
         sequence: u64,
-        packages: &BTreeSet<String>,
+        packages: &BTreeSet<wamn_catalog::PackageName>,
         project_env_key: &str,
     ) -> Result<Option<serde_json::Value>, TriggerMatchError> {
         if sequence <= self.enable_sequence {
@@ -73,7 +74,6 @@ impl EventTrigger {
                 self,
                 condition.as_ref(),
                 event,
-                packages,
                 project_env_key,
                 MAX_CAUSATION_DEPTH,
             ),
@@ -106,11 +106,11 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let packages = BTreeSet::from(["orders".to_owned(), "other".to_owned()]);
+        let packages = BTreeSet::from(["orders".parse().unwrap(), "other".parse().unwrap()]);
         let trigger = EventTrigger {
-            application: "erp".into(),
+            application: "erp".parse().unwrap(),
             workflow_id: "notify".into(),
-            source_package: "orders".into(),
+            source_package: "orders".parse().unwrap(),
             entity: "order".into(),
             ops: vec![Op::Update],
             condition: Some("old.status != new.status && new.status == 'open'".into()),
@@ -130,7 +130,7 @@ mod tests {
         );
         for changed in [
             EventTrigger {
-                source_package: "other".into(),
+                source_package: "other".parse().unwrap(),
                 ..trigger.clone()
             },
             EventTrigger {

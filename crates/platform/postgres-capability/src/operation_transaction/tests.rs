@@ -28,10 +28,10 @@ const OPERATION_OWNER: &str = "operation-transaction-owner";
 const OWNER_OPERATION: &str = "base:widget/record@1.0.0";
 const PROJECT_ENV_KEY: &str = "test--dev--operationtxn";
 
-fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
+fn invocation(operation: &str, package_id: &wamn_catalog::PackageName) -> ConnectionInvocation {
     ConnectionInvocation {
         origin: ConnectionOrigin {
-            package_id: "overlay".into(),
+            package_id: "overlay".parse().unwrap(),
             component_digest: format!("sha256:{}", "a".repeat(64))
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
@@ -42,7 +42,7 @@ fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
         entry: wamn_capability_authority::connection::InvocationEntry::Wiring(
             wamn_capability_authority::connection::WiringPosition {
                 configuration: Default::default(),
-                package_id: "overlay".into(),
+                application: "overlay".parse().unwrap(),
                 wiring_hash: format!("sha256:{}", "a".repeat(64))
                     .parse::<wamn_digest::Digest>()
                     .unwrap(),
@@ -52,11 +52,11 @@ fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
                 occurrence: 0,
             },
         ),
-        package_id: package_id.into(),
+        package_id: package_id.clone(),
         component_digest: format!("sha256:{}", "b".repeat(64))
             .parse::<wamn_digest::Digest>()
             .unwrap(),
-        component: package_id.into(),
+        component: package_id.to_string(),
         operation: operation.into(),
         closure: ConnectionExecutionClosure::Released,
         effects: None,
@@ -215,7 +215,10 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it(pool:
         .set_release_identity(OPERATION_OWNER, ReleaseIdentity::for_test(release))
         .expect("release binds");
     postgres
-        .bind_invocation(OPERATION_OWNER, invocation(OWNER_OPERATION, "base"))
+        .bind_invocation(
+            OPERATION_OWNER,
+            invocation(OWNER_OPERATION, &"base".parse().unwrap()),
+        )
         .expect("invocation binds");
     let sql = "UPDATE operation_transaction_roundtrip SET value = value + 1 RETURNING value";
     let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();

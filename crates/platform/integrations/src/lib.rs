@@ -52,7 +52,7 @@ impl std::fmt::Debug for ReadResources {
 struct ComponentReads {
     resources: Arc<ReadResources>,
     component: wamn_digest::Digest,
-    package: String,
+    package: wamn_catalog::PackageName,
     names: HashSet<String>,
 }
 
@@ -207,8 +207,8 @@ impl ReadState {
 /// Process-owned imports with immutable declarations and shared links by identity.
 #[derive(Debug)]
 pub struct Integrations {
-    imports: HashMap<(wamn_digest::Digest, String), Arc<IntegrationImports>>,
-    declarations: HashMap<(wamn_digest::Digest, String), HashSet<String>>,
+    imports: HashMap<(wamn_digest::Digest, wamn_catalog::PackageName), Arc<IntegrationImports>>,
+    declarations: HashMap<(wamn_digest::Digest, wamn_catalog::PackageName), HashSet<String>>,
     resources: Arc<ReadResources>,
 }
 
@@ -290,7 +290,7 @@ impl Integrations {
     pub fn imports(
         &self,
         component: &wamn_digest::Digest,
-        package: &str,
+        package: &wamn_catalog::PackageName,
     ) -> anyhow::Result<Arc<IntegrationImports>> {
         self.imports
             .get(&(component.to_owned(), package.to_owned()))
@@ -302,7 +302,7 @@ impl Integrations {
     pub async fn add_to_linker(
         &self,
         item: &mut wash_runtime::engine::workload::WorkloadItem<'_>,
-        owners: &[(&wamn_digest::Digest, &str)],
+        owners: &[(&wamn_digest::Digest, &wamn_catalog::PackageName)],
     ) -> anyhow::Result<()> {
         let mut routes = HashMap::new();
         let mut interfaces = HashSet::new();

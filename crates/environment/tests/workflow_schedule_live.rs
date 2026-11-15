@@ -90,10 +90,10 @@ async fn an_undeclared_application_refuses_at_author(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture(&pool).await;
     let other: wamn_catalog::EnvironmentApplications = [(
-        "billing".to_owned(),
+        "billing".parse().unwrap(),
         wamn_catalog::ApplicationDefinition {
             connections: std::collections::BTreeMap::new(),
-            packages: [APPLICATION.to_owned()].into(),
+            packages: [APPLICATION.parse().unwrap()].into(),
         },
     )]
     .into();
@@ -336,7 +336,7 @@ async fn no_enabled_schedule_version_refuses_with_no_row(pool: sqlx::PgPool) {
             org: "schedule-live",
             project: "default",
             environment: ENVIRONMENT,
-            application: APP,
+            application: &APP.parse().expect("valid fixture name"),
             workflow_id: "nightly",
             version: 1,
         },
@@ -370,7 +370,7 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
         Arc::clone(&fixture.postgres),
         PROJECT,
-        APP,
+        APP.parse().expect("valid fixture name"),
         tokio::sync::watch::channel(Some(Arc::clone(&fixture.release))).1,
     );
     let (stop, stopping) = tokio::sync::watch::channel(false);
@@ -438,7 +438,7 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped(pool: sqlx::PgPool
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
         postgres,
         PROJECT,
-        APP,
+        APP.parse().expect("valid fixture name"),
         tokio::sync::watch::channel(Some(Arc::clone(&fixture.release))).1,
     );
     let executor = url::Url::parse(&fixture.executor_url)
@@ -493,17 +493,35 @@ async fn applications_schedule_independently_across_upgrade_and_rollback(pool: s
     fixture.enable("nightly", READER).await.unwrap();
     sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by) \
          SELECT project_env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application=$1").bind(&APP).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
-    let upgraded = Arc::new(release_variant(&mut fixture, APP, b"1251").await);
-    let billing = Arc::new(release_variant(&mut fixture, "billing", b"1252").await);
+    let upgraded = Arc::new(
+        release_variant(
+            &mut fixture,
+            &APP.parse().expect("valid fixture name"),
+            b"1251",
+        )
+        .await,
+    );
+    let billing = Arc::new(
+        release_variant(
+            &mut fixture,
+            &"billing".parse().expect("valid name"),
+            b"1252",
+        )
+        .await,
+    );
     let b = PostgresSchedules::new(
         Arc::clone(&fixture.postgres),
         PROJECT,
-        "billing",
+        "billing".parse().expect("valid name"),
         tokio::sync::watch::channel(Some(Arc::clone(&billing))).1,
     );
     let rows_tick = due("2026-10-20T10:15:00Z");
     let b_rows = b.enabled(rows_tick).await.unwrap();
-    assert!(b_rows.iter().all(|row| row.application == "billing"));
+    assert!(
+        b_rows
+            .iter()
+            .all(|row| row.application == "billing".parse().expect("valid name"))
+    );
     assert!(!b_rows.is_empty());
     for (minute, release) in [
         (15, &fixture.release),
@@ -513,11 +531,15 @@ async fn applications_schedule_independently_across_upgrade_and_rollback(pool: s
         let a = PostgresSchedules::new(
             Arc::clone(&fixture.postgres),
             PROJECT,
-            APP,
+            APP.parse().expect("valid fixture name"),
             tokio::sync::watch::channel(Some(Arc::clone(release))).1,
         );
         let a_rows = a.enabled(rows_tick).await.unwrap();
-        assert!(a_rows.iter().all(|row| row.application == APP));
+        assert!(
+            a_rows
+                .iter()
+                .all(|row| row.application == APP.parse().expect("valid fixture name"))
+        );
         assert!(!a_rows.is_empty());
         let tick = due(&format!("2026-10-20T10:{minute}:00Z"));
         for (schedules, rows, loaded) in [(&b, &b_rows, &billing), (&a, &a_rows, release)] {
@@ -540,7 +562,10 @@ async fn applications_schedule_independently_across_upgrade_and_rollback(pool: s
                 .fetch_one(&mut fixture.admin)
                 .await
                 .unwrap();
-                assert_eq!(stored.get::<String, _>(0), row.application);
+                assert_eq!(
+                    stored.get::<wamn_catalog::ApplicationName, _>(0),
+                    row.application
+                );
                 assert_eq!(
                     stored.get::<wamn_digest::Digest, _>(1),
                     loaded.release().manifest_digest
@@ -573,7 +598,7 @@ async fn schedule_ticks_use_the_environment_time_zone(pool: sqlx::PgPool) {
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
         Arc::clone(&fixture.postgres),
         PROJECT,
-        APP,
+        APP.parse().expect("valid fixture name"),
         tokio::sync::watch::channel(Some(Arc::clone(&fixture.release))).1,
     );
     for tick in [

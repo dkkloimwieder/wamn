@@ -12,7 +12,7 @@ use super::{Platform, document::EnvironmentDocument, sql};
 pub async fn schema(
     platform: &Platform,
     triple: &wamn_registry::Triple,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     release: Option<&wamn_digest::Digest>,
     apply: bool,
 
@@ -72,7 +72,7 @@ pub struct Request<'a> {
     pub org: &'a str,
     pub project: &'a str,
     pub env: &'a str,
-    pub application: Option<&'a str>,
+    pub application: Option<&'a wamn_catalog::ApplicationName>,
     pub release: Option<&'a wamn_digest::Digest>,
 }
 

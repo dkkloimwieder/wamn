@@ -98,7 +98,7 @@ fn validate_model_fields(
         }
         // The relation owner's inserts and updates fill the column too, so a
         // column it does not have is never numbered or stamped.
-        if model.field_owner(field) != model.owner {
+        if model.field_owner(field) != &model.owner {
             return Err(invalid(format!(
                 "{model_name}.{field} belongs to {}, not to the relation owner {}; only the relation owner's fields are numbered or stamped",
                 model.field_owner(field),
@@ -193,7 +193,7 @@ fn validate_numbered_field(
                 "{model_name}.{field} numbers from sequence {sequence}, whose pattern names key {name}, but {model_name} has no field {name}: the generated insert passes the model's fields as the keys"
             )));
         };
-        if model.field_owner(name) != model.owner {
+        if model.field_owner(name) != &model.owner {
             return Err(invalid(format!(
                 "{model_name}.{field} numbers from sequence {sequence}, whose pattern names key {name}, but {model_name}.{name} belongs to {}, not to the relation owner {}",
                 model.field_owner(name),

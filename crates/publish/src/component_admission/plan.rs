@@ -323,7 +323,7 @@ pub(super) fn ensure_component_package_matches(
     component: &AdmittedComponent,
     package: &wamn_catalog::PackageCoordinate,
 ) -> anyhow::Result<()> {
-    if component.target.package_id != package.package_id()
+    if &component.target.package_id != package.package_id()
         || component.target.package_version != package.package_version()
     {
         return Err(ComponentProjectionError::new(

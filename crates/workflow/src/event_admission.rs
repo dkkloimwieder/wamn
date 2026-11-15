@@ -39,9 +39,17 @@ pub async fn admit_event_batch(
                     "invalid event sequence or source identity",
                 ));
             }
-            // Different packages can share an entity subject. Only its own
-            // consumer admits the event; the others settle it without runs.
-            if source.source() != (admission.source_package, admission.entity) {
+            // The consumer matches the source package for captured rows and the
+            // source application for derived events. Other deliveries settle without runs.
+            if match &source {
+                SourceEvent::Cdc(event) => {
+                    &event.package_id != admission.source_package
+                        || event.entity != admission.entity
+                }
+                SourceEvent::Derived(event) => {
+                    &event.application != admission.application || event.entity != admission.entity
+                }
+            } {
                 return Ok(());
             }
             if !target.applications.contains_key(admission.application) {
@@ -175,7 +183,7 @@ pub async fn admit_application_events(
     jetstream: &wamn_events_capability::WamnJetstream,
     postgres: &WamnPostgres,
     project: &str,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     release: &LoadedRelease,
 ) -> anyhow::Result<()> {
     let target = release.target();
@@ -196,12 +204,12 @@ pub async fn admit_application_events(
     let sources = triggers
         .iter()
         .filter(|trigger| {
-            trigger.application == application && target.applications.contains_key(application)
+            &trigger.application == application && target.applications.contains_key(application)
         })
         .map(|trigger| {
             (
-                trigger.application.as_str(),
-                trigger.source_package.as_str(),
+                &trigger.application,
+                &trigger.source_package,
                 trigger.entity.as_str(),
             )
         })
@@ -218,9 +226,13 @@ fn decode_event_trigger(row: &sqlx::postgres::PgRow) -> Result<EventTrigger, Pro
     let ops: String = row.get(4);
     let sequence: i64 = row.get(6);
     Ok(EventTrigger {
-        application: row.get(0),
+        application: row
+            .try_get(0)
+            .map_err(|error| ProductionLeaseError::invalid("decode application", error))?,
         workflow_id: row.get(1),
-        source_package: row.get(2),
+        source_package: row
+            .try_get(2)
+            .map_err(|error| ProductionLeaseError::invalid("decode source package", error))?,
         entity: row.get(3),
         ops: serde_json::from_str(&ops)
             .map_err(|error| ProductionLeaseError::invalid("decode event operations", error))?,

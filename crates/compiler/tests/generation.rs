@@ -225,16 +225,7 @@ fn shared_operation_vocabulary_refuses_permission_identity_drift() {
 }
 
 #[test]
-fn shared_operation_vocabulary_refuses_noncanonical_coordinates() {
-    let mut package = manifest();
-    package["package"]["id"] = json!("platform-Gadget");
-    assert_eq!(
-        validate_operation_vocabulary(&parsed_manifest(&package))
-            .expect_err("noncanonical package id was accepted")
-            .error_type(),
-        GenerateErrorType::InvalidIdentity
-    );
-
+fn shared_operation_vocabulary_refuses_ambiguous_versions() {
     for ambiguous in ["1.0.0:shadow", "1.0.0/shadow", "1.0.0@shadow"] {
         let mut version = manifest();
         version["package"]["version"] = json!(ambiguous);
@@ -1852,24 +1843,6 @@ fn generated_operations_require_a_supported_single_column_key() {
         assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
         assert_eq!(error.object(), Some("inventory.gadget"));
     }
-}
-
-#[test]
-fn package_id_wamn_is_reserved_for_the_platform() {
-    let mut reserved = manifest();
-    reserved["package"]["id"] = json!("wamn");
-    assert_eq!(
-        validate_operation_vocabulary(&parsed_manifest(&reserved))
-            .expect_err("package id wamn was accepted")
-            .error_type(),
-        GenerateErrorType::InvalidIdentity
-    );
-    assert_eq!(
-        run(&catalog(false), &reserved, &QUERY_SOURCES)
-            .expect_err("generation accepted package id wamn")
-            .error_type(),
-        GenerateErrorType::InvalidIdentity
-    );
 }
 
 fn feed_manifest() -> Value {

@@ -44,9 +44,33 @@ pub struct WebManifest {
     /// The version from the package's `web/package.json`.
     pub version: String,
     /// `<package id>@<package version>` from the package build record.
-    pub package: String,
+    #[serde(with = "package_coordinate_wire")]
+    pub package: wamn_catalog::PackageCoordinate,
     /// `outputs.manifest`, the digest of the compiled canonical `wamn.json`.
     pub contract_digest: wamn_digest::Digest,
+}
+
+mod package_coordinate_wire {
+    use serde::{Deserialize as _, Deserializer, Serializer};
+    use wamn_catalog::PackageCoordinate;
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &PackageCoordinate,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&format_args!(
+            "{}@{}",
+            value.package_id(),
+            value.package_version()
+        ))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<PackageCoordinate, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        crate::publish_release::parse_package(&value).map_err(serde::de::Error::custom)
+    }
 }
 
 impl WebManifest {
@@ -181,14 +205,7 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
     );
     ensure!(!metadata.version.is_empty(), "web.json has no version");
 
-    let (package, version) = metadata
-        .package
-        .split_once('@')
-        .context("web.json package must be <id>@<version>")?;
-    ensure!(
-        !package.is_empty() && !version.is_empty(),
-        "web.json package must be <id>@<version>"
-    );
+    let package = metadata.package.package_id();
     let tag = format!("{package}-web-{}", metadata.version);
     ensure_tag(&tag)?;
     let mut files = std::collections::BTreeMap::new();
@@ -426,7 +443,7 @@ async fn pull_archive(
 /// The package, destination, and completion state of an artifact upload.
 #[derive(Debug)]
 pub struct UploadedClient {
-    pub package: String,
+    pub package: wamn_catalog::PackageName,
     pub location: String,
     pub written: bool,
 }
@@ -465,15 +482,20 @@ pub async fn upload_web_to_store(
     digest: &wamn_digest::Digest,
     prefix: &str,
     store: &dyn ObjectStore,
-) -> anyhow::Result<(String, String, bool)> {
+) -> anyhow::Result<(wamn_catalog::PackageName, String, bool)> {
     let (metadata, tar) = pull_web(registry, digest).await?;
-    let (package, _) = metadata.package.split_once('@').expect("verified web.json");
-    ensure_tag(package)?;
-    let root = [prefix.trim_matches('/'), "clients", package, &digest.hex()]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("/");
+    let package = metadata.package.package_id();
+    ensure_tag(package.as_str())?;
+    let root = [
+        prefix.trim_matches('/'),
+        "clients",
+        package.as_str(),
+        &digest.hex(),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join("/");
     let index = object_store::path::Path::from(format!("{root}/index.html"));
     match store.head(&index).await {
         Ok(_) => return Ok((package.to_owned(), root, false)),

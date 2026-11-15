@@ -73,7 +73,7 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure(
         let application = if root.ends_with("appb") { "b" } else { "a" };
         let selected = wamn_environment::environment::analyse::select_application(
             &document,
-            Some(application),
+            Some(&application.parse().unwrap()),
         )?;
         std::fs::write(&file, selected.to_kcl())?;
         let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));

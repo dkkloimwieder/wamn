@@ -1896,11 +1896,13 @@ host:
         descriptor.connections = connections;
         ServingManifest::new(
             ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
+                packages: BTreeSet::from([
+                    PackageCoordinate::new("cat".parse().unwrap(), "1.0.0").unwrap()
+                ]),
             },
             BTreeSet::from([ServingComponent {
                 runtime_schema: None,
-                package_id: "cat".into(),
+                package_id: "cat".parse().unwrap(),
                 descriptor: {
                     let mut descriptor = descriptor;
                     descriptor.operations = BTreeMap::from([(
@@ -1918,7 +1920,7 @@ host:
                 },
             }]),
             BTreeSet::from([ServingRoute {
-                package_id: "cat".into(),
+                package_id: "cat".parse().unwrap(),
                 component: "http-request".into(),
                 operation: "request".into(),
                 type_: OperationType::Command,
@@ -1930,7 +1932,7 @@ host:
                 "orders".into(),
                 ServingAttachment {
                     type_: AttachmentType::Http,
-                    package_id: "cat".into(),
+                    package_id: "cat".parse().unwrap(),
                     target: AttachmentTarget::Route {
                         component: "http-request".into(),
                         operation: "request".into(),

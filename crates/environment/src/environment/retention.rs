@@ -137,12 +137,12 @@ pub async fn retire_runtime_grants(
     retired: &[wamn_digest::Digest],
     drops: &mut wamn_broker::auth_changes::AuthDrops,
 ) -> anyhow::Result<()> {
-    let mut removed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut retained: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut removed: BTreeMap<wamn_catalog::PackageName, BTreeSet<String>> = BTreeMap::new();
+    let mut retained: BTreeMap<wamn_catalog::PackageName, BTreeSet<String>> = BTreeMap::new();
     for (digest, (manifest, packages)) in releases {
         let dependencies = packages
             .iter()
-            .map(|package| (package.package.id.as_str(), package))
+            .map(|package| (&package.package.id, package))
             .collect();
         for package in packages.iter().filter(|package| {
             wamn_publish::publish_release::composes_integration(package, &manifest.components)
@@ -167,7 +167,7 @@ pub async fn retire_runtime_grants(
         .principal_id()
         .to_string();
     for (package, permissions) in removed {
-        let role = format!("application-{}", package.replace('_', "-"));
+        let role = format!("application-{}", package.as_str().replace('_', "-"));
         let subject = wamn_platform_identity::application_subject(project_env_key, &package)?;
         let principal = wamn_platform_identity::resolve_subject(
             system,

@@ -38,7 +38,7 @@ pub fn palette_connections<'a>(
     connection: &wamn_catalog::ComponentConnection,
     packages: impl IntoIterator<Item = &'a PackageManifest>,
 ) -> std::collections::BTreeMap<
-    (&'a str, &'a str),
+    (&'a wamn_catalog::PackageName, &'a str),
     &'a wamn_compiler::manifest::ConnectionDeclaration,
 > {
     let mut names = std::collections::BTreeMap::new();
@@ -52,7 +52,7 @@ pub fn palette_connections<'a>(
                         import == connection.requirement_type.import_package()
                     })
             {
-                names.insert((package.package.id.as_str(), name.as_str()), declaration);
+                names.insert((&package.package.id, name.as_str()), declaration);
             }
         }
     }
@@ -86,7 +86,7 @@ mod palette_tests {
         for package in &packages {
             for (alias, declaration) in &package.connections {
                 assert_eq!(
-                    selected.get(&(package.package.id.as_str(), alias.as_str())),
+                    selected.get(&(&package.package.id, alias.as_str())),
                     Some(&declaration)
                 );
             }
@@ -109,7 +109,7 @@ pub async fn prepare_release(
         .map(wamn_component_artifact::component_artifact_source::ComponentArtifactSource::new)
         .transpose()?;
     for component in &release.components {
-        if component.package_id == wamn_catalog::PALETTE_PACKAGE_ID {
+        if component.package_id.as_str() == wamn_catalog::PALETTE_PACKAGE_ID {
             for connection in &component.descriptor.connections {
                 for ((owner, alias), declaration) in palette_connections(connection, packages) {
                     if !release
@@ -163,7 +163,7 @@ pub async fn prepare_release(
             .context("set WAMN_COMPONENT_ARTIFACT_BASE for activation")?;
         let target = wamn_catalog::ComponentPackageCoordinate::new(
             project_env_key,
-            &package.package.id,
+            package.package.id.clone(),
             &package.package.version,
         )?;
         let admitted = component.descriptor.clone().into_admitted(target);

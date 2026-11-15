@@ -32,7 +32,7 @@ struct QueueTarget {
     invocation: String,
     project_env_key: String,
     project: String,
-    package_ids: Vec<String>,
+    applications: Vec<wamn_catalog::ApplicationName>,
     environment: String,
 }
 
@@ -83,7 +83,7 @@ impl QueueService {
             invocation: wamn_engine::operation::next_scope("queue").into(),
             project_env_key: release.target().project_env_key.clone(),
             project: config.project.clone(),
-            package_ids: release.target().applications.keys().cloned().collect(),
+            applications: release.target().applications.keys().cloned().collect(),
             environment: release.target().environment.clone(),
         };
         postgres
@@ -142,7 +142,7 @@ impl QueueService {
                     )
                     .pinned_backlog(
                         &self.target.invocation,
-                        &self.target.package_ids,
+                        &self.target.applications,
                         &self.target.environment,
                     )
                     .await?)
@@ -160,7 +160,7 @@ impl QueueService {
 
 fn queue_delivery_span(
     target: &QueueTarget,
-    package_id: &str,
+    application: &wamn_catalog::ApplicationName,
     run_id: &str,
     wiring_id: &str,
     wiring_version: u32,
@@ -168,7 +168,7 @@ fn queue_delivery_span(
     tracing::info_span!(
         target: "wamn::router", parent: None, "wamn.queue.delivery",
         wamn.project_env_key = %target.project_env_key, wamn.project = %target.project,
-        wamn.package_id = %package_id, wamn.environment = %target.environment,
+        wamn.package_id = %application, wamn.environment = %target.environment,
         wamn.run_id = %run_id, wamn.wiring_id = %wiring_id,
         wamn.wiring_version = wiring_version,
     )
@@ -226,7 +226,7 @@ async fn drain_one(
     match wamn_connections::production_lease::ProductionLeases::new(postgres)
         .reap_exhausted(
             &target.invocation,
-            &target.package_ids,
+            &target.applications,
             &target.environment,
             PRODUCTION_JANITOR_GRACE_MS,
         )
@@ -241,7 +241,7 @@ async fn drain_one(
     match wamn_connections::production_lease::ProductionLeases::new(postgres)
         .lease_next(
             &target.invocation,
-            &target.package_ids,
+            &target.applications,
             &target.environment,
             lease_ttl_ms,
         )
@@ -250,7 +250,7 @@ async fn drain_one(
         ProductionLeaseResult::Empty => Ok(false),
         ProductionLeaseResult::Ready {
             run_id,
-            package_id,
+            application,
             payload,
             lease_generation,
             wiring_id,
@@ -261,11 +261,11 @@ async fn drain_one(
             let wiring_version = u32::try_from(wiring_version)
                 .context("acquired wiring version is not a positive u32")?;
             let queue_span =
-                queue_delivery_span(target, &package_id, &run_id, &wiring_id, wiring_version);
+                queue_delivery_span(target, &application, &run_id, &wiring_id, wiring_version);
             let workflow = *workflow;
             let request = WorkflowRunRequest {
                 project_env_key: target.project_env_key.clone(),
-                package_id: package_id.clone(),
+                application: application.clone(),
                 environment: target.environment.clone(),
                 wiring_id: wiring_id.clone(),
                 wiring_version,
@@ -286,7 +286,7 @@ async fn drain_one(
                     target,
                     postgres,
                     jetstream,
-                    &package_id,
+                    &application,
                     &run_id,
                     lease_generation,
                     lease_ttl_ms,
@@ -310,7 +310,7 @@ async fn drive_lease(
     target: &QueueTarget,
     postgres: &WamnPostgres,
     jetstream: &WamnJetstream,
-    package_id: &str,
+    application: &wamn_catalog::ApplicationName,
     run_id: &str,
     lease_generation: i64,
     lease_ttl_ms: i64,
@@ -401,7 +401,7 @@ async fn drive_lease(
             let publish = jetstream
                 .publish_derived(DerivedPublishRequest {
                     component_id: run_id.to_owned(),
-                    package_id: package_id.to_owned(),
+                    application: application.to_owned(),
                     wiring_id,
                     wiring_version,
                     node_id,

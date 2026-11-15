@@ -116,7 +116,7 @@ impl WamnPostgres {
         role: Option<&str>,
         user_id: Option<&str>,
         operation: Option<&str>,
-        application: Option<&str>,
+        application: Option<&wamn_catalog::ApplicationName>,
         run: Option<&Causation>,
         statement_timeout_ms: u32,
     ) -> Result<String, PgError> {
@@ -150,28 +150,24 @@ impl WamnPostgres {
         role: Option<&str>,
         user_id: Option<&str>,
         operation: Option<&str>,
-        application: Option<&str>,
+        application: Option<&wamn_catalog::ApplicationName>,
         run: Option<&Causation>,
         statement_timeout_ms: u32,
     ) -> Result<BoundIdentity, PgError> {
         // The project selected this connection credential. Refuse malformed values
         // before opening its transaction.
-        validate_session_identity(
-            project_env_key,
-            schema,
-            runner,
-            role,
-            user_id,
-            operation,
-            application,
-        )?;
+        validate_session_identity(project_env_key, schema, runner, role, user_id, operation)?;
         let principal = user_id.ok_or_else(|| {
             PgError::QueryError(("55000".to_owned(), "actor-required".to_owned()))
         })?;
         let params = vec![
             Some(principal.to_owned()),
             Some(role.unwrap_or_default().to_owned()),
-            Some(application.unwrap_or_default().to_owned()),
+            Some(
+                application
+                    .map_or("", wamn_catalog::ApplicationName::as_str)
+                    .to_owned(),
+            ),
             operation.map(str::to_owned),
             runner.map(str::to_owned),
         ];

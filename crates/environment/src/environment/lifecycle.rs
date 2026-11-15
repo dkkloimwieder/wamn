@@ -7,7 +7,7 @@ use wamn_registry::lifecycle_lock::LifecycleLock;
 pub async fn configure(
     platform: &Platform,
     document: &EnvironmentDocument,
-    application: Option<&str>,
+    application: Option<&wamn_catalog::ApplicationName>,
     disposable: Option<bool>,
     system_owner: &str,
     actor: &str,

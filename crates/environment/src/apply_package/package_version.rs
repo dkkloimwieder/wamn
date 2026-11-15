@@ -22,7 +22,7 @@ pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextende
 pub async fn load_applied_package(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
-    package_id: &str,
+    package_id: &wamn_catalog::PackageName,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     read_package(
         tx,
@@ -36,7 +36,7 @@ pub async fn load_applied_package(
 pub async fn read_applied_package(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
-    package_id: &str,
+    package_id: &wamn_catalog::PackageName,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     read_package(
         tx,
@@ -50,7 +50,7 @@ pub async fn read_applied_package(
 async fn read_package(
     tx: &mut sqlx::PgConnection,
     project_env_key: &str,
-    package_id: &str,
+    package_id: &wamn_catalog::PackageName,
     query: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(query.to_owned()))
@@ -62,7 +62,10 @@ async fn read_package(
         return Ok(None);
     };
     Ok(Some(AppliedPackage {
-        coordinate: wamn_catalog::PackageCoordinate::new(package_id, row.get::<&str, _>(1))?,
+        coordinate: wamn_catalog::PackageCoordinate::new(
+            package_id.clone(),
+            row.get::<&str, _>(1),
+        )?,
         artifact_digest: row.get(0),
     }))
 }
@@ -71,7 +74,7 @@ async fn read_package(
 pub async fn read_package_migrations(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
-    package_id: &str,
+    package_id: &wamn_catalog::PackageName,
 ) -> anyhow::Result<Vec<sqlx::migrate::AppliedMigration>> {
     use sqlx::migrate::Migrate as _;
     let table = wamn_control_provision::migration::history_table(project_env_key, package_id);

@@ -26,8 +26,25 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Closed event operation used by an admitted Emit selector.
-pub type WiringEventOperation = wamn_event_wire::Op;
+/// The row operation carried by events and workflow Emit selectors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WiringEventOperation {
+    Insert,
+    Update,
+    Delete,
+}
+
+impl WiringEventOperation {
+    /// The serialized operation spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WiringEventOperation::Insert => "insert",
+            WiringEventOperation::Update => "update",
+            WiringEventOperation::Delete => "delete",
+        }
+    }
+}
 
 use crate::{CatalogIdentityError, validate_text};
 
@@ -398,8 +415,8 @@ fn is_main_port(port: &str) -> bool {
 mod tests {
     use std::collections::BTreeMap;
 
+    use crate::WiringEventOperation as Op;
     use serde_json::{Value, json};
-    use wamn_event_wire::Op;
 
     use super::{
         WiringDocument, WiringEdge, WiringNode, WiringOperationDependency, WiringTerminal,

@@ -573,10 +573,10 @@ pub enum StaticSqlFetch {
 
 impl PackageManifest {
     /// Captured entities paired with the package that owns each relation.
-    pub fn entity_pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+    pub fn entity_pairs(&self) -> impl Iterator<Item = (&wamn_catalog::PackageName, &str)> {
         self.models
             .iter()
-            .map(|(entity, model)| (model.owner.as_str(), entity.as_str()))
+            .map(|(entity, model)| (&model.owner, entity.as_str()))
     }
 
     /// The local names of the operations whose request element transaction the host
@@ -856,7 +856,7 @@ impl PackageManifest {
 pub fn validate_operation_vocabulary(
     manifest: &PackageManifest,
 ) -> Result<BTreeSet<String>, ManifestError> {
-    validate_package_identity(&manifest.package)?;
+    validate_package_version(&manifest.package.version)?;
     validate_base_dependencies(manifest)?;
     validate_internal_relation_vocabulary(manifest)?;
     validate_routes(&manifest.routes)?;
@@ -2158,7 +2158,7 @@ pub fn canonical_operation_identity(
     let (module, operation) = local_operation
         .split_once('.')
         .expect("validated operation identity has one separator");
-    validate_package_identity(package)?;
+    validate_package_version(&package.version)?;
     Ok(wamn_catalog::operation_token(
         &package.id,
         &package.version,
@@ -2169,8 +2169,8 @@ pub fn canonical_operation_identity(
 
 /// Construct the native extern-name prefix owned by one package.
 pub fn canonical_operation_prefix(package: &PackageIdentity) -> Result<String, ManifestError> {
-    validate_package_identity(package)?;
-    Ok(format!("{}:", package.id.replace('_', "-")))
+    validate_package_version(&package.version)?;
+    Ok(format!("{}:", package.id.as_str().replace('_', "-")))
 }
 
 pub use wamn_catalog::sealed_operation_reference;
@@ -2210,7 +2210,7 @@ pub fn resolve_operation_reference(
                 .values()
                 .map(|base| (&base.package, &base.version)),
         )
-        .find(|(package, _)| package.replace('_', "-") == prefix)
+        .find(|(package, _)| package.as_str().replace('_', "-") == prefix)
         .ok_or_else(|| refuse("names neither this package nor one of its base_dependencies"))?;
     let package = PackageIdentity {
         id: owner.0.clone(),
@@ -2229,19 +2229,7 @@ pub fn resolve_operation_reference(
     Ok(sealed)
 }
 
-fn validate_package_identity(package: &PackageIdentity) -> Result<(), ManifestError> {
-    // The platform owns the `wamn:` operation-token namespace.
-    if package.id == "wamn" {
-        return Err(ManifestError::new(
-            ManifestErrorType::InvalidIdentity,
-            "package id `wamn` is reserved for the platform",
-        ));
-    }
-    validate_package_coordinate(&package.id, &package.version)
-}
-
-fn validate_package_coordinate(package: &str, version: &str) -> Result<(), ManifestError> {
-    validate_identifier(package, "package id")?;
+fn validate_package_version(version: &str) -> Result<(), ManifestError> {
     if version.is_empty()
         || version.trim() != version
         || version.as_bytes().contains(&0)
@@ -2261,7 +2249,7 @@ fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), Manifest
     let mut packages = BTreeSet::new();
     for (alias, requirement) in &manifest.base_dependencies {
         validate_identifier(alias, "base dependency alias")?;
-        validate_package_coordinate(&requirement.package, &requirement.version)?;
+        validate_package_version(&requirement.version)?;
         if requirement.package == manifest.package.id {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidIdentity,
@@ -2458,7 +2446,7 @@ mod tests {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageIdentity {
-    pub id: String,
+    pub id: wamn_catalog::PackageName,
     pub version: String,
 }
 
@@ -2512,7 +2500,7 @@ impl PackageManifest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BaseDependencyRequirement {
-    pub package: String,
+    pub package: wamn_catalog::PackageName,
     pub version: String,
     pub digest: wamn_digest::Digest,
     pub operations: Vec<String>,
@@ -2540,13 +2528,13 @@ pub enum PolicyContractState {
 pub struct ModelDeclaration {
     pub schema: String,
     pub table: String,
-    pub owner: String,
+    pub owner: wamn_catalog::PackageName,
     #[serde(default)]
     pub client_field_extensible: bool,
     #[serde(default)]
-    pub field_owners: BTreeMap<String, String>,
+    pub field_owners: BTreeMap<String, wamn_catalog::PackageName>,
     #[serde(default)]
-    pub constraint_owners: BTreeMap<String, String>,
+    pub constraint_owners: BTreeMap<String, wamn_catalog::PackageName>,
     #[serde(default)]
     pub server_owned_fields: Vec<String>,
     #[serde(default)]
@@ -2714,10 +2702,8 @@ impl ModelDeclaration {
     }
 
     /// Definition owner for one field, inheriting the relation owner when omitted.
-    pub fn field_owner(&self, field: &str) -> &str {
-        self.field_owners
-            .get(field)
-            .map_or(self.owner.as_str(), String::as_str)
+    pub fn field_owner(&self, field: &str) -> &wamn_catalog::PackageName {
+        self.field_owners.get(field).unwrap_or(&self.owner)
     }
 
     /// The model's revision column: the one column its operations name as
@@ -3003,7 +2989,10 @@ pub fn rust_type_identifier(value: &str) -> String {
 ///
 /// The rule is npm's own: at most 214 characters, lowercase, one optional
 /// `@scope/` prefix, and each segment starting with a letter or a digit.
-fn validate_client_package_name(package: &str, name: &str) -> Result<(), ManifestError> {
+fn validate_client_package_name(
+    package: &wamn_catalog::PackageName,
+    name: &str,
+) -> Result<(), ManifestError> {
     let refuse = |reason: &str| {
         Err(ManifestError::new(
             ManifestErrorType::InvalidClientPackage,

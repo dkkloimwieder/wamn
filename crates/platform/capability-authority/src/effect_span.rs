@@ -144,7 +144,7 @@ pub struct EffectIdentity<'a> {
 /// component by nor the operation the wiring ran (`wamn-b2m6.7`).
 #[derive(Clone, Copy, Debug)]
 pub struct EffectWiring<'a> {
-    pub package_id: &'a str,
+    pub source: EffectSource<'a>,
     pub wiring_id: &'a str,
     pub wiring_version: u32,
     pub node_id: &'a str,
@@ -152,6 +152,22 @@ pub struct EffectWiring<'a> {
     pub component_digest: Option<&'a wamn_digest::Digest>,
     pub component_name: &'a str,
     pub operation: &'a str,
+}
+
+/// The typed identity written to the published `wamn.package_id` trace field.
+#[derive(Clone, Copy, Debug)]
+pub enum EffectSource<'a> {
+    Package(&'a wamn_catalog::PackageName),
+    Application(&'a wamn_catalog::ApplicationName),
+}
+
+impl<'a> EffectSource<'a> {
+    fn as_str(self) -> &'a str {
+        match self {
+            Self::Package(name) => name.as_str(),
+            Self::Application(name) => name.as_str(),
+        }
+    }
 }
 
 /// The run coordinates of one effect, for a surface whose contract carries them.
@@ -354,7 +370,7 @@ pub fn record_run(span: &tracing::Span, run: Option<EffectRun<'_>>) {
 pub fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_>>) {
     span.record(
         "wamn.package_id",
-        wiring.map_or("", |wiring| wiring.package_id),
+        wiring.map_or("", |wiring| wiring.source.as_str()),
     );
     span.record(
         "wamn.wiring_id",

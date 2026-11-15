@@ -3,7 +3,12 @@
 #[sqlx::test(migrations = false)]
 async fn catalog_stamps_require_an_actor_and_preserve_creation(pool: sqlx::PgPool) {
     let database = wamn_test_postgres::url(&pool);
-    wamn_catalog::test_database::project(database.as_str()).await;
+    wamn_catalog::test_database::project(
+        &mut wamn_postgres::connect(database.as_str())
+            .await
+            .expect("connect the test database"),
+    )
+    .await;
     let principals = format!(
         "BEGIN; {} COMMIT;",
         wamn_control_provision::platform_principals_sql("example.invalid").unwrap()

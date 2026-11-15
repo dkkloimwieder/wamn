@@ -3,26 +3,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-/// Row operation — the `<op>` subject segment. v3 publishes exactly these
-/// three; TRUNCATE is not part of the event plane (a reader logs and skips it).
-///
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Op {
-    Insert,
-    Update,
-    Delete,
-}
-
-impl Op {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Op::Insert => "insert",
-            Op::Update => "update",
-            Op::Delete => "delete",
-        }
-    }
-}
+use wamn_catalog::WiringEventOperation as Op;
 
 /// The v3 §4 causation stamp `{run, root, depth}` — stitched onto a
 /// transaction's envelopes by the reader when the `wamn:postgres` plugin
@@ -43,7 +24,7 @@ pub struct Causation {
 /// author's logical deduplication operand, and the causation the host derives
 /// from the delivery it is completing. The environment key, project, and
 /// environment are copied from bound host identity so no guest or wiring field can redirect the
-/// event; package identity comes from the bound release/run/wiring source the
+/// event; application identity comes from the bound release/run/wiring source the
 /// native host emitter resolved.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,8 +32,8 @@ pub struct DerivedEvent {
     pub project_env_key: String,
     pub project: String,
     pub environment: String,
-    #[serde(deserialize_with = "source_name")]
-    pub package_id: String,
+    #[serde(rename = "package_id")]
+    pub application: wamn_catalog::ApplicationName,
     #[serde(deserialize_with = "source_name")]
     pub entity: String,
     pub op: Op,
@@ -71,7 +52,7 @@ impl DerivedEvent {
         project_env_key: impl Into<String>,
         project: impl Into<String>,
         environment: impl Into<String>,
-        package_id: impl Into<String>,
+        application: wamn_catalog::ApplicationName,
         entity: impl Into<String>,
         op: Op,
         payload: serde_json::Value,
@@ -82,7 +63,7 @@ impl DerivedEvent {
             project_env_key: project_env_key.into(),
             project: project.into(),
             environment: environment.into(),
-            package_id: package_id.into(),
+            application,
             entity: entity.into(),
             op,
             payload,
@@ -122,8 +103,7 @@ pub struct Envelope {
     pub old: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new: Option<serde_json::Map<String, serde_json::Value>>,
-    #[serde(deserialize_with = "source_name")]
-    pub package_id: String,
+    pub package_id: wamn_catalog::PackageName,
     #[serde(deserialize_with = "source_name")]
     pub entity: String,
     pub table: String,
@@ -153,7 +133,7 @@ pub fn msg_id(project: &str, env: &str, identity: &CdcIdentity) -> String {
 ///
 /// The type discriminator keeps author ids that happen to be decimal apart
 /// from CDC LSN identities. The trusted target prevents the same author id in a
-/// different project_env_key/project/environment/package and admitted terminal selector
+/// different project_env_key/project/environment/application and admitted terminal selector
 /// from colliding. Only a bounded digest reaches the NATS header; the logical
 /// operand itself remains byte-for-byte author supplied in
 /// [`DerivedEvent::dedup_id`]. Length framing prevents concatenation ambiguity
@@ -162,7 +142,7 @@ pub fn derived_msg_id(
     project_env_key: &str,
     project: &str,
     env: &str,
-    package_id: &str,
+    application: &wamn_catalog::ApplicationName,
     entity: &str,
     op: Op,
     dedup_id: &str,
@@ -175,7 +155,7 @@ pub fn derived_msg_id(
         project_env_key,
         project,
         env,
-        package_id,
+        application.as_str(),
         entity,
         op.as_str(),
         dedup_id,
@@ -285,14 +265,22 @@ mod tests {
             "acme",
             "app",
             "dev",
-            "orders",
+            &"orders".parse().unwrap(),
             "orders",
             Op::Insert,
             "orders:7:created",
         );
         assert!(!id.is_empty());
         assert_ne!(
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "42"),
+            derived_msg_id(
+                "acme",
+                "app",
+                "dev",
+                &"orders".parse().unwrap(),
+                "orders",
+                Op::Insert,
+                "42"
+            ),
             msg_id(
                 "app",
                 "dev",
@@ -306,29 +294,61 @@ mod tests {
             "a numeric author id cannot collide with a CDC LSN"
         );
         assert_ne!(
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
+            derived_msg_id(
+                "acme",
+                "app",
+                "dev",
+                &"orders".parse().unwrap(),
+                "orders",
+                Op::Insert,
+                "same"
+            ),
             derived_msg_id(
                 "other",
                 "app",
                 "dev",
-                "orders",
+                &"orders".parse().unwrap(),
                 "orders",
                 Op::Insert,
                 "same"
             )
         );
         assert_ne!(
-            derived_msg_id("a", "bc", "dev", "orders", "orders", Op::Insert, "same"),
-            derived_msg_id("ab", "c", "dev", "orders", "orders", Op::Insert, "same"),
+            derived_msg_id(
+                "a",
+                "bc",
+                "dev",
+                &"orders".parse().unwrap(),
+                "orders",
+                Op::Insert,
+                "same"
+            ),
+            derived_msg_id(
+                "ab",
+                "c",
+                "dev",
+                &"orders".parse().unwrap(),
+                "orders",
+                Op::Insert,
+                "same"
+            ),
             "length framing keeps adjacent fields unambiguous"
         );
         assert_ne!(
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
             derived_msg_id(
                 "acme",
                 "app",
                 "dev",
+                &"orders".parse().unwrap(),
                 "orders",
+                Op::Insert,
+                "same"
+            ),
+            derived_msg_id(
+                "acme",
+                "app",
+                "dev",
+                &"orders".parse().unwrap(),
                 "receipts",
                 Op::Insert,
                 "same"
@@ -336,8 +356,24 @@ mod tests {
             "the admitted entity is part of stream-wide dedup target"
         );
         assert_ne!(
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Update, "same"),
+            derived_msg_id(
+                "acme",
+                "app",
+                "dev",
+                &"orders".parse().unwrap(),
+                "orders",
+                Op::Insert,
+                "same"
+            ),
+            derived_msg_id(
+                "acme",
+                "app",
+                "dev",
+                &"orders".parse().unwrap(),
+                "orders",
+                Op::Update,
+                "same"
+            ),
             "the admitted operation is part of stream-wide dedup target"
         );
         assert_ne!(
@@ -345,7 +381,7 @@ mod tests {
                 "acme",
                 "app",
                 "dev",
-                "orders",
+                &"orders".parse().unwrap(),
                 "receipt",
                 Op::Insert,
                 "same"
@@ -354,7 +390,7 @@ mod tests {
                 "acme",
                 "app",
                 "dev",
-                "overlay",
+                &"overlay".parse().unwrap(),
                 "receipt",
                 Op::Insert,
                 "same"
@@ -362,8 +398,24 @@ mod tests {
             "the package-local entity is disambiguated by its owning package"
         );
         assert_eq!(
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
+            derived_msg_id(
+                "acme",
+                "app",
+                "dev",
+                &"orders".parse().unwrap(),
+                "orders",
+                Op::Insert,
+                "same"
+            ),
+            derived_msg_id(
+                "acme",
+                "app",
+                "dev",
+                &"orders".parse().unwrap(),
+                "orders",
+                Op::Insert,
+                "same"
+            ),
             "an exact replay retains one stream-wide dedup identity"
         );
     }
@@ -399,7 +451,7 @@ mod tests {
             op: Op::Update,
             old: None,
             new: Some(new),
-            package_id: "orders".into(),
+            package_id: "orders".parse().unwrap(),
             entity: "sales_orders".into(),
             table: "orders2".into(),
             identity: CdcIdentity {
@@ -449,7 +501,7 @@ mod tests {
             "acme--dev--app",
             "app",
             "dev",
-            "orders",
+            "orders".parse().unwrap(),
             "order",
             Op::Insert,
             serde_json::json!({"id": "7"}),
@@ -530,7 +582,7 @@ pub fn verified_derived_source_event_id(
         project_env_key,
         project,
         environment,
-        &event.package_id,
+        &event.application,
         &event.entity,
         event.op,
         &event.dedup_id,
@@ -557,7 +609,6 @@ impl SourceEvent {
                 ("project_env_key", event.project_env_key.as_str()),
                 ("project", event.project.as_str()),
                 ("environment", event.environment.as_str()),
-                ("package-id", event.package_id.as_str()),
                 ("entity", event.entity.as_str()),
                 ("causation.run", event.causation.run.as_str()),
                 ("causation.root", event.causation.root.as_str()),
@@ -595,13 +646,6 @@ impl SourceEvent {
                 event,
                 headers,
             ),
-        }
-    }
-
-    pub fn source(&self) -> (&str, &str) {
-        match self {
-            Self::Cdc(envelope) => (&envelope.package_id, &envelope.entity),
-            Self::Derived(event) => (&event.package_id, &event.entity),
         }
     }
 }

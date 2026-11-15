@@ -139,7 +139,7 @@ pub struct PackageRegistry {
 /// internal error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoPackageArtifact {
-    pub package_id: String,
+    pub package_id: wamn_catalog::PackageName,
     pub version: String,
 }
 
@@ -469,7 +469,7 @@ impl Repository {
 /// the artifact cannot be pulled.
 pub async fn pull_package(
     registry: &PackageRegistry,
-    package_id: &str,
+    package_id: &wamn_catalog::PackageName,
     version: &str,
 ) -> anyhow::Result<(wamn_digest::Digest, Vec<PackedLayer>)> {
     Repository::open(registry, &format!("{package_id}-{version}"))?
@@ -514,7 +514,7 @@ pub fn parse_descriptor(bytes: &[u8]) -> anyhow::Result<ComponentDescriptor> {
 /// valid.
 pub async fn read_descriptors(
     registry: &PackageRegistry,
-    package_id: &str,
+    package_id: &wamn_catalog::PackageName,
     version: &str,
 ) -> anyhow::Result<Vec<ComponentDescriptor>> {
     let (_, layers) = pull_package(registry, package_id, version).await?;
@@ -597,12 +597,12 @@ mod tests {
     #[test]
     fn the_refusal_is_found_through_context() {
         let error = anyhow::Error::new(NoPackageArtifact {
-            package_id: "orders".to_owned(),
+            package_id: "orders".parse().unwrap(),
             version: "1.0.0".to_owned(),
         })
         .context("open the package");
         let found = NoPackageArtifact::find(&error).expect("the refusal is in the chain");
-        assert_eq!(found.package_id, "orders");
+        assert_eq!(found.package_id, "orders".parse().unwrap());
         assert!(NoPackageArtifact::find(&anyhow::anyhow!("other")).is_none());
     }
 

@@ -113,7 +113,7 @@ fn target(canonical: &[u8]) -> wamn_engine::release_manifest::ReleaseTarget {
         .expect("the published manifest is valid");
     wamn_engine::release_manifest::ReleaseTarget::new("t1", "prod").with_applications(
         [(
-            "catalog".to_owned(),
+            "catalog".parse().unwrap(),
             wamn_catalog::ApplicationDefinition {
                 connections: std::collections::BTreeMap::new(),
                 packages: manifest

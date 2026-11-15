@@ -119,7 +119,7 @@ pub fn render(input: &ValuesInput) -> anyhow::Result<Value> {
 /// Build release values from the application selection and artifact repositories.
 pub fn release_values(
     document: &EnvironmentDocument,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     manifest: &wamn_catalog::ServingManifest,
     manifest_digest: &wamn_digest::Digest,
     artifact_base: &str,

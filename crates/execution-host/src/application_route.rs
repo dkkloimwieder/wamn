@@ -80,7 +80,7 @@ struct PermissionRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkflowStartRequest {
-    application: String,
+    application: wamn_catalog::ApplicationName,
     workflow_id: String,
     input_json: Value,
     idempotency_key: String,
@@ -89,7 +89,7 @@ struct WorkflowStartRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CounterSetRequest {
-    application: String,
+    application: wamn_catalog::ApplicationName,
     sequence: String,
     counter: String,
     key: String,
@@ -176,9 +176,6 @@ impl ApplicationRoutes<'_> {
         payload: &str,
     ) -> Result<Value, Refusal> {
         let request: WorkflowStartRequest = parse(payload)?;
-        if request.application.is_empty() {
-            return Err(start_refusal("invalid_input", "application"));
-        }
         if request.workflow_id.is_empty() {
             return Err(start_refusal("invalid_input", "workflow_id"));
         }
@@ -191,7 +188,7 @@ impl ApplicationRoutes<'_> {
         let Some(declared) = target.applications.get(&request.application) else {
             return Err(start_refusal("application_not_declared", "application"));
         };
-        let application = request.application.as_str();
+        let application = &request.application;
         let packages = &declared.packages;
         let workflow = self
             .postgres
@@ -255,7 +252,7 @@ impl ApplicationRoutes<'_> {
                     connection,
                     project_env_key,
                     &ManualRunAdmission {
-                        package_id: application,
+                        application: application,
                         manifest_digest: &self.release.release().manifest_digest,
                         environment: &target.environment,
                         workflow_id: &request.workflow_id,
@@ -594,7 +591,7 @@ impl ApplicationRoutes<'_> {
 
 fn require_counter_application(
     applications: &wamn_catalog::EnvironmentApplications,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
 ) -> Result<(), CounterSetRefusal> {
     if applications.contains_key(application) {
         Ok(())
@@ -615,10 +612,13 @@ mod tests {
             "receiving": {"packages": ["base", "overlay"]}
         }))
         .unwrap();
-        assert!(require_counter_application(&applications, "receiving").is_ok());
-        for name in ["base", "overlay", "unknown", ""] {
+        assert!(
+            require_counter_application(&applications, &"receiving".parse().expect("valid name"))
+                .is_ok()
+        );
+        for name in ["base", "overlay", "unknown"] {
             assert!(matches!(
-                require_counter_application(&applications, name),
+                require_counter_application(&applications, &name.parse().unwrap()),
                 Err(CounterSetRefusal::InvalidInput {
                     field: "application"
                 })
@@ -638,7 +638,7 @@ mod tests {
         });
         let parsed: WorkflowStartRequest =
             parse(&start.to_string()).unwrap_or_else(|_| panic!("the contract input parses"));
-        assert_eq!(parsed.application, "orders");
+        assert_eq!(parsed.application, "orders".parse().unwrap());
         assert_eq!(parsed.workflow_id, "nightly");
         for (member, value) in [
             ("user_id", json!("11111111-1111-4111-8111-111111111111")),

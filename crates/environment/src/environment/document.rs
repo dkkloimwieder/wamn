@@ -70,7 +70,7 @@ pub async fn write_revocation_configuration(
             .iter()
             .map(|(name, selection)| Setting {
                 target_type: "application".into(),
-                target_id: name.clone(),
+                target_id: name.to_string(),
                 key: "revocation-seconds".into(),
                 value: selection.revocation_seconds.into(),
                 locked: true,
@@ -360,7 +360,9 @@ mod tests {
         second.hostname = "second.example".into();
         second.revocation_seconds = 3600;
         second.connections.get_mut("erp").unwrap().version = Some(1);
-        expected.applications.insert("second".into(), second);
+        expected
+            .applications
+            .insert("second".parse().expect("valid name"), second);
         {
             let batches: &[&str] = &[
                 "CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
@@ -392,7 +394,7 @@ mod tests {
             .await?;
         let release = wamn_digest::bytes_sha256(b"selected release");
         let restored = Client {
-            package: "wamn_wms".into(),
+            package: "wamn_wms".parse().unwrap(),
             web: wamn_digest::bytes_sha256(b"restored web"),
         };
         let mut transaction =
@@ -401,7 +403,7 @@ mod tests {
             configuration::write_selection(
                 &mut transaction,
                 &triple,
-                "wms",
+                &"wms".parse().expect("valid name"),
                 Some(&release),
                 Some(&restored)
             )
@@ -436,11 +438,24 @@ mod tests {
         let mut transaction =
             crate::provision_project_env::provisioning_transaction(&mut connection).await?;
         assert!(
-            configuration::write_selection(&mut transaction, &triple, "wms", None, None).await?
+            configuration::write_selection(
+                &mut transaction,
+                &triple,
+                &"wms".parse().expect("valid name"),
+                None,
+                None
+            )
+            .await?
         );
         assert!(
-            !configuration::write_selection(&mut transaction, &triple, "missing", None, None)
-                .await?
+            !configuration::write_selection(
+                &mut transaction,
+                &triple,
+                &"missing".parse().expect("valid name"),
+                None,
+                None
+            )
+            .await?
         );
         transaction.commit().await?;
         let application = expected.applications.get_mut("wms").unwrap();
@@ -499,16 +514,6 @@ mod tests {
             },
             |c: &mut configuration::EnvironmentConfiguration| {
                 c.applications.get_mut("wms").unwrap().hostname = "Invalid Host".into()
-            },
-            |c: &mut configuration::EnvironmentConfiguration| {
-                c.applications
-                    .get_mut("wms")
-                    .unwrap()
-                    .client
-                    .as_mut()
-                    .unwrap()
-                    .package
-                    .clear()
             },
             |c: &mut configuration::EnvironmentConfiguration| {
                 c.applications.get_mut("wms").unwrap().connections.insert(

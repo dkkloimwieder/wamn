@@ -742,7 +742,7 @@ mod tests {
                 connections: Vec::new(),
                 target: ComponentPackageCoordinate {
                     project_env_key: "org-a".to_string(),
-                    package_id: "orders".to_string(),
+                    package_id: "orders".parse().unwrap(),
                     package_version: "1.0.0".to_string(),
                 },
                 component: "transform".to_string(),

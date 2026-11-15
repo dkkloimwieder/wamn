@@ -156,7 +156,7 @@ pub async fn workflow_host(
 /// The applications an integration environment declares: `application`, with
 /// every package of the release.
 pub fn declared(
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     manifest: &wamn_catalog::ServingManifest,
 ) -> wamn_catalog::EnvironmentApplications {
     [(
@@ -188,7 +188,7 @@ pub async fn schedule_run(
     database: &url::Url,
     host: &WamnPostgres,
     manifest: &wamn_catalog::ServingManifest,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     document: &wamn_catalog::WiringDocument,
     role: &str,
     operations: &[&str],
@@ -224,7 +224,7 @@ pub async fn schedule_run(
     .await?;
     enable_workflow(
         database.as_str(),
-        &wamn_registry::Triple::new("rest", "test", application),
+        &wamn_registry::Triple::new("rest", "test", application.as_str()),
         &mut project,
         &WorkflowVersion {
             org: "rest",
@@ -486,8 +486,10 @@ pub async fn invoke(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "consumer live",
-        ReleaseTarget::new(PROJECT_ENV_KEY, "test")
-            .with_applications(declared("rest_connector", manifest)),
+        ReleaseTarget::new(PROJECT_ENV_KEY, "test").with_applications(declared(
+            &"rest_connector".parse().expect("valid name"),
+            manifest,
+        )),
     )?);
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(
@@ -564,7 +566,7 @@ pub async fn invoke(
         database,
         &workflow_host,
         manifest,
-        "rest_connector",
+        &"rest_connector".parse().expect("valid name"),
         &document,
         ROLE,
         &["rest-consumer-fixture:item/record"],
@@ -644,7 +646,7 @@ pub async fn invoke(
                         operation,
                         InvocationEntry::Wiring(WiringPosition {
                             configuration: Default::default(),
-                            package_id: "rest_connector".into(),
+                            application: "rest_connector".parse().expect("valid name"),
                             wiring_hash: (format!("sha256:{}", "a".repeat(64)))
                                 .parse::<wamn_digest::Digest>()
                                 .unwrap(),

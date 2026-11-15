@@ -194,7 +194,7 @@ pub fn operator_subject(org: &str, project: &str, env: &str) -> String {
     format!("wamn-operator-{}", project_env_key(org, project, env))
 }
 /// A scheduled application's service principal.
-pub fn application_subject(key: &str, package: &str) -> String {
+pub fn application_subject(key: &str, package: &wamn_catalog::PackageName) -> String {
     format!("wamn-app-{key}--{package}")
 }
 /// The operator presenter Secret.
@@ -262,7 +262,7 @@ pub fn application_release_name(
     org: &str,
     project: &str,
     env: &str,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
 ) -> Result<String, NameError> {
     validate_coordinate("org", org, true)?;
     validate_coordinate("environment", env, false)?;
@@ -300,11 +300,15 @@ pub fn stream_name(org: &str, project: &str, env: &str) -> String {
 }
 /// The durable consumer shared by an application's hosts for one source.
 /// Hash the framed identity so application punctuation cannot enter a broker name.
-pub fn application_event_consumer(application: &str, package: &str, entity: &str) -> String {
+pub fn application_event_consumer(
+    application: &wamn_catalog::ApplicationName,
+    package: &wamn_catalog::PackageName,
+    entity: &str,
+) -> String {
     let identity = format!(
         "{}:{application}{}:{package}{}:{entity}",
-        application.len(),
-        package.len(),
+        application.as_str().len(),
+        package.as_str().len(),
         entity.len(),
     );
     format!("application_{}", hex::encode(sha256(identity.as_bytes())))

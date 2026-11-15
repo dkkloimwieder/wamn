@@ -9,6 +9,7 @@ license.workspace = true
 path = "lib.rs"
 
 [dependencies]
+wamn-catalog.workspace = true
 rustix.workspace = true
 hmac = { workspace = true }
 sha2 = { workspace = true }

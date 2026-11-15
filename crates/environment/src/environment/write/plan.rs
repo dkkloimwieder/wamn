@@ -50,7 +50,7 @@ pub(in crate::environment) fn registry_arguments(host_group: &Mapping) -> Vec<St
 /// Build release values from the document, artifact, policy, and host overlay.
 pub(super) fn release_values(
     document: &EnvironmentDocument,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     manifest: &wamn_catalog::ServingManifest,
     manifest_digest: &wamn_digest::Digest,
     artifact_base: &str,

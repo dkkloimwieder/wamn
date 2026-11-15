@@ -106,7 +106,7 @@ pub fn component_source_from_env(
 #[derive(Debug)]
 pub struct ApplyOutcome {
     /// Package id of the applied coordinate.
-    pub package_id: String,
+    pub package_id: wamn_catalog::PackageName,
 
     /// Package version of the applied coordinate.
     pub package_version: String,
@@ -239,7 +239,7 @@ async fn apply(
     crate::migrations::lock_session(
         &mut executor,
         LOCK_PACKAGE_SQL,
-        &[project_env_key, &package_id],
+        &[project_env_key, package_id.as_str()],
     )
     .await?;
     crate::migrations::lock_session(

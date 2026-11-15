@@ -20,9 +20,10 @@ pub fn project_package_catalog(
     target: &PackageManifest,
     installed: &[PackageManifest],
 ) -> anyhow::Result<CatalogIr> {
-    let mut relation_owners = BTreeMap::<(String, String), String>::new();
-    let mut field_owners = BTreeMap::<(String, String, String), String>::new();
-    let mut constraint_owners = BTreeMap::<(String, String, String), String>::new();
+    let mut relation_owners = BTreeMap::<(String, String), wamn_catalog::PackageName>::new();
+    let mut field_owners = BTreeMap::<(String, String, String), wamn_catalog::PackageName>::new();
+    let mut constraint_owners =
+        BTreeMap::<(String, String, String), wamn_catalog::PackageName>::new();
     for package in installed {
         for model in package.models.values() {
             relation_owners
@@ -53,12 +54,12 @@ pub fn project_package_catalog(
         }
     }
 
-    let admitted_owners = std::iter::once(target.package.id.as_str())
+    let admitted_owners = std::iter::once(&target.package.id)
         .chain(
             target
                 .base_dependencies
                 .values()
-                .map(|dependency| dependency.package.as_str()),
+                .map(|dependency| &dependency.package),
         )
         .collect::<BTreeSet<_>>();
     let mut tables = Vec::new();
@@ -71,7 +72,7 @@ pub fn project_package_catalog(
                 table.name()
             )
         })?;
-        if !admitted_owners.contains(relation_owner.as_str()) {
+        if !admitted_owners.contains(relation_owner) {
             continue;
         }
 
@@ -86,7 +87,7 @@ pub fn project_package_catalog(
                         column.name().to_owned(),
                     ))
                     .unwrap_or(relation_owner);
-                admitted_owners.contains(owner.as_str())
+                admitted_owners.contains(owner)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -105,7 +106,7 @@ pub fn project_package_catalog(
                         constraint.name().to_owned(),
                     ))
                     .unwrap_or(relation_owner);
-                admitted_owners.contains(owner.as_str())
+                admitted_owners.contains(owner)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -131,7 +132,7 @@ pub fn project_package_catalog(
                         exclusion.name().to_owned(),
                     ))
                     .unwrap_or(relation_owner);
-                admitted_owners.contains(owner.as_str())
+                admitted_owners.contains(owner)
             })
             .cloned()
             .collect::<Vec<_>>();

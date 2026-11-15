@@ -172,7 +172,7 @@ pub fn render_package_declaration(
         .ok_or_else(|| invalid(format!("component {component} was not compiled")))?;
     let target = wamn_catalog::ComponentPackageCoordinate::new(
         project_env_key,
-        declaration.target.package_id(),
+        declaration.target.package_id().clone(),
         declaration.target.package_version(),
     )
     .map_err(|source| invalid(source.to_string()))?;
@@ -236,7 +236,7 @@ mod tests {
         let palette = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guests");
         let target = wamn_catalog::ComponentPackageCoordinate {
             project_env_key: "org-a".to_owned(),
-            package_id: "wamn_wms".to_owned(),
+            package_id: "wamn_wms".parse().unwrap(),
             package_version: "1.0.0".to_owned(),
         };
         let template = palette.join("blob-put/declaration.json.in");

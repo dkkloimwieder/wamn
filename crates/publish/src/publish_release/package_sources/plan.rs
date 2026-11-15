@@ -2,7 +2,7 @@ use super::{PackageContract, PublishManifestError, PublishManifestErrorType, Ser
 
 pub(super) fn package_route(
     contracts: Vec<PackageContract>,
-    package_id: &str,
+    package_id: &wamn_catalog::PackageName,
     component: &str,
     operation: &str,
 ) -> Result<ServingRoute, PublishManifestError> {

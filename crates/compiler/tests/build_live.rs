@@ -146,7 +146,13 @@ fn copy_source(source: &Path, target: &Path) {
 /// Every file below `root`, by its path relative to `root`.
 async fn build(package: &Path, output_root: &Path, database: &str) -> anyhow::Result<Value> {
     generate_package(&BuildRequest::new(package, output_root, database)).await?;
-    let path = package_output(output_root, wamn_fixture_package::PACKAGE_ID).join("wamn.json");
+    let path = package_output(
+        output_root,
+        &wamn_fixture_package::PACKAGE_ID
+            .parse()
+            .expect("valid fixture name"),
+    )
+    .join("wamn.json");
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 
@@ -376,7 +382,12 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
         ))
         .await
         .expect("generate the projection over a migrated view");
-        let output = package_output(&output_root, wamn_fixture_package::PACKAGE_ID);
+        let output = package_output(
+            &output_root,
+            &wamn_fixture_package::PACKAGE_ID
+                .parse()
+                .expect("valid fixture name"),
+        );
         let manifest: Value =
             serde_json::from_slice(&fs::read(output.join("wamn.json")).unwrap()).unwrap();
         let projection = &manifest["custom_operations"]["widget.list"];
@@ -413,8 +424,16 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
     .await
     .expect("generate an undeclared view value as nullable");
     let manifest: Value = serde_json::from_slice(
-        &fs::read(package_output(&output_root, wamn_fixture_package::PACKAGE_ID).join("wamn.json"))
-            .unwrap(),
+        &fs::read(
+            package_output(
+                &output_root,
+                &wamn_fixture_package::PACKAGE_ID
+                    .parse()
+                    .expect("valid fixture name"),
+            )
+            .join("wamn.json"),
+        )
+        .unwrap(),
     )
     .unwrap();
     assert_eq!(
@@ -492,7 +511,13 @@ async fn overlay_builds_inherit_owner_fields_from_manifests_with_build_records(p
     generate_package(&request).await.unwrap();
     let manifest: Value = serde_json::from_slice(
         &fs::read(
-            package_output(&output, wamn_fixture_package::OVERLAY_PACKAGE_ID).join("wamn.json"),
+            package_output(
+                &output,
+                &wamn_fixture_package::OVERLAY_PACKAGE_ID
+                    .parse()
+                    .expect("valid fixture name"),
+            )
+            .join("wamn.json"),
         )
         .unwrap(),
     )
@@ -541,7 +566,12 @@ async fn history_changes_append_immutable_versions_and_execute_during_build(
     let output = workspace.root.join("target/wamn");
     let request = BuildRequest::new(&package, &output, database.as_str());
     generate_package(&request).await?;
-    let directory = package_output(&output, wamn_fixture_package::PACKAGE_ID);
+    let directory = package_output(
+        &output,
+        &wamn_fixture_package::PACKAGE_ID
+            .parse()
+            .expect("valid fixture name"),
+    );
     let original = sqlx::migrate::Migrator::new(directory.join("history")).await?;
     generate_package(&request).await?;
     let repeated = sqlx::migrate::Migrator::new(directory.join("history")).await?;

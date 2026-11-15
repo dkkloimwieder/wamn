@@ -39,7 +39,7 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
         },
         invocation: ConnectionInvocation {
             origin: ConnectionOrigin {
-                package_id: "platform_fixture_overlay".to_owned(),
+                package_id: "platform_fixture_overlay".parse().unwrap(),
                 component_digest: wamn_digest::bytes_sha256(b"overlay"),
                 component: "overlay".to_owned(),
                 interface_version: "1.0.0".to_owned(),
@@ -47,7 +47,7 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
             },
             entry: InvocationEntry::Wiring(WiringPosition {
                 configuration: Default::default(),
-                package_id: "org_workflow".to_owned(),
+                application: "org_workflow".parse().unwrap(),
                 wiring_hash: (format!("sha256:{}", "a".repeat(64)))
                     .parse::<wamn_digest::Digest>()
                     .unwrap(),
@@ -56,7 +56,7 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
                 node_id: "base-command".to_owned(),
                 occurrence: 0,
             }),
-            package_id: "platform_fixture_overlay".to_owned(),
+            package_id: "platform_fixture_overlay".parse().unwrap(),
             component_digest: wamn_digest::bytes_sha256(b"overlay"),
             component: "overlay".to_owned(),
             operation: "platform-fixture-overlay:widget/record-batch@2.1.0".to_owned(),
@@ -85,11 +85,11 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
     // The call binds the token of the operation that it executes and the
     // declared application that its policy names.
     assert_eq!(
-        original.executing_identity(None, "receiving"),
+        original.executing_identity(None, &"receiving".parse().expect("valid name")),
         SessionIdentity {
             user_id: Some(platform_user),
             operation: Some("platform-fixture-overlay:widget/record-batch@2.1.0".to_owned()),
-            application: Some("receiving".to_owned()),
+            application: Some("receiving".parse().expect("valid name")),
             ..original.identity
         }
     );

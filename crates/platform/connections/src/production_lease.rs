@@ -83,7 +83,7 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
     pub async fn lease_next(
         &self,
         component_id: &str,
-        package_ids: &[String],
+        applications: &[wamn_catalog::ApplicationName],
         environment: &str,
         lease_ttl_ms: i64,
     ) -> Result<ProductionLeaseResult, ProductionLeaseError> {
@@ -102,7 +102,7 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
                     connection,
                     project_env_key,
                     &runner,
-                    package_ids,
+                    applications,
                     environment,
                     lease_ttl_ms,
                     digest,
@@ -120,7 +120,7 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
     pub async fn reap_exhausted(
         &self,
         component_id: &str,
-        package_ids: &[String],
+        applications: &[wamn_catalog::ApplicationName],
         environment: &str,
         grace_ms: i64,
     ) -> Result<ProductionReapResult, ProductionLeaseError> {
@@ -129,7 +129,7 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
                 persistence::reap_exhausted(
                     connection,
                     project_env_key,
-                    package_ids,
+                    applications,
                     environment,
                     grace_ms,
                 )
@@ -265,7 +265,7 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
     pub async fn pinned_backlog(
         &self,
         component_id: &str,
-        package_ids: &[String],
+        applications: &[wamn_catalog::ApplicationName],
         environment: &str,
     ) -> Result<bool, ProductionLeaseError> {
         let digest = self.database.manifest_digest(component_id);
@@ -278,7 +278,7 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
                 persistence::pinned_backlog(
                     connection,
                     project_env_key,
-                    package_ids,
+                    applications,
                     environment,
                     digest,
                 )

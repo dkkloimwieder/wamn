@@ -26,23 +26,28 @@ use common::{
 async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_catalog::test_database::project(database.as_str()).await;
+    wamn_catalog::test_database::project(
+        &mut wamn_postgres::connect(database.as_str())
+            .await
+            .expect("connect the test database"),
+    )
+    .await;
     let url = database.as_str();
     let mut fixture = install_fixture(url).await?;
     let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
-    let release_package_ids = [PACKAGE_ID.to_owned(), "cat_overlay".to_owned()];
+    let release_package_ids = [PACKAGE_ID.parse().unwrap(), "cat_overlay".parse().unwrap()];
 
     // Run id breaks equal
     // timestamps across package boundaries. An earlier foreign-package row does
     // not enter the mounted release's one SQL turn.
-    seed_run(admin, "fifo-foreign", "cat_foreign").await?;
+    seed_run(admin, "fifo-foreign", &"cat_foreign".parse().unwrap()).await?;
     for (run_id, package_id) in [
         ("fifo-c", PACKAGE_ID),
         ("fifo-b", "cat_overlay"),
         ("fifo-a", PACKAGE_ID),
     ] {
-        seed_run(admin, run_id, package_id).await?;
+        seed_run(admin, run_id, &package_id.parse().unwrap()).await?;
     }
     let mut fifo = Vec::new();
     for _ in 0..3 {
@@ -50,26 +55,28 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
             .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?;
         let ProductionLeaseResult::Ready {
-            run_id, package_id, ..
+            run_id,
+            application,
+            ..
         } = result
         else {
             panic!("expected a release-package FIFO row, got {result:?}");
         };
-        fifo.push((run_id, package_id));
+        fifo.push((run_id, application));
     }
     assert_eq!(
         fifo,
         [
-            ("fifo-a".into(), PACKAGE_ID.into()),
-            ("fifo-b".into(), "cat_overlay".into()),
-            ("fifo-c".into(), PACKAGE_ID.into()),
+            ("fifo-a".into(), PACKAGE_ID.parse().unwrap()),
+            ("fifo-b".into(), "cat_overlay".parse().unwrap()),
+            ("fifo-c".into(), PACKAGE_ID.parse().unwrap()),
         ]
     );
 
     // A second leaseholder skips the exact FIFO head while the first leaseholder holds
     // its production row locks, then the rolled-back head remains leasable.
-    seed_run(admin, "double-a", "cat_main").await?;
-    seed_run(admin, "double-b", "cat_main").await?;
+    seed_run(admin, "double-a", &"cat_main".parse().unwrap()).await?;
+    seed_run(admin, "double-b", &"cat_main".parse().unwrap()).await?;
     let mut first_leaseholder = connect(url).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "BEGIN; SET LOCAL search_path TO {SCHEMA}, pg_catalog"
@@ -134,7 +141,7 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     // project forever. The advance now runs before the grant's subtransaction,
     // so a refusal still counts as crash evidence. A probe trigger stands in
     // for any database guard that can refuse the grant.
-    seed_run(admin, "grant-refused", "cat_main").await?;
+    seed_run(admin, "grant-refused", &"cat_main".parse().unwrap()).await?;
     sqlx::query(sqlx::AssertSqlSafe(
         (&format!(
             "UPDATE {SCHEMA}.run_queue \
@@ -203,7 +210,7 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     //
     // Admission pins the release by its manifest digest. A matching pod leases
     // the run and never writes the pin.
-    seed_run(admin, "release-record", PACKAGE_ID).await?;
+    seed_run(admin, "release-record", &PACKAGE_ID.parse().unwrap()).await?;
     let recorded = Some(POD_MANIFEST_DIGEST.to_string());
     assert_eq!(release_record(admin, "release-record").await?, recorded);
     assert_eq!(
@@ -302,7 +309,12 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
 async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_catalog::test_database::project(database.as_str()).await;
+    wamn_catalog::test_database::project(
+        &mut wamn_postgres::connect(database.as_str())
+            .await
+            .expect("connect the test database"),
+    )
+    .await;
     let mut fixture = install_fixture(database.as_str()).await?;
     let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
@@ -317,7 +329,7 @@ async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> any
                 connection,
                 PROJECT_ENV_KEY,
                 &wamn_events::admission::ManualRunAdmission {
-                    package_id: PACKAGE_ID,
+                    application: &PACKAGE_ID.parse().unwrap(),
                     manifest_digest: &POD_MANIFEST_DIGEST.parse().unwrap(),
                     environment: ENVIRONMENT,
                     workflow_id: WIRING_ID,
@@ -351,10 +363,15 @@ async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> any
         .await
         .map(|result| result.rows_affected())?;
 
-    seed_run(admin, "history-lease", PACKAGE_ID).await?;
+    seed_run(admin, "history-lease", &PACKAGE_ID.parse().unwrap()).await?;
     let acquired = ready_run(
         wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .lease_next(COMPONENT, &[PACKAGE_ID.to_owned()], ENVIRONMENT, 30_000)
+            .lease_next(
+                COMPONENT,
+                &[PACKAGE_ID.parse().unwrap()],
+                ENVIRONMENT,
+                30_000,
+            )
             .await?,
     );
     assert_eq!(acquired, "history-lease");
@@ -375,18 +392,23 @@ async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> any
 async fn mixed_retries_end_with_the_last_cause(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_catalog::test_database::project(database.as_str()).await;
+    wamn_catalog::test_database::project(
+        &mut wamn_postgres::connect(database.as_str())
+            .await
+            .expect("connect the test database"),
+    )
+    .await;
     let mut fixture = install_fixture(database.as_str()).await?;
     let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
-    let packages = [PACKAGE_ID.to_owned()];
+    let packages = [PACKAGE_ID.parse().unwrap()];
     for last_release in [true, false] {
         let run = if last_release {
             "last-release"
         } else {
             "last-expiry"
         };
-        seed_run(admin, run, PACKAGE_ID).await?;
+        seed_run(admin, run, &PACKAGE_ID.parse().unwrap()).await?;
         sqlx::query("UPDATE wamn_run.run_queue SET max_attempts=3 WHERE run_id=$1")
             .bind(&run)
             .execute(&mut *admin)
@@ -497,14 +519,19 @@ async fn mixed_retries_end_with_the_last_cause(pool: sqlx::PgPool) -> anyhow::Re
 async fn lease_release_fences_and_bounds_backoff(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_catalog::test_database::project(database.as_str()).await;
+    wamn_catalog::test_database::project(
+        &mut wamn_postgres::connect(database.as_str())
+            .await
+            .expect("connect the test database"),
+    )
+    .await;
     let mut fixture = install_fixture(database.as_str()).await?;
     let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
-    let packages = [PACKAGE_ID.to_owned()];
+    let packages = [PACKAGE_ID.parse().unwrap()];
     for attempts in [0_i32, 1, 2, 8, 9, 18] {
         let run = format!("backoff-{attempts}");
-        seed_run(admin, &run, PACKAGE_ID).await?;
+        seed_run(admin, &run, &PACKAGE_ID.parse().unwrap()).await?;
         let lease = wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
             .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
             .await?;

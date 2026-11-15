@@ -43,7 +43,7 @@ impl From<sqlx::Error> for BindingError {
 /// One declared name resolved to an active environment connection and version.
 #[derive(Debug, Clone)]
 pub struct Binding {
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     pub alias: String,
     pub connection_id: String,
     pub integration_type: String,
@@ -242,12 +242,12 @@ pub async fn write(
     .fetch_all(&mut **tx)
     .await?
     {
-        let package: String = row.get(1);
+        let package: wamn_catalog::PackageName = row.try_get(1)?;
         let application = document.application_for_package(&package).ok_or_else(|| anyhow::anyhow!("release package {package} has no sole application owner"))?;
         let name: String = row.get(2);
         let binding = bindings
             .iter()
-            .find(|b| b.application == application && b.alias == name);
+            .find(|b| &b.application == application && b.alias == name);
         let binding = binding.ok_or_else(|| anyhow::anyhow!("connection_unbound: {application}.{name}"))?;
         let required: String = row.get(3);
         anyhow::ensure!(

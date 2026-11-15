@@ -45,7 +45,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state(
     ];
     let target = ComponentPackageCoordinate {
         project_env_key: "rest--test--publication".into(),
-        package_id: "rest_connector".into(),
+        package_id: "rest_connector".parse().expect("valid name"),
         package_version: "0.1.1".into(),
     };
     let documents: Vec<_> = ["rest_item", "rest_item_pushed"]
@@ -73,7 +73,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state(
             "rest_consumer_fixture",
         ]
         .into_iter()
-        .map(|name| PackageCoordinate::new(name, "0.1.1").unwrap())
+        .map(|name| PackageCoordinate::new(name.parse().unwrap(), "0.1.1").unwrap())
         .collect(),
     };
     let assembled = assemble_release(&args, &roots, &admissions, &[]).unwrap();
@@ -152,7 +152,8 @@ async fn composed_sql_uses_released_schemas(
             .components
             .iter()
             .find(|component| {
-                component.package_id == package && component.descriptor.component == package
+                component.package_id.as_str() == package
+                    && component.descriptor.component == package
             })
             .unwrap();
         assert_eq!(component.runtime_schema.as_deref(), Some(expected_schema));

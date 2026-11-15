@@ -5488,6 +5488,7 @@ dependencies = [
  "tracing",
  "uuid",
  "wamn-capability-authority",
+ "wamn-catalog",
  "wamn-digest",
  "wamn-event-wire",
  "wamn-events-capability",
@@ -5569,7 +5570,6 @@ dependencies = [
  "wamn-component-policy",
  "wamn-control-provision",
  "wamn-digest",
- "wamn-event-wire",
  "wamn-postgres",
  "wamn-record-history",
  "wamn-scalar",
@@ -6043,6 +6043,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "wamn-catalog",
  "wamn-registry",
 ]
 
@@ -6082,6 +6083,7 @@ dependencies = [
  "tracing",
  "wamn-broker",
  "wamn-capability-authority",
+ "wamn-catalog",
  "wamn-engine",
  "wamn-event-wire",
  "wamn-postgres-capability",
@@ -6400,6 +6402,7 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+ "wamn-catalog",
  "wamn-digest",
  "wamn-package-artifact",
  "wamn-test-application",
@@ -6425,6 +6428,7 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+ "wamn-catalog",
  "wamn-digest",
  "wamn-registry",
 ]
@@ -6733,6 +6737,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "uuid",
+ "wamn-catalog",
  "wamn-digest",
 ]
 
@@ -6849,6 +6854,7 @@ dependencies = [
  "url",
  "uuid",
  "wamn-broker",
+ "wamn-catalog",
  "wamn-compiler",
  "wamn-control-provision",
  "wamn-digest",
@@ -6894,6 +6900,7 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "tracing-subscriber",
+ "wamn-catalog",
  "wamn-digest",
  "wamn-engine",
  "wamn-kubernetes",

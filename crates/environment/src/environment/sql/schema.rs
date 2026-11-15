@@ -44,21 +44,21 @@ pub struct PackageDiff {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diff {
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     pub release: Option<wamn_digest::Digest>,
     pub mode: SchemaMode,
     pub disposable: Option<bool>,
-    pub packages: BTreeMap<String, PackageDiff>,
-    pub reset_sources: BTreeMap<String, SchemaSource>,
-    pub affected_applications: BTreeSet<String>,
-    pub missing_reset_sources: BTreeSet<String>,
+    pub packages: BTreeMap<wamn_catalog::PackageName, PackageDiff>,
+    pub reset_sources: BTreeMap<wamn_catalog::PackageName, SchemaSource>,
+    pub affected_applications: BTreeSet<wamn_catalog::ApplicationName>,
+    pub missing_reset_sources: BTreeSet<wamn_catalog::PackageName>,
     pub unknowns: Vec<String>,
 }
 
 #[derive(Debug, Default)]
 pub struct State {
     pub disposable: Option<bool>,
-    pub packages: BTreeMap<String, AppliedPackage>,
+    pub packages: BTreeMap<wamn_catalog::PackageName, AppliedPackage>,
     pub unknowns: Vec<String>,
     database_url: Option<String>,
     project_env_key: String,
@@ -86,9 +86,9 @@ pub async fn database_state(url: &str, project_env_key: &str) -> anyhow::Result<
     let mut packages = BTreeMap::new();
     for row in sqlx::query("SELECT package_id, package_version, artifact_digest FROM catalog.packages WHERE project_env_key=$1")
         .bind(project_env_key).fetch_all(&mut client).await? {
-        let id: String = row.get(0);
+        let id: wamn_catalog::PackageName = row.try_get(0)?;
         packages.insert(id.clone(), AppliedPackage {
-            coordinate: wamn_catalog::PackageCoordinate::new(&id, row.get::<&str, _>(1))?,
+            coordinate: wamn_catalog::PackageCoordinate::new(id.clone(), row.get::<&str, _>(1))?,
             artifact_digest: row.get(2),
         });
     }
@@ -104,7 +104,7 @@ pub async fn database_state(url: &str, project_env_key: &str) -> anyhow::Result<
 pub async fn release_candidates(
     platform: &Platform,
     document: &EnvironmentDocument,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     release: Option<&wamn_digest::Digest>,
 ) -> anyhow::Result<(wamn_digest::Digest, Vec<Candidate>)> {
     ensure!(
@@ -141,7 +141,7 @@ pub async fn release_candidates(
 
 pub(super) async fn open(
     platform: &Platform,
-    id: &str,
+    id: &wamn_catalog::PackageName,
     version: &str,
     digest: Option<&wamn_digest::Digest>,
 ) -> anyhow::Result<Candidate> {
@@ -157,7 +157,7 @@ pub(super) async fn open(
     let manifest =
         wamn_compiler::manifest::PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
     ensure!(
-        manifest.package.id == id && manifest.package.version == version,
+        &manifest.package.id == id && manifest.package.version == version,
         "package artifact does not declare {id}@{version}"
     );
     Ok(Candidate {
@@ -169,7 +169,7 @@ pub(super) async fn open(
 /// Compare selected files with SQLx versions and checksums.
 pub async fn plan(
     document: &EnvironmentDocument,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     release: Option<wamn_digest::Digest>,
     candidates: &[Candidate],
     state: &State,
@@ -254,7 +254,7 @@ pub async fn plan(
         .cloned()
         .collect();
     Ok(Diff {
-        application: application.into(),
+        application: application.clone(),
         release,
         mode: document.schema_mode(state.disposable),
         disposable: state.disposable,
@@ -292,7 +292,7 @@ pub async fn reset_candidates(
 /// Validate all replacement inputs before stopping users.
 pub fn validate_candidates(
     candidates: &[Candidate],
-    sources: &BTreeMap<String, SchemaSource>,
+    sources: &BTreeMap<wamn_catalog::PackageName, SchemaSource>,
 ) -> anyhow::Result<(Vec<wamn_compiler::manifest::PackageManifest>, Vec<usize>)> {
     let mut packages = Vec::new();
     let mut found = BTreeSet::new();
@@ -337,11 +337,8 @@ pub fn validate_candidates(
             .iter()
             .map(|p| {
                 (
-                    p.package.id.as_str(),
-                    p.base_dependencies
-                        .values()
-                        .map(|d| d.package.as_str())
-                        .collect(),
+                    &p.package.id,
+                    p.base_dependencies.values().map(|d| &d.package).collect(),
                 )
             })
             .collect::<Vec<_>>(),
@@ -352,7 +349,7 @@ pub fn validate_candidates(
 pub async fn apply(
     platform: &Platform,
     document: &EnvironmentDocument,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     release: &wamn_digest::Digest,
     migration_database_url: &str,
 ) -> anyhow::Result<()> {
@@ -385,11 +382,8 @@ pub(super) async fn apply_candidates(
             .iter()
             .map(|p| {
                 (
-                    p.package.id.as_str(),
-                    p.base_dependencies
-                        .values()
-                        .map(|d| d.package.as_str())
-                        .collect(),
+                    &p.package.id,
+                    p.base_dependencies.values().map(|d| &d.package).collect(),
                 )
             })
             .collect::<Vec<_>>(),
@@ -417,8 +411,8 @@ pub(super) async fn apply_candidates(
 pub struct Status {
     pub mode: SchemaMode,
     pub disposable: Option<bool>,
-    pub installed: BTreeMap<String, SchemaSource>,
-    pub applications: BTreeMap<String, Diff>,
+    pub installed: BTreeMap<wamn_catalog::PackageName, SchemaSource>,
+    pub applications: BTreeMap<wamn_catalog::ApplicationName, Diff>,
     pub unknowns: Vec<String>,
 }
 

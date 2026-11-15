@@ -199,16 +199,12 @@ pub fn validate_invocation(invocation: &ConnectionInvocation) -> anyhow::Result<
             ConnectionExecutionClosure::Candidate { .. }
         ),
         InvocationEntry::Wiring(position) => {
-            !position.package_id.is_empty()
-                && !position.wiring_id.is_empty()
+            !position.wiring_id.is_empty()
                 && position.wiring_version > 0
                 && !position.node_id.is_empty()
         }
     };
-    anyhow::ensure!(
-        !invocation.package_id.is_empty() && entry_valid,
-        "connection-http-invocation-invalid"
-    );
+    anyhow::ensure!(entry_valid, "connection-http-invocation-invalid");
     if let ConnectionExecutionClosure::Candidate {
         environment,
         component,

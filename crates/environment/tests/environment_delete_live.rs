@@ -167,7 +167,7 @@ esac
         &triple.org,
         &triple.project,
         &triple.env,
-        "app",
+        &"app".parse().expect("valid name"),
     )?;
     std::fs::write(
         "releases.json",

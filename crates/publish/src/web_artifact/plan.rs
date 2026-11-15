@@ -31,7 +31,10 @@ pub(super) fn web_manifest(
     Ok(WebManifest {
         client_package: client.name,
         version,
-        package: format!("{}@{}", record.package.id, record.package.version),
+        package: wamn_catalog::PackageCoordinate::new(
+            record.package.id.clone(),
+            &record.package.version,
+        )?,
         contract_digest: record.outputs.manifest,
     })
 }
@@ -61,14 +64,6 @@ pub(super) fn read_web_manifest(tar: &[u8]) -> anyhow::Result<WebManifest> {
             "web.json has no client_package"
         );
         ensure!(!web.version.is_empty(), "web.json has no version");
-        let (package, version) = web
-            .package
-            .split_once('@')
-            .context("web.json package must be <id>@<version>")?;
-        ensure!(
-            !package.is_empty() && !version.is_empty(),
-            "web.json package must be <id>@<version>"
-        );
         metadata = Some(web);
     }
     metadata.context("web artifact has no web.json")

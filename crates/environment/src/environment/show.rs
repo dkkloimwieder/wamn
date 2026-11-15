@@ -15,7 +15,7 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
 pub async fn serving_application(
     platform: &Platform,
     triple: &Triple,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<(wamn_digest::Digest, wamn_catalog::EnvironmentApplications)> {
     let name = wamn_control_provision::environment_names::application_release_name(
         &triple.org,

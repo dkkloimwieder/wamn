@@ -24,7 +24,7 @@ pub enum ProductionLeaseResult {
     /// A fresh lease for router execution after the caller commits.
     Ready {
         run_id: String,
-        package_id: String,
+        application: wamn_catalog::ApplicationName,
         payload: serde_json::Value,
         lease_generation: i64,
         wiring_id: String,
@@ -63,7 +63,7 @@ pub enum LeaseTurn {
 #[derive(Debug)]
 struct SelectedLease {
     run_id: String,
-    package_id: String,
+    application: wamn_catalog::ApplicationName,
     had_prior_lease: bool,
     status: RunStatus,
     payload: serde_json::Value,
@@ -221,19 +221,19 @@ pub async fn lease_next(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
     runner: &str,
-    package_ids: &[String],
+    applications: &[wamn_catalog::ApplicationName],
     environment: &str,
     lease_ttl_ms: i64,
     manifest_digest: Option<&wamn_digest::Digest>,
 ) -> Result<LeaseTurn, ProductionLeaseError> {
-    validate_target(package_ids, environment)?;
+    validate_target(applications, environment)?;
     validate_duration(lease_ttl_ms)?;
     let select_sql = select_production_lease_sql();
     // The select skips runs pinned to another release, so their head never
     // blocks this host's own backlog (R20). The grant below tests again the pin.
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(select_sql))
         .bind(project_env_key)
-        .bind(package_ids)
+        .bind(applications)
         .bind(environment)
         .bind(manifest_digest)
         .fetch_optional(&mut *connection)
@@ -321,7 +321,7 @@ pub async fn lease_next(
     let lease_generation = row_value(&row, 0, "lease generation")?;
     Ok(LeaseTurn::Leased(ProductionLeaseResult::Ready {
         run_id: selected.run_id,
-        package_id: selected.package_id,
+        application: selected.application,
         payload: selected.payload,
         lease_generation,
         wiring_id: selected.wiring_id,
@@ -334,11 +334,11 @@ pub async fn lease_next(
 pub async fn reap_exhausted(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
-    package_ids: &[String],
+    applications: &[wamn_catalog::ApplicationName],
     environment: &str,
     grace_ms: i64,
 ) -> Result<ProductionReapResult, ProductionLeaseError> {
-    validate_target(package_ids, environment)?;
+    validate_target(applications, environment)?;
     if grace_ms < 0 {
         return Err(invalid_parameters("janitor grace must be nonnegative"));
     }
@@ -346,7 +346,7 @@ pub async fn reap_exhausted(
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(select_sql))
         .bind(project_env_key)
         .bind(grace_ms)
-        .bind(package_ids)
+        .bind(applications)
         .bind(environment)
         .fetch_optional(&mut *connection)
         .await
@@ -488,7 +488,7 @@ fn decode_selected_lease(row: &Row) -> Result<SelectedLease, ProductionLeaseErro
     }
     Ok(SelectedLease {
         run_id: row_value(row, 0, "run id")?,
-        package_id: row_value(row, 7, "application")?,
+        application: row_value(row, 7, "application")?,
         had_prior_lease: row_value(row, 1, "prior lease evidence")?,
         status,
         payload: serde_json::from_str(&payload).map_err(|error| {
@@ -573,7 +573,7 @@ pub async fn unfinished_releases(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
     environment: &str,
-) -> Result<Vec<(String, wamn_digest::Digest, String)>, sqlx::Error> {
+) -> Result<Vec<(wamn_catalog::ApplicationName, wamn_digest::Digest, String)>, sqlx::Error> {
     sqlx::query_as(
         "SELECT package_id, manifest_digest, run_id FROM wamn_run.runs \
          WHERE project_env_key=$1 AND environment=$2 AND status IN ('dispatched','running') \
@@ -589,7 +589,7 @@ pub async fn unfinished_releases(
 pub async fn pinned_backlog(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
-    applications: &[String],
+    applications: &[wamn_catalog::ApplicationName],
     environment: &str,
     manifest_digest: &wamn_digest::Digest,
 ) -> Result<bool, ProductionLeaseError> {
@@ -669,15 +669,11 @@ fn validate_duration(duration_ms: i64) -> Result<(), ProductionLeaseError> {
     }
     Ok(())
 }
-fn validate_target(applications: &[String], environment: &str) -> Result<(), ProductionLeaseError> {
-    if applications.is_empty()
-        || environment.is_empty()
-        || applications.iter().any(|application| {
-            application.is_empty()
-                || application.trim() != application
-                || application.as_bytes().contains(&0)
-        })
-    {
+fn validate_target(
+    applications: &[wamn_catalog::ApplicationName],
+    environment: &str,
+) -> Result<(), ProductionLeaseError> {
+    if applications.is_empty() || environment.is_empty() {
         return Err(invalid_parameters(
             "nonempty application names and environment are required",
         ));

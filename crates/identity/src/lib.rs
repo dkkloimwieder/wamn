@@ -140,7 +140,10 @@ pub fn operator_subject(
 }
 
 /// The service subject of one scheduled application in one environment project.
-pub fn application_subject(project_env_key: &str, package: &str) -> Result<String, IdentityError> {
+pub fn application_subject(
+    project_env_key: &str,
+    package: &wamn_catalog::PackageName,
+) -> Result<String, IdentityError> {
     canonical_subject(&wamn_registry::name::application_subject(
         project_env_key,
         package,
@@ -1143,14 +1146,14 @@ mod tests {
     #[test]
     fn application_subject_is_targeted_to_project_env_key_and_package() {
         assert_ne!(
-            application_subject("acme--prod--erp", "integration").unwrap(),
-            application_subject("acme--dev--erp", "integration").unwrap()
+            application_subject("acme--prod--erp", &"integration".parse().unwrap()).unwrap(),
+            application_subject("acme--dev--erp", &"integration".parse().unwrap()).unwrap()
         );
         assert_ne!(
-            application_subject("acme--prod--erp", "integration").unwrap(),
-            application_subject("acme--prod--erp", "consumer").unwrap()
+            application_subject("acme--prod--erp", &"integration".parse().unwrap()).unwrap(),
+            application_subject("acme--prod--erp", &"consumer".parse().unwrap()).unwrap()
         );
-        assert!(application_subject("bad project", "integration").is_err());
+        assert!(application_subject("bad project", &"integration".parse().unwrap()).is_err());
     }
 
     #[test]

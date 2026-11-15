@@ -65,7 +65,7 @@ impl LifecycleLock {
     pub async fn acquire_application(
         client: Client,
         triple: &Triple,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
     ) -> anyhow::Result<Self> {
         // Fixed order: environment exclusion, then the application key.
         let lock = Self::acquire_shared(client, triple).await?;

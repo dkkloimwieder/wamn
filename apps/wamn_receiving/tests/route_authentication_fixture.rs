@@ -19,11 +19,12 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 const BASE_PACKAGE_ID: &str = "wamn_receiving";
 /// The version of the base package, from its wamn.json.
 static BASE_PACKAGE_VERSION: LazyLock<&'static str> =
-    LazyLock::new(|| package_version(BASE_PACKAGE_ID).leak());
+    LazyLock::new(|| package_version(&BASE_PACKAGE_ID.parse().expect("valid fixture name")).leak());
 const OVERLAY_PACKAGE_ID: &str = "client_acme_receiving";
 /// The version of the overlay package, from its wamn.json.
-static OVERLAY_PACKAGE_VERSION: LazyLock<&'static str> =
-    LazyLock::new(|| package_version(OVERLAY_PACKAGE_ID).leak());
+static OVERLAY_PACKAGE_VERSION: LazyLock<&'static str> = LazyLock::new(|| {
+    package_version(&OVERLAY_PACKAGE_ID.parse().expect("valid fixture name")).leak()
+});
 
 /// The Receiving release from this checkout.
 fn identity() -> &'static ReleaseIdentity {
@@ -34,7 +35,9 @@ fn identity() -> &'static ReleaseIdentity {
         route_host: "receiving.localhost".to_owned(),
         packages: JOURNEY_PACKAGES
             .iter()
-            .map(|package| wamn_catalog::PackageCoordinate::new(package.id, package.version()))
+            .map(|package| {
+                wamn_catalog::PackageCoordinate::new(package.id.parse().unwrap(), package.version())
+            })
             .collect::<Result<_, _>>()
             .expect("read the Receiving journey package coordinates"),
     });

@@ -534,7 +534,7 @@ fn member_admission_request(child_digest: &wamn_digest::Digest) -> ComponentAdmi
             connections: Vec::new(),
             target: ComponentPackageCoordinate {
                 project_env_key: PROJECT_ENV_KEY.into(),
-                package_id: "root".into(),
+                package_id: "root".parse().unwrap(),
                 package_version: "1.0.0".into(),
             },
             component: "node".into(),

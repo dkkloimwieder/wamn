@@ -53,7 +53,7 @@ pub struct Installed {
 /// What the project database holds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectState {
-    pub installed: BTreeMap<String, Installed>,
+    pub installed: BTreeMap<wamn_catalog::PackageName, Installed>,
     pub schema_report: Option<crate::migrations::SchemaReport>,
     /// `(manifest_digest, component_digest, store_alias, instance_id)`.
     pub bindings: BTreeSet<(String, String, String, String)>,
@@ -96,7 +96,7 @@ impl Revision {
             (Some(package), Some(web)) => {
                 let web = web.parse::<wamn_digest::Digest>()?;
                 Ok(Some(super::document::Client {
-                    package: package.to_owned(),
+                    package: package.parse()?,
                     web,
                 }))
             }
@@ -126,7 +126,7 @@ pub struct Authorities {
     pub release: Option<ReleaseFacts>,
     pub revision: Option<Revision>,
     /// Loaded application and digest pairs observed from the environment hosts.
-    pub live: BTreeMap<(String, wamn_digest::Digest), usize>,
+    pub live: BTreeMap<(wamn_catalog::ApplicationName, wamn_digest::Digest), usize>,
 }
 
 /// The result of analysis: the authorities and the differences to apply.
@@ -134,7 +134,7 @@ pub struct Authorities {
 pub struct Analysis {
     pub schema_mode: super::document::SchemaMode,
     pub authorities: Authorities,
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     pub notices: Vec<Notice>,
     pub actor: String,
     pub plan: Vec<String>,
@@ -144,7 +144,7 @@ pub struct Analysis {
 /// Evidence that does not prevent application activation.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Notice {
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     pub identity: String,
     pub observed: Observation,
     pub next_action: String,
@@ -165,7 +165,7 @@ pub enum Observation {
 /// Select one application's inputs while preserving shared configuration.
 pub fn select_application(
     document: &EnvironmentDocument,
-    application: Option<&str>,
+    application: Option<&wamn_catalog::ApplicationName>,
 ) -> anyhow::Result<EnvironmentDocument> {
     let name = if let Some(name) = application {
         name
@@ -216,7 +216,7 @@ pub fn select_application(
 pub async fn analyse(
     platform: &Platform,
     document: &EnvironmentDocument,
-    application: Option<&str>,
+    application: Option<&wamn_catalog::ApplicationName>,
 ) -> anyhow::Result<Analysis> {
     let mut selected = select_application(document, application)?;
     let document = &selected;
@@ -456,7 +456,7 @@ pub async fn read_project(
         .fetch_one(&mut *transaction)
         .await
         .context("bind the project identity")?;
-    let mut installed = BTreeMap::<String, Installed>::new();
+    let mut installed = BTreeMap::<wamn_catalog::PackageName, Installed>::new();
     for row in sqlx::query(
         "SELECT package_id, package_version FROM catalog.packages \
               WHERE project_env_key = $1",
@@ -467,7 +467,7 @@ pub async fn read_project(
     .context("read the installed packages")?
     {
         installed.insert(
-            row.get(0),
+            row.try_get(0)?,
             Installed {
                 current: row.get(1),
             },
@@ -549,7 +549,7 @@ async fn read_release(
 /// The targeted application's Helm release and host group identity.
 pub fn application_release_name(
     document: &EnvironmentDocument,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<String> {
     Ok(
         wamn_control_provision::environment_names::application_release_name(
@@ -734,7 +734,7 @@ async fn read_history_revision(
 pub(crate) async fn application_releases(
     platform: &Platform,
     triple: &wamn_registry::Triple,
-) -> anyhow::Result<BTreeMap<String, String>> {
+) -> anyhow::Result<BTreeMap<wamn_catalog::ApplicationName, String>> {
     wamn_control_provision::validate_project_env(
         &triple.org,
         &triple.project,
@@ -944,15 +944,17 @@ mod tests {
         Ok(())
     }
 
-    fn applications(entries: &[(&str, &[&str])]) -> wamn_catalog::EnvironmentApplications {
+    fn applications(
+        entries: &[(wamn_catalog::ApplicationName, &[wamn_catalog::PackageName])],
+    ) -> wamn_catalog::EnvironmentApplications {
         entries
             .iter()
             .map(|(name, packages)| {
                 (
-                    (*name).to_owned(),
+                    name.clone(),
                     wamn_catalog::ApplicationDefinition {
                         connections: BTreeMap::new(),
-                        packages: packages.iter().map(|id| (*id).to_owned()).collect(),
+                        packages: packages.iter().cloned().collect(),
                     },
                 )
             })
@@ -960,13 +962,13 @@ mod tests {
     }
 
     fn sequences(
-        entries: &[(&str, &[(&str, &str)])],
+        entries: &[(wamn_catalog::PackageName, &[(&str, &str)])],
     ) -> Vec<wamn_compiler::manifest::PackageManifest> {
         entries
             .iter()
             .map(|(package, declared)| {
                 let mut manifest = wamn_publish::test_support::source_manifest();
-                manifest.package.id = (*package).to_owned();
+                manifest.package.id = package.clone();
                 manifest.sequences = declared
                     .iter()
                     .map(|(name, pattern)| {
@@ -985,11 +987,20 @@ mod tests {
 
     #[test]
     fn one_sequence_name_with_two_patterns_in_one_application_is_refused() {
-        let declared = applications(&[("receiving", &["acme_receiving", "wamn_receiving"])]);
+        let declared = applications(&[(
+            "receiving".parse().unwrap(),
+            &[
+                "acme_receiving".parse().unwrap(),
+                "wamn_receiving".parse().unwrap(),
+            ],
+        )]);
         let declarations = sequences(&[
-            ("acme_receiving", &[("purchase_order", "ACME-{seq:po}")]),
             (
-                "wamn_receiving",
+                "acme_receiving".parse().unwrap(),
+                &[("purchase_order", "ACME-{seq:po}")],
+            ),
+            (
+                "wamn_receiving".parse().unwrap(),
                 &[("purchase_order", "PO-{seq:po,width=6}")],
             ),
         ]);
@@ -1004,14 +1015,20 @@ mod tests {
 
     #[test]
     fn one_sequence_name_with_one_pattern_in_one_application_is_allowed() {
-        let declared = applications(&[("receiving", &["acme_receiving", "wamn_receiving"])]);
+        let declared = applications(&[(
+            "receiving".parse().unwrap(),
+            &[
+                "acme_receiving".parse().unwrap(),
+                "wamn_receiving".parse().unwrap(),
+            ],
+        )]);
         let declarations = sequences(&[
             (
-                "acme_receiving",
+                "acme_receiving".parse().unwrap(),
                 &[("purchase_order", "PO-{seq:po,width=6}")],
             ),
             (
-                "wamn_receiving",
+                "wamn_receiving".parse().unwrap(),
                 &[("purchase_order", "PO-{seq:po,width=6}")],
             ),
         ]);
@@ -1020,13 +1037,22 @@ mod tests {
 
     #[test]
     fn one_sequence_name_in_two_applications_is_allowed() {
-        let declared = applications(&[("receiving", &["wamn_receiving"]), ("wms", &["wamn_wms"])]);
+        let declared = applications(&[
+            (
+                "receiving".parse().unwrap(),
+                &["wamn_receiving".parse().unwrap()],
+            ),
+            ("wms".parse().unwrap(), &["wamn_wms".parse().unwrap()]),
+        ]);
         let declarations = sequences(&[
             (
-                "wamn_receiving",
+                "wamn_receiving".parse().unwrap(),
                 &[("purchase_order", "PO-{seq:po,width=6}")],
             ),
-            ("wamn_wms", &[("purchase_order", "W-{seq:po}")]),
+            (
+                "wamn_wms".parse().unwrap(),
+                &[("purchase_order", "W-{seq:po}")],
+            ),
         ]);
         assert!(sequence_refusals(&declared, &declarations).is_empty());
     }

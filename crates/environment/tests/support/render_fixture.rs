@@ -142,7 +142,12 @@ pub fn template(values: &serde_yaml::Value, namespace: &str) -> anyhow::Result<V
             .context("application coordinate")?
             .split('/')
             .collect();
-        release_chart::release_name(coordinate[0], coordinate[2], coordinate[1], application)?
+        release_chart::release_name(
+            coordinate[0],
+            coordinate[2],
+            coordinate[1],
+            &application.parse().unwrap(),
+        )?
     } else {
         values["runtime-operator"]["runtime"]["hostGroups"][0]["name"]
             .as_str()

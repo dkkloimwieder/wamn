@@ -103,7 +103,9 @@ pub(super) async fn exercise(
         )
         .await?;
     let mut document = EnvironmentDocument::compile(&journey.file)?;
-    document.applications.retain(|name, _| name == "alpha");
+    document
+        .applications
+        .retain(|name, _| name.as_str() == "alpha");
     document
         .applications
         .get_mut("alpha")
@@ -126,7 +128,10 @@ pub(super) async fn exercise(
         )
         .await?;
     journey
-        .apply("connection-deploy", &mut journey.deploy("alpha", release))
+        .apply(
+            "connection-deploy",
+            &mut journey.deploy(&"alpha".parse().unwrap(), release),
+        )
         .await?;
 
     let coordinate = format!("{}/{}/{}", document.org, document.env, document.project);

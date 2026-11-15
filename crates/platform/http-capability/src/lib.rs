@@ -1158,7 +1158,7 @@ mod tests {
     fn invocation() -> ConnectionInvocation {
         ConnectionInvocation {
             origin: ConnectionOrigin {
-                package_id: "package_a".to_string(),
+                package_id: "package_a".parse().unwrap(),
                 component_digest: digest('a'),
                 component: "notifier".to_string(),
                 interface_version: "0.1".to_string(),
@@ -1166,7 +1166,7 @@ mod tests {
             },
             entry: wamn_capability_authority::connection::InvocationEntry::Wiring(
                 wamn_capability_authority::connection::WiringPosition {
-                    package_id: "package_a".to_string(),
+                    application: "package_a".parse().unwrap(),
                     wiring_hash: fixture_wiring_hash(),
                     wiring_id: "orders".to_string(),
                     wiring_version: 3,
@@ -1175,7 +1175,7 @@ mod tests {
                     configuration: Default::default(),
                 },
             ),
-            package_id: "package_a".to_string(),
+            package_id: "package_a".parse().unwrap(),
             component_digest: digest('a'),
             component: "notifier".to_string(),
             operation: "orders:notify/dispatch@1.0.0".to_string(),
@@ -1332,7 +1332,11 @@ mod tests {
             composed_entry: None,
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new("package_a", "1.0.0").unwrap()]),
+                packages: BTreeSet::from([PackageCoordinate::new(
+                    "package_a".parse().unwrap(),
+                    "1.0.0",
+                )
+                .unwrap()]),
             },
             components: BTreeSet::from([ServingComponent {
                 runtime_schema: None,
@@ -1434,8 +1438,9 @@ mod tests {
         let mut route = invocation();
         route.entry = InvocationEntry::Route;
         let lookup = entry_lookup(&route).expect("a route has a lookup entry");
-        assert_eq!(lookup.package_id, route.origin.package_id);
-        assert!(lookup.wiring.is_none());
+        assert!(
+            matches!(lookup, wamn_capability_authority::identity::ConnectionEntryLookup::Route { package_id } if package_id == &route.origin.package_id)
+        );
         plugin
             .postgres
             .bind_invocation("released-route", route.clone())
@@ -1466,13 +1471,13 @@ mod tests {
             .expect("the released entry is authorized");
 
         let mut unrelated = manifest.components.first().expect("root").clone();
-        unrelated.package_id = "package_b".to_string();
+        unrelated.package_id = "package_b".parse().unwrap();
         unrelated.descriptor.component = "unrelated".to_string();
         unrelated.descriptor.component_digest = digest('e');
-        manifest
-            .release
-            .packages
-            .insert(PackageCoordinate::new("package_b", "1.0.0").expect("unrelated package"));
+        manifest.release.packages.insert(
+            PackageCoordinate::new("package_b".parse().unwrap(), "1.0.0")
+                .expect("unrelated package"),
+        );
         invocation.package_id.clone_from(&unrelated.package_id);
         invocation
             .component

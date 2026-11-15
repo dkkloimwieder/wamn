@@ -25,7 +25,7 @@ impl RunTrigger {
 #[derive(Debug)]
 pub struct RunAdmission<'a> {
     pub project_env_key: &'a str,
-    pub application: &'a str,
+    pub application: &'a wamn_catalog::ApplicationName,
     pub manifest_digest: &'a wamn_digest::Digest,
     pub environment: &'a str,
     pub workflow_id: &'a str,
@@ -147,7 +147,7 @@ pub async fn enabled_workflow(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
     environment: &str,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     workflow: &str,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
     sqlx::query(ENABLED_WORKFLOW_SQL)
@@ -164,7 +164,7 @@ pub async fn workflow_version(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
     environment: &str,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     workflow: &str,
     version: i32,
 ) -> Result<Option<(String, wamn_digest::Digest)>, sqlx::Error> {
@@ -190,7 +190,7 @@ pub async fn event_workflows(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
     environment: &str,
-    applications: Option<&[String]>,
+    applications: Option<&[wamn_catalog::ApplicationName]>,
 ) -> Result<Vec<sqlx::postgres::PgRow>, sqlx::Error> {
     sqlx::query(ENABLED_EVENTS_SQL)
         .bind(project_env_key)
@@ -240,7 +240,7 @@ pub async fn history_actor(
             return Ok(None);
         }
         let image = match envelope.op {
-            wamn_event_wire::Op::Delete => &envelope.old,
+            wamn_catalog::WiringEventOperation::Delete => &envelope.old,
             _ => &envelope.new,
         }
         .as_ref()
@@ -279,7 +279,7 @@ pub async fn enabled_schedule(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
     environment: &str,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     workflow: &str,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
     sqlx::query(
@@ -300,10 +300,18 @@ pub async fn enabled_schedules(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
     environment: &str,
-    applications: &[String],
+    applications: &[wamn_catalog::ApplicationName],
     project: &str,
     tick: chrono::DateTime<chrono::Utc>,
-) -> Result<Vec<(String, String, String, chrono::NaiveDateTime)>, sqlx::Error> {
+) -> Result<
+    Vec<(
+        wamn_catalog::ApplicationName,
+        String,
+        String,
+        chrono::NaiveDateTime,
+    )>,
+    sqlx::Error,
+> {
     sqlx::query("WITH timezone AS (SELECT COALESCE((SELECT value FROM platform.setting \
             WHERE target_type='project' AND target_id=$4 AND key='timezone'), '\"UTC\"'::jsonb) AS value) \
         SELECT application, workflow_id, schedule, \
@@ -313,6 +321,6 @@ pub async fn enabled_schedules(
         WHERE project_env_key=$1 AND environment=$2 AND application=ANY($3) \
             AND enabled AND trigger='schedule'")
         .bind(project_env_key).bind(environment).bind(applications).bind(project).bind(tick)
-        .fetch_all(connection).await.map(|rows| rows.into_iter()
-            .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3))).collect())
+        .fetch_all(connection).await.and_then(|rows| rows.into_iter()
+            .map(|row| Ok((row.try_get(0)?, row.get(1), row.get(2), row.get(3)))).collect())
 }

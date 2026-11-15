@@ -108,7 +108,7 @@ pub(in crate::environment) async fn recorded_cluster(
 pub async fn reset_deployed(
     platform: &Platform,
     triple: &wamn_registry::Triple,
-    candidate: Option<(&str, &wamn_digest::Digest)>,
+    candidate: Option<(&wamn_catalog::ApplicationName, &wamn_digest::Digest)>,
     credentials: &Credentials,
 ) -> anyhow::Result<Value> {
     let document = EnvironmentDocument::read_serving(platform, triple).await?;

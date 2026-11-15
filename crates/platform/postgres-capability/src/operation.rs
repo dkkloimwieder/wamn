@@ -66,7 +66,7 @@ struct OperationAuthority {
     grant: Option<String>,
     schema: Option<String>,
     invocation: wamn_capability_authority::connection::ConnectionInvocation,
-    application: String,
+    application: wamn_catalog::ApplicationName,
     transaction: bool,
 }
 

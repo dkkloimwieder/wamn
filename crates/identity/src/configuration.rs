@@ -88,7 +88,7 @@ pub struct Connection {
 pub struct NumberSequence {
     /// A uuid, which the control plane assigns.
     pub id: String,
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     pub name: String,
     pub pattern: String,
 }
@@ -199,7 +199,7 @@ pub async fn write_configuration(
 /// environment map, its sequence name and its default pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SequenceDefault {
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     pub name: String,
     pub pattern: String,
 }

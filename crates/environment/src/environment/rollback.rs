@@ -7,7 +7,7 @@ use wamn_registry::Triple;
 pub async fn rollback(
     platform: &Platform,
     triple: &Triple,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     release: Option<&wamn_digest::Digest>,
 ) -> anyhow::Result<Analysis> {
     super::apply_selection(

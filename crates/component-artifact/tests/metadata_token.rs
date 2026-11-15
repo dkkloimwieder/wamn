@@ -166,7 +166,7 @@ fn admitted(bytes: &[u8]) -> AdmittedComponent {
             connections: Vec::new(),
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a".to_owned(),
-                package_id: "orders".to_owned(),
+                package_id: "orders".parse().unwrap(),
                 package_version: "1.0.0".to_owned(),
             },
             component: "transform".to_owned(),

@@ -63,7 +63,9 @@ pub async fn drain(
 }
 
 /// Loaded application and digest membership for the database's unfinished-run boundary.
-pub fn loaded(residency: &[ReleaseResidency]) -> BTreeMap<(String, wamn_digest::Digest), usize> {
+pub fn loaded(
+    residency: &[ReleaseResidency],
+) -> BTreeMap<(wamn_catalog::ApplicationName, wamn_digest::Digest), usize> {
     let mut live = BTreeMap::new();
     for release in residency.iter().filter(|release| release.loaded) {
         *live
@@ -136,8 +138,8 @@ pub async fn stranded(
     project_url: &str,
     project_env_key: &str,
     environment: &str,
-    applications: Option<&[String]>,
-    live: &BTreeMap<(String, wamn_digest::Digest), usize>,
+    applications: Option<&[wamn_catalog::ApplicationName]>,
+    live: &BTreeMap<(wamn_catalog::ApplicationName, wamn_digest::Digest), usize>,
 ) -> anyhow::Result<Vec<Stranded>> {
     let (loaded_applications, loaded_digests): (Vec<&str>, Vec<wamn_digest::Digest>) = live
         .keys()

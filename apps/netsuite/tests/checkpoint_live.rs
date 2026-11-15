@@ -38,8 +38,9 @@ pub async fn invoke(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "NetSuite checkpoint live",
-        ReleaseTarget::new(PROJECT_ENV_KEY, "test")
-            .with_applications(super::consumer_live::declared("erp", manifest)),
+        ReleaseTarget::new(PROJECT_ENV_KEY, "test").with_applications(
+            super::consumer_live::declared(&"erp".parse().expect("valid name"), manifest),
+        ),
     )?);
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(
@@ -116,7 +117,7 @@ pub async fn invoke(
         &database,
         &workflow_host,
         manifest,
-        "erp",
+        &"erp".parse().expect("valid name"),
         &wiring,
         "netsuite-pull",
         &["rest-consumer-fixture:item/record"],
@@ -135,7 +136,8 @@ pub async fn invoke(
     let record = &wiring.nodes["record"];
     let registered = wamn_catalog::resolve_workflow_components(
         PROJECT_ENV_KEY,
-        &super::consumer_live::declared("erp", manifest)["erp"].packages,
+        &super::consumer_live::declared(&"erp".parse().expect("valid name"), manifest)["erp"]
+            .packages,
         manifest,
         &wiring,
     )?["record"]
@@ -203,7 +205,7 @@ pub async fn invoke(
                             &write.operation,
                             InvocationEntry::Wiring(WiringPosition {
                                 configuration: Default::default(),
-                                package_id: "netsuite".into(),
+                                application: "netsuite".parse().expect("valid name"),
                                 wiring_hash: wiring.wiring_hash(),
                                 wiring_id: wiring.wiring_id.clone(),
                                 wiring_version: wiring.version,

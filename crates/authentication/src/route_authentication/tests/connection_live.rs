@@ -99,7 +99,8 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     let sources = StaticCredentialProvider::projects_from_json(&json!({"host-project":{"credentials":{(AuthorityClass::CallableHttp.as_str()):reader.to_string()}}}).to_string(),&base).unwrap();
     let mut postgres =
         WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(sources, None)));
-    let applications = ["receiver"];
+    let application = "receiver".parse::<wamn_catalog::ApplicationName>().unwrap();
+    let applications = [&application];
     assert!(
         postgres
             .configure_revocation("host-project", &applications)

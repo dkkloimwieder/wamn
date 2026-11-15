@@ -11,7 +11,13 @@ pub fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
     let (package_id, package_version) = value
         .rsplit_once('@')
         .ok_or_else(|| "expected PACKAGE_ID@PACKAGE_VERSION".to_owned())?;
-    PackageCoordinate::new(package_id, package_version).map_err(|error| error.to_string())
+    PackageCoordinate::new(
+        package_id
+            .parse()
+            .map_err(|error: wamn_catalog::ParsePackageNameError| error.to_string())?,
+        package_version,
+    )
+    .map_err(|error| error.to_string())
 }
 
 /// The digests of an admitted application and of the members it embeds.
@@ -122,12 +128,12 @@ pub(super) fn validate_request(
 /// Derive the one schema that an application's SQL resolves against.
 pub(crate) fn application_runtime_schema(
     manifest: &wamn_compiler::manifest::PackageManifest,
-    manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
+    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_compiler::manifest::PackageManifest>,
     components: &BTreeSet<ServingComponent>,
 ) -> anyhow::Result<Option<String>> {
     let mut members = vec![manifest];
     for dependency in manifest.base_dependencies.values() {
-        let prefix = format!("{}:", dependency.package.replace('_', "-"));
+        let prefix = format!("{}:", dependency.package.as_str().replace('_', "-"));
         if components
             .iter()
             .filter(|component| component.package_id == manifest.package.id)
@@ -181,8 +187,8 @@ pub fn composes_integration(
     components: &BTreeSet<ServingComponent>,
 ) -> bool {
     manifest.base_dependencies.values().any(|dependency| {
-        let prefix = format!("{}:", dependency.package.replace('_', "-"));
-        dependency.package == "wamn_integration"
+        let prefix = format!("{}:", dependency.package.as_str().replace('_', "-"));
+        dependency.package.as_str() == "wamn_integration"
             && components
                 .iter()
                 .filter(|component| component.package_id == manifest.package.id)
@@ -199,13 +205,13 @@ pub fn composes_integration(
 /// Publication resolves them against the released package manifests.
 pub fn application_dependency_permissions(
     manifest: &wamn_compiler::manifest::PackageManifest,
-    manifests: &BTreeMap<&str, &wamn_compiler::manifest::PackageManifest>,
+    manifests: &BTreeMap<&wamn_catalog::PackageName, &wamn_compiler::manifest::PackageManifest>,
 ) -> anyhow::Result<BTreeSet<String>> {
     let mut permissions = BTreeSet::new();
     for dependency in manifest.base_dependencies.values() {
         for operation in &dependency.operations {
             let base = manifests
-                .get(dependency.package.as_str())
+                .get(&dependency.package)
                 .with_context(|| format!("missing dependency manifest {}", dependency.package))?;
             ensure!(
                 base.package.version == dependency.version,
@@ -249,12 +255,9 @@ pub fn application_dependency_permissions(
 
 pub(super) fn pin_runtime_schemas(
     components: BTreeSet<ServingComponent>,
-    manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
+    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_compiler::manifest::PackageManifest>,
 ) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {
-    let dependency_manifests = manifests
-        .iter()
-        .map(|(id, manifest)| (id.as_str(), manifest))
-        .collect();
+    let dependency_manifests = manifests.iter().collect();
     let schemas = manifests
         .iter()
         .map(|(id, manifest)| {
@@ -303,7 +306,10 @@ pub(super) fn project_routes(
     request: &PublishReleaseManifest<'_>,
     route_contracts: &RouteContracts,
     component_facts: &ReleaseComponents,
-    package_manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
+    package_manifests: &BTreeMap<
+        wamn_catalog::PackageName,
+        wamn_compiler::manifest::PackageManifest,
+    >,
     components: &mut BTreeSet<ServingComponent>,
 ) -> Result<BTreeSet<ServingRoute>, PublishManifestError> {
     let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
@@ -316,7 +322,7 @@ pub(super) fn project_routes(
         let package = request
             .packages
             .iter()
-            .find(|package| package.package_id() == attachment.package_id)
+            .find(|package| package.package_id() == &attachment.package_id)
             .ok_or_else(|| {
                 PublishManifestError::new(
                     PublishManifestErrorType::Component,

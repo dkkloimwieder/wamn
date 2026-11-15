@@ -68,7 +68,7 @@ pub async fn initialize(
     admin_url: &str,
     platform_migration_database_url: &str,
     migration_database_url: &str,
-    application: Option<&str>,
+    application: Option<&wamn_catalog::ApplicationName>,
 ) -> anyhow::Result<()> {
     let document = analyse::select_application(document, application)?;
     let DeclaredRelease::Digest(digest) = document.legacy_release() else {

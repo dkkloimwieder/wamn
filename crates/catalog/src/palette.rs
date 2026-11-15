@@ -23,7 +23,9 @@ pub type Palette = BTreeMap<String, PalettePin>;
 pub fn palette_target(project_env_key: &str) -> ComponentPackageCoordinate {
     ComponentPackageCoordinate {
         project_env_key: project_env_key.to_owned(),
-        package_id: PALETTE_PACKAGE_ID.to_owned(),
+        package_id: PALETTE_PACKAGE_ID
+            .parse()
+            .expect("platform package name is valid"),
         package_version: PALETTE_PACKAGE_VERSION.to_owned(),
     }
 }

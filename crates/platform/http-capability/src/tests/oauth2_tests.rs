@@ -849,7 +849,7 @@ async fn claimed_requests_stop_at_the_invocation_deadline_or_cancellation() {
         host.prepare_released(&components).await.unwrap();
         let mut connection = invocation();
         if let InvocationEntry::Wiring(position) = &mut connection.entry {
-            position.package_id = "app".into();
+            position.application = "app".parse().unwrap();
         }
         connection.component_digest = component.component_digest;
         connection.origin.component_digest = component.component_digest;

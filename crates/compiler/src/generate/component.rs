@@ -51,7 +51,7 @@ pub(super) fn emit_model_component(
     compiled: &super::operations::ModelDescription<'_>,
 ) -> Result<(), GenerateError> {
     let model_name = compiled.name;
-    let namespace = module_name(&compiled.package.id);
+    let namespace = compiled.package.id.as_str();
     let package = module_name(model_name);
     let mut source = String::from(HEADER);
     writeln!(
@@ -430,7 +430,7 @@ fn emit_package_world(
         return Ok(());
     }
 
-    let namespace = package.id.replace('_', "-");
+    let namespace = package.id.as_str().replace('_', "-");
     let postgres = if postgres { POSTGRES } else { "" };
     let world = format!(
         "// @generated from the package manifest; do not edit.\n\n\

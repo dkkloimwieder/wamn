@@ -201,7 +201,7 @@ mod tests {
         else {
             panic!("rollback");
         };
-        assert_eq!(rollback.application, "orders");
+        assert_eq!(rollback.application, "orders".parse().unwrap());
         assert_eq!(rollback.env, deploy.env);
         assert!(rollback.release.is_none());
         let Command::Rollback(rollback) = Cli::try_parse_from([
@@ -291,7 +291,7 @@ mod tests {
                 wamn_ctl::schema_verbs::SchemaCommand::Apply(args) => args,
                 _ => panic!("schema input"),
             };
-            assert_eq!(args.application, "orders");
+            assert_eq!(args.application, "orders".parse().unwrap());
             assert_eq!(args.env, std::path::Path::new("environment.k"));
             assert_eq!(
                 args.release.as_ref(),

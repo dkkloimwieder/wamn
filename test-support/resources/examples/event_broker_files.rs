@@ -79,10 +79,11 @@ fn declared_consumers(target: &Triple, manifests: &[String]) -> anyhow::Result<V
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+    let application = target.project.parse::<wamn_catalog::ApplicationName>()?;
     let entities = manifests.iter().flat_map(PackageManifest::entity_pairs);
     let consumers = entities
         .map(|(package, entity)| {
-            wamn_broker::events::application_consumer(target, &target.project, package, entity)
+            wamn_broker::events::application_consumer(target, &application, package, entity)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(consumers)

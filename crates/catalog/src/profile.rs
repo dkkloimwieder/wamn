@@ -12,7 +12,7 @@ pub struct ReleaseProfile {
 /// One export of one release component.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OperationProfile {
-    pub package: String,
+    pub package: crate::PackageName,
     pub component: String,
     pub operation: String,
 }

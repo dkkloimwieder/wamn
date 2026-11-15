@@ -20,7 +20,7 @@ pub struct EnvironmentConfiguration {
     pub revocation_seconds: u32,
     #[serde(default)]
     pub schema: Schema,
-    pub applications: BTreeMap<String, ApplicationConfiguration>,
+    pub applications: BTreeMap<wamn_catalog::ApplicationName, ApplicationConfiguration>,
     #[serde(default)]
     pub integrations: BTreeMap<String, Integration>,
 }
@@ -117,7 +117,7 @@ pub enum SchemaMode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Client {
-    pub package: String,
+    pub package: wamn_catalog::PackageName,
     pub web: wamn_digest::Digest,
 }
 
@@ -176,7 +176,7 @@ pub async fn read(
     for row in rows {
         match row.try_get::<Option<i32>, _>("record_type")? {
             Some(1) => {
-                let package: Option<String> = row.try_get("client_package")?;
+                let package: Option<wamn_catalog::PackageName> = row.try_get("client_package")?;
                 let client = package
                     .map(|package| {
                         Ok::<_, sqlx::Error>(Client {
@@ -197,10 +197,10 @@ pub async fn read(
                 );
             }
             Some(2) => {
-                let application: &str = row.try_get("name")?;
+                let application: wamn_catalog::ApplicationName = row.try_get("name")?;
                 configuration
                     .applications
-                    .get_mut(application)
+                    .get_mut(&application)
                     .expect("connection references a stored application")
                     .connections
                     .insert(
@@ -308,7 +308,7 @@ pub async fn write(
         .await?;
     sqlx::query("UPDATE registry.environments SET policy_name=$3, target_id=$4::text::uuid WHERE org=$1 AND env=$2")
         .bind(&c.org).bind(&c.env).bind(&c.policy).bind(target).execute(&mut *transaction).await?;
-    let applications: Vec<&str> = c.applications.keys().map(String::as_str).collect();
+    let applications: Vec<&wamn_catalog::ApplicationName> = c.applications.keys().collect();
     sqlx::query("DELETE FROM registry.environment_applications WHERE org=$1 AND env=$2 AND project=$3 AND NOT(application=ANY($4))")
         .bind(&c.org).bind(&c.env).bind(&c.project).bind(&applications).execute(&mut *transaction).await?;
     sqlx::query("DELETE FROM registry.environment_application_connections WHERE org=$1 AND env=$2 AND project=$3")
@@ -359,7 +359,7 @@ pub async fn write(
 pub async fn write_selection(
     connection: &mut sqlx::PgConnection,
     triple: &Triple,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     release: Option<&wamn_digest::Digest>,
     client: Option<&Client>,
 ) -> Result<bool, sqlx::Error> {

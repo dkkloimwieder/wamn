@@ -18,24 +18,25 @@ use wamn_broker::events::{
     advisory_stream_config, consumer_config_matches, source_stream_config, stream_config_matches,
 };
 use wamn_capability_authority::EffectOutcome;
-use wamn_event_wire::{Causation, DerivedEvent, Op, derived_msg_id, stream_name, subject};
+use wamn_catalog::WiringEventOperation as Op;
+use wamn_event_wire::{Causation, DerivedEvent, derived_msg_id, stream_name, subject};
 use wamn_registry::Triple;
 
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wit::WitWorld;
 
 use wamn_capability_authority::effect_span::{
-    EFFECT_OPERATION, EffectIdentity, EffectOutcomeGuard, EffectWiring, JETSTREAM_DURATION_MS,
-    effect_span, record_effect_ms, record_wiring,
+    EFFECT_OPERATION, EffectIdentity, EffectOutcomeGuard, EffectSource, EffectWiring,
+    JETSTREAM_DURATION_MS, effect_span, record_effect_ms, record_wiring,
 };
 pub const WAMN_JETSTREAM_ID: &str = "wamn-jetstream";
 
 /// An admitted Emit terminal. Event coordinates come from host construction.
-/// The caller supplies its package selector, payload and trace position.
+/// The caller supplies its application, payload and trace position.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DerivedPublishRequest {
     pub component_id: String,
-    pub package_id: String,
+    pub application: wamn_catalog::ApplicationName,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub node_id: String,
@@ -197,7 +198,7 @@ struct PreparedDerivedPublication<'a> {
 /// The wiring position one derived publication was admitted at, for tracing.
 #[derive(Debug)]
 struct DerivedPublishWiring {
-    package_id: String,
+    application: wamn_catalog::ApplicationName,
     wiring_id: String,
     wiring_version: u32,
     node_id: String,
@@ -212,12 +213,6 @@ fn prepare_derived_publication<'a>(
         return Err(DerivedPublishError::new(
             DerivedPublishErrorType::UnboundIdentity,
             "derived event environment differs from the platform event binding",
-        ));
-    }
-    if !wamn_event_wire::valid_subject_token(&request.package_id) {
-        return Err(DerivedPublishError::new(
-            DerivedPublishErrorType::InvalidInput,
-            "derived event package-id is empty or noncanonical",
         ));
     }
     if !wamn_event_wire::valid_subject_token(&request.entity) {
@@ -243,7 +238,7 @@ fn prepare_derived_publication<'a>(
         identity.project_env_key.to_string(),
         coordinates.project.to_string(),
         coordinates.environment.to_string(),
-        request.package_id,
+        request.application,
         request.entity,
         request.operation,
         request.payload,
@@ -261,7 +256,7 @@ fn prepare_derived_publication<'a>(
         &identity.project_env_key,
         &coordinates.project,
         &coordinates.environment,
-        &event.package_id,
+        &event.application,
         &event.entity,
         event.op,
         &event.dedup_id,
@@ -288,7 +283,7 @@ fn prepare_derived_publication<'a>(
         message_id,
         expected_stream,
         wiring: DerivedPublishWiring {
-            package_id: event.package_id,
+            application: event.application,
             wiring_id: request.wiring_id,
             wiring_version: request.wiring_version,
             node_id: request.node_id,
@@ -317,7 +312,7 @@ fn js_span(
     record_wiring(
         &span,
         wiring.map(|wiring| EffectWiring {
-            package_id: &wiring.package_id,
+            source: EffectSource::Application(&wiring.application),
             wiring_id: &wiring.wiring_id,
             wiring_version: wiring.wiring_version,
             node_id: &wiring.node_id,
@@ -534,7 +529,7 @@ mod tests {
     fn derived_request(component_id: &str, dedup_id: &str) -> DerivedPublishRequest {
         DerivedPublishRequest {
             component_id: component_id.into(),
-            package_id: "platform_fixture".into(),
+            application: "platform_fixture".parse().unwrap(),
             wiring_id: "fixture-orders".into(),
             wiring_version: 7,
             node_id: "publish".into(),
@@ -599,7 +594,7 @@ mod tests {
                 "fixture-route-auth",
                 "widgets",
                 "dev",
-                "platform_fixture",
+                &"platform_fixture".parse().unwrap(),
                 "orders",
                 Op::Update,
                 dangerous_author_id,
@@ -612,7 +607,7 @@ mod tests {
         assert_eq!(event.project_env_key, "fixture-route-auth");
         assert_eq!(event.project, "widgets");
         assert_eq!(event.environment, "dev");
-        assert_eq!(event.package_id, "platform_fixture");
+        assert_eq!(event.application, "platform_fixture".parse().unwrap());
         assert_eq!(event.entity, "orders");
         assert_eq!(event.op, Op::Update);
         assert_eq!(event.dedup_id, dangerous_author_id);
@@ -622,25 +617,6 @@ mod tests {
             assert_eq!(observed[0], serde_json::json!("arbitrary"));
             assert_eq!(observed[1]["status"], serde_json::json!("ready"));
         };
-    }
-
-    #[test]
-    fn derived_publication_refuses_a_noncanonical_package_identity() {
-        let identity = JetstreamIdentity {
-            project_env_key: "fixture".into(),
-            project: "app".into(),
-            environment: "dev".into(),
-        };
-        let mut request = derived_request("component-1", "author:orders:7");
-        request.package_id = " platform_fixture".into();
-        let coordinates = EventCoordinates {
-            org: "fixture".into(),
-            project: "app".into(),
-            environment: "dev".into(),
-        };
-        let error = prepare_derived_publication(identity, &coordinates, request)
-            .expect_err("a noncanonical package identity must refuse");
-        assert_eq!(error.error_type(), DerivedPublishErrorType::InvalidInput);
     }
 
     #[tokio::test]
@@ -778,8 +754,8 @@ mod tests {
 /// One message from one entity consumer. Target and release come from the host.
 #[derive(Debug)]
 pub struct EventBatchAdmission<'a> {
-    pub application: &'a str,
-    pub source_package: &'a str,
+    pub application: &'a wamn_catalog::ApplicationName,
+    pub source_package: &'a wamn_catalog::PackageName,
     pub entity: &'a str,
     pub envelope: &'a str,
     pub sequence: u64,

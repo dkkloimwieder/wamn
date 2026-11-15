@@ -30,7 +30,7 @@ use wash_runtime::plugin::wasi_logging::TracingLogger;
 pub(super) type ManifestCache =
     Arc<std::sync::Mutex<BTreeMap<wamn_digest::Digest, Arc<tokio::sync::OnceCell<Arc<[u8]>>>>>>;
 
-type ReleaseKey = (String, wamn_digest::Digest);
+type ReleaseKey = (wamn_catalog::ApplicationName, wamn_digest::Digest);
 
 pub(super) struct Resources {
     pub engine: Arc<Engine>,
@@ -77,7 +77,7 @@ pub(super) struct Releases {
     paused: std::sync::atomic::AtomicBool,
     api: KubernetesApi,
     resident: RwLock<BTreeMap<ReleaseKey, Arc<ResidentRelease>>>,
-    selections: RwLock<BTreeMap<String, Selection>>,
+    selections: RwLock<BTreeMap<wamn_catalog::ApplicationName, Selection>>,
     loading: std::sync::Mutex<BTreeMap<ReleaseKey, Arc<Mutex<()>>>>,
     bytes: ManifestCache,
 }
@@ -116,7 +116,7 @@ impl Releases {
             annotations.get("wamn.project_env_key") == Some(&self.resources.target.project_env_key),
             "workload belongs to another project deployment"
         );
-        self.load(application, &digest.parse()?).await
+        self.load(&application.parse()?, &digest.parse()?).await
     }
 
     pub fn files(
@@ -150,7 +150,7 @@ impl Releases {
 
     async fn load(
         &self,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         digest: &wamn_digest::Digest,
     ) -> anyhow::Result<Arc<ResidentRelease>> {
         let key = (application.to_owned(), digest.to_owned());
@@ -296,7 +296,10 @@ impl Releases {
         Ok(resident)
     }
 
-    async fn selected(&self) -> anyhow::Result<BTreeMap<String, (wamn_digest::Digest, String)>> {
+    async fn selected(
+        &self,
+    ) -> anyhow::Result<BTreeMap<wamn_catalog::ApplicationName, (wamn_digest::Digest, String)>>
+    {
         if self.paused.load(std::sync::atomic::Ordering::Acquire) {
             return Ok(BTreeMap::new());
         }
@@ -316,6 +319,9 @@ impl Releases {
         {
             let annotations = &map["metadata"]["annotations"];
             let Some(application) = annotations["wamn.application"].as_str() else {
+                continue;
+            };
+            let Ok(application) = application.parse::<wamn_catalog::ApplicationName>() else {
                 continue;
             };
             if annotations["wamn.environment"].as_str()
@@ -354,11 +360,11 @@ impl Releases {
             })();
             match projection {
                 Ok(projection) => {
-                    if ambiguous.contains(application) {
+                    if ambiguous.contains(&application) {
                         continue;
                     }
-                    if selected.contains_key(application) {
-                        selected.remove(application);
+                    if selected.contains_key(&application) {
+                        selected.remove(&application);
                         ambiguous.insert(application.to_owned());
                         tracing::warn!(%application, "application has multiple current selections; its admission is paused");
                     } else {
@@ -632,7 +638,7 @@ impl Releases {
                 let rows = wamn_workflow::schedule::PostgresSchedules::new(
                     Arc::clone(&self.resources.postgres),
                     &self.resources.configuration.project,
-                    application,
+                    application.clone(),
                     selection.release.subscribe(),
                 );
                 let schedule_stopping = stopping.clone();

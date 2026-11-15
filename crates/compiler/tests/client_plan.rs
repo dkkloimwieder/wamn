@@ -41,7 +41,12 @@ fn screens_drop_event_handlers_and_sort_within_their_model() {
     ir.models[widget].operations.reverse();
 
     let plan = ClientPlan::from_ir(&ir);
-    assert_eq!(plan.package, "platform_fixture");
+    assert_eq!(
+        plan.package,
+        &"platform_fixture"
+            .parse::<wamn_catalog::PackageName>()
+            .expect("valid name")
+    );
     assert_eq!(plan.models.len(), ir.models.len());
     let mut inputs: Vec<_> = ir.models.iter().collect();
     inputs.sort_by_key(|model| &model.name);

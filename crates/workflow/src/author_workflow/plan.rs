@@ -18,9 +18,9 @@ pub enum WorkflowTrigger<'a> {
     Schedule(&'a str),
     /// A captured model change, filtered with the registration vocabulary.
     Event {
-        source_package: &'a str,
+        source_package: &'a wamn_catalog::PackageName,
         entity: &'a str,
-        ops: &'a [wamn_event_wire::Op],
+        ops: &'a [wamn_catalog::WiringEventOperation],
         condition: Option<&'a str>,
     },
 }

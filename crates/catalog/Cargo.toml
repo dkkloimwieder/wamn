@@ -16,7 +16,7 @@ license.workspace = true
 [features]
 # `test-util` also provides the project test database minimum (`test_database`),
 # which installs the catalog on a supplied test connection.
-test-util = ["dep:wamn-postgres", "dep:sqlx"]
+test-util = []
 
 [dependencies]
 anyhow.workspace = true
@@ -31,9 +31,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 url = { workspace = true }
 wamn-component-policy = { workspace = true }
-wamn-event-wire = { workspace = true }
-wamn-postgres = { workspace = true, optional = true }
-sqlx = { workspace = true, optional = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
+sqlx = { workspace = true, features = ["postgres"] }
 
 # A self dev-dependency, so this crate's own `tests/` directory — a separate
 # compilation unit that cannot see its parent's features — builds with
@@ -43,6 +41,7 @@ sqlx = { workspace = true, optional = true, features = ["postgres", "runtime-tok
 # not reach a lib-only build, so `cargo check -p wamn-catalog` remains the
 # production configuration.
 [dev-dependencies]
+wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 proptest.workspace = true
 wamn-catalog = { path = ".", features = ["test-util"] }

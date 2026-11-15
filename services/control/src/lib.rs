@@ -183,7 +183,7 @@ pub struct Operation {
     #[arg(long)]
     env: String,
     #[arg(long)]
-    application: Option<String>,
+    application: Option<wamn_catalog::ApplicationName>,
     #[arg(long)]
     release: Option<wamn_digest::Digest>,
 }
@@ -254,7 +254,7 @@ pub async fn execute(config: &Configuration, operation: Operation) -> anyhow::Re
             org: &operation.org,
             project: &operation.project,
             env: &operation.env,
-            application: operation.application.as_deref(),
+            application: operation.application.as_ref(),
             release: operation.release.as_ref(),
         },
         &actor,

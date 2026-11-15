@@ -9,6 +9,7 @@ license.workspace = true
 test-util = ["wamn-engine/test-util", "wamn-capability-authority/test-util", "wamn-postgres-capability/test-util"]
 
 [dependencies]
+wamn-catalog.workspace = true
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream", "kv"] }
 async-trait = { workspace = true }

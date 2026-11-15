@@ -60,7 +60,7 @@ pub struct AuthorArgs {
     pub coordinate: String,
     /// The application of the workflow, as the environment declares it.
     #[arg(long)]
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     /// Compiled publication wiring from a package build. Operations must carry their sealed versions.
     #[arg(long = "document")]
     pub compiled_document: PathBuf,
@@ -75,7 +75,7 @@ pub struct AuthorArgs {
     pub schedule: Option<String>,
     /// The application package whose captured model starts this workflow.
     #[arg(long, requires_all = ["entity", "ops"])]
-    pub source_package: Option<String>,
+    pub source_package: Option<wamn_catalog::PackageName>,
     #[arg(long, requires = "source_package")]
     pub entity: Option<String>,
     /// Comma-separated event operations: insert, update, delete.
@@ -93,7 +93,7 @@ pub struct VersionArgs {
     #[arg(long)]
     pub coordinate: String,
     #[arg(long)]
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     #[arg(long)]
     pub workflow_id: String,
     #[arg(long)]
@@ -116,7 +116,7 @@ pub struct StartArgs {
     pub token: String,
     /// The application of the workflow, as the environment declares it.
     #[arg(long)]
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     #[arg(long)]
     pub workflow_id: String,
     /// A repeated start with the same key and input answers the first run.

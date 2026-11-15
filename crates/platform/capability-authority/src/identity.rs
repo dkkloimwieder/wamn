@@ -79,18 +79,21 @@ pub struct SessionIdentity {
     pub operation: Option<String>,
     /// `app.application`: the environment map name of the application that
     /// holds the operation's package.
-    pub application: Option<String>,
+    pub application: Option<wamn_catalog::ApplicationName>,
     /// The release digest the binding pod carries.
     pub release: Option<ReleaseIdentity>,
 }
 
-/// The route or wiring position one effect snapshot resolves under.
+/// The route package or application workflow that owns an effect's entry.
 #[derive(Debug, Clone, Copy)]
-pub struct ConnectionEntryLookup<'a> {
-    /// The package that owns the route or the wiring.
-    pub package_id: &'a str,
-    /// `None` for a route, which has no wiring position.
-    pub wiring: Option<WiringLookup<'a>>,
+pub enum ConnectionEntryLookup<'a> {
+    Route {
+        package_id: &'a wamn_catalog::PackageName,
+    },
+    Wiring {
+        application: &'a wamn_catalog::ApplicationName,
+        wiring: WiringLookup<'a>,
+    },
 }
 
 /// One node of an exact wiring version.
@@ -105,12 +108,12 @@ pub struct WiringLookup<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct ConnectionEffectLookup<'a> {
     pub entry: ConnectionEntryLookup<'a>,
-    pub origin_package_id: &'a str,
+    pub origin_package_id: &'a wamn_catalog::PackageName,
     pub origin_component_digest: &'a wamn_digest::Digest,
     pub origin_component: &'a str,
     pub origin_interface_version: &'a str,
     pub origin_operation: &'a str,
-    pub package_id: &'a str,
+    pub package_id: &'a wamn_catalog::PackageName,
     pub operation: &'a str,
     /// The release the effect runs under, as its manifest digest.
     pub manifest_digest: &'a wamn_digest::Digest,

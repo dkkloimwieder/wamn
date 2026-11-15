@@ -81,7 +81,7 @@ pub fn configuration(project: &str) -> PlatformConfiguration {
         }],
         number_sequences: vec![NumberSequence {
             id: NUMBER_SEQUENCE_ID.to_owned(),
-            application: "receiving".to_owned(),
+            application: "receiving".parse().unwrap(),
             name: "receipt".to_owned(),
             pattern: "RC-{yyyy}-{seq:5}".to_owned(),
         }],

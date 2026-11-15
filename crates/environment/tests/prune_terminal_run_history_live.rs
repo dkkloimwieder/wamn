@@ -303,7 +303,12 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key(
 ) {
     let _lock = wamn_test_postgres::lock();
     let url = wamn_test_postgres::url(&pool).to_string();
-    wamn_catalog::test_database::project(&url).await;
+    wamn_catalog::test_database::project(
+        &mut wamn_postgres::connect(&url)
+            .await
+            .expect("connect the test database"),
+    )
+    .await;
     let mut admin = connect(&url).await;
     let database: String = sqlx::query("SELECT current_database()::text")
         .fetch_one(&mut admin)

@@ -10,9 +10,8 @@ use wamn_run_state::run_store::ProductionLeaseError;
 /// component digest of every node.
 #[derive(Debug, Clone, Copy)]
 pub struct ManualRunAdmission<'a> {
-    /// The application, by the name the environment declares: the run's
-    /// package id.
-    pub package_id: &'a str,
+    /// The application, by the name the environment declares.
+    pub application: &'a wamn_catalog::ApplicationName,
     /// The release the host serves, as its manifest digest.
     pub manifest_digest: &'a wamn_digest::Digest,
     pub environment: &'a str,
@@ -40,7 +39,7 @@ pub async fn admit_manual_run(
         connection,
         &RunAdmission {
             project_env_key,
-            application: run.package_id,
+            application: run.application,
             manifest_digest: run.manifest_digest,
             environment: run.environment,
             workflow_id: run.workflow_id,
@@ -80,7 +79,7 @@ pub async fn enabled_workflow(
     connection: &mut sqlx::PgConnection,
     project_env_key: &str,
     environment: &str,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     workflow_id: &str,
 ) -> anyhow::Result<Option<EnabledWorkflow>> {
     let Some(row) = wamn_run_state::admission::enabled_workflow(

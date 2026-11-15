@@ -20,7 +20,7 @@ fn file_fixture_declares_each_binding_mode() {
             .join("tests/support/file_package/publication/components/blob-put.json.in"),
         &wamn_catalog::ComponentPackageCoordinate {
             project_env_key: "file-fixture".into(),
-            package_id: "file_fixture".into(),
+            package_id: "file_fixture".parse().unwrap(),
             package_version: "0.1.0".into(),
         },
         None,

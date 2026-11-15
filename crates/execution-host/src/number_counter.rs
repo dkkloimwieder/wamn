@@ -31,7 +31,7 @@ const SEQUENCE_SQL: &str =
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CounterSet {
     /// The declared application that owns the sequence.
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     /// The sequence name.
     pub sequence: String,
     /// The counter name in the sequence's pattern.

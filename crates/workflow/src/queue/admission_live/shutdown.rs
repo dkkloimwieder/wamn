@@ -72,7 +72,7 @@ pub(super) async fn run(
                 wamn_connections::production_lease::ProductionLeases::new(execution.postgres)
                     .pinned_backlog(
                         &execution.target.invocation,
-                        &execution.target.package_ids,
+                        &execution.target.applications,
                         &execution.target.environment,
                     )
                     .await?,
@@ -170,7 +170,7 @@ pub(super) async fn run(
     let recovered = wamn_connections::production_lease::ProductionLeases::new(execution.postgres)
         .lease_next(
             &execution.target.invocation,
-            &execution.target.package_ids,
+            &execution.target.applications,
             &execution.target.environment,
             1000,
         )

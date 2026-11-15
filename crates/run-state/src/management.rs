@@ -11,7 +11,8 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WorkflowRun {
     pub run_id: String,
-    pub package_id: String,
+    #[serde(rename = "package_id")]
+    pub application: wamn_catalog::ApplicationName,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub trigger_source: Option<String>,
@@ -228,7 +229,7 @@ pub async fn list(
             let status: String = row.try_get(5).map_err(decode)?;
             Ok(WorkflowRun {
                 run_id: row.try_get(0).map_err(decode)?,
-                package_id: row.try_get(1).map_err(decode)?,
+                application: row.try_get(1).map_err(decode)?,
                 wiring_id: row.try_get(2).map_err(decode)?,
                 wiring_version: u32::try_from(version).map_err(|_| {
                     WorkflowError::new(WorkflowErrorType::Storage, "a wiring version is negative")

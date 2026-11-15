@@ -177,7 +177,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let nodes = serde_json::json!({"read": digest});
     let run = RunAdmission {
         project_env_key: "t1",
-        application: "cat",
+        application: &"cat".parse().unwrap(),
         manifest_digest: &digest,
         environment: "prod",
         workflow_id: "workflow",
@@ -211,13 +211,8 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         RunAdmitted::Conflict
     );
     tx.commit().await?;
-    let applications = ["cat".to_owned()];
-    for invalid in [
-        Vec::new(),
-        vec![String::new()],
-        vec![" cat".to_owned()],
-        vec!["cat\0".to_owned()],
-    ] {
+    let applications = ["cat".parse().unwrap()];
+    for invalid in [Vec::<wamn_catalog::ApplicationName>::new()] {
         let mut tx = bound_transaction(&mut worker).await?;
         let error = persistence::lease_next(
             &mut tx,

@@ -85,8 +85,8 @@ pub fn default_output_root(package_root: &Path) -> PathBuf {
 
 /// The build output directory of `package` below `output_root`.
 #[must_use]
-pub fn package_output(output_root: &Path, package: &str) -> PathBuf {
-    output_root.join(package)
+pub fn package_output(output_root: &Path, package: &wamn_catalog::PackageName) -> PathBuf {
+    output_root.join(package.as_str())
 }
 
 /// Generate package output before component compilation.
@@ -111,9 +111,12 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
             .and_then(Value::as_object_mut)
         {
             for dependency in dependencies.values_mut() {
-                let package = dependency["package"].as_str().context("base package id")?;
+                let package: wamn_catalog::PackageName = dependency["package"]
+                    .as_str()
+                    .context("base package id")?
+                    .parse()?;
                 let built =
-                    crate::build_record::read(&package_output(&request.output_root, package))?;
+                    crate::build_record::read(&package_output(&request.output_root, &package))?;
                 let [component] = built.outputs.components.as_slice() else {
                     bail!("development base {package} requires one built component");
                 };

@@ -7,7 +7,7 @@ use sqlx::{Connection as _, Row as _, Statement as _};
 pub async fn bind(
     platform: &Platform,
     document: &mut EnvironmentDocument,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     alias: &str,
     name: &str,
     integration: &str,

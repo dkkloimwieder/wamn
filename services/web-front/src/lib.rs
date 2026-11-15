@@ -61,7 +61,7 @@ struct Route {
 struct LiveRelease {
     host: String,
     digest: wamn_digest::Digest,
-    clients: BTreeMap<String, String>,
+    clients: BTreeMap<String, wamn_catalog::PackageName>,
     webs: BTreeMap<String, wamn_digest::Digest>,
     platform_ui: Option<wamn_digest::Digest>,
     org: String,
@@ -78,7 +78,6 @@ impl LiveRelease {
             .clients
             .get(host)
             .context("the host has no web client")?;
-        ensure!(segment(package), "invalid client package");
         let hex = self
             .webs
             .get(host)
@@ -587,7 +586,7 @@ mod tests {
             digest: (format!("sha256:{}", "c".repeat(64)))
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
-            clients: [("app.example.com".into(), "app".into())].into(),
+            clients: [("app.example.com".into(), "app".parse().unwrap())].into(),
             webs: [(
                 "app.example.com".into(),
                 format!("sha256:{}", digit.to_string().repeat(64))
