@@ -38,7 +38,7 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
             wait_timeout_ms: 2000,
             statement_timeout_ms: 5000,
         })
-        .expect("Postgres capability"),
+        .expect("Postgres host service"),
     );
     postgres
         .set_project_env_key("application", "test--dev--dynamic")

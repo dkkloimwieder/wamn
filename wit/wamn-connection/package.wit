@@ -1,6 +1,6 @@
 package wamn:connection@0.1.0;
 
-/// The minimum environment-bound HTTP connection capability.
+/// The minimum environment-bound HTTP connection interface.
 interface http {
   record header {
     name: string,

@@ -26,7 +26,7 @@ Proposal: Delete the dormant runner and its private reducer tests. Keep startup 
 
 Deletes: Approximately 827 lines, including the module declaration.
 
-Risk: Removes an unavailable measurement capability. Compile every integration target and retain the existing condition command tests. No current live test exercises `assert_startup`.
+Risk: Removes an unavailable measurement function. Compile every integration target and retain the existing condition command tests. No current live test exercises `assert_startup`.
 
 Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit.
 
@@ -727,7 +727,7 @@ Evidence: `crates/control/provision/src/system_reader.rs:104`, `crates/control/p
 
 Problem: Five error families repeat absent, malformed, scheme, database, role, and extra-input categories. Their parsers repeat corresponding URL predicates. These are concrete duplication candidates within the supplied 124-error inventory. The inventory also includes test errors and generated source text, so its total does not represent 124 competing production contracts (`crates/control/lib/src/dev/activation.rs:1731`, `crates/schema/generator/src/generate/data.rs:1166`).
 
-Proposal: Use one contextual credential-input error and shared parsing predicates within provisioning. Keep each capability’s role and database authority rules distinct. Preserve genuinely different artifact, session, invocation, and workflow contracts.
+Proposal: Use one contextual credential-input error and shared parsing predicates within provisioning. Keep each service’s role and database authority rules distinct. Preserve genuinely different artifact, session, invocation, and workflow contracts.
 
 Deletes: Repeated error enums, formatting implementations, and common parser branches.
 

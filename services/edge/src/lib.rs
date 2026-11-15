@@ -23,7 +23,7 @@
 //!
 //! This crate refuses to depend on:
 //!
-//! - Upper layers: `the cloud capability crates`, `wamn-workflow`,
+//! - Upper layers: the cloud service crates, `wamn-workflow`,
 //!   `wamn-execution-host`.
 //! - Postgres: `tokio-postgres`, `deadpool-postgres`, `postgres-types`, and
 //!   `wamn-platform-identity`, which links `tokio-postgres`.

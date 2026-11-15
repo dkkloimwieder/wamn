@@ -12,7 +12,7 @@ See [telemetry storage and queries](../operations/observability.md).
 
 ## 2. What exists
 
-See [edge capability boundaries](../architecture/capabilities.md).
+See [edge host service boundaries](../architecture/platform-services.md).
 
 ## 3. Rulings
 

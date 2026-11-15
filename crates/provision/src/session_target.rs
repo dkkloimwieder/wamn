@@ -218,7 +218,7 @@ impl SessionTarget {
     pub fn project_env_key(&self) -> &str {
         &self.document.project_env_key
     }
-    /// Borrow the validated reader capability for the database driver only.
+    /// Borrow the validated reader connection for the database driver only.
     pub fn connection(&self) -> &SessionConnection {
         &self.document.connection
     }

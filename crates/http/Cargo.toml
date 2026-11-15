@@ -1,6 +1,6 @@
 [package]
 name = "wamn-http"
-description = "Bound HTTP host capability and OAuth authorization."
+description = "Bound HTTP host service and OAuth authorization."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

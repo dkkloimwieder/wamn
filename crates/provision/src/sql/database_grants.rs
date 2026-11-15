@@ -29,7 +29,7 @@ pub fn public_connect_databases_sql() -> &'static str {
 /// `ALTER`ed or `DROP`ped, needing no `CONNECT` on the target at all.
 /// `template0` is `datallowconn = false` and stays untouched, as it must:
 /// `CREATE DATABASE … TEMPLATE template1` does not require the creator to hold
-/// `CONNECT`, so closing the route costs no provisioning capability.
+/// `CONNECT`, so closing the route removes no provisioning authority.
 ///
 /// The loop revokes only where `pg_database.datacl` still grants PUBLIC
 /// `CONNECT`, so the provisioner, which is not a superuser, skips a database

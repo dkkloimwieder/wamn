@@ -1,4 +1,4 @@
-//! Standard-node fixture importing only the typed HTTP connection capability.
+//! Standard-node fixture importing only the typed HTTP connection host service.
 //!
 //! MVP outcome: minimum test coverage.
 

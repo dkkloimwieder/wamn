@@ -1,4 +1,4 @@
-//! Route authority fixtures shared by capability boundary tests.
+//! Route authority fixtures shared by host service boundary tests.
 
 use super::PlatformRouteAuthenticator;
 use serde_json::{Value, json};

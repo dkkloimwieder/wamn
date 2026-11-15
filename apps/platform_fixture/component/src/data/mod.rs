@@ -1,4 +1,4 @@
-//! Typed platform fixture accessors over the frozen `wamn:postgres` capability.
+//! Typed platform fixture accessors over the frozen `wamn:postgres` host service.
 //!
 //! Runtime access uses the generated statement accessors of the fixture
 //! package, and this crate authors no SQL. The generated operations are

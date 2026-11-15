@@ -11,9 +11,9 @@
 | docs/plan/cdc-reader-slot.md:125 | B | docs/operations/gcp.md:1345. source services/cdc-reader/src/lib.rs:624 |
 | docs/plan/cdc-reader-slot.md:127 | D | The unbuilt resync target refers to the retired plan. No current implemented resync establishes its disposition. |
 | docs/plan/cdc-reader-slot.md:129 | B | docs/operations/gcp.md:1388. The section-number reference already becomes “as the gap record states”. |
-| docs/plan/component-pull.md:9 | B | docs/architecture/capabilities.md:362. source Cargo.toml:102 |
+| docs/plan/component-pull.md:9 | B | docs/architecture/platform-services.md:362. source Cargo.toml:102 |
 | docs/plan/component-pull.md:13 | C | Cargo.toml:102. The pin is wasmCloud v2.11.0, not fd2bbc0a. |
-| docs/plan/component-pull.md:96 | A | docs/architecture/capabilities.md:381. source services/edge/Cargo.toml:21. unchanged |
+| docs/plan/component-pull.md:96 | A | docs/architecture/platform-services.md:381. source services/edge/Cargo.toml:21. unchanged |
 | docs/plan/environment-teardown.md:13 | C | services/ctl/src/env_verbs.rs:115. The command is env delete with one coordinate and optional --data. It has no old coordinate flags or --confirm plan mode. |
 | docs/plan/environment-teardown.md:14 | B | docs/architecture/naming.md:83. The environment lifecycle section also states that deletion is safe to repeat.. source crates/control/lib/src/environment/delete.rs:108 |
 | docs/plan/environment-teardown.md:21 | C | crates/control/lib/src/environment/delete.rs:173. Deletion calls Kubernetes and Helm itself. It does not print a Kubernetes deletion plan for an operator. |

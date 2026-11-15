@@ -95,4 +95,4 @@ The [operator methods](../../docs/testing/application-tests.md#operator-outcomes
 
 Cross-package reference tables, joined quantity sorting, and custom label-template authoring remain outside this scenario.
 Cycle counts, putaway strategies, and wave picking need separate application requirements.
-The app introduces no new platform capability or shared user-interface abstraction by itself.
+The app introduces no new platform host service or shared user-interface abstraction by itself.

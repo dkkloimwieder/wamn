@@ -1,12 +1,12 @@
-# Platform capabilities
+# Platform services
 
-A capability is an interface through which a component accesses platform resources.
+A host service implements an interface through which a component accesses platform resources.
 A binding connects a declared requirement to an authorized environment resource.
 The guest names its requirement and logical input. The host owns endpoints, credentials, and deployment target.
 
 ## Import admission
 
-The code-owned [capability declaration](../../crates/component-policy/src/lib.rs) defines the closed project import set.
+The code-owned [platform import registry](../../crates/component-policy/src/lib.rs) defines the closed project import set.
 It admits package and version pairs.
 A `wamn:*`, `wasmcloud:*` or `wasi:logging` row names an exact version.
 A `wasi:io`, `wasi:clocks` or `wasi:random` row names the family `0.2`.
@@ -36,13 +36,13 @@ Both admission and component modeling classify platform packages from this same 
 They classify the package independently of version, then enforce the admitted version or family.
 A foreign namespace alone does not make an import an application dependency.
 
-A guest-visible capability requires one pinned WIT contract and its corresponding host world.
+A guest-visible host service requires one pinned WIT contract and its corresponding host world.
 The implementation translates failures to that contract's error types.
 Its connection descriptor, publication mapping, binding coordinates, and plugin registration must agree.
 Per-effect spans and latency series belong to the implementation.
 The [native alignment page](native-alignment.md) records retained differences and their removal conditions.
 
-Capabilities used only by the platform need no guest import or project admission row.
+Host services used only by the platform need no guest import or project admission row.
 A new security class or unsupported method needs an explicit owner decision.
 The existing code declaration records that decision and does not infer it from a guest's imports.
 

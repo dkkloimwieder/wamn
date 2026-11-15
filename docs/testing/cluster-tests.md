@@ -11,7 +11,7 @@ Thin lifecycle entrypoints perform explicit container, cluster, and image operat
 The [Receiving cluster owner](../../apps/wamn_receiving/tests/route_authentication_live/cluster.rs) and [WMS cluster owner](../../apps/wamn_wms/tests/cluster.rs) retain their separate application cases.
 Shared platform helpers do not own the application's business assertions.
 
-Exercise the actual released guest and its required capabilities.
+Exercise the actual released guest and its required host services.
 Observe readiness, workload identity, image identity, and environment boundaries through the selected case.
 For event features, use the real broker delivery path described in [application tests](application-tests.md#committed-events).
 Process and connection failures need tests when their guarantees are affected.

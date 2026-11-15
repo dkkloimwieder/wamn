@@ -576,7 +576,7 @@ async fn native_member_statement_instances(pool: sqlx::PgPool) {
                     .filter(|import| import.as_str() == super::STATEMENTS)
                     .count(),
                 1,
-                "the two named instances are one capability: {:?}",
+                "the two named instances are one platform import: {:?}",
                 admitted.component.imports
             );
             let _lock = wamn_test_postgres::lock();

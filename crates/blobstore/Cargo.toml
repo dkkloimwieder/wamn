@@ -1,6 +1,6 @@
 [package]
 name = "wamn-blobstore"
-description = "Bound blob storage host capability."
+description = "Bound blob storage host service."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

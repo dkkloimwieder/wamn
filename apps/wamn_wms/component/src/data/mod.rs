@@ -1,4 +1,4 @@
-//! Typed WMS accessors over the frozen `wamn:postgres` capability.
+//! Typed WMS accessors over the frozen `wamn:postgres` host service.
 //!
 //! Runtime access uses content-addressed [`wamn_postgres_statements`]
 //! accessors and the generated Wamn projections; this crate authors no SQL.

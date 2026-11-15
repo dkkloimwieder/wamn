@@ -1,4 +1,4 @@
-//! Typed Acme Receiving overlay operations over the frozen PostgreSQL capability.
+//! Typed Acme Receiving overlay operations over the frozen PostgreSQL host service.
 
 mod error;
 pub mod operation;

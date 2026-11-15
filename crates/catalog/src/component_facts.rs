@@ -318,7 +318,7 @@ pub struct AdmittedComponentEffect {
 
 /// What shows one effect fact.
 ///
-/// The capability registry classifies an import by posture, and it is
+/// The platform import registry classifies an import by posture, and it is
 /// package-grain and declared. This classifies an effect by provenance on the
 /// same grain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -704,9 +704,9 @@ fn refuse_application_operation_imports(imports: &[String]) -> Result<(), Compon
 }
 
 /// Whether an import is a cross-package APPLICATION call rather than a
-/// platform capability.
+/// platform import.
 ///
-/// Keyed on the capability registry, not on a namespace. This was the LAST
+/// Keyed on the platform import registry, not on a namespace. This was the LAST
 /// namespace heuristic in the tree, and §2a missed it while deleting
 /// `is_effect_package`: it read "not `wasi` and not `wamn` ⇒ an application
 /// call", which silently misclassified `wasmcloud:blobstore` as a cross-package
@@ -718,7 +718,7 @@ fn refuse_application_operation_imports(imports: &[String]) -> Result<(), Compon
 /// Matching is on the registered PACKAGE, at any version, because this asks
 /// what TYPE of import it is and type does not change with version. A
 /// `wasi:clocks` import at an unregistered version is still a platform
-/// capability; refusing the version is admission's job, not this classifier's.
+/// import; refusing the version is admission's job, not this classifier's.
 fn is_application_operation_import(name: &str) -> bool {
     !wamn_component_policy::is_registered_package(name)
 }
@@ -726,7 +726,7 @@ fn is_application_operation_import(name: &str) -> bool {
 /// Sort and deduplicate derived effects, pinning them to platform imports.
 ///
 /// Both directions are validated: every interface an effect names is one of
-/// this component's own platform-capability imports, and every effectful
+/// this component's own platform imports, and every effectful
 /// import is in the projection.
 fn normalize_effects(
     effects: Vec<AdmittedComponentEffect>,
@@ -742,9 +742,7 @@ fn normalize_effects(
             if !imports.iter().any(|import| import == interface) {
                 return Err(ComponentFactError::new(
                     ComponentFactErrorType::UnimportedEffect,
-                    format!(
-                        "effect interface {interface:?} is not an audited platform-capability import"
-                    ),
+                    format!("effect interface {interface:?} is not an audited platform import"),
                 ));
             }
         }

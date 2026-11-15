@@ -65,7 +65,7 @@ pub fn validate_context(
     Ok(())
 }
 
-/// Bind a host-selected deployment for a capability fixture.
+/// Bind a host-selected deployment for a host service fixture.
 #[cfg(any(test, feature = "test-util"))]
 pub fn bind_test_context(
     postgres: &WamnPostgres,

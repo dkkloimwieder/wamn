@@ -103,7 +103,7 @@
 //! component name and the operation the driver called (`wamn-b2m6.7`). Before
 //! that widening an effect span named its component only by
 //! `wamn.component_digest`, which is a manifest key, and named its call only by
-//! `effect.operation`, which is the capability method. Neither answers "which
+//! `effect.operation`, which is the host service method. Neither answers "which
 //! component, running which node operation, raised this effect".
 
 use std::sync::{Arc, Mutex};
@@ -139,7 +139,7 @@ pub struct EffectIdentity<'a> {
 ///
 /// `component_name` and `operation` say WHO ran the effect and WHICH node
 /// operation raised it. The digest names the component by the key its manifest
-/// stores it under, and `effect.operation` names the capability method. So
+/// stores it under, and `effect.operation` names the host service method. So
 /// without these two a reader has neither the component name a person calls the
 /// component by nor the operation the wiring ran (`wamn-b2m6.7`).
 #[derive(Clone, Copy, Debug)]
@@ -170,7 +170,7 @@ pub struct EffectRun<'a> {
 
 /// Failure evidence shared only by one invocation and its nested calls.
 ///
-/// Successful capability attempts contribute no failure evidence. Exactly one
+/// Successful host service attempts contribute no failure evidence. Exactly one
 /// failed attempt supplies its observed outcome; two or more are ambiguous.
 /// Dropping the last handle discards the evidence with its invocation.
 #[derive(Debug, Clone, Default)]
@@ -187,7 +187,7 @@ enum FailureEvidence {
 }
 
 impl EffectEvidence {
-    /// Start an invocation with no observed failed capability attempt.
+    /// Start an invocation with no observed failed host service attempt.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -253,7 +253,7 @@ impl EffectOutcomeGuard {
         }
     }
 
-    /// Name the observed outcome and whether the capability returned an error.
+    /// Name the observed outcome and whether the host service returned an error.
     ///
     /// A successful response contributes no failure evidence, even though both
     /// success and some backend refusals are classified as `responded`.

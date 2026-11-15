@@ -1369,10 +1369,10 @@ mod tests {
 
     /// The parameter must actually discriminate. A snapshot carrying a valid
     /// HTTP authority chain is still refused when authorized against another
-    /// capability's descriptor — otherwise the argument is decoration, and one
-    /// capability could authorize another's binding.
+    /// service's descriptor — otherwise the argument is decoration, and one
+    /// service could authorize another's binding.
     #[test]
-    fn a_valid_http_snapshot_is_refused_against_another_capabilitys_descriptor() {
+    fn a_valid_http_snapshot_is_refused_against_another_services_descriptor() {
         let valid = snapshot();
         authorize_snapshot(&valid, &ConnectionTypeDescriptor::http_v1())
             .expect("valid against its own descriptor");

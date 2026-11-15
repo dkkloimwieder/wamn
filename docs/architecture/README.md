@@ -8,6 +8,6 @@ These pages describe implemented WAMN behavior, its contract boundaries, and kno
 [Data access](data-access.md): Schema ownership, SQL generation, transactions, record history, and query contracts.
 [Naming](naming.md): Package, operation, and language identifiers, and reserved names.
 [Components](components.md): Artifact grouping, admitted dependencies, and guest build identity.
-[Capabilities](capabilities.md): Import permission, external effects, and environment bindings.
+[Platform services](platform-services.md): Import permission, external effects, and environment bindings.
 [Edge](edge.md): The status socket of a running `wamn-edge`.
 [Native alignment](native-alignment.md): Retained WAMN implementations, upstream boundaries, and conditions for replacement.

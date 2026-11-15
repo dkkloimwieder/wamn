@@ -288,7 +288,7 @@ async fn setup(raw: &str) -> Fixture {
             &wamn_registry::project_env_key(org, "widgets", env),
             &login_url(&mut admin, &name, &role),
         )
-        .expect_redacted("production target capability");
+        .expect_redacted("production target connection");
         assert!(!format!("{target:?}").contains(PASSWORD));
         roles.push(role);
         targets.push(target);

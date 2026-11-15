@@ -36,16 +36,16 @@ Its target names the package and version. Admission adds the environment coordin
 Publication readers do not merge authored declarations or resolve schema references.
 A component declaration records its operations, ports, effects, static SQL, and connection requirements.
 Admission derives effects from the actual imports and compares the declared operation facts.
-Admission matches each capability row by its exact package and version.
+Admission matches each platform import row by its exact package and version.
 The standard WASI rows admit `0.2.12` only. A different patch is refused.
 The component's complete admitted facts remain separate from its compiled bytes.
 After native resolution, the host replaces each application's linker with one built from its declared imports.
-It then binds declared capabilities before preparing dispatch, including components that match no native plugin interface.
+It then binds declared host services before preparing dispatch, including components that match no native plugin interface.
 An undeclared import refuses at instantiation, and the error names that import.
 Platform workloads and the separate HTTP route component use their native linkers.
 Synchronous palette nodes export `wamn:node/handler`.
 Asynchronous palette nodes export `wamn:node/async-handler@0.1.0`.
-Application operations use their package interfaces and can await asynchronous capabilities.
+Application operations use their package interfaces and can await asynchronous host services.
 The P3 HTTP shell separately exports `wasi:http/handler@0.3.0`.
 Production component I/O uses native async calls for HTTP, PostgreSQL, typed operation invocation, and event settlement.
 HTTP authentication and durable queue polling also use native async calls.
@@ -53,7 +53,7 @@ HTTP authentication and durable queue polling also use native async calls.
 Pure transformations and reads of local metadata remain synchronous.
 Transaction destruction closes unfinished connections without waiting for network I/O.
 Explicit commit and rollback calls remain asynchronous and return clean connections to the pool.
-The [capability rules](capabilities.md) govern imported authority, and [naming](naming.md) defines exported operation tokens.
+The [host service rules](platform-services.md) govern imported authority, and [naming](naming.md) defines exported operation tokens.
 
 The receipt operation uses typed WIT calls between Acme and Receiving.
 Receiving and Acme each expose a typed purchase-order update interface in their own package.
@@ -119,7 +119,7 @@ Cargo hashes relative package paths there, so checkout paths do not change compo
 Combining unrelated guests can change dependency features and therefore compiled bytes.
 
 Standard-library guests target `wasm32-wasip2`.
-The build preserves their WASI imports, and admission applies the ordinary capability policy.
+The build preserves their WASI imports, and admission applies the ordinary import policy.
 The host supplies an empty application environment. Guest bytes are never rewritten.
 Platform component sources live under `guests/`. Each component has one directory.
 The palette and Modbus guests use standard WASI in the guest workspace.
@@ -141,6 +141,6 @@ This means 812 by 1,218 dots for provisional 4-by-6-inch labels at 203 dpi.
 The geometry is provisional.
 There is no public interface for template authoring.
 
-The separate blob writer uses the [blobstore capability](capabilities.md#object-storage) after rendering.
+The separate blob writer uses the [blobstore host service](platform-services.md#object-storage) after rendering.
 It preserves a caller's `request_id` and does not weaken object or binding authority.
 A printed label, stored label, and committed application mutation remain separate outcomes.

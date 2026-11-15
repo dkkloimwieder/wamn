@@ -356,7 +356,7 @@ An application is one composed component, and it loads as its own native workloa
 Publication records the separate route component in the release's entry record.
 The host starts that pinned component and loads application components separately.
 The route component receives release route data through `wasi:config`.
-Each request calls the host's operation capability, which invokes typed `run` in the application's store.
+Each request calls the host's operation interface, which invokes typed `run` in the application's store.
 The release chart uses a fresh store for each route request.
 The host serves platform endpoints natively under the same ingress host.
 Local publication records an absolute `file:` reference to a digest-named artifact. The existing local file loader makes sure of its bytes before binding.
@@ -366,7 +366,7 @@ Applications in one release can use different lifetimes.
 A call across applications is a workflow call through the host.
 
 Each call receives a new host-owned invocation scope.
-Capability calls use that scope, and cancellation revokes it independently of native store teardown.
+Host service calls use that scope, and cancellation revokes it independently of native store teardown.
 A retained guest context cannot select the next call's permissions.
 A call that leaves host resource handles open discards those resources and retires its instance while preserving its completed result.
 The host never clears a resource table and then reuses that instance, because old handles can alias new resources.
@@ -710,7 +710,7 @@ It enriches the value with storage information instead of replacing the original
 A write failure fails the emission as a whole.
 
 Commands use the [transaction rules](data-access.md#inputs-queries-and-transactions).
-Effects use the [capability contracts](capabilities.md), including their exact refusal and outcome types.
+Effects use the [host service contracts](platform-services.md), including their exact refusal and outcome types.
 No second error vocabulary replaces a public WIT or serialized application contract.
 
 ## Caller authentication

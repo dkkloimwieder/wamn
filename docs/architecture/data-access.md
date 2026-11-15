@@ -74,7 +74,7 @@ Base row creation, deletion, and business-field mutation require an explicit bas
 The platform owns grants and row policies separately from application DDL.
 Applications cannot replace or weaken them.
 PostgreSQL uses the authenticated database role for application row isolation.
-[Connection authority](capabilities.md#invocation-and-connection-authority) states how the host selects the database and the credential of each authority class.
+[Connection authority](platform-services.md#invocation-and-connection-authority) states how the host selects the database and the credential of each authority class.
 Control-store projections retain their separate project-targeted policies.
 `wamn-run-state` supplies the host queue worker's actual `CURRENT_USER` membership query.
 The native runtime refuses absent membership at the existing guest error boundary.
@@ -450,7 +450,7 @@ Run rows contain application JSON.
 This rule matches platform identity errors. Primary messages remain verbatim.
 
 Commands keep network effects outside transactions that hold database locks.
-Post-commit work uses the [event path](capabilities.md#events).
+Post-commit work uses the [event path](platform-services.md#events).
 
 A generated query returns its page as one result: its rows, and the keyset cursor that continues the read.
 For a cursor, SQL compares the sort field and ID as one row, so a matching index starts at that cursor.

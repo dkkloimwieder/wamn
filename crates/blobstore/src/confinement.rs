@@ -1,4 +1,4 @@
-//! Bucket and prefix walls for the blobstore capability.
+//! Bucket and prefix walls for the blobstore host service.
 //!
 //! The connection descriptor (`ConnectionTypeDescriptor::blobstore_v1`) makes
 //! the endpoint, bucket and prefix environment-owned and leaves the author

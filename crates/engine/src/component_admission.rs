@@ -19,7 +19,7 @@ pub const ASYNC_HANDLER_OPERATION: &str = "wamn:node/async-handler@0.1.0";
 const HANDLER_SIGNATURE: &str =
     "wamn:node/handler@0.1.0::run(node-context, string) -> result<emission, node-error>";
 
-/// Component declaration plus its exact admitted platform capabilities.
+/// Component declaration plus its exact admitted platform imports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentAdmissionRequest {
     pub declaration: ComponentDeclaration,
@@ -177,7 +177,7 @@ impl std::error::Error for ComponentAdmissionError {
 ///
 /// This function performs no network, storage, clock, or publication work. The
 /// caller supplies the configured validation engine, exact bytes, declaration,
-/// and the closed platform-capability set. Publication is the separate owner of
+/// and the closed platform import set. Publication is the separate owner of
 /// persisting a successful result — both halves of it: the library fact and the
 /// portable connection requirements the declaration's aliases mint.
 pub fn validate_component_admission(
@@ -328,7 +328,7 @@ pub fn validate_component_admission(
         }
     }
     // Policy and facts key each import by its interface instance type, so two
-    // named instances of one interface are one capability.
+    // named instances of one interface share one platform import entry.
     let imports = component_type
         .imports(raw)
         .map(|(name, item)| wamn_component_policy::instance_type(name, item.implements).to_owned())
@@ -433,8 +433,8 @@ fn owned_operation_value(ty: &wash_runtime::wasmtime::component::Type) -> bool {
 }
 
 /// Whether an import is a cross-package APPLICATION call rather than a
-/// platform capability -- the same question, keyed on the same capability
-/// registry, as `wamn_catalog`'s classifier of the same name.
+/// platform import -- the same question, keyed on the same platform
+/// import registry, as `wamn_catalog`'s classifier of the same name.
 ///
 /// This copy kept the namespace heuristic ("not `wasi` and not `wamn` ⇒ an
 /// application call") after the catalog's was moved onto the registry, so the
@@ -473,8 +473,8 @@ fn operation_signature_mismatch(
 ///
 /// Called with the policy import list after exact operation dependencies have
 /// been removed, so every remaining package is authority-free or an admitted
-/// platform capability. `effectful_dependencies` carries the other half of the
-/// union: a wrapper with an empty capability list reaches an effect
+/// platform import. `effectful_dependencies` carries the other half of the
+/// union: a wrapper with an empty import list reaches an effect
 /// through the operations it calls, and an empty projection declares it pure.
 ///
 /// A dependency contributes its PACKAGE and no interface, so its fact carries
@@ -482,7 +482,7 @@ fn operation_signature_mismatch(
 /// IMPORTED one. The interface this component imports is the dependency
 /// operation itself, and `wamn_catalog` excludes an operation-dependency
 /// import from the effect interfaces by rule. The package never collides with
-/// a capability package: an operation dependency is by construction an
+/// a platform package: an operation dependency is by construction an
 /// unregistered package.
 fn derive_effects(
     imports: &wamn_component_policy::ComponentImports,
@@ -576,11 +576,11 @@ fn top_level_exports(component_bytes: &[u8]) -> anyhow::Result<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-    /// `wamn-362o.41`: the classifier keys on the capability registry, so a
-    /// registered platform capability outside the `wasi`/`wamn` namespaces is
+    /// `wamn-362o.41`: the classifier keys on the platform import registry, so a
+    /// registered platform import outside the `wasi`/`wamn` namespaces is
     /// a platform import, and an unregistered package is an application call.
     #[test]
-    fn registered_capabilities_are_platform_imports_whatever_their_namespace() {
+    fn registered_packages_are_platform_imports_whatever_their_namespace() {
         for platform in [
             "wasmcloud:blobstore/blobstore@0.1.0",
             "wasmcloud:blobstore/container@0.1.0",
@@ -591,7 +591,7 @@ mod tests {
         ] {
             assert!(
                 !super::is_application_operation_import(platform),
-                "{platform} is a platform capability"
+                "{platform} is a platform import"
             );
         }
         for application in [

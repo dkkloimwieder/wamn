@@ -1,4 +1,4 @@
-//! Host identity capability for the separate HTTP route component.
+//! Host identity interface for the separate HTTP route component.
 
 use std::collections::HashSet;
 use std::sync::Arc;

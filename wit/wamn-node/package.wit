@@ -155,7 +155,7 @@ interface handler {
 }
 
 /// The async variant of the handler contract, for nodes that await async
-/// capability imports (RULED wamn-362o.46). The component model permits the
+/// platform imports (RULED wamn-362o.46). The component model permits the
 /// `async` canonical option only on an `async func` type -- an async lift of
 /// `handler.run` is refused by the validator -- so a node that must await
 /// (blob-put over wasmcloud:blobstore's async streams was the first) exports

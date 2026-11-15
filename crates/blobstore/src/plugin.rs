@@ -25,7 +25,7 @@ use wamn_sql::WamnPostgres;
 /// Plugin id, as the host registry knows it.
 pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
 
-/// The WAMN blobstore capability.
+/// The WAMN blobstore host service.
 pub struct WamnBlobstore {
     pub(super) postgres: Arc<WamnPostgres>,
     stores: moka::sync::Cache<(uuid::Uuid, i64), Arc<StoreClient>>,

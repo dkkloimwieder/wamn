@@ -543,7 +543,7 @@ Evidence: `crates/control/lib/src/delivery/qualification.rs:119` selects cases t
 
 Problem: Qualification supports WMS, Receiving, and Receiving with Acme. A correctly built hello application cannot pass that selection. Adding one more hello-specific branch preserves the same blocker for the next author.
 
-Proposal: Replace package-name selection with a platform qualification suite driven by declared capabilities and frozen release contracts. Run installation, component admission, authorization, route invocation, readiness, and applicable event tests against the exact candidate artifacts.
+Proposal: Replace package-name selection with a platform qualification suite driven by declared platform imports and frozen release contracts. Run installation, component admission, authorization, route invocation, readiness, and applicable event tests against the exact candidate artifacts.
 
 Keep application business suites separate from platform qualification. Preserve qualification identity through the release digest, platform image set, and suite identity.
 

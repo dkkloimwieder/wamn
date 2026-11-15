@@ -1,4 +1,4 @@
-//! The platform's closed vocabulary for observed capability outcomes.
+//! The platform's closed vocabulary for observed host service outcomes.
 
 use serde::{Deserialize, Serialize};
 
