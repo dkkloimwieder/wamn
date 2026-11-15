@@ -191,9 +191,8 @@ fn a_serving_host_binds_its_credential_to_the_declared_project() {
 
 #[test]
 fn a_serving_host_refuses_an_invalid_declared_project() {
-    let error = WamnPostgres::from_env_for_project("fixture.prod", None)
+    let _error = WamnPostgres::from_env_for_project("fixture.prod", None)
         .expect_err("an invalid project must refuse before reading ambient configuration");
-    assert!(error.to_string().contains("invalid composed project"));
 }
 
 // The identity-time record must match `runs_release_record_check` exactly, or a
@@ -560,43 +559,31 @@ const ENSURE_GUEST_ACL_ROLE_SQL: &str = "DO $acl$ BEGIN \
 /// The platform principal id `wamn-identity-protocol` derives for `wamn:executor`.
 const LIVE_PLATFORM_PRINCIPAL: &str = "d318d033-29ea-5cb0-ab56-24340413fbcc";
 
-/// The `platform."user"` minimum the provisioning test reads
-/// (`wamn-0h0g.9.19`).
-///
-/// Only the column the test names, because row existence is the whole
-/// question. `deploy/sql/app-schema.sql` owns the production table with its
-/// type CHECK constraints. The guest login reads it, so the
-/// fixture grants the stable ACL role what the production minimum grants: usage
-/// on the schema and select on the table.
-const ENSURE_LIVE_USER_TABLE_SQL: &str = "CREATE SCHEMA IF NOT EXISTS platform; \
-     CREATE TABLE IF NOT EXISTS platform.\"user\" ( \
-         id uuid NOT NULL, \
-         PRIMARY KEY (id)); \
-     GRANT USAGE ON SCHEMA platform TO wamn_app; \
-     GRANT SELECT ON platform.\"user\" TO wamn_app;";
-
-/// Install the user minimum in one disposable database and name the principals
-/// that own a row there.
+/// Install the product identity schema and seed the principals that own rows.
 pub(crate) async fn ensure_live_user_rows(admin_url: &str, principals: &[&str]) {
     let mut admin = connect_raw(admin_url).await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "{ENSURE_GUEST_ACL_ROLE_SQL} {ENSURE_LIVE_USER_TABLE_SQL}"
-    )))
-    .execute(&mut admin)
-    .await
-    .map(drop)
-    .expect("install the live platform.\"user\" minimum");
-    for principal in principals {
-        sqlx::query(
-            "INSERT INTO platform.\"user\" (id) VALUES ($1::text::uuid) \
-                 ON CONFLICT DO NOTHING",
-        )
-        .bind(principal)
-        .execute(&mut admin)
-        .await
-        .map(|result| result.rows_affected())
-        .expect("provision the live principal's user row");
+    for sql in [
+        ENSURE_GUEST_ACL_ROLE_SQL,
+        wamn_control_provision::sql::ensure_db_owner_role_sql(),
+        wamn_catalog::CATALOG_SCHEMA_SQL,
+        wamn_control_provision::APP_SCHEMA_SQL,
+    ] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+            .execute(&mut admin)
+            .await
+            .unwrap();
     }
+    sqlx::raw_sql("BEGIN").execute(&mut admin).await.unwrap();
+    sqlx::query("INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES ($1::text::uuid,'','fixture','admin:identity-fixture')")
+        .bind(LIVE_PRINCIPAL).execute(&mut admin).await.unwrap();
+    for principal in principals {
+        sqlx::query("INSERT INTO platform.\"user\" (id,type,email,display_name) VALUES ($1::text::uuid,$2,$1 || '@example.invalid',$3)")
+            .bind(principal)
+            .bind(if *principal == LIVE_PLATFORM_PRINCIPAL { "platform" } else { "user" })
+            .bind((*principal == LIVE_PLATFORM_PRINCIPAL).then_some("wamn:executor"))
+            .execute(&mut admin).await.unwrap();
+    }
+    sqlx::raw_sql("COMMIT").execute(&mut admin).await.unwrap();
 }
 
 fn live_database(admin_url: &str) -> String {

@@ -176,7 +176,6 @@ pub(super) fn manifest() -> Value {
                 "server_owned_fields": [
                     "part_code", "status", "row_version"
                 ],
-                "enum_fields": {"status": ["open", "complete", "cancelled"]},
                 "audit_log": {"columns": ["created_at"], "retention": "none"},
                 "operations": {
                     "get": {

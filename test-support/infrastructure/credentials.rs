@@ -176,7 +176,7 @@ pub async fn database_login(
 pub async fn apply_login(input: &str) -> anyhow::Result<String> {
     let mut connection = wamn_postgres::connect(input).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "{} CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD 'database-interface-only'; {} {}",
+        "{} DO $$ BEGIN IF to_regrole('wamn_apply') IS NULL THEN CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; ALTER ROLE wamn_apply PASSWORD 'database-interface-only'; {} {}",
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
         wamn_control_provision::apply::ensure_apply_role_sql(),
         wamn_control_provision::apply::APPLY_GRANTS_SQL,

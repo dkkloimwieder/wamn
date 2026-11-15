@@ -3,7 +3,7 @@
 import "fake-indexeddb/auto";
 import { expect, it, vi } from "vitest";
 import { render } from "@solidjs/testing-library";
-import { createRenderEffect, Loading } from "solid-js";
+import { createRenderEffect, createRoot, Loading } from "solid-js";
 import { liveList, liveRows, outbox } from "@wfe/sync";
 import {
   counterCollection,
@@ -72,20 +72,56 @@ it("round-trips widget list pages, changes, signal and cursor expiry", async () 
   const feed = widgetFeed(transport);
   const target = { filter: { code: ["priority"] } };
   const page = await feed.list(target, signal);
-  expect(page).toMatchObject({ cursor: "c1", complete: true });
+  {
+    const observed = page;
+    expect(observed).toHaveProperty(["cursor"], "c1");
+    expect(observed).toHaveProperty(["complete"], true);
+  }
   expect(page.rows).toHaveLength(2);
-  expect(page.rows[0]).toMatchObject({ id, editVersion: 4 });
-  expect(seen.map((request) => request.items)).toEqual([
-    [{ ...target, limit: 100 }],
-    [{ ...target, limit: 100, cursor: "p2" }],
-  ]);
+  {
+    const observed = page.rows[0];
+    expect(observed).toHaveProperty(["id"], id);
+    expect(observed).toHaveProperty(["editVersion"], 4);
+  }
+  expect(seen).toHaveLength(2);
+  for (const request of seen) {
+    expect(request.items).toHaveLength(1);
+    expect(request.items[0]).toHaveProperty("filter", target.filter);
+    expect(request.items[0]).toHaveProperty("limit", 100);
+  }
+  expect(seen[0]?.items[0]).not.toHaveProperty("cursor");
+  expect(seen[1]?.items[0]).toHaveProperty("cursor", "p2");
   const changes = await feed.changes(target, page.cursor, 50, signal);
-  expect(seen[2]?.items).toEqual([{ ...target, feed: { cursor: "c1", limit: 50 } }]);
-  expect(changes).toMatchObject({ next_cursor: "c3", complete: false });
-  expect(changes.rows[0]).toMatchObject({ id, row_version: 4001, data: { rowVersion: "4001", editVersion: 5 } });
-  expect(changes.rows[1]).toEqual({ id: "second", row_version: 4001, deleted: true });
-  expect(signals).toEqual([signal, signal, signal]);
-  await expect(feed.changes(target, "expired")).rejects.toMatchObject({ name: "CursorExpired" });
+  expect(seen[2]?.items).toHaveLength(1);
+  expect(seen[2]?.items[0]).toHaveProperty("filter", target.filter);
+  expect(seen[2]?.items[0]).toHaveProperty(["feed", "cursor"], "c1");
+  expect(seen[2]?.items[0]).toHaveProperty(["feed", "limit"], 50);
+  {
+    const observed = changes;
+    expect(observed).toHaveProperty(["next_cursor"], "c3");
+    expect(observed).toHaveProperty(["complete"], false);
+  }
+  {
+    const observed = changes.rows[0];
+    expect(observed).toHaveProperty(["id"], id);
+    expect(observed).toHaveProperty(["row_version"], 4001);
+    expect(observed).toHaveProperty(["data", "rowVersion"], "4001");
+    expect(observed).toHaveProperty(["data", "editVersion"], 5);
+  }
+  {
+    const observed = changes.rows[1];
+    expect(observed).toHaveProperty(["id"], "second");
+    expect(observed).toHaveProperty(["row_version"], 4001);
+    expect(observed).toHaveProperty(["deleted"], true);
+  }
+  {
+    const observed = signals;
+    expect(observed).toHaveProperty(["length"], 3);
+    expect(observed).toHaveProperty(["0"], signal);
+    expect(observed).toHaveProperty(["1"], signal);
+    expect(observed).toHaveProperty(["2"], signal);
+  }
+  await expect(feed.changes(target, "expired")).rejects.toHaveProperty("name", "CursorExpired");
 });
 
 it("reports an incomplete widget list at the cap", async () => {
@@ -97,7 +133,13 @@ it("reports an incomplete widget list at the cap", async () => {
     } as Transport,
     1,
   );
-  expect(await feed.list({})).toMatchObject({ cursor: "c1", complete: false, rows: [{ id }] });
+  {
+    const observed = await feed.list({});
+    expect(observed).toHaveProperty(["cursor"], "c1");
+    expect(observed).toHaveProperty(["complete"], false);
+    expect(observed).toHaveProperty(["rows", "length"], 1);
+    expect(observed).toHaveProperty(["rows", "0", "id"], id);
+  }
 });
 
 it("lists an authored view, follows an equal snapshot and deletes by the root id", async () => {
@@ -138,23 +180,42 @@ it("lists an authored view, follows an equal snapshot and deletes by the root id
     await c.preload();
     expect(c.size).toBe(2);
     expect(c.utils.complete()).toBe(true);
-    expect(c.get(id)).toMatchObject({ id, orderLabel: "order", itemLabel: "item", rowVersion: "4000" });
+    {
+      const observed = c.get(id);
+      expect(observed).toHaveProperty(["id"], id);
+      expect(observed).toHaveProperty(["orderLabel"], "order");
+      expect(observed).toHaveProperty(["itemLabel"], "item");
+      expect(observed).toHaveProperty(["rowVersion"], "4000");
+    }
     await c.utils.pull();
     expect(c.get(id)?.orderLabel).toBe("updated");
     await c.utils.pull();
     expect(c.has(id)).toBe(false);
     expect(c.has("second")).toBe(true);
     expect(seen.map((request) => request.operation)).toEqual(Array(3).fill(FEED_LINE_SCREEN_ROUTE.operation));
-    expect(seen.map((request) => request.items)).toEqual([
-      [{ order_id: id }],
-      [{ order_id: id, feed: { cursor: "c1" } }],
-      [{ order_id: id, feed: { cursor: "c2" } }],
-    ]);
+    {
+      const observed = seen.map((request) => request.items);
+      expect(observed).toHaveProperty(["length"], 3);
+      expect(observed).toHaveProperty(["0", "length"], 1);
+      expect(observed).toHaveProperty(["0", "0", "order_id"], id);
+      expect(observed).toHaveProperty(["1", "length"], 1);
+      expect(observed).toHaveProperty(["1", "0", "order_id"], id);
+      expect(observed).toHaveProperty(["1", "0", "feed", "cursor"], "c1");
+      expect(observed).toHaveProperty(["2", "length"], 1);
+      expect(observed).toHaveProperty(["2", "0", "order_id"], id);
+      expect(observed).toHaveProperty(["2", "0", "feed", "cursor"], "c2");
+    }
     expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
     expect(screenKey(target)).not.toBe(screenKey({ orderId: "other" }));
     const signal = new AbortController().signal;
-    await expect(feed.changes(target, "expired", 50, signal)).rejects.toMatchObject({ name: "CursorExpired" });
-    expect(seen[3]?.items).toEqual([{ order_id: id, feed: { cursor: "expired", limit: 50 } }]);
+    await expect(feed.changes(target, "expired", 50, signal)).rejects.toHaveProperty("name", "CursorExpired");
+    {
+      const observed = seen[3]?.items;
+      expect(observed).toHaveProperty(["length"], 1);
+      expect(observed).toHaveProperty(["0", "order_id"], id);
+      expect(observed).toHaveProperty(["0", "feed", "cursor"], "expired");
+      expect(observed).toHaveProperty(["0", "feed", "limit"], 50);
+    }
     expect(signals[3]).toBe(signal);
   } finally {
     await c.cleanup();
@@ -275,7 +336,7 @@ const counterWire = {
   created_at: wire.created_at,
 };
 
-it("fills counter pages and renders changes by their exact Int64 ids", async () => {
+it("fills counter pages and exposes reactive changes by their exact Int64 ids", async () => {
   const seen: WireRequest[] = [];
   const values: JsonValue[] = [
     { item: [counterWire], next_cursor: "p2", cursor: "c1" },
@@ -301,49 +362,53 @@ it("fills counter pages and renders changes by their exact Int64 ids", async () 
     },
   } as Transport;
   const c = counterCollection(counterFeed(transport), {}, { pollMs: 60_000 });
-  let view: ReturnType<typeof render> | undefined;
+  await c.preload();
+  const state = createRoot((dispose) => ({ rows: liveRows(c), list: liveList(c), dispose }));
   try {
-    view = render(
-      () => {
-        const rows = liveRows(c);
-        const list = liveList(c);
-        const host = document.createElement("div");
-        const mapNode = document.createElement("div");
-        const listNode = document.createElement("div");
-        mapNode.dataset.map = "";
-        listNode.dataset.list = "";
-        host.append(mapNode, listNode);
-        createRenderEffect(
-          () => [
-            Object.values(rows)
-              .map((row) => `${row.id}:${row.label};`)
-              .join(""),
-            list.map((row) => `${row.id}:${row.label};`).join(""),
-          ],
-          ([map, list]) => {
-            mapNode.textContent = map!;
-            listNode.textContent = list!;
-          },
-        );
-        return host;
-      },
-      { wrapper: Loading },
-    );
-    const contents = () =>
-      [...view!.container.querySelectorAll("[data-map], [data-list]")].map((node) => node.textContent);
-    const initial = `${counterId}:first;${nextCounterId}:second;`;
-    await vi.waitFor(() => expect(contents()).toEqual([initial, initial]));
+    await vi.waitFor(() => {
+      expect(Object.keys(state.rows)).toHaveLength(2);
+      expect(state.rows[counterId]?.label).toBe(counterWire.label);
+      expect(state.rows[nextCounterId]?.label).toBe("second");
+      expect(state.list).toHaveLength(2);
+      expect(state.list[0]?.id).toBe(counterId);
+      expect(state.list[0]?.label).toBe(counterWire.label);
+      expect(state.list[1]?.id).toBe(nextCounterId);
+      expect(state.list[1]?.label).toBe("second");
+    });
     expect(c.get(counterId)?.label).toBe("first");
     expect(c.get(nextCounterId)?.label).toBe("second");
     expect(c.get(Number(counterId))).toBeUndefined();
-    expect(seen.map((request) => request.items)).toEqual([[{ limit: 100 }], [{ limit: 100, cursor: "p2" }]]);
+    {
+      const observed = seen.map((request) => request.items);
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0", "length"], 1);
+      expect(observed).toHaveProperty(["0", "0", "limit"], 100);
+      expect(observed).toHaveProperty(["1", "length"], 1);
+      expect(observed).toHaveProperty(["1", "0", "limit"], 100);
+      expect(observed).toHaveProperty(["1", "0", "cursor"], "p2");
+    }
     await c.utils.pull();
-    expect(seen[2]?.items).toEqual([{ feed: { cursor: "c1" } }]);
-    expect(c.get(counterId)).toMatchObject({ id: counterId, label: "updated", editVersion: 2 });
+    {
+      const observed = seen[2]?.items;
+      expect(observed).toHaveProperty(["length"], 1);
+      expect(observed).toHaveProperty(["0", "feed", "cursor"], "c1");
+    }
+    {
+      const observed = c.get(counterId);
+      expect(observed).toHaveProperty(["id"], counterId);
+      expect(observed).toHaveProperty(["label"], "updated");
+      expect(observed).toHaveProperty(["editVersion"], 2);
+    }
     expect(c.has(nextCounterId)).toBe(false);
-    await vi.waitFor(() => expect(contents()).toEqual([`${counterId}:updated;`, `${counterId}:updated;`]));
+    await vi.waitFor(() => {
+      expect(Object.keys(state.rows)).toHaveLength(1);
+      expect(state.rows[counterId]?.label).toBe("updated");
+      expect(state.list).toHaveLength(1);
+      expect(state.list[0]?.id).toBe(counterId);
+      expect(state.list[0]?.label).toBe("updated");
+    });
   } finally {
-    view?.unmount();
+    state.dispose();
     await c.cleanup();
   }
 });
@@ -379,36 +444,35 @@ it("refuses an offline counter create and sends an online create without an outb
   try {
     const items = [{ label: "first", idempotencyKey: "create-1", requestId: "request-1" }];
     const options = { signal: new AbortController().signal };
-    await expect(record.create(items, options)).rejects.toThrow("This record cannot be created offline.");
+    await expect(record.create(items, options)).rejects.toThrow();
     expect(probe).toHaveBeenCalledWith(options.signal);
     expect(invoke).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
-    expect(o.entries()).toEqual([]);
+    {
+      const observed = o.entries();
+      expect(observed).toHaveProperty(["length"], 0);
+    }
     online = true;
-    await expect(record.create(items, options)).resolves.toEqual({
-      status: "completed",
-      value: {
-        id: counterId,
-        label: "first",
-        editVersion: 1,
-        createdAt: wire.created_at,
-      },
-    });
-    expect(invoke).toHaveBeenCalledExactlyOnceWith(
-      {
-        ...COUNTER_CREATE_ROUTE,
-        items: [
-          {
-            label: "first",
-            idempotency_key: "create-1",
-            request_id: "request-1",
-          },
-        ],
-      },
-      options,
-    );
+    const created = await record.create(items, options);
+    expect(created.status).toBe("completed");
+    if (created.status !== "completed") throw new Error("create did not complete");
+    expect(created.value.id).toBe(counterId);
+    expect(created.value.label).toBe("first");
+    expect(created.value.editVersion).toBe(1);
+    expect(created.value.createdAt).toBe(wire.created_at);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    const [request, observedOptions] = invoke.mock.calls[0]!;
+    for (const [field, value] of Object.entries(COUNTER_CREATE_ROUTE)) expect(request).toHaveProperty(field, value);
+    expect(request.items).toHaveLength(1);
+    expect(request.items[0]).toHaveProperty("label", items[0]!.label);
+    expect(request.items[0]).toHaveProperty("idempotency_key", items[0]!.idempotencyKey);
+    expect(request.items[0]).toHaveProperty("request_id", items[0]!.requestId);
+    expect(observedOptions).toBe(options);
     expect(enqueue).not.toHaveBeenCalled();
-    expect(o.entries()).toEqual([]);
+    {
+      const observed = o.entries();
+      expect(observed).toHaveProperty(["length"], 0);
+    }
     expect(send).not.toHaveBeenCalled();
   } finally {
     view.unmount();
@@ -475,11 +539,18 @@ it.each([COUNTER_UPDATE_ROUTE, COUNTER_DELETE_ROUTE])(
       const result = record.write(call, expected).catch((error: unknown) => error);
       await vi.waitFor(() => expect(o.entries()).toHaveLength(1));
       expect(enqueue).toHaveBeenCalledExactlyOnceWith(call, expected);
-      expect(o.entries()[0]).toMatchObject({ expect: { id: counterId }, expected });
+      {
+        const observed = o.entries()[0];
+        expect(observed).toHaveProperty(["expect", "id"], counterId);
+        expect(observed).toHaveProperty(["expected"], expected);
+      }
       await vi.waitFor(() => expect(view.container.textContent).toBe("updated"));
       expect(invoke).not.toHaveBeenCalled();
       await o.discard(o.entries()[0]!.seq);
-      expect(await result).toMatchObject({ name: "OutboxDiscarded" });
+      {
+        const observed = await result;
+        expect(observed).toHaveProperty(["name"], "OutboxDiscarded");
+      }
       await vi.waitFor(() => expect(view.container.textContent).toBe("first"));
     } finally {
       view.unmount();

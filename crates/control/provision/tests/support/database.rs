@@ -13,8 +13,9 @@ const SYSTEM_ROLE_SQL: &str = "DO $system_role$ BEGIN \
        END IF; \
      END $system_role$;";
 
-/// Install the control store on a supplied database, owned by `wamn_system`.
-pub async fn system(database: &str) {
+/// Install identity and registry storage, owned by `wamn_system`.
+/// Project-route fixtures install their own catalog after this schema.
+pub async fn system_schema(database: &str) {
     let mut connection = wamn_postgres::connect(database).await.unwrap();
     let name: String = sqlx::query_scalar("SELECT current_database()")
         .fetch_one(&mut connection)
@@ -30,9 +31,7 @@ pub async fn system(database: &str) {
             ),
             "SET ROLE wamn_system",
             SYSTEM_SCHEMA_SQL,
-            CONTROL_PORTABLE_STORE_SQL,
             "RESET ROLE",
-            &sql::grant_control_surface_sql(),
         ];
         for batch in batches {
             sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
@@ -40,6 +39,23 @@ pub async fn system(database: &str) {
                 .await
                 .expect("install the system control store minimum");
         }
+    }
+}
+
+/// Install the full control store, including its targeted author catalog.
+pub async fn system(database: &str) {
+    system_schema(database).await;
+    let mut connection = wamn_postgres::connect(database).await.unwrap();
+    for batch in [
+        "SET ROLE wamn_system",
+        CONTROL_PORTABLE_STORE_SQL,
+        "RESET ROLE",
+        &sql::grant_control_surface_sql(),
+    ] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(batch))
+            .execute(&mut connection)
+            .await
+            .expect("install control author storage");
     }
 }
 
@@ -160,15 +176,12 @@ pub fn login_sql(
 ) -> String {
     use postgres_protocol::escape::{escape_identifier, escape_literal};
     format!(
-        "{} CREATE ROLE {} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; {} {}",
+        "{} CREATE ROLE {} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; {}; {} {}",
         crate::sql::ensure_workload_acl_role_sql(family),
         escape_identifier(role),
         escape_literal(password),
-        format!(
-            "{}; {}",
-            membership_sql(family, role, true),
-            sql::platform_group_membership_sql(family)
-        ),
+        membership_sql(family, role, true),
+        sql::platform_group_membership_sql(family),
         crate::sql::grant_workload_login_sql(family, database, role)
     )
 }

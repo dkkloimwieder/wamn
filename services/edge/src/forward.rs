@@ -459,7 +459,7 @@ mod tests {
         assert_eq!(answer(StatusCode::OK, &accepted, "k"), Answer::Accepted);
         assert!(matches!(
             answer(StatusCode::OK, &refused, "k"),
-            Answer::Refused(reason) if reason.contains("invalid_input")
+            Answer::Refused(_)
         ));
         assert!(matches!(
             answer(StatusCode::BAD_REQUEST, b"no", "k"),

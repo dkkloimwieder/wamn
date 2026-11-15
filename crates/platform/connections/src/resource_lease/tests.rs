@@ -116,10 +116,10 @@ async fn database(pool: &sqlx::PgPool) -> (url::Url, sqlx::PgConnection) {
     (database, client)
 }
 
-async fn lock_pid(client: &mut sqlx::PgConnection, key: &str, granted: bool) -> i32 {
+async fn lock_pid(client: &mut sqlx::PgConnection, key: &str) -> i32 {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let row = sqlx::query("SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted=$2 AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1").bind(&key).bind(&granted).fetch_optional(&mut *client).await.unwrap();
+            let row = sqlx::query("SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1").bind(&key).fetch_optional(&mut *client).await.unwrap();
             if let Some(row) = row { return row.get(0); }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -136,19 +136,29 @@ async fn database_owners_unlock_and_recover_after_session_termination(pool: sqlx
     let target = uuid::Uuid::new_v4();
     let key = format!("resource:{target}:device");
     drop(a.call(connection, target, "device", false).await.unwrap());
-    let first_pid = lock_pid(&mut client, &key, true).await;
+    let first_pid = lock_pid(&mut client, &key).await;
     let other = Arc::clone(&b);
-    let second = tokio::spawn(async move { other.call(connection, target, "device", false).await });
-    lock_pid(&mut client, &key, false).await;
+    let mut second =
+        tokio::spawn(async move { other.call(connection, target, "device", false).await });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut second)
+            .await
+            .is_err()
+    );
     assert!(!second.is_finished());
     a.invalidate(connection);
     drop(second.await.unwrap().unwrap());
     b.invalidate(connection);
     drop(a.call(connection, target, "device", false).await.unwrap());
-    assert_eq!(lock_pid(&mut client, &key, true).await, first_pid);
+    assert_eq!(lock_pid(&mut client, &key).await, first_pid);
     let other = Arc::clone(&b);
-    let second = tokio::spawn(async move { other.call(connection, target, "device", false).await });
-    lock_pid(&mut client, &key, false).await;
+    let mut second =
+        tokio::spawn(async move { other.call(connection, target, "device", false).await });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut second)
+            .await
+            .is_err()
+    );
     assert!(
         sqlx::query("SELECT pg_terminate_backend($1)")
             .bind(&first_pid)
@@ -175,7 +185,7 @@ async fn database_owners_unlock_and_recover_after_session_termination(pool: sqlx
     })
     .await;
     drop(a.call(connection, target, "device", false).await.unwrap());
-    assert_ne!(lock_pid(&mut client, &key, true).await, first_pid);
+    assert_ne!(lock_pid(&mut client, &key).await, first_pid);
     a.shutdown().await;
 }
 
@@ -195,8 +205,13 @@ async fn a_waiting_acquire_does_not_block_another_resource_release(pool: sqlx::P
         .unwrap();
     drop(owner.call(first, target, "free", false).await.unwrap());
     let other = Arc::clone(&owner);
-    let pending = tokio::spawn(async move { other.call(second, target, "blocked", false).await });
-    lock_pid(&mut client, &blocked, false).await;
+    let mut pending =
+        tokio::spawn(async move { other.call(second, target, "blocked", false).await });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut pending)
+            .await
+            .is_err()
+    );
     drop(
         tokio::time::timeout(
             Duration::from_secs(5),

@@ -149,7 +149,10 @@ async fn a_committed_write_serves_the_new_generation_after_the_delete(pool: sqlx
         "new"
     );
     assert!(facts.secrets.get(&old.credential_id.unwrap()).is_none());
-    assert!(old_secret.expose().contains("old"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(old_secret.expose()).unwrap()["password"],
+        "old"
+    );
 }
 
 #[sqlx::test(migrations = false)]

@@ -885,11 +885,6 @@ async fn first_install(
         journey.environment,
         "beta",
     )?;
-    let shared = wamn_control_provision::environment_names::environment_resource_name(
-        org,
-        journey.project,
-        journey.environment,
-    )?;
     let mut environment = Value::Null;
     for after_sql in [false, true] {
         let label = if after_sql {

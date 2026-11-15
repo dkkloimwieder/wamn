@@ -164,10 +164,22 @@ fn linear_walk_completes_in_order() {
     });
     assert_eq!(t.status, WalkStatus::Completed);
     assert_eq!(t.nodes(), ["a", "b", "c"]);
-    assert_eq!(t.walk.result(), &json!({ "at": "c" }));
-    assert_eq!(*t.invoked[0].payload, json!({ "seen": [] })); // the entry gets the delivery payload
-    assert_eq!(*t.invoked[1].payload, json!({ "at": "a" })); // b sees a's output
-    assert_eq!(*t.invoked[2].payload, json!({ "at": "b" })); // c sees b's output
+    {
+        let observed = &(t.walk.result());
+        assert_eq!(observed["at"], serde_json::json!("c"));
+    };
+    {
+        let observed = &(*t.invoked[0].payload);
+        assert!(observed["seen"].as_array().expect("array").is_empty());
+    }; // the entry gets the delivery payload
+    {
+        let observed = &(*t.invoked[1].payload);
+        assert_eq!(observed["at"], serde_json::json!("a"));
+    }; // b sees a's output
+    {
+        let observed = &(*t.invoked[2].payload);
+        assert_eq!(observed["at"], serde_json::json!("b"));
+    }; // c sees b's output
 }
 
 #[test]
@@ -310,7 +322,10 @@ fn a_leaf_with_no_successors_just_ends() {
     });
     assert_eq!(t.status, WalkStatus::Completed);
     assert_eq!(t.nodes(), ["a"]);
-    assert_eq!(t.walk.result(), &json!({ "done": true }));
+    {
+        let observed = &(t.walk.result());
+        assert_eq!(observed["done"], serde_json::json!(true));
+    };
 }
 
 #[test]
@@ -341,10 +356,11 @@ fn terminal_error_routes_to_error_port_and_continues() {
         "handler ran last: {:?}",
         t.nodes()
     );
-    assert_eq!(
-        *t.invoked.last().unwrap().payload,
-        json!({"error": {"message": "boom", "code": "HTTP_500"}}),
-    );
+    {
+        let observed = &(*t.invoked.last().unwrap().payload);
+        assert_eq!(observed["error"]["message"], serde_json::json!("boom"));
+        assert_eq!(observed["error"]["code"], serde_json::json!("HTTP_500"));
+    };
 }
 
 #[test]
@@ -471,7 +487,7 @@ fn node_call_carries_configuration_and_deadline() {
     assert_eq!(c.input_port, None);
     assert_eq!(c.occurrence, 0);
     assert_eq!(c.deadline_ms, Some(5000));
-    assert_eq!(c.definition.params["url"], json!("https://x"));
+    assert_eq!(c.definition.params["url"], serde_json::json!("https://x"));
 }
 
 #[test]

@@ -698,7 +698,11 @@ pub async fn invoke(
                 );
                 failed_payload = payload;
             } else {
-                assert_eq!(payload[0]["value"]["keys"], json!(["native-item"]));
+                {
+                    let observed = &(payload[0]["value"]["keys"]);
+                    assert_eq!(observed.as_array().expect("array").len(), 1);
+                    assert_eq!(observed[0], serde_json::json!("native-item"));
+                };
             }
         }
     }

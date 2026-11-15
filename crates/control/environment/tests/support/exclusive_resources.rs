@@ -1,7 +1,6 @@
 //! Exclusive calls through the existing registry, Modbus and application fixtures.
 
 use super::*;
-use sqlx::{Connection as _, Row as _};
 use wamn_broker::Publisher;
 use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_capability_authority::auth_cache::test_util::{nats, until};

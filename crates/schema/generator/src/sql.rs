@@ -863,7 +863,7 @@ mod tests {
                 let last = rows.last().expect("a full page");
                 cursor = format!(
                     "{}, '{}'",
-                    last.get::<i32, _>(1),
+                    last.get::<i64, _>(1),
                     last.get::<uuid::Uuid, _>(0)
                 );
             }

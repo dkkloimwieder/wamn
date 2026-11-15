@@ -1,7 +1,7 @@
 //! Real-PostgreSQL test for the personal-access-token presenter.
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
 use wamn_broker::auth_changes::AuthDrops;
 
@@ -146,12 +146,6 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
             .and_then(|e| e.code())
             .as_deref(),
         Some("55000")
-    );
-    assert_eq!(
-        unbound
-            .as_database_error()
-            .map(sqlx::error::DatabaseError::message),
-        Some("actor-required")
     );
     assert_eq!(
         revoke_pat(

@@ -1,4 +1,4 @@
-use command_histories::database::bind_fixture_principal;
+use database::bind_fixture_principal;
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;

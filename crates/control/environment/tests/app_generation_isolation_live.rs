@@ -53,7 +53,6 @@ const PROJECT_ENV_KEY: &str = "project-dkzr";
 /// A throwaway probe string for a disposable server that dies with this test
 /// process. It is never printed and it names no real credential.
 const GENERATION_PROBE_PASSWORD: &str = "app-generation-probe";
-const NEVER_EXPIRES: &str = "2100-01-01T00:00:00Z";
 
 async fn connect(url: &str) -> Client {
     let client = wamn_postgres::connect(url)

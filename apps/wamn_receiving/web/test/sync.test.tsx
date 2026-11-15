@@ -101,12 +101,13 @@ describe("the receipt arithmetic", () => {
       receivedQuantity: "2.000",
       remainingQuantity: "8.000",
     } as unknown as Parameters<typeof receivedLine>[0];
-    expect(receivedLine(row, "3")).toEqual({
-      lineId: "line-1",
-      receivedQuantity: "5.000",
-      remainingQuantity: "5.000",
-      $tentative: true,
-    });
+    {
+      const observed = receivedLine(row, "3");
+      expect(observed).toHaveProperty(["lineId"], "line-1");
+      expect(observed).toHaveProperty(["receivedQuantity"], "5.000");
+      expect(observed).toHaveProperty(["remainingQuantity"], "5.000");
+      expect(observed).toHaveProperty(["$tentative"], true);
+    }
   });
 
   it("keys one receipt call to its line and leaves the key to the send", async () => {
@@ -119,13 +120,15 @@ describe("the receipt arithmetic", () => {
       },
     };
     const call = await receiptCall(request);
-    expect(call).toEqual({
-      operation: RECEIVING_RECORD_RECEIPT_ROUTE.operation,
-      request,
-      request_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
-      expect: { model: "purchase_order_line", id: "line-1" },
-      append_only: false,
-    });
+    {
+      const observed = call;
+      expect(observed).toHaveProperty(["operation"], RECEIVING_RECORD_RECEIPT_ROUTE.operation);
+      expect(observed).toHaveProperty(["request"], request);
+      expect(observed).toHaveProperty(["request_hash"], expect.stringMatching(/^[0-9a-f]{64}$/));
+      expect(observed).toHaveProperty(["expect", "model"], "purchase_order_line");
+      expect(observed).toHaveProperty(["expect", "id"], "line-1");
+      expect(observed).toHaveProperty(["append_only"], false);
+    }
   });
 });
 
@@ -154,16 +157,29 @@ describe("the open receipt lines screen", () => {
       </Loading>
     ));
     const table = await record("3");
-    await waitFor(() => expect(table.querySelector("[data-tentative]")).not.toBeNull());
     await waitFor(() => expect(within(table).getAllByText("5.000").length).toBe(2));
-    await waitFor(() => expect(screen.getByLabelText("Sync status").textContent).toContain("Pending: 1"));
+    await waitFor(() => {
+      const status = screen.getByLabelText("Sync status").textContent!;
+      expect(Number(status.match(/Pending:\s*(\d+)/)?.[1])).toBe(1);
+    });
     // The panel closes once the outbox holds the receipt, before any host answer.
     await waitFor(() => expect(screen.queryByRole("form", { name: "Record a receipt" })).toBeNull());
     await waitFor(() => expect(h.receipts.length).toBeGreaterThan(0));
     const sent = h.receipts[0]!.items[0] as { request_id: string; value: Record<string, unknown> };
     expect(sent.value.idempotency_key).toMatch(/^[0-9a-f]{64}$/);
-    expect(sent.value.line).toEqual([{ purchase_order_line_id: "line-1", location_id: "location-1", quantity: "3" }]);
-    expect(Object.keys(sent).sort()).toEqual(["request_id", "value"]);
+    {
+      const observed = sent.value.line;
+      expect(observed).toHaveProperty(["length"], 1);
+      expect(observed).toHaveProperty(["0", "purchase_order_line_id"], "line-1");
+      expect(observed).toHaveProperty(["0", "location_id"], "location-1");
+      expect(observed).toHaveProperty(["0", "quantity"], "3");
+    }
+    {
+      const observed = Object.keys(sent).sort();
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0"], "request_id");
+      expect(observed).toHaveProperty(["1"], "value");
+    }
     answer = {
       status: "completed",
       value: { receipt_id: "r-1", purchase_order_id: "order-1", purchase_order_status: "open", row_version: 4 },
@@ -172,9 +188,10 @@ describe("the open receipt lines screen", () => {
 
   it("puts a refused receipt in the not uploaded panel and resubmits a correction under the same line", async () => {
     let refuse = true;
+    const refusal = { status: "refused", code: "quantity_exceeds_remaining", text: "Too many.", detail: null } as const;
     const h = host(() =>
       refuse
-        ? { status: "refused", code: "quantity_exceeds_remaining", text: "Too many.", detail: null }
+        ? refusal
         : {
             status: "completed",
             value: { receipt_id: "r-1", purchase_order_id: "order-1", purchase_order_status: "open", row_version: 4 },
@@ -187,8 +204,8 @@ describe("the open receipt lines screen", () => {
     ));
     await record("30");
     const panel = await screen.findByRole("region", { name: "Not uploaded" });
-    await within(panel).findByText("Too many.");
-    expect(within(panel).getByText(/Record id: line-1/)).toBeDefined();
+    await within(panel).findByText(refusal.text);
+    expect(within(panel).getByText(/Record id:/).textContent).toContain(line.line_id);
     refuse = false;
     const corrected = (within(panel).getByLabelText("Corrected request") as HTMLTextAreaElement).value.replace(
       '"quantity": "30"',
@@ -199,6 +216,6 @@ describe("the open receipt lines screen", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "Resubmit" }));
     await waitFor(() => expect(h.receipts.length).toBe(2));
     expect((h.receipts[1]!.items[0] as { value: { line: { quantity: string }[] } }).value.line[0]!.quantity).toBe("3");
-    await waitFor(() => expect(within(panel).queryByText("Too many.")).toBeNull());
+    await waitFor(() => expect(within(panel).queryByText(refusal.text)).toBeNull());
   });
 });

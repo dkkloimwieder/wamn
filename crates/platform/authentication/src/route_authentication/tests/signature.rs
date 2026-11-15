@@ -241,10 +241,11 @@ async fn exact_body_signature_delivers_the_same_json_as_none() {
     assert_eq!(verified.status, 200);
     assert_eq!(delivered, expected);
     assert_eq!(delivered.len(), 1);
-    assert_eq!(
-        serde_json::from_str::<Value>(&delivered[0]).unwrap(),
-        json!({"a":2,"z":1})
-    );
+    {
+        let observed = &(serde_json::from_str::<Value>(&delivered[0]).unwrap());
+        assert_eq!(observed["a"], serde_json::json!(2));
+        assert_eq!(observed["z"], serde_json::json!(1));
+    };
     assert_ne!(delivered[0].as_bytes(), BODY);
 
     // A signature over re-encoded JSON must not authenticate the raw request.

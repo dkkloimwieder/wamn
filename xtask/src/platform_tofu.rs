@@ -293,17 +293,20 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        assert_eq!(
-            rendered["data"]["google_compute_network_endpoint_group"]["edge"],
-            json!({
-                "name": "wamn-edge", "zone": source["zone"], "project": source["project_id"]
-            })
-        );
+        {
+            let observed = &(rendered["data"]["google_compute_network_endpoint_group"]["edge"]);
+            assert_eq!(observed["name"], serde_json::json!("wamn-edge"));
+            assert_eq!(observed["zone"], serde_json::json!(source["zone"]));
+            assert_eq!(observed["project"], serde_json::json!(source["project_id"]));
+        };
         let resources = &rendered["resource"];
-        assert_eq!(
-            resources["google_compute_health_check"]["edge"]["tcp_health_check"],
-            json!({"port_specification": "USE_SERVING_PORT"})
-        );
+        {
+            let observed = &(resources["google_compute_health_check"]["edge"]["tcp_health_check"]);
+            assert_eq!(
+                observed["port_specification"],
+                serde_json::json!("USE_SERVING_PORT")
+            );
+        };
         let backends = resources["google_compute_backend_service"]
             .as_object()
             .unwrap();
@@ -312,42 +315,71 @@ mod tests {
         assert_eq!(backend["name"], "wamn-edge");
         assert_eq!(backend["protocol"], "HTTP");
         assert_eq!(backend["load_balancing_scheme"], "EXTERNAL_MANAGED");
-        assert_eq!(
-            backend["health_checks"],
-            json!(["${google_compute_health_check.edge.id}"])
-        );
-        assert_eq!(
-            backend["backend"],
-            json!([{
-                "group": "${data.google_compute_network_endpoint_group.edge.self_link}",
-                "balancing_mode": "RATE", "max_rate_per_endpoint": 1000,
-            }])
-        );
+        {
+            let observed = &(backend["health_checks"]);
+            assert_eq!(observed.as_array().expect("array").len(), 1);
+            assert_eq!(
+                observed[0],
+                serde_json::json!("${google_compute_health_check.edge.id}")
+            );
+        };
+        {
+            let observed = &(backend["backend"]);
+            assert_eq!(observed.as_array().expect("array").len(), 1);
+            assert_eq!(
+                observed[0]["group"],
+                serde_json::json!("${data.google_compute_network_endpoint_group.edge.self_link}")
+            );
+            assert_eq!(observed[0]["balancing_mode"], serde_json::json!("RATE"));
+            assert_eq!(
+                observed[0]["max_rate_per_endpoint"],
+                serde_json::json!(1000)
+            );
+        };
         assert_eq!(backend["enable_cdn"], true);
-        assert_eq!(
-            backend["cdn_policy"],
-            json!({
-                "cache_mode": "USE_ORIGIN_HEADERS",
-                "cache_key_policy": {
-                    "include_host": true, "include_protocol": true, "include_query_string": true,
-                },
-            })
-        );
-        assert_eq!(
-            resources["google_compute_url_map"]["edge"],
-            json!({
-                "name": "wamn-edge", "project": "wamn-dev",
-                "default_service": "${google_compute_backend_service.edge_https.id}",
-            })
-        );
-        assert_eq!(
-            resources["google_compute_target_https_proxy"]["edge"],
-            json!({
-                "name": "wamn-edge", "project": "wamn-dev",
-                "url_map": "${google_compute_url_map.edge.id}",
-                "certificate_map": "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.edge.id}",
-            })
-        );
+        {
+            let observed = &(backend["cdn_policy"]);
+            assert_eq!(
+                observed["cache_mode"],
+                serde_json::json!("USE_ORIGIN_HEADERS")
+            );
+            assert_eq!(
+                observed["cache_key_policy"]["include_host"],
+                serde_json::json!(true)
+            );
+            assert_eq!(
+                observed["cache_key_policy"]["include_protocol"],
+                serde_json::json!(true)
+            );
+            assert_eq!(
+                observed["cache_key_policy"]["include_query_string"],
+                serde_json::json!(true)
+            );
+        };
+        {
+            let observed = &(resources["google_compute_url_map"]["edge"]);
+            assert_eq!(observed["name"], serde_json::json!("wamn-edge"));
+            assert_eq!(observed["project"], serde_json::json!("wamn-dev"));
+            assert_eq!(
+                observed["default_service"],
+                serde_json::json!("${google_compute_backend_service.edge_https.id}")
+            );
+        };
+        {
+            let observed = &(resources["google_compute_target_https_proxy"]["edge"]);
+            assert_eq!(observed["name"], serde_json::json!("wamn-edge"));
+            assert_eq!(observed["project"], serde_json::json!("wamn-dev"));
+            assert_eq!(
+                observed["url_map"],
+                serde_json::json!("${google_compute_url_map.edge.id}")
+            );
+            assert_eq!(
+                observed["certificate_map"],
+                serde_json::json!(
+                    "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.edge.id}"
+                )
+            );
+        };
         let forwarding = &resources["google_compute_global_forwarding_rule"]["edge"];
         assert_eq!(
             forwarding["target"],
@@ -392,47 +424,79 @@ mod tests {
         )
         .unwrap();
         let resources = &rendered["resource"];
-        assert_eq!(
-            resources["google_certificate_manager_dns_authorization"]["edge"],
-            json!({
-                "name": "wamn-edge", "project": "wamn-dev", "domain": "wamn.dev",
-                "type": "PER_PROJECT_RECORD",
-            })
-        );
-        assert_eq!(
-            resources["google_certificate_manager_certificate"]["edge"],
-            json!({
-                "name": "wamn-edge", "project": "wamn-dev",
-                "managed": {
-                    "domains": ["wamn.dev", "*.wamn.dev"],
-                    "dns_authorizations": ["${google_certificate_manager_dns_authorization.edge.id}"],
-                },
-            })
-        );
-        assert_eq!(
-            resources["google_certificate_manager_certificate_map"]["edge"],
-            json!({"name": "wamn-edge", "project": "wamn-dev"})
-        );
-        assert_eq!(
-            resources["google_certificate_manager_certificate_map_entry"]["edge"],
-            json!({
-                "name": "wamn-edge", "project": "wamn-dev",
-                "map": "${google_certificate_manager_certificate_map.edge.name}",
-                "certificates": ["${google_certificate_manager_certificate.edge.id}"],
-                "matcher": "PRIMARY",
-            })
-        );
-        assert_eq!(
-            rendered["output"],
-            json!({
-                "edge_dns_authorization_name": {
-                    "value": "${google_certificate_manager_dns_authorization.edge.dns_resource_record[0].name}",
-                },
-                "edge_dns_authorization_data": {
-                    "value": "${google_certificate_manager_dns_authorization.edge.dns_resource_record[0].data}",
-                },
-            })
-        );
+        {
+            let observed = &(resources["google_certificate_manager_dns_authorization"]["edge"]);
+            assert_eq!(observed["name"], serde_json::json!("wamn-edge"));
+            assert_eq!(observed["project"], serde_json::json!("wamn-dev"));
+            assert_eq!(observed["domain"], serde_json::json!("wamn.dev"));
+            assert_eq!(observed["type"], serde_json::json!("PER_PROJECT_RECORD"));
+        };
+        {
+            let observed = &(resources["google_certificate_manager_certificate"]["edge"]);
+            assert_eq!(observed["name"], serde_json::json!("wamn-edge"));
+            assert_eq!(observed["project"], serde_json::json!("wamn-dev"));
+            assert_eq!(
+                observed["managed"]["domains"]
+                    .as_array()
+                    .expect("array")
+                    .len(),
+                2
+            );
+            assert_eq!(
+                observed["managed"]["domains"][0],
+                serde_json::json!("wamn.dev")
+            );
+            assert_eq!(
+                observed["managed"]["domains"][1],
+                serde_json::json!("*.wamn.dev")
+            );
+            assert_eq!(
+                observed["managed"]["dns_authorizations"]
+                    .as_array()
+                    .expect("array")
+                    .len(),
+                1
+            );
+            assert_eq!(
+                observed["managed"]["dns_authorizations"][0],
+                serde_json::json!("${google_certificate_manager_dns_authorization.edge.id}")
+            );
+        };
+        {
+            let observed = &(resources["google_certificate_manager_certificate_map"]["edge"]);
+            assert_eq!(observed["name"], serde_json::json!("wamn-edge"));
+            assert_eq!(observed["project"], serde_json::json!("wamn-dev"));
+        };
+        {
+            let observed = &(resources["google_certificate_manager_certificate_map_entry"]["edge"]);
+            assert_eq!(observed["name"], serde_json::json!("wamn-edge"));
+            assert_eq!(observed["project"], serde_json::json!("wamn-dev"));
+            assert_eq!(
+                observed["map"],
+                serde_json::json!("${google_certificate_manager_certificate_map.edge.name}")
+            );
+            assert_eq!(observed["certificates"].as_array().expect("array").len(), 1);
+            assert_eq!(
+                observed["certificates"][0],
+                serde_json::json!("${google_certificate_manager_certificate.edge.id}")
+            );
+            assert_eq!(observed["matcher"], serde_json::json!("PRIMARY"));
+        };
+        {
+            let observed = &(rendered["output"]);
+            assert_eq!(
+                observed["edge_dns_authorization_name"]["value"],
+                serde_json::json!(
+                    "${google_certificate_manager_dns_authorization.edge.dns_resource_record[0].name}"
+                )
+            );
+            assert_eq!(
+                observed["edge_dns_authorization_data"]["value"],
+                serde_json::json!(
+                    "${google_certificate_manager_dns_authorization.edge.dns_resource_record[0].data}"
+                )
+            );
+        };
     }
 
     #[test]
@@ -446,18 +510,16 @@ mod tests {
         )
         .unwrap();
         let rendered: Value = serde_json::from_slice(&bytes).expect("rendered JSON");
-        assert_eq!(
-            rendered["terraform"]["backend"],
-            json!({
-                "gcs": {"bucket": "owner-state", "prefix": "gcp/dev"},
-            })
-        );
-        assert_eq!(
-            rendered["terraform"]["required_providers"]["google"],
-            json!({
-                "source": "hashicorp/google", "version": "7.1.0",
-            })
-        );
+        {
+            let observed = &(rendered["terraform"]["backend"]);
+            assert_eq!(observed["gcs"]["bucket"], serde_json::json!("owner-state"));
+            assert_eq!(observed["gcs"]["prefix"], serde_json::json!("gcp/dev"));
+        };
+        {
+            let observed = &(rendered["terraform"]["required_providers"]["google"]);
+            assert_eq!(observed["source"], serde_json::json!("hashicorp/google"));
+            assert_eq!(observed["version"], serde_json::json!("7.1.0"));
+        };
         let resources = &rendered["resource"];
         assert_eq!(resources.as_object().unwrap().len(), 15);
         let clusters = resources["google_container_cluster"].as_object().unwrap();
@@ -472,34 +534,54 @@ mod tests {
             "projects/wamn-dev/regions/us-central1/subnetworks/wamn-us-central1"
         );
         assert_eq!(cluster["release_channel"]["channel"], "REGULAR");
-        assert_eq!(
-            cluster["ip_allocation_policy"],
-            json!({
-                "cluster_secondary_range_name": "pods", "services_secondary_range_name": "services",
-            })
-        );
+        {
+            let observed = &(cluster["ip_allocation_policy"]);
+            assert_eq!(
+                observed["cluster_secondary_range_name"],
+                serde_json::json!("pods")
+            );
+            assert_eq!(
+                observed["services_secondary_range_name"],
+                serde_json::json!("services")
+            );
+        };
         assert_eq!(
             cluster["workload_identity_config"]["workload_pool"],
             "wamn-dev.svc.id.goog"
         );
-        assert_eq!(
-            cluster["logging_config"]["enable_components"],
-            json!(["SYSTEM_COMPONENTS"])
-        );
-        assert_eq!(
-            cluster["monitoring_config"],
-            json!({
-                "enable_components": ["SYSTEM_COMPONENTS"], "managed_prometheus": {"enabled": false},
-            })
-        );
+        {
+            let observed = &(cluster["logging_config"]["enable_components"]);
+            assert_eq!(observed.as_array().expect("array").len(), 1);
+            assert_eq!(observed[0], serde_json::json!("SYSTEM_COMPONENTS"));
+        };
+        {
+            let observed = &(cluster["monitoring_config"]);
+            assert_eq!(
+                observed["enable_components"]
+                    .as_array()
+                    .expect("array")
+                    .len(),
+                1
+            );
+            assert_eq!(
+                observed["enable_components"][0],
+                serde_json::json!("SYSTEM_COMPONENTS")
+            );
+            assert_eq!(
+                observed["managed_prometheus"]["enabled"],
+                serde_json::json!(false)
+            );
+        };
         assert_eq!(cluster["remove_default_node_pool"], true);
         assert_eq!(cluster["initial_node_count"], 1);
         assert_eq!(cluster["deletion_protection"], true);
         assert_eq!(cluster["lifecycle"]["prevent_destroy"], true);
-        assert_eq!(
-            cluster["lifecycle"]["ignore_changes"],
-            json!(["initial_node_count", "remove_default_node_pool"])
-        );
+        {
+            let observed = &(cluster["lifecycle"]["ignore_changes"]);
+            assert_eq!(observed.as_array().expect("array").len(), 2);
+            assert_eq!(observed[0], serde_json::json!("initial_node_count"));
+            assert_eq!(observed[1], serde_json::json!("remove_default_node_pool"));
+        };
 
         let pools = resources["google_container_node_pool"].as_object().unwrap();
         let declared_pools = declared["node_pools"].as_array().unwrap();
@@ -514,10 +596,12 @@ mod tests {
             assert!(pool.get("initial_node_count").is_none());
             assert!(pool.get("autoscaling").is_none());
             assert_eq!(pool["lifecycle"]["prevent_destroy"], true);
-            assert_eq!(
-                pool["lifecycle"]["ignore_changes"],
-                json!(["node_count", "node_config[0].taint"])
-            );
+            {
+                let observed = &(pool["lifecycle"]["ignore_changes"]);
+                assert_eq!(observed.as_array().expect("array").len(), 2);
+                assert_eq!(observed[0], serde_json::json!("node_count"));
+                assert_eq!(observed[1], serde_json::json!("node_config[0].taint"));
+            };
             for field in ["machine_type", "spot", "disk_type"] {
                 assert_eq!(pool["node_config"][field], source[field]);
             }
@@ -531,45 +615,69 @@ mod tests {
                 declared["node_service_account"]
             );
             if source["spot"] == true {
-                assert_eq!(
-                    pool["upgrade_settings"],
-                    json!({"max_surge": 0, "max_unavailable": 1})
-                );
+                {
+                    let observed = &(pool["upgrade_settings"]);
+                    assert_eq!(observed["max_surge"], serde_json::json!(0));
+                    assert_eq!(observed["max_unavailable"], serde_json::json!(1));
+                };
             } else {
                 assert!(pool.get("upgrade_settings").is_none());
             }
         }
-        assert_eq!(pools["main"]["node_config"]["labels"], json!({}));
-        assert_eq!(pools["main"]["node_config"]["taint"], json!([]));
+        {
+            let observed = &(pools["main"]["node_config"]["labels"]);
+            assert!(observed.as_object().expect("object").is_empty());
+        };
+        {
+            let observed = &(pools["main"]["node_config"]["taint"]);
+            assert!(observed.as_array().expect("array").is_empty());
+        };
         for (name, role) in [("bench", "bench-host"), ("pg", "postgres")] {
-            assert_eq!(pools[name]["node_config"]["labels"], json!({"role": role}));
-            assert_eq!(
-                pools[name]["node_config"]["taint"],
-                json!([
-                    {"key": "role", "value": role, "effect": "NO_SCHEDULE"},
-                ])
-            );
+            {
+                let observed = &(pools[name]["node_config"]["labels"]);
+                assert_eq!(observed["role"], serde_json::json!(role));
+            };
+            {
+                let observed = &(pools[name]["node_config"]["taint"]);
+                assert_eq!(observed.as_array().expect("array").len(), 1);
+                assert_eq!(observed[0]["key"], serde_json::json!("role"));
+                assert_eq!(observed[0]["value"], serde_json::json!(role));
+                assert_eq!(observed[0]["effect"], serde_json::json!("NO_SCHEDULE"));
+            };
         }
         // An import of a missing cluster or pool refuses the plan (wamn-02nkn),
         // so only the three project resources that outlive a teardown import.
-        assert_eq!(
-            rendered["import"],
-            json!([
-                {
-                    "to": "google_artifact_registry_repository.kind",
-                    "id": "projects/wamn-dev/locations/us-central1/repositories/wamn-kind",
-                },
-                {
-                    "to": "google_dns_managed_zone.zone",
-                    "id": "projects/wamn-dev/managedZones/wamn-dev",
-                },
-                {
-                    "to": "google_storage_bucket_iam_member.guard_state",
-                    "id": "b/wamn-dev-tofu-state roles/storage.objectUser \
-                           serviceAccount:wamn-guard@wamn-dev.iam.gserviceaccount.com guard-state",
-                },
-            ])
-        );
+        {
+            let observed = &(rendered["import"]);
+            assert_eq!(observed.as_array().expect("array").len(), 3);
+            assert_eq!(
+                observed[0]["to"],
+                serde_json::json!("google_artifact_registry_repository.kind")
+            );
+            assert_eq!(
+                observed[0]["id"],
+                serde_json::json!("projects/wamn-dev/locations/us-central1/repositories/wamn-kind")
+            );
+            assert_eq!(
+                observed[1]["to"],
+                serde_json::json!("google_dns_managed_zone.zone")
+            );
+            assert_eq!(
+                observed[1]["id"],
+                serde_json::json!("projects/wamn-dev/managedZones/wamn-dev")
+            );
+            assert_eq!(
+                observed[2]["to"],
+                serde_json::json!("google_storage_bucket_iam_member.guard_state")
+            );
+            assert_eq!(
+                observed[2]["id"],
+                serde_json::json!(
+                    "b/wamn-dev-tofu-state roles/storage.objectUser \
+                           serviceAccount:wamn-guard@wamn-dev.iam.gserviceaccount.com guard-state"
+                )
+            );
+        };
     }
 
     #[test]
@@ -584,39 +692,89 @@ mod tests {
         )
         .unwrap();
         let resources = &rendered["resource"];
-        assert_eq!(
-            resources["google_artifact_registry_repository"]["kind"],
-            json!({
-                "project": "wamn-dev", "location": "us-central1", "repository_id": "wamn-kind",
-                "description": "kind test pushes of upgrade-environment", "format": "DOCKER",
-                "docker_config": {"immutable_tags": true},
-                "cleanup_policies": [{
-                    "id": "delete-older-than-7-days", "action": "DELETE",
-                    "condition": {"tag_state": "ANY", "older_than": "604800s"},
-                }],
-                "lifecycle": {"prevent_destroy": true},
-            })
-        );
-        assert_eq!(
-            resources["google_dns_managed_zone"]["zone"],
-            json!({
-                "project": "wamn-dev", "name": "wamn-dev", "dns_name": "wamn.dev.",
-                "description": "wamn.dev public zone", "visibility": "public",
-                "lifecycle": {"prevent_destroy": true},
-            })
-        );
-        assert_eq!(
-            resources["google_storage_bucket_iam_member"]["guard_state"],
-            json!({
-                "bucket": "wamn-dev-tofu-state", "role": "roles/storage.objectUser",
-                "member": "serviceAccount:wamn-guard@wamn-dev.iam.gserviceaccount.com",
-                "condition": {
-                    "title": "guard-state",
-                    "expression": "resource.name.startsWith(\"projects/_/buckets/wamn-dev-tofu-state/objects/guard/\")",
-                },
-                "lifecycle": {"prevent_destroy": true},
-            })
-        );
+        {
+            let observed = &(resources["google_artifact_registry_repository"]["kind"]);
+            assert_eq!(observed["project"], serde_json::json!("wamn-dev"));
+            assert_eq!(observed["location"], serde_json::json!("us-central1"));
+            assert_eq!(observed["repository_id"], serde_json::json!("wamn-kind"));
+            assert_eq!(
+                observed["description"],
+                serde_json::json!("kind test pushes of upgrade-environment")
+            );
+            assert_eq!(observed["format"], serde_json::json!("DOCKER"));
+            assert_eq!(
+                observed["docker_config"]["immutable_tags"],
+                serde_json::json!(true)
+            );
+            assert_eq!(
+                observed["cleanup_policies"]
+                    .as_array()
+                    .expect("array")
+                    .len(),
+                1
+            );
+            assert_eq!(
+                observed["cleanup_policies"][0]["id"],
+                serde_json::json!("delete-older-than-7-days")
+            );
+            assert_eq!(
+                observed["cleanup_policies"][0]["action"],
+                serde_json::json!("DELETE")
+            );
+            assert_eq!(
+                observed["cleanup_policies"][0]["condition"]["tag_state"],
+                serde_json::json!("ANY")
+            );
+            assert_eq!(
+                observed["cleanup_policies"][0]["condition"]["older_than"],
+                serde_json::json!("604800s")
+            );
+            assert_eq!(
+                observed["lifecycle"]["prevent_destroy"],
+                serde_json::json!(true)
+            );
+        };
+        {
+            let observed = &(resources["google_dns_managed_zone"]["zone"]);
+            assert_eq!(observed["project"], serde_json::json!("wamn-dev"));
+            assert_eq!(observed["name"], serde_json::json!("wamn-dev"));
+            assert_eq!(observed["dns_name"], serde_json::json!("wamn.dev."));
+            assert_eq!(
+                observed["description"],
+                serde_json::json!("wamn.dev public zone")
+            );
+            assert_eq!(observed["visibility"], serde_json::json!("public"));
+            assert_eq!(
+                observed["lifecycle"]["prevent_destroy"],
+                serde_json::json!(true)
+            );
+        };
+        {
+            let observed = &(resources["google_storage_bucket_iam_member"]["guard_state"]);
+            assert_eq!(observed["bucket"], serde_json::json!("wamn-dev-tofu-state"));
+            assert_eq!(
+                observed["role"],
+                serde_json::json!("roles/storage.objectUser")
+            );
+            assert_eq!(
+                observed["member"],
+                serde_json::json!("serviceAccount:wamn-guard@wamn-dev.iam.gserviceaccount.com")
+            );
+            assert_eq!(
+                observed["condition"]["title"],
+                serde_json::json!("guard-state")
+            );
+            assert_eq!(
+                observed["condition"]["expression"],
+                serde_json::json!(
+                    "resource.name.startsWith(\"projects/_/buckets/wamn-dev-tofu-state/objects/guard/\")"
+                )
+            );
+            assert_eq!(
+                observed["lifecycle"]["prevent_destroy"],
+                serde_json::json!(true)
+            );
+        };
         // The state bucket stays out of OpenTofu: it holds OpenTofu's own state.
         assert!(resources.get("google_storage_bucket").is_none());
     }

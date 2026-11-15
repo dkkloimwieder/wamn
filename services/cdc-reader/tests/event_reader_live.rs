@@ -22,7 +22,7 @@
 //! - an invalidated slot ends capture; recovery and restart resume it;
 //! - clean shutdown on cancellation; teardown leaves NO slot behind.
 
-use sqlx::{Connection as _, Row as _};
+use sqlx::Row as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -414,7 +414,6 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     .await
     .map(|result| result.rows_affected())
     .expect("project-env row");
-    let secret = wamn_registry::name::project_env_cdc_secret_name(ORG, PROJECT, ENV);
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&sql::ensure_schema_sql("app")).to_string(),
     ))

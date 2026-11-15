@@ -24,7 +24,6 @@ ring = { workspace = true }
 sha2 = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
-proptest = { workspace = true }
 wamn-package-artifact = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

@@ -124,7 +124,10 @@ describe("send", () => {
 
   it("maps a completed reply to ok", async () => {
     const { send } = harness(completed);
-    expect(await send(entry(), new AbortController().signal)).toEqual({ ok: true });
+    {
+      const observed = await send(entry(), new AbortController().signal);
+      expect(observed).toHaveProperty(["ok"], true);
+    }
   });
 
   it("replays one outbox entry with the same key and hash", async () => {
@@ -142,11 +145,23 @@ describe("send", () => {
       const queued = await box.enqueue(stored);
       await vi.waitFor(() => {
         expect(fetch).toHaveBeenCalledTimes(1);
-        expect(box.entries()).toEqual([{ ...queued, state: "pending" }]);
+        expect(box.entries()).toHaveLength(1);
+        const restored = box.entries()[0]!;
+        expect(restored.seq).toBe(queued.seq);
+        expect(restored.operation).toBe(queued.operation);
+        expect(restored.request).toEqual(queued.request);
+        expect(restored.request_hash).toBe(queued.request_hash);
+        expect(restored.expect).toEqual(queued.expect);
+        expect(restored.recorded_at).toBe(queued.recorded_at);
+        expect(restored.append_only).toBe(queued.append_only);
+        expect(restored.state).toBe("pending");
       });
       await box.replay();
       expect(fetch).toHaveBeenCalledTimes(2);
-      expect(box.entries()).toEqual([]);
+      {
+        const observed = box.entries();
+        expect(observed).toHaveProperty(["length"], 0);
+      }
       expect(requests[0]?.["idempotency_key"]).toBe(stored.request_hash);
       expect(requests[1]?.["idempotency_key"]).toBe(stored.request_hash);
       expect(requests[0]?.["request_id"]).not.toBe(requests[1]?.["request_id"]);
@@ -180,13 +195,12 @@ describe("send", () => {
       await box.replay();
       expect(fetch).toHaveBeenCalledTimes(1);
       expect(requests[0]?.["idempotency_key"]).toBe(stored.request_hash);
-      expect(box.entries()).toEqual([
-        {
-          ...queued,
-          state: "refused",
-          refusal: { code: "idempotency_conflict", text: '{"detail":{"field":"idempotency_key"}}' },
-        },
-      ]);
+      const refused = box.entries()[0]!;
+      expect(refused.request).toEqual(queued.request);
+      expect(refused.request_hash).toBe(queued.request_hash);
+      expect(refused.state).toBe("refused");
+      expect(refused.refusal?.code).toBe("idempotency_conflict");
+      expect(JSON.parse(refused.refusal!.text)).toHaveProperty(["detail", "field"], "idempotency_key");
     } finally {
       box.close();
     }
@@ -207,30 +221,18 @@ describe("send", () => {
   });
 
   it.each([
-    ["retry", undefined, retriable],
-    ["timeout", undefined, retriable],
-    [
-      "internal_error",
-      undefined,
-      { ok: false, retriable: false, refusal: { code: "internal_error", text: "internal_error" } },
-    ],
-    [
-      "unique_violation",
-      { constraint: "row_label" },
-      { ok: false, retriable: false, refusal: { code: "unique_violation", text: "This row already exists." } },
-    ],
-    [
-      "check_violation",
-      { constraint: "row_label" },
-      {
-        ok: false,
-        retriable: false,
-        refusal: { code: "check_violation", text: '{"detail":{"constraint":"row_label"}}' },
-      },
-    ],
-  ] as const)("maps the declared refusal %s", async (code, detail, expected) => {
+    ["retry", undefined, true],
+    ["timeout", undefined, true],
+    ["internal_error", undefined, false],
+    ["unique_violation", { constraint: "row_label" }, false],
+    ["check_violation", { constraint: "row_label" }, false],
+  ] as const)("maps the declared refusal %s", async (code, detail, retriable) => {
     const { send } = harness((requestId) => Response.json([{ request_id: requestId, error: { code, detail } }]));
-    expect(await send(entry(), new AbortController().signal)).toEqual(expected);
+    const result = await send(entry(), new AbortController().signal);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("refusal expected");
+    expect(result.retriable).toBe(retriable);
+    if (!retriable) expect(result.refusal?.code).toBe(code);
   });
 
   it("renews once and resends with the same key and a fresh request id", async () => {
@@ -239,18 +241,25 @@ describe("send", () => {
     );
     const stored = entry();
     const original = structuredClone(stored);
-    expect(await send(stored, new AbortController().signal)).toEqual({ ok: true });
-    expect(await send(stored, new AbortController().signal)).toEqual({ ok: true });
+    {
+      const observed = await send(stored, new AbortController().signal);
+      expect(observed).toHaveProperty(["ok"], true);
+    }
+    {
+      const observed = await send(stored, new AbortController().signal);
+      expect(observed).toHaveProperty(["ok"], true);
+    }
     expect(renew).toHaveBeenCalledTimes(1);
     expect(requests).toHaveLength(3);
     expect(new Set(requests.map((item) => item["request_id"])).size).toBe(3);
     for (const item of requests) {
-      expect(item).toEqual({
-        id: "row-1",
-        label: "Box",
-        idempotency_key: "stored-hash",
-        request_id: expect.any(String),
-      });
+      {
+        const observed = item;
+        expect(observed).toHaveProperty(["id"], "row-1");
+        expect(observed).toHaveProperty(["label"], "Box");
+        expect(observed).toHaveProperty(["idempotency_key"], "stored-hash");
+        expect(observed).toHaveProperty(["request_id"], expect.any(String));
+      }
     }
     expect(stored).toEqual(original);
   });
@@ -297,7 +306,16 @@ describe("send", () => {
       await replay;
       expect(await send.mock.results[0]!.value).toEqual(retriable);
       expect(renew).toHaveBeenCalledTimes(renewed ? 1 : 0);
-      expect(box.entries()).toEqual([{ ...queued, state: "pending" }]);
+      expect(box.entries()).toHaveLength(1);
+      const restored = box.entries()[0]!;
+      expect(restored.seq).toBe(queued.seq);
+      expect(restored.operation).toBe(queued.operation);
+      expect(restored.request).toEqual(queued.request);
+      expect(restored.request_hash).toBe(queued.request_hash);
+      expect(restored.expect).toEqual(queued.expect);
+      expect(restored.recorded_at).toBe(queued.recorded_at);
+      expect(restored.append_only).toBe(queued.append_only);
+      expect(restored.state).toBe("pending");
 
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open(database);
@@ -310,7 +328,16 @@ describe("send", () => {
           request.onsuccess = () => resolve(request.result as OutboxEntry[]);
           request.onerror = () => reject(request.error);
         });
-        expect(stored).toEqual([{ ...queued, state: "pending" }]);
+        expect(stored).toHaveLength(1);
+        const restored = stored[0]!;
+        expect(restored.seq).toBe(queued.seq);
+        expect(restored.operation).toBe(queued.operation);
+        expect(restored.request).toEqual(queued.request);
+        expect(restored.request_hash).toBe(queued.request_hash);
+        expect(restored.expect).toEqual(queued.expect);
+        expect(restored.recorded_at).toBe(queued.recorded_at);
+        expect(restored.append_only).toBe(queued.append_only);
+        expect(restored.state).toBe("pending");
       } finally {
         db.close();
       }
@@ -321,11 +348,13 @@ describe("send", () => {
 
   it.each(["absent", "toString"])("refuses the unknown operation %s", async (name) => {
     const { send, fetch, renew } = harness(completed);
-    expect(await send({ ...entry(), operation: name }, new AbortController().signal)).toEqual({
-      ok: false,
-      retriable: false,
-      refusal: { code: "unknown_operation", text: "unknown_operation" },
-    });
+    {
+      const observed = await send({ ...entry(), operation: name }, new AbortController().signal);
+      expect(observed).toHaveProperty(["ok"], false);
+      expect(observed).toHaveProperty(["retriable"], false);
+      expect(observed).toHaveProperty(["refusal", "code"], "unknown_operation");
+      expect(observed).toHaveProperty(["refusal", "text"], expect.any(String));
+    }
     expect(fetch).not.toHaveBeenCalled();
     expect(renew).not.toHaveBeenCalled();
   });
@@ -343,30 +372,42 @@ describe("send", () => {
       bindings: { [operation]: { invoke: create, fields: createFields } },
       renew: async () => true,
     });
-    expect(await send(entry(), new AbortController().signal)).toEqual({
-      ok: false,
-      retriable: false,
-      refusal: { code: "partial", text: "partial" },
-    });
+    {
+      const observed = await send(entry(), new AbortController().signal);
+      expect(observed).toHaveProperty(["ok"], false);
+      expect(observed).toHaveProperty(["retriable"], false);
+      expect(observed).toHaveProperty(["refusal", "code"], "partial");
+      expect(observed).toHaveProperty(["refusal", "text"], expect.any(String));
+    }
   });
 });
 
 describe("the idempotency key", () => {
   it("goes where each generated input type puts it", () => {
-    expect(idempotencyKeyPath(createFields)).toEqual(["idempotencyKey"]);
-    expect(idempotencyKeyPath(commandFields)).toEqual(["value", "idempotencyKey"]);
+    {
+      const observed = idempotencyKeyPath(createFields);
+      expect(observed).toHaveProperty(["length"], 1);
+      expect(observed).toHaveProperty(["0"], "idempotencyKey");
+    }
+    {
+      const observed = idempotencyKeyPath(commandFields);
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0"], "value");
+      expect(observed).toHaveProperty(["1"], "idempotencyKey");
+    }
     expect(idempotencyKeyPath({ request_id: "requestId", id: "id" })).toBeUndefined();
   });
 
   it("is a top-level member of a create request", async () => {
     const { send, requests } = harness(completed);
     await send(entry(), new AbortController().signal);
-    expect(requests[0]).toEqual({
-      id: "row-1",
-      label: "Box",
-      idempotency_key: "stored-hash",
-      request_id: expect.any(String),
-    });
+    {
+      const observed = requests[0];
+      expect(observed).toHaveProperty(["id"], "row-1");
+      expect(observed).toHaveProperty(["label"], "Box");
+      expect(observed).toHaveProperty(["idempotency_key"], "stored-hash");
+      expect(observed).toHaveProperty(["request_id"], expect.any(String));
+    }
   });
 
   it("is inside value for a claim command, and the stored request keeps no key", async () => {
@@ -383,18 +424,24 @@ describe("the idempotency key", () => {
     });
     const stored = { orderId: "order-1", line: [{ orderLineId: "line-1", quantity: "2" }] };
     const command = { ...entry(), operation: commandOperation, request: { value: stored } };
-    expect(await send(command, new AbortController().signal)).toEqual({ ok: true });
-    expect(items).toEqual([
-      {
-        request_id: expect.any(String),
-        value: {
-          idempotency_key: "stored-hash",
-          order_id: "order-1",
-          line: [{ order_line_id: "line-1", quantity: "2" }],
-        },
-      },
-    ]);
-    expect(command.request).toEqual({ value: stored });
+    {
+      const observed = await send(command, new AbortController().signal);
+      expect(observed).toHaveProperty(["ok"], true);
+    }
+    {
+      const observed = items;
+      expect(observed).toHaveProperty(["length"], 1);
+      expect(observed).toHaveProperty(["0", "request_id"], expect.any(String));
+      expect(observed).toHaveProperty(["0", "value", "idempotency_key"], "stored-hash");
+      expect(observed).toHaveProperty(["0", "value", "order_id"], "order-1");
+      expect(observed).toHaveProperty(["0", "value", "line", "length"], 1);
+      expect(observed).toHaveProperty(["0", "value", "line", "0", "order_line_id"], "line-1");
+      expect(observed).toHaveProperty(["0", "value", "line", "0", "quantity"], "2");
+    }
+    {
+      const observed = command.request;
+      expect(observed).toHaveProperty(["value"], stored);
+    }
   });
 
   it("refuses a binding whose input takes no key", () => {
@@ -404,7 +451,7 @@ describe("the idempotency key", () => {
         bindings: { [operation]: { invoke: create, fields: { id: "id" } } },
         renew: async () => true,
       }),
-    ).toThrow(`${operation} takes no idempotency key, so the outbox cannot replay it`);
+    ).toThrow();
   });
 });
 

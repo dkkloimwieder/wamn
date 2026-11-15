@@ -2,7 +2,7 @@
 //! (docs/architecture/overview.md#organization-membership-and-administration):
 //! Administration is inherited from explicit grants. Invalid targets are refused.
 
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_platform_identity::{
     IdentityErrorType, create_or_reuse_user,

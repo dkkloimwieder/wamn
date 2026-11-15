@@ -89,14 +89,7 @@ A replacement target invalidates records, revisions, cursors, drafts, and pendin
 
 ## Application assertions
 
-[Command histories](tests/receiving_command_histories_live.rs) compare outcomes with an independent [model](tests/receiving_history/model.rs).
-The [database observer](tests/receiving_history/database.rs) reads a coherent business snapshot independently of the response.
-It includes orders, lines, command claims, receipts, and receipt lines.
-Its assertions compare receipt-line sums separately from the stored received quantity.
-
-The retained cases cover replay, changed-body refusal, exact remainder, excess quantity, invalid status, contention, rollback, lost response, stale revisions, and authority removal.
-The lost-response case withholds a received application response after observing commit.
-It does not establish a TCP-loss or process-kill result.
+The command-history route case needs a product fault fixture before it can run the histories.
 
 [Route tests](tests/route_authentication_live.rs) exercise the deployed application and its exact release.
 The PAT journey folds the served history of a purchase order that the Acme update changed, and it finds no Acme column.

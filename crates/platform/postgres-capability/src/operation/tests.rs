@@ -100,7 +100,7 @@ BTreeMap::from([("entry".into(), ServingAttachment {
 
 struct Run {
     mode: u32,
-    reply: oneshot::Sender<()>,
+    reply: oneshot::Sender<String>,
 }
 
 impl GuestCall for Run {
@@ -183,10 +183,14 @@ impl GuestCall for Run {
                     assert_eq!(delivery.depth, 0);
                 }
             }
+            let invocation =
+                accessor.with(|mut access| access.get().active_ctx.component_id.to_string());
             let dropped = accessor.with(|mut access| access.get().dropped.token());
             tokio::spawn(async move {
                 dropped.cancelled().await;
-                self.reply.send(()).expect("fixture receiver exists");
+                self.reply
+                    .send(invocation)
+                    .expect("fixture receiver exists");
             });
             Ok(None)
         })
@@ -197,20 +201,8 @@ async fn fixture(pool: &sqlx::PgPool) -> (url::Url, Arc<WamnPostgres>, Arc<Loade
     let database = wamn_test_postgres::url(pool);
     let url = live_guest_url(database.as_str(), PROJECT_ENV_KEY).await;
     ensure_live_user_rows(database.as_str(), &[LIVE_PRINCIPAL]).await;
-    let schema = include_str!("../../../../../deploy/sql/app-schema.sql");
-    let start = schema
-        .find("CREATE TABLE IF NOT EXISTS platform.write_log")
-        .unwrap();
-    let end = schema
-        .find("GRANT DELETE ON platform.write_log TO wamn_app;")
-        .unwrap()
-        + "GRANT DELETE ON platform.write_log TO wamn_app;".len();
     {
         let batches: &[&str] = &[
-            &schema[start..end],
-            "DO $$ BEGIN CREATE ROLE wamn_db_owner; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
-            include_str!("../../../../../deploy/sql/record-history.sql"),
-            include_str!("../../../../../deploy/sql/record-history-app-grants.sql"),
             "CREATE TABLE widget(id int PRIMARY KEY, value int NOT NULL, \
            CONSTRAINT application_identity CHECK (value = 1 OR wamn_authority.current_application() IS NOT DISTINCT FROM 'receiving')); \
          INSERT INTO widget VALUES (1, 1); \
@@ -256,7 +248,7 @@ async fn fixture(pool: &sqlx::PgPool) -> (url::Url, Arc<WamnPostgres>, Arc<Loade
     (database, postgres, release)
 }
 
-async fn run_guest(postgres: Arc<WamnPostgres>, release: Arc<LoadedRelease>, mode: u32) {
+async fn run_guest(postgres: Arc<WamnPostgres>, release: Arc<LoadedRelease>, mode: u32) -> String {
     let engine = build_engine(&[]).unwrap();
     let workload = engine
         .initialize_workload(
@@ -320,7 +312,7 @@ async fn run_guest(postgres: Arc<WamnPostgres>, release: Arc<LoadedRelease>, mod
     tokio::time::timeout(std::time::Duration::from_secs(120), receive)
         .await
         .expect("fixture Store drops")
-        .unwrap();
+        .unwrap()
 }
 
 async fn connect(database: &url::Url) -> sqlx::PgConnection {
@@ -393,7 +385,7 @@ async fn unavailable_principal_database_returns_connection_unavailable(pool: sql
 
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture(&pool).await;
-    sqlx::raw_sql("DROP TABLE platform.\"user\"")
+    sqlx::raw_sql("DROP TABLE platform.\"user\" CASCADE")
         .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
         .await
         .unwrap();
@@ -404,7 +396,7 @@ async fn unavailable_principal_database_returns_connection_unavailable(pool: sql
 async fn missing_principal_returns_permission_denied(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture(&pool).await;
-    sqlx::raw_sql("DELETE FROM platform.\"user\"")
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES('{LIVE_PRINCIPAL}','','fixture','admin:remove-fixture-user'); DELETE FROM platform.\"user\"; COMMIT")))
         .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
         .await
         .unwrap();
@@ -415,8 +407,10 @@ async fn missing_principal_returns_permission_denied(pool: sqlx::PgPool) {
 async fn anonymous_read_authorization_uses_a_read_transaction(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let (_, postgres, release) = fixture(&pool).await;
-    run_guest(Arc::clone(&postgres), release, 19).await;
-    assert!(postgres.scopes.is_empty());
+    let invocation = run_guest(Arc::clone(&postgres), release, 19).await;
+    assert!(postgres.operation_transaction_for(&invocation).is_none());
+    assert!(postgres.session_identity(&invocation).is_none());
+    assert!(postgres.invocation(&invocation).is_none());
 }
 
 #[sqlx::test(migrations = false)]
@@ -424,7 +418,10 @@ async fn reads_use_a_host_transaction_and_refuse_write_claims(pool: sqlx::PgPool
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture(&pool).await;
     for _ in 0..2 {
-        run_guest(Arc::clone(&postgres), Arc::clone(&release), 18).await;
+        let invocation = run_guest(Arc::clone(&postgres), Arc::clone(&release), 18).await;
+        assert!(postgres.operation_transaction_for(&invocation).is_none());
+        assert!(postgres.session_identity(&invocation).is_none());
+        assert!(postgres.invocation(&invocation).is_none());
     }
     let count: i64 = sqlx::query("SELECT count(*) FROM platform.write_log")
         .fetch_one(&mut connect(&database).await)
@@ -432,7 +429,6 @@ async fn reads_use_a_host_transaction_and_refuse_write_claims(pool: sqlx::PgPool
         .unwrap()
         .get(0);
     assert_eq!(count, 0);
-    assert!(postgres.scopes.is_empty());
 }
 
 #[tokio::test]
@@ -485,9 +481,11 @@ async fn rollback_without_begin_refuses(pool: sqlx::PgPool) {
 async fn rollback_removes_the_claim_and_statement_effects(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture(&pool).await;
-    run_guest(Arc::clone(&postgres), release, 14).await;
+    let invocation = run_guest(Arc::clone(&postgres), release, 14).await;
     assert_eq!(value(&database).await, 1);
-    assert!(postgres.scopes.is_empty());
+    assert!(postgres.operation_transaction_for(&invocation).is_none());
+    assert!(postgres.session_identity(&invocation).is_none());
+    assert!(postgres.invocation(&invocation).is_none());
     let count: i64 = sqlx::query("SELECT count(*) FROM platform.write_log")
         .fetch_one(&mut connect(&database).await)
         .await
@@ -580,9 +578,11 @@ async fn refused_commit_then_begin_on_the_same_store_is_accepted(pool: sqlx::PgP
 async fn store_drop_rolls_back_the_statement_and_claim(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture(&pool).await;
-    run_guest(Arc::clone(&postgres), release, 2).await;
+    let invocation = run_guest(Arc::clone(&postgres), release, 2).await;
     assert_eq!(value(&database).await, 1);
-    assert!(postgres.scopes.is_empty());
+    assert!(postgres.operation_transaction_for(&invocation).is_none());
+    assert!(postgres.session_identity(&invocation).is_none());
+    assert!(postgres.invocation(&invocation).is_none());
     let count: i64 = sqlx::query("SELECT count(*) FROM platform.write_log")
         .fetch_one(&mut connect(&database).await)
         .await

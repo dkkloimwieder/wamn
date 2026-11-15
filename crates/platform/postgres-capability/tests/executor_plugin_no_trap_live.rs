@@ -59,10 +59,6 @@ use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker};
 /// the host trapped instead of returning.
 const MARK_ENTER: u32 = 238;
 
-/// Pushed AFTER a plugin call whose WIT declares no error channel. Its presence
-/// is the whole no-trap assertion for those two plugins.
-const MARK_RESUMED: u32 = 255;
-
 /// The `component_id` every store is built with. Plugins key their per-component
 /// state on it (`ActiveCtx::component_id`), so the test's own registration —
 /// the postgres project identity — must use the same string.

@@ -1,7 +1,7 @@
 //! Receiving application scenarios over real platform adapters.
 
-#[path = "receiving_command_histories_live.rs"]
-mod command_histories;
+#[path = "receiving_history/database.rs"]
+mod database;
 
 mod dev;
 mod environment;

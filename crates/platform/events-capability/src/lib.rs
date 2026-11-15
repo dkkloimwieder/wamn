@@ -616,10 +616,12 @@ mod tests {
         assert_eq!(event.entity, "orders");
         assert_eq!(event.op, Op::Update);
         assert_eq!(event.dedup_id, dangerous_author_id);
-        assert_eq!(
-            event.payload,
-            serde_json::json!(["arbitrary", {"status": "ready"}])
-        );
+        {
+            let observed = &(event.payload);
+            assert_eq!(observed.as_array().expect("array").len(), 2);
+            assert_eq!(observed[0], serde_json::json!("arbitrary"));
+            assert_eq!(observed[1]["status"], serde_json::json!("ready"));
+        };
     }
 
     #[test]

@@ -164,10 +164,17 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
             .find(|object| object["kind"] == "ClusterRole")
             .unwrap();
         assert!(role["metadata"]["namespace"].is_null());
-        assert_eq!(
-            role["rules"],
-            json!([{"apiGroups":[""], "resources":["configmaps"], "verbs":["get", "list"]}])
-        );
+        {
+            let observed = &(role["rules"]);
+            assert_eq!(observed.as_array().expect("array").len(), 1);
+            assert_eq!(observed[0]["apiGroups"].as_array().expect("array").len(), 1);
+            assert_eq!(observed[0]["apiGroups"][0], serde_json::json!(""));
+            assert_eq!(observed[0]["resources"].as_array().expect("array").len(), 1);
+            assert_eq!(observed[0]["resources"][0], serde_json::json!("configmaps"));
+            assert_eq!(observed[0]["verbs"].as_array().expect("array").len(), 2);
+            assert_eq!(observed[0]["verbs"][0], serde_json::json!("get"));
+            assert_eq!(observed[0]["verbs"][1], serde_json::json!("list"));
+        };
         let binding = objects
             .iter()
             .find(|object| object["kind"] == "ClusterRoleBinding")
@@ -350,7 +357,11 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
                     } else {
                         cluster
                     };
-                    assert_eq!(rule["resourceNames"], json!([target]));
+                    {
+                        let observed = &(rule["resourceNames"]);
+                        assert_eq!(observed.as_array().expect("array").len(), 1);
+                        assert_eq!(observed[0], serde_json::json!(target));
+                    };
                     assert!(
                         !rule["verbs"]
                             .as_array()

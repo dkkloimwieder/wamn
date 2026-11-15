@@ -159,10 +159,6 @@ pub const ENSURE_ADMIN_ROLE_SQL: &str = "INSERT INTO platform.role (name) \
 mod tests {
     use super::*;
 
-    fn fixture_manifest() -> Vec<u8> {
-        wamn_fixture_package::manifest_bytes()
-    }
-
     fn owned_manifest() -> serde_json::Value {
         let mut operations = serde_json::Map::new();
         for (name, visibility, errors) in [
@@ -203,16 +199,18 @@ mod tests {
 
     #[test]
     fn public_operations_receive_only_their_canonical_grants() {
-        let bytes = serde_json::to_vec(&owned_manifest()).expect("serialize owned manifest");
+        let manifest = owned_manifest();
+        let expected = manifest["custom_operations"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(_, operation)| operation["visibility"] == "public")
+            .map(|(name, _)| format!("grant-fixture:{name}").replace('.', "/") + "@1.0.0")
+            .collect();
+        let bytes = serde_json::to_vec(&manifest).expect("serialize owned manifest");
         assert_eq!(
             operation_grant_tokens(&bytes).expect("parse owned manifest"),
-            [
-                "grant-fixture:widget/archive@1.0.0",
-                "grant-fixture:widget/publish@1.0.0",
-            ]
-            .map(str::to_owned)
-            .into_iter()
-            .collect()
+            expected
         );
     }
 
@@ -237,10 +235,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires: input:fixture"]
     fn manifest_unknown_fields_are_refused_by_the_public_strict_parser() {
-        let mut manifest: serde_json::Value =
-            serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");
+        let mut manifest = owned_manifest();
         manifest["invented_grant_grammar"] = serde_json::Value::Bool(true);
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("unknown field was accepted");
@@ -252,12 +248,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires: input:fixture"]
     fn semantic_operation_vocabulary_refusal_reaches_the_grant_boundary() {
-        let mut manifest: serde_json::Value =
-            serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");
-        manifest["models"]["widget"]["operations"]["get"]["component"] =
-            serde_json::json!("missing");
+        let mut manifest = owned_manifest();
+        manifest["custom_operations"]["widget.publish"]["component"] = serde_json::json!("missing");
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("unknown operation was granted");
         assert_eq!(error.error_type(), OperationGrantErrorType::InvalidManifest);
@@ -271,11 +264,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires: input:fixture"]
     fn noncanonical_package_identity_reaches_the_grant_boundary() {
-        let mut manifest: serde_json::Value =
-            serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");
-        manifest["package"]["id"] = serde_json::json!("platform-Fixture");
+        let mut manifest = owned_manifest();
+        manifest["package"]["id"] = serde_json::json!("grant-Fixture");
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("invalid package id was granted");
         assert_eq!(error.error_type(), OperationGrantErrorType::InvalidManifest);

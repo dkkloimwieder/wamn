@@ -216,12 +216,17 @@ mod tests {
         );
         assert_eq!(value.changed_by.0, "00000000-0000-0000-0000-000000000004");
         assert_eq!(value.changed_at.0, "2026-08-31T12:01:00.000000Z");
-        assert_eq!(value.before, r#"{"row_version": 1}"#);
-        assert_eq!(value.after, r#"{"row_version": 2}"#);
-        assert_eq!(
-            value.current,
-            r#"{"id": "00000000-0000-0000-0000-000000000001", "row_version": 2}"#
-        );
+        {
+            let value: serde_json::Value = serde_json::from_str(&(value.before)).unwrap();
+            assert_eq!(value["row_version"], serde_json::json!(1));
+        }
+        {
+            let value: serde_json::Value = serde_json::from_str(&(value.after)).unwrap();
+            assert_eq!(value["row_version"], serde_json::json!(2));
+        }
+        let current: serde_json::Value = serde_json::from_str(&value.current).unwrap();
+        assert_eq!(current["id"], record.0);
+        assert_eq!(current["row_version"], 2);
 
         // The cursor carries no readable position, and it reads back as the
         // position of the entry it followed.

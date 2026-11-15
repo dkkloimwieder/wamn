@@ -1364,7 +1364,7 @@ mod tests {
             ] {
                 assert!(
                     matches!(control_page(input, attachment, &principal, "acme", project, order),
-                    Err(Refusal::Declared {code: "invalid_input", detail}) if detail == json!({"field":field}))
+                    Err(Refusal::Declared {code: "invalid_input", detail}) if ({ let observed = &(detail); observed["field"] == serde_json::json!(field) }))
                 );
             }
             assert_eq!(
@@ -1409,13 +1409,13 @@ mod tests {
         ] {
             assert!(matches!(
                 page(&request.to_string()),
-                Err(Refusal::Declared {code: "invalid_input", detail}) if detail == json!({"field": "cursor"})
+                Err(Refusal::Declared {code: "invalid_input", detail}) if ({ let observed = &(detail); observed["field"] == serde_json::json!("cursor") })
             ));
         }
         for input in ["{\"environment\":null}", "{\"environment\":1}"] {
             assert!(matches!(
                 page(input),
-                Err(Refusal::Declared {code: "invalid_input", detail}) if detail == json!({"field": "environment"})
+                Err(Refusal::Declared {code: "invalid_input", detail}) if ({ let observed = &(detail); observed["field"] == serde_json::json!("environment") })
             ));
         }
         assert!(matches!(
@@ -1456,10 +1456,12 @@ mod tests {
             anyhow::bail!("control unavailable")
         })
         .await;
-        assert_eq!(
-            answer,
-            json!({"users_with_role": 0, "roles": 2, "memberships": null})
-        );
+        {
+            let observed = &(answer);
+            assert_eq!(observed["users_with_role"], serde_json::json!(0));
+            assert_eq!(observed["roles"], serde_json::json!(2));
+            assert_eq!(observed["memberships"], serde_json::json!(null));
+        };
         let answer = status_with_counts(
             json!({}),
             "billing",
@@ -1468,10 +1470,12 @@ mod tests {
             async { Ok(3) },
         )
         .await;
-        assert_eq!(
-            answer,
-            json!({"users_with_role": null, "roles": null, "memberships": 3})
-        );
+        {
+            let observed = &(answer);
+            assert_eq!(observed["users_with_role"], serde_json::json!(null));
+            assert_eq!(observed["roles"], serde_json::json!(null));
+            assert_eq!(observed["memberships"], serde_json::json!(3));
+        };
     }
 
     #[tokio::test]
@@ -1484,10 +1488,13 @@ mod tests {
             std::future::pending(),
         )
         .await;
-        assert_eq!(
-            answer,
-            json!({"digest": "sha256:live", "users_with_role": null, "roles": null, "memberships": null})
-        );
+        {
+            let observed = &(answer);
+            assert_eq!(observed["digest"], serde_json::json!("sha256:live"));
+            assert_eq!(observed["users_with_role"], serde_json::json!(null));
+            assert_eq!(observed["roles"], serde_json::json!(null));
+            assert_eq!(observed["memberships"], serde_json::json!(null));
+        };
     }
 }
 

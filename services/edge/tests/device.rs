@@ -74,9 +74,16 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
     let db = directory.join("edge.db");
     let before = status::read(&db).await.expect("read the status");
     assert!(before["started_at"].is_string(), "{before}");
-    assert_eq!(before["device"], json!({"dropped_frames": 0}));
+    {
+        let observed = &(before["device"]);
+        assert_eq!(observed["dropped_frames"], serde_json::json!(0));
+    };
     assert_eq!(before["forward"], json!(null), "no forward is configured");
-    assert_eq!(before["samples"], json!({"pending": 0, "refused": []}));
+    {
+        let observed = &(before["samples"]);
+        assert_eq!(observed["pending"], serde_json::json!(0));
+        assert!(observed["refused"].as_array().expect("array").is_empty());
+    };
     assert_eq!(host.status_socket(), directory.join("status.sock"));
     controller
         .write_all(b"0123456789ABCDEFGHIJ\n12.5 kg\r\n   \n  13.0 kg\n")
@@ -88,8 +95,15 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
         "the long frame is counted"
     );
     let after = status::read(&db).await.expect("read the status");
-    assert_eq!(after["device"], json!({"dropped_frames": 1}));
-    assert_eq!(after["samples"], json!({"pending": 2, "refused": []}));
+    {
+        let observed = &(after["device"]);
+        assert_eq!(observed["dropped_frames"], serde_json::json!(1));
+    };
+    {
+        let observed = &(after["samples"]);
+        assert_eq!(observed["pending"], serde_json::json!(2));
+        assert!(observed["refused"].as_array().expect("array").is_empty());
+    };
     assert_eq!(after["started_at"], before["started_at"]);
     host.stop().await.expect("the edge stops");
     assert!(
@@ -106,11 +120,14 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
         "the long frame stores no sample"
     );
     for sample in &stored {
-        assert_eq!(
-            sample.body,
-            json!({"frame": sample.body["frame"], "captured_at": sample.captured_at}),
-            "the device component returns the frame and its capture time"
-        );
+        {
+            let observed = &(sample.body);
+            assert_eq!(observed["frame"], serde_json::json!(sample.body["frame"]));
+            assert_eq!(
+                observed["captured_at"],
+                serde_json::json!(sample.captured_at)
+            );
+        };
         assert_eq!(sample.attempts, 0);
     }
 

@@ -249,11 +249,33 @@ Changed pins require a commit subject that names the submodule path or its last 
 A test stays only if a realistic defect fails it, and nothing else rejects that defect more strongly.
 The expected value of the test must not come from the code under test.
 
-- No test compares source text, DDL text, or a generated file to a string.
+- Tests check returned values, error types, parsed contract fields, and database changes.
+- No test compares diagnostics, source text, DDL text, or file contents to a string.
+- Tests do not check test helpers with fabricated failures.
 - A byte or digest test stays only when the bytes are a persisted or wire contract and the expected value is independent.
 - A source or repository policy test is a lint in `cargo xtask repo-lint`, not a test.
 - A schema rule is tested against the installed database: a refused write, a cascade, or a `pg_catalog` fact.
 - A new live test must not repeat an existing one. Extend the existing test when a rule has no other test.
+
+### Decisions: retained text contracts
+
+Exact text remains in the cases below because the bytes or literal are the public value being tested. The linked assertions hold the exact vectors. Do not copy those vectors into another fixture or use these exceptions for diagnostic wording.
+
+- [Record history projection](../../apps/platform/data/record-history/tests/fold.rs), `retained_columns_keep_their_raw_spelling_and_order` and `retained_timestamptz_columns_take_one_spelling_from_either_spelling`: retained JSON tokens keep their spelling and order. This includes `1.50`, `12.3400`, quoted JSON keys, the canonical UTC timestamp and `infinity`. Ordinary JSON response tests inspect fields.
+- [Connection requirement identity](../../crates/catalog/model/src/connection.rs), `the_requirement_hash_bytes_are_pinned`, and [catalog serialization](../../crates/schema/introspection/src/ir.rs), `catalog_retains_view_columns_and_dependencies` and `catalog_without_views_keeps_canonical_bytes`: canonical persisted bytes define identity. [Durable JSON identity](../../crates/platform/digest/src/lib.rs) also preserves numeric spelling, signed zero and canonical key order.
+- [SHA-256 vectors](../../crates/platform/digest/src/lib.rs), [Ed25519 vectors](../../crates/identity/protocol/src/token/tests.rs), [HMAC vectors](../../crates/platform/http-capability/src/authentication.rs) and [release label encoding](../../crates/platform/engine/src/release_manifest.rs): independent encoded vectors define the digest, signature or base32 value. A digest comparison is not a source-file snapshot.
+- Frozen serialized variants, refusal codes, media types, SQLSTATEs, reserved input paths, token prefixes and protocol identifiers remain literal comparisons. Their owners are [SQL values](../../crates/platform/scalar/src/lib.rs), [identity protocols](../../crates/identity/protocol/src), [component contracts](../../crates/catalog/model/src), [host route contracts](../../crates/catalog/model/src/host_route.rs) and the RFC protocols used by the transport. HTTP request lines, authorization schemes, metadata headers, health response tokens and canonical cache keys are wire values. Security allowlists remain independent of the implementation that installs the grants.
+- [TypeScript type spelling](../../crates/schema/generator/src/client_ts.rs), `every_contract_type_has_its_exact_typescript_spelling`: `boolean`, `number`, `Int64`, `string`, `number[]`, `Numeric`, `Timestamptz`, `JsonValue` and `Uuid` name generated language types.
+- [HTML escaping](../../crates/execution/host/src/oauth_callback.rs) and its [HTTP boundary](../../crates/execution/host/tests/support/oauth_authorization.rs): `&lt;script&gt;&quot;&amp;&#39;` and `&lt;script&gt;&amp;&quot;&#39;` encode the supplied attack text. The unescaped text must stay absent.
+- [Generated TypeScript documentation](../../crates/schema/generator/tests/client_ts_behavior.test.ts) compares authored paragraphs with their input declarations. Generated comment headings and formatting are not asserted. Export names derive from the input operations; the public `Feed`, `Collection`, `Write` and `Changes` naming suffixes remain API literals.
+- [Receiving decimal arithmetic](../../apps/wamn_receiving/web/test/sync.test.tsx): `3.500`, `6.500`, `0.3`, `-0.25` and `15` are decimal values with the required scale, not formatted diagnostics.
+- [Manifest loading](../../crates/platform/engine/src/release_manifest.rs), `an_unsupported_format_refuses_with_the_frozen_literal`: `unsupported-serving-manifest-version` is the serialized refusal that the loader must preserve.
+- [The log viewer](../../apps/platform_ui/test/environment.test.tsx) must display the supplied log bytes unchanged; its fixture owns those bytes, and the assertions read them from the recorded response.
+- [Descriptor limit observation](../../services/host/tests/native_descriptor_limits.rs): `Max open files` identifies the Linux process limit record. The test parses its two numeric values while the real host runs.
+
+Accessible control names select the action under test. They do not assert diagnostic wording, classes or geometry.
+
+Secret-redaction checks still search for the actual supplied secret. Payload round trips compare the caller's original value. Authored labels and refusal text are compared with their source declarations. None of these checks owns a second wording or document snapshot.
 
 ## Local application business tests
 
@@ -548,9 +570,6 @@ Set `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT`, and `WAMN_NATS_TL
 Each case creates its memory buckets through the production function and needs permission to create and delete keys.
 Use the installed disposable platform's broker and its normal platform NATS inputs.
 The [development loop](development-loop.md) does not provision a private broker.
-
-`production_operator_authentication_and_operation_authorization` keeps `identity.log` and `test.log` in a new `wamn-route-auth-*` directory under `${TMPDIR:-/var/tmp}`.
-A failure prints both paths.
 
 ### Record history retention test
 

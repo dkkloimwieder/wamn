@@ -2,7 +2,6 @@
 
 use super::*;
 use sha2::{Digest as _, Sha256};
-use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeMap;
 use wamn_package_artifact::http_client::HttpRequest;
 use wamn_platform_identity::password::{
@@ -637,11 +636,17 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         .await
         .map(|result| result.rows_affected())
         .expect_redacted("remove the memberships");
-    assert_eq!(
-        discover(&https).await,
-        json!({"environments": [], "next_cursor": null, "total": 0}),
-        "a member with no access is offered no environment"
-    );
+    {
+        let observed = &(discover(&https).await);
+        assert!(
+            observed["environments"]
+                .as_array()
+                .expect("array")
+                .is_empty()
+        );
+        assert_eq!(observed["next_cursor"], serde_json::json!(null));
+        assert_eq!(observed["total"], serde_json::json!(0));
+    };
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

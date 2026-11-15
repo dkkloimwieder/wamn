@@ -16,10 +16,6 @@ Compare the observed result and settled state with a small, independently expres
 Do not use the production validator as the expected-answer function.
 Do not translate SQL into a second implementation just to obtain an expected result.
 
-The [Receiving history model](../../apps/wamn_receiving/tests/receiving_history/model.rs) supplies application steps and expected state.
-Its [test owner](../../apps/wamn_receiving/tests/receiving_command_histories_live.rs) drives the real authenticated routes.
-The model alone does not execute those routes or establish their database behavior.
-
 ## Shrinking failures
 
 Shrinking reduces a failing generated input while preserving the failure.
@@ -27,6 +23,5 @@ Keep fixture dependencies and the original business property intact.
 An infrastructure error must not replace the business counterexample.
 Retain the minimized regression with a stable test name.
 
-The Receiving history tests exercise both failure-preservation cases explicitly.
 Report the relevant reproduction inputs with the [test result](evidence.md).
 For controlled execution, see [deterministic tests](deterministic.md).

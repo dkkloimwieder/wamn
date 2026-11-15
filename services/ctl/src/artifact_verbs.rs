@@ -152,13 +152,26 @@ mod tests {
         let from =
             json!({"package": {"id": "a", "version": "1.0.0"}, "tables": ["x", "y"], "a/b": 1});
         let to = json!({"package": {"id": "a", "version": "1.1.0"}, "tables": ["x"], "c": true, "a/b": 1});
-        assert_eq!(
-            diff_documents(&from, &to),
-            "+ /c true\n\
-             - /package/version \"1.0.0\"\n\
-             + /package/version \"1.1.0\"\n\
-             - /tables/1 \"y\"\n"
-        );
-        assert_eq!(diff_documents(&from, &from), "");
+        let rendered = diff_documents(&from, &to);
+        let mut changes = std::collections::BTreeMap::new();
+        for line in rendered.lines() {
+            let mut fields = line.splitn(3, ' ');
+            let action = fields.next().unwrap();
+            let pointer = fields.next().unwrap();
+            let value: serde_json::Value = serde_json::from_str(fields.next().unwrap()).unwrap();
+            assert!(changes.insert((action, pointer), value).is_none());
+        }
+        for pointer in ["/c", "/package/version", "/tables/1"] {
+            assert_eq!(
+                changes.remove(&("-", pointer)).as_ref(),
+                from.pointer(pointer)
+            );
+            assert_eq!(
+                changes.remove(&("+", pointer)).as_ref(),
+                to.pointer(pointer)
+            );
+        }
+        assert!(changes.is_empty());
+        assert!(diff_documents(&from, &from).is_empty());
     }
 }

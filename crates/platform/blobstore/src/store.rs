@@ -723,12 +723,9 @@ mod tests {
     /// The store handle can carry credentials; Debug must never render it.
     #[tokio::test]
     async fn debug_does_not_render_the_store_handle() {
-        let (container, _store) = bound("p");
-        let rendered = format!("{container:?}");
-        assert!(rendered.contains("wamn-labels") && rendered.contains('p'));
-        assert!(
-            !rendered.to_lowercase().contains("secret") && !rendered.contains("InMemory"),
-            "the store handle must not be rendered: {rendered}"
-        );
+        let private = "private-backend-marker";
+        let store = object_store::prefix::PrefixStore::new(InMemory::new(), private);
+        let container = BoundContainer::for_test(Arc::new(store), "labels", "p");
+        assert!(!format!("{container:?}").contains(private));
     }
 }

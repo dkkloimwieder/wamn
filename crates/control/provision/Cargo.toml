@@ -49,6 +49,8 @@ url = { workspace = true }
 
 [dev-dependencies]
 wamn-registry = { workspace = true, features = ["test-util"] }
+pg_query = "=6.2.1"
+wamn-scalar.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }

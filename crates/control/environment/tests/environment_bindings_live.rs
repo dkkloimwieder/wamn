@@ -865,10 +865,7 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state(po
             .is_err()
     );
     let mut missing = url::Url::parse(database.as_str()).unwrap();
-    missing.set_path(&format!(
-        "/{}_absent",
-        database.path().trim_start_matches('/')
-    ));
+    missing.set_path("/unprovisioned_fixture");
     assert!(
         analyse::read_project(missing.as_str(), "acme--dev--one")
             .await

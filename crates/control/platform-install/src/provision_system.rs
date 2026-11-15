@@ -374,10 +374,7 @@ mod tests {
         drop(client);
 
         // PostgreSQL accepts the TCP connection but refuses an absent database.
-        url.set_path(&format!(
-            "/{}_absent",
-            database.path().trim_start_matches('/')
-        ));
+        url.set_path("/unprovisioned_fixture");
         let Err(error) = connect_system_database(url.as_str()).await else {
             panic!("an absent database must refuse the connection");
         };

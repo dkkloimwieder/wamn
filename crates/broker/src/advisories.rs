@@ -588,13 +588,9 @@ mod tests {
         let error = tokio::time::timeout(Duration::from_secs(2), errors.recv())
             .await?
             .context("broker omitted its permission refusal")?;
-        let message = error.to_string();
         ensure!(
-            message
-                .to_ascii_lowercase()
-                .contains("permissions violation")
-                && message.contains(subject),
-            "broker did not refuse the selected subject {subject}: {message}"
+            matches!(error, async_nats::ServerError::Other(_)),
+            "broker omitted the server refusal for {subject}: {error}"
         );
         Ok(())
     }

@@ -305,7 +305,6 @@ pub(super) fn insert_expected_operation(
         .insert(
             operation.clone(),
             ExpectedOperationContract {
-                local_operation: local_operation.to_owned(),
                 component: component.to_owned(),
                 public,
             },

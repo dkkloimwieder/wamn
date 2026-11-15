@@ -29,10 +29,53 @@ fn window_uses_the_checkpoint_and_due_with_stable_order() {
         None,
     );
     assert_eq!(result["due"], due);
+    let bounds = |query: &Value| {
+        query
+            .as_str()
+            .unwrap()
+            .split('\'')
+            .enumerate()
+            .filter(|(index, _)| index % 2 == 1)
+            .filter_map(|(_, text)| {
+                chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S").ok()
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected = ["2026-10-22T12:00:00Z", due].map(|time| {
+        chrono::DateTime::parse_from_rfc3339(time)
+            .unwrap()
+            .naive_utc()
+    });
+    assert_eq!(bounds(&result["body"]["q"]), expected);
+    let tokens = result["body"]["q"]
+        .as_str()
+        .unwrap()
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    let from = tokens
+        .iter()
+        .position(|token| token.eq_ignore_ascii_case("FROM"))
+        .unwrap();
+    let projection = tokens[1..from].join(" ");
+    let columns = projection
+        .split(',')
+        .map(|column| column.split_whitespace().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns[0][0], "id");
+    assert_eq!(columns[1][0], "entityid");
+    assert!(columns[1][1].eq_ignore_ascii_case("AS"));
+    assert_eq!(columns[1][2], "name");
+    assert_eq!(tokens[from + 1], "customer");
     assert_eq!(
-        result["body"]["q"],
-        "SELECT id, entityid AS name FROM customer WHERE lastmodifieddate >= TO_DATE('2026-10-22 12:00:00', 'YYYY-MM-DD HH24:MI:SS') AND lastmodifieddate < TO_DATE('2026-10-22 12:01:00', 'YYYY-MM-DD HH24:MI:SS') ORDER BY id"
+        tokens
+            .iter()
+            .filter(|token| matches!(**token, ">=" | "<"))
+            .copied()
+            .collect::<Vec<_>>(),
+        [">=", "<"]
     );
+    assert_eq!(&tokens[tokens.len() - 3..], ["ORDER", "BY", "id"]);
     // sync.finish stores the due time in its normalized timestamptz form.
     let normalized = mapping(
         "netsuite_pull",
@@ -42,18 +85,16 @@ fn window_uses_the_checkpoint_and_due_with_stable_order() {
         }}]),
         None,
     );
-    assert_eq!(normalized["body"]["q"], result["body"]["q"]);
+    assert_eq!(bounds(&normalized["body"]["q"]), expected);
     let first = mapping(
         "netsuite_pull",
         "window",
         &json!([{"value": {"value": null, "carry": due}}]),
         None,
     );
-    assert!(
-        first["body"]["q"]
-            .as_str()
-            .unwrap()
-            .contains("1970-01-01 00:00:00")
+    assert_eq!(
+        bounds(&first["body"]["q"])[0],
+        chrono::DateTime::UNIX_EPOCH.naive_utc()
     );
 }
 
@@ -66,17 +107,44 @@ fn pull_rows_become_one_consumer_batch_and_retain_due() {
         &json!({"carry": due, "external_system_id":"00000000-0000-4000-8000-00000000e001", "items": [{"id": "42", "name": "Acme"}]}),
         None,
     );
-    assert_eq!(
-        rows,
-        json!([{"request_id": due, "value": {"external_system_id":"00000000-0000-4000-8000-00000000e001", "idempotency_key": due, "items": [{"key": "42", "name": "Acme"}]}}])
-    );
+    {
+        let observed = &(rows);
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0]["request_id"], serde_json::json!(due));
+        assert_eq!(
+            observed[0]["value"]["external_system_id"],
+            serde_json::json!("00000000-0000-4000-8000-00000000e001")
+        );
+        assert_eq!(
+            observed[0]["value"]["idempotency_key"],
+            serde_json::json!(due)
+        );
+        assert_eq!(
+            observed[0]["value"]["items"]
+                .as_array()
+                .expect("array")
+                .len(),
+            1
+        );
+        assert_eq!(
+            observed[0]["value"]["items"][0]["key"],
+            serde_json::json!("42")
+        );
+        assert_eq!(
+            observed[0]["value"]["items"][0]["name"],
+            serde_json::json!("Acme")
+        );
+    };
     let empty = mapping(
         "netsuite_pull",
         "rows",
         &json!({"carry": due, "external_system_id":"00000000-0000-4000-8000-00000000e001", "items": []}),
         None,
     );
-    assert_eq!(empty[0]["value"]["items"], json!([]));
+    {
+        let observed = &(empty[0]["value"]["items"]);
+        assert!(observed.as_array().expect("array").is_empty());
+    };
     let finish = mapping(
         "netsuite_pull",
         "finish",
@@ -111,10 +179,20 @@ fn consumer_error_prevents_checkpoint_mapping() {
 fn push_uses_the_stable_key_for_body_and_percent_encoded_eid_path() {
     let event = json!({"event":"insert", "new":{"key":"customer /α?#%", "name":"Acme"}});
     let first = mapping("netsuite_push", "map", &event, None);
-    assert_eq!(
-        first,
-        json!({"path":"/services/rest/record/v1/customer/eid:customer%20%2F%CE%B1%3F%23%25", "body":{"entityId":"Acme","externalId":"customer /α?#%"}})
-    );
+    {
+        let observed = &(first);
+        assert_eq!(
+            observed["path"],
+            serde_json::json!(
+                "/services/rest/record/v1/customer/eid:customer%20%2F%CE%B1%3F%23%25"
+            )
+        );
+        assert_eq!(observed["body"]["entityId"], serde_json::json!("Acme"));
+        assert_eq!(
+            observed["body"]["externalId"],
+            serde_json::json!("customer /α?#%")
+        );
+    };
     let retry = mapping("netsuite_push", "map", &event, None);
     assert_eq!(retry["path"], first["path"]);
     let changed = json!({"event":"insert", "new":{"key":"customer /α?#%", "name":"Changed"}});
@@ -161,10 +239,14 @@ fn record_and_restlet_parameters_build_relative_paths() {
         &json!({"body":{"ok":true}}),
         Some(&json!({"script":"a&b", "deploy":"1"})),
     );
-    assert_eq!(
-        output,
-        json!({"path":"/app/site/hosting/restlet.nl?script=a%26b&deploy=1","body":{"ok":true}})
-    );
+    {
+        let observed = &(output);
+        assert_eq!(
+            observed["path"],
+            serde_json::json!("/app/site/hosting/restlet.nl?script=a%26b&deploy=1")
+        );
+        assert_eq!(observed["body"]["ok"], serde_json::json!(true));
+    };
 }
 
 #[test]

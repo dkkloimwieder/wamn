@@ -675,29 +675,41 @@ fn the_platform_group_members_are_exactly_the_derived_families() {
 }
 
 // ---------------------------------------------------------------------------
-// THE PASS-ALL POLICIES of the control database
+// Unconditional policies of the control database
 // ---------------------------------------------------------------------------
 
-/// Every table of the control database has a project, so no policy admits
-/// every row. Read from the server.
+/// Installed control policies must not publish a constant true predicate.
 #[test]
 #[ignore = "requires: postgres, bin:psql"]
 fn no_control_policy_passes_every_row() {
     let fixture = fixture();
-    assert_eq!(
-        rows(
-            &fixture.control_url,
-            "SELECT n.nspname || '.' || c.relname || ' ' || p.polname \
-               FROM pg_catalog.pg_policy p \
-               JOIN pg_catalog.pg_class c ON c.oid = p.polrelid \
-               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-              WHERE pg_get_expr(p.polqual, p.polrelid) = 'true' \
-                 OR pg_get_expr(p.polwithcheck, p.polrelid) = 'true' \
-              ORDER BY (n.nspname || '.' || c.relname || ' ' || p.polname) COLLATE \"C\"",
-        ),
-        Vec::<String>::new(),
-        "a pass-all policy exists on a table that has a project"
-    );
+    let policies: Vec<[Option<String>; 2]> = serde_json::from_str(&query(
+        &fixture.control_url,
+        "SELECT coalesce(jsonb_agg(jsonb_build_array(pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid))), '[]'::jsonb)::text FROM pg_catalog.pg_policy",
+    )).unwrap();
+    for expression in policies.into_iter().flatten().flatten() {
+        let parsed = pg_query::parse(&format!("SELECT 1 WHERE {expression}")).unwrap();
+        let pg_query::NodeEnum::SelectStmt(statement) = parsed
+            .protobuf
+            .stmts
+            .into_iter()
+            .next()
+            .unwrap()
+            .stmt
+            .unwrap()
+            .node
+            .unwrap()
+        else {
+            panic!("policy expression is not a predicate");
+        };
+        if let Some(pg_query::NodeEnum::AConst(value)) =
+            statement.where_clause.and_then(|node| node.node)
+        {
+            assert!(
+                !matches!(value.val, Some(pg_query::protobuf::a_const::Val::Boolval(value)) if value.boolval)
+            );
+        }
+    }
 }
 
 /// A reader can select its public membership fields but cannot read the whole row.
@@ -731,7 +743,7 @@ fn the_identity_reader_cannot_read_private_membership_fields() {
 fn authority_derivations_are_not_public_execute() {
     let denied = query(
         &fixture().db_url,
-        "SELECT NOT EXISTS (SELECT FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) acl WHERE n.nspname='wamn_authority' AND acl.grantee=0 AND acl.privilege_type='EXECUTE')",
+        "SELECT (NOT EXISTS (SELECT FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) acl WHERE n.nspname='wamn_authority' AND acl.grantee=0 AND acl.privilege_type='EXECUTE'))::text",
     );
     assert!(denied.parse::<bool>().unwrap());
 }

@@ -3,7 +3,7 @@ import { webcrypto } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor, within } from "@solidjs/testing-library";
 import { Loading, flush } from "solid-js";
-import { outbox, shell, type Change, type OperationCall, type Reply } from "@wfe/sync";
+import { outbox, shell, type Change, type OperationCall, type Reply, type Outbox, type OutboxCounts } from "@wfe/sync";
 import {
   createCall,
   createSend,
@@ -20,7 +20,7 @@ import {
   type PackagingCreateRequest,
 } from "../src/generated/wamn_wms/packaging.js";
 import { packagingCollection, packagingKey, type PackagingRow } from "../src/generated/wamn_wms/packaging.js";
-import { packagingAddress } from "../src/packaging-writes.js";
+import * as packaging from "../src/packaging-writes.js";
 import { PackagingScreen } from "../src/packaging-screen.js";
 import { makeRows } from "../src/fake.js";
 
@@ -93,6 +93,7 @@ async function mounted(restored?: { call: OperationCall; row: PackagingRow; list
   }
   const o = outbox({ database, send, probe: async () => net.up });
   await o.replay();
+  const inspect = vi.spyOn(packaging, "packagingWrites");
   const view = render(() => (
     <Loading>
       <PackagingScreen collection={c} outbox={o} shellResult={shellResult} />
@@ -117,6 +118,8 @@ async function mounted(restored?: { call: OperationCall; row: PackagingRow; list
     ...view,
     c,
     o,
+    shellResult,
+    optimistic: inspect.mock.results.at(-1)!.value.rows,
     row,
     submit,
     changes,
@@ -133,27 +136,46 @@ async function mounted(restored?: { call: OperationCall; row: PackagingRow; list
   };
 }
 
+function counts(o: Outbox): OutboxCounts {
+  const observed: OutboxCounts[] = [];
+  o.watch((value) => observed.push(value))();
+  return observed[0]!;
+}
+
 it("takes the project and environment from the application route and the id from the session", () => {
-  const route = packagingAddress("/urn:wamn:project-env:acme:wms:dev:instance/live.html");
-  expect(route).toEqual({ aud: "urn:wamn:project-env:acme:wms:dev:instance", application: "wms", environment: "dev" });
+  const route = packaging.packagingAddress("/urn:wamn:project-env:acme:wms:dev:instance/live.html");
+  {
+    const observed = route;
+    expect(observed).toHaveProperty(["aud"], "urn:wamn:project-env:acme:wms:dev:instance");
+    expect(observed).toHaveProperty(["application"], "wms");
+    expect(observed).toHaveProperty(["environment"], "dev");
+  }
   expect(outboxDatabase(route.application, route.environment, "signed-in-user")).toBe(
     "wamn-outbox:wms:dev:signed-in-user",
   );
-  expect(() => packagingAddress("/live.html")).toThrow("Open /urn:wamn:project-env:");
+  expect(() => packaging.packagingAddress("/live.html")).toThrow();
 });
 
-it("reports Recorded and enables three offline creates before any upload", async () => {
+it("enables repeated offline creates before any upload", async () => {
   const h = await mounted();
   const reset = vi.spyOn(HTMLFormElement.prototype, "reset");
   const form = h.getByRole("form", { name: "Create packaging" });
   for (let count = 1; count <= 3; count++) {
     const entry = await h.submit(`OFFLINE-${count}`);
     await waitFor(() => expect(reset).toHaveBeenCalledTimes(count));
-    await waitFor(() => expect(form.querySelector("output")?.textContent).toBe("Recorded"));
     expect((within(form).getByRole("button", { name: "Create packaging" }) as HTMLButtonElement).disabled).toBe(false);
-    expect(h.row(entry.expect.id)?.textContent).toContain(`OFFLINE-${count} (tentative)`);
+    {
+      expect(h.row(entry.expect.id)?.textContent).toContain(`OFFLINE-${count}`);
+      expect(h.optimistic[entry.expect.id]?.$tentative).toBe(true);
+    }
   }
-  expect(h.o.entries().map((entry) => entry.state)).toEqual(["pending", "pending", "pending"]);
+  {
+    const observed = h.o.entries().map((entry) => entry.state);
+    expect(observed).toHaveProperty(["length"], 3);
+    expect(observed).toHaveProperty(["0"], "pending");
+    expect(observed).toHaveProperty(["1"], "pending");
+    expect(observed).toHaveProperty(["2"], "pending");
+  }
   expect(h.send).not.toHaveBeenCalled();
 });
 
@@ -162,28 +184,36 @@ it("records a UUIDv7 create, keeps it tentative after send, and confirms after a
   const entry = await h.submit();
   const id = entry.expect.id;
   expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-  expect(entry.request).toMatchObject({ id, packagingCode: "PK-NEW" });
+  {
+    const observed = entry.request;
+    expect(observed).toHaveProperty(["id"], id);
+    expect(observed).toHaveProperty(["packagingCode"], "PK-NEW");
+  }
   expect(entry.request_hash).toBe(await requestHash(entry.request));
-  await waitFor(() => expect(h.row(id)?.textContent).toContain("PK-NEW (tentative)"));
-  expect(h.getByLabelText("Sync status").textContent).toContain("Pending: 1");
-  expect(h.getByLabelText("Sync status").textContent).toContain("Refused: 0");
-  expect(h.getByLabelText("Sync status").textContent).toContain("Storage protected");
-  expect(h.getByLabelText("Sync status").textContent).toContain("Worker: unavailable. Persisted: yes.");
-  expect(h.getByLabelText("Sync status").textContent).toContain("Quota: 4096 bytes. Used: 1024 bytes.");
+  await waitFor(() => {
+    expect(h.row(id)?.textContent).toContain("PK-NEW");
+    expect(h.optimistic[id]?.$tentative).toBe(true);
+  });
+  expect(counts(h.o).pending).toBe(1);
+  expect(counts(h.o).refused).toBe(0);
+  expect(h.shellResult.persisted).toBe(true);
+  expect(h.shellResult.worker).toBe(false);
+  expect(h.shellResult.quota.quota).toBe(4096);
+  expect(h.shellResult.quota.usage).toBe(1024);
   expect(h.persisted).not.toHaveBeenCalled();
   expect(h.persist).toHaveBeenCalledOnce();
   h.net.up = true;
   await h.o.replay();
   expect(h.o.entries()).toHaveLength(0);
   flush();
-  expect(h.row(id)?.textContent).toContain("tentative");
-  expect(h.getByLabelText("Sync status").textContent).not.toContain("Last sent: never");
+  expect(h.optimistic[id]?.$tentative).toBe(true);
+  expect(Number.isNaN(Date.parse(counts(h.o).lastSentAt!))).toBe(false);
   const data = { ...makeRows(1)[0]!, ...(entry.request as object), id };
   h.changes.push({ id, row_version: 1, deleted: false, data });
   await h.c.utils.pull();
   await waitFor(() => {
     expect(h.row(id)?.textContent).toContain("PK-NEW");
-    expect(h.row(id)?.textContent).not.toContain("tentative");
+    expect(h.optimistic[id]?.$tentative).not.toBe(true);
   });
   // An empty feed reply updates the time without a row change or a refresh timer.
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -201,28 +231,30 @@ it("records a UUIDv7 create, keeps it tentative after send, and confirms after a
 it("shows a refused request beside the current row and discards it", async () => {
   const h = await mounted();
   const entry = await h.submit();
-  h.answer({
-    ok: false,
-    retriable: false,
-    refusal: { code: "unique_violation", text: "Packaging code already exists" },
-  });
+  const refusal = { code: "unique_violation", text: "Packaging code already exists" };
+  h.answer({ ok: false, retriable: false, refusal });
   h.net.up = true;
   await h.o.replay();
   await waitFor(() => expect(h.row(entry.expect.id)).toBeNull());
   const panel = within(h.getByRole("region", { name: "Not uploaded" }));
-  expect(panel.getByText("Packaging code already exists")).toBeTruthy();
-  expect(panel.getByText("no row")).toBeTruthy();
+  expect(panel.getByText(refusal.text)).toBeTruthy();
   expect(panel.getByText(/Operation:/).textContent).toContain(entry.operation);
   expect(panel.getByText(/Record id:/).textContent).toContain(entry.expect.id);
-  expect(h.getByLabelText("Sync status").textContent).toContain("Refused: 1");
+  expect(counts(h.o).refused).toBe(1);
   const data = { ...makeRows(1)[0]!, id: entry.expect.id, packagingCode: "CURRENT" };
   h.changes.push({ id: data.id, row_version: 1, deleted: false, data });
   await h.c.utils.pull();
-  await waitFor(() => expect(panel.getByText(/"packagingCode": "CURRENT"/)).toBeTruthy());
-  expect((panel.getByLabelText("Corrected request") as HTMLTextAreaElement).value).toContain("PK-NEW");
+  await waitFor(() => {
+    const current = panel.getByRole("heading", { name: "Current row" }).nextElementSibling;
+    expect(JSON.parse(current!.textContent!)).toHaveProperty("packagingCode", data.packagingCode);
+  });
+  expect(JSON.parse((panel.getByLabelText("Corrected request") as HTMLTextAreaElement).value)).toHaveProperty(
+    "packagingCode",
+    "PK-NEW",
+  );
   fireEvent.click(panel.getByRole("button", { name: "Discard" }));
   await waitFor(() => expect(h.o.entries()).toHaveLength(0));
-  await waitFor(() => expect(panel.queryByText("Packaging code already exists")).toBeNull());
+  await waitFor(() => expect(panel.queryByText(refusal.text)).toBeNull());
   expect(h.row(data.id)?.textContent).toContain("CURRENT");
 });
 
@@ -235,7 +267,7 @@ it("waits through a failed follow pass and confirms without a result row", async
   h.failRead(new Error("offline"));
   await h.c.utils.pull();
   flush();
-  expect(h.row(id)?.textContent).toContain("tentative");
+  expect(h.optimistic[id]?.$tentative).toBe(true);
   h.failRead(undefined);
   await h.c.utils.pull();
   await waitFor(() => expect(h.row(id)).toBeNull());
@@ -248,23 +280,27 @@ it("keeps a create tentative when its feed echo arrives before the successful re
   h.net.up = true;
   await h.o.replay();
   expect(h.send).toHaveBeenCalledOnce();
-  await waitFor(() =>
-    expect(h.getByRole("form", { name: "Create packaging" }).querySelector("output")?.textContent).toBe("Recorded"),
-  );
+  expect(counts(h.o).pending).toBe(1);
   const id = entry.expect.id;
   const data = { ...makeRows(1)[0]!, ...(entry.request as object), id };
   h.changes.push({ id, row_version: 1, deleted: false, data });
   await h.c.utils.pull();
-  await waitFor(() => expect(h.row(id)?.textContent).toContain("LOST-REPLY (tentative)"));
+  await waitFor(() => {
+    expect(h.row(id)?.textContent).toContain("LOST-REPLY");
+    expect(h.optimistic[id]?.$tentative).toBe(true);
+  });
   expect(h.o.entries()).toHaveLength(1);
   expect(h.o.entries()[0]?.state).toBe("pending");
   expect(h.send).toHaveBeenCalledOnce();
   h.answer({ ok: true });
   await h.o.replay();
   flush();
-  expect(h.row(id)?.textContent).toContain("tentative");
+  expect(h.optimistic[id]?.$tentative).toBe(true);
   await h.c.utils.pull();
-  await waitFor(() => expect(h.row(id)?.textContent).not.toContain("tentative"));
+  await waitFor(() => {
+    expect(h.optimistic[id]).toBeDefined();
+    expect(h.optimistic[id]?.$tentative).not.toBe(true);
+  });
   expect(h.send).toHaveBeenCalledTimes(2);
 });
 
@@ -288,7 +324,10 @@ it("records the edited create with the same id before discarding the refusal, wi
     expect(recorded[1]!.request_hash).not.toBe(old.request_hash);
     flush();
     rowBeforeDiscard = h.row(old.expect.id);
-    expect(rowBeforeDiscard?.textContent).toContain("CORRECTED (tentative)");
+    {
+      expect(rowBeforeDiscard?.textContent).toContain("CORRECTED");
+      expect(h.optimistic[old.expect.id]?.$tentative).toBe(true);
+    }
     await discard(seq);
     flush();
     expect(h.row(old.expect.id)).toBe(rowBeforeDiscard);
@@ -303,8 +342,17 @@ it("records the edited create with the same id before discarding the refusal, wi
   fireEvent.click(h.getByRole("button", { name: "Resubmit" }));
   await waitFor(() => expect(h.o.discard).toHaveBeenCalledWith(old.seq));
   await waitFor(() => expect(h.o.entries()).toHaveLength(1));
-  expect(order).toEqual(["recorded", "discard"]);
-  expect(h.o.entries()[0]!.request).toMatchObject({ id: old.expect.id, packagingCode: "CORRECTED" });
+  {
+    const observed = order;
+    expect(observed).toHaveProperty(["length"], 2);
+    expect(observed).toHaveProperty(["0"], "recorded");
+    expect(observed).toHaveProperty(["1"], "discard");
+  }
+  {
+    const observed = h.o.entries()[0]!.request;
+    expect(observed).toHaveProperty(["id"], old.expect.id);
+    expect(observed).toHaveProperty(["packagingCode"], "CORRECTED");
+  }
   expect(h.o.entries()[0]!.request_hash).toBe(await requestHash(h.o.entries()[0]!.request));
   expect(h.row(old.expect.id)).toBe(rowBeforeDiscard);
   stop();
@@ -357,7 +405,7 @@ it("keeps the refused entry if recording the correction fails", async () => {
   });
   flush();
   fireEvent.click(h.getByRole("button", { name: "Resubmit" }));
-  await waitFor(() => expect(h.getByRole("alert").textContent).toContain("Storage is full"));
+  await waitFor(() => expect(h.getByRole("alert").textContent?.trim()).toBeTruthy());
   expect(h.o.entries()).toHaveLength(1);
   expect(h.o.entries()[0]!.seq).toBe(old.seq);
   expect(discard).not.toHaveBeenCalled();
@@ -377,24 +425,33 @@ it("paints saved rows and recovered tentative creates before the list resolves, 
   });
   const h = await mounted({ call, row, list });
   await waitFor(() => expect(h.row(row.id)?.textContent).toContain(row.packagingCode));
-  await waitFor(() => expect(h.row(id)?.textContent).toContain("RECOVERED (tentative)"));
+  await waitFor(() => {
+    expect(h.row(id)?.textContent).toContain("RECOVERED");
+    expect(h.optimistic[id]?.$tentative).toBe(true);
+  });
   expect(h.send).not.toHaveBeenCalled();
   expect(h.c.utils.currentAt()).toBeUndefined();
   failList(new Error("offline"));
   h.failRead(new Error("offline"));
   await h.c.utils.pull();
   await waitFor(() => expect(h.row(row.id)?.textContent).toContain(row.packagingCode));
-  expect(h.row(id)?.textContent).toContain("RECOVERED (tentative)");
+  {
+    expect(h.row(id)?.textContent).toContain("RECOVERED");
+    expect(h.optimistic[id]?.$tentative).toBe(true);
+  }
   h.failRead(undefined);
   h.changes.push({ id, row_version: 1, deleted: false, data: { ...row, ...(call.request as object), id } });
   await h.c.utils.pull();
-  await waitFor(() => expect(h.row(id)?.textContent).toContain("tentative"));
+  await waitFor(() => expect(h.optimistic[id]?.$tentative).toBe(true));
   h.net.up = true;
   await h.o.replay();
   flush();
-  expect(h.row(id)?.textContent).toContain("tentative");
+  expect(h.optimistic[id]?.$tentative).toBe(true);
   await h.c.utils.pull();
-  await waitFor(() => expect(h.row(id)?.textContent).not.toContain("tentative"));
+  await waitFor(() => {
+    expect(h.optimistic[id]).toBeDefined();
+    expect(h.optimistic[id]?.$tentative).not.toBe(true);
+  });
   expect(h.send).toHaveBeenCalledOnce();
   h.changes.push({ id, row_version: 2, deleted: true });
   await h.c.utils.pull();

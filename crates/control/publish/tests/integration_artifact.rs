@@ -1,6 +1,6 @@
 //! Integration source identity and registry publication use real artifacts.
 
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::path::{Path, PathBuf};
 
 use wamn_package_artifact::{PackageRegistry, Repository};
@@ -77,7 +77,7 @@ async fn build_digest_tracks_source_bytes_and_survives_another_checkout() {
 #[ignore = "requires: bin:docker"]
 async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let mut database = wamn_test_postgres::url(&pool);
+    let database = wamn_test_postgres::url(&pool);
     wamn_control_provision::test_database::system(database.as_str()).await;
     sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('fixture','wasm',false)").execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
     let fixture = fixture();
@@ -121,9 +121,24 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx:
     let wasm = wamn_package_artifact::integration::pull(&configuration, "fixture", &built.digest)
         .await
         .unwrap();
+    let wit_component::DecodedWasm::Component(resolve, world) =
+        wit_component::decode(&wasm).unwrap()
+    else {
+        panic!("the published artifact is a component");
+    };
+    let declared = resolve.worlds[world]
+        .exports
+        .values()
+        .filter_map(|item| match item {
+            wit_parser::WorldItem::Interface { id, .. } => resolve.id_of(*id),
+            _ => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
-        row.get::<Vec<String>, _>(2),
-        wamn_publish::connection_requirement::exported_interfaces(&wasm).unwrap()
+        row.get::<Vec<String>, _>(2)
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        declared
     );
     assert!(
         wamn_package_artifact::integration::pull(&configuration, "other", &built.digest)

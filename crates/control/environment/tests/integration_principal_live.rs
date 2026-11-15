@@ -7,7 +7,6 @@ use sqlx::Row as _;
 use wamn_broker::Publisher;
 use wamn_catalog::ServingManifest;
 use wamn_environment::environment::stage::{materialize_application_principals, write_release};
-use wamn_postgres::schema::BareSchemaName;
 
 const PROJECT_ENV_KEY: &str = "acme--dev--erp";
 const OPERATION: &str = "consumer:item/import@1.0.0";
@@ -44,7 +43,6 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     )
     .unwrap();
     let mut admin = connect(project.as_str()).await?;
-    let schema = BareSchemaName::new("wamn_run")?;
     wamn_environment::platform_migrations::install_project(&mut admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::platform_principals_sql("example.invalid")?).to_string(),

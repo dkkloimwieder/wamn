@@ -271,7 +271,6 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
 
 #[derive(Debug)]
 struct ExpectedOperationContract {
-    local_operation: String,
     component: String,
     public: bool,
 }

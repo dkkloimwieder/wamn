@@ -42,6 +42,7 @@ wamn-identity-protocol = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+chrono = { workspace = true, features = ["std"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 jsonwebtoken = { workspace = true }

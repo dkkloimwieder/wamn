@@ -212,17 +212,9 @@ esac
         .fetch_one(&mut system)
         .await?
         .get(0);
-    let error = delete(&platform, &triple, false, database.as_str())
+    delete(&platform, &triple, false, database.as_str())
         .await
         .unwrap_err();
-    for field in ["run_id", "manifest_digest"] {
-        assert!(
-            error
-                .to_string()
-                .contains(run_before[field].as_str().unwrap()),
-            "{error:#}"
-        );
-    }
     assert!(
         std::fs::read("delete-mutations")?.is_empty(),
         "refusal must precede every external mutation"

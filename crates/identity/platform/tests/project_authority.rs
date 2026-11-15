@@ -29,7 +29,7 @@
 
 use std::fmt::Write as _;
 
-use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 
 /// The project every probe runs under, and the user its seeded rows belong to.
 const PROJECT_ENV_KEY: &str = "t1";
@@ -47,7 +47,6 @@ const UNKNOWN_SEQUENCE: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 /// The pinned `wamn:provisioning` id, the row a project must not create.
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
-const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 
 /// `deploy/sql/record-history.sql`, `deploy/sql/record-history-app-grants.sql`,
 /// and `deploy/sql/app-schema.sql`, the order every project applier uses.

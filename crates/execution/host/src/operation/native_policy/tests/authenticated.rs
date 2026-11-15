@@ -8,7 +8,7 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
-use tokio::time::{Instant, timeout};
+use tokio::time::Instant;
 
 use tracing::{Instrument as _, instrument::WithSubscriber as _};
 use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
@@ -73,6 +73,7 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
         !occupied,
         "refuse populated PostgreSQL: arm only this test's fresh disposable server"
     );
+    wamn_control_provision::test_database::system_schema(admin_url).await;
     let mut database: String = sqlx::query("SELECT current_database()::text")
         .fetch_one(&mut admin)
         .await?
@@ -369,7 +370,9 @@ async fn assert_case(caller: &AuthenticatedCaller, postgres: Arc<WamnPostgres>) 
     let emission = result
         .expect("the permitted call graph dispatches")
         .expect("typed emission");
-    assert_eq!(emission.payload, r#"[{"value":37}]"#);
+    let payload: serde_json::Value = serde_json::from_str(&emission.payload).unwrap();
+    assert_eq!(payload.as_array().unwrap().len(), 1);
+    assert_eq!(payload[0]["value"].as_u64(), Some(37));
     assert_eq!(emission.port, None);
     fixture.assert_clean().await;
     let observations = fixture.events.lock().expect("observations lock").clone();
@@ -569,7 +572,7 @@ async fn native_member_statement_instances(pool: sqlx::PgPool) {
                 .await
                 .expect("authenticated member fixture");
             let caller = authenticated(&route, true).await;
-            let (postgres, _) = warm_postgres_with_pool(database.as_str(), &[], 2)
+            let (postgres, _) = warm_postgres_with_pool(database.as_str(), &[], 2, None)
                 .await
                 .expect("member SQL credentials");
             let mut admin = connect(database.as_str()).await.expect("admin connection");
@@ -690,7 +693,7 @@ async fn native_sql_free_command_begins_from_its_transaction_field(pool: sqlx::P
                 .await
                 .expect("authenticated member fixture");
             let caller = authenticated(&route, true).await;
-            let (postgres, _) = warm_postgres_with_pool(database.as_str(), &[], 2)
+            let (postgres, _) = warm_postgres_with_pool(database.as_str(), &[], 2, None)
                 .await
                 .expect("member SQL credentials");
             let mut admin = connect(database.as_str()).await.expect("admin connection");
@@ -771,9 +774,13 @@ async fn native_warm_alternating_callers_and_credentials(pool: sqlx::PgPool) {
             let bob =
                 authenticated_as(&route, true, Some("00000000-0000-4000-8000-0000000000b2")).await;
             assert_ne!(alice.principal_id(), bob.principal_id());
-            let (postgres, credentials) = warm_postgres(database.as_str(), &[])
-                .await
-                .expect("guest-generation fixture");
+            let directory = wamn_test_infrastructure::scratch::ScratchRoot::create()
+                .expect("credential directory");
+            let credential_file = directory.path().join("guest");
+            let (postgres, provider) =
+                warm_postgres_with_pool(database.as_str(), &[], 1, Some(&credential_file))
+                    .await
+                    .expect("guest-generation fixture");
             let fixture = Fixture::build_with_reuse(
                 Case::CalleeGrant,
                 true,
@@ -898,84 +905,106 @@ async fn native_warm_alternating_callers_and_credentials(pool: sqlx::PgPool) {
                 .expect("session remains authorized after PAT calls")
                 .expect("emission");
             super::warm::close(&fixture).await;
+            let retired_postgres = Arc::new(WamnPostgres::with_provider(provider));
             let retired = Fixture::build_with_reuse(
                 Case::Success,
                 false,
                 true,
                 None,
                 Some(REUSE_WINDOW_SECONDS),
-                Some(Arc::clone(&postgres)),
+                Some(Arc::clone(&retired_postgres)),
             )
             .await;
-            let mut request = retired.request(Instant::now() + CLEANUP);
-            request.facts.caller = Some(bob.clone());
-            invoke_native(&retired.target().await, request)
+            // Readiness creates a warm instance before credential resolution.
+            super::prepare_native(&retired.target().await, Instant::now() + CLEANUP)
                 .await
-                .expect("credential initially available")
-                .expect("emission");
-            credentials
-                .enabled
-                .store(false, std::sync::atomic::Ordering::SeqCst);
-            // This host watches no auth bucket, so it keeps no auth answer and
-            // the principal test reaches the credential (wamn-f2qud).
-            let mut request = retired.request(Instant::now() + CLEANUP);
-            request.facts.caller = Some(bob.clone());
-            assert!(
+                .expect("warm instance ready before its first invocation");
+            let login = workload_login(
+                WorkloadRoleFamily::App,
+                WorkloadRoleIdentity::ProjectEnvKey {
+                    project_env_key: PROJECT_ENV_KEY,
+                    database: database.path().trim_start_matches('/'),
+                },
+            )
+            .unwrap();
+            let mut observer = connect(database.as_str()).await.unwrap();
+            let mut replacements = Vec::new();
+            for disappearing in [true, false] {
+                let starts_before = super::warm::starts(&retired);
+                if disappearing {
+                    std::fs::rename(&credential_file, directory.path().join("unmounted")).unwrap();
+                } else {
+                    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                        "ALTER ROLE \"{login}\" NOLOGIN"
+                    )))
+                    .execute(&mut observer)
+                    .await
+                    .unwrap();
+                    sqlx::query(
+                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename=$1",
+                    )
+                    .bind(&login)
+                    .fetch_all(&mut observer)
+                    .await
+                    .unwrap();
+                }
+                retired_postgres.auth_cache().clear();
+                let before_refusal = retired.events.lock().unwrap().len();
+                let mut request = retired.request(Instant::now() + CLEANUP);
+                request.facts.caller = Some(bob.clone());
+                assert!(
+                    invoke_native(&retired.target().await, request)
+                        .await
+                        .is_err(),
+                    "unavailable credentials refuse without substitution"
+                );
+                assert_eq!(
+                    retired.events.lock().unwrap().len(),
+                    before_refusal,
+                    "credential refusal never reaches a guest instance"
+                );
+                if disappearing {
+                    std::fs::rename(directory.path().join("unmounted"), &credential_file).unwrap();
+                } else {
+                    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("ALTER ROLE \"{login}\" LOGIN")))
+                        .execute(&mut observer)
+                        .await
+                        .unwrap();
+                }
+                retired_postgres.auth_cache().clear();
+                let mut request = retired.request(Instant::now() + CLEANUP);
+                request.facts.caller = Some(bob.clone());
                 invoke_native(&retired.target().await, request)
                     .await
-                    .is_err(),
-                "an unavailable credential refuses without substitution"
-            );
-            credentials
-                .enabled
-                .store(true, std::sync::atomic::Ordering::SeqCst);
-            let mut request = retired.request(Instant::now() + CLEANUP);
-            request.facts.caller = Some(bob);
-            invoke_native(&retired.target().await, request)
-                .await
-                .expect("restored credential")
-                .expect("emission");
-            assert_eq!(
-                super::warm::starts(&retired),
-                2,
-                "credential refusal retires the previously reused instance"
-            );
+                    .expect("restored credential")
+                    .expect("emission");
+                replacements.push((disappearing, starts_before, super::warm::starts(&retired)));
+            }
             super::warm::close(&retired).await;
+            assert!(
+                replacements
+                    .iter()
+                    .all(|(_, before, after)| *after == before + 1),
+                "credential refusals must replace warm instances (disappeared, before, after): {replacements:?}"
+            );
             server.stop().await;
         },
     );
 }
 
-struct WarmCredentials {
-    provider: StaticCredentialProvider,
-    enabled: std::sync::atomic::AtomicBool,
-}
-impl wamn_postgres_capability::CredentialProvider for WarmCredentials {
-    fn resolve(
-        &self,
-        project: &str,
-        class: AuthorityClass,
-        project_env_key: Option<&str>,
-    ) -> anyhow::Result<Option<wamn_postgres_capability::ResolvedCredential>> {
-        if !self.enabled.load(std::sync::atomic::Ordering::SeqCst) {
-            return Ok(None);
-        }
-        self.provider.resolve(project, class, project_env_key)
-    }
-}
-
 async fn warm_postgres(
     admin_url: &str,
     principals: &[&str],
-) -> anyhow::Result<(Arc<WamnPostgres>, Arc<WarmCredentials>)> {
-    warm_postgres_with_pool(admin_url, principals, 1).await
+) -> anyhow::Result<(Arc<WamnPostgres>, Arc<StaticCredentialProvider>)> {
+    warm_postgres_with_pool(admin_url, principals, 1, None).await
 }
 
 async fn warm_postgres_with_pool(
     admin_url: &str,
     principals: &[&str],
     guest_pool_max_size: usize,
-) -> anyhow::Result<(Arc<WamnPostgres>, Arc<WarmCredentials>)> {
+    credential_file: Option<&std::path::Path>,
+) -> anyhow::Result<(Arc<WamnPostgres>, Arc<StaticCredentialProvider>)> {
     let mut admin = connect(admin_url).await?;
     let mut database: String = sqlx::query("SELECT current_database()::text")
         .fetch_one(&mut admin)
@@ -1022,8 +1051,14 @@ async fn warm_postgres_with_pool(
     http_url
         .set_username(&http_role)
         .map_err(|()| anyhow::anyhow!("HTTP reader username"))?;
+    let guest_credential = if let Some(path) = credential_file {
+        std::fs::write(path, url.as_str())?;
+        path.to_str().expect("credential path")
+    } else {
+        url.as_str()
+    };
     let configuration = json!({ PROJECT: { "credentials": {
-        (AuthorityClass::GuestSql.as_str()): url.as_str(),
+        (AuthorityClass::GuestSql.as_str()): guest_credential,
         (AuthorityClass::CallableHttp.as_str()): http_url.as_str()
     } } });
     let projects = StaticCredentialProvider::projects_from_json(
@@ -1036,16 +1071,11 @@ async fn warm_postgres_with_pool(
             statement_timeout_ms: 5000,
         },
     )?;
-    let credentials = Arc::new(WarmCredentials {
-        provider: StaticCredentialProvider::new(projects, None),
-        enabled: std::sync::atomic::AtomicBool::new(true),
-    });
-    Ok((
-        Arc::new(WamnPostgres::with_provider(Arc::<WarmCredentials>::clone(
-            &credentials,
-        ))),
-        credentials,
-    ))
+    let provider = Arc::new(StaticCredentialProvider::new(projects, None));
+    let postgres = WamnPostgres::with_provider(
+        Arc::clone(&provider) as Arc<dyn wamn_postgres_capability::CredentialProvider>
+    );
+    Ok((Arc::new(postgres), provider))
 }
 
 async fn pat_caller(

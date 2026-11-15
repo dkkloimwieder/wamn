@@ -64,8 +64,11 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
     let changed = routes.create("r-3", "k-1", &first_id, "priority").await?;
     anyhow::ensure!(
         changed["error"]["code"] == "idempotency_conflict"
-            && changed["error"]["detail"]
-                == json!({"field": "idempotency_key", "intent": "platform-fixture:widget/create#k-1"}),
+            && ({
+                let observed = &(changed["error"]["detail"]);
+                observed["field"] == serde_json::json!("idempotency_key")
+                    && observed["intent"] == serde_json::json!("platform-fixture:widget/create#k-1")
+            }),
         "a changed request is refused: {changed}"
     );
     anyhow::ensure!(counts(&mut database, "k-1").await? == (1, 1));

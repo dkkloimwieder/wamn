@@ -4,29 +4,30 @@ use super::fixture;
 
 #[test]
 fn platform_fixture_generates_client_descriptors() {
-    let client: ClientContractIr = fixture::client_release();
+    let package = fixture::generate_fixture();
+    let client: ClientContractIr = fixture::client_release_of(&package);
 
     let widget = client
         .models
         .iter()
         .find(|model| model.name == "widget")
         .expect("widget descriptors");
+    let expected: Vec<_> = package
+        .operations()
+        .iter()
+        .filter(|(_, description)| {
+            description.operation.type_ != wamn_catalog::OperationType::EventHandler
+                && description.operation.visibility.as_deref() != Some("private")
+        })
+        .filter_map(|(local, _)| local.strip_prefix("widget."))
+        .collect();
     assert_eq!(
         widget
             .operations
             .iter()
             .map(|operation| operation.name.as_str())
             .collect::<Vec<_>>(),
-        [
-            "archive",
-            "create",
-            "delete",
-            "get",
-            "list",
-            "query",
-            "record_batch",
-            "update"
-        ]
+        expected
     );
 
     let fields = leaf_fields(&widget.fields);

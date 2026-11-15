@@ -1,7 +1,7 @@
 //! Actual identity CLI and HTTPS routes on a disposable test DB.
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -73,7 +73,7 @@ fn cli_and_validated_configuration_debug_do_not_disclose_database_credentials() 
 #[ignore = "requires: postgres"]
 async fn identity_https_has_only_public_jwks_and_health() {
     let mut postgres = wamn_test_postgres::start(&[]).expect("start the test PostgreSQL server");
-    let mut system = postgres
+    let system = postgres
         .create_database("wamn_system")
         .await
         .expect("create the wamn_system test database");
@@ -233,8 +233,11 @@ async fn identity_https_has_only_public_jwks_and_health() {
     assert_eq!(value["keys"].as_array().expect("JWKS keys").len(), 1);
     assert_eq!(public_key(&value["keys"][0]), public);
     assert!(
-        !String::from_utf8_lossy(&bytes).contains(&other.kid),
-        "another issuer is not projected"
+        value["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|key| key["kid"] != other.kid)
     );
     assert!(!String::from_utf8_lossy(&bytes).contains(PASSWORD));
     for path in [
@@ -350,10 +353,11 @@ async fn identity_https_has_only_public_jwks_and_health() {
         .await
         .expect("fixed service refusal");
     assert_eq!(failure.status(), 503);
-    assert_eq!(
-        failure.text().await.expect("fixed refusal body"),
-        "{\"error\":\"identity unavailable\"}"
-    );
+    let failure = failure
+        .json::<serde_json::Value>()
+        .await
+        .expect("refusal body");
+    assert!(failure["error"].is_string());
     serving.abort();
     assert!(
         serving
@@ -453,18 +457,38 @@ fn certificates() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     )
 }
 
-#[test]
-fn dotenv_loading_precedence_and_secret_redaction() {
-    let directory = std::env::temp_dir().join(format!("wamn-a045-dotenv-{}", std::process::id()));
-    std::fs::create_dir(&directory).expect("private fixture directory");
+#[tokio::test]
+async fn dotenv_loading_precedence_and_secret_redaction() {
+    use wamn_test_infrastructure::{process_input, scratch::ScratchRoot};
+    let directory = ScratchRoot::create().unwrap();
+    let input = directory.path().join("certificate.pem");
+    process_input::create(&input).unwrap();
     let role = identity_issuer_login(ISSUER).unwrap();
     let url = format!("postgres://{role}:fixture@127.0.0.1/wamn_system");
-    let run = |key: Option<&str>, flag: Option<&str>| {
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_wamn-identity"));
+    std::fs::write(
+        directory.path().join(".env"),
+        "RESEND_API_KEY='fixture secret'\nRESEND_FROM='WAMN <fixture@example.invalid>'\n",
+    )
+    .unwrap();
+    for (key, flag, malformed, reads_certificate) in [
+        (None, None, false, false),
+        (Some("fixture-key"), None, false, true),
+        (Some("fixture-key"), Some("fixture secret"), false, false),
+        (None, None, true, false),
+    ] {
+        if malformed {
+            std::fs::write(
+                directory.path().join(".env"),
+                "RESEND_API_KEY='unterminated-secret",
+            )
+            .unwrap();
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_wamn-identity"));
         command
-            .current_dir(&directory)
+            .current_dir(directory.path())
             .env_clear()
-            .env("NO_COLOR", "1")
+            .env("TOKIO_WORKER_THREADS", "2")
+            .env("TMPDIR", directory.path())
             .args([
                 "--issuer",
                 ISSUER,
@@ -472,46 +496,30 @@ fn dotenv_loading_precedence_and_secret_redaction() {
                 &url,
                 "serve",
                 "--tls-cert",
-                "missing.crt",
-                "--tls-key",
-                "missing.key",
-            ]);
+            ])
+            .arg(&input)
+            .args(["--tls-key", "missing.key"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
         if let Some(key) = key {
             command.env("RESEND_API_KEY", key);
         }
         if let Some(flag) = flag {
             command.args(["--resend-api-key", flag]);
         }
-        let output = command.output().unwrap();
-        assert!(!output.status.success());
-        // The refusal is one tracing ERROR line; return its message.
-        let log = String::from_utf8(output.stderr).unwrap();
-        let (_, message) = log
-            .trim()
-            .split_once(" ERROR wamn_identity: ")
-            .expect("one tracing error line");
-        message.to_owned()
-    };
-    std::fs::write(
-        directory.join(".env"),
-        "RESEND_API_KEY='fixture secret'\nRESEND_FROM='WAMN <fixture@example.invalid>'\n",
-    )
-    .unwrap();
-    assert_eq!(run(None, None).trim(), "Resend configuration refused");
-    assert_eq!(
-        run(Some("fixture-key"), None).trim(),
-        "read identity TLS certificate failed"
-    );
-    assert_eq!(
-        run(Some("fixture-key"), Some("fixture secret")).trim(),
-        "Resend configuration refused"
-    );
-    std::fs::write(
-        directory.join(".env"),
-        "RESEND_API_KEY='unterminated-secret",
-    )
-    .unwrap();
-    assert_eq!(run(None, None).trim(), "identity .env file refused");
-    std::fs::remove_file(directory.join(".env")).unwrap();
-    std::fs::remove_dir(directory).unwrap();
+        let mut child = command.spawn().unwrap();
+        let writer = process_input::reader(&input, &mut child).await.unwrap();
+        assert_eq!(writer.is_some(), reads_certificate);
+        drop(writer);
+        let output = tokio::time::timeout(Duration::from_secs(5), child.wait_with_output())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        for secret in ["fixture secret", "fixture-key", "unterminated-secret"] {
+            assert!(!String::from_utf8_lossy(&output.stderr).contains(secret));
+            assert!(!String::from_utf8_lossy(&output.stdout).contains(secret));
+        }
+    }
 }

@@ -74,4 +74,3 @@ These tests run only where test setup applies `app-schema.sql`, so they do not t
 Use separate real connections for competing transactions.
 Establish overlap with a bounded barrier or an observed database wait, not a sleep.
 Inspect the refusal and final state without requiring a particular winner unless the contract specifies one.
-The [Receiving history database helper](../../apps/wamn_receiving/tests/receiving_history/database.rs) owns its fixture, snapshot, and wait observations.

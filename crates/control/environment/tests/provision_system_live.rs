@@ -346,29 +346,6 @@ async fn platform_initialization_runs_sqlx_once_and_explicit_apply_advances_it(p
     assert!(owns);
 }
 
-// Compare substrate objects, including functions, grants, and history guards.
-// The application-data fixture lives in public, outside the substrate.
-// A fixed restrict key removes pg_dump's random session delimiter.
-async fn schema_dump(url: &str) -> String {
-    let output = tokio::process::Command::new("/usr/lib/postgresql/18/bin/pg_dump")
-        .args([
-            "--schema-only",
-            "--no-comments",
-            "--exclude-schema=public",
-            "--restrict-key=wamnDEP506",
-            url,
-        ])
-        .output()
-        .await
-        .expect("dump the disposable PostgreSQL schema");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).expect("pg_dump emits UTF-8 SQL")
-}
-
 // Enumerate the actual catalog and data rather than pinning a relation roster.
 async fn snapshot(client: &mut sqlx::PgConnection) -> serde_json::Value {
     let catalog: serde_json::Value = sqlx::query(r"

@@ -744,10 +744,13 @@ mod declaration_tests {
         for auth_type in ["none", "http_basic", "custom"] {
             let binding = super::IntegrationBinding::new("example.com:443", Some("private-secret".into())).unwrap()
                 .with_parameters(serde_json::json!({"authority":"example.com:443", "sample-count":3, "auth":{"name":"private-placement"}}), auth_type);
-            assert_eq!(
-                serde_json::from_str::<serde_json::Value>(&binding.parameters).unwrap(),
-                serde_json::json!({"authority":"example.com:443", "sample-count":3})
-            );
+            {
+                let observed =
+                    &(serde_json::from_str::<serde_json::Value>(&binding.parameters).unwrap());
+                assert_eq!(observed["authority"], serde_json::json!("example.com:443"));
+                assert_eq!(observed["sample-count"], serde_json::json!(3));
+                assert!(observed.get("auth").is_none());
+            };
             assert_eq!(
                 binding.credential.as_deref(),
                 (auth_type == "custom").then_some("private-secret")

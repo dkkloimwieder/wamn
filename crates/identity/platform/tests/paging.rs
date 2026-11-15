@@ -50,7 +50,11 @@ fn control_lists_first_next_last_and_legacy() {
         assert_eq!(first.read_limit(), Some(2));
         assert_eq!(first.after(0), None);
         let answer = first.answer("rows", keys[..2].to_vec(), Clone::clone);
-        assert_eq!(answer["rows"], json!([keys[0]]));
+        {
+            let observed = &(answer["rows"]);
+            assert_eq!(observed.as_array().expect("array").len(), 1);
+            assert_eq!(observed[0], serde_json::json!(keys[0]));
+        };
         assert!(answer["total"].is_null());
         let next = ListPage::new(
             &json!({"limit":1,"cursor":answer["next_cursor"]}),
@@ -61,7 +65,11 @@ fn control_lists_first_next_last_and_legacy() {
         .unwrap();
         assert_eq!(next.after(0), Some("a"));
         let answer = next.answer("rows", keys[1..].to_vec(), Clone::clone);
-        assert_eq!(answer["rows"], json!([keys[1]]));
+        {
+            let observed = &(answer["rows"]);
+            assert_eq!(observed.as_array().expect("array").len(), 1);
+            assert_eq!(observed[0], serde_json::json!(keys[1]));
+        };
         let last = ListPage::new(
             &json!({"cursor":answer["next_cursor"]}),
             operation,

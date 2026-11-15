@@ -6,26 +6,21 @@
 //! the same server, with administration logins that the production prepare
 //! mints, read from a directory laid out as the mounted Secret.
 //!
-//! The test starts its own PostgreSQL 18 server and a fake identity service
+//! The test starts its own PostgreSQL 18 server and the identity service
 //! that requires the operator certificate. It calls the host route delivery
 //! with the caller that the control route authenticator admits; the
 //! admission itself is the test of `control.mine` in `host_route_live.rs`.
 
 use sqlx::{Connection as _, Row as _};
 use std::collections::HashSet;
-use std::io::Write as _;
-use std::path::PathBuf;
 use std::sync::Arc;
 use wamn_broker::Publisher;
 
-use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
+use rcgen::{CertificateParams, KeyPair};
 use serde_json::{Value, json};
 use sqlx::PgConnection as Client;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
-use tokio_rustls::TlsAcceptor;
-use wamn_catalog::HostRouteSet;
+use wamn_catalog::{HostRouteAuthority, HostRouteSet};
 use wamn_control_provision::PlatformComponent;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::native_routes::{DeliveryError, DeliveryRequest, Source};
@@ -40,149 +35,58 @@ use wamn_platform_identity::org::{MemberGrants, invite_member};
 mod control_fixture;
 use control_fixture::{ORG, connect, environments, install};
 
-/// A fake identity service that requires the operator certificate. `/users`
-/// answers from `user` by email, or refuses an unknown email as identity
-/// refuses one. `/invitations` accepts every request. Each request path and
-/// body is sent on the returned channel.
-struct FakeIdentity {
+/// Run the identity service with its issuer login and the shared TLS fixture.
+struct IdentityServer {
     config: PatIssuerConfig,
-    requests: mpsc::UnboundedReceiver<(String, Value)>,
-    task: tokio::task::JoinHandle<()>,
-    directory: PathBuf,
+    task: tokio::task::JoinHandle<Result<(), wamn_identity::IdentityServiceError>>,
+    directory: wamn_test_infrastructure::scratch::ScratchRoot,
 }
 
-impl Drop for FakeIdentity {
+impl Drop for IdentityServer {
     fn drop(&mut self) {
         self.task.abort();
-        let _ = std::fs::remove_dir_all(&self.directory);
     }
 }
 
-async fn fake_identity(users: Vec<(&'static str, String, bool)>) -> FakeIdentity {
-    let directory = std::env::temp_dir().join(format!(
-        "wamn-control-route-identity-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&directory);
-    std::fs::create_dir(&directory).expect("fixture directory");
-    let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
-    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
-    let ca_key = KeyPair::generate().unwrap();
-    let ca = ca_params.self_signed(&ca_key).unwrap();
-    let issuer = Issuer::new(ca_params, ca_key);
-    let server_key = KeyPair::generate().unwrap();
-    let server = CertificateParams::new(vec!["127.0.0.1".to_owned()])
-        .unwrap()
-        .signed_by(&server_key, &issuer)
-        .unwrap();
-    let client_key = KeyPair::generate().unwrap();
-    let client = CertificateParams::new(vec!["operator.example".to_owned()])
-        .unwrap()
-        .signed_by(&client_key, &issuer)
-        .unwrap();
-    let write = |name: &str, pem: &str| {
-        let path = directory.join(name);
-        std::fs::File::create(&path)
-            .and_then(|mut file| file.write_all(pem.as_bytes()))
-            .expect("fixture credential file");
-        path
-    };
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(ca.der().clone()).unwrap();
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
-        Arc::new(roots),
-        Arc::clone(&provider),
+async fn identity_server(admin: &mut Client, admin_url: &str) -> anyhow::Result<IdentityServer> {
+    let directory = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+    let authority = wamn_test_infrastructure::nats_tls::Authority::new(directory.path())?;
+    let operator = authority.client("operator.example")?;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = format!("https://{}", listener.local_addr()?);
+    let password = "control-route-issuer-test-only";
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::test_database::issuer_login_sql(&endpoint, password)?,
+    ))
+    .execute(admin)
+    .await?;
+    let mut connection = url::Url::parse(admin_url)?;
+    connection
+        .set_username(&wamn_control_provision::identity_role::identity_issuer_login(&endpoint)?)
+        .map_err(|()| anyhow::anyhow!("issuer username"))?;
+    connection
+        .set_password(Some(password))
+        .map_err(|()| anyhow::anyhow!("issuer password"))?;
+    let service = wamn_identity::IdentityService::connect(
+        wamn_identity::IdentityConfig::new(&endpoint, connection.as_str())?
+            .with_local_mail(directory.path().join("mail.jsonl")),
     )
-    .build()
-    .unwrap();
-    let mut tls = rustls::ServerConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_client_cert_verifier(verifier)
-        .with_single_cert(
-            vec![server.der().clone()],
-            rustls::pki_types::PrivatePkcs8KeyDer::from(server_key.serialize_der()).into(),
-        )
-        .unwrap();
-    tls.alpn_protocols = vec![b"http/1.1".to_vec()];
-    let acceptor = TlsAcceptor::from(Arc::new(tls));
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let config = PatIssuerConfig {
-        endpoint: Some(format!(
-            "https://{}/identity",
-            listener.local_addr().unwrap()
-        )),
-        client_cert: Some(write("operator.pem", &mut client.pem())),
-        client_key: Some(write("operator.key", &client_key.serialize_pem())),
-        server_ca: Some(write("ca.pem", &ca.pem())),
-    };
-    let (sender, requests) = mpsc::unbounded_channel();
-    let task = tokio::spawn(async move {
-        while let Ok((stream, _)) = listener.accept().await {
-            let Ok(mut stream) = acceptor.accept(stream).await else {
-                continue;
-            };
-            let mut request = Vec::new();
-            let mut buffer = [0_u8; 1024];
-            let headers_end = loop {
-                let read = stream.read(&mut buffer).await.unwrap();
-                assert!(read > 0);
-                request.extend_from_slice(&buffer[..read]);
-                if let Some(offset) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
-                    break offset + 4;
-                }
-            };
-            let headers = String::from_utf8(request[..headers_end].to_vec()).unwrap();
-            let length: usize = headers
-                .lines()
-                .find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    name.eq_ignore_ascii_case("content-length")
-                        .then(|| value.trim().parse().unwrap())
-                })
-                .unwrap();
-            while request.len() < headers_end + length {
-                let read = stream.read(&mut buffer).await.unwrap();
-                request.extend_from_slice(&buffer[..read]);
-            }
-            let path = headers.split(' ').nth(1).unwrap().to_owned();
-            let body: Value = serde_json::from_slice(&request[headers_end..]).unwrap();
-            let (status, reply) = if path.ends_with("/users") {
-                match users.iter().find(|(email, _, _)| body["email"] == *email) {
-                    Some((_, id, enrolled)) => {
-                        ("200 OK", json!({"principal_id": id, "enrolled": enrolled}))
-                    }
-                    None => (
-                        "400 Bad Request",
-                        json!({"error": "email must be a local part, an @, and a dotted domain, in at most 254 bytes"}),
-                    ),
-                }
-            } else {
-                ("201 Created", json!({"status": "accepted_for_delivery"}))
-            };
-            sender.send((path, body)).unwrap();
-            let reply = reply.to_string();
-            let _ = stream
-                .write_all(
-                    format!(
-                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
-                         Content-Length: {}\r\nConnection: close\r\n\r\n{reply}",
-                        reply.len()
-                    )
-                    .as_bytes(),
-                )
-                .await;
-            let _ = stream.shutdown().await;
-        }
-    });
-    FakeIdentity {
-        config,
-        requests,
-        task,
+    .await?;
+    let tls = wamn_identity::tls_config_with_operator_ca(
+        &std::fs::read(&authority.server_cert)?,
+        &std::fs::read(&authority.server_key)?,
+        &std::fs::read(&authority.ca)?,
+    )?;
+    Ok(IdentityServer {
+        config: PatIssuerConfig {
+            endpoint: Some(endpoint),
+            client_cert: Some(operator.cert),
+            client_key: Some(operator.key),
+            server_ca: Some(authority.ca),
+        },
+        task: tokio::spawn(wamn_identity::serve(listener, service, tls)),
         directory,
-    }
+    })
 }
 
 /// One org route call: the answer, or the refusal. A declared refusal reads
@@ -192,7 +96,7 @@ async fn call(
     operation: &str,
     caller: &str,
     payload: Value,
-) -> Result<Value, String> {
+) -> Result<Value, Value> {
     let (id, attachment) = HostRouteSet::Control
         .attachments()
         .find(|(_, attachment)| attachment.reference == format!("wamn-control:{operation}"))
@@ -237,43 +141,88 @@ async fn call(
             }
         }
         Err(DeliveryError::PermissionDenied(denial)) => {
-            Err(format!("permission denied {}", denial.operation))
+            Err(json!({"code":"permission-denied","operation":denial.operation}))
         }
         other => panic!("an org route answers or refuses: {other:?}"),
     }
 }
 
 /// How [`call`] reads a declared refusal.
-fn refused(code: &str, detail: &Value) -> String {
-    format!("{code} {detail}")
+fn refused(code: &str, detail: &Value) -> Value {
+    json!({"code":code,"detail":detail})
 }
 
 /// The org roles, project roles and memberships of one principal.
-async fn grants(admin: &mut Client, principal: &str) -> Vec<String> {
-    sqlx::query(
-        "SELECT 'org ' || role FROM identity.org_roles WHERE principal_id = $1::text::uuid \
-             UNION ALL SELECT 'project ' || project || ' ' || role \
-               FROM identity.project_roles WHERE principal_id = $1::text::uuid \
-             UNION ALL SELECT 'env ' || project || '/' || env \
-               FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid \
-             UNION ALL SELECT 'member ' || status || ' ' || updated_by::text \
-               FROM identity.org_memberships WHERE principal_id = $1::text::uuid \
-             ORDER BY 1",
+async fn grants(admin: &mut Client, principal: &str) -> Vec<(String, String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT 'org', role, NULL::text FROM identity.org_roles WHERE principal_id=$1::text::uuid
+         UNION ALL SELECT 'project', project, role FROM identity.project_roles WHERE principal_id=$1::text::uuid
+         UNION ALL SELECT 'env', project, env FROM identity.project_env_memberships WHERE principal_id=$1::text::uuid
+         UNION ALL SELECT 'member', status, updated_by::text FROM identity.org_memberships WHERE principal_id=$1::text::uuid
+         ORDER BY 1,2,3"
+    ).bind(principal).fetch_all(admin).await.expect("read the grants")
+}
+
+/// Compare a route page with the current registry and identity state.
+async fn assert_project_list(response: &Value, admin: &mut Client) -> anyhow::Result<()> {
+    let expected_projects: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT p.id, EXISTS(SELECT FROM registry.environment_projects ep
+         JOIN registry.environments e USING(org,env)
+         WHERE ep.org=p.org AND ep.project=p.id AND e.status='active')
+         FROM registry.projects p WHERE org=$1 ORDER BY id",
     )
-    .bind(&principal)
+    .bind(ORG)
     .fetch_all(&mut *admin)
-    .await
-    .expect("read the grants")
-    .iter()
-    .map(|row| row.get(0))
-    .collect()
+    .await?;
+    let returned_projects = response["projects"].as_array().expect("projects");
+    assert_eq!(returned_projects.len(), expected_projects.len());
+    assert_eq!(
+        response["total"].as_u64(),
+        Some(expected_projects.len() as u64)
+    );
+    assert!(response["next_cursor"].is_null());
+    for (returned, (name, active)) in returned_projects.iter().zip(expected_projects) {
+        assert_eq!(returned["name"].as_str(), Some(name.as_str()));
+        assert_eq!(
+            returned["state"],
+            if active { "active" } else { "inactive" }
+        );
+    }
+
+    Ok(())
+}
+
+async fn assert_org_users(response: &Value, admin: &mut Client) -> anyhow::Result<()> {
+    let expected_users: Vec<(String,String,String,String,bool)> = sqlx::query_as(
+        "SELECT p.id::text,p.email,p.display_name,m.status,
+         EXISTS(SELECT FROM identity.org_roles r WHERE r.org=m.org AND r.principal_id=p.id AND r.role='org-admin')
+         FROM identity.principals p JOIN identity.org_memberships m ON m.principal_id=p.id
+         WHERE m.org=$1 ORDER BY p.email"
+    ).bind(ORG).fetch_all(&mut *admin).await?;
+    let returned_users = response["users"].as_array().expect("users");
+    assert_eq!(returned_users.len(), expected_users.len());
+    assert_eq!(
+        response["total"].as_u64(),
+        Some(expected_users.len() as u64)
+    );
+    assert!(response["next_cursor"].is_null());
+    for (returned, (id, email, name, status, org_admin)) in
+        returned_users.iter().zip(&expected_users)
+    {
+        assert_eq!(returned["principal_id"].as_str(), Some(id.as_str()));
+        assert_eq!(returned["email"].as_str(), Some(email.as_str()));
+        assert_eq!(returned["display_name"].as_str(), Some(name.as_str()));
+        assert_eq!(returned["status"].as_str(), Some(status.as_str()));
+        assert_eq!(returned["org_admin"].as_bool(), Some(*org_admin));
+    }
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires: postgres"]
 async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
-    let test_database = postgres.create_database("control_org_routes").await?;
+    let test_database = postgres.create_database("wamn_system").await?;
     let admin_url = test_database.url();
     let mut admin = connect(admin_url).await?;
     let control_url = install(&mut admin, admin_url).await?;
@@ -311,11 +260,27 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     let boss_text = boss.to_string();
     let boss = boss_text.as_str();
 
-    let mut identity = fake_identity(vec![
-        ("ann@example.test", ann.to_string(), false),
-        ("cat@example.test", cat.to_string(), true),
-    ])
-    .await;
+    let invitation =
+        wamn_platform_identity::password::issue_invitation(&mut admin, &boss_text.parse()?, &cat)
+            .await?;
+    wamn_platform_identity::password::enroll_password(
+        &mut admin,
+        &wamn_platform_identity::password::password_work(),
+        &cat,
+        invitation.secret(),
+        wamn_platform_identity::password::Password::new("an enrolled user's password".to_owned())?,
+    )
+    .await?;
+    let disabled = create_or_reuse_user(&mut admin, "dan@example.test", "Dan")
+        .await?
+        .principal_id;
+    wamn_platform_identity::disable_principal(
+        &mut admin,
+        &disabled,
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
+    )
+    .await?;
+    let identity = identity_server(&mut admin, admin_url).await?;
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
@@ -329,102 +294,113 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         },
     );
 
-    // Every org route refuses a caller without org-admin.
-    for operation in [
-        "user/list",
-        "user/invite",
-        "user/activate",
-        "user/deactivate",
-        "project/list",
-        "org-admin/grant",
-        "org-admin/revoke",
-    ] {
+    // Every route whose declared authority is org administration refuses a non-admin.
+    for (_, attachment) in HostRouteSet::Control
+        .attachments()
+        .filter(|(_, attachment)| attachment.route.authority == HostRouteAuthority::OrgAdmin)
+    {
+        let operation = attachment
+            .reference
+            .strip_prefix("wamn-control:")
+            .expect("control reference");
         assert_eq!(
-            call(&delivery, operation, ann.to_string().as_str(), json!({})).await,
-            Err(format!("permission denied wamn-control:{operation}@0.9.0"))
+            call(&delivery, operation, ann.to_string().as_str(), json!({}))
+                .await
+                .unwrap_err()["code"],
+            "permission-denied"
         );
     }
-
-    assert_eq!(
-        call(&delivery, "project/list", boss, json!({})).await,
-        Ok(
-            json!({"next_cursor": null, "total": 2, "projects": [{"name": "billing", "state": "active"}, {"name": "shop", "state": "active"}]})
-        )
-    );
+    let projects = call(&delivery, "project/list", boss, json!({}))
+        .await
+        .expect("projects");
+    assert_project_list(&projects, &mut admin).await?;
 
     // A new user gets the membership and the mail; an enrolled user gets no
     // mail. The host refuses an email that the identity rules refuse, and
-    // identity refuses a user it does not create.
+    // identity refuses a disabled user.
+    let invited = call(
+        &delivery,
+        "user/invite",
+        boss,
+        json!({"email": "ann@example.test", "display_name": "Ann",
+               "memberships": [{"project": "billing", "env": "dev"}]}),
+    )
+    .await
+    .expect("invite new user");
     assert_eq!(
-        call(
-            &delivery,
-            "user/invite",
-            boss,
-            json!({"email": "ann@example.test", "display_name": "Ann",
-                   "memberships": [{"project": "billing", "env": "dev"}]})
-        )
-        .await,
-        Ok(json!({"principal_id": ann.to_string().as_str(), "enrolled": false, "invited": true}))
+        invited["principal_id"].as_str(),
+        Some(ann.to_string().as_str())
     );
-    assert_eq!(identity.requests.recv().await.unwrap().0, "/identity/users");
+    assert_eq!(invited["enrolled"].as_bool(), Some(false));
+    assert_eq!(invited["invited"].as_bool(), Some(true));
+    let mail: Vec<Value> = std::fs::read_to_string(identity.directory.path().join("mail.jsonl"))?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
     assert_eq!(
-        identity.requests.recv().await.unwrap(),
-        (
-            "/identity/invitations".to_owned(),
-            json!({"principal_id": ann.to_string().as_str()})
-        )
+        mail.iter()
+            .map(|message| message["to"].as_str().expect("recipient"))
+            .collect::<Vec<_>>(),
+        ["ann@example.test"]
     );
     assert_eq!(
         grants(&mut admin, ann.to_string().as_str()).await,
         [
-            "env billing/dev".to_owned(),
-            format!("member active {boss}")
+            (
+                "env".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned())
+            ),
+            (
+                "member".to_owned(),
+                "active".to_owned(),
+                Some(boss.to_owned())
+            )
         ]
     );
+    let enrolled = call(
+        &delivery,
+        "user/invite",
+        boss,
+        json!({"email": "cat@example.test", "display_name": "Cat"}),
+    )
+    .await
+    .expect("invite enrolled user");
     assert_eq!(
-        call(
+        enrolled["principal_id"].as_str(),
+        Some(cat.to_string().as_str())
+    );
+    assert_eq!(enrolled["enrolled"].as_bool(), Some(true));
+    assert_eq!(enrolled["invited"].as_bool(), Some(false));
+    let recipients: Vec<String> =
+        std::fs::read_to_string(identity.directory.path().join("mail.jsonl"))?
+            .lines()
+            .map(|line| -> anyhow::Result<String> {
+                let message: Value = serde_json::from_str(line)?;
+                Ok(message["to"].as_str().expect("recipient").to_owned())
+            })
+            .collect::<Result<_, _>>()?;
+    assert_eq!(recipients, ["ann@example.test"]);
+    for (email, code) in [
+        ("not-an-email", "invalid_input"),
+        ("dan@example.test", "user_refused"),
+    ] {
+        let refusal = call(
             &delivery,
             "user/invite",
             boss,
-            json!({"email": "cat@example.test", "display_name": "Cat"})
+            json!({"email": email, "display_name": "Nobody"}),
         )
-        .await,
-        Ok(json!({"principal_id": cat.to_string().as_str(), "enrolled": true, "invited": false}))
-    );
-    assert_eq!(identity.requests.recv().await.unwrap().0, "/identity/users");
-    assert!(
-        identity.requests.try_recv().is_err(),
-        "an enrolled user gets no invitation"
-    );
-    assert_eq!(
-        call(
-            &delivery,
-            "user/invite",
-            boss,
-            json!({"email": "not-an-email", "display_name": "Nobody"})
-        )
-        .await,
-        Err(refused("invalid_input", &json!({"field": "email"})))
-    );
-    assert_eq!(
-        call(
-            &delivery,
-            "user/invite",
-            boss,
-            json!({"email": "dan@example.test", "display_name": "Dan"})
-        )
-        .await,
-        Err(refused("user_refused", &json!({"field": "email"})))
-    );
-    assert_eq!(identity.requests.recv().await.unwrap().0, "/identity/users");
-    assert_eq!(
-        call(&delivery, "user/list", boss, json!({})).await,
-        Ok(json!({"next_cursor": null, "total": 3, "users": [
-            {"principal_id": ann.to_string().as_str(), "email": "ann@example.test", "display_name": "Ann", "status": "active", "org_admin": false},
-            {"principal_id": boss, "email": "boss@example.test", "display_name": "Boss", "status": "active", "org_admin": true},
-            {"principal_id": cat.to_string().as_str(), "email": "cat@example.test", "display_name": "Cat", "status": "active", "org_admin": false},
-        ]}))
-    );
+        .await
+        .unwrap_err();
+        assert_eq!(refusal["code"], code);
+        assert_eq!(refusal["detail"]["field"], "email");
+    }
+    let users = call(&delivery, "user/list", boss, json!({}))
+        .await
+        .expect("users");
+    assert_org_users(&users, &mut admin).await?;
+    let expected_users = users["users"].as_array().expect("users");
     // A paged read follows next_cursor to the end. Only a complete first page carries a total.
     let mut paged = Vec::new();
     let mut input = json!({"limit": 1});
@@ -441,88 +417,136 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         input = json!({"limit": 1, "cursor": page["next_cursor"]});
     }
     assert_eq!(
-        paged,
-        [
-            json!(ann.to_string().as_str()),
-            json!(boss),
-            json!(cat.to_string().as_str())
-        ]
+        paged
+            .iter()
+            .map(|id| id.as_str().expect("principal"))
+            .collect::<Vec<_>>(),
+        expected_users
+            .iter()
+            .map(|user| user["principal_id"].as_str().expect("principal"))
+            .collect::<Vec<_>>()
     );
     assert_eq!(
-        call(&delivery, "user/list", boss, json!({"limit": 3}))
-            .await
-            .expect("one page")["total"],
-        3
+        call(
+            &delivery,
+            "user/list",
+            boss,
+            json!({"limit": expected_users.len()})
+        )
+        .await
+        .expect("one page")["total"]
+            .as_u64(),
+        Some(expected_users.len() as u64)
     );
 
-    // org-admin materializes over every project and environment, and its
-    // revoke leaves the ordinary memberships.
+    // Org administration derives authority over every registry project and
+    // environment. Revocation preserves the explicit memberships.
+    let ordinary_grants = grants(&mut admin, ann.to_string().as_str()).await;
     let ann_payload = json!({"principal_id": ann.to_string().as_str()});
+    let granted = call(&delivery, "org-admin/grant", boss, ann_payload.clone())
+        .await
+        .expect("grant");
     assert_eq!(
-        call(&delivery, "org-admin/grant", boss, ann_payload.clone()).await,
-        Ok(json!({"principal_id": ann.to_string().as_str(), "org_admin": true}))
+        granted["principal_id"].as_str(),
+        Some(ann.to_string().as_str())
     );
+    assert_eq!(granted["org_admin"].as_bool(), Some(true));
+    let projects: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT p.id,ep.env FROM registry.projects p
+         LEFT JOIN registry.environment_projects ep ON ep.org=p.org AND ep.project=p.id
+         WHERE p.org=$1 ORDER BY p.id,ep.env",
+    )
+    .bind(ORG)
+    .fetch_all(&mut admin)
+    .await?;
+    for (project, env) in &projects {
+        assert!(
+            wamn_platform_identity::control::is_project_admin(
+                &mut admin,
+                &ann,
+                ORG,
+                project,
+                env.as_deref()
+            )
+            .await?
+        );
+    }
+    let revoked = call(&delivery, "org-admin/revoke", boss, ann_payload.clone())
+        .await
+        .expect("revoke");
+    assert_eq!(
+        revoked["principal_id"].as_str(),
+        Some(ann.to_string().as_str())
+    );
+    assert_eq!(revoked["org_admin"].as_bool(), Some(false));
     assert_eq!(
         grants(&mut admin, ann.to_string().as_str()).await,
-        [
-            "env billing/dev".to_owned(),
-            "env shop/dev".to_owned(),
-            format!("member active {boss}"),
-            "org org-admin".to_owned(),
-            "project billing project-admin".to_owned(),
-            "project shop project-admin".to_owned(),
-        ]
+        ordinary_grants
     );
-    assert_eq!(
-        call(&delivery, "org-admin/revoke", boss, ann_payload.clone()).await,
-        Ok(json!({"principal_id": ann.to_string().as_str(), "org_admin": false}))
-    );
-    assert_eq!(
-        grants(&mut admin, ann.to_string().as_str()).await,
-        [
-            "env billing/dev".to_owned(),
-            "env shop/dev".to_owned(),
-            format!("member active {boss}"),
-        ]
-    );
+    for (project, env) in &projects {
+        assert!(
+            !wamn_platform_identity::control::is_project_admin(
+                &mut admin,
+                &ann,
+                ORG,
+                project,
+                env.as_deref()
+            )
+            .await?
+        );
+    }
 
     // Deactivation revokes from the leaves upward, and activation restores
     // no access.
+    let deactivated = call(&delivery, "user/deactivate", boss, ann_payload.clone())
+        .await
+        .expect("deactivate");
     assert_eq!(
-        call(&delivery, "user/deactivate", boss, ann_payload.clone()).await,
-        Ok(json!({"principal_id": ann.to_string().as_str(), "status": "inactive"}))
+        deactivated["principal_id"].as_str(),
+        Some(ann.to_string().as_str())
     );
+    assert_eq!(deactivated["status"], "inactive");
     assert_eq!(
         grants(&mut admin, ann.to_string().as_str()).await,
-        [format!("member inactive {boss}")]
+        [(
+            "member".to_owned(),
+            "inactive".to_owned(),
+            Some(boss.to_owned())
+        )]
     );
+    let refusal = call(&delivery, "org-admin/grant", boss, ann_payload.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(refusal["code"], "user_not_active");
+    assert_eq!(refusal["detail"]["field"], "principal_id");
+    let activated = call(&delivery, "user/activate", boss, ann_payload)
+        .await
+        .expect("activate");
     assert_eq!(
-        call(&delivery, "org-admin/grant", boss, ann_payload.clone()).await,
-        Err(refused(
-            "user_not_active",
-            &json!({"field": "principal_id"})
-        ))
+        activated["principal_id"].as_str(),
+        Some(ann.to_string().as_str())
     );
-    assert_eq!(
-        call(&delivery, "user/activate", boss, ann_payload).await,
-        Ok(json!({"principal_id": ann.to_string().as_str(), "status": "active"}))
-    );
+    assert_eq!(activated["status"], "active");
     assert_eq!(
         grants(&mut admin, ann.to_string().as_str()).await,
-        [format!("member active {boss}")]
+        [(
+            "member".to_owned(),
+            "active".to_owned(),
+            Some(boss.to_owned())
+        )]
     );
 
-    // A revoked org-admin is refused on the next request. Boss keeps the
-    // project-admin rows that org-admin materialized, so an org route that
-    // only org-admin holds is the one that refuses.
+    // A revoked org administrator is refused on the next request.
     sqlx::query("DELETE FROM identity.org_roles WHERE principal_id = $1::text::uuid")
         .bind(&boss)
         .execute(&mut admin)
         .await
         .map(|result| result.rows_affected())?;
     assert_eq!(
-        call(&delivery, "project/list", boss, json!({})).await,
-        Err("permission denied wamn-control:project/list@0.9.0".to_owned())
+        call(&delivery, "project/list", boss, json!({}))
+            .await
+            .unwrap_err()["code"],
+        "permission-denied"
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
@@ -604,8 +628,8 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         ("project-admin/revoke", project_admin(ann)),
     ] {
         assert_eq!(
-            call(&delivery, operation, ann, payload).await,
-            Err(format!("permission denied wamn-control:{operation}@0.9.0"))
+            call(&delivery, operation, ann, payload).await.unwrap_err()["code"],
+            "permission-denied"
         );
     }
     assert_eq!(
@@ -615,75 +639,134 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             cat,
             json!({"project": "shop"})
         )
-        .await,
-        Err("permission denied wamn-control:environment/list@0.9.0".to_owned())
+        .await
+        .unwrap_err()["code"],
+        "permission-denied"
     );
     // A project admin reads the org's users, and holds no other org route.
+    let users = call(&delivery, "user/list", cat, json!({}))
+        .await
+        .expect("org users");
+    assert_org_users(&users, &mut admin).await?;
     assert_eq!(
-        call(&delivery, "user/list", cat, json!({})).await,
-        Ok(json!({"next_cursor": null, "total": 3, "users": [
-            {"principal_id": ann, "email": "ann@example.test", "display_name": "Ann", "status": "active", "org_admin": false},
-            {"principal_id": boss, "email": "boss@example.test", "display_name": "Boss", "status": "active", "org_admin": true},
-            {"principal_id": cat, "email": "cat@example.test", "display_name": "Cat", "status": "active", "org_admin": false},
-        ]}))
+        call(&delivery, "project/list", cat, json!({}))
+            .await
+            .unwrap_err()["code"],
+        "permission-denied"
     );
+    let environments = call(
+        &delivery,
+        "environment/list",
+        cat,
+        json!({"project": "billing"}),
+    )
+    .await
+    .expect("project environments");
+    let expected_environments: Vec<(String, String)> = sqlx::query_as(
+        "SELECT ep.env,e.status FROM registry.environment_projects ep
+         JOIN registry.environments e USING(org,env)
+         WHERE ep.org=$1 AND ep.project=$2 ORDER BY ep.env",
+    )
+    .bind(ORG)
+    .bind("billing")
+    .fetch_all(&mut admin)
+    .await?;
+    let returned_environments = environments["environments"]
+        .as_array()
+        .expect("environments");
+    assert_eq!(returned_environments.len(), expected_environments.len());
     assert_eq!(
-        call(&delivery, "project/list", cat, json!({})).await,
-        Err("permission denied wamn-control:project/list@0.9.0".to_owned())
+        environments["total"].as_u64(),
+        Some(expected_environments.len() as u64)
     );
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/list",
-            cat,
-            json!({"project": "billing"})
-        )
-        .await,
-        Ok(
-            json!({"next_cursor": null, "total": 1, "environments": [{"name": "dev", "state": "active"}]})
-        )
-    );
+    assert!(environments["next_cursor"].is_null());
+    for (returned, (name, status)) in returned_environments.iter().zip(expected_environments) {
+        assert_eq!(returned["name"].as_str(), Some(name.as_str()));
+        assert_eq!(returned["state"].as_str(), Some(status.as_str()));
+    }
     // A status read names an environment of the project before it reads
     // Kubernetes.
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/status",
-            cat,
-            json!({"project": "billing", "env": "prod"})
-        )
-        .await,
-        Err(refused("environment_not_found", &json!({"field": "env"})))
-    );
+    let refusal = call(
+        &delivery,
+        "environment/status",
+        cat,
+        json!({"project": "billing", "env": "prod"}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refusal["code"], "environment_not_found");
+    assert_eq!(refusal["detail"]["field"], "env");
 
     // A membership goes to an active org member in an environment of the
     // project.
-    assert_eq!(
-        call(&delivery, "member/grant", cat, member(ann, "dev")).await,
-        Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": true}))
-    );
+    let response = call(&delivery, "member/grant", cat, member(ann, "dev"))
+        .await
+        .expect("route response");
+    assert_eq!(response["principal_id"].as_str(), Some(ann));
+    assert_eq!(response["project"], "billing");
+    assert_eq!(response["env"], "dev");
+    assert_eq!(response["member"].as_bool(), Some(true));
     assert_eq!(
         grants(&mut admin, ann).await,
         [
-            "env billing/dev".to_owned(),
-            format!("member active {provisioning}")
+            (
+                "env".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned())
+            ),
+            (
+                "member".to_owned(),
+                "active".to_owned(),
+                Some(provisioning.to_owned())
+            )
         ]
     );
+    let refusal = call(&delivery, "member/grant", cat, member(ann, "prod"))
+        .await
+        .unwrap_err();
+    assert_eq!(refusal["code"], "environment_not_found");
+    assert_eq!(refusal["detail"]["field"], "env");
+    let members = call(&delivery, "member/list", cat, json!({"project": "billing"}))
+        .await
+        .expect("project members");
+    let expected_members =
+        wamn_platform_identity::org::project_members(&mut admin, ORG, "billing").await?;
+    let returned_members = members["members"].as_array().expect("members");
+    assert_eq!(returned_members.len(), expected_members.len());
     assert_eq!(
-        call(&delivery, "member/grant", cat, member(ann, "prod")).await,
-        Err(refused("environment_not_found", &json!({"field": "env"})))
+        members["total"].as_u64(),
+        Some(expected_members.len() as u64)
     );
-    assert_eq!(
-        call(&delivery, "member/list", cat, json!({"project": "billing"})).await,
-        Ok(json!({"next_cursor": null, "total": 3, "members": [
-            {"principal_id": ann, "email": "ann@example.test", "display_name": "Ann",
-             "org_admin": false, "project_admin": false, "environments": ["dev"]},
-            {"principal_id": boss, "email": "boss@example.test", "display_name": "Boss",
-             "org_admin": true, "project_admin": true, "environments": ["dev"]},
-            {"principal_id": cat, "email": "cat@example.test", "display_name": "Cat",
-             "org_admin": false, "project_admin": true, "environments": ["dev"]},
-        ]}))
-    );
+    assert!(members["next_cursor"].is_null());
+    for (returned, expected) in returned_members.iter().zip(&expected_members) {
+        assert_eq!(
+            returned["principal_id"].as_str(),
+            Some(expected.principal_id.as_str())
+        );
+        assert_eq!(returned["email"].as_str(), Some(expected.email.as_str()));
+        assert_eq!(
+            returned["display_name"].as_str(),
+            Some(expected.display_name.as_str())
+        );
+        assert_eq!(returned["org_admin"].as_bool(), Some(expected.org_admin));
+        assert_eq!(
+            returned["project_admin"].as_bool(),
+            Some(expected.project_admin)
+        );
+        assert_eq!(
+            returned["environments"]
+                .as_array()
+                .expect("environments")
+                .iter()
+                .map(|env| env.as_str().expect("environment"))
+                .collect::<Vec<_>>(),
+            expected
+                .environments
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        );
+    }
 
     // An environment filters in the query, before the limit.
     let page = call(
@@ -694,89 +777,131 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     )
     .await
     .expect("a filtered page");
-    assert_eq!(
-        page["members"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|row| (row["email"].clone(), row["environments"].clone()))
-            .collect::<Vec<_>>(),
-        [
-            (json!("ann@example.test"), json!(["dev"])),
-            (json!("boss@example.test"), json!(["dev"])),
-        ]
-    );
+    let expected_page: Vec<_> = expected_members
+        .iter()
+        .filter(|member| member.environments.iter().any(|env| env == "dev"))
+        .take(2)
+        .collect();
+    let returned_page = page["members"].as_array().expect("members");
+    assert_eq!(returned_page.len(), expected_page.len());
+    for (returned, expected) in returned_page.iter().zip(expected_page) {
+        assert_eq!(
+            returned["principal_id"].as_str(),
+            Some(expected.principal_id.as_str())
+        );
+        assert_eq!(returned["email"].as_str(), Some(expected.email.as_str()));
+        assert_eq!(
+            returned["environments"]
+                .as_array()
+                .expect("environments")
+                .iter()
+                .map(|env| env.as_str().expect("environment"))
+                .collect::<Vec<_>>(),
+            expected
+                .environments
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        );
+    }
     assert!(page["next_cursor"].is_string());
-    assert_eq!(
-        call(
-            &delivery,
-            "member/list",
-            cat,
-            json!({"project": "billing", "cursor": page["next_cursor"]}),
-        )
-        .await,
-        Err(refused("invalid_input", &json!({"field": "cursor"})))
-    );
-    assert_eq!(
-        call(
-            &delivery,
-            "member/list",
-            cat,
-            json!({"project": "billing", "environment": "prod"}),
-        )
-        .await,
-        Ok(json!({"next_cursor": null, "total": 0, "members": []}))
-    );
-    assert_eq!(
-        call(
-            &delivery,
-            "member/list",
-            cat,
-            json!({"project": "billing", "environment": null}),
-        )
-        .await,
-        Err(refused("invalid_input", &json!({"field": "environment"})))
-    );
+    let refusal = call(
+        &delivery,
+        "member/list",
+        cat,
+        json!({"project": "billing", "cursor": page["next_cursor"]}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refusal["code"], "invalid_input");
+    assert_eq!(refusal["detail"]["field"], "cursor");
+    let empty = call(
+        &delivery,
+        "member/list",
+        cat,
+        json!({"project": "billing", "environment": "prod"}),
+    )
+    .await
+    .expect("members of an absent environment");
+    assert!(empty["members"].as_array().expect("members").is_empty());
+    assert_eq!(empty["total"].as_u64(), Some(0));
+    assert!(empty["next_cursor"].is_null());
+    let refusal = call(
+        &delivery,
+        "member/list",
+        cat,
+        json!({"project": "billing", "environment": null}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refusal["code"], "invalid_input");
+    assert_eq!(refusal["detail"]["field"], "environment");
 
     // A covering grant refuses the revoke below it.
-    assert_eq!(
-        call(&delivery, "member/revoke", boss, member(cat, "dev")).await,
-        Err(refused("admin_covered", &json!({"field": "principal_id"})))
-    );
-    assert_eq!(
-        call(&delivery, "member/revoke", cat, member(boss, "dev")).await,
-        Err(refused("admin_covered", &json!({"field": "principal_id"})))
-    );
-    assert_eq!(
-        call(&delivery, "project-admin/revoke", cat, project_admin(boss)).await,
-        Err(refused("admin_covered", &json!({"field": "principal_id"})))
-    );
+    let refusal = call(&delivery, "member/revoke", boss, member(cat, "dev"))
+        .await
+        .unwrap_err();
+    assert_eq!(refusal["code"], "admin_covered");
+    assert_eq!(refusal["detail"]["field"], "principal_id");
+    let refusal = call(&delivery, "member/revoke", cat, member(boss, "dev"))
+        .await
+        .unwrap_err();
+    assert_eq!(refusal["code"], "admin_covered");
+    assert_eq!(refusal["detail"]["field"], "principal_id");
+    let refusal = call(&delivery, "project-admin/revoke", cat, project_admin(boss))
+        .await
+        .unwrap_err();
+    assert_eq!(refusal["code"], "admin_covered");
+    assert_eq!(refusal["detail"]["field"], "principal_id");
 
     // project-admin covers every environment of the project, and its revoke
     // leaves the memberships.
-    assert_eq!(
-        call(&delivery, "project-admin/grant", cat, project_admin(ann)).await,
-        Ok(json!({"principal_id": ann, "project": "billing", "project_admin": true}))
-    );
+    let response = call(&delivery, "project-admin/grant", cat, project_admin(ann))
+        .await
+        .expect("route response");
+    assert_eq!(response["principal_id"].as_str(), Some(ann));
+    assert_eq!(response["project"], "billing");
+    assert_eq!(response["project_admin"].as_bool(), Some(true));
     assert_eq!(
         grants(&mut admin, ann).await,
         [
-            "env billing/dev".to_owned(),
-            format!("member active {provisioning}"),
-            "project billing project-admin".to_owned(),
+            (
+                "env".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned())
+            ),
+            (
+                "member".to_owned(),
+                "active".to_owned(),
+                Some(provisioning.to_owned())
+            ),
+            (
+                "project".to_owned(),
+                "billing".to_owned(),
+                Some("project-admin".to_owned())
+            ),
         ]
     );
-    assert_eq!(
-        call(&delivery, "project-admin/revoke", cat, project_admin(ann)).await,
-        Ok(json!({"principal_id": ann, "project": "billing", "project_admin": false}))
-    );
-    assert_eq!(
-        call(&delivery, "member/revoke", cat, member(ann, "dev")).await,
-        Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": false}))
-    );
+    let response = call(&delivery, "project-admin/revoke", cat, project_admin(ann))
+        .await
+        .expect("route response");
+    assert_eq!(response["principal_id"].as_str(), Some(ann));
+    assert_eq!(response["project"], "billing");
+    assert_eq!(response["project_admin"].as_bool(), Some(false));
+    let response = call(&delivery, "member/revoke", cat, member(ann, "dev"))
+        .await
+        .expect("route response");
+    assert_eq!(response["principal_id"].as_str(), Some(ann));
+    assert_eq!(response["project"], "billing");
+    assert_eq!(response["env"], "dev");
+    assert_eq!(response["member"].as_bool(), Some(false));
     assert_eq!(
         grants(&mut admin, ann).await,
-        [format!("member active {provisioning}")]
+        [(
+            "member".to_owned(),
+            "active".to_owned(),
+            Some(provisioning.to_owned())
+        )]
     );
 
     // A revoked project admin is refused on the next request.
@@ -792,28 +917,20 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             cat,
             json!({"project": "billing"})
         )
-        .await,
-        Err("permission denied wamn-control:environment/list@0.9.0".to_owned())
+        .await
+        .unwrap_err()["code"],
+        "permission-denied"
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
 }
 
 /// The application rows of one principal in one project database.
-async fn application_rows(target: &mut Client, principal: &str) -> Vec<String> {
-    sqlx::query(
-        "SELECT 'user' FROM platform.\"user\" WHERE id = $1::text::uuid \
-             UNION ALL SELECT 'role ' || role_name FROM platform.user_role \
-               WHERE user_id = $1::text::uuid \
-             ORDER BY 1",
-    )
-    .bind(&principal)
-    .fetch_all(&mut *target)
-    .await
-    .expect("read the application rows")
-    .iter()
-    .map(|row| row.get(0))
-    .collect()
+async fn application_rows(target: &mut Client, principal: &str) -> Vec<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT 'user', NULL::text FROM platform.\"user\" WHERE id=$1::text::uuid
+         UNION ALL SELECT 'role', role_name FROM platform.user_role WHERE user_id=$1::text::uuid ORDER BY 1,2"
+    ).bind(principal).fetch_all(target).await.expect("read application rows")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -867,103 +984,184 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
 
     // org-admin writes the user row and admin in every environment, after its
     // system rows; its revoke removes admin first and keeps the user row.
-    assert_eq!(
-        call(&delivery, "org-admin/grant", boss, ann_payload.clone()).await,
-        Ok(json!({"principal_id": ann, "org_admin": true}))
-    );
+    {
+        let observed = &(call(&delivery, "org-admin/grant", boss, ann_payload.clone()).await)
+            .expect("route succeeds");
+        assert_eq!(observed["principal_id"], serde_json::json!(ann));
+        assert_eq!(observed["org_admin"], serde_json::json!(true));
+    };
     assert_eq!(
         application_rows(&mut billing, ann).await,
-        ["role admin", "user"]
+        [
+            ("role".to_owned(), Some("admin".to_owned())),
+            ("user".to_owned(), None)
+        ]
     );
     assert_eq!(
         application_rows(&mut shop, ann).await,
-        ["role admin", "user"]
+        [
+            ("role".to_owned(), Some("admin".to_owned())),
+            ("user".to_owned(), None)
+        ]
     );
-    assert_eq!(
-        call(
+    {
+        let observed = &(call(
             &delivery,
             "project-admin/revoke",
             boss,
-            billing_admin.clone()
+            billing_admin.clone(),
         )
-        .await,
-        Err(refused("admin_covered", &json!({"field": "principal_id"})))
-    );
+        .await)
+            .expect_err("route refuses");
+        assert_eq!(observed["code"], serde_json::json!("admin_covered"));
+        assert_eq!(
+            observed["detail"]["field"],
+            serde_json::json!("principal_id")
+        );
+    };
     assert_eq!(
         application_rows(&mut billing, ann).await,
-        ["role admin", "user"],
+        [
+            ("role".to_owned(), Some("admin".to_owned())),
+            ("user".to_owned(), None)
+        ],
         "a refused revoke changes no application row"
     );
+    {
+        let observed = &(call(&delivery, "org-admin/revoke", boss, ann_payload.clone()).await)
+            .expect("route succeeds");
+        assert_eq!(observed["principal_id"], serde_json::json!(ann));
+        assert_eq!(observed["org_admin"], serde_json::json!(false));
+    };
     assert_eq!(
-        call(&delivery, "org-admin/revoke", boss, ann_payload.clone()).await,
-        Ok(json!({"principal_id": ann, "org_admin": false}))
+        application_rows(&mut billing, ann).await,
+        [("user".to_owned(), None)]
     );
-    assert_eq!(application_rows(&mut billing, ann).await, ["user"]);
-    assert_eq!(application_rows(&mut shop, ann).await, ["user"]);
+    assert_eq!(
+        application_rows(&mut shop, ann).await,
+        [("user".to_owned(), None)]
+    );
 
     // project-admin covers its project's environments only.
-    assert_eq!(
-        call(
+    {
+        let observed = &(call(
             &delivery,
             "project-admin/grant",
             boss,
-            billing_admin.clone()
+            billing_admin.clone(),
         )
-        .await,
-        Ok(json!({"principal_id": ann, "project": "billing", "project_admin": true}))
-    );
+        .await)
+            .expect("route succeeds");
+        assert_eq!(observed["principal_id"], serde_json::json!(ann));
+        assert_eq!(observed["project"], serde_json::json!("billing"));
+        assert_eq!(observed["project_admin"], serde_json::json!(true));
+    };
     assert_eq!(
         application_rows(&mut billing, ann).await,
-        ["role admin", "user"]
+        [
+            ("role".to_owned(), Some("admin".to_owned())),
+            ("user".to_owned(), None)
+        ]
     );
-    assert_eq!(application_rows(&mut shop, ann).await, ["user"]);
     assert_eq!(
-        call(&delivery, "project-admin/revoke", boss, billing_admin).await,
-        Ok(json!({"principal_id": ann, "project": "billing", "project_admin": false}))
+        application_rows(&mut shop, ann).await,
+        [("user".to_owned(), None)]
     );
-    assert_eq!(application_rows(&mut billing, ann).await, ["user"]);
+    {
+        let observed = &(call(&delivery, "project-admin/revoke", boss, billing_admin).await)
+            .expect("route succeeds");
+        assert_eq!(observed["principal_id"], serde_json::json!(ann));
+        assert_eq!(observed["project"], serde_json::json!("billing"));
+        assert_eq!(observed["project_admin"], serde_json::json!(false));
+    };
+    assert_eq!(
+        application_rows(&mut billing, ann).await,
+        [("user".to_owned(), None)]
+    );
 
     // A membership revoke removes the user row, and a grant writes it again.
-    assert_eq!(
-        call(&delivery, "member/revoke", boss, billing_member.clone()).await,
-        Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": false}))
-    );
+    {
+        let observed = &(call(&delivery, "member/revoke", boss, billing_member.clone()).await)
+            .expect("route succeeds");
+        assert_eq!(observed["principal_id"], serde_json::json!(ann));
+        assert_eq!(observed["project"], serde_json::json!("billing"));
+        assert_eq!(observed["env"], serde_json::json!("dev"));
+        assert_eq!(observed["member"], serde_json::json!(false));
+    };
     assert!(application_rows(&mut billing, ann).await.is_empty());
+    {
+        let observed =
+            &(call(&delivery, "member/grant", boss, billing_member).await).expect("route succeeds");
+        assert_eq!(observed["principal_id"], serde_json::json!(ann));
+        assert_eq!(observed["project"], serde_json::json!("billing"));
+        assert_eq!(observed["env"], serde_json::json!("dev"));
+        assert_eq!(observed["member"], serde_json::json!(true));
+    };
     assert_eq!(
-        call(&delivery, "member/grant", boss, billing_member).await,
-        Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": true}))
+        application_rows(&mut billing, ann).await,
+        [("user".to_owned(), None)]
     );
-    assert_eq!(application_rows(&mut billing, ann).await, ["user"]);
 
     // A failed projection names completed environments after system authority commits.
-    let shop_key = logins.join("shop--dev");
+    let shop_key = logins.join(wamn_control_provision::control_administration_key(
+        "shop", "dev",
+    ));
     let shop_login = std::fs::read_to_string(&shop_key)?;
     std::fs::write(&shop_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
-    assert_eq!(
-        call(&delivery, "user/deactivate", boss, ann_payload.clone()).await,
-        Err(refused(
-            "application_write_incomplete",
-            &json!({"environment": "shop/dev", "completed": ["billing/dev"]})
-        ))
-    );
+    {
+        let observed = &(call(&delivery, "user/deactivate", boss, ann_payload.clone()).await)
+            .expect_err("route refuses");
+        assert_eq!(
+            observed["code"],
+            serde_json::json!("application_write_incomplete")
+        );
+        assert_eq!(
+            observed["detail"]["environment"],
+            serde_json::json!("shop/dev")
+        );
+        assert_eq!(
+            observed["detail"]["completed"]
+                .as_array()
+                .expect("array")
+                .len(),
+            1
+        );
+        assert_eq!(
+            observed["detail"]["completed"][0],
+            serde_json::json!("billing/dev")
+        );
+    };
     assert!(application_rows(&mut billing, ann).await.is_empty());
-    assert_eq!(application_rows(&mut shop, ann).await, ["user"]);
+    assert_eq!(
+        application_rows(&mut shop, ann).await,
+        [("user".to_owned(), None)]
+    );
     assert_eq!(
         grants(&mut admin, ann).await,
-        [format!("member inactive {boss}")],
+        [(
+            "member".to_owned(),
+            "inactive".to_owned(),
+            Some(boss.to_owned())
+        )],
         "committed deactivation remains authoritative after a projection failure"
     );
 
     // With the login back, the deactivation completes.
     std::fs::write(&shop_key, shop_login)?;
-    assert_eq!(
-        call(&delivery, "user/deactivate", boss, ann_payload).await,
-        Ok(json!({"principal_id": ann, "status": "inactive"}))
-    );
+    {
+        let observed =
+            &(call(&delivery, "user/deactivate", boss, ann_payload).await).expect("route succeeds");
+        assert_eq!(observed["principal_id"], serde_json::json!(ann));
+        assert_eq!(observed["status"], serde_json::json!("inactive"));
+    };
     assert!(application_rows(&mut shop, ann).await.is_empty());
     assert_eq!(
         grants(&mut admin, ann).await,
-        [format!("member inactive {boss}")]
+        [(
+            "member".to_owned(),
+            "inactive".to_owned(),
+            Some(boss.to_owned())
+        )]
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
@@ -971,27 +1169,26 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
 
 /// The system status of each environment of the org, and the status row of
 /// each project database, or `none` without one.
-async fn statuses(admin: &mut Client, billing: &mut Client, shop: &mut Client) -> Vec<String> {
-    let mut statuses: Vec<String> = sqlx::query(
-        "SELECT 'system ' || project || '/' || env || ' ' || status \
-               FROM registry.environment_projects WHERE org = $1 ORDER BY project, env",
-    )
-    .bind(&ORG)
-    .fetch_all(&mut *admin)
-    .await
-    .expect("read the system statuses")
-    .iter()
-    .map(|row| row.get(0))
-    .collect();
-    for (name, target) in [("billing", billing), ("shop", shop)] {
-        let row = sqlx::query("SELECT status FROM platform.environment")
-            .fetch_optional(&mut *target)
+async fn statuses(
+    admin: &mut Client,
+    billing: &mut Client,
+    shop: &mut Client,
+) -> (String, Option<String>, Option<String>) {
+    let status =
+        sqlx::query_scalar("SELECT status FROM registry.environments WHERE org=$1 AND env='dev'")
+            .bind(ORG)
+            .fetch_one(admin)
             .await
-            .expect("read the status row");
-        let status: String = row.map_or_else(|| "none".to_owned(), |row| row.get(0));
-        statuses.push(format!("row {name} {status}"));
-    }
-    statuses
+            .unwrap();
+    let billing = sqlx::query_scalar("SELECT status FROM platform.environment")
+        .fetch_optional(billing)
+        .await
+        .unwrap();
+    let shop = sqlx::query_scalar("SELECT status FROM platform.environment")
+        .fetch_optional(shop)
+        .await
+        .unwrap();
+    (status, billing, shop)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1045,19 +1242,11 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
         },
     );
     let billing_dev = json!({"project": "billing", "env": "dev"});
-    let shop_project = json!({"project": "shop"});
+    let shop_dev = json!({"project": "shop", "env": "dev"});
     assert_eq!(
         statuses(&mut admin, &mut billing, &mut shop).await,
-        [
-            "system billing/dev active",
-            "system shop/dev active",
-            "row billing none",
-            "row shop none"
-        ],
-        "an environment without a status row is active"
+        ("active".into(), None, None)
     );
-
-    // A project-admin of billing is not an org-admin.
     assert_eq!(
         call(
             &delivery,
@@ -1065,156 +1254,194 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
             ann,
             billing_dev.clone()
         )
-        .await,
-        Err("permission denied wamn-control:environment/inactivate@0.9.0".to_owned())
+        .await
+        .unwrap_err()["code"],
+        "permission-denied"
     );
     assert_eq!(
         call(
             &delivery,
             "environment/inactivate",
             boss,
-            json!({"project": "billing", "env": "prod"})
+            json!({"project":"billing","env":"prod"})
         )
-        .await,
-        Err(refused("environment_not_found", &json!({"field": "env"})))
+        .await
+        .unwrap_err()["code"],
+        "environment_not_found"
     );
     assert_eq!(
         call(
             &delivery,
             "project/inactivate",
             boss,
-            json!({"project": "nope"})
+            json!({"project":"nope"})
         )
-        .await,
-        Err(refused("project_not_found", &json!({"field": "project"})))
+        .await
+        .unwrap_err()["code"],
+        "project_not_found"
     );
 
-    // One environment, then a whole project, and back.
-    assert_eq!(
-        call(
+    let expected_projects =
+        sqlx::query_scalar::<_, String>("SELECT id FROM registry.projects WHERE org=$1")
+            .bind(ORG)
+            .fetch_all(&mut admin)
+            .await?
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+    let expected_environments = sqlx::query_scalar::<_, String>(
+        "SELECT env FROM registry.environment_projects WHERE org=$1 AND project='shop'",
+    )
+    .bind(ORG)
+    .fetch_all(&mut admin)
+    .await?
+    .into_iter()
+    .collect::<std::collections::BTreeSet<_>>();
+    // Lifecycle belongs to the environment. Every attached project receives the same status.
+    for (route, payload, expected) in [
+        ("environment/inactivate", billing_dev.clone(), "inactive"),
+        ("project/inactivate", json!({"project":"shop"}), "inactive"),
+        ("environment/activate", billing_dev.clone(), "active"),
+    ] {
+        let reply = call(&delivery, route, boss, payload).await.unwrap();
+        assert_eq!(reply["status"], expected);
+        assert_eq!(
+            statuses(&mut admin, &mut billing, &mut shop).await,
+            (
+                expected.into(),
+                Some(expected.into()),
+                Some(expected.into())
+            )
+        );
+        let projects = call(&delivery, "project/list", boss, json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            projects["projects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|project| project["name"].as_str().unwrap().to_owned())
+                .collect::<std::collections::BTreeSet<_>>(),
+            expected_projects
+        );
+        assert!(
+            projects["projects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|project| project["state"] == expected)
+        );
+        let environments = call(
             &delivery,
-            "environment/inactivate",
+            "environment/list",
             boss,
-            billing_dev.clone()
+            json!({"project":"shop"}),
         )
-        .await,
-        Ok(json!({"project": "billing", "env": "dev", "status": "inactive"}))
-    );
-    assert_eq!(
-        call(&delivery, "project/inactivate", boss, shop_project.clone()).await,
-        Ok(json!({"project": "shop", "status": "inactive"}))
-    );
-    assert_eq!(
-        statuses(&mut admin, &mut billing, &mut shop).await,
-        [
-            "system billing/dev inactive",
-            "system shop/dev inactive",
-            "row billing inactive",
-            "row shop inactive"
-        ]
-    );
-    assert_eq!(
-        call(&delivery, "project/list", boss, json!({})).await,
-        Ok(
-            json!({"next_cursor": null, "total": 2, "projects": [{"name": "billing", "state": "inactive"}, {"name": "shop", "state": "inactive"}]})
-        )
-    );
-    assert_eq!(
-        call(&delivery, "environment/list", boss, shop_project.clone()).await,
-        Ok(
-            json!({"next_cursor": null, "total": 1, "environments": [{"name": "dev", "state": "inactive"}]})
-        )
-    );
-    assert_eq!(
-        call(&delivery, "environment/activate", boss, billing_dev.clone()).await,
-        Ok(json!({"project": "billing", "env": "dev", "status": "active"}))
-    );
-    assert_eq!(
-        statuses(&mut admin, &mut billing, &mut shop).await,
-        [
-            "system billing/dev active",
-            "system shop/dev inactive",
-            "row billing active",
-            "row shop inactive"
-        ]
-    );
+        .await
+        .unwrap();
+        assert_eq!(
+            environments["environments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|environment| environment["name"].as_str().unwrap().to_owned())
+                .collect::<std::collections::BTreeSet<_>>(),
+            expected_environments
+        );
+        assert!(
+            environments["environments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|environment| environment["state"] == expected)
+        );
+    }
+    call(
+        &delivery,
+        "environment/inactivate",
+        boss,
+        billing_dev.clone(),
+    )
+    .await
+    .unwrap();
 
-    // An activation commits the system row first, so a failed environment
-    // leaves it active and its row inactive.
-    let shop_key = logins.join("shop--dev");
+    // Activation commits the registry first. A later projection can fail independently.
+    let shop_key = logins.join(wamn_control_provision::control_administration_key(
+        "shop", "dev",
+    ));
     let shop_login = std::fs::read_to_string(&shop_key)?;
     std::fs::write(&shop_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
-    assert_eq!(
-        call(&delivery, "project/activate", boss, shop_project.clone()).await,
-        Err(refused(
-            "application_write_incomplete",
-            &json!({"environment": "shop/dev", "completed": []})
-        ))
-    );
+    let refusal = call(&delivery, "environment/activate", boss, shop_dev.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(refusal["code"], "application_write_incomplete");
     assert_eq!(
         statuses(&mut admin, &mut billing, &mut shop).await,
-        [
-            "system billing/dev active",
-            "system shop/dev active",
-            "row billing active",
-            "row shop inactive"
-        ],
-        "an activation commits the system row before the environment"
+        (
+            "active".into(),
+            Some("active".into()),
+            Some("inactive".into())
+        )
     );
     std::fs::write(&shop_key, &shop_login)?;
-    assert_eq!(
-        call(&delivery, "project/activate", boss, shop_project).await,
-        Ok(json!({"project": "shop", "status": "active"}))
-    );
+    call(&delivery, "environment/activate", boss, shop_dev)
+        .await
+        .unwrap();
 
-    // An inactivation writes the environment first, so a failed environment
-    // leaves the system row active.
-    let billing_key = logins.join("billing--dev");
+    // Inactivation commits the registry only after all project writes succeed.
+    let billing_key = logins.join(wamn_control_provision::control_administration_key(
+        "billing", "dev",
+    ));
     std::fs::write(&billing_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
-    assert_eq!(
-        call(&delivery, "environment/inactivate", boss, billing_dev).await,
-        Err(refused(
-            "application_write_incomplete",
-            &json!({"environment": "billing/dev", "completed": []})
-        ))
-    );
+    let refusal = call(&delivery, "environment/inactivate", boss, billing_dev)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal["code"], "application_write_incomplete");
     assert_eq!(
         statuses(&mut admin, &mut billing, &mut shop).await,
-        [
-            "system billing/dev active",
-            "system shop/dev active",
-            "row billing active",
-            "row shop active"
-        ],
-        "an inactivation commits the system row after every environment"
+        (
+            "active".into(),
+            Some("active".into()),
+            Some("active".into())
+        )
     );
+
     sqlx::query("WITH parent_environment AS ( \
              INSERT INTO registry.environments (org, env, policy_name, status) \
              SELECT org, 'other', policy_name, 'inactive' FROM registry.environments \
              WHERE org=$1 AND env='dev' \
          ) INSERT INTO registry.environment_projects (org, env, project, secret_name, instance_suffix) \
          SELECT org, 'other', project, secret_name, instance_suffix \
-         FROM registry.environment_projects WHERE org=$1 AND project='billing' AND env='dev'").bind(&ORG).execute(&mut admin).await.map(|result| result.rows_affected())?;
-    assert_eq!(
-        call(&delivery, "project/list", boss, json!({})).await,
-        Ok(
-            json!({"next_cursor": null, "total": 2, "projects": [{"name": "billing", "state": "active"}, {"name": "shop", "state": "active"}]})
-        ),
-        "an inactive environment does not hide an active environment"
+         FROM registry.environment_projects WHERE org=$1 AND project='billing' AND env='dev'")
+        .bind(ORG).execute(&mut admin).await?;
+    let projects = call(&delivery, "project/list", boss, json!({}))
+        .await
+        .unwrap();
+    assert!(
+        projects["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|project| project["state"] == "active")
     );
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/list",
-            boss,
-            json!({"project": "billing"})
-        )
-        .await,
-        Ok(
-            json!({"next_cursor": null, "total": 2, "environments": [{"name": "dev", "state": "active"}, {"name": "other", "state": "inactive"}]})
-        )
-    );
-    let _ = std::fs::remove_dir_all(&logins);
+    let environments = call(
+        &delivery,
+        "environment/list",
+        boss,
+        json!({"project":"billing"}),
+    )
+    .await
+    .unwrap();
+    for environment in environments["environments"].as_array().unwrap() {
+        let expected: String =
+            sqlx::query_scalar("SELECT status FROM registry.environments WHERE org=$1 AND env=$2")
+                .bind(ORG)
+                .bind(environment["name"].as_str().unwrap())
+                .fetch_one(&mut admin)
+                .await?;
+        assert_eq!(environment["state"], expected);
+    }
+    std::fs::remove_dir_all(logins)?;
     Ok(())
 }
 
@@ -1292,63 +1519,61 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
             cat,
             json!({"project": "ledger"})
         )
-        .await,
-        Err("permission denied wamn-control:project/create@0.9.0".to_owned())
+        .await
+        .unwrap_err()["code"],
+        "permission-denied"
     );
     for project in ["Ledger", "wamn-ledger", "led--ger"] {
+        let refusal = call(
+            &delivery,
+            "project/create",
+            boss,
+            json!({"project": project}),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(
-            call(
-                &delivery,
-                "project/create",
-                boss,
-                json!({"project": project})
-            )
-            .await,
-            Err(refused("invalid_input", &json!({"field": "project"}))),
+            refusal["code"], "invalid_input",
             "{project} is not a project id"
         );
+        assert_eq!(refusal["detail"]["field"], "project");
     }
-    assert_eq!(
-        call(
-            &delivery,
-            "project/create",
-            boss,
-            json!({"project": "billing"})
-        )
-        .await,
-        Err(refused("project_exists", &json!({"field": "project"})))
-    );
-    assert_eq!(
-        call(
-            &delivery,
-            "project/create",
-            boss,
-            json!({"project": "ledger"})
-        )
-        .await,
-        Ok(json!({"project": "ledger"}))
-    );
-    assert_eq!(
-        call(
-            &delivery,
-            "project/create",
-            dee,
-            json!({"project": "ledger"})
-        )
-        .await,
-        Err(refused("project_exists", &json!({"field": "project"}))),
-        "ledger exists"
-    );
+    let refusal = call(
+        &delivery,
+        "project/create",
+        boss,
+        json!({"project": "billing"}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refusal["code"], "project_exists");
+    assert_eq!(refusal["detail"]["field"], "project");
+    let response = call(
+        &delivery,
+        "project/create",
+        boss,
+        json!({"project": "ledger"}),
+    )
+    .await
+    .expect("route response");
+    assert_eq!(response["project"], "ledger");
+    let refusal = call(
+        &delivery,
+        "project/create",
+        dee,
+        json!({"project": "ledger"}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refusal["code"], "project_exists", "ledger exists");
+    assert_eq!(refusal["detail"]["field"], "project");
 
     // The project has no environment, and each org admin, and only they,
     // holds project-admin in it.
     let projects = call(&delivery, "project/list", dee, json!({}))
         .await
         .expect("an org admin lists the projects");
-    assert_eq!(
-        projects["projects"],
-        json!([{"name": "billing", "state": "active"}, {"name": "ledger", "state": "inactive"}, {"name": "shop", "state": "active"}])
-    );
+    assert_project_list(&projects, &mut admin).await?;
     let listed = call(
         &delivery,
         "environment/list",
@@ -1357,24 +1582,69 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
     )
     .await
     .expect("an org admin lists the environments of ledger");
-    assert_eq!(
-        listed,
-        json!({"next_cursor": null, "total": 0, "environments": []})
-    );
-    let mut admins: Vec<String> = sqlx::query(
-        "SELECT principal_id::text FROM identity.project_roles \
-              WHERE org = $1 AND project = 'ledger' AND role = 'project-admin'",
+    let expected_environments: Vec<String> = sqlx::query_scalar(
+        "SELECT env FROM registry.environment_projects WHERE org=$1 AND project=$2 ORDER BY env",
     )
-    .bind(&ORG)
+    .bind(ORG)
+    .bind("ledger")
     .fetch_all(&mut admin)
-    .await?
-    .iter()
-    .map(|row| row.get(0))
-    .collect();
-    admins.sort();
-    let mut expected = vec![boss.to_owned(), dee.to_owned()];
-    expected.sort();
-    assert_eq!(admins, expected);
+    .await?;
+    assert!(
+        expected_environments.is_empty(),
+        "a new project has no environment"
+    );
+    let returned_environments = listed["environments"].as_array().expect("environments");
+    assert_eq!(
+        returned_environments
+            .iter()
+            .map(|row| row["name"].as_str().expect("name"))
+            .collect::<Vec<_>>(),
+        expected_environments
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        listed["total"].as_u64(),
+        Some(expected_environments.len() as u64)
+    );
+    assert!(listed["next_cursor"].is_null());
+    let admins: Vec<String> = sqlx::query_scalar(
+        "SELECT principal_id::text FROM identity.org_roles WHERE org=$1 AND role='org-admin' ORDER BY principal_id"
+    ).bind(ORG).fetch_all(&mut admin).await?;
+    for principal in admins {
+        assert!(
+            wamn_platform_identity::control::is_project_admin(
+                &mut admin,
+                &principal.parse()?,
+                ORG,
+                "ledger",
+                None
+            )
+            .await?
+        );
+    }
+    assert!(
+        !wamn_platform_identity::control::is_project_admin(
+            &mut admin,
+            &cat.parse()?,
+            ORG,
+            "ledger",
+            None
+        )
+        .await?
+    );
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/list",
+            cat,
+            json!({"project":"ledger"})
+        )
+        .await
+        .unwrap_err()["code"],
+        "permission-denied"
+    );
 
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
@@ -1458,80 +1728,89 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
         },
     );
     let payload = json!({"project": "billing", "env": "dev"});
-    let expected = json!({"digest": "sha256:live", "rollout": {"replicas": 1}, "workloads": [], "live": [],
-        "users_with_role": 1, "roles": 2, "memberships": 1});
-    assert_eq!(
-        call(
+    let runtime = |answer: &Value| {
+        assert_eq!(answer["digest"].as_str(), Some("sha256:live"));
+        assert_eq!(answer["rollout"]["replicas"].as_u64(), Some(1));
+        assert!(
+            answer["workloads"]
+                .as_array()
+                .expect("workloads")
+                .is_empty()
+        );
+        assert!(answer["live"].as_array().expect("live runs").is_empty());
+    };
+    for (project, connection) in [("billing", &mut billing), ("shop", &mut shop)] {
+        let (users, roles): (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(DISTINCT r.user_id) FROM platform.user_role r
+                     JOIN platform.\"user\" u ON u.id=r.user_id WHERE u.type='user'),
+                    (SELECT count(*) FROM platform.role)",
+        )
+        .fetch_one(connection)
+        .await?;
+        let memberships = wamn_platform_identity::org::project_members(&mut admin, ORG, project)
+            .await?
+            .iter()
+            .filter(|member| member.environments.iter().any(|env| env == "dev"))
+            .count();
+        let answer = call(
             &delivery,
             "environment/status",
             principal.to_string().as_str(),
-            payload.clone()
+            json!({"project":project,"env":"dev"}),
         )
-        .await,
-        Ok(expected.clone())
-    );
-    let mut other = expected.clone();
-    other["roles"] = json!(1);
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/status",
-            principal.to_string().as_str(),
-            json!({"project": "shop", "env": "dev"})
-        )
-        .await,
-        Ok(other)
-    );
+        .await
+        .expect("status");
+        runtime(&answer);
+        assert_eq!(answer["users_with_role"].as_i64(), Some(users));
+        assert_eq!(answer["roles"].as_i64(), Some(roles));
+        assert_eq!(answer["memberships"].as_u64(), Some(memberships as u64));
+    }
     sqlx::raw_sql("DELETE FROM platform.role")
         .execute(&mut shop)
         .await
         .map(drop)?;
-    let mut empty = expected.clone();
-    empty["users_with_role"] = json!(0);
-    empty["roles"] = json!(0);
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/status",
-            principal.to_string().as_str(),
-            json!({"project": "shop", "env": "dev"})
-        )
-        .await,
-        Ok(empty)
-    );
-    // A failed application query cannot turn runtime status into a refusal.
+    let answer = call(
+        &delivery,
+        "environment/status",
+        principal.to_string().as_str(),
+        json!({"project":"shop","env":"dev"}),
+    )
+    .await
+    .expect("empty counts");
+    runtime(&answer);
+    assert_eq!(answer["users_with_role"].as_u64(), Some(0));
+    assert_eq!(answer["roles"].as_u64(), Some(0));
+    // Count queries can fail without refusing independent runtime state.
     sqlx::raw_sql("ALTER TABLE platform.role RENAME TO unavailable_roles")
         .execute(&mut billing)
         .await
         .map(drop)?;
-    let mut unavailable = expected;
-    unavailable["users_with_role"] = Value::Null;
-    unavailable["roles"] = Value::Null;
-    assert_eq!(
-        call(
+    let memberships = wamn_platform_identity::org::project_members(&mut admin, ORG, "billing")
+        .await?
+        .iter()
+        .filter(|member| member.environments.iter().any(|env| env == "dev"))
+        .count();
+    for missing_credential in [false, true] {
+        if missing_credential {
+            std::fs::remove_file(
+                logins.join(wamn_control_provision::control_administration_key(
+                    "billing", "dev",
+                )),
+            )?;
+        }
+        let answer = call(
             &delivery,
             "environment/status",
             principal.to_string().as_str(),
-            payload.clone()
+            payload.clone(),
         )
-        .await,
-        Ok(unavailable.clone())
-    );
-    // A missing mounted credential has the same optional-count behavior.
-    let login = logins.join(wamn_control_provision::control_administration_key(
-        "billing", "dev",
-    ));
-    std::fs::remove_file(login)?;
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/status",
-            principal.to_string().as_str(),
-            payload
-        )
-        .await,
-        Ok(unavailable)
-    );
+        .await
+        .expect("runtime status survives unavailable counts");
+        runtime(&answer);
+        assert!(answer["users_with_role"].is_null());
+        assert!(answer["roles"].is_null());
+        assert_eq!(answer["memberships"].as_u64(), Some(memberships as u64));
+    }
     std::fs::remove_dir_all(logins)?;
     Ok(())
 }
@@ -1611,31 +1890,30 @@ async fn assert_definer_grantees(client: &mut Client) -> anyhow::Result<()> {
             &["wamn_control"],
         ),
     ];
-    let functions = sqlx::query("SELECT n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')', p.proconfig, pg_get_userbyid(p.proowner), ARRAY(SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee)::text END FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner ORDER BY 1) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.prosecdef ORDER BY 1").fetch_all(&mut *client).await?;
-    assert!(!functions.is_empty());
+    let functions = sqlx::query("SELECT p.oid, n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS name, p.proconfig, pg_get_userbyid(p.proowner) AS owner, EXISTS (SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_execute, EXISTS (SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee<>p.proowner AND a.is_grantable) AS grantable FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.prosecdef")
+        .fetch_all(&mut *client).await?;
     for function in functions {
-        let name: String = function.get(0);
+        let name: String = function.get("name");
         let allowed = ALLOWED
             .iter()
             .find(|(signature, _)| *signature == name)
-            .unwrap_or_else(|| panic!("SECURITY DEFINER function absent from allow list: {name}"));
-        assert_eq!(function.get::<String, _>(2), "wamn_system", "{name} owner");
-        let configuration: Vec<String> = function.get(1);
-        let expected_path = "search_path=pg_catalog";
-        assert_eq!(configuration, [expected_path], "{name}");
-        for grantee in function.get::<Vec<String>, _>(3) {
-            assert!(
-                allowed.1.contains(&grantee.as_str()),
-                "unexpected EXECUTE grantee {grantee} on {name}"
-            );
-        }
-        let effective = sqlx::query("SELECT r.rolname::text FROM pg_roles r WHERE NOT r.rolsuper AND has_function_privilege(r.oid,$1::text::regprocedure,'EXECUTE') AND NOT pg_has_role(r.oid,(SELECT proowner FROM pg_proc WHERE oid=$1::text::regprocedure),'USAGE') AND NOT EXISTS (SELECT FROM pg_roles a WHERE a.rolname=ANY($2::text[]) AND pg_has_role(r.oid,a.oid,'USAGE'))").bind(&name).bind(&allowed.1).fetch_all(&mut *client).await?;
+            .unwrap_or_else(|| panic!("unreviewed privileged function: {name}"));
+        let effective = sqlx::query("SELECT r.rolname::text FROM pg_roles r WHERE NOT r.rolsuper AND has_function_privilege(r.oid,$1::text::regprocedure,'EXECUTE') AND NOT pg_has_role(r.oid,(SELECT proowner FROM pg_proc WHERE oid=$1::text::regprocedure),'USAGE') AND NOT EXISTS (SELECT FROM pg_roles a WHERE a.rolname=ANY($2::text[]) AND pg_has_role(r.oid,a.oid,'USAGE'))")
+            .bind(&name).bind(&allowed.1).fetch_all(&mut *client).await?;
         assert!(
             effective.is_empty(),
-            "unexpected inherited EXECUTE privilege on {name}: {effective:?}"
+            "unexpected effective privilege on {name}: {effective:?}"
         );
-        let grantable: bool = sqlx::query("SELECT EXISTS (SELECT FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid=$1::text::regprocedure AND a.grantee<>p.proowner AND a.is_grantable)").bind(&name).fetch_one(&mut *client).await?.get(0);
-        assert!(!grantable, "non-owner grant option on {name}");
+        assert_eq!(function.get::<String, _>("owner"), "wamn_system", "{name}");
+        let configuration: Vec<String> = function.get("proconfig");
+        let search_path = configuration
+            .iter()
+            .filter_map(|setting| setting.split_once('='))
+            .find(|(key, _)| *key == "search_path")
+            .map(|(_, value)| value);
+        assert_eq!(search_path, Some("pg_catalog"), "{name}");
+        assert!(!function.get::<bool, _>("public_execute"), "{name}");
+        assert!(!function.get::<bool, _>("grantable"), "{name}");
     }
     Ok(())
 }
@@ -1710,7 +1988,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     );
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {} UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning)))).execute(&mut admin).await.map(drop)?;
     let external = json!({"project":"billing","name":"erp"});
-    assert!(
+    assert_eq!(
         call(
             &delivery,
             "external-system/write",
@@ -1718,8 +1996,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             external.clone()
         )
         .await
-        .unwrap_err()
-        .starts_with("permission denied ")
+        .unwrap_err()["code"],
+        "permission-denied"
     );
     call(
         &delivery,
@@ -1874,7 +2152,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .execute(&mut billing)
         .await
         .map(drop)?;
-    assert!(
+    assert_eq!(
         call(
             &delivery,
             "connection/delete",
@@ -1882,8 +2160,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             selection.clone()
         )
         .await
-        .unwrap_err()
-        .starts_with("referenced ")
+        .unwrap_err()["code"],
+        "referenced"
     );
     call(
         &delivery,
@@ -1895,7 +2173,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     .unwrap();
     let mut changed = connection.clone();
     changed["parameters"]["primary-authority"] = "https://changed.invalid".into();
-    assert!(
+    assert_eq!(
         call(
             &delivery,
             "connection/write",
@@ -1903,8 +2181,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             changed
         )
         .await
-        .unwrap_err()
-        .starts_with("immutable_field ")
+        .unwrap_err()["code"],
+        "immutable_field"
     );
     sqlx::raw_sql("ALTER TABLE platform.integration RENAME TO unavailable_integration")
         .execute(&mut billing)
@@ -1912,7 +2190,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .map(drop)?;
     let mut changed = connection;
     changed["parameters"]["tls-verification"] = "disabled".into();
-    assert!(
+    assert_eq!(
         call(
             &delivery,
             "connection/write",
@@ -1920,8 +2198,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             changed
         )
         .await
-        .unwrap_err()
-        .starts_with("application_write_incomplete ")
+        .unwrap_err()["code"],
+        "application_write_incomplete"
     );
     assert_eq!(sqlx::query("SELECT g.parameters->>'tls-verification' FROM registry.connection c JOIN registry.connection_generation g ON(g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.id=$1::text::uuid").bind(&identity).fetch_one(&mut admin).await?.get::<String, _>(0),"disabled");
     sqlx::raw_sql("ALTER TABLE platform.unavailable_integration RENAME TO integration")
@@ -2077,7 +2355,10 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
         }
         grant.await?.map_err(anyhow::Error::msg)?;
         let rows = application_rows(&billing, user.as_str()).await;
-        assert!(rows.iter().all(|row| !row.contains("admin")), "{rows:?}");
+        assert!(
+            rows.iter().all(|row| row.1.as_deref() != Some("admin")),
+            "{rows:?}"
+        );
         let count: i64 = sqlx::query("SELECT count(*) FROM identity.project_roles WHERE principal_id=$1::text::uuid AND role='project-admin'").bind(&user.as_str()).fetch_one(&mut admin).await?.get(0);
         assert_eq!(count, 0);
         let project_env_key = wamn_registry::project_env_key(ORG, "billing", "dev");

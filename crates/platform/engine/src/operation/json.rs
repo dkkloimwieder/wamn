@@ -573,10 +573,11 @@ mod tests {
             let encoded = input(&ty, &value).unwrap();
             let result = Val::Result(Ok(Some(Box::new(Val::List(vec![encoded])))));
             let emission = emission(&result).unwrap().unwrap();
-            assert_eq!(
-                serde_json::from_str::<Value>(&emission.payload).unwrap(),
-                json!([value])
-            );
+            {
+                let observed = &(serde_json::from_str::<Value>(&emission.payload).unwrap());
+                assert_eq!(observed.as_array().expect("array").len(), 1);
+                assert_eq!(observed[0], serde_json::json!(value));
+            };
         }
         let text = argument("type input = string;");
         assert!(input(&text, &json!({"object": true})).is_err());
@@ -603,19 +604,32 @@ mod tests {
             }
         }
         let result = Val::Result(Err(Some(Box::new(Val::Variant("not-found".into(), None)))));
-        assert_eq!(
-            output(&result).unwrap(),
-            json!({"error":{"code":"not_found","detail":{}}})
-        );
+        {
+            let observed = &(output(&result).unwrap());
+            assert_eq!(observed["error"]["code"], serde_json::json!("not_found"));
+            assert!(
+                observed["error"]["detail"]
+                    .as_object()
+                    .expect("object")
+                    .is_empty()
+            );
+        };
         let detail = Val::Record(vec![
             ("constraint".into(), Val::String("unique_name".into())),
             ("field".into(), Val::Option(None)),
         ]);
         let refusal = Val::Variant("unique-violation".into(), Some(Box::new(detail)));
         let result = Val::Result(Err(Some(Box::new(refusal))));
-        assert_eq!(
-            output(&result).unwrap(),
-            json!({"error":{"code":"unique_violation","detail":{"constraint":"unique_name"}}})
-        );
+        {
+            let observed = &(output(&result).unwrap());
+            assert_eq!(
+                observed["error"]["code"],
+                serde_json::json!("unique_violation")
+            );
+            assert_eq!(
+                observed["error"]["detail"]["constraint"],
+                serde_json::json!("unique_name")
+            );
+        };
     }
 }

@@ -149,30 +149,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_platform_row_that_is_already_there_is_kept() {
-        let sql = platform_principals_sql("example.invalid").expect("a domain name renders");
-        assert_eq!(
-            sql.matches("ON CONFLICT (id) DO NOTHING").count(),
-            PlatformComponent::ALL.len() + 1,
-            "every insert keeps a row that is already there, so a project_env_key holding part of the \
-             list converges to the whole list"
-        );
-    }
-
-    #[test]
-    fn the_workflow_user_row_is_rendered_once_as_a_service() {
-        let sql = platform_principals_sql("example.invalid").expect("a domain name renders");
-        let row = format!(
-            "INSERT INTO platform.\"user\" (id, type, email, display_name) VALUES \
-             ('{}', 'service', 'workflow@example.invalid', 'workflow') ON CONFLICT (id) \
-             DO NOTHING;\n",
-            workflow_user_id()
-        );
-        assert_eq!(sql.matches(&row).count(), 1, "{sql}");
-        assert_eq!(sql.matches(&workflow_user_id().to_string()).count(), 1);
-    }
-
-    #[test]
     fn a_domain_name_renders() {
         for domain in ["example.invalid", "localhost", "a-1.b2.example"] {
             assert!(

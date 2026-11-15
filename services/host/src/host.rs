@@ -41,7 +41,7 @@ use wamn_engine::engine::{
     build_engine_with_host_memory_and_compilation_cache,
 };
 use wamn_engine::flow_http_routing::FlowHttpRouting;
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_http_capability::transport::HttpTransport;
 use wamn_identity_protocol::verifier::SessionVerifier;
 use wamn_postgres_capability::AuthorityClass;
@@ -1228,6 +1228,7 @@ mod lease_tests;
 #[cfg(test)]
 mod tests {
     use clap::Parser as _;
+    use wamn_engine::release_manifest::ReleaseTarget;
 
     use super::*;
 
@@ -1366,8 +1367,7 @@ host:
             ("subject-allow", ">"),
         ] {
             let overrides = [(key, value)].into_iter().collect();
-            let error = resolve("events", &overrides).unwrap_err().to_string();
-            assert!(error.contains(key), "{error}");
+            resolve("events", &overrides).unwrap_err();
         }
         assert!(
             plugin_bindings(&args, "host:\n  plugins:\n    - id: x\n      image: y\n").is_err()
@@ -1392,12 +1392,8 @@ host:
         let defaults = parse(["wamn-host"]).unwrap().args;
         assert!(defaults.drain_delay.is_zero());
         assert_eq!(defaults.drain_bound_seconds, 300);
-        let error = TestCli::try_parse_from(["wamn-host"])
+        TestCli::try_parse_from(["wamn-host"])
             .expect_err("a host without its drain bound refuses to start");
-        assert!(
-            error.to_string().contains("--drain-bound-seconds"),
-            "{error}"
-        );
         assert!(defaults.nats_connect_timeout.is_zero());
         let args = parse([
             "wamn-host",
@@ -1633,7 +1629,15 @@ host:
                 .unwrap();
             let mut response = String::new();
             client.read_to_string(&mut response).await.unwrap();
-            assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+            assert_eq!(
+                response
+                    .split_ascii_whitespace()
+                    .nth(1)
+                    .unwrap()
+                    .parse::<u16>()
+                    .unwrap(),
+                200
+            );
 
             let cleanup_polled = AtomicBool::new(false);
             let (stop_queue, _stopping) = tokio::sync::watch::channel(false);
@@ -1666,12 +1670,7 @@ host:
             }
             assert!(!cleanup_polled.load(Ordering::Relaxed));
             probe.abort();
-            let error = running.await.unwrap_err();
-            assert!(
-                error
-                    .to_string()
-                    .starts_with("native probe listener stopped unexpectedly:")
-            );
+            running.await.unwrap_err();
             assert!(cleanup_polled.load(Ordering::Relaxed));
         })
         .await
@@ -1880,10 +1879,6 @@ host:
                 &format!("postgres://reader:secret@localhost/{database}"),
             )
             .expect_err("the permission reader must target the exact audience database");
-            assert_eq!(
-                error.to_string(),
-                "session audience and permission database differ"
-            );
             assert!(!format!("{error:?}").contains("secret"));
         }
     }

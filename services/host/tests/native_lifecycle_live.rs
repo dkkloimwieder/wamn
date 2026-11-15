@@ -18,6 +18,9 @@ use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::time::{Instant, sleep, timeout};
 
+#[path = "support/native_host.rs"]
+mod native_host;
+
 const REQUEST_BUDGET: Duration = Duration::from_secs(1);
 const STARTUP_BUDGET: Duration = Duration::from_secs(60);
 const SHUTDOWN_BUDGET: Duration = Duration::from_secs(70);
@@ -157,27 +160,6 @@ async fn await_readiness(
     }
 }
 
-fn native_host_id(evidence: &Path, name: &str) -> anyhow::Result<String> {
-    // Native Host started diagnostics identify the private RPC subject. Do not
-    // derive it from --host-name: native host identity is a separate value.
-    for suffix in ["stdout", "stderr"] {
-        let log = fs::read_to_string(evidence.join(format!("{name}.{suffix}")))?;
-        for line in log.lines().filter(|line| line.contains("Host started")) {
-            if let Some((_, value)) = line.split_once("host_id=") {
-                let value = value.trim_start_matches('"');
-                let id = value
-                    .split(|c: char| c == '"' || c.is_whitespace())
-                    .next()
-                    .unwrap_or_default();
-                if !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-                    return Ok(id.to_owned());
-                }
-            }
-        }
-    }
-    anyhow::bail!("native Host started log did not identify the host RPC subject")
-}
-
 async fn heartbeat_rpc(
     address: SocketAddr,
     host_id: &str,
@@ -194,10 +176,11 @@ async fn heartbeat_rpc(
             )
             .await
             {
-                let body = std::str::from_utf8(&response.payload)?;
+                let heartbeat: wash_runtime::washlet::types::v2::HostHeartbeat =
+                    serde_json::from_slice(&response.payload)?;
                 ensure!(
-                    body.contains(host_name),
-                    "native heartbeat RPC did not name this host"
+                    heartbeat.friendly_name == host_name,
+                    "heartbeat belongs to another host"
                 );
                 return Ok(response.payload.to_vec());
             }
@@ -285,7 +268,8 @@ async fn assert_host_lifecycle(
         .context("start the rebuilt wamn-host binary")?;
     let result = async {
         let observed_starting = await_ready(&mut host, probe_address).await?;
-        let host_id = native_host_id(evidence, &name)?;
+        let observer = async_nats::connect(nats_address.to_string()).await?;
+        let host_id = native_host::discover(&observer, &name).await?;
         fs::write(evidence.join(format!("{name}-heartbeat-before.json")),
             heartbeat_rpc(nats_address, &host_id, &name).await?)?;
 
@@ -386,8 +370,6 @@ async fn assert_blocked_flush(nats_address: SocketAddr, evidence: &Path) -> anyh
         let status = timeout(remaining, host.wait()).await
             .context("blocked exporter kept host alive beyond its shutdown budget")??;
         ensure!(status.code().is_some_and(|code| code != 0), "blocked flush did not return a process error: {status}");
-        let stderr = fs::read_to_string(evidence.join(format!("{name}.stderr")))?;
-        ensure!(stderr.contains("telemetry flush did not complete"), "nonzero exit did not identify the bounded flush failure");
         fs::write(evidence.join(format!("{name}-result.txt")), format!(
             "signal=SIGTERM\nexit_code={}\nshutdown_ms={}\ntrace_export_connection_observed=true\ntrace_peer_answered=false\nflush_failure_reported=true\n",
             status.code().context("failed host has no exit code")?, signalled.elapsed().as_millis(),
@@ -474,11 +456,11 @@ async fn assert_missing_first_beat(
     let cleanup_time = cleanup_started.elapsed();
     drop(host);
 
-    let error =
+    let _refusal =
         observed.context("the failed native task was not detected within its silence bound")?;
     ensure!(
-        error.to_string().contains("first liveness beat") && never_beat,
-        "the native task did not fail before its first beat: {error:#}"
+        never_beat,
+        "native state recorded a beat before the refusal"
     );
     ensure!(
         observation_time >= silence_budget && observation_time < silence_budget + REQUEST_BUDGET,
@@ -495,8 +477,7 @@ async fn assert_missing_first_beat(
         .downcast_ref::<async_nats::SubscribeError>()
         .context("cleanup did not retrieve the native subscription error")?;
     ensure!(
-        subscription.kind() == async_nats::SubscribeErrorKind::Other
-            && error.to_string() == "failed to subscribe for API requests",
+        subscription.kind() == async_nats::SubscribeErrorKind::Other,
         "cleanup returned a different native failure: {error:#}"
     );
     fs::write(

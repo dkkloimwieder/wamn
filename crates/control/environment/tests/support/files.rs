@@ -328,9 +328,24 @@ pub async fn registry(
         .map(drop)?;
     }
     sqlx::raw_sql("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud')").execute(&mut owner).await.map(drop)?;
-    sqlx::raw_sql("CREATE ROLE file_fixture_control LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \
-         GRANT wamn_control TO file_fixture_control").execute(&mut bootstrap).await.map(drop)?;
-    let mut control = connect(&login(database.url(), "file_fixture_control")?).await?;
+    let control_login = workload_login(
+        WorkloadRoleFamily::Control,
+        WorkloadRoleIdentity::Org {
+            org,
+            database: "file_registry",
+        },
+    )?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::test_database::login_sql(
+            WorkloadRoleFamily::Control,
+            "file_registry",
+            &control_login,
+            "file-fixture-only",
+        ),
+    ))
+    .execute(&mut bootstrap)
+    .await?;
+    let mut control = connect(&login(database.url(), &control_login)?).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe((&bind_actor).to_string()))
         .execute(&mut control)
         .await

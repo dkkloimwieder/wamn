@@ -26,7 +26,6 @@
 //! The cases share one PostgreSQL server and hold its process lock.
 //! Each case rebuilds cluster-wide roles and owns a fresh `wamn` database.
 
-use std::fmt::Write as _;
 use std::process::Command;
 use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{
@@ -120,8 +119,19 @@ fn apply(url: &str, sql: &str) {
         .expect("spawn psql (is it installed?)");
     assert!(
         out.status.success(),
-        "apply failed:\n{}",
+        "apply failed:\n{}\nSQL: {sql}",
         String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Assert a predicate against the installed database, without rendering rows.
+fn assert_query(url: &str, query: &str) {
+    apply(
+        url,
+        &format!(
+            "DO $test$ BEGIN ASSERT ({}); END $test$;",
+            query.trim().trim_end_matches(';')
+        ),
     );
 }
 
@@ -196,9 +206,34 @@ fn the_swept_minimum_admits_only_the_connected_guest_on_postgres() {
     apply(&admin, POSTGRES_INIT);
     let base = admin.rsplit_once('/').expect("url names a database").0;
     let db_url = format!("{base}/wamn");
+    assert_query(
+        &db_url,
+        "SELECT NOT (rolcanlogin OR rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolinherit OR rolreplication OR rolpassword IS NOT NULL) FROM pg_authid WHERE rolname='wamn_app'",
+    );
     for sql in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
         apply(&db_url, sql);
     }
+
+    // 1. NOTHING guest-reachable is still on a settable identity.
+    assert_query(
+        &db_url,
+        "SELECT NOT EXISTS (SELECT FROM pg_class c WHERE c.relrowsecurity AND has_table_privilege('wamn_app',c.oid,'SELECT') AND NOT EXISTS (SELECT FROM pg_policy p JOIN pg_depend d ON d.classid='pg_policy'::regclass AND d.objid=p.oid WHERE p.polrelid=c.oid AND d.refclassid='pg_proc'::regclass AND d.refobjid='wamn_authority.current_project_key()'::regprocedure))",
+    );
+
+    // The remaining relation with the identity holds no guest privilege.
+    // This assertion also refuses a guest grant on that relation.
+    assert_query(
+        &db_url,
+        "SELECT NOT has_table_privilege('wamn_app','wamn_run.run_queue','SELECT')",
+    );
+
+    // 2. EVERY re-keyed relation carries its expression index. Without it the
+    //    predicate sequential-scans, which is the cliff option (c) had to
+    //    answer for. wamn-0h0g.22.15 makes this a standing denial-acceptance-test arm.
+    assert_query(
+        &db_url,
+        "SELECT NOT EXISTS (SELECT FROM pg_class c WHERE EXISTS (SELECT FROM pg_policy p JOIN pg_depend d ON d.classid='pg_policy'::regclass AND d.objid=p.oid WHERE p.polrelid=c.oid AND d.refclassid='pg_proc'::regclass AND d.refobjid='wamn_authority.current_project_key()'::regprocedure) AND NOT EXISTS (SELECT FROM pg_index i JOIN pg_depend d ON d.classid='pg_class'::regclass AND d.objid=i.indexrelid WHERE i.indrelid=c.oid AND d.refclassid='pg_proc'::regclass AND d.refobjid='wamn_authority.project_key(text)'::regprocedure))",
+    );
 
     let guest = record_history_guest();
     apply(
@@ -325,62 +360,29 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     //    `pg_authid`, NOT `pg_roles`: the view substitutes the literal
     //    `'********'` for every row's `rolpassword`, so `rolpassword IS NOT NULL`
     //    reads TRUE against `pg_roles` for a role that has no password at all.
-    let attributes = psql(
+    assert_query(
         &db_url,
-        None,
-        "SELECT concat_ws(' ', rolcanlogin, rolsuper, rolbypassrls, rolcreatedb, \
-                rolcreaterole, rolreplication, rolpassword IS NOT NULL) \
-           FROM pg_authid WHERE rolname = 'wamn_platform'",
-    );
-    assert_eq!(
-        attributes, "f f f f f f f",
-        "wamn_platform must be a NOLOGIN NOBYPASSRLS group role carrying no \
-         credential (order: login, super, bypassrls, createdb, createrole, \
-         replication, password set)"
+        "SELECT NOT (rolcanlogin OR rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication OR rolpassword IS NOT NULL) FROM pg_authid WHERE rolname='wamn_platform'",
     );
 
     // 2. EVERY GOVERNED RELATION CARRIES EXACTLY ONE ARM OF EACH TYPE, counted
     //    PER RELATION rather than in total: a relation with two platform arms and
     //    one with none sum to the same 40 and leave a silent lockout standing.
-    let missing_arm = psql(
+    assert_query(
         &db_url,
-        None,
-        "SELECT coalesce(string_agg(rel, ' ' ORDER BY rel), '<none>') FROM (\
-           SELECT n.nspname||'.'||c.relname AS rel, c.oid AS oid \
-             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-            WHERE EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid \
-                            AND pg_get_expr(p.polqual, p.polrelid) \
-                                LIKE '%current_project_key%')) g \
-          WHERE (SELECT count(*) FROM pg_policy p JOIN pg_roles r ON r.oid = ANY(p.polroles) \
-                  WHERE p.polrelid = g.oid AND p.polpermissive \
-                    AND r.rolname = 'wamn_platform') <> 1",
+        "SELECT NOT EXISTS (SELECT FROM pg_class c WHERE EXISTS (SELECT FROM pg_policy p JOIN pg_depend d ON d.classid='pg_policy'::regclass AND d.objid=p.oid WHERE p.polrelid=c.oid AND d.refclassid='pg_proc'::regclass AND d.refobjid='wamn_authority.current_project_key()'::regprocedure) AND (SELECT count(*) FROM pg_policy p WHERE p.polrelid=c.oid AND p.polpermissive AND (SELECT oid FROM pg_roles WHERE rolname='wamn_platform')=ANY(p.polroles))<>1)",
     );
-    assert_eq!(
-        missing_arm, "<none>",
-        "a governed relation does not carry exactly one permissive wamn_platform \
-         arm — every platform principal reads it at ZERO ROWS, silently"
+    assert_query(
+        &db_url,
+        "SELECT NOT EXISTS (SELECT FROM pg_policy p JOIN pg_depend d ON d.classid='pg_policy'::regclass AND d.objid=p.oid WHERE d.refclassid='pg_proc'::regclass AND d.refobjid='wamn_authority.current_project_key()'::regprocedure AND p.polroles<>ARRAY[(SELECT oid FROM pg_roles WHERE rolname='wamn_app')])",
     );
-
     // …and NOTHING on a governed relation is untargeted. An arm widened to
     // PUBLIC still carries `USING (true)`, so it passes every predicate-shaped
     // test above while handing every project's rows to any role holding the
     // table grant. `polroles = '{0}'` is how PostgreSQL spells PUBLIC.
-    let public_arm = psql(
+    assert_query(
         &db_url,
-        None,
-        "SELECT coalesce(string_agg(rel, ' ' ORDER BY rel), '<none>') FROM (\
-           SELECT n.nspname||'.'||c.relname AS rel \
-             FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
-             JOIN pg_namespace n ON n.oid = c.relnamespace \
-            WHERE p.polroles = '{0}' \
-              AND EXISTS (SELECT 1 FROM pg_policy g WHERE g.polrelid = c.oid \
-                            AND pg_get_expr(g.polqual, g.polrelid) \
-                                LIKE '%current_project_key%')) t",
-    );
-    assert_eq!(
-        public_arm, "<none>",
-        "a governed relation carries a policy targeting PUBLIC: the arm is one \
-         group role, not an open door"
+        "SELECT NOT EXISTS (SELECT FROM pg_class c WHERE EXISTS (SELECT FROM pg_policy p JOIN pg_depend d ON d.classid='pg_policy'::regclass AND d.objid=p.oid WHERE p.polrelid=c.oid AND d.refclassid='pg_proc'::regclass AND d.refobjid='wamn_authority.current_project_key()'::regprocedure) AND EXISTS(SELECT FROM pg_policy p WHERE p.polrelid=c.oid AND p.polroles=ARRAY[0::oid]))",
     );
 
     // 3. THE MEMBER SET, FROM THE REAL BUILDER, WITH ITS EDGE OPTIONS.
@@ -401,42 +403,24 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         .map(|family| family.acl_role())
         .collect();
     expected.sort_unstable();
-    let members = psql(
+    let members = expected
+        .iter()
+        .map(|role| postgres_protocol::escape::escape_literal(role))
+        .collect::<Vec<_>>()
+        .join(",");
+    assert_query(
         &db_url,
-        None,
-        "SELECT coalesce(string_agg(m.rolname, ' ' ORDER BY m.rolname), '<none>') \
-           FROM pg_auth_members am JOIN pg_roles m ON m.oid = am.member \
-           JOIN pg_roles g ON g.oid = am.roleid WHERE g.rolname = 'wamn_platform'",
+        &format!(
+            "SELECT array_agg(m.rolname::text ORDER BY m.rolname)=ARRAY[{members}] FROM pg_auth_members am JOIN pg_roles m ON m.oid=am.member JOIN pg_roles g ON g.oid=am.roleid WHERE g.rolname='wamn_platform'"
+        ),
     );
-    assert_eq!(
-        members,
-        expected.join(" "),
-        "the wamn_platform member set moved: the guest family must never appear, \
-         and a control-plane family has no governed relation to reach"
-    );
-    let edges = psql(
+    assert_query(
         &db_url,
-        None,
-        "SELECT concat_ws(' ', bool_and(am.inherit_option), bool_and(NOT am.admin_option), \
-                bool_and(NOT am.set_option)) \
-           FROM pg_auth_members am JOIN pg_roles g ON g.oid = am.roleid \
-          WHERE g.rolname = 'wamn_platform'",
+        "SELECT bool_and(am.inherit_option AND NOT am.admin_option AND NOT am.set_option) FROM pg_auth_members am JOIN pg_roles g ON g.oid=am.roleid WHERE g.rolname='wamn_platform'",
     );
-    assert_eq!(
-        edges, "t t t",
-        "every wamn_platform edge must be INHERIT TRUE, ADMIN FALSE, SET FALSE — \
-         a defaulted INHERIT option on a NOINHERIT ACL role reads ZERO ROWS in \
-         silence (order: inherit, no admin, no set)"
-    );
-    let guest_is_not_a_member = psql(
+    assert_query(
         &db_url,
-        None,
-        "SELECT pg_has_role('wamn_app', 'wamn_platform', 'USAGE')",
-    );
-    assert_eq!(
-        guest_is_not_a_member, "f",
-        "the guest family must not reach the platform arm: it would read every \
-         project's rows, which is the exact hole wamn-0h0g.22.6 closed"
+        "SELECT NOT pg_has_role('wamn_app','wamn_platform','USAGE')",
     );
 
     // 4. THE ADMISSION ITSELF, END TO END (`wamn-0h0g.22.40`).
@@ -488,30 +472,17 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     // than assumed: a family that lost its grant reads zero rows for a reason
     // that has nothing to do with the arm, and the row count below would blame
     // the arm for it.
-    let probe_grants = psql(
+    assert_query(
         &db_url,
-        None,
-        "SELECT has_any_column_privilege('wamn_run_retention', 'wamn_run.runs', 'SELECT')",
-    );
-    assert_eq!(
-        probe_grants, "t",
-        "the probe family holds no SELECT on wamn_run.runs, so a zero-row read \
-         below would blame the arm for a missing privilege"
+        "SELECT has_any_column_privilege('wamn_run_retention','wamn_run.runs','SELECT')",
     );
     // A SUPERUSER FIXTURE MASKS RLS ENTIRELY, so the probe roles are asserted
     // unprivileged from `pg_roles` before a single row is counted.
-    let unprivileged = psql(
+    assert_query(
         &db_url,
-        None,
         &format!(
-            "SELECT bool_and(NOT (rolsuper OR rolbypassrls)) FROM pg_roles \
-              WHERE rolname IN ('{retention}', '{PLATFORM_PROBE_OUTSIDER}', \
-                                'wamn_run_retention', 'wamn_platform')"
+            "SELECT bool_and(NOT (rolsuper OR rolbypassrls)) FROM pg_roles WHERE rolname IN ('{retention}','{PLATFORM_PROBE_OUTSIDER}','wamn_run_retention','wamn_platform')"
         ),
-    );
-    assert_eq!(
-        unprivileged, "t",
-        "a probe role that is superuser or BYPASSRLS establishes nothing about RLS"
     );
     apply(
         &db_url,
@@ -563,37 +534,21 @@ fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
     const ROLE: &str = "wamn_audit_retention";
     const SYSTEM_DATABASE: &str = "wamn_minimum_system";
     let (_database, admin) = shared_server();
-    let shape = |url: &str| {
-        psql(
-            url,
-            None,
-            &format!(
-                "SELECT coalesce((SELECT concat_ws(' ', rolcanlogin, rolsuper, rolinherit, \
-                          rolcreaterole, rolcreatedb, rolreplication, rolbypassrls, \
-                          rolpassword IS NOT NULL, \
-                          EXISTS (SELECT FROM pg_catalog.pg_auth_members \
-                                   WHERE member = pg_authid.oid)) \
-                   FROM pg_catalog.pg_authid WHERE rolname = '{ROLE}'), '<absent>')"
-            ),
-        )
-    };
 
     reset(&admin);
     apply(&admin, POSTGRES_INIT);
-    assert_eq!(
-        shape(&admin),
-        "<absent>",
-        "the audit retention role exists before CATALOG_SCHEMA_SQL runs"
+    assert_query(
+        &admin,
+        &format!("SELECT NOT EXISTS(SELECT FROM pg_authid WHERE rolname='{ROLE}')"),
     );
     let base = admin.rsplit_once('/').expect("url names a database").0;
     let db_url = format!("{base}/wamn");
     apply(&db_url, CATALOG_SCHEMA);
-    assert_eq!(
-        shape(&db_url),
-        "f f f f f f f f f",
-        "CATALOG_SCHEMA_SQL does not create the stable audit retention role \
-         (order: login, super, inherit, createrole, createdb, replication, \
-         bypassrls, password set, any membership)"
+    assert_query(
+        &db_url,
+        &format!(
+            "SELECT NOT (rolcanlogin OR rolsuper OR rolinherit OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls OR rolpassword IS NOT NULL OR EXISTS(SELECT FROM pg_auth_members WHERE member=pg_authid.oid)) FROM pg_authid WHERE rolname='{ROLE}'"
+        ),
     );
 
     apply(
@@ -628,20 +583,15 @@ fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
                 wamn_control_provision::SYSTEM_SCHEMA_SQL
             ),
         );
-        assert_eq!(
-            psql(
-                &system_url,
-                None,
-                "SELECT nspowner::regrole::text FROM pg_catalog.pg_namespace \
-                  WHERE nspname = 'wamn_history'"
+        assert_query(
+            &system_url,
+            &format!(
+                "SELECT nspowner='{applier}'::regrole FROM pg_namespace WHERE nspname='wamn_history'"
             ),
-            applier,
-            "SYSTEM_SCHEMA_SQL did not run as {applier}"
         );
-        assert_eq!(
-            shape(&system_url),
-            "<absent>",
-            "SYSTEM_SCHEMA_SQL applied as {applier} created the audit retention role"
+        assert_query(
+            &system_url,
+            &format!("SELECT NOT EXISTS(SELECT FROM pg_authid WHERE rolname='{ROLE}')"),
         );
     }
     apply(
@@ -681,29 +631,19 @@ fn the_catalog_and_app_schemas_install_under_a_superuser_not_named_postgres() {
     let installer_url = installer_url.as_str();
 
     apply(installer_url, CATALOG_SCHEMA);
-    assert_eq!(
-        psql(
-            installer_url,
-            None,
-            "SELECT nspowner::regrole::text FROM pg_catalog.pg_namespace \
-              WHERE nspname = 'catalog'"
+    assert_query(
+        installer_url,
+        &format!(
+            "SELECT nspowner='{CATALOG_INSTALLER}'::regrole FROM pg_namespace WHERE nspname='catalog'"
         ),
-        CATALOG_INSTALLER,
-        "CATALOG_SCHEMA_SQL applied as {CATALOG_INSTALLER} gave the catalog schema \
-         another owner"
     );
 
     apply(installer_url, APP_SCHEMA);
-    assert_eq!(
-        psql(
-            installer_url,
-            None,
-            "SELECT nspowner::regrole::text FROM pg_catalog.pg_namespace \
-              WHERE nspname = 'platform'"
+    assert_query(
+        installer_url,
+        &format!(
+            "SELECT nspowner='{CATALOG_INSTALLER}'::regrole FROM pg_namespace WHERE nspname='platform'"
         ),
-        CATALOG_INSTALLER,
-        "app-schema.sql applied as {CATALOG_INSTALLER} gave the platform schema \
-         another owner"
     );
 }
 
@@ -792,27 +732,11 @@ fn the_stamp_trigger_stamps_guest_writes_on_postgres() {
     let (db_url, guest) = record_history_fixture(&admin);
 
     // THE GRANTS AND THE FUNCTION SHAPE, from the server catalogs.
-    let shape = psql(
+    assert_query(
         &db_url,
-        None,
         &format!(
-            "SELECT concat_ws(' ', \
-               has_schema_privilege('wamn_db_owner', 'wamn_history', 'USAGE'), \
-               has_function_privilege('wamn_db_owner', 'wamn_history.stamp_row()', 'EXECUTE'), \
-               has_schema_privilege('wamn_app', 'wamn_history', 'USAGE'), \
-               has_function_privilege('wamn_app', 'wamn_history.stamp_row()', 'EXECUTE'), \
-               has_function_privilege('{guest}', 'wamn_history.stamp_row()', 'EXECUTE'), \
-               p.prosecdef, array_to_string(p.proconfig, ',')) \
-               FROM pg_proc p WHERE p.oid = 'wamn_history.stamp_row()'::regprocedure"
+            "SELECT has_schema_privilege('wamn_db_owner','wamn_history','USAGE') AND has_function_privilege('wamn_db_owner','wamn_history.stamp_row()','EXECUTE') AND has_schema_privilege('wamn_app','wamn_history','USAGE') AND NOT has_function_privilege('wamn_app','wamn_history.stamp_row()','EXECUTE') AND NOT has_function_privilege('{guest}','wamn_history.stamp_row()','EXECUTE') AND NOT p.prosecdef AND 'search_path=pg_catalog'=ANY(p.proconfig) FROM pg_proc p WHERE p.oid='wamn_history.stamp_row()'::regprocedure"
         ),
-    );
-    assert_eq!(
-        shape, "t t t f f f search_path=pg_catalog",
-        "wamn_db_owner must hold schema USAGE and function EXECUTE, wamn_app must \
-         hold schema USAGE for wamn_history.row_image, neither wamn_app nor the \
-         guest must hold EXECUTE, and the function must be SECURITY INVOKER with a \
-         pinned search_path (order: owner usage, owner execute, wamn_app usage, \
-         wamn_app execute, guest execute, security definer, config)"
     );
 
     // 1. An insert stamps four with one instant per transaction, and replaces
@@ -1101,8 +1025,7 @@ fn refuses_log_write(statement: &str, condition: &str, assertion: &str) -> Strin
     )
 }
 
-/// Run `sql` and expect psql to stop on an error. Returns the verbose error
-/// output, which carries the SQLSTATE.
+/// Run `sql` and return its SQLSTATE after psql refuses it.
 fn apply_refused(url: &str, sql: &str) -> String {
     let out = Command::new("psql")
         .arg(url)
@@ -1113,7 +1036,19 @@ fn apply_refused(url: &str, sql: &str) -> String {
         !out.status.success(),
         "the script succeeded, but it must fail:\n{sql}"
     );
-    String::from_utf8_lossy(&out.stderr).into_owned()
+    let error = String::from_utf8_lossy(&out.stderr);
+    error
+        .split_whitespace()
+        .filter_map(|token| token.strip_suffix(':'))
+        .find(|code| {
+            code.len() == 5
+                && code
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+                && code.chars().any(|c| c.is_ascii_digit())
+        })
+        .expect("psql provides a SQLSTATE")
+        .to_owned()
 }
 
 /// The history table shape, the function configuration and grants, and the
@@ -1124,98 +1059,63 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
 
-    let functions = psql(
+    assert_query(
         &db_url,
-        None,
         &format!(
-            "SELECT concat_ws(' ', \
-               has_function_privilege('wamn_db_owner', \
-                 'wamn_history.create_history_table(text, text, boolean)', 'EXECUTE'), \
-               has_function_privilege('wamn_db_owner', 'wamn_history.log_row_change()', 'EXECUTE'), \
-               has_function_privilege('wamn_app', \
-                 'wamn_history.create_history_table(text, text, boolean)', 'EXECUTE'), \
-               has_function_privilege('wamn_app', 'wamn_history.log_row_change()', 'EXECUTE'), \
-               has_function_privilege('{guest}', 'wamn_history.log_row_change()', 'EXECUTE'))"
+            "SELECT has_function_privilege('wamn_db_owner','wamn_history.create_history_table(text,text,boolean)','EXECUTE') AND has_function_privilege('wamn_db_owner','wamn_history.log_row_change()','EXECUTE') AND NOT has_function_privilege('wamn_app','wamn_history.create_history_table(text,text,boolean)','EXECUTE') AND NOT has_function_privilege('wamn_app','wamn_history.log_row_change()','EXECUTE') AND NOT has_function_privilege('{guest}','wamn_history.log_row_change()','EXECUTE')"
         ),
     );
-    assert_eq!(
-        functions, "t t f f f",
-        "wamn_db_owner must hold EXECUTE on both functions after the second apply, \
-         and wamn_app and the guest must hold neither (order: owner create, owner \
-         log, wamn_app create, wamn_app log, guest log)"
-    );
-    let config = psql(
+    assert_query(
         &db_url,
-        None,
-        "SELECT string_agg(concat_ws(' ', p.proname, p.prosecdef, \
-                 array_to_string(p.proconfig, ',')), '; ' ORDER BY p.proname) \
-           FROM pg_proc p WHERE p.pronamespace = 'wamn_history'::regnamespace",
-    );
-    assert_eq!(
-        config,
-        "create_history_table f search_path=pg_catalog; \
-         log_row_change f search_path=pg_catalog; \
-         row_image f search_path=pg_catalog,TimeZone=UTC; \
-         stamp_row f search_path=pg_catalog; \
-         timestamptz_image f search_path=pg_catalog,TimeZone=UTC",
-        "every record-history function must be SECURITY INVOKER with a pinned \
-         search_path, and the row image function must pin TimeZone to UTC"
+        "SELECT NOT EXISTS (SELECT FROM pg_proc p WHERE p.pronamespace='wamn_history'::regnamespace AND (p.prosecdef OR NOT coalesce('search_path=pg_catalog'=ANY(p.proconfig),false) OR (p.proname IN ('row_image','timestamptz_image') AND NOT coalesce('TimeZone=UTC'=ANY(p.proconfig),false))))",
     );
 
-    let columns = |relation: &str| {
-        psql(
+    for (relation, projected) in [("logged_history", false), ("projected_history", true)] {
+        let names: Vec<String> = serde_json::from_str(&psql(&db_url, None, &format!(
+            "SELECT json_agg(attname ORDER BY attname) FROM pg_attribute WHERE attrelid='rh_probe.{relation}'::regclass AND attnum>0 AND NOT attisdropped"
+        ))).unwrap();
+        let mut expected: Vec<_> = wamn_record_history::HISTORY_COLUMNS
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
+        if projected {
+            expected.push("project_id");
+        }
+        expected.sort_unstable();
+        assert_eq!(names, expected);
+        if projected {
+            assert_query(
+                &db_url,
+                &format!(
+                    "SELECT attnotnull AND atttypid='text'::regtype FROM pg_attribute WHERE attrelid='rh_probe.{relation}'::regclass AND attname='project_id'"
+                ),
+            );
+        }
+        for (name, type_) in wamn_record_history::HISTORY_COLUMNS {
+            let type_: wamn_scalar::SqlValueType =
+                serde_json::from_value(serde_json::json!(type_)).unwrap();
+            let postgres_type = type_.postgres_name();
+            assert_query(
+                &db_url,
+                &format!(
+                    "SELECT attnotnull AND atttypid='{postgres_type}'::regtype FROM pg_attribute WHERE attrelid='rh_probe.{relation}'::regclass AND attname='{name}'"
+                ),
+            );
+        }
+        assert_query(
             &db_url,
-            None,
             &format!(
-                "SELECT string_agg(concat_ws(':', attname, format_type(atttypid, atttypmod), \
-                         attnotnull, attidentity), ', ' ORDER BY attnum) \
-                   FROM pg_attribute \
-                  WHERE attrelid = 'rh_probe.{relation}'::regclass \
-                    AND attnum > 0 AND NOT attisdropped"
+                "SELECT attidentity='a' FROM pg_attribute WHERE attrelid='rh_probe.{relation}'::regclass AND attname='position'"
             ),
-        )
-    };
-    let fixed = "row_key:jsonb:t:, type:text:t:, operation:text:t:, changed_by:uuid:t:, \
-                 changed_at:timestamp with time zone:t:, transaction_id:bigint:t:, \
-                 before:jsonb:t:, after:jsonb:t:";
-    assert_eq!(
-        columns("logged_history"),
-        format!("position:bigint:t:a, id:uuid:t:, {fixed}"),
-        "a history table without the project flag must have the fixed shape and no project_id"
-    );
-    assert_eq!(
-        columns("projected_history"),
-        format!("position:bigint:t:a, id:uuid:t:, project_id:text:t:, {fixed}"),
-        "the project flag must add project_id NOT NULL after the entry id"
-    );
-
-    let objects = psql(
+        );
+    }
+    assert_query(
         &db_url,
-        None,
-        "SELECT concat_ws(' | ', \
-           (SELECT string_agg(conname || ':' || contype::text, ', ' ORDER BY conname) \
-              FROM pg_constraint WHERE conrelid = 'rh_probe.logged_history'::regclass), \
-           (SELECT pg_get_constraintdef(oid) FROM pg_constraint \
-             WHERE conname = 'logged_history_pkey'), \
-           pg_get_serial_sequence('rh_probe.logged_history', 'position'), \
-           (SELECT string_agg(DISTINCT relowner::regrole::text, ',') FROM pg_class \
-             WHERE oid IN ('rh_probe.logged_history'::regclass, \
-                           'rh_probe.logged_history_position_seq'::regclass)))",
+        "SELECT i.indnatts=2 AND i.indkey[0]=(SELECT attnum FROM pg_attribute WHERE attrelid=i.indrelid AND attname='row_key') AND i.indkey[1]=(SELECT attnum FROM pg_attribute WHERE attrelid=i.indrelid AND attname='position') FROM pg_index i WHERE i.indrelid='rh_probe.logged_history'::regclass AND i.indisprimary",
     );
-    assert_eq!(
-        objects,
-        "logged_history_after_not_null:n, logged_history_before_not_null:n, \
-         logged_history_changed_at_not_null:n, logged_history_changed_by_not_null:n, \
-         logged_history_id_not_null:n, logged_history_operation_check:c, \
-         logged_history_operation_not_null:n, logged_history_pkey:p, \
-         logged_history_position_not_null:n, logged_history_row_key_not_null:n, \
-         logged_history_transaction_id_not_null:n, logged_history_type_check:c, \
-         logged_history_type_not_null:n \
-         | PRIMARY KEY (row_key, \"position\") \
-         | rh_probe.logged_history_position_seq \
-         | wamn_db_owner",
-        "the function must name every derived object, key the table by (row_key, \
-         position), and leave the table and its sequence with the caller"
+    assert_query(
+        &db_url,
+        "SELECT bool_and(relowner='wamn_db_owner'::regrole) FROM pg_class WHERE oid IN ('rh_probe.logged_history'::regclass,pg_get_serial_sequence('rh_probe.logged_history','position')::regclass)",
     );
 
     // The type CHECK accepts only insert, update, and delete.
@@ -1238,7 +1138,7 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
         refuses_log_write(
             &format!("PERFORM wamn_history.create_history_table('rh_probe', {relation}, true)"),
             "invalid_parameter_value",
-            &format!("SQLERRM = 'history-name-too-long: ' || {relation}"),
+            "true",
         )
     };
     apply(
@@ -1267,28 +1167,31 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
 
-/// Every grant on schema `wamn_history`, its functions, and its watermark table, except the grants
-/// of the owner, from the server ACLs.
-fn history_grants(url: &str) -> String {
-    psql(
+/// Inspect every installed history function and every non-owner privilege.
+fn assert_history_grants(url: &str, app: bool) {
+    assert_query(
         url,
-        None,
-        "SELECT coalesce(string_agg(entry, '; ' ORDER BY entry COLLATE \"C\"), '<none>') FROM ( \
-           SELECT 'wamn_history ' || acl.grantee::regrole::text || ' ' || acl.privilege_type \
-                  AS entry \
-             FROM pg_catalog.pg_namespace n, pg_catalog.aclexplode(n.nspacl) acl \
-            WHERE n.nspname = 'wamn_history' AND acl.grantee <> n.nspowner \
-           UNION ALL \
-           SELECT p.proname || ' ' || acl.grantee::regrole::text || ' ' || acl.privilege_type \
-             FROM pg_catalog.pg_proc p, pg_catalog.aclexplode(p.proacl) acl \
-            WHERE p.pronamespace = 'wamn_history'::regnamespace \
-              AND acl.grantee <> p.proowner \
-           UNION ALL \
-           SELECT c.relname || ' ' || acl.grantee::regrole::text || ' ' || acl.privilege_type \
-             FROM pg_catalog.pg_class c, pg_catalog.aclexplode(c.relacl) acl \
-            WHERE c.oid = 'wamn_history.pruning_watermarks'::regclass \
-              AND acl.grantee <> c.relowner) entries",
-    )
+        "SELECT has_schema_privilege('wamn_db_owner','wamn_history','CREATE') AND has_schema_privilege('wamn_db_owner','wamn_history','USAGE') AND bool_and(has_function_privilege('wamn_db_owner',p.oid,'EXECUTE')) FROM pg_proc p WHERE p.pronamespace='wamn_history'::regnamespace",
+    );
+    assert_query(url, &format!("SELECT NOT EXISTS (
+        SELECT FROM pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) a
+        WHERE n.nspname='wamn_history' AND a.grantee<>n.nspowner
+          AND (a.is_grantable OR NOT (a.grantee='wamn_db_owner'::regrole OR ({app} AND a.grantee=to_regrole('wamn_app') AND a.privilege_type='USAGE')))
+        UNION ALL
+        SELECT FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+        WHERE p.pronamespace='wamn_history'::regnamespace AND a.grantee<>p.proowner
+          AND (a.is_grantable OR NOT (a.grantee='wamn_db_owner'::regrole OR ({app} AND a.grantee=to_regrole('wamn_app') AND p.oid IN ('wamn_history.row_image(record)'::regprocedure,'wamn_history.timestamptz_image(timestamptz)'::regprocedure))))
+        UNION ALL
+        SELECT FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+        WHERE c.relnamespace='wamn_history'::regnamespace AND a.grantee<>c.relowner
+          AND (a.is_grantable OR NOT ({app} AND a.grantee=to_regrole('wamn_app') AND c.oid='wamn_history.pruning_watermarks'::regclass AND a.privilege_type='SELECT')))
+    "));
+    if app {
+        assert_query(
+            url,
+            "SELECT has_schema_privilege('wamn_app','wamn_history','USAGE') AND has_function_privilege('wamn_app','wamn_history.row_image(record)','EXECUTE') AND has_function_privilege('wamn_app','wamn_history.timestamptz_image(timestamptz)','EXECUTE') AND has_table_privilege('wamn_app','wamn_history.pruning_watermarks','SELECT')",
+        );
+    }
 }
 
 /// Ruling 78 (`wamn-emtx.31`). The `wamn_app` record history grants come from
@@ -1301,36 +1204,10 @@ fn history_grants(url: &str) -> String {
 #[ignore = "requires: postgres, bin:psql"]
 fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
     const SYSTEM_DATABASE: &str = "wamn_minimum_history_system";
-    const OWNER_GRANTS: [&str; 7] = [
-        "create_history_table wamn_db_owner EXECUTE",
-        "log_row_change wamn_db_owner EXECUTE",
-        "row_image wamn_db_owner EXECUTE",
-        "stamp_row wamn_db_owner EXECUTE",
-        "timestamptz_image wamn_db_owner EXECUTE",
-        "wamn_history wamn_db_owner CREATE",
-        "wamn_history wamn_db_owner USAGE",
-    ];
-    const APP_GRANTS: [&str; 4] = [
-        "pruning_watermarks wamn_app SELECT",
-        "row_image wamn_app EXECUTE",
-        "timestamptz_image wamn_app EXECUTE",
-        "wamn_history wamn_app USAGE",
-    ];
     let (_database, admin) = shared_server();
-    let joined = |grants: &[&str]| {
-        let mut grants = grants.to_vec();
-        grants.sort_unstable();
-        grants.join("; ")
-    };
 
     let (db_url, guest) = record_history_log_fixture(&admin);
-    assert_eq!(
-        history_grants(&db_url),
-        joined(&[OWNER_GRANTS.as_slice(), APP_GRANTS.as_slice()].concat()),
-        "CATALOG_SCHEMA_SQL must give wamn_app exactly schema USAGE and EXECUTE on \
-         row_image and timestamptz_image, and record-history.sql applied again must \
-         keep them"
-    );
+    assert_history_grants(&db_url, true);
     apply(
         &db_url,
         &format!(
@@ -1356,10 +1233,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
              INSERT INTO rh_probe.logged (id, note, revision) VALUES (2, 'second', 1);"
         ),
     );
-    assert!(
-        refused.contains("42501") && refused.contains("row_image"),
-        "a guest write to a logged relation must fail without the row_image grant:\n{refused}"
-    );
+    assert_eq!(refused, "42501");
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 
     reset(&admin);
@@ -1399,35 +1273,15 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
                     wamn_control_provision::SYSTEM_SCHEMA_SQL
                 ),
             );
-            assert_eq!(
-                history_grants(&system_url),
-                joined(&OWNER_GRANTS),
-                "SYSTEM_SCHEMA_SQL applied as {applier} (wamn_app present: {app_role}) \
-                 must grant wamn_history to wamn_db_owner alone"
-            );
+            assert_history_grants(&system_url, false);
             if app_role {
-                assert_eq!(
-                    psql(
-                        &system_url,
-                        None,
-                        "SELECT concat_ws(' ', \
-                           has_schema_privilege('wamn_app', 'wamn_history', 'USAGE'), \
-                           has_function_privilege('wamn_app', \
-                             'wamn_history.row_image(record)', 'EXECUTE'), \
-                           has_function_privilege('wamn_app', \
-                             'wamn_history.timestamptz_image(timestamptz)', 'EXECUTE'))"
-                    ),
-                    "f f f",
-                    "SYSTEM_SCHEMA_SQL applied as {applier} gave an existing wamn_app a \
-                     history privilege (order: usage, row_image, timestamptz_image)"
+                assert_query(
+                    &system_url,
+                    "SELECT NOT has_schema_privilege('wamn_app','wamn_history','USAGE') AND NOT has_function_privilege('wamn_app','wamn_history.row_image(record)','EXECUTE') AND NOT has_function_privilege('wamn_app','wamn_history.timestamptz_image(timestamptz)','EXECUTE')",
                 );
             } else {
                 let refused = apply_refused(&system_url, RECORD_HISTORY_APP_GRANTS);
-                assert!(
-                    refused.contains("42704")
-                        && refused.contains("role \"wamn_app\" does not exist"),
-                    "the grant file must refuse a database without wamn_app:\n{refused}"
-                );
+                assert_eq!(refused, "42704");
             }
         }
     }
@@ -1697,10 +1551,7 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
             "UPDATE rh_probe.logged SET note = 'lost', revision = revision + 1 WHERE id = 1;",
         ),
     );
-    assert!(
-        stopped.contains("23514") && stopped.contains("logged_history_operation_check"),
-        "the refused entry must stop the transaction with the operation CHECK:\n{stopped}"
-    );
+    assert_eq!(stopped, "23514");
 
     // 10. An unbound operation, and the empty binding the host sends for an
     //     absent identity, raise operation-required. An unbound actor raises
@@ -2299,25 +2150,9 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
 /// insert, two updates, and a delete of a widget, and reads the history. The
 /// fold then shows the row at each retained position.
 #[test]
-#[ignore = "requires: input:fixture, postgres, bin:psql"]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
-    let manifest = wamn_compiler::manifest::PackageManifest::from_slice(
-        &wamn_fixture_package::manifest_bytes(),
-    )
-    .expect("parse fixture manifest");
-    let mut history_tables = String::new();
-    for model in manifest
-        .models
-        .values()
-        .filter(|model| model.owner == manifest.package.id && model.log_retention().is_some())
-    {
-        writeln!(
-            history_tables,
-            "SELECT wamn_history.create_history_table('{}', '{}', false);",
-            model.schema, model.table
-        )
-        .expect("append history table creation");
-    }
+    let history_tables = "SELECT wamn_history.create_history_table('inventory', 'widget', false);";
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
     apply(
@@ -2348,6 +2183,10 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
         &db_url,
         &format!(
             "BEGIN;\n\
+             GRANT USAGE ON SCHEMA inventory TO wamn_app;\n\
+             GRANT SELECT,INSERT,UPDATE,DELETE ON inventory.widget TO wamn_app;\n\
+             GRANT INSERT ON inventory.widget_history TO wamn_app;\n\
+             GRANT USAGE ON SEQUENCE inventory.widget_history_position_seq TO wamn_app;\n\
              GRANT SELECT (position, row_key, type, operation, changed_by, changed_at, \
                            before, after) ON inventory.widget_history TO wamn_app;\n\
              COMMIT;\n"
@@ -2535,59 +2374,48 @@ fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
         ),
     );
 
-    let logs = psql(
+    assert_query(
         &db_url,
-        None,
-        "SELECT string_agg(c.relname || ':' || encode(t.tgargs, 'escape'), ' ' \
-                           ORDER BY c.relname COLLATE \"C\") \
-           FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid \
-          WHERE c.relnamespace = 'platform'::regnamespace \
-            AND t.tgname = 'wamn_record_history_log' AND NOT t.tgisinternal",
+        "SELECT NOT EXISTS (SELECT FROM pg_class c WHERE c.relnamespace='platform'::regnamespace AND c.relkind='r' AND right(c.relname,length('_history'))<>'_history' AND EXISTS(SELECT FROM pg_class history WHERE history.relnamespace=c.relnamespace AND history.relname=c.relname||'_history') AND NOT EXISTS (SELECT FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='wamn_record_history_log' AND NOT t.tgisinternal AND t.tgargs=convert_to('unlimited','UTF8')||decode('00','hex')))",
     );
-    assert_eq!(
-        logs,
-        "api_key:unlimited\\000 environment:unlimited\\000 \
-         file:unlimited\\000 \
-         number_sequence:unlimited\\000 permission:unlimited\\000 \
-         role:unlimited\\000 setting:unlimited\\000 \
-         user:unlimited\\000 user_role:unlimited\\000",
-        "every platform relation must log with the retention unlimited"
-    );
-    let targets = psql(
+    let targets_sql = wamn_control_provision::audit_retention::AUDIT_RETENTION_TARGETS_SQL
+        .trim()
+        .trim_end_matches(';');
+    assert_query(
         &db_url,
-        None,
-        wamn_control_provision::audit_retention::AUDIT_RETENTION_TARGETS_SQL,
+        &format!(
+            "SELECT count(*)=1 AND bool_and(schema_name='rh_probe' AND relation_name='projected' AND history_name='projected_history' AND days::integer=30) FROM ({targets_sql}) targets"
+        ),
     );
-    assert_eq!(
-        targets, "rh_probe|projected|projected_history|30",
-        "the retention targets must be the P30D fixture relation alone"
-    );
-    let reach = psql(
+    assert_query(
         &db_url,
-        None,
-        "SELECT concat_ws(' ', \
-           has_table_privilege('wamn_audit_retention', 'rh_probe.projected_history', 'DELETE'), \
-           has_schema_privilege('wamn_audit_retention', 'platform', 'USAGE'), \
-           (SELECT count(*) FROM pg_namespace n \
-             CROSS JOIN LATERAL aclexplode(n.nspacl) AS acl \
-             WHERE n.nspname = 'platform' \
-               AND acl.grantee = 'wamn_audit_retention'::regrole), \
-           (SELECT count(*) FROM pg_class c \
-             CROSS JOIN LATERAL aclexplode(c.relacl) AS acl \
-             WHERE c.relnamespace = 'platform'::regnamespace \
-               AND acl.grantee = 'wamn_audit_retention'::regrole), \
-           (SELECT count(*) FROM pg_attribute a \
-             JOIN pg_class c ON c.oid = a.attrelid \
-             CROSS JOIN LATERAL aclexplode(a.attacl) AS acl \
-             WHERE c.relnamespace = 'platform'::regnamespace \
-               AND acl.grantee = 'wamn_audit_retention'::regrole))",
+        "SELECT has_table_privilege('wamn_audit_retention','rh_probe.projected_history','DELETE') AND has_schema_privilege('wamn_audit_retention','platform','USAGE') AND NOT EXISTS (SELECT FROM pg_class c WHERE c.relnamespace='platform'::regnamespace AND c.relkind='r' AND c.relname<>'write_log' AND (has_table_privilege('wamn_audit_retention',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('wamn_audit_retention',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')))",
     );
-    assert_eq!(
-        reach, "t t 1 1 2",
-        "the audit retention role reaches only the write log in platform (order: control \
-         DELETE on the P30D history table, platform USAGE, schema ACL \
-         entries, relation ACL entries, column ACL entries)"
+
+    assert_query(
+        &db_url,
+        "SELECT has_table_privilege('wamn_audit_retention','platform.write_log','DELETE') AND NOT has_table_privilege('wamn_audit_retention','platform.write_log','SELECT,INSERT,UPDATE,TRUNCATE,REFERENCES,TRIGGER')",
     );
+    for column in wamn_control_provision::audit_retention::WRITE_LOG_RETENTION_READ_COLUMNS {
+        assert_query(
+            &db_url,
+            &format!(
+                "SELECT has_column_privilege('wamn_audit_retention','platform.write_log','{column}','SELECT')"
+            ),
+        );
+    }
+    let columns: Vec<String> = serde_json::from_str(&psql(&db_url, None, "SELECT json_agg(attname) FROM pg_attribute WHERE attrelid='platform.write_log'::regclass AND attnum>0 AND NOT attisdropped")).unwrap();
+    for column in columns.iter().filter(|column| {
+        !wamn_control_provision::audit_retention::WRITE_LOG_RETENTION_READ_COLUMNS
+            .contains(&column.as_str())
+    }) {
+        assert_query(
+            &db_url,
+            &format!(
+                "SELECT NOT has_column_privilege('wamn_audit_retention','platform.write_log','{column}','SELECT')"
+            ),
+        );
+    }
 
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }

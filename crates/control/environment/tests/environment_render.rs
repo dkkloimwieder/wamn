@@ -100,7 +100,10 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
                 .unwrap()
             {
                 let resources = &component["localResources"];
-                assert_eq!(resources["allowedIpNameLookups"], json!([]));
+                {
+                    let observed = &(resources["allowedIpNameLookups"]);
+                    assert!(observed.as_array().expect("array").is_empty());
+                };
                 for (key, value) in resources["environment"]["config"]
                     .as_object()
                     .into_iter()

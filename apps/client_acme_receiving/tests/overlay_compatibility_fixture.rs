@@ -6,7 +6,6 @@ use std::path::Path;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_catalog::schema::ForeignKeyColumn;
-use wamn_digest::bytes_sha256;
 use wamn_environment::apply_package::{self, ApplyPackageRequest};
 use wamn_schema_introspection::ir::{Constraint, ForeignKeyAction, postgres_type};
 
@@ -266,7 +265,7 @@ async fn install_fresh(
     .execute(&mut project)
     .await
     .map(drop)?;
-    panic!("wamn-eulfr.12.10: no product fresh-install comparison fixture");
+    panic!("wamn-eulfr.12.10: no product fresh-install comparison fixture for {packages:?}");
     let roots = packages
         .iter()
         .map(|package| {

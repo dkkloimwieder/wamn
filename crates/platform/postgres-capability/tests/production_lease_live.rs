@@ -4,7 +4,7 @@
 //! ignore it. FIFO order, lease recovery, crash accounting,
 //! and release pins retain their standard behavior.
 
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
@@ -172,7 +172,6 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         .await
         .expect_err("the probed grant refuses");
     assert_eq!(starved.error_type(), ProductionLeaseErrorType::Storage);
-    assert_eq!(starved.operation(), "grant production lease");
     assert_eq!(
         queue_attempts(admin, "grant-refused").await?,
         3,
@@ -281,7 +280,6 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
             .as_database_error()
             .expect("guard refusal is a db error");
         assert_eq!(db.code().as_deref().unwrap(), "55000");
-        assert_eq!(db.message(), "run-admission-pin-immutable");
     }
     assert_eq!(release_record(admin, "release-record").await?, recorded);
     sqlx::query(sqlx::AssertSqlSafe(

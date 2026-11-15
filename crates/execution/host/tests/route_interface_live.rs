@@ -814,7 +814,10 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
         }
         let before = widget_changes(&paths, &all, &cursor).await?;
         anyhow::ensure!(
-            before["rows"] == json!([]) && before["complete"] == json!(true),
+            ({
+                let observed = &(before["rows"]);
+                observed.as_array().is_some_and(|items| items.len() == 0)
+            }) && before["complete"] == json!(true),
             "the writes before the list do not appear: {before}"
         );
         let w1 = note_widget(&paths, &first, first_version, "w1").await?;
@@ -860,7 +863,10 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
             .to_owned();
         let quiet = widget_changes(&paths, &all, &idle).await?;
         anyhow::ensure!(
-            quiet["rows"] == json!([]) && quiet["next_cursor"] == json!(idle),
+            ({
+                let observed = &(quiet["rows"]);
+                observed.as_array().is_some_and(|items| items.len() == 0)
+            }) && quiet["next_cursor"] == json!(idle),
             "an unchanged feed keeps its cursor: {quiet}"
         );
         let feed_path = format!(
@@ -1097,7 +1103,7 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
             cursor = changes["next_cursor"].as_str().unwrap().to_owned();
         }
         let idle = screen_changes(&paths, &cursor, None).await?;
-        anyhow::ensure!(idle["next_cursor"] == cursor && idle["rows"] == json!([]), "{idle}");
+        anyhow::ensure!(idle["next_cursor"] == cursor && ({ let observed = &(idle["rows"]); observed.as_array().is_some_and(|items| items.len() == 0) }), "{idle}");
         let query = read_query::encode_read_query(json!({"feed": {"cursor": cursor}}).as_object().unwrap());
         let path = format!("/feed_line/screen?{query}");
         let (status, tag, _) = paths.conditional(&path, None).await?;

@@ -186,10 +186,13 @@ async fn a_role_schedule_run_is_admitted_once_per_due_and_runs_as_the_workflow_u
         workflow("nightly").wiring_hash().as_str()
     );
     assert_eq!(row.get::<String, _>(5), fixture.digest);
-    assert_eq!(
-        serde_json::from_str::<Value>(&row.get::<String, _>(6)).unwrap(),
-        json!({"read": fixture.read.component_digest})
-    );
+    {
+        let observed = &(serde_json::from_str::<Value>(&row.get::<String, _>(6)).unwrap());
+        assert_eq!(
+            observed["read"],
+            serde_json::json!(fixture.read.component_digest)
+        );
+    };
     assert_eq!(row.get::<String, _>(7), workflow_user_id().to_string());
     assert_eq!(row.get::<String, _>(8), "reader");
     assert_eq!(row.get::<String, _>(9), "schedule");
@@ -198,10 +201,10 @@ async fn a_role_schedule_run_is_admitted_once_per_due_and_runs_as_the_workflow_u
         row.get::<String, _>(11),
         "schedule:erp/nightly:2026-10-20T10:15:00Z"
     );
-    assert_eq!(
-        serde_json::from_str::<Value>(&row.get::<String, _>(12)).unwrap(),
-        json!({"due": "2026-10-20T10:15:00Z"})
-    );
+    {
+        let observed = &(serde_json::from_str::<Value>(&row.get::<String, _>(12)).unwrap());
+        assert_eq!(observed["due"], serde_json::json!("2026-10-20T10:15:00Z"));
+    };
     assert_eq!(row.get::<String, _>(13), APP);
 
     fixture.drain().await;

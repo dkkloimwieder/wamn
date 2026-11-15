@@ -193,6 +193,7 @@ impl Server {
 
     pub(super) async fn stop(&mut self) {
         if let Some(task) = self.task.take() {
+            task.abort();
             assert!(task.await.expect_err("stopped listener").is_cancelled());
         }
     }
@@ -200,11 +201,13 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        if let Some(_task) = &self.task {}
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
     }
 }
 
-/// Minimal identity rows for route tests; lifecycle tests use the full system schema.
+/// Seed route-test principals in the installed product control schema.
 pub(super) async fn install_authority(
     client: &mut sqlx::PgConnection,
     project: &str,
@@ -212,40 +215,23 @@ pub(super) async fn install_authority(
     audience: &str,
     principals: &[&str],
 ) -> anyhow::Result<()> {
-    sqlx::raw_sql("CREATE SCHEMA identity; CREATE SCHEMA provisioning; CREATE SCHEMA registry;
-        CREATE TABLE identity.principals (id uuid PRIMARY KEY, type text, status text);
-        CREATE TABLE identity.project_env_memberships (principal_id uuid, org text, project text, env text);
-        CREATE TABLE identity.password_logins (id uuid PRIMARY KEY, principal_id uuid, issuer text, audience text,
-            revoked_at timestamptz, expires_at timestamptz, renewal_expires_at timestamptz);
-        CREATE TABLE identity.pats (id uuid PRIMARY KEY, principal_id uuid, revoked_at timestamptz, expires_at timestamptz);
-        CREATE TABLE identity.project_roles (principal_id uuid, org text, project text, role text);
-        CREATE TABLE identity.org_memberships (principal_id uuid, org text, status text);
-        CREATE TABLE identity.org_roles (principal_id uuid, org text, role text);
-        CREATE TABLE registry.projects (org text, id text);
-        CREATE TABLE registry.environment_projects (org text, project text, env text, status text);").execute(&mut *client).await.map(drop)?;
+    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
+    sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:seed-session-authority',false)")
+        .bind(actor.to_string()).execute(&mut *client).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::test_database::seed_org_project_env_sql(ORG, project, environment),
+    ))
+    .execute(&mut *client)
+    .await?;
     for principal in principals {
-        sqlx::query("INSERT INTO identity.org_memberships VALUES ($1::text::uuid,$2,'active')")
-            .bind(principal)
-            .bind(&ORG)
-            .execute(&mut *client)
-            .await
-            .map(|result| result.rows_affected())?;
-        sqlx::query("INSERT INTO identity.principals VALUES ($1::text::uuid,'user','active')")
-            .bind(principal)
-            .execute(&mut *client)
-            .await
-            .map(|result| result.rows_affected())?;
-        sqlx::query(
-            "INSERT INTO identity.project_env_memberships VALUES ($1::text::uuid,$2,$3,$4)",
-        )
-        .bind(principal)
-        .bind(&ORG)
-        .bind(&project)
-        .bind(&environment)
-        .execute(&mut *client)
-        .await
-        .map(|result| result.rows_affected())?;
-        sqlx::query("INSERT INTO identity.password_logins VALUES ($1::text::uuid,$1::text::uuid,$2,$3,NULL,clock_timestamp()+interval '8 hours',clock_timestamp()+interval '30 minutes')").bind(principal).bind(&ISSUER).bind(&audience).execute(&mut *client).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO identity.principals (id,type,subject,email,display_name) VALUES ($1::text::uuid,'user',$1,$1||'@example.test',$1)")
+            .bind(principal).execute(&mut *client).await?;
+        sqlx::query("INSERT INTO identity.org_memberships (principal_id,org,status) VALUES ($1::text::uuid,$2,'active')")
+            .bind(principal).bind(ORG).execute(&mut *client).await?;
+        sqlx::query("INSERT INTO identity.project_env_memberships (principal_id,org,project,env) VALUES ($1::text::uuid,$2,$3,$4)")
+            .bind(principal).bind(ORG).bind(project).bind(environment).execute(&mut *client).await?;
+        sqlx::query("INSERT INTO identity.password_logins (id,principal_id,issuer,audience,authenticated_at,expires_at,renewal_expires_at) VALUES ($1::text::uuid,$1::text::uuid,$2,$3,now(),now()+interval '8 hours',now()+interval '30 minutes')")
+            .bind(principal).bind(ISSUER).bind(audience).execute(&mut *client).await?;
     }
     Ok(())
 }

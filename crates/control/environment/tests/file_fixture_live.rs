@@ -19,13 +19,8 @@ mod native_files {
             .canonicalize()?;
         let work =
             std::env::temp_dir().join(format!("file-http-role-proof-{}", std::process::id()));
-        let (package, admissions) = Box::pin(build_fixture(
-            &work,
-            &work.join("kubeconfig"),
-            &repository,
-            database.url(),
-        ))
-        .await?;
+        let (package, admissions) =
+            Box::pin(build_fixture(&work, &repository, database.url())).await?;
         let published = wamn_publish::publish_release::assemble_release(
             &release_request()?,
             &[package],

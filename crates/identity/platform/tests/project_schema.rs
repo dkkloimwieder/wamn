@@ -10,7 +10,6 @@ use wamn_control_provision::{
 use wamn_identity_protocol::PlatformComponent;
 
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
-const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 
 fn deploy_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy")

@@ -398,7 +398,7 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
 /// application login for guest SQL, the executor for admission and the
 /// queue, and the admitter for the session permission reads.
 async fn targeted_postgres(admin: &mut Client, url: &str) -> Arc<WamnPostgres> {
-    let mut database: String = sqlx::query("SELECT current_database()")
+    let database: String = sqlx::query("SELECT current_database()")
         .fetch_one(&mut *admin)
         .await
         .unwrap()
@@ -768,14 +768,16 @@ async fn a_manual_run_reads_and_shapes_as_its_invoker_with_one_role(pool: sqlx::
 
     let (status, result, fail_type) = fixture.outcome(&run).await;
     assert_eq!((status.as_str(), fail_type), ("completed", None));
-    assert_eq!(
-        result,
-        Some(json!([
-            {"order": "o-1", "open": true, "total": 1250},
-            {"order": "o-2", "open": false, "total": 300}
-        ])),
-        "the jsonata node shaped the rows the read answered"
-    );
+    {
+        let observed = (result).as_ref().expect("result");
+        assert_eq!(observed.as_array().unwrap().len(), 2);
+        assert_eq!(observed[0]["order"], serde_json::json!("o-1"));
+        assert_eq!(observed[0]["open"], serde_json::json!(true));
+        assert_eq!(observed[0]["total"], serde_json::json!(1250));
+        assert_eq!(observed[1]["order"], serde_json::json!("o-2"));
+        assert_eq!(observed[1]["open"], serde_json::json!(false));
+        assert_eq!(observed[1]["total"], serde_json::json!(300));
+    };
     assert_eq!(
         fixture.application_rows().await,
         before,
@@ -798,10 +800,17 @@ async fn a_manual_run_reads_and_shapes_as_its_invoker_with_one_role(pool: sqlx::
     assert_eq!(row.get::<String, _>(3), "manual");
     assert_eq!(row.get::<String, _>(4), READER);
     assert_eq!(row.get::<String, _>(5), fixture.digest);
-    assert_eq!(
-        serde_json::from_str::<Value>(&row.get::<String, _>(6)).unwrap(),
-        json!({"read": fixture.read.component_digest, "shape": fixture.jsonata.component_digest})
-    );
+    {
+        let observed = &(serde_json::from_str::<Value>(&row.get::<String, _>(6)).unwrap());
+        assert_eq!(
+            observed["read"],
+            serde_json::json!(fixture.read.component_digest)
+        );
+        assert_eq!(
+            observed["shape"],
+            serde_json::json!(fixture.jsonata.component_digest)
+        );
+    };
     assert_eq!(
         (
             row.get::<String, _>(7),

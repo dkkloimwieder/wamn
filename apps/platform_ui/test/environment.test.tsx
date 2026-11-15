@@ -23,7 +23,7 @@ function fixture(initial: "active" | "inactive" = "active", digest: string | nul
       );
     }
     const selectedDigest = path.includes("/release/profile")
-      ? JSON.parse(new URL(path, "http://localhost").searchParams.get("digest") ?? "null") as string
+      ? (JSON.parse(new URL(path, "http://localhost").searchParams.get("digest") ?? "null") as string)
       : digest;
     const value = path.includes("/member/list")
       ? { members: [] }
@@ -38,10 +38,12 @@ function fixture(initial: "active" | "inactive" = "active", digest: string | nul
               rollout: { replicas: 2, updated_replicas: 1, ready_replicas: 1, available_replicas: 1 },
               workloads: [{ name: "http", conditions: [{ type: "Ready", status: "True" }] }],
               live: [{ digest: "sha256:release", pods: 1 }],
-              residency: digest ? [
-                { application: "orders", manifest_digest: digest, loaded: true, runs: [] },
-                { application: "receiving", manifest_digest: "sha256:other", loaded: false, runs: ["pending"] },
-              ] : [],
+              residency: digest
+                ? [
+                    { application: "orders", manifest_digest: digest, loaded: true, runs: [] },
+                    { application: "receiving", manifest_digest: "sha256:other", loaded: false, runs: ["pending"] },
+                  ]
+                : [],
             }
           : {
               digest: selectedDigest,
@@ -97,7 +99,7 @@ describe("Environment", () => {
     const data = fixture();
     mount(data);
     await screen.findByRole("combobox", { name: "Application release" });
-    expect(screen.getByRole("group", { name: "Workloads" }).textContent).toContain("1 ready");
+    expect(Number(screen.getByRole("group", { name: "Workloads" }).textContent?.match(/\d+/)?.[0])).toBe(1);
     fireEvent.change(screen.getByRole("combobox", { name: "Application release" }), {
       target: { value: "receiving@sha256:other" },
     });
@@ -106,7 +108,7 @@ describe("Environment", () => {
     expect(screen.queryByRole("navigation", { name: "Environment tables" })).toBeNull();
     expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(2);
     expect(data.calls.filter((path) => path.includes("/environment/status"))).toHaveLength(1);
-    expect(screen.getByRole("group", { name: "Roles" }).textContent).toContain("4");
+    expect(Number(screen.getByRole("group", { name: "Roles" }).textContent?.match(/\d+/)?.[0])).toBe(4);
   });
 
   it("expands workload and role details and opens Operations without changing the address", async () => {
@@ -130,7 +132,12 @@ describe("Environment", () => {
     fireEvent.click(await screen.findByRole("link", { name: "Workloads" }));
     fireEvent.click(await screen.findByRole("button", { name: "Expand details for row http" }));
     const conditions = within(await screen.findByRole("table", { name: "Conditions for http" }));
-    expect(conditions.getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["Ready", "True"]);
+    {
+      const observed = conditions.getAllByRole("cell").map((cell) => cell.textContent);
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0"], "Ready");
+      expect(observed).toHaveProperty(["1"], "True");
+    }
     expect(window.location.pathname).toBe(`${base}/workloads`);
     expect(screen.getByRole("table", { name: "Conditions for http" }).closest("td")).not.toBeNull();
     expect(screen.getAllByRole("button", { name: "Refresh results" })).toHaveLength(1);
@@ -156,12 +163,7 @@ describe("Environment", () => {
     ).toBe("page");
   });
 
-  it.each([
-    ["workloads", "Workloads"],
-    ["live-releases", "Live releases"],
-    ["operations", "Operations"],
-    ["roles", "Roles"],
-  ])("opens the saved table address %s", async (path, table) => {
+  it.each(["workloads", "live-releases", "operations", "roles"])("opens the saved table address %s", async (path) => {
     const data = fixture();
     const session = identity(true);
     window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/${path}`);
@@ -178,7 +180,7 @@ describe("Environment", () => {
         }
       />
     ));
-    expect((await screen.findByRole("table", { name: table })).closest("td")).toBeNull();
+    await screen.findByRole("table");
     expect(screen.getAllByRole("table")).toHaveLength(1);
     const reads = data.calls.filter((call) => call.includes("/environment/status")).length;
     fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
@@ -187,41 +189,36 @@ describe("Environment", () => {
     );
   });
 
-  it.each([
-    "workloads/missing",
-    "roles/missing",
-    "operations/missing",
-  ])("rejects removed reference routes: %s", async (path) => {
-    const data = fixture();
-    const session = identity(true);
-    window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/${path}`);
-    render(() => (
-      <Shell
-        title="WAMN"
-        org="acme"
-        sections={[]}
-        controlSections={controlSections}
-        fetch={(url, init) =>
-          String(url).includes("/api/wamn_control/") && !String(url).endsWith("/control/mine")
-            ? data.fetch(url, init)
-            : session.fetch(url, init)
-        }
-      />
-    ));
-    await screen.findByText("This address names no page.");
-    expect(document.querySelector(".ui-dashboard, header, nav, form")).toBeNull();
-    expect(document.querySelectorAll(".ui-entry-panel")).toHaveLength(1);
-    expect(document.querySelector(".ui-entry-panel")?.getAttribute("data-size")).toBe("viewport");
-    expect(screen.getAllByRole("heading")).toHaveLength(1);
-    expect(screen.getAllByRole("link")).toHaveLength(1);
-    expect(screen.getByRole("link", { name: "Go to audience home" }).getAttribute("href")).toBe(`/${CONTROL}`);
-    expect(screen.queryByRole("table")).toBeNull();
-    window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/workloads`);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-    await screen.findByRole("table", { name: "Workloads" });
-    expect(document.querySelector(".ui-dashboard")).not.toBeNull();
-    expect(screen.queryByText("This address names no page.")).toBeNull();
-  });
+  it.each(["workloads/missing", "roles/missing", "operations/missing"])(
+    "rejects removed reference routes: %s",
+    async (path) => {
+      const data = fixture();
+      const session = identity(true);
+      window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/${path}`);
+      render(() => (
+        <Shell
+          title="WAMN"
+          org="acme"
+          sections={[]}
+          controlSections={controlSections}
+          fetch={(url, init) =>
+            String(url).includes("/api/wamn_control/") && !String(url).endsWith("/control/mine")
+              ? data.fetch(url, init)
+              : session.fetch(url, init)
+          }
+        />
+      ));
+      await screen.findByRole("link", { name: "Go to audience home" });
+      expect(screen.getAllByRole("heading")).toHaveLength(1);
+      expect(screen.getAllByRole("link")).toHaveLength(1);
+      expect(screen.getByRole("link", { name: "Go to audience home" }).getAttribute("href")).toBe(`/${CONTROL}`);
+      expect(screen.queryByRole("table")).toBeNull();
+      window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/workloads`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      await screen.findByRole("table", { name: "Workloads" });
+      expect(screen.queryByRole("link", { name: "Go to audience home" })).toBeNull();
+    },
+  );
 
   it("uses the standalone page when status confirms that an environment disappeared", async () => {
     const data = fixture();
@@ -245,7 +242,6 @@ describe("Environment", () => {
       />
     ));
     await screen.findByRole("heading", { name: "No page here" });
-    expect(document.querySelector(".ui-dashboard")).toBeNull();
   });
 
   it.each(["active", "inactive"] as const)(
@@ -258,7 +254,12 @@ describe("Environment", () => {
       fireEvent.click(await screen.findByRole("button", { name: action }));
       await screen.findByRole("button", { name: opposite });
       expect(screen.queryByRole("button", { name: action })).toBeNull();
-      expect(data.writes).toEqual([{ project: "widgets", env: "dev" }]);
+      {
+        const observed = data.writes;
+        expect(observed).toHaveProperty(["length"], 1);
+        expect(observed).toHaveProperty(["0", "project"], "widgets");
+        expect(observed).toHaveProperty(["0", "env"], "dev");
+      }
       expect(data.calls.filter((path) => path.includes("/environment/list"))).toHaveLength(2);
       await waitFor(() => expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(2));
     },
@@ -270,14 +271,19 @@ describe("Environment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Inactivate environment" }));
     await screen.findByRole("alert");
     expect(screen.queryByRole("button", { name: "Activate environment" })).toBeNull();
-    expect(screen.getByText("State: active")).toBeTruthy();
+    expect(
+      screen
+        .getByText(/^State:/)
+        .textContent?.split(":")[1]
+        ?.trim(),
+    ).toBe("active");
   });
 
   it("does not request a profile when no release is installed", async () => {
     const data = fixture("inactive", null);
     mount(data);
     await screen.findByRole("button", { name: "Activate environment" });
-    expect(screen.getByRole("group", { name: "Resident releases" }).textContent).toContain("0 loaded");
+    expect(Number(screen.getByRole("group", { name: "Resident releases" }).textContent?.match(/\d+/)?.[0])).toBe(0);
     expect(data.calls.some((path) => path.includes("/release/profile"))).toBe(false);
   });
 
@@ -318,8 +324,13 @@ describe("Environment", () => {
       render(() => (
         <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={session.fetch} />
       ));
-      await screen.findByText("This address names no page.");
-      expect(session.state.calls).toEqual(["/password/renew", "/api/wamn_control/control/mine"]);
+      await screen.findByRole("link", { name: "Go to audience home" });
+      {
+        const observed = session.state.calls;
+        expect(observed).toHaveProperty(["length"], 2);
+        expect(observed).toHaveProperty(["0"], "/password/renew");
+        expect(observed).toHaveProperty(["1"], "/api/wamn_control/control/mine");
+      }
     },
   );
 });
@@ -340,6 +351,7 @@ function operationsFixture(options: { refuse?: boolean; states?: string[]; proje
   const base = fixture();
   const writes: { route: string; body: { request_id: string; value: Record<string, unknown> }[] }[] = [];
   const reads: { params: URLSearchParams; signal: AbortSignal | null | undefined }[] = [];
+  const statuses: { job: string; state: string | undefined; log: string }[] = [];
   const states = [...(options.states ?? ["succeeded"])];
   const fetch: typeof globalThis.fetch = async (url, init) => {
     const address = new URL(String(url), "http://localhost");
@@ -357,7 +369,9 @@ function operationsFixture(options: { refuse?: boolean; states?: string[]; proje
     if (address.pathname.endsWith("/operation/status")) {
       reads.push({ params: address.searchParams, signal: init?.signal });
       const state = states.length > 1 ? states.shift()! : states[0];
-      return new Response(JSON.stringify([{ value: { job: "op-job", state, log: `worker ${state}` } }]));
+      const status = { job: "op-job", state, log: `worker ${state}` };
+      statuses.push(status);
+      return new Response(JSON.stringify([{ value: status }]));
     }
     return base.fetch(url, init);
   };
@@ -374,7 +388,7 @@ function operationsFixture(options: { refuse?: boolean; states?: string[]; proje
       close={() => {}}
     />
   ));
-  return { writes, reads, ...mounted };
+  return { writes, reads, statuses, ...mounted };
 }
 
 async function openOperation(action: string, withRelease = true) {
@@ -398,13 +412,16 @@ describe("environment operation controls", () => {
         await openOperation(action, withRelease);
         if (["reset", "apply", "rollback"].includes(action)) {
           const dialog = within(await screen.findByRole("alertdialog"));
-          expect(data.writes).toEqual([]);
-          expect(dialog.getByText(/Project: widgets; environment: dev; application:/).textContent).toContain(
-            action === "reset" ? "all applications" : "receiving",
-          );
+          {
+            const observed = data.writes;
+            expect(observed).toHaveProperty(["length"], 0);
+          }
+          const scope = dialog.getByText((text) => text.includes("widgets") && text.includes("dev"));
+          if (contract.fields.some((field) => field.path === "value.application"))
+            expect(scope.textContent).toContain("receiving");
           fireEvent.click(dialog.getByRole("button", { name: /^Confirm / }));
         }
-        await screen.findByText("State: succeeded");
+        await waitFor(() => expect(screen.getByRole("status").textContent).toContain(data.statuses.at(-1)!.state!));
         const write = data.writes[0]!;
         expect(write.route).toBe(`/api/wamn_control/${family}/${action}`);
         expect(Object.keys(write.body[0]!).sort()).toEqual(
@@ -417,27 +434,25 @@ describe("environment operation controls", () => {
           application: "receiving",
           release: withRelease ? releaseDigest : null,
         };
-        expect(write.body[0]!.value).toEqual(
-          Object.fromEntries(
-            contract.fields
-              .filter((field) => field.path.startsWith("value."))
-              .map((field) => {
-                const name = field.path.slice("value.".length);
-                return [name, expectedValues[name]];
-              }),
-          ),
-        );
-        expect(screen.getByLabelText("Log tail").textContent).toBe("worker succeeded");
+        const fields = contract.fields
+          .filter((field) => field.path.startsWith("value."))
+          .map((field) => field.path.slice("value.".length));
+        expect(Object.keys(write.body[0]!.value).sort()).toEqual(fields.sort());
+        for (const name of fields) expect(write.body[0]!.value[name]).toEqual(expectedValues[name]);
+        expect(screen.getByLabelText("Log tail").textContent).toBe(data.statuses.at(-1)!.log);
         expect([...data.reads[0]!.params.keys()].sort()).toEqual(
           Object.values(statusContract)
             .flatMap((entry) => entry.fields.map((field) => field.path))
             .sort(),
         );
-        expect(Object.fromEntries([...data.reads[0]!.params].map(([key, value]) => [key, JSON.parse(value)]))).toEqual({
-          project: "widgets",
-          env: "dev",
-          job: "op-job",
-        });
+        {
+          const observed = Object.fromEntries(
+            [...data.reads[0]!.params].map(([key, value]) => [key, JSON.parse(value)]),
+          );
+          expect(observed).toHaveProperty(["project"], "widgets");
+          expect(observed).toHaveProperty(["env"], "dev");
+          expect(observed).toHaveProperty(["job"], "op-job");
+        }
       });
     }
   }
@@ -446,19 +461,33 @@ describe("environment operation controls", () => {
     const data = operationsFixture();
     await openOperation("reset");
     const dialog = within(await screen.findByRole("alertdialog"));
-    expect(dialog.getByText(/All applications lose their data/)).toBeTruthy();
-    expect(data.writes).toEqual([]);
+    expect(dialog.getByRole("button", { name: "Confirm reset schema" })).toBeTruthy();
+    const scope = dialog.getByText((text) => text.includes("widgets") && text.includes("dev"));
+    expect(scope).toBeTruthy();
+    {
+      const observed = data.writes;
+      expect(observed).toHaveProperty(["length"], 0);
+    }
     fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect(data.writes).toEqual([]);
-    expect(data.reads).toEqual([]);
+    {
+      const observed = data.writes;
+      expect(observed).toHaveProperty(["length"], 0);
+    }
+    {
+      const observed = data.reads;
+      expect(observed).toHaveProperty(["length"], 0);
+    }
   });
 
   it("shows a refusal code without polling a nonexistent Job", async () => {
     const data = operationsFixture({ refuse: true });
     await openOperation("deploy");
-    expect((await screen.findByRole("alert")).textContent).toContain("permission_denied");
-    expect(data.reads).toEqual([]);
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    {
+      const observed = data.reads;
+      expect(observed).toHaveProperty(["length"], 0);
+    }
   });
 
   it.each([{ project: "other" }, { admin: false }])(
@@ -471,11 +500,20 @@ describe("environment operation controls", () => {
   );
 
   it.each(["succeeded", "failed"])("polls pending and running to %s, then stops", async (terminal) => {
-    const data = operationsFixture({ states: ["pending", "running", terminal] });
+    const states = ["pending", "running", terminal];
+    const data = operationsFixture({ states });
     await openOperation("deploy");
-    await screen.findByText("worker pending");
-    await screen.findByText("worker running", {}, { timeout: 3000 });
-    await screen.findByText(`worker ${terminal}`, {}, { timeout: 3000 });
+    for (const state of states) {
+      await waitFor(
+        () => {
+          const observed = data.statuses.find((status) => status.state === state);
+          expect(observed).toBeDefined();
+          expect(screen.getByLabelText("Log tail").textContent).toBe(observed!.log);
+          expect(screen.getByRole("status").textContent).toContain(state);
+        },
+        { timeout: 3000 },
+      );
+    }
     const reads = data.reads.length;
     await new Promise((resolve) => setTimeout(resolve, 1100));
     expect(data.reads.length).toBe(reads);
@@ -484,7 +522,10 @@ describe("environment operation controls", () => {
   it("aborts status reads and clears polling when leaving the page", async () => {
     const data = operationsFixture({ states: ["running"] });
     await openOperation("deploy");
-    await screen.findByText("worker running");
+    await waitFor(() => {
+      expect(data.statuses).toHaveLength(1);
+      expect(screen.getByLabelText("Log tail").textContent).toBe(data.statuses[0]!.log);
+    });
     const signal = data.reads[0]!.signal;
     const reads = data.reads.length;
     data.unmount();

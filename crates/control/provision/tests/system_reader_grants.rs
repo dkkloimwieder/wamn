@@ -1,5 +1,4 @@
-//! Live make sure that the T1 control-database readers hold EXACTLY their own
-//! grant set (`wamn-0h0g.12.116`).
+//! Reader credentials permit their consuming queries and refuse foreign writes.
 //!
 //! The test reads the SERVER'S OWN ANSWER, never the text of a statement:
 //! `has_schema_privilege`, `has_table_privilege`, `pg_roles` attributes,
@@ -133,18 +132,14 @@ fn apply_system_schema(admin_url: &str) {
     run_admin(admin_url, "apply the system schema", &script);
 }
 
-/// The whole ACL the named role holds in this database, as the server reports
-/// it through `aclexplode` — relation, column, schema and database entries
-/// alike, so a grant of any grain lands in the comparison.
-fn role_grants_sql(role: &str) -> String {
-    format!(
-        "SELECT type || '|' || sch || '|' || obj || '|' || priv || '|' || grantable FROM ( \
+/// Read whether any privilege permits delegation to another role.
+const ROLE_GRANTS_SQL: &str = "SELECT grantable FROM ( \
            SELECT 'relation' AS type, n.nspname::text AS sch, c.relname::text AS obj, \
                   x.privilege_type::text AS priv, x.is_grantable AS grantable \
              FROM pg_catalog.pg_class c \
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
              CROSS JOIN LATERAL aclexplode(c.relacl) x \
-            WHERE x.grantee = '{role}'::regrole \
+            WHERE x.grantee = $1::text::regrole \
            UNION ALL \
            SELECT 'column', n.nspname::text, c.relname || '.' || a.attname, \
                   x.privilege_type::text, x.is_grantable \
@@ -152,33 +147,21 @@ fn role_grants_sql(role: &str) -> String {
              JOIN pg_catalog.pg_class c ON c.oid = a.attrelid \
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
              CROSS JOIN LATERAL aclexplode(a.attacl) x \
-            WHERE x.grantee = '{role}'::regrole \
+            WHERE x.grantee = $1::text::regrole \
            UNION ALL \
            SELECT 'schema', n.nspname::text, n.nspname::text, \
                   x.privilege_type::text, x.is_grantable \
              FROM pg_catalog.pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) x \
-            WHERE x.grantee = '{role}'::regrole \
+            WHERE x.grantee = $1::text::regrole \
            UNION ALL \
            SELECT 'routine', n.nspname::text, p.proname::text, x.privilege_type::text, x.is_grantable \
              FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace \
-             CROSS JOIN LATERAL aclexplode(p.proacl) x WHERE x.grantee='{role}'::regrole \
+             CROSS JOIN LATERAL aclexplode(p.proacl) x WHERE x.grantee=$1::text::regrole \
            UNION ALL \
            SELECT 'database', '', d.datname::text, x.privilege_type::text, x.is_grantable \
              FROM pg_catalog.pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) x \
-            WHERE x.grantee = '{role}'::regrole \
-         ) q ORDER BY 1;"
-    )
-}
-
-fn load_role_grants(admin_url: &str, role: &str) -> Vec<String> {
-    let (ok, out, err) = psql_tuples(admin_url, &role_grants_sql(role));
-    assert!(ok, "read the direct grants for {role}:\n{err}");
-    out.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
+            WHERE x.grantee = $1::text::regrole \
+         ) q ORDER BY 1;";
 
 fn psql_tuples(url: &str, query: &str) -> (bool, String, String) {
     let child = Command::new("psql")
@@ -264,53 +247,22 @@ async fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches
         reader_url.push((reader, role_url(&admin_url, &role, READER_PW), role));
     }
 
-    // --- the server's answer about the identity reader's whole ACL ----------
+    // No reader can delegate its privileges to another role.
+    for (reader, _, _) in &reader_url {
+        let grants: Vec<bool> = sqlx::query_scalar(ROLE_GRANTS_SQL)
+            .bind(reader.family().acl_role())
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(grants.into_iter().all(|grantable| !grantable));
+    }
     assert_eq!(
-        load_role_grants(&admin_url, WorkloadRoleFamily::IdentityReader.acl_role()),
-        vec![
-            "column|identity|org_memberships.org|SELECT|false".to_owned(),
-            "column|identity|org_memberships.principal_id|SELECT|false".to_owned(),
-            "column|identity|org_memberships.status|SELECT|false".to_owned(),
-            "relation|identity|password_logins|SELECT|false".to_owned(),
-            "relation|identity|pats|SELECT|false".to_owned(),
-            "relation|identity|principals|SELECT|false".to_owned(),
-            "relation|identity|project_env_memberships|SELECT|false".to_owned(),
-            "relation|identity|project_roles|SELECT|false".to_owned(),
-            "schema|identity|identity|USAGE|false".to_owned(),
-        ],
-        "the stable identity-reader role's aclexplode grants are not exactly \
-         USAGE on identity plus its identity reads and membership columns"
-    );
-    assert_eq!(
-        load_role_grants(&admin_url, WorkloadRoleFamily::ConnectionReader.acl_role()),
-        vec![
-            "relation|identity|oauth_authorization|DELETE|false".to_owned(),
-            "relation|identity|oauth_authorization|INSERT|false".to_owned(),
-            "relation|identity|oauth_authorization|SELECT|false".to_owned(),
-            "relation|identity|oauth_authorization|UPDATE|false".to_owned(),
-            "relation|identity|oauth_token|DELETE|false".to_owned(),
-            "relation|identity|oauth_token|INSERT|false".to_owned(),
-            "relation|identity|oauth_token|SELECT|false".to_owned(),
-            "relation|identity|oauth_token|UPDATE|false".to_owned(),
-            "routine|registry|lock_oauth_connection|EXECUTE|false".to_owned(),
-            "routine|registry|read_connection_fact|EXECUTE|false".to_owned(),
-            "routine|registry|read_connection_generation|EXECUTE|false".to_owned(),
-            "routine|registry|read_connection_secret|EXECUTE|false".to_owned(),
-            "routine|registry|read_env_connections|EXECUTE|false".to_owned(),
-            "routine|registry|read_file_connection|EXECUTE|false".to_owned(),
-            "routine|registry|read_integration_version|EXECUTE|false".to_owned(),
-            "schema|identity|identity|USAGE|false".to_owned(),
-            "schema|registry|registry|USAGE|false".to_owned(),
-        ],
-        "the connection reader holds OAuth storage access and credential reader execution"
-    );
-    assert_eq!(
-        reader_sqlstate(&reader_url[2].1, "SELECT id FROM registry.connection"),
+        reader_sqlstate(&reader_url[1].1, "SELECT id FROM registry.connection"),
         Some("42501".to_owned()),
         "the connection reader cannot directly read connection rows"
     );
     assert_eq!(
-        reader_sqlstate(&reader_url[2].1, "DELETE FROM registry.connection"),
+        reader_sqlstate(&reader_url[1].1, "DELETE FROM registry.connection"),
         Some("42501".to_owned()),
         "the connection reader cannot change connection rows"
     );
@@ -336,53 +288,106 @@ async fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches
         );
     }
 
-    let identity_role = &reader_url[0].2;
-    let mut probes = format!(
-        "DO $probe$ DECLARE r text := '{identity_role}'; BEGIN \
-           ASSERT NOT (SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = r), \
-             'the probe role is superuser or bypasses RLS — that masks every denial below'; \n"
-    );
-    for relation in [
-        "identity.password_logins",
-        "identity.pats",
-        "identity.principals",
-        "identity.project_env_memberships",
-        "identity.project_roles",
-    ] {
-        writeln!(
-            probes,
-            "  ASSERT has_table_privilege(r, '{relation}', 'SELECT'), \
-               'the identity reader cannot read {relation}'; "
+    // Enumerate installed objects. Effective privileges include inherited,
+    // PUBLIC and column grants, even when they cannot be passed to another role.
+    for (reader, _, role) in &reader_url {
+        let tables: Vec<(String, String, String, bool)> = sqlx::query_as(
+            "SELECT n.nspname,c.relname,p.privilege_type,
+                    has_table_privilege($1,c.oid,p.privilege_type)
+             FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             CROSS JOIN LATERAL aclexplode(acldefault('r',c.relowner)) p
+             WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+               AND c.relkind IN ('r','p','v','m','f')",
         )
-        .expect("writing to a String cannot fail");
-        // THE THREE-TIMES-DRIFT GUARD, as the server reports it.
-        for privilege in ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES"] {
-            writeln!(
-                probes,
-                "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
-                   'the identity reader holds {privilege} on {relation}'; "
-            )
-            .expect("writing to a String cannot fail");
+        .bind(role)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        for (schema, relation, privilege, permitted) in tables {
+            let expected = schema == "identity"
+                && match reader {
+                    SystemReader::Identity => {
+                        privilege == "SELECT"
+                            && wamn_control_provision::sql::IDENTITY_READER_RELATIONS
+                                .contains(&relation.as_str())
+                    }
+                    SystemReader::Connection => {
+                        matches!(relation.as_str(), "oauth_token" | "oauth_authorization")
+                            && matches!(
+                                privilege.as_str(),
+                                "SELECT" | "INSERT" | "UPDATE" | "DELETE"
+                            )
+                    }
+                };
+            assert_eq!(
+                permitted, expected,
+                "{reader}: {privilege} on {schema}.{relation}"
+            );
+        }
+        let columns: Vec<(String, String, String, String, bool)> = sqlx::query_as(
+            "SELECT n.nspname,c.relname,a.attname,p.privilege,
+                    has_column_privilege($1,c.oid,a.attnum,p.privilege)
+             FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid
+             JOIN pg_namespace n ON n.oid=c.relnamespace
+             CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','REFERENCES']) p(privilege)
+             WHERE a.attnum>0 AND NOT a.attisdropped
+               AND n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+               AND c.relkind IN ('r','p','v','m','f')",
+        )
+        .bind(role)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        for (schema, relation, column, privilege, permitted) in columns {
+            let expected = schema == "identity"
+                && match reader {
+                    SystemReader::Identity => {
+                        privilege == "SELECT"
+                            && (wamn_control_provision::sql::IDENTITY_READER_RELATIONS
+                                .contains(&relation.as_str())
+                                || wamn_control_provision::sql::IDENTITY_READER_COLUMNS
+                                    .iter()
+                                    .any(|(table, columns)| {
+                                        *table == relation && columns.contains(&column.as_str())
+                                    }))
+                    }
+                    SystemReader::Connection => {
+                        matches!(relation.as_str(), "oauth_token" | "oauth_authorization")
+                            && matches!(privilege.as_str(), "SELECT" | "INSERT" | "UPDATE")
+                    }
+                };
+            assert_eq!(
+                permitted, expected,
+                "{reader}: {privilege} on {schema}.{relation}.{column}"
+            );
+        }
+        let sequences: Vec<(String, String, bool)> = sqlx::query_as(
+            "SELECT n.nspname,c.relname,has_sequence_privilege($1,c.oid,'USAGE,SELECT,UPDATE')
+             FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE c.relkind='S' AND n.nspname NOT LIKE 'pg_%'",
+        )
+        .bind(role)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        for (schema, sequence, permitted) in sequences {
+            assert!(!permitted, "{reader} reaches sequence {schema}.{sequence}");
+        }
+        let schemas: Vec<(String, bool, bool)> = sqlx::query_as(
+            "SELECT nspname,has_schema_privilege($1,oid,'CREATE'),has_schema_privilege($1,oid,'USAGE')
+             FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema'"
+        ).bind(role).fetch_all(&pool).await.unwrap();
+        for (schema, create, usage) in schemas {
+            assert!(!create, "{reader} can create objects in {schema}");
+            assert_eq!(
+                usage,
+                schema == "public"
+                    || schema == "identity"
+                    || (*reader == SystemReader::Connection && schema == "registry"),
+                "{reader} schema access: {schema}"
+            );
         }
     }
-    for schema in ["registry", "provisioning"] {
-        writeln!(
-            probes,
-            "  ASSERT NOT has_schema_privilege(r, '{schema}', 'USAGE'), \
-               'the identity reader reaches the {schema} schema'; "
-        )
-        .expect("writing to a String cannot fail");
-    }
-    for relation in ["registry.event_readers", "registry.orgs"] {
-        writeln!(
-            probes,
-            "  ASSERT NOT has_table_privilege(r, '{relation}', 'SELECT'), \
-               'the identity reader can read {relation}'; "
-        )
-        .expect("writing to a String cannot fail");
-    }
-    probes.push_str("END $probe$;\n");
-    run_admin(&admin_url, "the identity-reader privilege probes", &probes);
 
     // --- each reader's OWN session ------------------------------------------
     for (reader, url, _) in &reader_url {

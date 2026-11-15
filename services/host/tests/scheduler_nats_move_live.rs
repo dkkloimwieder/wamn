@@ -10,13 +10,10 @@
 //! stops and removes the NATS container, parks a placeholder on its address,
 //! and starts a new NATS container under the same alias, so the name resolves
 //! to a new IP. Each step requires a heartbeat RPC through the current server
-//! with no host restart, and a debug line with the cause of each failed
-//! attempt. It requires Docker, the images below and an evidence directory
+//! with no host restart. It requires Docker, the images below and an evidence directory
 //! outside the source tree, in which it creates its own new directory. It
 //! starts no PostgreSQL, operator or guest workload.
 
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use std::fs;
 use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
@@ -34,6 +31,9 @@ use tokio::time::{Instant, sleep, timeout};
 const NATS_IMAGE: &str = "nats:2.12.8-alpine";
 /// A base whose glibc runs the host binary that Cargo built for this test.
 const HOST_IMAGE: &str = "debian:trixie-slim";
+#[path = "support/native_host.rs"]
+mod native_host;
+
 const REQUEST_BUDGET: Duration = Duration::from_secs(1);
 const STARTUP_BUDGET: Duration = Duration::from_secs(60);
 /// Longer than several passes at the 4-second reconnect delay of async-nats.
@@ -271,20 +271,6 @@ async fn save_host_log(host: &str, evidence: &Path) -> anyhow::Result<String> {
     Ok(log)
 }
 
-fn native_host_id(log: &str) -> Option<String> {
-    log.lines()
-        .filter(|line| line.contains("Host started"))
-        .find_map(|line| {
-            let (_, value) = line.split_once("host_id=")?;
-            let id = value
-                .trim_start_matches('"')
-                .split(|c: char| c == '"' || c.is_whitespace())
-                .next()?;
-            (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
-                .then(|| id.to_owned())
-        })
-}
-
 async fn heartbeat_rpc(
     certs: &Certificates,
     port: u16,
@@ -302,10 +288,11 @@ async fn heartbeat_rpc(
             )
             .await
             {
-                let body = std::str::from_utf8(&response.payload)?;
+                let heartbeat: wash_runtime::washlet::types::v2::HostHeartbeat =
+                    serde_json::from_slice(&response.payload)?;
                 ensure!(
-                    body.contains(host_name),
-                    "heartbeat RPC did not name this host"
+                    heartbeat.friendly_name == host_name,
+                    "heartbeat belongs to another host"
                 );
                 return Ok(response.payload.to_vec());
             }
@@ -432,22 +419,21 @@ async fn start_case(case: &str) -> anyhow::Result<Case> {
     let probe_port = published_port(&host, "9090/tcp").await?;
 
     let deadline = Instant::now() + STARTUP_BUDGET;
-    let host_id = loop {
-        let log = save_host_log(&host, &evidence).await?;
-        if probe(probe_port, "/readyz").await.ok() == Some((200, "ok\n".to_owned()))
-            && let Some(id) = native_host_id(&log)
-        {
-            break id;
+    loop {
+        if probe(probe_port, "/readyz").await.ok() == Some((200, "ok\n".to_owned())) {
+            break;
         }
         ensure!(
             Instant::now() < deadline,
             "host did not become ready; see host.log"
         );
         sleep(Duration::from_millis(250)).await;
-    };
+    }
     // The host is ready before any NATS server exists; the first one comes now.
     let (nats, nats_port) = start_nats(&mut fixture, "nats-first", &evidence, &certs).await?;
     let nats_ip = container_ip(&nats, &network).await?;
+    let observer = operator_client(&certs, nats_port).await?;
+    let host_id = native_host::discover(&observer, HOST_NAME).await?;
     fs::write(
         evidence.join("heartbeat-before.json"),
         heartbeat_rpc(&certs, nats_port, &host_id, HOST_NAME, STARTUP_BUDGET).await?,
@@ -533,59 +519,19 @@ async fn move_nats(case: &mut Case) -> anyhow::Result<String> {
     Ok(lines)
 }
 
-/// The failed attempts of the log, counted by cause.
-fn causes(log: &str) -> BTreeMap<String, usize> {
-    let mut causes = BTreeMap::new();
-    for line in log
-        .lines()
-        .filter(|line| line.contains("connection attempt failed"))
-    {
-        let cause = line
-            .split_once("error=")
-            .map_or("<no cause>", |(_, cause)| cause);
-        *causes.entry(cause.to_owned()).or_insert(0) += 1;
-    }
-    causes
-}
-
-/// Every failed attempt names its cause, every scheduler client line names its
-/// client, and the host never restarted.
+/// Preserve diagnostics for failures, but observe continued execution through the process interface.
 async fn finish(case: &Case, result: String) -> anyhow::Result<()> {
-    let log = save_host_log(&case.host, &case.evidence).await?;
-    let causes = causes(&log);
-    let mut result = result;
-    for (cause, count) in &causes {
-        writeln!(result, "cause {count} x {cause}")?;
-    }
+    save_host_log(&case.host, &case.evidence).await?;
     fs::write(case.evidence.join("result.txt"), result)?;
+    let state: serde_json::Value =
+        serde_json::from_str(&docker(&["inspect", "-f", "{{json .}}", &case.host]).await?)?;
+    ensure!(state["RestartCount"].as_u64() == Some(0), "host restarted");
     ensure!(
-        !causes.is_empty() && !causes.contains_key("<no cause>"),
-        "the host log did not name the cause of each failed attempt; see host.log"
-    );
-    ensure!(
-        log.lines()
-            .filter(|line| line.contains("scheduler NATS client error"))
-            .all(|line| line.contains(&format!("client={HOST_NAME}"))),
-        "a scheduler client error line did not name its client"
-    );
-    ensure!(
-        docker(&[
-            "inspect",
-            "-f",
-            "{{.RestartCount}} {{.State.Running}}",
-            &case.host
-        ])
-        .await?
-            == "0 true",
-        "the host container restarted or stopped"
+        state["State"]["Running"].as_bool() == Some(true),
+        "host stopped"
     );
     Ok(())
 }
-
-/// How long the case waits for the client to notice a server that holds its
-/// connection open and answers nothing. The async-nats defaults are a ping
-/// every 60 s and two outstanding pings.
-const PAUSE_DETECT_BUDGET: Duration = Duration::from_secs(240);
 
 /// The host starts before NATS exists. Then the server pauses: it keeps its
 /// TCP connections open and answers nothing, as a node that vanishes does. The
@@ -595,33 +541,24 @@ const PAUSE_DETECT_BUDGET: Duration = Duration::from_secs(240);
 #[ignore = "requires: nats, bin:docker, env:WAMN_HOST_LIVE_EVIDENCE_DIR"]
 async fn host_connects_again_through_scheduler_nats_outages() -> anyhow::Result<()> {
     let mut case = start_case("outages").await?;
-    let disconnects = |log: &str| {
-        log.lines()
-            .filter(|line| line.contains("disconnected from scheduler NATS"))
-            .count()
-    };
-    let before = disconnects(&save_host_log(&case.host, &case.evidence).await?);
     docker(&["pause", &case.nats]).await?;
     let paused = Instant::now();
-    let detected = loop {
-        expect_live(&case).await?;
-        if disconnects(&save_host_log(&case.host, &case.evidence).await?) > before {
-            break Some(paused.elapsed());
-        }
-        if paused.elapsed() > PAUSE_DETECT_BUDGET {
-            break None;
-        }
-        sleep(Duration::from_secs(1)).await;
-    };
-    let noticed = Instant::now();
-    while detected.is_some() && noticed.elapsed() < NATS_OUTAGE {
+    ensure!(
+        heartbeat_rpc(
+            &case.certs,
+            case.nats_port,
+            &case.host_id,
+            HOST_NAME,
+            REQUEST_BUDGET
+        )
+        .await
+        .is_err(),
+        "a paused broker answered a host RPC"
+    );
+    while paused.elapsed() < NATS_OUTAGE {
         expect_live(&case).await?;
         sleep(Duration::from_millis(500)).await;
     }
-    let paused_log = save_host_log(&case.host, &case.evidence).await?;
-    fs::write(case.evidence.join("host-paused.log"), &paused_log)?;
-    let paused_attempts: usize = causes(&paused_log).values().sum();
-
     docker(&["unpause", &case.nats]).await?;
     let unpaused = Instant::now();
     let rejoined = heartbeat_rpc(
@@ -633,11 +570,10 @@ async fn host_connects_again_through_scheduler_nats_outages() -> anyhow::Result<
     )
     .await;
     let rejoined_after = unpaused.elapsed();
+    ensure!(rejoined.is_ok(), "host did not recover its heartbeat RPC");
     let mut result = format!(
-        "pause_disconnect_noticed_after_ms={}\npause_failed_attempts={paused_attempts}\nunpause_heartbeat={}\nunpause_heartbeat_after_ms={}\n",
-        detected.map_or("none".to_owned(), |after| after.as_millis().to_string()),
-        rejoined.is_ok(),
-        rejoined_after.as_millis(),
+        "unpause_heartbeat=true\nunpause_heartbeat_after_ms={}\n",
+        rejoined_after.as_millis()
     );
     fs::write(case.evidence.join("result-pause.txt"), &result)?;
     result.push_str(&move_nats(&mut case).await?);

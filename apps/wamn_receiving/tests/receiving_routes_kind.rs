@@ -94,8 +94,7 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
             let body: Value = response.json().await?;
             ensure!(
                 status == hyper::StatusCode::OK
-                    && body[0]["error"]
-                        == json!({"code": "invalid_input", "detail": {"field": "input"}}),
+                    && ({ let observed = &(body[0]["error"]); observed["code"] == serde_json::json!("invalid_input") && observed["detail"]["field"] == serde_json::json!("input") }),
                 "the route accepted caller-supplied {field}: {status} {body}"
             );
         }

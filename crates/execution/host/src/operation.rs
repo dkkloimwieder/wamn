@@ -5,7 +5,7 @@
 //! [`wamn_engine::operation::invoke_operation`], which the router driver and
 //! the route path both call.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,7 +22,7 @@ use wamn_capability_authority::connection::{
 };
 use wamn_capability_authority::effect_span::EffectEvidence;
 use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
-use wamn_catalog::{AdmittedComponent, ServingComponent, ServingRoute};
+use wamn_catalog::AdmittedComponent;
 use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;

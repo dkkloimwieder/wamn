@@ -33,9 +33,7 @@ export async function assertChunksParse(configFile: string | URL): Promise<void>
       try {
         execFileSync(process.execPath, ["--check", module], { stdio: "pipe" });
       } catch (error) {
-        const lines = String((error as { stderr?: unknown }).stderr ?? error).split("\n");
-        const reason = lines.filter((line) => /^\w*Error:/.test(line)).join(" ");
-        throw new Error(`${chunk} does not parse: ${reason}`, { cause: error });
+        throw new Error(`${chunk} does not parse`, { cause: error });
       }
     }
   } finally {

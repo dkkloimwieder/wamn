@@ -1,7 +1,6 @@
 //! Event admission over the shared schedule fixture.
 
 use super::*;
-use sqlx::Row as _;
 #[sqlx::test(migrations = false)]
 async fn fanout_is_atomic_idempotent_and_records_the_history_actor(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();

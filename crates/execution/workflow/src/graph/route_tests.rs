@@ -105,12 +105,11 @@ fn a_second_terminal_fails_the_delivery_not_the_router() {
         failure(&outcome),
         ("second", FailureType::SecondVerdict, Some("second-verdict"))
     );
-    assert_eq!(
-        outcome.verdict,
-        Some(Verdict::Respond {
-            payload: json!({"at": "first"}),
-            node_id: "first".to_string(),
-        }),
-        "the first verdict is the one this delivery recorded; the second is the defect"
-    );
+    {
+        let Some(Verdict::Respond { payload, node_id }) = &(outcome.verdict) else {
+            panic!("unexpected outcome")
+        };
+        assert_eq!(payload["at"], serde_json::json!("first"));
+        assert_eq!(node_id, "first");
+    };
 }

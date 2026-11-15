@@ -5,19 +5,16 @@
 //! test process.
 
 use sqlx::PgConnection as Client;
-use sqlx::{Row as _, Statement as _};
+use sqlx::Row as _;
 use std::collections::BTreeMap;
 
 use wamn_control_provision::identity_role::{
     IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES, grant_identity_issuer_surface_sql,
 };
 use wamn_control_provision::sql;
-use wamn_environment::apply_package::{self, ApplyPackageRequest};
-use wamn_postgres::schema::BareSchemaName;
 
 const SYSTEM_SCHEMA_SQL: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const CONTROL_PORTABLE_STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
-const APP_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../../test-support/fixtures/sql/current-database-public-connect.sql");
 const AUTHOR_SQL_ROLES: [&str; 1] = ["wamn_app"];
@@ -121,7 +118,7 @@ async fn install_control_database(client: &mut Client) {
     }
 }
 
-async fn install_project_database(client: &mut Client, url: &str) {
+async fn install_project_database(client: &mut Client) {
     // Package DDL runs as the production database owner, not the administrator.
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (sql::ensure_db_owner_role_sql()).to_string(),
@@ -153,7 +150,6 @@ async fn install_project_database(client: &mut Client, url: &str) {
     .await
     .map(drop)
     .expect("remove same-qualified control portable schemas before project install");
-    let schema = BareSchemaName::new("wamn_run").expect("canonical run schema name");
     wamn_environment::platform_migrations::install_project(client)
         .await
         .expect("install canonical project schemas through reconciler");
@@ -330,7 +326,7 @@ async fn protected_relations_match_reconciled_postgres(pool: sqlx::PgPool) {
         "control-only portable relations must exist in the control plane: {control_only_fingerprints:?}"
     );
     assert_author_sql_boundaries(&mut client).await;
-    install_project_database(&mut client, &url).await;
+    install_project_database(&mut client).await;
     let project_side_control_only =
         portable_fingerprints(&mut client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
     assert!(

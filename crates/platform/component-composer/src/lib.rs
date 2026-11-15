@@ -293,24 +293,32 @@ mod tests {
 
     #[test]
     fn composition_plugs_operations_by_export_name() {
-        let composed = compose(overlay(), vec![base()]).expect("the members compose");
-
+        let entry = overlay();
+        let member = base();
+        let mut input_types = Types::default();
+        let mut expected_exports = BTreeSet::new();
+        let mut expected_imports = BTreeSet::new();
+        for (name, bytes) in [("entry", &entry), ("member", &member)] {
+            let package =
+                Package::from_bytes(name, None, bytes.as_slice(), &mut input_types).unwrap();
+            let world = &input_types[package.ty()];
+            expected_exports.extend(world.exports.keys().cloned());
+            expected_imports.extend(world.imports.keys().cloned());
+        }
+        expected_imports.retain(|name| !expected_exports.contains(name));
+        let composed = compose(entry, vec![member]).expect("the members compose");
         let mut types = Types::default();
         let package = Package::from_bytes("composed", None, composed, &mut types)
             .expect("the composed bytes are a component");
         let world = &types[package.ty()];
         assert_eq!(
-            world.imports.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["test:host/log@1.0.0"],
+            world.imports.keys().cloned().collect::<BTreeSet<_>>(),
+            expected_imports,
             "only the import no member satisfies stays an import"
         );
         assert_eq!(
-            world
-                .exports
-                .keys()
-                .map(String::as_str)
-                .collect::<BTreeSet<_>>(),
-            BTreeSet::from(["test:base/op@1.0.0", "test:overlay/main@1.0.0"]),
+            world.exports.keys().cloned().collect::<BTreeSet<_>>(),
+            expected_exports,
             "every member export is a composed export"
         );
     }

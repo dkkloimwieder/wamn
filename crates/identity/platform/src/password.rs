@@ -646,6 +646,7 @@ mod tests {
             ready.await.unwrap();
         }
         for task in tasks {
+            task.abort();
             assert!(task.await.unwrap_err().is_cancelled());
         }
         assert_eq!(

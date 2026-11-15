@@ -15,8 +15,7 @@ use wamn_schema_introspection::ir::{CatalogIr, Column, Constraint};
 )]
 mod support;
 use support::{
-    QUERY_SOURCES, catalog, manifest, object_named, rebuilt_table, replacing_table, run,
-    run_with_bases, table,
+    QUERY_SOURCES, catalog, manifest, rebuilt_table, replacing_table, run, run_with_bases, table,
 };
 
 /// The gadget fixture with a numbered `part_code`, keyed per stock, and a
@@ -557,8 +556,7 @@ async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
             sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
                 "SET ROLE wamn_app; SET search_path TO inventory, pg_catalog;
                 INSERT INTO platform.tx_identity(user_id,role,application) VALUES('{second}','','fixture'); PREPARE update_gadget AS {update}
-                EXECUTE update_gadget('{id}', {}, {present}, '{value}');",
-                revision
+                EXECUTE update_gadget('{id}', {revision}, {present}, '{value}');"
             )))
             .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
             .await

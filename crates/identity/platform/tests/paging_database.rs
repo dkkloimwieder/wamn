@@ -1,6 +1,5 @@
 //! Keyset queries against an owned, disposable PostgreSQL server.
 
-use sqlx::{Connection as _, Row as _, Statement as _};
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_platform_identity::{control, create_or_reuse_user, org};
 
@@ -8,7 +7,7 @@ use wamn_platform_identity::{control, create_or_reuse_user, org};
 #[ignore = "requires: postgres"]
 async fn sql_pages_keep_order_filter_and_current_authority() {
     let server = wamn_test_postgres::start(&[]).expect("start disposable PostgreSQL");
-    let mut database = server.database("postgres").unwrap();
+    let database = server.database("postgres").unwrap();
     let mut client = wamn_postgres::connect(database.url()).await.unwrap();
 
     sqlx::raw_sql("CREATE ROLE wamn_system")

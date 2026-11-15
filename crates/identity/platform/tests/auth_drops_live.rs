@@ -3,7 +3,7 @@
 //! real PostgreSQL, and the test tests the drop it records. A new writer
 //! takes an `AuthDrops`, so it does not compile until it joins this list.
 
-use sqlx::{Connection as _, Row as _};
+use sqlx::Connection as _;
 use std::time::Duration;
 use wamn_broker::Publisher;
 

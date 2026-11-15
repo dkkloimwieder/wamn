@@ -9,7 +9,7 @@
 #![cfg(feature = "test-util")]
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
@@ -18,7 +18,7 @@ use wamn_authentication::route_authentication::{
     EnvironmentStatusReader, PlatformRouteAuthenticator,
 };
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
-use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_postgres_capability::{
@@ -33,7 +33,7 @@ const PASSWORD: &str = "environment-status-test-only";
 const ACTOR: &str = "11111111-1111-4111-8111-111111111111";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let mut client = wamn_postgres::connect(url).await?;
+    let client = wamn_postgres::connect(url).await?;
 
     Ok(client)
 }

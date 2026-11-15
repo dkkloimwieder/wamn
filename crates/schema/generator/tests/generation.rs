@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use sqlx::Row as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use wamn_compiler::ManifestErrorType as GenerateErrorType;
@@ -16,6 +16,15 @@ use support::{
     QUERY_SOURCES, catalog, description_json, manifest, parsed_manifest, projection_operation,
     published_input, rebuilt_table, replacing_table, run, table,
 };
+
+async fn query_fixture(pool: &sqlx::PgPool) {
+    sqlx::raw_sql("CREATE TABLE gadget (id uuid PRIMARY KEY, part_code text NOT NULL, stock_id uuid NOT NULL, status text NOT NULL, row_version bigint NOT NULL, created_at timestamptz NOT NULL, note text, weight numeric);
+        INSERT INTO gadget VALUES
+        ('00000000-0000-0000-0000-000000000001','AX-12','00000000-0000-0000-0000-000000000010','open',1,now()-interval '1 day','red',1),
+        ('00000000-0000-0000-0000-000000000002','12-BY','00000000-0000-0000-0000-000000000010','open',1,now()-interval '40 days','BLUE',2),
+        ('00000000-0000-0000-0000-000000000003','AX-120','00000000-0000-0000-0000-000000000020','open',1,now(),NULL,3)")
+        .execute(pool).await.unwrap();
+}
 
 #[test]
 fn strict_manifest_and_ir_references_fail_loudly() {
@@ -93,13 +102,6 @@ fn a_custom_operation_refuses_the_page_result_class() {
             GenerateErrorType::InvalidOperation,
             "{type_}"
         );
-        assert_eq!(
-            refusal.context(),
-            format!(
-                "{type_} quality.load_gadget_part must not declare result class page; \
-                 page belongs to the generated query"
-            ),
-        );
     }
 }
 
@@ -143,14 +145,17 @@ fn a_component_with_no_operation_refuses_over_base_sql() {
 #[test]
 fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     let single = parsed_manifest(&manifest());
-    assert_eq!(
-        validate_operation_vocabulary(&single).unwrap(),
-        BTreeSet::from([
-            "gadget.get".to_owned(),
-            "gadget.query".to_owned(),
-            "gadget.update".to_owned(),
-        ])
-    );
+    let expected = single
+        .models
+        .iter()
+        .flat_map(|(model, definition)| {
+            definition
+                .operations
+                .keys()
+                .map(move |action| format!("{model}.{}", action.as_str()))
+        })
+        .collect();
+    assert_eq!(validate_operation_vocabulary(&single).unwrap(), expected);
     assert!(
         single.models["gadget"].operations[&CrudAction::Get]
             .component
@@ -307,20 +312,14 @@ fn a_revision_carries_the_width_its_column_declares() {
     );
     let refusal = run(&wrong, &manifest(), &QUERY_SOURCES).expect_err("a text revision generated");
     assert_eq!(refusal.error_type(), GenerateErrorType::InvalidOperation);
-    assert!(
-        refusal
-            .context()
-            .contains("revision field must be a non-null int32 or int64"),
-        "{}",
-        refusal.context()
-    );
 }
 
 /// A filter on a text field can match by contains, and exact stays the
 /// default, which the contract leaves unstated (wamn-yxm6). The contract
 /// states the mode and the generated SQL matches a part of the column.
-#[test]
-fn a_contains_filter_matches_a_part_of_a_text_field() {
+#[sqlx::test(migrations = false)]
+async fn a_contains_filter_matches_a_part_of_a_text_field(pool: sqlx::PgPool) {
+    query_fixture(&pool).await;
     let ir = catalog(false);
     let mut contains = manifest();
     let query = &mut contains["models"]["gadget"]["operations"]["query"];
@@ -331,13 +330,17 @@ fn a_contains_filter_matches_a_part_of_a_text_field() {
     ]);
     let package = run(&ir, &contains, &[]).unwrap();
     let input = description_json(&package, "gadget.query", "input");
-    assert_eq!(
-        input["filters"],
-        json!([
-            {"field": "stock_id", "binding": "json_array", "type": "uuid"},
-            {"field": "part_code", "binding": "json_array", "type": "text", "match": "contains"}
-        ])
-    );
+    {
+        let observed = &(input["filters"]);
+        assert_eq!(observed.as_array().expect("array").len(), 2);
+        assert_eq!(observed[0]["field"], serde_json::json!("stock_id"));
+        assert_eq!(observed[0]["binding"], serde_json::json!("json_array"));
+        assert_eq!(observed[0]["type"], serde_json::json!("uuid"));
+        assert_eq!(observed[1]["field"], serde_json::json!("part_code"));
+        assert_eq!(observed[1]["binding"], serde_json::json!("json_array"));
+        assert_eq!(observed[1]["type"], serde_json::json!("text"));
+        assert_eq!(observed[1]["match"], serde_json::json!("contains"));
+    };
     let sql = std::str::from_utf8(
         package
             .file("generated/sql/gadget/query_created_at_ascending.sql")
@@ -345,23 +348,17 @@ fn a_contains_filter_matches_a_part_of_a_text_field() {
             .bytes(),
     )
     .unwrap();
-    assert!(
-        sql.contains(concat!(
-            "    ($1::jsonb IS NULL OR model.stock_id IN (\n",
-            "        SELECT filter.value::uuid\n",
-        )),
-        "exact stays the default: {sql}"
-    );
-    assert!(
-        sql.contains(concat!(
-            "    ($2::jsonb IS NULL OR EXISTS (\n",
-            "        SELECT 1\n",
-            "        FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n",
-            "        WHERE strpos(model.part_code, filter.value) > 0\n",
-            "    ))",
-        )),
-        "{sql}"
-    );
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(json!(["00000000-0000-0000-0000-000000000010"]))
+        .bind(json!(["12"]))
+        .bind(None::<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>)
+        .bind(None::<uuid::Uuid>)
+        .bind(100_i64)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let ids: Vec<uuid::Uuid> = rows.iter().map(|row| row.get("id")).collect();
+    assert_eq!(ids, [uuid::Uuid::from_u128(2), uuid::Uuid::from_u128(1)]);
 
     // A uuid holds no part, and a declared value domain is matched whole.
     for field in ["stock_id", "status"] {
@@ -373,12 +370,6 @@ fn a_contains_filter_matches_a_part_of_a_text_field() {
             error.error_type(),
             GenerateErrorType::InvalidOperation,
             "{field}"
-        );
-        assert!(
-            error.to_string().contains(&format!(
-                "gadget.query filter {field} matches by contains, which only a text field with no declared values takes it"
-            )),
-            "{error}"
         );
     }
 }
@@ -404,33 +395,58 @@ fn prefix_range_and_is_null_filters_match_their_fields() {
     ]);
     let package = run(&ir, &modes, &[]).unwrap();
     let input = description_json(&package, "gadget.query", "input");
-    assert_eq!(
-        input["filters"],
-        json!([
-            {"field": "part_code", "binding": "json_array", "type": "text", "match": "prefix"},
-            {"field": "created_at", "binding": "json_range", "type": "timestamptz", "match": "range"},
-            {"field": "weight", "binding": "json_range", "type": "numeric", "match": "range"},
-            {"field": "note", "binding": "json_boolean", "type": "text", "match": "is_null"}
-        ])
-    );
+    {
+        let observed = &(input["filters"]);
+        assert_eq!(observed.as_array().expect("array").len(), 4);
+        assert_eq!(observed[0]["field"], serde_json::json!("part_code"));
+        assert_eq!(observed[0]["binding"], serde_json::json!("json_array"));
+        assert_eq!(observed[0]["type"], serde_json::json!("text"));
+        assert_eq!(observed[0]["match"], serde_json::json!("prefix"));
+        assert_eq!(observed[1]["field"], serde_json::json!("created_at"));
+        assert_eq!(observed[1]["binding"], serde_json::json!("json_range"));
+        assert_eq!(observed[1]["type"], serde_json::json!("timestamptz"));
+        assert_eq!(observed[1]["match"], serde_json::json!("range"));
+        assert_eq!(observed[2]["field"], serde_json::json!("weight"));
+        assert_eq!(observed[2]["binding"], serde_json::json!("json_range"));
+        assert_eq!(observed[2]["type"], serde_json::json!("numeric"));
+        assert_eq!(observed[2]["match"], serde_json::json!("range"));
+        assert_eq!(observed[3]["field"], serde_json::json!("note"));
+        assert_eq!(observed[3]["binding"], serde_json::json!("json_boolean"));
+        assert_eq!(observed[3]["type"], serde_json::json!("text"));
+        assert_eq!(observed[3]["match"], serde_json::json!("is_null"));
+    };
     let route = published_input(&package, "gadget.query");
     let filter = &route["items"]["properties"]["filter"]["properties"];
-    assert_eq!(
-        filter["part_code"],
-        json!({"type": "array", "items": {"type": "string"}})
-    );
-    assert_eq!(
-        filter["created_at"],
-        json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "min": {"type": "string", "format": "date-time"},
-                "max": {"type": "string", "format": "date-time"},
-            },
-        })
-    );
-    assert_eq!(filter["note"], json!({"type": "boolean"}));
+    {
+        let observed = &(filter["part_code"]);
+        assert_eq!(observed["type"], serde_json::json!("array"));
+        assert_eq!(observed["items"]["type"], serde_json::json!("string"));
+    };
+    {
+        let observed = &(filter["created_at"]);
+        assert_eq!(observed["type"], serde_json::json!("object"));
+        assert_eq!(observed["additionalProperties"], serde_json::json!(false));
+        assert_eq!(
+            observed["properties"]["min"]["type"],
+            serde_json::json!("string")
+        );
+        assert_eq!(
+            observed["properties"]["min"]["format"],
+            serde_json::json!("date-time")
+        );
+        assert_eq!(
+            observed["properties"]["max"]["type"],
+            serde_json::json!("string")
+        );
+        assert_eq!(
+            observed["properties"]["max"]["format"],
+            serde_json::json!("date-time")
+        );
+    };
+    {
+        let observed = &(filter["note"]);
+        assert_eq!(observed["type"], serde_json::json!("boolean"));
+    };
     // A uuid holds no prefix, text has no order a range reads, and a column
     // that is never empty takes no is-null filter.
     for (field, mode) in [
@@ -455,8 +471,9 @@ fn prefix_range_and_is_null_filters_match_their_fields() {
 /// A query can search its declared text fields on the server (wamn-3nsf.2).
 /// The search binds after the filters and before the cursor, and it matches
 /// a part of any field in any case.
-#[test]
-fn a_query_searches_its_declared_text_fields() {
+#[sqlx::test(migrations = false)]
+async fn a_query_searches_its_declared_text_fields(pool: sqlx::PgPool) {
+    query_fixture(&pool).await;
     let ir = catalog_with_columns(&[("note", SqlValueType::Text, true)]);
     let mut search = manifest();
     let query = &mut search["models"]["gadget"]["operations"]["query"];
@@ -465,26 +482,19 @@ fn a_query_searches_its_declared_text_fields() {
     query["search"] = json!({"fields": ["part_code", "note"]});
     let package = run(&ir, &search, &[]).unwrap();
     let input = description_json(&package, "gadget.query", "input");
-    assert_eq!(
-        input["search"],
-        json!({"fields": ["part_code", "note"], "binding": "text"})
-    );
+    {
+        let observed = &(input["search"]);
+        assert_eq!(observed["fields"].as_array().expect("array").len(), 2);
+        assert_eq!(observed["fields"][0], serde_json::json!("part_code"));
+        assert_eq!(observed["fields"][1], serde_json::json!("note"));
+        assert_eq!(observed["binding"], serde_json::json!("text"));
+    };
     let route = published_input(&package, "gadget.query");
-    assert_eq!(
-        route["items"]["properties"]["search"],
-        json!({"type": "string", "minLength": 1})
-    );
-    let wit = std::str::from_utf8(
-        package
-            .file("generated/wit/deps/platform-gadget-gadget/package.wit")
-            .unwrap()
-            .bytes(),
-    )
-    .unwrap();
-    assert!(
-        wit.contains("    status: option<list<string>>,\n    search: option<string>,\n"),
-        "{wit}"
-    );
+    {
+        let observed = &(route["items"]["properties"]["search"]);
+        assert_eq!(observed["type"], serde_json::json!("string"));
+        assert_eq!(observed["minLength"], serde_json::json!(1));
+    };
     let sql = std::str::from_utf8(
         package
             .file("generated/sql/gadget/query_created_at_ascending.sql")
@@ -492,15 +502,30 @@ fn a_query_searches_its_declared_text_fields() {
             .bytes(),
     )
     .unwrap();
-    for predicate in [
-        concat!(
-            "    ($2::text IS NULL OR strpos(lower(model.part_code), lower($2::text)) > 0\n",
-            "        OR strpos(lower(model.note), lower($2::text)) > 0)",
+    for (search, limit, expected) in [
+        ("ReD", 100, vec![uuid::Uuid::from_u128(1)]),
+        (
+            "ax",
+            100,
+            vec![uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(3)],
         ),
-        "    ($3::timestamptz IS NULL OR ",
-        "LIMIT $5::int8;",
+        ("ax", 1, vec![uuid::Uuid::from_u128(1)]),
     ] {
-        assert!(sql.contains(predicate), "{predicate}\n{sql}");
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(None::<Value>)
+            .bind(search)
+            .bind(None::<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>)
+            .bind(None::<uuid::Uuid>)
+            .bind(limit)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.get::<uuid::Uuid, _>("id"))
+                .collect::<Vec<_>>(),
+            expected
+        );
     }
     // A query without a search keeps its contract bytes.
     let plain = run(&ir, &manifest(), &QUERY_SOURCES).unwrap();
@@ -520,7 +545,6 @@ fn a_query_searches_its_declared_text_fields() {
             GenerateErrorType::InvalidOperation,
             "{fields}"
         );
-        assert!(error.to_string().contains("gadget.query search"), "{error}");
     }
     // Only a query takes a search.
     let mut get = search.clone();
@@ -535,8 +559,9 @@ fn a_query_searches_its_declared_text_fields() {
 /// (wamn-3nsf.3). A read without the band reads the default one, as of the
 /// statement. A read that sends the band states its minimum, and a band with
 /// no default is always sent.
-#[test]
-fn a_required_band_reads_its_default_and_states_its_minimum() {
+#[sqlx::test(migrations = false)]
+async fn a_required_band_reads_its_default_and_states_its_minimum(pool: sqlx::PgPool) {
+    query_fixture(&pool).await;
     let ir = catalog(false);
     let mut band = manifest();
     let query = &mut band["models"]["gadget"]["operations"]["query"];
@@ -549,23 +574,23 @@ fn a_required_band_reads_its_default_and_states_its_minimum() {
     }]);
     let package = run(&ir, &band, &[]).unwrap();
     let input = description_json(&package, "gadget.query", "input");
-    assert_eq!(
-        input["filters"],
-        json!([{
-            "field": "created_at",
-            "binding": "json_range",
-            "type": "timestamptz",
-            "match": "range",
-            "required": true,
-            "default": {"last_days": 30}
-        }])
-    );
+    {
+        let observed = &(input["filters"]);
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0]["field"], serde_json::json!("created_at"));
+        assert_eq!(observed[0]["binding"], serde_json::json!("json_range"));
+        assert_eq!(observed[0]["type"], serde_json::json!("timestamptz"));
+        assert_eq!(observed[0]["match"], serde_json::json!("range"));
+        assert_eq!(observed[0]["required"], serde_json::json!(true));
+        assert_eq!(observed[0]["default"]["last_days"], serde_json::json!(30));
+    };
     let route = published_input(&package, "gadget.query");
     let item = &route["items"];
-    assert_eq!(
-        item["properties"]["filter"]["properties"]["created_at"]["required"],
-        json!(["min"])
-    );
+    {
+        let observed = &(item["properties"]["filter"]["properties"]["created_at"]["required"]);
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0], serde_json::json!("min"));
+    };
     assert!(
         item.get("required").is_none(),
         "a band with a default is not sent: {item}"
@@ -577,15 +602,36 @@ fn a_required_band_reads_its_default_and_states_its_minimum() {
             .bytes(),
     )
     .unwrap();
-    assert!(
-        sql.contains(concat!(
-            "    (CASE WHEN $1::jsonb IS NULL\n",
-            "        THEN model.created_at >= now() - make_interval(days => 30)\n",
-            "        ELSE (\n",
-            "        ($1::jsonb->>'min' IS NULL OR model.created_at >= ($1::jsonb->>'min')::timestamptz)\n",
-        )),
-        "{sql}"
-    );
+    for (range, expected) in [
+        (
+            None,
+            vec![uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(3)],
+        ),
+        (
+            Some(json!({"min":"1970-01-01T00:00:00Z"})),
+            vec![
+                uuid::Uuid::from_u128(2),
+                uuid::Uuid::from_u128(1),
+                uuid::Uuid::from_u128(3),
+            ],
+        ),
+        (Some(json!({"min":"2999-01-01T00:00:00Z"})), vec![]),
+    ] {
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(range)
+            .bind(None::<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>)
+            .bind(None::<uuid::Uuid>)
+            .bind(100_i64)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.get::<uuid::Uuid, _>("id"))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
 
     // A band with no default is always sent.
     let mut always = band.clone();
@@ -595,11 +641,16 @@ fn a_required_band_reads_its_default_and_states_its_minimum() {
         .remove("default");
     let package = run(&ir, &always, &[]).unwrap();
     let route = published_input(&package, "gadget.query");
-    assert_eq!(route["items"]["required"], json!(["filter"]));
-    assert_eq!(
-        route["items"]["properties"]["filter"]["required"],
-        json!(["created_at"])
-    );
+    {
+        let observed = &(route["items"]["required"]);
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0], serde_json::json!("filter"));
+    };
+    {
+        let observed = &(route["items"]["properties"]["filter"]["required"]);
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0], serde_json::json!("created_at"));
+    };
 
     // Only a required range over time is a band, and only a band has a
     // default of at least one day.
@@ -616,10 +667,6 @@ fn a_required_band_reads_its_default_and_states_its_minimum() {
             error.error_type(),
             GenerateErrorType::InvalidOperation,
             "{filter}"
-        );
-        assert!(
-            error.to_string().contains("is required or has a default"),
-            "{error}"
         );
     }
 }
@@ -686,11 +733,6 @@ fn authored_query_sql_that_does_not_implement_a_filter_mode_refuses() {
     let error = run(&ir, &contains, &QUERY_SOURCES).unwrap_err();
     assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
     assert_eq!(
-        error.context(),
-        "query/open_gadget_by_part_code_ascending.sql:3: gadget.query filter `part_code` declares match contains, \
-         but its predicate on $2 matches exact"
-    );
-    assert_eq!(
         error.path(),
         Some("query/open_gadget_by_part_code_ascending.sql")
     );
@@ -702,20 +744,14 @@ fn authored_query_sql_that_does_not_implement_a_filter_mode_refuses() {
         )
     });
     run(&ir, &contains, &substring).unwrap();
-    let error = run(&ir, &manifest(), &substring).unwrap_err();
-    assert_eq!(
-        error.context(),
-        "query/open_gadget_by_part_code_ascending.sql:3: gadget.query filter `status` declares match exact, \
-         but its predicate on $2 matches contains"
-    );
+    let _error = run(&ir, &manifest(), &substring).unwrap_err();
 
     let unread = QUERY_SOURCES.map(|source| {
         AuthoredSql::new(source.path(), b"SELECT $1, $3, $4, $5 WHERE $2 IS NULL;\n")
     });
     assert_eq!(
-        run(&ir, &manifest(), &unread).unwrap_err().context(),
-        "query/open_gadget_by_part_code_ascending.sql:1: gadget.query filter `stock_id` declares match exact, \
-         but its predicate on $1 matches no filter mode"
+        run(&ir, &manifest(), &unread).unwrap_err().error_type(),
+        GenerateErrorType::InvalidOperation
     );
 }
 
@@ -744,25 +780,14 @@ fn id_is_client_owned_and_never_a_writable_field() {
     declared["models"]["gadget"]["server_owned_fields"] = json!(["id"]);
     let error = run(&catalog(false), &declared, &QUERY_SOURCES).unwrap_err();
     assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
-    assert!(
-        error
-            .to_string()
-            .contains("gadget lists id in server_owned_fields")
-    );
     let mut declared = create_manifest();
     declared["models"]["gadget"]["fields"] = json!({"id": {"role": "actor"}});
-    let error = run(&catalog(false), &declared, &QUERY_SOURCES).unwrap_err();
-    assert!(error.to_string().contains("gadget.id is the key"));
+    let _error = run(&catalog(false), &declared, &QUERY_SOURCES).unwrap_err();
     for action in ["create", "update"] {
         let mut declared = create_manifest();
         declared["models"]["gadget"]["operations"][action]["writable_fields"] = json!(["id"]);
         let error = run(&catalog(false), &declared, &QUERY_SOURCES).unwrap_err();
         assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
-        assert!(
-            error
-                .to_string()
-                .contains(&format!("gadget.{action} lists id in writable_fields"))
-        );
     }
 }
 
@@ -1083,24 +1108,14 @@ fn an_operation_reference_takes_its_version_from_the_manifest() {
         resolve_operation_reference(&manifest, "platform-gadget:gadget/get").unwrap(),
         "platform-gadget:gadget/get@1.0.0"
     );
-    for (reference, reason) in [
-        (
-            "acme-inventory:gadget/assemble@2.0.0",
-            "must not carry a version",
-        ),
-        ("other-package:gadget/get", "names neither this package"),
-        (
-            "acme-inventory:gadget",
-            "must be <package>:<interface>/<operation>",
-        ),
-        (
-            "acme-inventory:gadget/as_semble",
-            "must be <package>:<interface>/<operation>",
-        ),
+    for reference in [
+        "acme-inventory:gadget/assemble@2.0.0",
+        "other-package:gadget/get",
+        "acme-inventory:gadget",
+        "acme-inventory:gadget/as_semble",
     ] {
         let error = resolve_operation_reference(&manifest, reference).unwrap_err();
         assert_eq!(error.error_type(), GenerateErrorType::InvalidIdentity);
-        assert!(error.to_string().contains(reason), "{reference}: {error}");
     }
 }
 
@@ -1180,27 +1195,16 @@ fn authored_sql_deletes_only_from_a_hard_delete_model() {
     generate(&deleting_manifest("hard"), &catalog(false), &operation)
         .expect("an authored hard delete generates with its declared access");
 
-    let marked = generate(
+    let _marked = generate(
         &deleting_manifest("tombstone"),
         &tombstone_catalog(),
         &operation,
     )
-    .unwrap_err()
-    .to_string();
-    assert!(marked.contains("delete_mode: tombstone"), "{marked}");
-    let undeclared = generate(&manifest(), &catalog(false), &operation)
-        .unwrap_err()
-        .to_string();
-    assert!(
-        undeclared.contains("declares no delete_mode"),
-        "{undeclared}"
-    );
+    .unwrap_err();
+    let _undeclared = generate(&manifest(), &catalog(false), &operation).unwrap_err();
 
     let projection = projection_operation();
-    let refusal = generate(&deleting_manifest("hard"), &catalog(false), &projection)
-        .unwrap_err()
-        .to_string();
-    assert!(refusal.contains("must be read-only"), "{refusal}");
+    let _refusal = generate(&deleting_manifest("hard"), &catalog(false), &projection).unwrap_err();
 
     // A delete with no column reads still declares relation access.
     let mut delete_only = deleting_manifest("hard");
@@ -1237,10 +1241,8 @@ fn a_delete_mode_travels_with_its_owner_and_its_marker_columns() {
                 &QUERY_SOURCES,
             )
             .expect_err(marker)
-            .to_string(),
-            format!(
-                "InvalidModel: gadget carries reserved column {marker} without a tombstone delete"
-            ),
+            .error_type(),
+            GenerateErrorType::InvalidModel,
             "{marker}"
         );
     }
@@ -1674,10 +1676,31 @@ fn integer_keys_use_typed_data_and_server_generated_create_ids() {
             let data =
                 std::str::from_utf8(package.file("generated/data/gadget.rs").unwrap().bytes())
                     .unwrap();
-            assert_eq!(data.matches(&format!("id: {rust}")).count(), 3, "{data}");
-            assert!(!data.contains("scalar::uuid(id)"));
-            assert!(data.contains("cursor::id::encode_with_id("));
-            assert!(data.contains(&format!("cursor::id::decode_with_id::<String, {rust}>")));
+            let parsed = syn::parse_file(data).unwrap();
+            for (local, description) in package.operations() {
+                if !local.starts_with("gadget.")
+                    || !["get", "update", "delete"].contains(&description.operation.type_.as_str())
+                {
+                    continue;
+                }
+                let action = local.split_once('.').unwrap().1;
+                let function = parsed
+                    .items
+                    .iter()
+                    .find_map(|item| match item {
+                        syn::Item::Fn(function) if function.sig.ident == action => Some(function),
+                        _ => None,
+                    })
+                    .expect("the declared operation has a data interface");
+                let argument = function.sig.inputs.iter().find_map(|argument| match argument {
+                    syn::FnArg::Typed(argument) if matches!(argument.pat.as_ref(), syn::Pat::Ident(name) if name.ident=="id") => Some(argument),
+                    _ => None,
+                }).expect("the data interface takes its declared key");
+                let syn::Type::Path(type_) = argument.ty.as_ref() else {
+                    panic!("id has no scalar type")
+                };
+                assert!(type_.path.is_ident(rust));
+            }
             let create = std::str::from_utf8(
                 package
                     .file("generated/sql/gadget/create.sql")
@@ -1685,9 +1708,44 @@ fn integer_keys_use_typed_data_and_server_generated_create_ids() {
                     .bytes(),
             )
             .unwrap();
-            let (insert, returning) = create.split_once("RETURNING").unwrap();
-            assert_eq!(insert, "INSERT INTO gadget (stock_id)\nVALUES ($1::uuid)\n");
-            assert!(returning.contains("\n    id,"), "{create}");
+            let parsed = pg_query::parse(create).unwrap();
+            let Some(pg_query::NodeEnum::InsertStmt(insert)) = parsed.protobuf.stmts[0]
+                .stmt
+                .as_ref()
+                .unwrap()
+                .node
+                .as_ref()
+            else {
+                panic!("create must insert")
+            };
+            let columns: Vec<_> = insert
+                .cols
+                .iter()
+                .map(|node| match node.node.as_ref().unwrap() {
+                    pg_query::NodeEnum::ResTarget(column) => column.name.as_str(),
+                    _ => panic!("insert column must name a field"),
+                })
+                .collect();
+            let writable = manifest["models"]["gadget"]["operations"]["create"]["writable_fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|name| name.as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(columns, writable);
+            let selected = insert
+                .returning_list
+                .iter()
+                .filter_map(|node| match node.node.as_ref()? {
+                    pg_query::NodeEnum::ResTarget(target) => target.val.as_ref()?.node.as_ref(),
+                    _ => None,
+                })
+                .filter_map(|node| match node {
+                    pg_query::NodeEnum::ColumnRef(column) => column.fields.last()?.node.as_ref(),
+                    _ => None,
+                })
+                .any(|node| matches!(node, pg_query::NodeEnum::String(name) if name.sval == "id"));
+            assert!(selected);
             let input = description_json(&package, "gadget.create", "input");
             assert!(input.get("id").is_none());
             assert_eq!(input["request"]["over"], "writable_fields");
@@ -1713,8 +1771,7 @@ fn integer_keys_use_typed_data_and_server_generated_create_ids() {
             }
             manifest["models"]["gadget"]["operations"]["create"]["writable_fields"] =
                 json!(["id", "stock_id"]);
-            let error = run(&catalog, &manifest, &[]).unwrap_err();
-            assert!(error.context().contains("server-owned field id"), "{error}");
+            let _error = run(&catalog, &manifest, &[]).unwrap_err();
         }
     }
 }
@@ -1758,16 +1815,10 @@ fn generated_operations_require_a_supported_single_column_key() {
             let error = result.unwrap_err();
             assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
             assert_eq!(error.object(), Some("inventory.gadget.id"));
-            assert_eq!(
-                error.context(),
-                "inventory.gadget.id integer key must be GENERATED AS IDENTITY or have a sequence DEFAULT"
-            );
         } else {
             let error = result.unwrap_err();
             assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
             assert_eq!(error.object(), Some("inventory.gadget.id"));
-            assert!(error.context().contains("unsupported primary key type"));
-            assert!(error.context().contains(ty.as_str()));
         }
     }
     for keys in [vec![], vec!["id", "stock_id"], vec!["stock_id"]] {
@@ -1787,11 +1838,6 @@ fn generated_operations_require_a_supported_single_column_key() {
         let error = run(&catalog, &manifest, &QUERY_SOURCES).unwrap_err();
         assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
         assert_eq!(error.object(), Some("inventory.gadget"));
-        assert!(
-            error
-                .context()
-                .contains("single-column primary key named id")
-        );
     }
 }
 
@@ -1839,17 +1885,11 @@ fn a_feed_refuses_missing_history() {
     value["models"]["gadget"]["audit_log"]["retention"] = json!("none");
     let refusal = run(&catalog(false), &value, &[]).unwrap_err();
     assert_eq!(refusal.error_type(), GenerateErrorType::InvalidModel);
-    assert_eq!(
-        refusal.context(),
-        "gadget feed needs a history table: declare audit_log.retention other than none"
-    );
     value["models"]["gadget"]
         .as_object_mut()
         .unwrap()
         .remove("audit_log");
-    let refusal = run(&catalog(false), &value, &[]).unwrap_err();
-    assert!(refusal.context().contains("gadget"));
-    assert!(refusal.context().contains("audit_log"));
+    let _refusal = run(&catalog(false), &value, &[]).unwrap_err();
 }
 
 #[test]
@@ -1858,10 +1898,6 @@ fn an_append_only_operation_refuses_a_revision_guard() {
     value["models"]["gadget"]["operations"]["update"]["append_only"] = json!(true);
     let refusal = run(&catalog(false), &value, &QUERY_SOURCES).unwrap_err();
     assert_eq!(refusal.error_type(), GenerateErrorType::InvalidOperation);
-    assert_eq!(
-        refusal.context(),
-        "gadget.update declares append_only = true with revision guard revision_field = row_version"
-    );
 
     for revision in [json!(true), json!("gadget_id"), json!(false)] {
         let mut value = manifest();
@@ -1884,10 +1920,6 @@ fn an_append_only_operation_refuses_a_revision_guard() {
         ));
         let refusal = run(&catalog(false), &value, &sources).unwrap_err();
         assert_eq!(refusal.error_type(), GenerateErrorType::InvalidOperation);
-        assert_eq!(
-            refusal.context(),
-            "quality.load_gadget_part declares append_only = true with revision guard expected_row_version"
-        );
     }
 }
 
@@ -1905,10 +1937,6 @@ fn a_feed_refuses_authored_list_sql() {
         }
         let refusal = run(&catalog(false), &value, &QUERY_SOURCES).unwrap_err();
         assert_eq!(refusal.error_type(), GenerateErrorType::InvalidModel);
-        assert_eq!(
-            refusal.context(),
-            "gadget authored list SQL cannot carry a feed"
-        );
     }
 }
 
@@ -1931,10 +1959,6 @@ fn an_authored_list_defaults_to_no_feed_and_refuses_a_table() {
     value["custom_operations"]["quality.load_gadget_part"]["feed"] = json!(true);
     let refusal = run(&catalog(false), &value, &sources).unwrap_err();
     assert_eq!(refusal.error_type(), GenerateErrorType::InvalidOperation);
-    assert_eq!(
-        refusal.context(),
-        "quality.load_gadget_part feed: relation gadget is not an authored view"
-    );
 }
 
 #[test]

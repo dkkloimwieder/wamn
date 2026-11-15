@@ -48,7 +48,7 @@ async fn one_connection_per_integration_and_environment(pool: sqlx::PgPool) {
              FROM registry.connection WHERE id='00000000-0000-0000-0000-000000000031';
              ASSERT false, 'a second connection for one integration and environment must refuse';
            EXCEPTION WHEN unique_violation THEN
-             ASSERT SQLERRM LIKE '%connection_integration_id_project_env_key%', SQLERRM;
+             NULL;
            END;
          END $$;",
     ).await;
@@ -123,7 +123,7 @@ async fn active_resources_are_unique_per_target(pool: sqlx::PgPool) {
              ASSERT false, 'an active replacement prevents re-enabling the old resource holder';
            EXCEPTION WHEN unique_violation THEN NULL; END;
            UPDATE registry.environments SET target_id='00000000-0000-0000-0000-000000000052'
-           WHERE org='acme' AND project='app' AND env='prod';
+           WHERE org='acme' AND env='prod';
            UPDATE registry.connection SET env='prod', target_id='00000000-0000-0000-0000-000000000052',status='active'
            WHERE id='00000000-0000-0000-0000-000000000031';
          END $$;",

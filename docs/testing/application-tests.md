@@ -22,21 +22,9 @@ Record the source, tools, machine limits, commands, and sample count without a f
 
 ## Receiving commands
 
-The [Receiving history tests](../../apps/wamn_receiving/tests/receiving_command_histories_live.rs) exercise `receiving.record_receipt` and `purchase_order.update`.
-The [local test](../../apps/wamn_receiving/tests/route_authentication_live/local_business.rs) supplies real components, authenticated HTTP, and disposable PostgreSQL without cluster or image setup.
+The [Receiving route cases](../../apps/wamn_receiving/tests/route_authentication_live/local_business.rs) cover composed receipts and screen reads.
+The command-history case stops at its missing product fault fixture.
 See the [focused commands](../operations/running-tests.md#local-application-business-tests).
-Their required observations are:
-
-- Accepted receipts accumulate without exceeding the order, with matching status, revisions, and committed receipt history.
-- Exact remaining quantity succeeds, while excess quantity and invalid status refuse without partial business writes.
-- The same key and body recover the original receipt, while changed bodies refuse, including during overlapping same-key calls.
-- Competing receipts whose sum exceeds the remaining quantity cannot both commit.
-- Failure after an observed intermediate write rolls back all receipt business writes.
-- An independently confirmed commit with suppressed response permits captured retry without posting a second receipt.
-- Stale revisions and denied callers refuse without an unauthorized business mutation.
-
-Use a [deliberate business defect](mutation.md) to establish that the intended assertion detects it.
-Contention controls must retain other constraints that still protect the business rule.
 
 ## WMS operations
 

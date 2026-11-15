@@ -94,7 +94,6 @@ wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }
 wat = "=1.254.2"
-rcgen = { workspace = true }
 pg_query = "=6.2.1"
 tar = { workspace = true }
 wamn-identity-protocol = { workspace = true }

@@ -1471,14 +1471,17 @@ mod tests {
     /// field fails here.
     #[test]
     fn the_persisted_effect_fact_spells_its_provenance() {
-        assert_eq!(
-            serde_json::to_value(postgres_effect()).expect("an imported effect serializes"),
-            json!({
-                "package": "wamn:postgres",
-                "provenance": "imported",
-                "interfaces": ["wamn:postgres/client@0.1.0"],
-            })
-        );
+        {
+            let observed =
+                &(serde_json::to_value(postgres_effect()).expect("an imported effect serializes"));
+            assert_eq!(observed["package"], serde_json::json!("wamn:postgres"));
+            assert_eq!(observed["provenance"], serde_json::json!("imported"));
+            assert_eq!(observed["interfaces"].as_array().expect("array").len(), 1);
+            assert_eq!(
+                observed["interfaces"][0],
+                serde_json::json!("wamn:postgres/client@0.1.0")
+            );
+        };
     }
 
     #[test]
