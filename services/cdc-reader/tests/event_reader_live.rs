@@ -39,7 +39,6 @@ use wamn_event_wire::{Causation, Envelope, Op, msg_id, subject};
 use wamn_events::reader::ReaderConfig;
 use wamn_registry::sql::{upsert_org_sql, upsert_project_env_with_policy_sql, upsert_project_sql};
 
-const SYSTEM_SCHEMA: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const DB: &str = "wamn_reader_live";
 const ORG: &str = "rl0";
@@ -47,11 +46,11 @@ const PROJECT: &str = "app";
 const ENV: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
 const CDC_PW: &str = "wamn_cdc_pw";
-/// Swap the database path segment of a libpq URL (the test controls the URL —
-/// no query string).
-fn swap_db(url: &str, db: &str) -> String {
-    let (base, _) = url.rsplit_once('/').expect("url has a path");
-    format!("{base}/{db}")
+/// Select the database while retaining the server's TLS parameters.
+fn swap_db(input: &str, db: &str) -> String {
+    let mut url = url::Url::parse(input).expect("test server URL");
+    url.set_path(db);
+    url.into()
 }
 
 /// `host:port` (with credentials swapped out) → the CDC role's plain URL.
@@ -61,10 +60,11 @@ fn cdc_plain_url(super_url: &str, role: &str) -> String {
 
 /// `host:port` (with credentials swapped out) → one role's plain URL on [`DB`].
 fn role_url(super_url: &str, role: &str, password: &str) -> String {
-    let (_, after_scheme) = super_url.split_once("://").expect("url has a scheme");
-    let (_, host_and_path) = after_scheme.rsplit_once('@').expect("url has userinfo");
-    let (host_port, _) = host_and_path.split_once('/').expect("url has a path");
-    format!("postgres://{role}:{password}@{host_port}/{DB}")
+    let mut url = url::Url::parse(super_url).expect("test server URL");
+    url.set_username(role).expect("test role");
+    url.set_password(Some(password)).expect("test password");
+    url.set_path(DB);
+    url.into()
 }
 
 async fn connect(url: &str) -> sqlx::PgConnection {
@@ -323,36 +323,23 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .expect("create db");
 
     // --- the REAL substrate, via the real builders --------------------------
-    let mut sys = connect(&swap_db(&super_url, DB)).await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
-         THEN CREATE ROLE wamn_system NOLOGIN NOINHERIT; END IF; END $$")
-            .to_string(),
-    ))
-    .execute(&mut sys)
-    .await
-    .map(drop)
-    .expect("wamn_system role (the schema's owner-grants target)");
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
-         THEN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' \
-           NOSUPERUSER NOCREATEDB NOBYPASSRLS; END IF; END $$")
-            .to_string(),
-    ))
-    .execute(&mut sys)
-    .await
-    .map(drop)
-    .expect("wamn_app role (the minimum + catalog schema's grant target)");
-    sqlx::raw_sql(SYSTEM_SCHEMA)
+    let database_url = swap_db(&super_url, DB);
+    wamn_control_provision::test_database::system_schema(&database_url).await;
+    let mut sys = connect(&database_url).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(sql::ensure_app_acl_role_sql()))
         .execute(&mut sys)
         .await
-        .map(drop)
-        .expect("apply deploy/sql/system-schema.sql");
+        .expect("prepare the application ACL roles");
     sqlx::raw_sql(CATALOG_SCHEMA)
         .execute(&mut sys)
         .await
         .map(drop)
         .expect("apply the complete catalog bootstrap (the package/effective-release store)");
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
+        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut sys)
+        .await
+        .expect("map the native fixture login");
     sqlx::query(sqlx::AssertSqlSafe((upsert_org_sql()).to_string()))
         .bind(&ORG)
         .bind(&"pooled")
@@ -404,13 +391,11 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     .await
     .map(|result| result.rows_affected())
     .expect("project-env row");
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&sql::ensure_schema_sql("app")).to_string(),
-    ))
-    .execute(&mut sys)
-    .await
-    .map(drop)
-    .expect("schema");
+    sqlx::raw_sql("CREATE SCHEMA app")
+        .execute(&mut sys)
+        .await
+        .map(drop)
+        .expect("schema");
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("CREATE TABLE app.widgets (id bigint PRIMARY KEY, val text, big text, note text); \
          CREATE TABLE app.command_record (id bigint PRIMARY KEY, command_bytes bytea NOT NULL); \

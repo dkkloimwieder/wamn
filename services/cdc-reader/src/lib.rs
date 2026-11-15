@@ -381,7 +381,8 @@ async fn open_session(
     // Deliver logical-decoding Message frames (the `wamn.causation` stamp the
     // wamn:postgres plugin emits per run-owned txn — wamn-l5i9.12): off by
     // default, so the reader must opt in for `drain` to see them.
-    .with_messages(true);
+    .with_messages(true)
+    .with_existing_slot_required(true);
     let mut stream = LogicalReplicationStream::new(&url, cfg).await?;
     let identity = *stream.server_identity();
     let history = stream.timeline_history().await?;
@@ -469,18 +470,24 @@ pub async fn run_with_shutdown(
         .find(|(name, _)| name == "sslrootcert")
         .map(|(_, value)| value.into_owned());
     let mut certificate = tempfile::NamedTempFile::new()?;
-    if let Some(ca) = ca.filter(|ca| ca.starts_with("-----BEGIN CERTIFICATE-----")) {
-        certificate.write_all(ca.as_bytes())?;
-        let pairs: Vec<_> = input
-            .query_pairs()
-            .filter(|(name, _)| name != "sslrootcert")
-            .map(|(name, value)| (name.into_owned(), value.into_owned()))
-            .collect();
-        input
-            .query_pairs_mut()
-            .clear()
-            .extend_pairs(pairs)
-            .append_pair("sslrootcert", &certificate.path().to_string_lossy());
+    let ca = match ca {
+        Some(ca) if ca.starts_with("-----BEGIN CERTIFICATE-----") => {
+            certificate.write_all(ca.as_bytes())?;
+            Some(certificate.path().to_string_lossy().into_owned())
+        }
+        Some(ca) => Some(ca.strip_prefix("file: ").unwrap_or(&ca).to_owned()),
+        None => None,
+    };
+    // SQLx serializes certificate files with a prefix and includes its statement
+    // cache setting. The replication client expects libpq connection options.
+    let pairs: Vec<_> = input
+        .query_pairs()
+        .filter(|(name, _)| name != "sslrootcert" && name != "statement-cache-capacity")
+        .map(|(name, value)| (name.into_owned(), value.into_owned()))
+        .collect();
+    input.query_pairs_mut().clear().extend_pairs(pairs);
+    if let Some(ca) = ca {
+        input.query_pairs_mut().append_pair("sslrootcert", &ca);
     }
     args.cdc_url = input.into();
     let token = shutdown.token;

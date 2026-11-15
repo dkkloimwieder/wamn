@@ -1,6 +1,6 @@
 //! Read-only candidate testing under the connection writer's authority.
 
-use sqlx::{Connection as _, Row as _};
+use sqlx::Row as _;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -89,7 +89,11 @@ impl ControlRoutes<'_> {
             let logins = self.logins(&[(project.into(), env.into())])?;
             let mut client = wamn_postgres::connect(&logins[0]).await?;
 
-            let mut transaction = client.begin().await?;
+            let mut transaction = wamn_platform_identity::transaction::read_connection(
+                &mut client,
+                caller.to_string().as_str(),
+            )
+            .await?;
             let published = Value::Object(
                 versions
                     .iter()

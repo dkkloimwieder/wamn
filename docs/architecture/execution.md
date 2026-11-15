@@ -931,6 +931,9 @@ This applies to token fetches, refreshes, candidate health, and authorization co
 The browser's `authorize_url` stays outside this token boundary.
 
 OAuth storage uses `identity.oauth_token` and `identity.oauth_authorization` in the system database.
+A public authorization callback locks its pending state through `registry.lock_oauth_authorization`.
+The function restricts the state to the control login’s org.
+The host binds the principal that created the state before it reads or writes other protected rows.
 Only the host connection role and the control role receive table grants.
 Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
 An envelope key protects that data key.

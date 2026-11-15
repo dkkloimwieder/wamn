@@ -747,6 +747,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
 
 /// Non-secret connection functions available to the control host.
 pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
+    "lock_oauth_authorization(text)",
     "retired_connection_credential(text)",
     "connection_projection(text,text,text)",
     "publish_integration(text,integer,text,jsonb,text,text[],text[])",

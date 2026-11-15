@@ -106,6 +106,10 @@ async fn install(
 }
 
 async fn seed(admin: &mut Client) -> anyhow::Result<()> {
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
+        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut *admin)
+        .await?;
     let first = claims()["sub"]
         .as_str()
         .expect("fixture principal")

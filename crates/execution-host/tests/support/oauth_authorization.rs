@@ -28,7 +28,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600))?;
     }
     let store = Arc::new(wamn_test_infrastructure::credentials::MemoryStore::default());
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let listener = TcpListener::bind((super::connection_test::private_ip()?, 0)).await?;
     let provider_base = format!("http://{}/", listener.local_addr()?);
     let token_url = format!("{provider_base}token");
     let challenge = Arc::new(std::sync::Mutex::new(None::<String>));

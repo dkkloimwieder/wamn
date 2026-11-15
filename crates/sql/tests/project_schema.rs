@@ -214,6 +214,12 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // The status CHECK rejects a bad row.
     writeln!(
         script,
+        "INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,'{}');",
+        wamn_control_provision::PlatformComponent::Provisioning.principal_id()
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(
+        script,
         "DO $$ BEGIN BEGIN\n\
            INSERT INTO platform.\"user\" (id, type, email, status) VALUES ('{U4}','user','x@t1','zombie');\n\
            ASSERT false, 'an unknown user status must be rejected';\n\

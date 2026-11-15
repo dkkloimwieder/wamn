@@ -102,6 +102,11 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
             .await
             .is_err()
     );
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
+        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut project)
+        .await
+        .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("INSERT INTO platform.setting(target_type,target_id,key,value) VALUES \
         ('project','host-project','revocation-seconds','60'), \

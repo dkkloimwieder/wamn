@@ -25,7 +25,7 @@ impl wamn_execution_host::environment_status::StatusSource for HealthStatus {
     }
 }
 
-fn private_ip() -> anyhow::Result<std::net::IpAddr> {
+pub(super) fn private_ip() -> anyhow::Result<std::net::IpAddr> {
     let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
     socket.connect("192.0.2.1:9")?;
     Ok(socket.local_addr()?.ip())

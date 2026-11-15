@@ -35,6 +35,10 @@ pub(super) async fn install(admin: &mut Client, admin_url: &str) -> anyhow::Resu
         .await
         .map(drop)?;
     wamn_environment::provision_system::install_control_store(admin).await?;
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
+        .bind(PlatformComponent::Provisioning.principal_id())
+        .execute(&mut *admin)
+        .await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "BEGIN; SET LOCAL ROLE wamn_system; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{}'::text::uuid,'','fixture','admin:fixture');",
@@ -156,6 +160,10 @@ pub(super) async fn project_database(
     .execute(&mut target)
     .await
     .map(drop)?;
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
+        .bind(PlatformComponent::Provisioning.principal_id())
+        .execute(&mut target)
+        .await?;
     sqlx::query(
         "INSERT INTO platform.\"user\" (id, type, email, display_name) \
              VALUES ($1::text::uuid, 'platform', 'provisioning@example.test', $2)",

@@ -422,10 +422,8 @@ async fn database_session(configuration: String, mut commands: mpsc::UnboundedRe
                             let acquired = sqlx::query_scalar::<_, bool>(
                                 "SELECT pg_try_advisory_lock(hashtextextended($1, 0))")
                                 .bind(&lease.key).fetch_one(&mut client);
-                            let result = tokio::select! {
-                                result = tokio::time::timeout(WAIT, acquired) => result.ok().and_then(Result::ok),
-                                command = commands.recv() => { deferred = command; break; }
-                            };
+                            let result = tokio::time::timeout(WAIT, acquired)
+                                .await.ok().and_then(Result::ok);
                             match result {
                                 Some(true) => lease.set(HELD),
                                 Some(false) => pending.push_back(lease),

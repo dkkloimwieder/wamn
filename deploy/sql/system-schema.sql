@@ -1877,6 +1877,18 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
     SELECT EXISTS (SELECT FROM registry.connection c WHERE c.id=connection AND c.org=registry.control_org())
 $$;
 
+-- The pending state supplies the callback's principal before ordinary row security applies.
+CREATE FUNCTION registry.lock_oauth_authorization(pending_state text)
+RETURNS SETOF identity.oauth_authorization
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT pending.* FROM identity.oauth_authorization pending
+    WHERE pending.state = pending_state
+      AND registry.control_connection(pending.connection_id)
+    FOR UPDATE
+$$;
+ALTER FUNCTION registry.lock_oauth_authorization(text) OWNER TO wamn_system;
+REVOKE ALL ON FUNCTION registry.lock_oauth_authorization(text) FROM PUBLIC;
+
 DO $control_security$
 DECLARE relation_name text; predicate text;
 BEGIN
