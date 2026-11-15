@@ -174,6 +174,7 @@ pub fn render_package_declaration(
         component: declaration.component,
         interface_version: declaration.interface_version,
         operations: declaration.operations,
+        connections: declaration.connections,
     };
     serde_json::to_value(document)
         .map_err(|source| ComponentDeclarationError::parse(package_root, source))
@@ -212,12 +213,7 @@ pub fn declared_platform_packages(
         })?;
         packages.insert(package.to_owned());
     }
-    for connection in declaration
-        .operations
-        .values()
-        .flat_map(|operation| &operation.connections)
-        .filter_map(wamn_catalog::OperationConnection::host)
-    {
+    for connection in &declaration.connections {
         packages.insert(connection.requirement_type.import_package().to_owned());
     }
     Ok(packages.into_iter().collect())

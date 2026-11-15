@@ -1069,8 +1069,7 @@ impl WamnPostgres {
         }
         let declaration = invocation
             .connection(manifest, lookup.store_alias)
-            .and_then(wamn_catalog::OperationConnection::host)
-            .context("operation declares no such connection alias")?;
+            .context("component declares no such connection alias")?;
         anyhow::ensure!(
             facts.project_env_key() == project_env_key,
             "HTTP effect authorization project_env_key {project_env_key:?} disagrees with the connection facts"

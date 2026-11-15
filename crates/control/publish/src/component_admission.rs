@@ -438,7 +438,6 @@ mod tests {
             operations: BTreeMap::from([(
                 operation,
                 AdmittedComponentOperation {
-                    connections: Vec::new(),
                     committed_result_schema: None,
                     registered_operation: None,
                     host_transaction: false,
@@ -549,7 +548,6 @@ mod tests {
             operations: BTreeMap::from([(
                 "wamn:node/handler@0.1.0".to_owned(),
                 AdmittedComponentOperation {
-                    connections: Vec::new(),
                     committed_result_schema: None,
                     registered_operation: registered.map(str::to_owned),
                     host_transaction: false,
@@ -661,6 +659,7 @@ mod tests {
             &component_bytes,
             wamn_engine::component_admission::ComponentAdmissionRequest {
                 declaration: ComponentDeclaration {
+                    connections: Vec::new(),
                     target: ComponentPackageCoordinate {
                         project_env_key: "org-a".to_owned(),
                         package_id: "orders".to_owned(),
@@ -671,7 +670,6 @@ mod tests {
                     operations: BTreeMap::from([(
                         operation.to_owned(),
                         ComponentOperationDeclaration {
-                            connections: Vec::new(),
                             committed_result_schema: None,
                             registered_operation: None,
                             input_ports: Vec::new(),

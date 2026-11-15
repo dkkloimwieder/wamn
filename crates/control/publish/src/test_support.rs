@@ -35,7 +35,6 @@ pub fn closure_component(component: &str, registered_operation: Option<&str>) ->
         operations: BTreeMap::from([(
             operation.to_owned(),
             AdmittedComponentOperation {
-                connections: Vec::new(),
                 committed_result_schema: None,
                 registered_operation: registered_operation.map(str::to_owned),
                 host_transaction: false,

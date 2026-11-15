@@ -5,18 +5,14 @@ use super::{
 use anyhow::Context as _;
 
 pub(crate) fn component_connection_names<'a>(
-    connections: impl Iterator<Item = &'a wamn_catalog::OperationConnection>,
-) -> Vec<String> {
-    connections
-        .filter_map(|connection| match connection {
-            wamn_catalog::OperationConnection::Import(name) => Some(name.clone()),
-            wamn_catalog::OperationConnection::Host(connection) => {
-                connection.store_alias.name().map(str::to_owned)
-            }
-        })
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect()
+    manifest: &'a wamn_compiler::manifest::PackageManifest,
+    component: &str,
+) -> anyhow::Result<&'a [String]> {
+    manifest
+        .components
+        .get(component)
+        .map(|declaration| declaration.connections.as_slice())
+        .with_context(|| format!("package declares no component {component}"))
 }
 
 /// The canonical image manifest bytes of `layers`.

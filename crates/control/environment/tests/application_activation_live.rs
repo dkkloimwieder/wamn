@@ -138,12 +138,6 @@ fn component(
             mode: wamn_catalog::ConnectionMode::Write,
         })
         .collect();
-    descriptor.operations.get_mut("run").unwrap().connections = descriptor
-        .connections
-        .iter()
-        .cloned()
-        .map(Into::into)
-        .collect();
     let admitted = descriptor
         .clone()
         .into_admitted(wamn_catalog::ComponentPackageCoordinate::new(

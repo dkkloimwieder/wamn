@@ -116,7 +116,7 @@ The generator compares those choices with the schema and SQL. It does not replac
 | Parameter/row `name`, `type`, `nullable` | Accessor names and representation. SQL planning does not determine all application names or nullability contracts. Retain. |
 | `connections` | Map each application alias to an integration code and a `read` or `write` mode. PostgreSQL stays outside this map. |
 | `components` keys | Component grouping. Cargo artifact names do not determine operation grouping. |
-| `custom_operations.*.connections` | External connection aliases called by this operation. Generated operations call none. The singular `connection` names the SQL connection. |
+| `components.*.connections` | External connection aliases available to every operation of the component. The singular operation field `connection` names the SQL connection. |
 | `targets` | The target types a package runs on: `cloud` or `local`. The default is `cloud`. Generation refuses a package with models that lists `local`. Retain. |
 | `sequences.*.pattern`, `.callable` | Application numbering choices: the default pattern of a number sequence, and whether the package's commands call it. Generation parses each pattern with the one pattern parser. Retain. |
 | `models.*.fields.*.number`, `.role` | Application choice of what fills a column. `number` names the sequence that numbers the field on insert. `role = "actor"` fills the field from the operation caller. Generated SQL fills both, so a write that supplies the field refuses. Retain. |
@@ -348,7 +348,8 @@ A refusal still rolls back the work and the claim.
 The component reaches that transaction with `wamn_postgres_statements::operation_transaction()` of `wamn:postgres` 0.4.0, and its data access takes the `Transaction`.
 An operation without SQL claims in two steps on a host connection of its own: begin before the call, and finish after it.
 An external-only claim command omits `transaction: explicit_per_input`.
-Keep external calls outside SQL transactions as a development practice. The host does not enforce this practice.
+Keep external calls outside SQL transactions as a development practice. Split SQL work and external calls into separate operations.
+The host does not enforce this practice. Each operation receives the external connections declared by its component.
 A begun claim has a null `result` until it finishes.
 An unfinished claim answers `in-progress` until its age exceeds `MAX_HOST_CALL_DURATION` plus five seconds for clock skew, or 35 seconds in total.
 After that boundary it answers `outcome-unknown`. A late completion can still record its result.

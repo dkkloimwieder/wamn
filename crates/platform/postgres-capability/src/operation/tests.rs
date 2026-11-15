@@ -46,12 +46,12 @@ BTreeSet::from([ServingComponent {
             runtime_schema: None,
             package_id: "base".into(),
             descriptor: { let mut descriptor = ComponentDescriptor::named("entry", "0.1", digest('a')); descriptor.operations = BTreeMap::from([(READ_OPERATION.into(), AdmittedComponentOperation {
-connections: Vec::new(), host_transaction: false, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
+host_transaction: false, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
                 registered_operation: None,
                 committed_result_schema: None,
 
             }), (OPERATION.into(), AdmittedComponentOperation {
-connections: Vec::new(), host_transaction: true, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
+host_transaction: true, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
                 registered_operation: Some(OPERATION.into()),
                 committed_result_schema: None,
             })]); descriptor },

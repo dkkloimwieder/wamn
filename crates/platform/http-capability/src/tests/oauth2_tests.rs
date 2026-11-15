@@ -323,18 +323,6 @@ impl Fixture {
                 mode: wamn_catalog::ConnectionMode::Write,
             })
             .collect();
-        component
-            .descriptor
-            .operations
-            .get_mut(&invocation.operation)
-            .unwrap()
-            .connections = component
-            .descriptor
-            .connections
-            .iter()
-            .cloned()
-            .map(Into::into)
-            .collect();
         if let Some(bytes) = component_bytes {
             let digest = wamn_digest::bytes_sha256(bytes);
             component.descriptor.component_digest = digest.clone();

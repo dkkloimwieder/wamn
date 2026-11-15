@@ -182,7 +182,6 @@ mod tests {
 
     fn operation(op: &str, registered: bool) -> AdmittedComponentOperation {
         AdmittedComponentOperation {
-            connections: Vec::new(),
             committed_result_schema: None,
             registered_operation: registered.then(|| op.to_owned()),
             host_transaction: false,

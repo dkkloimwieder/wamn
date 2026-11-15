@@ -1197,7 +1197,6 @@ mod tests {
                 operations: BTreeMap::from([(
                     operation.into(),
                     crate::AdmittedComponentOperation {
-                        connections: Vec::new(),
                         registered_operation: Some(operation.into()),
                         committed_result_schema: None,
                         host_transaction: false,
@@ -1336,8 +1335,7 @@ mod tests {
                 "{package_id} runs as the composing application"
             );
         }
-        // Naming base changes the application even though both members have
-        // the same number of statement instances.
+        // Naming base changes the composing application.
         let entry = manifest.composed_entry.as_mut().unwrap();
         entry.application = entry
             .members

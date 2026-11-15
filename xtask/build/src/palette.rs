@@ -10,6 +10,8 @@ use std::{
 pub struct PaletteDeclaration {
     pub component: String,
     pub interface_version: String,
+    #[serde(default)]
+    pub connections: Vec<wamn_catalog::ComponentConnection>,
     pub operations: std::collections::BTreeMap<String, wamn_catalog::ComponentOperationDeclaration>,
 }
 
@@ -65,10 +67,8 @@ fn seal(
         })
         .chain(
             declaration
-                .operations
-                .values()
-                .flat_map(|operation| &operation.connections)
-                .filter_map(wamn_catalog::OperationConnection::host)
+                .connections
+                .iter()
                 .map(|connection| connection.requirement_type.import_package().to_owned()),
         )
         .collect();
@@ -81,6 +81,7 @@ fn seal(
                 component: declaration.component,
                 interface_version: declaration.interface_version,
                 operations: declaration.operations,
+                connections: declaration.connections,
             },
             admitted_platform_packages,
             base_digests: std::collections::BTreeSet::new(),
