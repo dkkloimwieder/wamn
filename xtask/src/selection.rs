@@ -641,6 +641,7 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
         env: BTreeMap::new(),
         skipped_missing: AtomicBool::new(false),
         artifacts: BTreeMap::new(),
+        build_errors: BTreeMap::new(),
         deadline,
     };
     let target =
@@ -870,6 +871,7 @@ struct Runner<'a> {
     env: BTreeMap<String, String>,
     skipped_missing: AtomicBool,
     artifacts: BTreeMap<(usize, String, String), cargo_metadata::Artifact>,
+    build_errors: BTreeMap<usize, String>,
     deadline: Instant,
 }
 impl Runner<'_> {
@@ -890,10 +892,9 @@ impl Runner<'_> {
             .replace("{root}", &self.root.display().to_string())
             .replace("{target}", &self.env["CARGO_TARGET_DIR"]);
         if value.contains("{guest-rustflags}") {
-            let executable = std::env::current_exe()?;
             let flags = process::output_before(
                 self.root,
-                executable.to_str().context("xtask executable path")?,
+                "/proc/self/exe",
                 &["guest-rustflags"],
                 self.deadline,
             )
@@ -947,10 +948,9 @@ impl Runner<'_> {
             }
             let mut command = self.command("cargo");
             command.args([
-                "test",
+                "build",
                 "--locked",
                 "--offline",
-                "--no-run",
                 "--keep-going",
                 "--message-format=json-render-diagnostics",
                 "--manifest-path",
@@ -975,6 +975,14 @@ impl Runner<'_> {
                     }
                 })
                 .collect();
+            // Cargo test cannot continue compilation after an error. Build test
+            // harnesses with Cargo build, then execute only the selected artifacts.
+            if selectors
+                .iter()
+                .any(|target| target.starts_with("lib:") || target.starts_with("bin:"))
+            {
+                command.arg("--tests");
+            }
             for target in selectors {
                 add_target(&mut command, target);
             }
@@ -1027,10 +1035,12 @@ impl Runner<'_> {
                 }
             }
             if !output.status.success() {
-                failures.push(format!(
-                    "{} test build: {}",
-                    WORKSPACES[workspace].0, output.status
-                ));
+                let error = format!(
+                    "{} test build: {}\n{}",
+                    WORKSPACES[workspace].0, output.status, output.diagnostics
+                );
+                failures.push(error.clone());
+                self.build_errors.insert(workspace, error);
             }
         }
         Ok(failures)
@@ -1109,8 +1119,13 @@ impl Runner<'_> {
             .await
         }
         .await;
+        let outcome = match &result {
+            Ok(true) => "passed",
+            Ok(false) => "skipped",
+            Err(_) => "failed",
+        };
         println!(
-            "finished target ({:.2}s): {label}",
+            "{outcome} target ({:.2}s): {label}",
             started.elapsed().as_secs_f64()
         );
         (
@@ -1127,15 +1142,6 @@ impl Runner<'_> {
         deadline: Instant,
         label: &str,
     ) -> anyhow::Result<bool> {
-        if selection.only.is_none_or(|suite| suite.tests.is_empty())
-            && !target.cases.is_empty()
-            && !target
-                .cases
-                .iter()
-                .any(|(name, case)| selection.includes(target, name, case))
-        {
-            return Ok(false);
-        }
         if matches!(self.mode, Mode::DryRun) {
             for (name, case) in &target.cases {
                 if selection.includes(target, name, case) {
@@ -1166,7 +1172,15 @@ impl Runner<'_> {
                     && *name == target.target
             })
             .map(|(_, artifact)| artifact)
-            .context("no compiled test executable; see build diagnostics")?;
+            .with_context(|| {
+                format!(
+                    "no compiled test executable: {}",
+                    self.build_errors.get(&target.workspace).map_or(
+                        "build completed without this test executable",
+                        String::as_str,
+                    )
+                )
+            })?;
         let Some(executable) = artifact.executable.as_deref() else {
             anyhow::bail!("test artifact has no executable");
         };

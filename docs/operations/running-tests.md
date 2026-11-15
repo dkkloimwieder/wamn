@@ -70,9 +70,12 @@ The selector runs ignored cases only when it can supply their declared inputs.
 An explicit suite fails when a selected case lacks an input.
 Selected suites own their named cases or filters, so dependency selection runs each case once.
 
-The selector builds all selected test executables together, once per Cargo workspace.
+The selector builds test executables together, once per Cargo workspace, with `cargo build --keep-going`.
+For library and binary tests, it adds `--tests` to build test harnesses.
+It runs only the selected executables.
 It combines their package features and target selectors in that build.
 Cargo keeps compiling independent packages after a build failure. The runner still runs the executables that built.
+Each target without a built executable fails and reports the build error.
 The selector preserves the features of the Cargo build when it runs its test executable.
 
 After preparation and compilation, independent targets run in parallel, up to the number of available CPU cores.
