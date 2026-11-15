@@ -18,6 +18,11 @@
       ],
       "parameters": [
         {
+          "name": "output-schema",
+          "schema": {"type": ["object", "boolean"]},
+          "required": true
+        },
+        {
           "name": "expression",
           "schema": { "type": "string", "minLength": 1 },
           "required": true

@@ -435,3 +435,13 @@ Give each worktree its own Cargo target directory.
 Build the same guest separately in each worktree through the shared component builder.
 Compare the artifact digests with `sha256sum`.
 To inspect the Cargo home mapping, repeat the build with a second `CARGO_HOME` path.
+
+## JSONata workflow output schemas
+
+Put `output-schema` in each JSONata node's `params`.
+Use the target port's JSON Schema, including its item and required-field rules.
+Keep the schema in that parameter. Admission derives the node's output port from it.
+Workflow admission checks at most three input samples with the guest's JSONata engine.
+A refusal names the node, input port and failing sample.
+Fix the expression or its promised schema before authoring the workflow again.
+Target ports also validate values during delivery, because samples cannot cover every input.

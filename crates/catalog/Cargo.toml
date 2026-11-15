@@ -19,6 +19,7 @@ license.workspace = true
 test-util = ["dep:wamn-postgres", "dep:sqlx"]
 
 [dependencies]
+wamn-jsonata.workspace = true
 anyhow.workspace = true
 wamn-scalar.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }

@@ -31,3 +31,54 @@ mod terminal_tests;
 #[cfg(test)]
 #[path = "walk_tests.rs"]
 mod walk_tests;
+
+#[cfg(test)]
+fn components(
+    document: &wamn_catalog::WiringDocument,
+) -> std::collections::BTreeMap<String, wamn_catalog::AdmittedComponent> {
+    use std::collections::BTreeMap;
+    use wamn_catalog::{
+        AdmittedComponent, AdmittedComponentOperation, AdmittedComponentPort,
+        ComponentPackageCoordinate, ComponentSchema,
+    };
+    document
+        .nodes
+        .iter()
+        .map(|(id, node)| {
+            let mut ports = BTreeMap::from([("input".to_owned(), serde_json::json!({}))]);
+            for edge in document.edges.iter().filter(|edge| edge.to == *id) {
+                ports.insert(
+                    edge.to_port.as_deref().unwrap_or("input").to_owned(),
+                    serde_json::json!({}),
+                );
+            }
+            let operation = AdmittedComponentOperation {
+                registered_operation: None,
+                host_transaction: false,
+                committed_result_schema: None,
+                input_ports: ports
+                    .into_iter()
+                    .map(|(name, schema)| AdmittedComponentPort {
+                        name,
+                        schema: ComponentSchema { schema },
+                    })
+                    .collect(),
+                output_ports: Vec::new(),
+                parameters: Vec::new(),
+            };
+            (
+                id.clone(),
+                AdmittedComponent {
+                    target: ComponentPackageCoordinate::new("project", "test", "1.0.0").unwrap(),
+                    component: node.component.clone(),
+                    interface_version: node.interface_version.clone(),
+                    operations: BTreeMap::from([(node.operation.clone(), operation)]),
+                    component_digest: format!("sha256:{}", "a".repeat(64)).parse().unwrap(),
+                    imports: Vec::new(),
+                    imports_fingerprint: format!("sha256:{}", "b".repeat(64)).parse().unwrap(),
+                    effects: Vec::new(),
+                },
+            )
+        })
+        .collect()
+}

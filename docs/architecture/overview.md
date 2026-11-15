@@ -71,6 +71,7 @@ Each library has one concern. Package names remain independent of directory name
 | `crates/record-history` | `wamn-record-history`: reconstruction of a row from its history |
 | `guests/http-route` | HTTP matching and JSON invocation of typed application operations |
 | `guests/blob-put` | Palette node that writes one object |
+| `crates/jsonata` | `wamn-jsonata`: expression evaluation shared by publication and the JSONata guest |
 | `guests/jsonata` | Palette node that evaluates a JSONata expression |
 | `guests/http-page` | Palette node that reads HTTP pages |
 | `guests/http-request` | Palette node that makes an HTTP request |

@@ -99,6 +99,7 @@ wamn-registry = { path = "../crates/registry", version = "0.1.0" }
 wamn-digest = { path = "../crates/digest", version = "0.1.0" }
 wamn-scalar = { path = "../crates/scalar", version = "0.1.0" }
 wamn-catalog = { path = "../crates/catalog", version = "0.1.0" }
+wamn-jsonata = { path = "../crates/jsonata", version = "0.1.0" }
 # Inherited by the four relocated guest-consumed rlibs, pinned exactly as the
 # root workspace pins them so a crate resolves identically from either side.
 url = "2"

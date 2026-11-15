@@ -48,7 +48,8 @@ fn wiring(entry: &str, nodes: Vec<(String, WiringNode)>, edges: Vec<WiringEdge>)
         "format-version": "0.1", "wiring-id": "test", "version": 1,
         "entry": entry, "nodes": nodes.into_iter().collect::<std::collections::BTreeMap<_, _>>(), "edges": edges,
     })).expect("catalog fixture admits");
-    Wiring::compile(document, &std::collections::BTreeMap::new()).expect("graph indexes")
+    let components = super::components(&document);
+    Wiring::compile(document, &components).expect("graph indexes")
 }
 
 fn started(wiring: &Wiring, caller_attached: bool) -> Walk {

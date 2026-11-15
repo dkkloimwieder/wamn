@@ -283,9 +283,30 @@ impl Wiring {
         if walk.status.is_terminal() {
             return Step::Done(walk.status);
         }
-        if walk.current.is_none() {
+        while walk.current.is_none() {
             match walk.frontier.pop_front() {
                 Some(tok) => {
+                    if let Err(detail) =
+                        self.validate_input(&tok.node, tok.input_port.as_deref(), &tok.payload)
+                    {
+                        // A refused delivery is never invoked or retried. Charge the
+                        // hop budget so a cycle of error ports remains bounded.
+                        walk.hops += 1;
+                        if walk.hops >= DEFAULT_HOP_LIMIT {
+                            walk.status = WalkStatus::Failed;
+                            walk.failure = Some(Failure {
+                                node: tok.node,
+                                type_: FailureType::HopLimit,
+                                detail,
+                            });
+                        } else {
+                            self.error_or_fail(walk, &tok.node, detail, FailureType::InvalidInput);
+                        }
+                        if walk.status.is_terminal() {
+                            return Step::Done(walk.status);
+                        }
+                        continue;
+                    }
                     walk.current = Some(Active {
                         node: tok.node,
                         input_port: tok.input_port,
