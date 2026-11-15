@@ -198,7 +198,9 @@ The filter matches only tests in the packages that the change set selects.
 If the change set selects no package, `run` and `dry-run` fail and name the filter.
 The selector lists compiled cases before each binary runs.
 If no case in the selected packages matches, the command fails and names the filter.
-`dry-run` compiles nothing, so it does not list the tests.
+`dry-run` compiles nothing. It reads test declarations and applies the same prerequisite check as `run` after preparation.
+Both modes report each skipped case and name its missing inputs.
+If matching cases are all skipped for missing inputs, `run` reports that reason instead of an unmatched filter.
 
 To run a named ignored test on an unchanged tree, add `--base <revision>` with a revision before a change to its package.
 You can also run the test through Cargo in its package:

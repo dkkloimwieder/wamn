@@ -6770,6 +6770,8 @@ dependencies = [
 name = "wamn-schema-introspection"
 version = "0.1.0"
 dependencies = [
+ "fallible-iterator",
+ "postgres-protocol",
  "serde",
  "serde_json",
  "sqlx",

@@ -131,6 +131,10 @@ Each application has its own Helm release of `deploy/platform/release`.
 The release name is `r-<slug>-<hash>`, derived from `org/env/project/application`.
 The environment chart owns one host for each org and environment, shared by all projects.
 Its project projection names the allowed projects. Each project mounts its own connection configuration and event certificate.
+Each project has its own resource lock. A poisoned project refuses its operations while other projects keep working.
+The shared project index and byte cache survive interrupted insertion or eviction and can safely recover their locks.
+File selection skips failed projects when another project owns the requested route. An unavailable selection returns HTTP 503; an absent route returns 404.
+Residency reports unavailable project state as an error.
 Application releases contain no host Deployment or runtime-operator dependency.
 It adds one WorkloadDeployment for the `http` role.
 The `http` role starts the separate route component with `poolSize` 0. A Service of the same name routes to it.

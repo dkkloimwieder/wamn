@@ -991,7 +991,16 @@ impl WamnPostgres {
                 &principal,
                 AuthorityClass::GuestSql,
             )
-            .await?;
+            .await
+            .map_err(|source| match source.downcast::<PgError>() {
+                Ok(source) => SessionIdentityError {
+                    type_: SessionIdentityErrorType::Infrastructure,
+                    context: "check out the principal grants connection",
+                    source: source.into(),
+                }
+                .into(),
+                Err(source) => source,
+            })?;
         if !grants.present {
             tracing::warn!(
                 project_env_key,

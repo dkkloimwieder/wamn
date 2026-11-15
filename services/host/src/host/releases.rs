@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use super::projects::StatePoisoned;
 use anyhow::Context as _;
 use tokio::sync::{Mutex, watch};
 use wamn_broker::Publisher;
@@ -23,6 +24,9 @@ use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::wasi_logging::TracingLogger;
 
+// Entries are independent cells. Initialization happens outside the map lock,
+// and insertion or eviction cannot invalidate another digest's bytes. Every
+// load still authorizes and verifies the bytes before using the shared cell.
 pub(super) type ManifestCache =
     Arc<std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::OnceCell<Arc<[u8]>>>>>>;
 
@@ -115,23 +119,28 @@ impl Releases {
         self.load(application, digest).await
     }
 
-    pub fn files(&self, host: &str) -> Option<Arc<wamn_execution_host::file_route::FileRoutes>> {
+    pub fn files(
+        &self,
+        host: &str,
+    ) -> anyhow::Result<Option<Arc<wamn_execution_host::file_route::FileRoutes>>> {
         let selections = self
             .selections
             .read()
-            .expect("release selections lock poisoned");
-        let (application, selection) = selections
+            .map_err(|_| StatePoisoned("release selections"))?;
+        let Some((application, selection)) = selections
             .iter()
-            .find(|(_, selection)| selection.host == host)?;
+            .find(|(_, selection)| selection.host == host)
+        else {
+            return Ok(None);
+        };
         let resident = self
             .resident
             .read()
-            .expect("resident releases lock poisoned");
-        Some(Arc::clone(
-            &resident
-                .get(&(application.clone(), selection.digest.clone()))?
-                .files,
-        ))
+            .map_err(|_| StatePoisoned("resident releases"))?;
+        let resident = resident
+            .get(&(application.clone(), selection.digest.clone()))
+            .context("selected file release is not resident")?;
+        Ok(Some(Arc::clone(&resident.files)))
     }
 
     async fn load(&self, application: &str, digest: &str) -> anyhow::Result<Arc<ResidentRelease>> {
@@ -140,21 +149,22 @@ impl Releases {
             let mut loading = self
                 .loading
                 .lock()
-                .expect("release preparations lock poisoned");
+                .map_err(|_| StatePoisoned("release preparations"))?;
             Arc::clone(loading.entry(key.clone()).or_default())
         };
         let _loading = loading.lock().await;
         if let Some(resident) = self
             .resident
             .read()
-            .expect("resident releases lock poisoned")
+            .map_err(|_| StatePoisoned("resident releases"))?
             .get(&key)
         {
             return Ok(Arc::clone(resident));
         }
         let r = &self.resources;
         let cached = {
-            let mut bytes = self.bytes.lock().expect("release bytes lock poisoned");
+            // Only the map is recovered; each cell initializes independently.
+            let mut bytes = self.bytes.lock().unwrap_or_else(|error| error.into_inner());
             Arc::clone(bytes.entry(digest.to_owned()).or_default())
         };
         let authorized = r
@@ -265,7 +275,7 @@ impl Releases {
         });
         self.resident
             .write()
-            .expect("resident releases lock poisoned")
+            .map_err(|_| StatePoisoned("resident releases"))?
             .insert(key, Arc::clone(&resident));
         Ok(resident)
     }
@@ -375,7 +385,7 @@ impl Releases {
             let mut selections = self
                 .selections
                 .write()
-                .expect("release selections lock poisoned");
+                .map_err(|_| StatePoisoned("release selections"))?;
             for (application, selection) in selections.iter_mut() {
                 if !selected.contains_key(application) {
                     selection.release.send_replace(None);
@@ -406,7 +416,7 @@ impl Releases {
         }
         self.resident
             .write()
-            .expect("resident releases lock poisoned")
+            .map_err(|_| StatePoisoned("resident releases"))?
             .retain(|key, resident| {
                 let keep = needed.contains_key(key)
                     || Arc::strong_count(resident) > 1
@@ -418,7 +428,7 @@ impl Releases {
             });
         self.loading
             .lock()
-            .expect("release preparations lock poisoned")
+            .map_err(|_| StatePoisoned("release preparations"))?
             .retain(|key, lock| needed.contains_key(key) || Arc::strong_count(lock) > 1);
         Ok(needed)
     }
@@ -442,7 +452,7 @@ impl Releases {
         > = self
             .resident
             .read()
-            .expect("resident releases lock poisoned")
+            .map_err(|_| StatePoisoned("resident releases"))?
             .keys()
             .map(|key| {
                 (
@@ -459,7 +469,7 @@ impl Releases {
         for (application, selection) in self
             .selections
             .read()
-            .expect("release selections lock poisoned")
+            .map_err(|_| StatePoisoned("release selections"))?
             .iter()
             .filter(|(_, selection)| !selection.digest.is_empty())
         {
@@ -513,7 +523,7 @@ impl Releases {
                     preparing.remove(&key);
                     match result {
                         Ok(resident) => {
-                            let selections = self.selections.read().expect("release selections lock poisoned");
+                            let selections = self.selections.read().map_err(|_| StatePoisoned("release selections"))?;
                             if let Some(selection) = selections.get(&key.0).filter(|selection| selection.digest == key.1) {
                                 selection.release.send_replace(Some(Arc::clone(&resident.operations.release)));
                             }
@@ -535,9 +545,9 @@ impl Releases {
                         Err(error) => tracing::warn!(error = %format_args!("{error:#}"), "release reconciliation failed"),
                     }
                     for key in needed.keys() {
-                        let loaded = self.resident.read().expect("resident releases lock poisoned").get(key).map(Arc::clone);
+                        let loaded = self.resident.read().map_err(|_| StatePoisoned("resident releases"))?.get(key).map(Arc::clone);
                         if let Some(resident) = loaded {
-                            if let Some(selection) = self.selections.read().expect("release selections lock poisoned").get(&key.0).filter(|selection| selection.digest == key.1) {
+                            if let Some(selection) = self.selections.read().map_err(|_| StatePoisoned("release selections"))?.get(&key.0).filter(|selection| selection.digest == key.1) {
                                 selection.release.send_replace(Some(Arc::clone(&resident.operations.release)));
                             }
                         } else if preparing.insert(key.clone()) {
@@ -554,7 +564,7 @@ impl Releases {
             for (key, resident) in self
                 .resident
                 .read()
-                .expect("resident releases lock poisoned")
+                .map_err(|_| StatePoisoned("resident releases"))?
                 .iter()
             {
                 if queue_tasks.insert(key.clone()) {
@@ -595,7 +605,7 @@ impl Releases {
             for (application, selection) in self
                 .selections
                 .read()
-                .expect("release selections lock poisoned")
+                .map_err(|_| StatePoisoned("release selections"))?
                 .iter()
             {
                 if !admission_tasks.insert(application.clone()) {
@@ -643,7 +653,7 @@ impl Releases {
         for resident in self
             .resident
             .read()
-            .expect("resident releases lock poisoned")
+            .map_err(|_| StatePoisoned("resident releases"))?
             .values()
         {
             resident.stop.send_replace(true);

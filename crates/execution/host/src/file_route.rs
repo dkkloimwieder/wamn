@@ -1091,7 +1091,7 @@ pub trait ResidencyReader: Send + Sync {
 /// Serve file requests through the current application selection for their host.
 pub async fn serve_selected(
     listener: tokio::net::TcpListener,
-    select: impl Fn(&str) -> Option<Arc<FileRoutes>> + Send + Sync + 'static,
+    select: impl Fn(&str) -> anyhow::Result<Option<Arc<FileRoutes>>> + Send + Sync + 'static,
     routing: Arc<FlowHttpRouting>,
     residency: Option<Arc<dyn ResidencyReader>>,
 ) -> std::io::Result<()> {
@@ -1111,7 +1111,7 @@ pub async fn serve_selected(
                 let residency = residency.as_ref().map(Arc::clone);
                 connections.spawn(async move {
                     let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
-                        let files = request.headers().get(hyper::header::HOST).and_then(|host| host.to_str().ok()).and_then(|host| select(host));
+                        let files = request.headers().get(hyper::header::HOST).and_then(|host| host.to_str().ok()).map(|host| select(host)).transpose().map(Option::flatten);
                         let routing = Arc::clone(&routing);
                         let residency = residency.as_ref().map(Arc::clone);
                         async move {
@@ -1124,8 +1124,9 @@ pub async fn serve_selected(
                             }
                             let request = request.map(|body| body.map_err(wasmtime_wasi_http::Error::from).boxed_unsync());
                             let response = match files {
-                                Some(files) => files.http(&routing, request).await,
-                                None => None,
+                                Ok(Some(files)) => files.http(&routing, request).await,
+                                Ok(None) => None,
+                                Err(error) => Some(error_response(&failed("selection", error))),
                             }.unwrap_or_else(|| {
                                 let mut response = hyper::Response::new(WasiBody::default());
                                 *response.status_mut() = hyper::StatusCode::NOT_FOUND;
@@ -1474,7 +1475,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let task = tokio::spawn(serve_selected(
             listener,
-            |_| None,
+            |_| Ok(None),
             Arc::new(FlowHttpRouting::new(Arc::default())),
             Some(Arc::new(Reader)),
         ));
@@ -1509,7 +1510,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let task = tokio::spawn(serve_selected(
             listener,
-            move |host| (host == "orders.example.com").then(|| Arc::clone(&files)),
+            move |host| Ok((host == "orders.example.com").then(|| Arc::clone(&files))),
             routing,
             None,
         ));
