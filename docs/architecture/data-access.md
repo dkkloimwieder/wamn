@@ -366,7 +366,7 @@ A new id comes from its insert's `RETURNING`, and nothing mints an id before the
 No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `transaction_ids` of a WMS command.
 The result row stays stored, so each retry returns the original success answer in full.
 The existing `prune-record-history` job deletes all claims older than 30 days, using `created_at`.
-Its expiry statement lives in `crates/control/provision/src/audit_retention.rs` and runs from `crates/control/environment/src/prune_record_history.rs`.
+Its expiry statement lives in `crates/provision/src/audit_retention.rs` and runs from `crates/environment/src/prune_record_history.rs`.
 This retention period exceeds the longest call by a wide margin.
 A result can finish late within that period without a separate claim identifier.
 The write log provides idempotency protection, which prevents repeated work for the same key.
@@ -666,12 +666,12 @@ A 30-day log with no stamp columns:
 }
 ```
 
-The [manifest validation](../../crates/schema/generator/src/manifest.rs) refuses a missing key, a key on an overlay model, and a repeated name.
+The [manifest validation](../../crates/compiler/src/manifest.rs) refuses a missing key, a key on an overlay model, and a repeated name.
 It also refuses an actor without its time: `created_by` requires `created_at`, and `updated_by` requires `updated_at`.
 It refuses every other retention, including `P0D`, weeks, months, years, time parts, fractions, and signs.
 The [retention task](#retention-task) removes expired entries.
 
-[Generation validation](../../crates/schema/generator/src/generate/validation.rs) compares the declaration with the schema.
+[Generation validation](../../crates/compiler/src/generate/validation.rs) compares the declaration with the schema.
 It refuses a selected column that is absent or nullable, and a logged relation with no primary key.
 A selected time column must be `timestamptz`, and a selected actor column must be `uuid`, the type of `platform."user".id`.
 Generation also refuses a column with a reserved name that the declaration does not select.
@@ -803,7 +803,7 @@ It reads none of its columns, constraints, indexes, sequences, triggers, rules, 
 The schema state id therefore stays the same when a relation starts or stops logging.
 
 The generator recognizes the history table of each logged model by its name, and it adds no history table to the catalog.
-It takes the history columns from `HISTORY_COLUMNS` in the [`wamn-record-history`](../../apps/platform/data/record-history/src/lib.rs) crate.
+It takes the history columns from `HISTORY_COLUMNS` in the [`wamn-record-history`](../../crates/record-history/src/lib.rs) crate.
 Authored SQL analysis and the required schema contract use that column list.
 A custom operation cannot require or map a constraint of a history table.
 The compiler writes history DDL as immutable files under `history/`.
@@ -830,7 +830,7 @@ A declared `"P<n>D"` retention is a minimum keep window.
 It promises nothing about removal time, backups, holds, or erasure.
 The retention task removes an expired entry on its next daily run, so its schedule sets the retention precision.
 
-The [`record retention owner`](../../crates/control/environment/src/prune_record_history.rs) runs the task.
+The [`record retention owner`](../../crates/environment/src/prune_record_history.rs) runs the task.
 It uses the project-specific audit retention login. Its shared role is `wamn_audit_retention`.
 It refuses any login that is not an audit retention login for the derived environment project in the connected database.
 The family is not a `wamn_platform` member, because no reader needs the edge.
@@ -859,7 +859,7 @@ It refuses any other grant and a grant on an `unlimited` history table.
 
 ### Integration state
 
-The [integration base](../../apps/platform/wamn_integration/README.md) owns `setting` and `log` in the `wamn_integration` schema.
+The [integration base](../../apps/wamn_integration/README.md) owns `setting` and `log` in the `wamn_integration` schema.
 Its private operations own their SQL and generated application grants.
 An integration composes those operations and keeps domain records in the consumer application.
 The [REST connector](../../apps/rest_connector/README.md) calls the consumer's registered `item.record` command through a pinned workflow dependency.
@@ -904,12 +904,12 @@ The `user_platform_principal_check` constraint pins each name and id pair, and i
 `wamn_app` has only `SELECT` on `platform."user"`.
 The database is the org boundary, so `platform."user"` has no `project_id`, no row policy, and no project key index. Its key is `id`, and `email` is unique in the database.
 
-The [platform principal owner](../../crates/control/provision/src/platform_principals.rs) renders the platform rows of a project database.
+The [platform principal owner](../../crates/provision/src/platform_principals.rs) renders the platform rows of a project database.
 It refuses a platform domain that is not a valid domain name.
 Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps itself.
 The development environment, the verification world, and the Rust identity journey apply that SQL.
 
-The [platform configuration writer](../../crates/identity/platform/src/configuration.rs) writes the platform configuration rows of one environment.
+The [platform configuration writer](../../crates/identity/src/configuration.rs) writes the platform configuration rows of one environment.
 The writer runs on the environment's `wamn_administration` login, in one transaction that binds the caller and the operation, so each row write appends its history entry.
 The writer keeps a row that already holds the given values, and it removes no row.
 
@@ -1080,7 +1080,7 @@ In the system database, the actor is an `identity.principals` id.
 The system identity tables record the actor only. A control route inserts `operation` to its sealed operation id, and no column stores it.
 The system database keeps stamps only and no history table, as its [limits](#limits) state.
 
-The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/control/provision/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
+The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/provision/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
 Initialization creates the `NOLOGIN` owner roles before installing these helpers.
 A separate managed migration login inherits the selected owner role and runs the platform migration sequence.
 `SYSTEM_SCHEMA_SQL` does not carry `record-history-app-grants.sql`.
@@ -1140,7 +1140,7 @@ The compiler uses `pg_query` to read PostgreSQL syntax.
 A whole-row reference reads every column of its relation.
 Release profiles read compiled relation facts and recorded view dependencies.
 
-The [`wamn-record-history`](../../apps/platform/data/record-history/src/lib.rs) crate holds the one fold, and both workspaces register it for guests, the client, and tests.
+The [`wamn-record-history`](../../crates/record-history/src/lib.rs) crate holds the one fold, and both workspaces register it for guests, the client, and tests.
 `state_at` takes every row of every page and returns `Present`, `Absent`, or `Unavailable` at a per-row position.
 It folds backward from the current row, or from the `before` image of a final delete.
 It keeps each column value as raw JSON text and replaces whole values, so numeric scale and every other spelling survive.

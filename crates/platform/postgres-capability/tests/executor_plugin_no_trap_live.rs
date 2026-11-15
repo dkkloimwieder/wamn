@@ -19,12 +19,12 @@
 //! The host functions these plugins install live behind each plugin's PRIVATE
 //! `mod bindings`, so no `Host` trait is nameable from outside the crate — the
 //! only way to reach them is a real guest. A guest compiled from
-//! `apps/platform/fixtures/` would make these tests depend on a `wasm32-wasip2`
+//! `test-support/fixtures/guests/` would make these tests depend on a `wasm32-wasip2`
 //! build of a separate workspace, and a test that silently skips when that
 //! artifact is missing is exactly the vacuous pass this bead exists to prevent.
 //! So each guest is authored as component-model WAT and encoded in-process,
 //! following the one hermetic precedent in the tree (`deadline_acceptance_test` in
-//! `crates/execution/host/src/lib.rs`). No cluster, no daemon, no network, no
+//! `crates/execution-host/src/lib.rs`). No cluster, no daemon, no network, no
 //! prebuilt artifact.
 //!
 //! # How a trap is distinguished from a mapped error
@@ -101,7 +101,7 @@ const RET_ERR_ALIGN4: u32 = RET_OK_ERR + 4;
 ///
 /// The plugins are registered through `Ctx::with_plugins` and the capability is
 /// linked by hand with the plugin module's own `add_to_linker`. That is exactly
-/// what `crates/execution/host/src/lib.rs` does for all four: `with_plugins`
+/// what `crates/execution-host/src/lib.rs` does for all four: `with_plugins`
 /// makes `ActiveCtx::try_get_plugin` resolve, and the hand link installs the
 /// host functions. `HostPlugin::world` conditions only `on_workload_item_bind`, which
 /// the executor never relies on for these four, so this test must not either.

@@ -392,7 +392,7 @@ applications = {
 
 ## Headless interface
 
-Everything has a headless interface. Every live action is a control host route; the UI, `wamn-ctl` and scripts call the same routes, in main's `noun.verb` style (`crates/catalog/model/src/host_route.rs`). Authority moves from org admin to project admin (org admins hold it implicitly).
+Everything has a headless interface. Every live action is a control host route; the UI, `wamn-ctl` and scripts call the same routes, in main's `noun.verb` style (`crates/catalog/src/host_route.rs`). Authority moves from org admin to project admin (org admins hold it implicitly).
 
 On main (fact): five control routes (`external_system.write`, `connection.write`, `project_connection.enable`, `project_connection.disable`, `integration_allow.allow`), all org-admin and write-only; `connection rotate` and `import-credentials` exist only as `wamn-ctl` verbs over SQL functions; `wamn-ctl bind-connection` writes a release-targeted binding; `wamn-ctl integration build` and `publish` handle wasm artifacts.
 

@@ -101,7 +101,7 @@ pub async fn invoke(
         .await?;
     let wiring: wamn_catalog::WiringDocument = serde_json::from_slice(&std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../apps/netsuite/tests/workflows/netsuite_pull.json"),
+            .join("../../apps/netsuite/tests/workflows/netsuite_pull.json"),
     )?)?;
     // The NetSuite pull is an environment workflow
     // (docs/architecture/execution.md#workflows), authored, enabled and

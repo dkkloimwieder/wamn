@@ -43,7 +43,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         "chart output {} exists",
         args.out.display()
     );
-    let chart = root.join("deploy/platform/release");
+    let chart = root.join("deploy/charts/release");
     let version = release_chart::chart_version(&chart)?;
     let ui = args
         .cluster

@@ -33,7 +33,7 @@ CREATE SCHEMA IF NOT EXISTS wamn_run AUTHORIZATION CURRENT_USER;
 
 -- The shared platform group role every non-guest project-base-grants arm below targets
 -- (`wamn-0h0g.22.17`). Created HERE, not assumed, for the reason
--- `crates/control/provision/src/project_key.rs` already gives for its own
+-- `crates/provision/src/project_key.rs` already gives for its own
 -- bootstrap: naming a role that may not exist adds a new precondition to every
 -- applier — seven live acceptance tests plus the production path in `services/ctl` — and
 -- `CREATE POLICY ... TO wamn_platform` fails outright against a cluster without

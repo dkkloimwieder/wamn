@@ -132,10 +132,8 @@ fn build_bundle() -> PathBuf {
         .args(["build", "--locked", "--offline", "--release"])
         .args(["--target", "wasm32-wasip2", "-p", "http-route"]));
     let ingress = repository.join("apps/target/wasm32-wasip2/release/http_route.wasm");
-    let pin = std::fs::read_to_string(
-        repository.join("apps/platform/ingress/http-route/http_route.wasm.sha256"),
-    )
-    .expect("read the http-route pin");
+    let pin = std::fs::read_to_string(repository.join("guests/http-route/http_route.wasm.sha256"))
+        .expect("read the http-route pin");
     let ingress_digest = bytes_sha256(&std::fs::read(&ingress).expect("read the route guest"));
     assert_eq!(
         Some(&ingress_digest["sha256:".len()..]),

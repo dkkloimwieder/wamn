@@ -111,7 +111,7 @@ pub struct WamnPostgres {
 /// refusal is an authorization fact, so the owning boundary translates it to
 /// the `permission-denied` the operation vocabulary already carries. The host
 /// router does that translation in
-/// `crates/execution/host/src/operation/native_policy.rs`.
+/// `crates/execution-host/src/operation/native_policy.rs`.
 ///
 /// It carries the project_env_key, the project database read, and the principal id, so
 /// an operator can find the missing row. It carries no connection material.

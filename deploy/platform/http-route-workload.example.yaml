@@ -30,7 +30,7 @@ spec:
   template:
     spec:
       # [wamn-0h0g.15.15] The host group this schedules onto — the label the
-      # host reports from `--host-group` (deploy/platform/release).
+      # host reports from `--host-group` (deploy/charts/release).
       hostSelector:
         hostgroup: default
       # The environment whose hosts may run this workload, matched against

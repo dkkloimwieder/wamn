@@ -7,12 +7,12 @@ Live database races still require the observations in [database tests](database-
 
 ## Existing boundaries
 
-The [graph tests](../../crates/execution/workflow/src/graph/walk_tests.rs) drive the private workflow walk with supplied outcomes and a controlled clock.
+The [graph tests](../../crates/workflow/src/graph/walk_tests.rs) drive the private workflow walk with supplied outcomes and a controlled clock.
 They cover graph order, ports, retries and the fixed invocation limit.
-The [catalog compatibility tests](../../crates/catalog/model/src/wiring_compatibility.rs) cover parameter and port admission.
+The [catalog compatibility tests](../../crates/catalog/src/wiring_compatibility.rs) cover parameter and port admission.
 These tests establish graph decisions, not guest execution or process recovery.
 
-The [queue invariants](../../crates/execution/run-state/src/invariants.rs) inspect pure queue decisions for leases, lease eligibility, and attempt limits.
+The [queue invariants](../../crates/run-state/src/invariants.rs) inspect pure queue decisions for leases, lease eligibility, and attempt limits.
 They do not establish database admission history, terminal-row immutability, or producer-key uniqueness.
 ## Event traffic
 

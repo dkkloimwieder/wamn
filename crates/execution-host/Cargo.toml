@@ -1,0 +1,103 @@
+[package]
+name = "wamn-execution-host"
+description = "The route path: the operation host, the delivery bridge, and release readiness."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+test-util = []
+
+[dependencies]
+wamn-number-pattern.workspace = true
+sha2.workspace = true
+wamn-events.workspace = true
+wamn-integrations.workspace = true
+moka = { workspace = true, features = ["sync"] }
+oci-client.workspace = true
+wamn-package-artifact.workspace = true
+wamn-postgres.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+wamn-broker = { workspace = true }
+wamn-kubernetes = { workspace = true }
+wamn-scalar.workspace = true
+wamn-digest.workspace = true
+wamn-catalog = { workspace = true }
+wamn-registry = { workspace = true }
+wamn-control-provision = { workspace = true }
+wamn-event-wire = { workspace = true }
+wamn-platform-identity = { workspace = true }
+wamn-identity-client = { workspace = true }
+wamn-identity-protocol = { workspace = true }
+wamn-capability-authority = { workspace = true }
+wamn-connections = { workspace = true }
+wamn-postgres-capability = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-http-capability = { workspace = true }
+wamn-blobstore = { workspace = true }
+wamn-authentication = { workspace = true }
+wamn-engine = { workspace = true }
+wash-runtime = { workspace = true, features = ["washlet", "wasi-logging"] }
+futures-util = { workspace = true }
+anyhow = { workspace = true }
+async-nats = { workspace = true }
+async-trait = { workspace = true }
+opentelemetry = { workspace = true, features = ["metrics", "trace"] }
+tracing-opentelemetry = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "net"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+boon.workspace = true
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true, features = ["tokio"] }
+wasmtime-wasi-http = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
+
+[dev-dependencies]
+wamn-platform-identity = { workspace = true, features = ["test-util"] }
+wamn-identity = { path = "../../services/identity" }
+sqlx = { workspace = true, features = ["macros", "migrate"] }
+chrono = { workspace = true, features = ["std", "clock"] }
+wamn-test-application = { workspace = true }
+wamn-component-artifact = { workspace = true, features = ["test-util"] }
+wamn-workflow = { workspace = true }
+opentelemetry-appender-tracing.workspace = true
+hyper-rustls = { workspace = true, features = ["http1"] }
+wamn-compiler = { workspace = true }
+wamn-package-artifact = { workspace = true }
+object_store = { workspace = true }
+serde_yaml = { workspace = true }
+# `wamn_catalog::fixture_graph` is conditioned behind `test-util`.
+wamn-catalog = { workspace = true, features = ["test-util"] }
+wamn-publish = { workspace = true, features = ["test-util"] }
+wamn-release-control = { workspace = true }
+wamn-environment = { workspace = true, features = ["ops", "test-util"] }
+wamn-test-infrastructure = { workspace = true }
+wamn-capability-authority = { workspace = true, features = ["test-util"] }
+wamn-connections = { workspace = true, features = ["test-util"] }
+wamn-postgres-capability = { workspace = true, features = ["test-util"] }
+wamn-http-capability = { workspace = true, features = ["test-util"] }
+wamn-blobstore = { workspace = true, features = ["test-util"] }
+wamn-authentication = { workspace = true, features = ["test-util"] }
+wamn-identity-protocol = { workspace = true }
+wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-fixture-package = { workspace = true }
+wamn-component-composer = { workspace = true }
+wasmparser = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+ring = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true, features = ["aws_lc_rs"] }
+tokio-rustls = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "net"] }
+opentelemetry_sdk = { workspace = true, features = ["logs", "trace", "testing"] }
+tracing-subscriber = { workspace = true }
+wat = "=1.254.2"
+wamn-test-postgres = { workspace = true }
+
+[lints]
+workspace = true

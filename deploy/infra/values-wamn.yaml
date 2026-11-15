@@ -7,7 +7,7 @@
 #      ONE PER CLUSTER, in `wamn-system`, installed once: the CRDs are
 #      cluster-wide, so every environment in the cluster shares this one
 #      operator version. It carries NO host groups.
-#   2. THE HOST TIER — the release chart (`deploy/platform/release`) with the
+#   2. THE HOST TIER — the release chart (`deploy/charts/release`) with the
 #      install values that environment apply renders, ONE HELM RELEASE PER
 #      ENVIRONMENT. Host images and host groups are per-environment,
 #      per-release values, which is why they live in the `platform/` tier
@@ -21,8 +21,8 @@
 #   # then this environment's release chart through `wamn-ctl env apply`
 #
 # NATS AND CERTIFICATES (docs/plan/alignment.md R1-R3). The platform runs one
-# NATS (deploy/platform/installation), so this release renders none. The
-# cert-manager CA (deploy/platform/installation/templates/certificates.yaml) issues the four Secrets
+# NATS (deploy/charts/installation), so this release renders none. The
+# cert-manager CA (deploy/charts/installation/templates/certificates.yaml) issues the four Secrets
 # that the chart mounts, so the chart generates no certificate. Install the CA
 # and the NATS before this release.
 #
@@ -118,7 +118,7 @@ operator:
 runtime:
   # -- No host groups in the operator release: the host tier is one Helm release
   # per environment (ruling wamn-0h0g.13.50), rendered by
-  # deploy/platform/release. `runtime.image` — the
+  # deploy/charts/release. `runtime.image` — the
   # chart-wide host image, which is the carriage our `wamn-host` image actually
   # rides (chart values.yaml:380-384; `hostGroups[].image` is only an optional
   # per-group override, chart values.yaml:669-674) — moved there with them.

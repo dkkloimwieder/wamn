@@ -268,15 +268,15 @@ The expected value of the test must not come from the code under test.
 
 Exact text remains in the cases below because the bytes or literal are the public value being tested. The linked assertions hold the exact vectors. Do not copy those vectors into another fixture or use these exceptions for diagnostic wording.
 
-- [Record history projection](../../apps/platform/data/record-history/tests/fold.rs), `retained_columns_keep_their_raw_spelling_and_order` and `retained_timestamptz_columns_take_one_spelling_from_either_spelling`: retained JSON tokens keep their spelling and order. This includes `1.50`, `12.3400`, quoted JSON keys, the canonical UTC timestamp and `infinity`. Ordinary JSON response tests inspect fields.
-- [Connection requirement identity](../../crates/catalog/model/src/connection.rs), `the_requirement_hash_bytes_are_pinned`, and [catalog serialization](../../crates/schema/introspection/src/ir.rs), `catalog_retains_view_columns_and_dependencies` and `catalog_without_views_keeps_canonical_bytes`: canonical persisted bytes define identity. [Durable JSON identity](../../crates/platform/digest/src/lib.rs) also preserves numeric spelling, signed zero and canonical key order.
-- [SHA-256 vectors](../../crates/platform/digest/src/lib.rs), [Ed25519 vectors](../../crates/identity/protocol/src/token/tests.rs), [HMAC vectors](../../crates/platform/http-capability/src/authentication.rs) and [release label encoding](../../crates/platform/engine/src/release_manifest.rs): independent encoded vectors define the digest, signature or base32 value. A digest comparison is not a source-file snapshot.
-- Frozen serialized variants, refusal codes, media types, SQLSTATEs, reserved input paths, token prefixes and protocol identifiers remain literal comparisons. Their owners are [SQL values](../../crates/platform/scalar/src/lib.rs), [identity protocols](../../crates/identity/protocol/src), [component contracts](../../crates/catalog/model/src), [host route contracts](../../crates/catalog/model/src/host_route.rs) and the RFC protocols used by the transport. HTTP request lines, authorization schemes, metadata headers, health response tokens and canonical cache keys are wire values. Security allowlists remain independent of the implementation that installs the grants.
-- [TypeScript type spelling](../../crates/schema/generator/src/client_ts.rs), `every_contract_type_has_its_exact_typescript_spelling`: `boolean`, `number`, `Int64`, `string`, `number[]`, `Numeric`, `Timestamptz`, `JsonValue` and `Uuid` name generated language types.
-- [HTML escaping](../../crates/execution/host/src/oauth_callback.rs) and its [HTTP boundary](../../crates/execution/host/tests/support/oauth_authorization.rs): `&lt;script&gt;&quot;&amp;&#39;` and `&lt;script&gt;&amp;&quot;&#39;` encode the supplied attack text. The unescaped text must stay absent.
-- [Generated TypeScript documentation](../../crates/schema/generator/tests/client_ts_behavior.test.ts) compares authored paragraphs with their input declarations. Generated comment headings and formatting are not asserted. Export names derive from the input operations; the public `Feed`, `Collection`, `Write` and `Changes` naming suffixes remain API literals.
+- [Record history projection](../../crates/record-history/tests/fold.rs), `retained_columns_keep_their_raw_spelling_and_order` and `retained_timestamptz_columns_take_one_spelling_from_either_spelling`: retained JSON tokens keep their spelling and order. This includes `1.50`, `12.3400`, quoted JSON keys, the canonical UTC timestamp and `infinity`. Ordinary JSON response tests inspect fields.
+- [Connection requirement identity](../../crates/catalog/src/connection.rs), `the_requirement_hash_bytes_are_pinned`, and [catalog serialization](../../crates/schema-introspection/src/ir.rs), `catalog_retains_view_columns_and_dependencies` and `catalog_without_views_keeps_canonical_bytes`: canonical persisted bytes define identity. [Durable JSON identity](../../crates/digest/src/lib.rs) also preserves numeric spelling, signed zero and canonical key order.
+- [SHA-256 vectors](../../crates/digest/src/lib.rs), [Ed25519 vectors](../../crates/identity-protocol/src/token/tests.rs), [HMAC vectors](../../crates/platform/http-capability/src/authentication.rs) and [release label encoding](../../crates/engine/src/release_manifest.rs): independent encoded vectors define the digest, signature or base32 value. A digest comparison is not a source-file snapshot.
+- Frozen serialized variants, refusal codes, media types, SQLSTATEs, reserved input paths, token prefixes and protocol identifiers remain literal comparisons. Their owners are [SQL values](../../crates/scalar/src/lib.rs), [identity protocols](../../crates/identity-protocol/src), [component contracts](../../crates/catalog/src), [host route contracts](../../crates/catalog/src/host_route.rs) and the RFC protocols used by the transport. HTTP request lines, authorization schemes, metadata headers, health response tokens and canonical cache keys are wire values. Security allowlists remain independent of the implementation that installs the grants.
+- [TypeScript type spelling](../../crates/compiler/src/client_ts.rs), `every_contract_type_has_its_exact_typescript_spelling`: `boolean`, `number`, `Int64`, `string`, `number[]`, `Numeric`, `Timestamptz`, `JsonValue` and `Uuid` name generated language types.
+- [HTML escaping](../../crates/execution-host/src/oauth_callback.rs) and its [HTTP boundary](../../crates/execution-host/tests/support/oauth_authorization.rs): `&lt;script&gt;&quot;&amp;&#39;` and `&lt;script&gt;&amp;&quot;&#39;` encode the supplied attack text. The unescaped text must stay absent.
+- [Generated TypeScript documentation](../../crates/compiler/tests/client_ts_behavior.test.ts) compares authored paragraphs with their input declarations. Generated comment headings and formatting are not asserted. Export names derive from the input operations; the public `Feed`, `Collection`, `Write` and `Changes` naming suffixes remain API literals.
 - [Receiving decimal arithmetic](../../apps/wamn_receiving/web/test/sync.test.tsx): `3.500`, `6.500`, `0.3`, `-0.25` and `15` are decimal values with the required scale, not formatted diagnostics.
-- [Manifest loading](../../crates/platform/engine/src/release_manifest.rs), `an_unsupported_format_refuses_with_the_frozen_literal`: `unsupported-serving-manifest-version` is the serialized refusal that the loader must preserve.
+- [Manifest loading](../../crates/engine/src/release_manifest.rs), `an_unsupported_format_refuses_with_the_frozen_literal`: `unsupported-serving-manifest-version` is the serialized refusal that the loader must preserve.
 - [The log viewer](../../apps/platform_ui/test/environment.test.tsx) must display the supplied log bytes unchanged; its fixture owns those bytes, and the assertions read them from the recorded response.
 - [Descriptor limit observation](../../services/host/tests/native_descriptor_limits.rs): `Max open files` identifies the Linux process limit record. The test parses its two numeric values while the real host runs.
 
@@ -566,7 +566,7 @@ Do not infer execution from the aggregate Cargo pass count.
 | `[IDENTITY-LIVE]` | Runtime `plugins::wamn_postgres::session_identity::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::session_identity::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
-| `[CAPTURE-GAP]` | `crates/control/environment/tests/capture_gap_live.rs`: requires a Kubernetes target, a stamped release chart, PostgreSQL 18 with `wal_level=logical`, and the platform NATS inputs below. It stops and restarts the reader Deployment during recovery |
+| `[CAPTURE-GAP]` | `crates/environment/tests/capture_gap_live.rs`: requires a Kubernetes target, a stamped release chart, PostgreSQL 18 with `wal_level=logical`, and the platform NATS inputs below. It stops and restarts the reader Deployment during recovery |
 
 The source owners declare additional credentials, artifact paths, and selected assertions.
 Do not substitute shared services for missing test inputs.
@@ -580,7 +580,7 @@ The [development loop](development-loop.md) does not provision a private broker.
 
 ### Record history retention test
 
-`crates/control/environment/tests/history_retention_live.rs` tests record retention through the owning library.
+`crates/environment/tests/history_retention_live.rs` tests record retention through the owning library.
 It creates roles and holds the process lock.
 
 ```bash
@@ -591,7 +591,7 @@ The cases assert retained rows, credential refusals and database grants.
 
 ### Run history retention test
 
-`crates/control/environment/tests/prune_terminal_run_history_live.rs` tests terminal run retention through the owning library.
+`crates/environment/tests/prune_terminal_run_history_live.rs` tests terminal run retention through the owning library.
 It creates roles and holds the process lock.
 
 ```bash
@@ -811,7 +811,7 @@ Approval must cover setup, both SQL applies, and cleanup on the disposable platf
 
 #### Focused platform upgrade preparation
 
-DEP4-06 prepares `platform_upgrade_kind` in `crates/control/dev/tests/platform_apply_kind.rs`.
+DEP4-06 prepares `platform_upgrade_kind` in `crates/dev/tests/platform_apply_kind.rs`.
 Its body lives in `support/platform_upgrade.rs` beside the existing application journey.
 The test compiles separately from execution.
 The test stays ignored until its externally prepared cluster, second chart, and owner password are supplied.
@@ -1034,7 +1034,7 @@ The emitted modules import the hand-written runtime by its package name, and the
 The clients of the host routes are build output, and Git does not hold them.
 The generator writes the client of the application host routes, `@wamn/control-client`, to `apps/target/wamn/wamn_control/client-ts`.
 It writes the client of the control routes, `@wamn/control-org-client`, to `apps/target/wamn/wamn_control/control/client-ts`.
-It makes them from the contracts in `crates/catalog/model/src/host_route/contracts` and `host_route/control/contracts`.
+It makes them from the contracts in `crates/catalog/src/host_route/contracts` and `host_route/control/contracts`.
 It copies them into `src/generated/wamn_control` and `src/generated/wamn_control_org` of each package that names them in `package.json` `"wamn": { "clients": [...] }`.
 Every web script that reads the clients writes them first through `cargo xtask host-route-clients`, so you do not need to write them yourself.
 To write them without a web script, run:

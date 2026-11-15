@@ -21,9 +21,9 @@ The chart's default is one NATS for scheduler and data plane, and it supports an
 | Two NATS: the chart's bundled one (ephemeral storage, scheduler only) and wamn's `evt-nats` (durable JetStream) | `deploy/infra/values-wamn.yaml`, `deploy/gcp/nats-jetstream.yaml` | One NATS; scheduler and data URL default to the same server |
 | The host's data-plane URL is ignored; events use `WAMN_EVT_NATS_URL` | `services/host/src/host.rs::HostArgs::data_nats_url`, `crates/platform/runtime/src/plugins/wamn_jetstream.rs` | `--data-nats-url` is the host's NATS for workload messaging |
 | The materializer's `wasmcloud:nats` binding `events` comes from a host flag file | `services/host/src/host.rs::materializer_nats_bindings`, `--materializer-nats-binding-file` | Host group `plugins` entry `wasmcloud-nats` with `bindings`, grants and `secretFrom` |
-| The auth memory bucket sits on the scheduler NATS | `crates/platform/runtime/src/auth_cache.rs`, `crates/identity/platform/src/auth_changes.rs` | No upstream equivalent; it belongs on the data plane |
+| The auth memory bucket sits on the scheduler NATS | `crates/platform/runtime/src/auth_cache.rs`, `crates/identity/src/auth_changes.rs` | No upstream equivalent; it belongs on the data plane |
 | The chart generates its CA (365 days, never renewed) | `deploy/infra/values-wamn.yaml` | `global.certificates.generate: false` plus Secrets by the chart's names |
-| Two auth schemes: scheduler mTLS with three shared users, `evt-nats` password users per (org, project, env) | `deploy/infra/values-wamn.yaml`, `crates/control/provision` | One server, one scheme |
+| Two auth schemes: scheduler mTLS with three shared users, `evt-nats` password users per (org, project, env) | `deploy/infra/values-wamn.yaml`, `crates/provision` | One server, one scheme |
 
 Already on the path: materializer delivery and settlement use native `wasmcloud:nats` JetStream. `wamn:jetstream` holds only host-owned registration (`prepare`, `triggers`, `admit`) and duplicates nothing upstream.
 
@@ -43,7 +43,7 @@ Each ruling names the test that shows it holds.
 | R6 | The materializer's binding is declared in the release chart: host group `plugins` entry `wasmcloud-nats`, binding `events`, grants within R5's target, `workloadConfig: deny`. | `--materializer-nats-binding-file` does not exist; a render test makes sure of every grant is inside its environment's prefix |
 | R7 | The auth memory bucket `wamn-auth` lives on the one NATS: memory storage, the same keys, the same 60 s bound, the same revision-guarded put. The connection memory bucket `wamn-connection` follows the same rules. Identity creates both buckets on start, and creates them again after a NATS restart. Hosts open them with a get. When a bucket is absent, a host caches nothing and reads Postgres, as [execution](../architecture/execution.md) specifies. The control host's user covers every environment of its org. Identity, wamn-ctl and the control host may publish deletes on $KV.wamn-auth.=identity.> and on the environment prefixes of their org. | `auth_cache` tests pass unchanged against the one-NATS fixture |
 | R8 | Everything reaches NATS by the data URL. `WAMN_EVT_NATS_URL`, the `evt-nats` Service and the password authorization file are deleted. | No source or chart names `WAMN_EVT_NATS_URL` or `evt-nats` |
-| R9 | The operator, its CRDs, the release chart's `WorkloadDeployment`s and the subchart host Deployment stay as they are. | `deploy/platform/release/templates/workloads.yaml` keeps its kinds; only `plugins` and NATS values change |
+| R9 | The operator, its CRDs, the release chart's `WorkloadDeployment`s and the subchart host Deployment stay as they are. | `deploy/charts/release/templates/workloads.yaml` keeps its kinds; only `plugins` and NATS values change |
 | R10 | A new or changed environment user reaches the server by an authorization reload, never a restart. A config reloader signals NATS when the authorization Secret changes; the StatefulSet carries no authorization digest annotation. | `platform apply` that adds an environment leaves the NATS pod's start time unchanged, and the operator logs no reconnect |
 
 ## One NATS: changes
@@ -62,7 +62,7 @@ Each ruling names the test that shows it holds.
 - `auth_cache.rs`: watch and put on the one NATS with the environment credential.
 - Fix the `HostArgs::data_nats_url` comment: it is now the event plane.
 
-**Release chart** (`deploy/platform/release`)
+**Release chart** (`deploy/charts/release`)
 
 - Host group `plugins`: the `wasmcloud-nats` entry, binding `events`, grants from the environment, no `servers`, so it inherits the data connection's `tls-*`.
 - `global.certificates.dataCertSecretName`: the environment's Certificate Secret.
@@ -70,9 +70,9 @@ Each ruling names the test that shows it holds.
 
 **Other clients**
 
-- `crates/identity/platform/src/auth_changes.rs`: the writer connects with its client certificate.
+- `crates/identity/src/auth_changes.rs`: the writer connects with its client certificate.
 - `crates/control/lib/src/platform/cdc.rs`, `services/ctl`: the CDC reader and the verbs use the data URL and client certificates.
-- `crates/control/provision` and `crates/control/lib/src/platform/broker.rs`: certificate users with today's permission set, one cert-manager `Certificate` per environment, and a config reloader in place of the StatefulSet digest annotation (R10).
+- `crates/provision` and `crates/control/lib/src/platform/broker.rs`: certificate users with today's permission set, one cert-manager `Certificate` per environment, and a config reloader in place of the StatefulSet digest annotation (R10).
 - `crates/control/lib/src/dev`, `services/ctl/src/dev/up.rs`, test support and the bench script: one NATS container with TLS.
 
 **Deleted**

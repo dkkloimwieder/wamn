@@ -6,7 +6,7 @@ The guest names its requirement and logical input. The host owns endpoints, cred
 
 ## Import admission
 
-The code-owned [capability declaration](../../crates/platform/component-policy/src/lib.rs) defines the closed project import set.
+The code-owned [capability declaration](../../crates/component-policy/src/lib.rs) defines the closed project import set.
 It admits package and version pairs.
 A `wamn:*`, `wasmcloud:*` or `wasi:logging` row names an exact version.
 A `wasi:io`, `wasi:clocks` or `wasi:random` row names the family `0.2`.
@@ -303,7 +303,7 @@ The [components page](components.md#shared-label-renderer) describes its composi
 
 ## Events
 
-PostgreSQL change capture publishes the [event contract](../../crates/events/wire/src/lib.rs).
+PostgreSQL change capture publishes the [event contract](../../crates/event-wire/src/lib.rs).
 The wire owner decodes records and verifies their source identity.
 Records carry `"type": "cdc"` or `"type": "derived"` and use underscore field names.
 Subjects use `evt.<org>.<env>.<project>.<entity>.<op>`.
@@ -388,7 +388,7 @@ It requests 30 days and authenticates the returned token as the expected princip
 It writes the credential atomically to a mode-0600 file.
 There is no database issuance fallback or credential output on stdout.
 
-The [PAT client](../../crates/identity/client/src/lib.rs) requires HTTPS and complete explicit TLS inputs before resource writes.
+The [PAT client](../../crates/identity-client/src/lib.rs) requires HTTPS and complete explicit TLS inputs before resource writes.
 Its base URL cannot contain user information, a query, or a fragment.
 The request permits five seconds and a 4,096-byte response, with no redirect or retry.
 If the connection is lost after issuance, the token can exist without a recoverable raw value.
@@ -406,12 +406,12 @@ Registry, GCS and KMS share that service's token and account email.
 The service serializes token refreshes and stops reusing a token thirty seconds before expiry.
 Each pull builds a new upstream registry client because that client remembers its first credential.
 The server's host is `GCE_METADATA_HOST` when it is set, as Google's client libraries read it, and `metadata.google.internal` otherwise.
-The [reader](../../crates/catalog/package-artifact/src/registry_credentials.rs) owns both accepted forms.
+The [reader](../../crates/package-artifact/src/registry_credentials.rs) owns both accepted forms.
 The artifact crate also owns the shared registry client configuration, trust roots and release artifact transfer.
 Platform endpoint calls share its Hyper client. They use explicit trust, bounded bodies and request deadlines, without proxies or redirects.
 The upstream transports inside `oci-client` and `object_store` stay with those libraries.
 
-The host image also carries [`docker-credential-wamn`](../../crates/platform/component-artifact/src/bin/docker-credential-wamn.rs), a Docker credential helper for wash-runtime's own pulls.
+The host image also carries [`docker-credential-wamn`](../../crates/component-artifact/src/bin/docker-credential-wamn.rs), a Docker credential helper for wash-runtime's own pulls.
 It answers `get` with the same token function, and supports no other command.
 A `config.json` that names it under `credHelpers` holds no credential.
 

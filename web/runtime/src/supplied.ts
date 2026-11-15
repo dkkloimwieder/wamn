@@ -2,7 +2,7 @@
  * The three values a caller writes into an item that the operator never types.
  *
  * The screen plan names the input paths that carry them:
- * `crates/schema/generator/src/client_plan.rs` lists `request_id`,
+ * `crates/compiler/src/client_plan.rs` lists `request_id`,
  * `idempotency_key` and `occurred_at`. A generated component writes the exact
  * path and takes the value from here.
  */
