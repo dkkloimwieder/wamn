@@ -66,6 +66,9 @@ An `input:ID` need selects the named preparation recipe when it has no environme
 An `env:NAME` need selects its output recipe and requires a nonempty variable after preparation.
 A `bin:PROGRAM` need requires an executable on `PATH` or at the given absolute path.
 The selector runs ignored cases only when it can supply their declared inputs.
+KCL-dependent library cases declare `bin:kcl`.
+For a direct run, prepare KCL with `cargo xtask install-kcl`.
+Then run `cargo test -p PACKAGE --lib CASE -- --ignored --exact`.
 An explicit suite fails when a selected case lacks an input.
 Selected suites own their named cases or filters, so dependency selection runs each case once.
 The selector preserves the features of the Cargo build when it runs its test executable.

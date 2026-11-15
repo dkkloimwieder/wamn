@@ -196,6 +196,7 @@ A package that holds both `wamn.k` and an authored `wamn.json` is refused.
 It reads the version, URL and checksum from `mise.toml`.
 Package builds install it when it is absent.
 Set `WAMN_KCL` to use another binary of the pinned version.
+`wamn_compiler::kcl::binary` selects that override first, then the pinned installation, then `kcl` on `PATH`.
 The compiler runs KCL and never installs tools.
 Platform document schemas live with their document types in `crates/control/environment/kcl/`.
 The OpenTofu renderer reads `ProjectDocument` in that same crate.

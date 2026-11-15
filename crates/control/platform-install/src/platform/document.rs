@@ -317,6 +317,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: bin:kcl"]
     fn the_kcl_form_compiles_back_to_the_same_document() {
         let parsed = ClusterDocument::from_json(document().to_string().as_bytes()).unwrap();
         let bytes = compile(&parsed.to_kcl()).expect("the document compiles");
@@ -324,6 +325,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: bin:kcl"]
     fn the_committed_cluster_compiles_to_the_runbook_values() {
         let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/gcp/cluster.k");
         let compiled = ClusterDocument::compile(&file).expect("the committed document compiles");
@@ -331,6 +333,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: bin:kcl"]
     fn the_committed_kind_cluster_compiles_without_gcp_inputs() {
         let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/kind/cluster.k");
         let compiled =
@@ -348,6 +351,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: bin:kcl"]
     fn kcl_and_json_refuse_fields_the_schema_lacks() {
         for pointer in ["", "/buckets", "/route_hosts"] {
             let mut unknown = document();
@@ -359,6 +363,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: bin:kcl"]
     fn kcl_and_json_refuse_bad_values() {
         for (pointer, value) in [
             ("/provider", json!("aws")),
@@ -420,6 +425,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: bin:kcl"]
     fn kind_needs_no_gcp_resources() {
         let mut value = document();
         value["provider"] = json!("kind");

@@ -457,6 +457,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: bin:kcl, bin:helm"]
     fn service_chart_resolution_prefers_own_then_default_then_fresh_supplied() -> anyhow::Result<()>
     {
         let supplied = prepared_chart();

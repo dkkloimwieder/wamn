@@ -2,6 +2,7 @@
 use anyhow::{Context as _, Result, bail};
 use std::{
     fs,
+    os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
@@ -33,7 +34,7 @@ pub(crate) fn compile_package(
 }
 /// Run `kcl` on one file in `directory` against one schema module.
 fn run_kcl(module: &SchemaModule, directory: &Path, file: &Path) -> Result<Vec<u8>> {
-    let kcl = kcl_binary()?;
+    let kcl = binary()?;
     // A private package cache: kcl prints "waiting for package-cache lock..."
     // to stdout while another run holds the shared one.
     let output = Command::new(&kcl)
@@ -61,24 +62,42 @@ fn run_kcl(module: &SchemaModule, directory: &Path, file: &Path) -> Result<Vec<u
     Ok(json.into_bytes())
 }
 
-/// Resolve KCL from the environment or the process search path.
-fn kcl_binary() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os(KCL_ENV) {
-        return Ok(PathBuf::from(path));
-    }
-    let pins: toml::Value = toml::from_str(include_str!("../../../../mise.toml"))?;
-    let version = pins["tools"]["http:kcl"]["version"]
-        .as_str()
-        .context("KCL version is absent")?;
-    let local = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../.tools/kcl")
-        .join(version)
-        .join("kcl");
-    Ok(if local.is_file() {
-        local
+/// Find executable KCL through the override, pinned installation, then PATH.
+///
+/// # Errors
+/// Returns an error if the pin is invalid or the selected command is not executable.
+pub fn binary() -> Result<PathBuf> {
+    let command = if let Some(path) = std::env::var_os(KCL_ENV) {
+        PathBuf::from(path)
     } else {
-        PathBuf::from("kcl")
-    })
+        let pins: toml::Value = toml::from_str(include_str!("../../../../mise.toml"))?;
+        let version = pins["tools"]["http:kcl"]["version"]
+            .as_str()
+            .context("KCL version is absent")?;
+        let local = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../.tools/kcl")
+            .join(version)
+            .join("kcl");
+        if local.is_file() {
+            local
+        } else {
+            PathBuf::from("kcl")
+        }
+    };
+    let executable = |path: &Path| {
+        fs::metadata(path)
+            .is_ok_and(|file| file.is_file() && file.permissions().mode() & 0o111 != 0)
+    };
+    let path = if command.components().count() == 1 && !command.is_absolute() {
+        let search = std::env::var_os("PATH").unwrap_or_default();
+        std::env::split_paths(&search)
+            .map(|directory| directory.join(&command))
+            .find(|path| executable(path))
+    } else {
+        executable(&command).then_some(command)
+    }
+    .context("KCL is unavailable; run cargo xtask install-kcl or set WAMN_KCL")?;
+    std::path::absolute(path).context("resolve the KCL executable path")
 }
 
 /// A schema module and a package cache, in a private directory for one compile.
