@@ -2,7 +2,7 @@
 name = "wamn-postgres-statements"
 version.workspace = true
 edition.workspace = true
-description = "Thin typed binding for content-addressed wamn:postgres statements"
+description = "Typed SQL access in the host operation transaction"
 license = "Apache-2.0"
 
 [dependencies]

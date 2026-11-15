@@ -4,47 +4,20 @@
       (case "int64" s64) (case "float64" f64) (case "text" string) (case "bytes" (list u8))
       (case "numeric" string) (case "timestamptz" string) (case "json" string) (case "uuid" string)))
     (export "sql-value" (type $sql-value (eq $sql-value')))
-    (type $column' (record (field "name" string) (field "type-name" string)))
-    (export "column" (type $column (eq $column')))
-    (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value)))))
-    (export "row-set" (type $row-set (eq $row-set')))
     (type $pg-error' (variant (case "serialization-failure") (case "connection-unavailable")
-      (case "statement-timeout") (case "row-limit-exceeded" u64) (case "unique-violation" string)
+      (case "statement-timeout") (case "unique-violation" string)
       (case "foreign-key-violation" string) (case "check-violation" string)
       (case "exclusion-violation" string) (case "permission-denied")
       (case "query-error" (tuple string string))))
     (export "pg-error" (type $pg-error (eq $pg-error')))))
   (alias export $types "sql-value" (type $sql-value))
-  (alias export $types "column" (type $column))
-  (alias export $types "row-set" (type $row-set))
   (alias export $types "pg-error" (type $pg-error))
   (import "wamn:postgres/statements@0.4.0" (instance $statements
-
-    (type $contract-part' (enum "binds" "columns"))
-    (export "contract-part" (type $contract-part (eq $contract-part')))
-    (type $value-shape' (record (field "count" u32) (field "types" (list string))))
-    (export "value-shape" (type $value-shape (eq $value-shape')))
-    (type $contract-mismatch' (record (field "statement" string) (field "part" $contract-part)
-      (field "expected" $value-shape) (field "observed" $value-shape)))
-    (export "contract-mismatch" (type $contract-mismatch (eq $contract-mismatch')))
-    (type $statement-error' (variant (case "unknown-statement" string)
-      (case "statement-contract-mismatch" $contract-mismatch) (case "postgres" $pg-error)))
-    (export "statement-error" (type $statement-error (eq $statement-error')))
     (export "transaction" (type $transaction (sub resource)))
     (export "operation-transaction" (func async
-      (result (result (own $transaction) (error $statement-error)))))
-    (export "begin" (func async
-      (result (result (own $transaction) (error $statement-error)))))
-    (export "run" (func async (param "statement" string) (param "binds" (list $sql-value))
-      (result (result $row-set (error $statement-error)))))
-    (export "run-stream" (func async (param "statement" string) (param "binds" (list $sql-value))
-      (result (result (tuple (list $column) (stream (list $sql-value))
-        (future (result (error $statement-error)))) (error $statement-error)))))
-    (export "[method]transaction.run" (func async (param "self" (borrow $transaction))
-      (param "statement" string) (param "binds" (list $sql-value))
-      (result (result $row-set (error $statement-error)))))
-    (export "[method]transaction.commit" (func async
-      (param "self" (borrow $transaction)) (result (result (error $statement-error)))))))
+      (result (result (own $transaction) (error $pg-error)))))
+    (export "[method]transaction.query-batch" (func async (param "self" (borrow $transaction))
+      (param "sql" string) (result (result (error $pg-error)))))))
   (alias export $statements "transaction" (type $transaction))
   (import "wamn:flow-http-routing/routing@0.1.0" (instance $routing
     (export "authenticated-caller" (type $caller (sub resource)))))
@@ -71,11 +44,11 @@
   (core module $memory
     (memory (export "memory") 1)
     (data (i32.const 640) "base:widget/get@1.0.0")
-    (data (i32.const 672) "read.sql")
+    (data (i32.const 672) "SELECT value FROM widget WHERE id = 1")
     (data (i32.const 512) "base:widget/update@1.0.0")
     (data (i32.const 544) "key")
     (data (i32.const 560) "\ff\00\80")
-    (data (i32.const 576) "update.sql")
+    (data (i32.const 768) "UPDATE widget SET value = value + 1 WHERE id = 1")
     (data (i32.const 608) "{ \22value\22 : 7 }")
     (global $next (mut i32) (i32.const 1024))
     (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
@@ -90,8 +63,6 @@
     (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $finish-read (canon lower (func $operation "finish-read")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
-  (core func $read (canon lower (func $statements "run")
-    (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $commit (canon lower (func $operation "commit")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $rollback (canon lower (func $operation "rollback")
@@ -100,7 +71,7 @@
     (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $transaction (canon lower (func $statements "operation-transaction")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
-  (core func $run (canon lower (func $statements "[method]transaction.run")
+  (core func $run (canon lower (func $statements "[method]transaction.query-batch")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $return (canon task.return (result bool)))
   (core module $main
@@ -108,21 +79,20 @@
     (import "host" "begin" (func $begin (param i32 i32 i32 i32 i32 i32 i32 i32 i32)))
     (import "host" "authorize" (func $authorize (param i32 i32 i32 i32 i32)))
     (import "host" "finish-read" (func $finish-read (param i32)))
-    (import "host" "read" (func $read (param i32 i32 i32 i32 i32)))
     (import "host" "commit" (func $commit (param i32 i32 i32)))
     (import "host" "rollback" (func $rollback (param i32)))
     (import "host" "wal" (func $wal (param i32)))
     (import "host" "transaction" (func $transaction (param i32)))
-    (import "host" "run" (func $run (param i32 i32 i32 i32 i32 i32)))
+    (import "host" "run" (func $run (param i32 i32 i32 i32)))
     (import "host" "return" (func $return (param i32)))
     (func $begin-call (param $caller i32)
       i32.const 1 local.get $caller i32.const 512 i32.const 24 i32.const 544 i32.const 3
       i32.const 560 i32.const 3 i32.const 64 call $begin
       i32.const 64 i32.load8_u i32.eqz if
-        i32.const 72 i32.load8_u i32.eqz if
+        i32.const 68 i32.load8_u i32.eqz if
           ;; Preserve the host's id before another import overwrites the result.
-          i32.const 256 i32.const 76 i32.load i32.store
-          i32.const 260 i32.const 80 i32.load i32.store
+          i32.const 256 i32.const 72 i32.load i32.store
+          i32.const 260 i32.const 76 i32.load i32.store
         end
       end)
     (func (export "delivery-id") (result i32) i32.const 256)
@@ -131,19 +101,19 @@
     (func $run-statement
       i32.const 128 call $transaction
       i32.const 128 i32.load8_u if unreachable end
-      i32.const 136 i32.load i32.const 576 i32.const 10
-      i32.const 0 i32.const 0 i32.const 192 call $run
+      i32.const 132 i32.load i32.const 768 i32.const 48
+      i32.const 192 call $run
       i32.const 192 i32.load8_u if unreachable end)
     (func $refused (param $tag i32)
       i32.const 64 i32.load8_u i32.const 1 i32.ne if unreachable end
-      i32.const 72 i32.load8_u local.get $tag i32.ne if unreachable end)
+      i32.const 68 i32.load8_u local.get $tag i32.ne if unreachable end)
     (func $wal-call
       (local $ptr i32) (local $end i32) (local $byte i32) (local $slashes i32)
       i32.const 64 call $wal
       i32.const 64 i32.load8_u if unreachable end
-      i32.const 72 i32.load local.set $ptr
-      i32.const 76 i32.load i32.const 3 i32.lt_u if unreachable end
-      local.get $ptr i32.const 76 i32.load i32.add local.set $end
+      i32.const 68 i32.load local.set $ptr
+      i32.const 72 i32.load i32.const 3 i32.lt_u if unreachable end
+      local.get $ptr i32.const 72 i32.load i32.add local.set $end
       loop $next
         local.get $ptr i32.load8_u local.set $byte
         local.get $byte i32.const 47 i32.eq if
@@ -164,25 +134,10 @@
       local.get $mode i32.const 23 i32.eq
       local.get $mode i32.const 24 i32.eq i32.or if
         local.get $caller call $begin-call i32.const 6 call $refused
-        i32.const 80 i32.load8_u
+        i32.const 72 i32.load8_u
         local.get $mode i32.const 23 i32.eq
-        if (result i32) i32.const 1 else i32.const 8 end
+        if (result i32) i32.const 1 else i32.const 7 end
         i32.ne if unreachable end
-        i32.const 1 call $return i32.const 0 return
-      end
-      local.get $mode i32.const 25 i32.eq if
-        i32.const 0 i32.const 0 i32.const 640 i32.const 21 i32.const 64 call $authorize
-        i32.const 64 i32.load8_u if unreachable end
-        ;; A bound read operation cannot run the update statement.
-        i32.const 576 i32.const 10 i32.const 0 i32.const 0
-        i32.const 192 call $read
-        i32.const 192 i32.load8_u i32.const 1 i32.ne if unreachable end
-        i32.const 200 i32.load8_u if unreachable end
-        i32.const 212 i32.load i32.const 10 i32.ne if unreachable end
-        i32.const 208 i32.load i64.load i64.const 0x732e657461647075 i64.ne if unreachable end
-        i32.const 208 i32.load i32.load16_u offset=8 i32.const 0x6c71 i32.ne if unreachable end
-        i32.const 64 call $finish-read
-        i32.const 64 i32.load8_u if unreachable end
         i32.const 1 call $return i32.const 0 return
       end
       local.get $mode i32.const 21 i32.eq if
@@ -216,11 +171,11 @@
         i32.const 1 local.get $caller i32.const 640 i32.const 21 i32.const 64 call $authorize
         i32.const 64 i32.load8_u if unreachable end
         call $commit-call i32.const 4 call $refused
-        i32.const 64 call $wal i32.const 4 call $refused
+        call $wal-call
         i32.const 128 call $transaction
-        i32.const 128 i32.load8_u i32.eqz if unreachable end
-        i32.const 672 i32.const 8 i32.const 0 i32.const 0
-        i32.const 192 call $read
+        i32.const 128 i32.load8_u if unreachable end
+        i32.const 132 i32.load i32.const 672 i32.const 37
+        i32.const 192 call $run
         i32.const 192 i32.load8_u if unreachable end
         i32.const 64 call $finish-read
         i32.const 64 i32.load8_u if unreachable end
@@ -233,7 +188,7 @@
       local.get $mode i32.const 17 i32.eq if
         local.get $caller call $begin-call
         i32.const 64 i32.load8_u if unreachable end
-        i32.const 72 i32.load8_u if unreachable end
+        i32.const 68 i32.load8_u if unreachable end
         call $wal-call
         call $run-statement
         call $wal-call
@@ -249,7 +204,7 @@
       local.get $mode i32.const 14 i32.ge_u if
         local.get $caller call $begin-call
         i32.const 64 i32.load8_u if unreachable end
-        i32.const 72 i32.load8_u if unreachable end
+        i32.const 68 i32.load8_u if unreachable end
         call $run-statement
         i32.const 64 call $rollback
         i32.const 64 i32.load8_u if unreachable end
@@ -259,7 +214,7 @@
           ;; The same key begins new work, not a replay.
           local.get $caller call $begin-call
           i32.const 64 i32.load8_u if unreachable end
-          i32.const 72 i32.load8_u if unreachable end
+          i32.const 68 i32.load8_u if unreachable end
           call $run-statement
           call $commit-call
           i32.const 64 i32.load8_u if unreachable end
@@ -298,18 +253,18 @@
             else
               i32.const 64 i32.load8_u if unreachable end
               local.get $mode i32.const 5 i32.eq if
-                i32.const 72 i32.load8_u i32.const 1 i32.ne if unreachable end
+                i32.const 68 i32.load8_u i32.const 1 i32.ne if unreachable end
                 ;; The stored text keeps the application's whitespace.
-                i32.const 80 i32.load i32.const 15 i32.ne if unreachable end
-                i32.const 76 i32.load i32.load i32.const 0x7622207b i32.ne if unreachable end
+                i32.const 76 i32.load i32.const 15 i32.ne if unreachable end
+                i32.const 72 i32.load i32.load i32.const 0x7622207b i32.ne if unreachable end
                 ;; Finished leaves no open operation: another replay is allowed.
                 local.get $caller call $begin-call
                 i32.const 64 i32.load8_u if unreachable end
-                i32.const 72 i32.load8_u i32.const 1 i32.ne if unreachable end
+                i32.const 68 i32.load8_u i32.const 1 i32.ne if unreachable end
                 ;; A replay cannot commit or run a statement.
                 call $commit-call i32.const 4 call $refused
               else
-                i32.const 72 i32.load8_u if unreachable end
+                i32.const 68 i32.load8_u if unreachable end
                 local.get $mode i32.const 1 i32.eq if
                   call $run-statement
                   local.get $caller call $begin-call i32.const 5 call $refused
@@ -320,7 +275,7 @@
                   i32.const 544 i32.const 110 i32.store8
                   local.get $caller call $begin-call
                   i32.const 64 i32.load8_u if unreachable end
-                  i32.const 72 i32.load8_u if unreachable end
+                  i32.const 68 i32.load8_u if unreachable end
                 end
                 call $run-statement
                 local.get $mode i32.const 2 i32.ne
@@ -332,7 +287,7 @@
                     i32.const 544 i32.const 110 i32.store8
                     local.get $caller call $begin-call
                     i32.const 64 i32.load8_u if unreachable end
-                    i32.const 72 i32.load8_u if unreachable end
+                    i32.const 68 i32.load8_u if unreachable end
                     call $run-statement
                     call $commit-call
                     i32.const 64 i32.load8_u if unreachable end
@@ -352,7 +307,6 @@
       (export "rollback" (func $rollback))
       (export "wal" (func $wal))
       (export "authorize" (func $authorize)) (export "finish-read" (func $finish-read))
-      (export "read" (func $read))
       (export "transaction" (func $transaction)) (export "run" (func $run))
       (export "return" (func $return))))))
   (func (export "delivery-id") (result string)

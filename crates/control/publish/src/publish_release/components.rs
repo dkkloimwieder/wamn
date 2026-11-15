@@ -229,21 +229,6 @@ fn refuse_anonymous_reach(
             ),
         ));
     }
-    if let Some(statement) = operation
-        .statements
-        .values()
-        .find(|statement| statement.transactional)
-    {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::UnauthenticatedWrite,
-            format!(
-                "attachment {attachment_id:?} reaches transactional statement \
-                 {:?} at {site}; set auth-policy modes = [{mode:?}]",
-                statement.name,
-                mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
-            ),
-        ));
-    }
     Ok(())
 }
 

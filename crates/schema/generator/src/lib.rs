@@ -45,7 +45,6 @@ pub mod publication;
 mod rustfmt;
 mod sql;
 mod sql_analysis;
-pub use sql_analysis::admission as declared_sql;
 
 pub use authoring::{
     AUTHORED_MANIFEST, COMPILED_MANIFEST, compile_manifest, is_authored, is_package_root,

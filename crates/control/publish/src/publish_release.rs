@@ -446,11 +446,7 @@ pub fn assemble_release(
                         && package.package_version() == fact.target.package_version),
             "local admission is outside package membership"
         );
-        release_components.insert(
-            fact.clone(),
-            admission.descriptor().connections,
-            admission.statement_instances().clone(),
-        )?;
+        release_components.insert(fact.clone(), admission.descriptor().connections)?;
     }
     let mut published = publish_release_with_package_manifests(
         &request,
@@ -648,9 +644,6 @@ fn seal_release(projected: &ServingManifest) -> Result<PublishedRelease, Publish
 pub struct ReleaseComponents {
     facts: BTreeMap<(String, String), Vec<AdmittedComponent>>,
     connections: BTreeMap<(String, String), Vec<ComponentConnection>>,
-    /// The verified statement instance record of each composed component, by
-    /// component digest.
-    statement_instances: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl ReleaseComponents {
@@ -660,12 +653,7 @@ impl ReleaseComponents {
         &mut self,
         fact: AdmittedComponent,
         connections: Vec<ComponentConnection>,
-        statement_instances: BTreeMap<String, String>,
     ) -> anyhow::Result<()> {
-        if !statement_instances.is_empty() {
-            self.statement_instances
-                .insert(fact.component_digest.clone(), statement_instances);
-        }
         ensure!(
             self.connections
                 .insert(
@@ -686,37 +674,6 @@ impl ReleaseComponents {
             .or_default()
             .push(fact);
         Ok(())
-    }
-
-    /// `serving` with the statement set of each named `statements` import of
-    /// its component: the overlay's from the component's own descriptor, and
-    /// each base member's from that base's admitted descriptor in the release,
-    /// found by the digest that the base dependency pins.
-    fn with_statement_instances(
-        &self,
-        serving: ServingComponent,
-    ) -> Result<ServingComponent, PublishManifestError> {
-        let Some(instances) = self
-            .statement_instances
-            .get(&serving.descriptor.component_digest)
-        else {
-            return Ok(serving);
-        };
-        let component = serving.descriptor.component.clone();
-        serving
-            .with_statement_instances(instances, &|digest| {
-                self.facts
-                    .values()
-                    .flatten()
-                    .find(|fact| fact.component_digest == digest)
-            })
-            .map_err(|error| {
-                PublishManifestError::with_source(
-                    PublishManifestErrorType::Component,
-                    format!("component {component:?} does not bind its statement instances"),
-                    error,
-                )
-            })
     }
 
     /// The declared connections of `fact`.
@@ -801,20 +758,7 @@ fn descriptor_components(
                     package.package_version()
                 )
             })?;
-            crate::component_admission::require_admitted_statements(&facts.component)
-                .with_context(|| {
-                    format!(
-                        "component {:?} of package {}@{} carries refused SQL",
-                        facts.component.component,
-                        package.package_id(),
-                        package.package_version()
-                    )
-                })?;
-            components.insert(
-                facts.component,
-                facts.connections,
-                facts.statement_instances,
-            )?;
+            components.insert(facts.component, facts.connections)?;
         }
     }
     Ok(components)
@@ -897,9 +841,7 @@ mod tests {
             component.target.package_id = "source_fixture".to_owned();
             component.target.project_env_key = request.project_env_key();
             let mut components = ReleaseComponents::default();
-            components
-                .insert(component, Vec::new(), BTreeMap::new())
-                .unwrap();
+            components.insert(component, Vec::new()).unwrap();
             publish_release_with_package_manifests(
                 &request,
                 &components,
@@ -1523,50 +1465,6 @@ mod tests {
         assert!(application_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).is_err());
     }
 
-    #[test]
-    fn composed_schema_uses_base_dependencies_without_copied_models() {
-        let digest = format!("sha256:{}", "a".repeat(64));
-        let mut overlay = dependency_manifest(&digest);
-        overlay.models.clear();
-        overlay.custom_operations.clear();
-        overlay.internal_relations.clear();
-        let mut base = source_manifest();
-        base.package.id = "base".into();
-        base.custom_operations.clear();
-        base.internal_relations.clear();
-        for model in base.models.values_mut() {
-            model.schema = "base_schema".into();
-        }
-        let mut consumer = base.clone();
-        consumer.package.id = "consumer".into();
-        for model in consumer.models.values_mut() {
-            model.schema = "consumer_schema".into();
-        }
-        let mut dependency = overlay.base_dependencies["base"].clone();
-        dependency.package = "consumer".into();
-        dependency.digest = format!("sha256:{}", "b".repeat(64));
-        overlay
-            .base_dependencies
-            .insert("consumer".into(), dependency);
-        let mut descriptor = wamn_catalog::ComponentDescriptor::named(
-            "overlay",
-            "1.0.0",
-            format!("sha256:{}", "c".repeat(64)),
-        );
-        descriptor
-            .statement_instances
-            .insert("sql-0".into(), digest);
-        let components = BTreeSet::from([ServingComponent {
-            package_id: overlay.package.id.clone(),
-            runtime_schema: None,
-            descriptor,
-            statement_instances: BTreeMap::new(),
-        }]);
-        let manifests = BTreeMap::from([("base".into(), base), ("consumer".into(), consumer)]);
-        application_runtime_schema(&overlay, &manifests, &components).unwrap();
-        assert!(application_runtime_schema(&overlay, &BTreeMap::new(), &components).is_err());
-    }
-
     /// The rule is selected by the projected environment marker and by nothing
     /// else. wamn-10yt.38 writes that marker; this pins the mapping so an
     /// operator switch cannot be added without failing here.
@@ -1722,39 +1620,6 @@ mod tests {
         assert_eq!(closure.len(), 2);
         assert!(closure.contains(&base));
         assert!(closure.contains(&overlay));
-    }
-
-    #[test]
-    fn release_projection_preserves_operation_targeted_statement_facts() {
-        let operation = "base:widget/get@1.0.0";
-        let sql = "SELECT row_version FROM widget WHERE id = $1";
-        let path = "generated/sql/widget/get.sql".to_owned();
-        let mut admitted = closure_component("base-component", Some(operation));
-        admitted
-            .operations
-            .get_mut(operation)
-            .expect("fixture has the registered operation")
-            .statements
-            .insert(
-                path.clone(),
-                wamn_catalog::ComponentSqlStatement {
-                    name: "get".to_owned(),
-                    path: "generated/sql/widget/get.sql".to_owned(),
-                    sql: sql.to_owned(),
-                    binds: Vec::new(),
-                    columns: Vec::new(),
-                    relations: Vec::new(),
-                    transactional: false,
-                },
-            );
-
-        let serving = project_serving_component(&admitted, Vec::new())
-            .expect("an admitted component projects to serving facts");
-
-        assert_eq!(
-            serving.descriptor.operations[operation].statement(&path),
-            admitted.operations[operation].statement(&path)
-        );
     }
 }
 

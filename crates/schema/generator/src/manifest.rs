@@ -583,8 +583,7 @@ impl PackageManifest {
     }
 
     /// The local names of the operations whose request element transaction the host
-    /// begins: every generated action that changes records, and every command
-    /// that [begins one](CustomOperationDeclaration::begins_host_transaction).
+    /// begins: generated writes, commands with explicit transactions, and SQL event handlers.
     pub fn host_transaction_operations(&self) -> BTreeSet<String> {
         self.models
             .iter()
@@ -598,7 +597,11 @@ impl PackageManifest {
             .chain(
                 self.custom_operations
                     .iter()
-                    .filter(|(_, operation)| operation.begins_host_transaction())
+                    .filter(|(_, operation)| {
+                        operation.begins_host_transaction()
+                            || (operation.type_ == CustomOperationType::EventHandler
+                                && !operation.statements.is_empty())
+                    })
                     .map(|(name, _)| name.clone()),
             )
             .collect()

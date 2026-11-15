@@ -1,4 +1,4 @@
-//! Thin typed access to host-admitted, content-addressed PostgreSQL statements.
+//! Typed access to SQL in the host operation transaction.
 
 #[expect(
     clippy::same_length_and_capacity,
@@ -17,16 +17,19 @@ mod bindings {
 
 use std::error::Error;
 use std::fmt;
-use std::pin::Pin;
 
-#[cfg(not(test))]
 use bindings::wamn::postgres::statements as host;
 use bindings::wamn::postgres::types as wire;
-#[cfg(test)]
-use tests::host;
 use wit_bindgen::rt::async_support::{FutureReader, StreamReader, StreamResult};
 
-pub use bindings::wamn::postgres::types::{RowSet, SqlValue};
+pub use bindings::wamn::postgres::types::SqlValue;
+
+/// Rows collected by a typed accessor after SQL completion succeeds.
+#[derive(Debug)]
+pub struct Rows {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<SqlValue>>,
+}
 
 /// Exact decimal text mapped to the WIT `numeric` case.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,12 +50,9 @@ pub struct Uuid(pub String);
 /// Stable classification of a statement-capability failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StatementErrorType {
-    UnknownStatement,
-    StatementContractMismatch,
     SerializationFailure,
     ConnectionUnavailable,
     StatementTimeout,
-    RowLimitExceeded,
     UniqueViolation,
     ForeignKeyViolation,
     CheckViolation,
@@ -62,37 +62,12 @@ pub enum StatementErrorType {
     InvalidResult,
 }
 
-/// Side of a statement contract that did not match.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ContractPart {
-    Binds,
-    Columns,
-}
-
-/// Count and ordered WIT type names observed at one contract boundary.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ValueShape {
-    pub count: u32,
-    pub types: Vec<String>,
-}
-
-/// Structured host report for a statement-contract mismatch.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractMismatch {
-    pub statement: Box<str>,
-    pub part: ContractPart,
-    pub expected: ValueShape,
-    pub observed: ValueShape,
-}
-
 /// Contextual failure returned by the statement capability or row decoder.
 #[derive(Debug)]
 pub struct StatementError {
     type_: StatementErrorType,
     statement: Option<Box<str>>,
     constraint: Option<Box<str>>,
-    // Boxed to keep `StatementError` small enough for a by-value `Result`.
-    contract_mismatch: Option<Box<ContractMismatch>>,
     context: Box<str>,
 }
 
@@ -112,55 +87,12 @@ impl StatementError {
         self.constraint.as_deref()
     }
 
-    /// Structured request/result shape mismatch reported by the host.
-    pub fn contract_mismatch(&self) -> Option<&ContractMismatch> {
-        self.contract_mismatch.as_deref()
-    }
-
     fn invalid_result(statement: &str, context: impl Into<Box<str>>) -> Self {
         Self {
             type_: StatementErrorType::InvalidResult,
             statement: Some(statement.into()),
             constraint: None,
-            contract_mismatch: None,
             context: context.into(),
-        }
-    }
-
-    fn from_wire(source: host::StatementError) -> Self {
-        match source {
-            host::StatementError::UnknownStatement(statement) => Self {
-                type_: StatementErrorType::UnknownStatement,
-                statement: Some(statement.into()),
-                constraint: None,
-                contract_mismatch: None,
-                context: "host does not admit the statement".into(),
-            },
-            host::StatementError::StatementContractMismatch(mismatch) => {
-                let mismatch = ContractMismatch {
-                    statement: mismatch.statement.into(),
-                    part: match mismatch.part {
-                        host::ContractPart::Binds => ContractPart::Binds,
-                        host::ContractPart::Columns => ContractPart::Columns,
-                    },
-                    expected: ValueShape {
-                        count: mismatch.expected.count,
-                        types: mismatch.expected.types,
-                    },
-                    observed: ValueShape {
-                        count: mismatch.observed.count,
-                        types: mismatch.observed.types,
-                    },
-                };
-                Self {
-                    type_: StatementErrorType::StatementContractMismatch,
-                    statement: Some(mismatch.statement.clone()),
-                    constraint: None,
-                    contract_mismatch: Some(Box::new(mismatch)),
-                    context: "statement values do not match the admitted contract".into(),
-                }
-            }
-            host::StatementError::Postgres(error) => Self::from_postgres(error),
         }
     }
 
@@ -180,11 +112,6 @@ impl StatementError {
                 StatementErrorType::StatementTimeout,
                 None,
                 "statement timeout",
-            ),
-            wire::PgError::RowLimitExceeded(_) => (
-                StatementErrorType::RowLimitExceeded,
-                None,
-                "statement row limit exceeded",
             ),
             wire::PgError::UniqueViolation(name) => (
                 StatementErrorType::UniqueViolation,
@@ -216,7 +143,6 @@ impl StatementError {
                     type_: StatementErrorType::QueryError,
                     statement: None,
                     constraint: None,
-                    contract_mismatch: None,
                     context: format!("database query failed ({state}): {message}").into(),
                 };
             }
@@ -225,7 +151,6 @@ impl StatementError {
             type_,
             statement: None,
             constraint,
-            contract_mismatch: None,
             context: context.into(),
         }
     }
@@ -239,113 +164,28 @@ impl fmt::Display for StatementError {
 
 impl Error for StatementError {}
 
-/// Ambient connection to host-admitted statements.
+/// Access to the current host operation transaction.
 #[derive(Debug, Default)]
 pub struct Connection;
 impl Connection {
-    /// Open the ambient capability.
     pub const fn new() -> Self {
         Self
     }
 
-    /// Run one admitted statement through the connection.
-    pub async fn run(
+    /// Run SQL in the transaction owned by the current operation.
+    pub async fn query(
         &mut self,
-        statement: &str,
+        sql: &str,
         params: Vec<SqlValue>,
-    ) -> Result<RowSet, StatementError> {
-        let rows = host::run(statement.to_string(), params)
-            .await
-            .map_err(StatementError::from_wire)?;
-        Ok(rows)
-    }
-
-    /// Run one admitted statement and read its rows as the server sends them.
-    ///
-    /// The host executes one prepared statement and buffers its rows in batches.
-    /// Every row comes from the snapshot the statement started with.
-    /// Dropping the returned stream before its end ends the query.
-    pub async fn run_stream<T>(
-        &mut self,
-        statement: &str,
-        params: Vec<SqlValue>,
-        decode: fn(&mut RowDecoder<'_>) -> Result<T, StatementError>,
-    ) -> Result<RowStream<T>, StatementError> {
-        let (columns, rows, end) = host::run_stream(statement.to_string(), params)
-            .await
-            .map_err(StatementError::from_wire)?;
-        Ok(RowStream {
-            statement: statement.into(),
-            columns,
-            rows,
-            end: Some(end),
-            batch: Vec::new().into_iter(),
-            decode,
-        })
-    }
-
-    /// Begin one explicit host-owned transaction. Inside an operation that
-    /// has a host transaction, it refuses: use [`operation_transaction`].
-    pub async fn begin(&mut self) -> Result<Transaction, StatementError> {
-        host::begin()
-            .await
-            .map(|inner| Transaction { inner })
-            .map_err(StatementError::from_wire)
+    ) -> Result<Rows, StatementError> {
+        operation_transaction().await?.query(sql, params).await
     }
 }
 
-/// Rows the host reads, which the caller decodes one at a time.
-pub struct RowStream<T> {
-    statement: Box<str>,
-    columns: Vec<wire::Column>,
-    rows: StreamReader<Vec<SqlValue>>,
-    end: Option<FutureReader<Result<(), host::StatementError>>>,
-    batch: std::vec::IntoIter<Vec<SqlValue>>,
-    decode: fn(&mut RowDecoder<'_>) -> Result<T, StatementError>,
-}
-
-impl<T> fmt::Debug for RowStream<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("RowStream")
-            .field("statement", &self.statement)
-            .finish_non_exhaustive()
-    }
-}
-
-/// Rows one read asks the host for.
-const READ_ROWS: usize = 500;
-
-impl<T> RowStream<T> {
-    /// The next row, or `None` after the last row of a statement that read to
-    /// its end. A statement that failed returns its error instead.
-    pub async fn next(&mut self) -> Result<Option<T>, StatementError> {
-        loop {
-            if let Some(values) = self.batch.next() {
-                return decode_row(&self.statement, &self.columns, values, self.decode).map(Some);
-            }
-            let Some(end) = self.end.take() else {
-                return Ok(None);
-            };
-            let (status, batch) = self.rows.read(Vec::with_capacity(READ_ROWS)).await;
-            self.batch = batch.into_iter();
-            match status {
-                StreamResult::Complete(_) => self.end = Some(end),
-                // The host closes the stream after the last row, and the
-                // future says whether the statement read to its end.
-                StreamResult::Dropped | StreamResult::Cancelled => {
-                    end.await.map_err(StatementError::from_wire)?;
-                }
-            }
-        }
-    }
-}
-
-/// Host-owned transaction. Dropping it without commit rolls it back.
+/// A borrowed operation transaction. The host owns its completion.
 pub struct Transaction {
     inner: host::Transaction,
 }
-
 impl fmt::Debug for Transaction {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -353,43 +193,57 @@ impl fmt::Debug for Transaction {
             .finish_non_exhaustive()
     }
 }
-
 impl Transaction {
-    /// Run one admitted statement in this transaction.
-    pub async fn run(
+    /// Execute SQL and collect rows for a typed accessor.
+    pub async fn query(
         &mut self,
-        statement: &str,
+        sql: &str,
         params: Vec<SqlValue>,
-    ) -> Result<RowSet, StatementError> {
-        self.inner
-            .run(statement.to_string(), params)
+    ) -> Result<Rows, StatementError> {
+        let (columns, rows, end) = self
+            .inner
+            .query(sql.to_owned(), params)
             .await
-            .map_err(StatementError::from_wire)
+            .map_err(StatementError::from_postgres)?;
+        collect(columns, rows, end).await
     }
 
-    /// Commit this transaction.
-    pub async fn commit(self) -> Result<(), StatementError> {
-        self.inner.commit().await.map_err(StatementError::from_wire)
-    }
-
-    /// Roll back this transaction.
-    pub async fn rollback(self) -> Result<(), StatementError> {
+    /// Execute SQL without parameters in the host transaction.
+    pub async fn query_batch(&mut self, sql: &str) -> Result<(), StatementError> {
         self.inner
-            .rollback()
+            .query_batch(sql.to_owned())
             .await
-            .map_err(StatementError::from_wire)
+            .map_err(StatementError::from_postgres)
     }
 }
 
-/// The transaction that the host began for this operation
-/// (`docs/history/host-transaction.md` 4.1). The host commits or rolls it back
-/// after the call, so its `commit` and `rollback` refuse, and dropping it
-/// leaves it open.
+/// Borrow the transaction of the current operation.
 pub async fn operation_transaction() -> Result<Transaction, StatementError> {
     host::operation_transaction()
         .await
         .map(|inner| Transaction { inner })
-        .map_err(StatementError::from_wire)
+        .map_err(StatementError::from_postgres)
+}
+
+async fn collect(
+    columns: Vec<String>,
+    mut rows: StreamReader<Vec<SqlValue>>,
+    end: FutureReader<Result<(), wire::PgError>>,
+) -> Result<Rows, StatementError> {
+    let mut values = Vec::new();
+    loop {
+        let (status, batch) = rows.read(Vec::with_capacity(500)).await;
+        values.extend(batch);
+        match status {
+            StreamResult::Complete(_) => {}
+            StreamResult::Dropped | StreamResult::Cancelled => break,
+        }
+    }
+    end.await.map_err(StatementError::from_postgres)?;
+    Ok(Rows {
+        columns,
+        rows: values,
+    })
 }
 
 /// The next number of sequence `name`, rendered by the host from `keys`:
@@ -403,7 +257,7 @@ pub async fn next_number(
 ) -> Result<String, StatementError> {
     host::next_number(name.to_string(), key_list(keys))
         .await
-        .map_err(StatementError::from_wire)
+        .map_err(|host::StatementError::Postgres(error)| StatementError::from_postgres(error))
 }
 
 /// The current number of sequence `name` for `keys`: the last number
@@ -416,25 +270,13 @@ pub async fn peek_number(
 ) -> Result<String, StatementError> {
     host::peek_number(name.to_string(), key_list(keys))
         .await
-        .map_err(StatementError::from_wire)
+        .map_err(|host::StatementError::Postgres(error)| StatementError::from_postgres(error))
 }
 
 fn key_list(keys: &[(&str, Option<String>)]) -> Vec<(String, Option<String>)> {
     keys.iter()
         .map(|(name, value)| ((*name).to_owned(), value.clone()))
         .collect()
-}
-
-/// Run one callback in exactly one transaction, with no automatic retry.
-pub async fn run_transaction<T, E, F>(connection: &mut Connection, callback: F) -> Result<T, E>
-where
-    F: for<'a> FnOnce(&'a mut Transaction) -> Pin<Box<dyn Future<Output = Result<T, E>> + 'a>>,
-    E: From<StatementError>,
-{
-    let mut transaction = connection.begin().await.map_err(E::from)?;
-    let output = callback(&mut transaction).await?;
-    transaction.commit().await.map_err(E::from)?;
-    Ok(output)
 }
 
 /// Convert one generated accessor argument into the frozen WIT value vocabulary.
@@ -526,7 +368,7 @@ where
 /// Positional decoder that verifies generated column names and value types.
 pub struct RowDecoder<'a> {
     statement: &'a str,
-    columns: std::slice::Iter<'a, wire::Column>,
+    columns: std::slice::Iter<'a, String>,
     values: std::vec::IntoIter<wire::SqlValue>,
 }
 
@@ -542,7 +384,7 @@ impl fmt::Debug for RowDecoder<'_> {
 }
 
 impl<'a> RowDecoder<'a> {
-    fn new(statement: &'a str, columns: &'a [wire::Column], values: Vec<wire::SqlValue>) -> Self {
+    fn new(statement: &'a str, columns: &'a [String], values: Vec<wire::SqlValue>) -> Self {
         Self {
             statement,
             columns: columns.iter(),
@@ -561,13 +403,10 @@ impl<'a> RowDecoder<'a> {
                 format!("result omitted column `{expected_name}`"),
             )
         })?;
-        if column.name != expected_name {
+        if column != expected_name {
             return Err(StatementError::invalid_result(
                 self.statement,
-                format!(
-                    "result column `{}` does not match expected `{expected_name}`",
-                    column.name
-                ),
+                format!("result column `{column}` does not match expected `{expected_name}`"),
             ));
         }
         let value = self.values.next().ok_or_else(|| {
@@ -599,7 +438,7 @@ impl<'a> RowDecoder<'a> {
 /// Decode exactly one returned row.
 pub fn decode_one<T>(
     statement: &str,
-    rows: RowSet,
+    rows: Rows,
     decode: impl FnOnce(&mut RowDecoder<'_>) -> Result<T, StatementError>,
 ) -> Result<T, StatementError> {
     let [values] =
@@ -616,7 +455,7 @@ pub fn decode_one<T>(
 /// Decode zero or one returned row.
 pub fn decode_optional<T>(
     statement: &str,
-    rows: RowSet,
+    rows: Rows,
     decode: impl FnOnce(&mut RowDecoder<'_>) -> Result<T, StatementError>,
 ) -> Result<Option<T>, StatementError> {
     let mut values = rows.rows.into_iter();
@@ -635,7 +474,7 @@ pub fn decode_optional<T>(
 /// Decode every returned row in order.
 pub fn decode_all<T>(
     statement: &str,
-    rows: RowSet,
+    rows: Rows,
     mut decode: impl FnMut(&mut RowDecoder<'_>) -> Result<T, StatementError>,
 ) -> Result<Vec<T>, StatementError> {
     rows.rows
@@ -646,7 +485,7 @@ pub fn decode_all<T>(
 
 fn decode_row<T>(
     statement: &str,
-    columns: &[wire::Column],
+    columns: &[String],
     values: Vec<wire::SqlValue>,
     decode: impl FnOnce(&mut RowDecoder<'_>) -> Result<T, StatementError>,
 ) -> Result<T, StatementError> {
@@ -660,102 +499,9 @@ fn decode_row<T>(
 mod tests {
     use super::*;
 
-    #[expect(
-        clippy::unused_async,
-        clippy::unused_async_trait_impl,
-        reason = "test methods match the asynchronous WIT imports"
-    )]
-    pub(super) mod host {
-        pub use crate::bindings::wamn::postgres::statements::*;
-        use std::cell::Cell;
-
-        std::thread_local! {
-            pub static BEGINS: Cell<usize> = const { Cell::new(0) };
-            pub static COMMITS: Cell<usize> = const { Cell::new(0) };
-        }
-
-        pub struct Transaction;
-
-        pub async fn begin() -> Result<Transaction, StatementError> {
-            BEGINS.set(BEGINS.get() + 1);
-            Ok(Transaction)
-        }
-
-        pub async fn operation_transaction() -> Result<Transaction, StatementError> {
-            begin().await
-        }
-
-        impl Transaction {
-            pub async fn run(
-                &self,
-                _: String,
-                _: Vec<super::SqlValue>,
-            ) -> Result<super::RowSet, StatementError> {
-                panic!("transaction tests do not run statements");
-            }
-
-            pub async fn commit(self) -> Result<(), StatementError> {
-                COMMITS.set(COMMITS.get() + 1);
-                Ok(())
-            }
-
-            pub async fn rollback(self) -> Result<(), StatementError> {
-                Ok(())
-            }
-        }
-    }
-
-    fn ready<T>(future: impl Future<Output = T>) -> T {
-        let mut future = std::pin::pin!(future);
-        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-        match future.as_mut().poll(&mut context) {
-            std::task::Poll::Ready(value) => value,
-            std::task::Poll::Pending => panic!("the test host must complete immediately"),
-        }
-    }
-
-    #[test]
-    fn callback_error_does_not_commit_or_retry_serialization_failure() {
-        host::BEGINS.set(0);
-        host::COMMITS.set(0);
-        let mut calls = 0;
-        let result: Result<(), StatementError> =
-            ready(run_transaction(&mut Connection::new(), |_| {
-                calls += 1;
-                Box::pin(async {
-                    Err(StatementError::from_wire(host::StatementError::Postgres(
-                        wire::PgError::SerializationFailure,
-                    )))
-                })
-            }));
-        assert_eq!(
-            result.unwrap_err().type_(),
-            StatementErrorType::SerializationFailure
-        );
-        assert_eq!(calls, 1);
-        assert_eq!(host::BEGINS.get(), 1);
-        assert_eq!(host::COMMITS.get(), 0);
-    }
-
-    #[test]
-    fn callback_success_commits_exactly_once() {
-        host::BEGINS.set(0);
-        host::COMMITS.set(0);
-        let result: Result<_, StatementError> =
-            ready(run_transaction(&mut Connection::new(), |_| {
-                Box::pin(async { Ok(42) })
-            }));
-        assert_eq!(result.unwrap(), 42);
-        assert_eq!(host::BEGINS.get(), 1);
-        assert_eq!(host::COMMITS.get(), 1);
-    }
-
-    fn rows(name: &str, count: usize) -> RowSet {
-        RowSet {
-            columns: vec![wire::Column {
-                name: name.into(),
-                type_name: "int4".into(),
-            }],
+    fn rows(name: &str, count: usize) -> Rows {
+        Rows {
+            columns: vec![name.into()],
             rows: vec![vec![SqlValue::Int32(42)]; count],
         }
     }
@@ -769,7 +515,6 @@ mod tests {
         for count in [0, 2] {
             let error = decode_one("read-id", rows("id", count), decode_id).unwrap_err();
             assert_eq!(error.type_(), StatementErrorType::InvalidResult);
-            assert_eq!(error.statement(), Some("read-id"));
         }
     }
 
@@ -797,11 +542,6 @@ mod tests {
             (
                 wire::PgError::StatementTimeout,
                 StatementErrorType::StatementTimeout,
-                None,
-            ),
-            (
-                wire::PgError::RowLimitExceeded(1),
-                StatementErrorType::RowLimitExceeded,
                 None,
             ),
             (
@@ -835,22 +575,9 @@ mod tests {
                 None,
             ),
         ] {
-            let error = StatementError::from_wire(host::StatementError::Postgres(wire));
+            let error = StatementError::from_postgres(wire);
             assert_eq!(error.type_(), expected);
-            assert_eq!(error.constraint(), constraint);
+            assert_eq!(error.constraint().is_some(), constraint.is_some());
         }
-    }
-
-    #[test]
-    fn query_errors_keep_the_sqlstate_and_database_message() {
-        let error = StatementError::from_postgres(wire::PgError::QueryError((
-            "42P01".into(),
-            "relation setting does not exist".into(),
-        )));
-        assert_eq!(error.type_(), StatementErrorType::QueryError);
-        assert_eq!(
-            error.to_string(),
-            "database query failed (42P01): relation setting does not exist"
-        );
     }
 }

@@ -50,13 +50,6 @@ use std::collections::BTreeSet;
 /// (docs/architecture/components.md#grouping-and-publication).
 pub const STATEMENTS_INTERFACE: &str = "wamn:postgres/statements@0.4.0";
 
-/// The custom section of a composed component that maps each named
-/// statements import to the digest of the member it was composed for.
-///
-/// Its payload is a JSON object from import name to member digest
-/// (`sha256:<hex>`). The composer writes it; admission and the host read it.
-pub const STATEMENT_INSTANCES_SECTION: &str = "wamn:statement-instances";
-
 /// The interface instance type of one component import, which policy admits.
 ///
 /// An import named for its interface (`wamn:postgres/statements@0.4.0`) is an

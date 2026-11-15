@@ -9,7 +9,7 @@ use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component, Linker};
 
 use crate::{
-    ClassCredentials, PgError, RowSet, SqlValue, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
+    ClassCredentials, PgError, SqlValue, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
 };
 
 #[sqlx::test(migrations = false)]
@@ -35,7 +35,6 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
             platform_pool_max_size: 1,
             wait_timeout_ms: 2000,
             statement_timeout_ms: 5000,
-            row_limit: 10,
         })
         .expect("Postgres capability"),
     );
@@ -66,19 +65,21 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
         .await
         .expect("application guest links");
     let query = instance
-        .get_typed_func::<(String, Vec<SqlValue>), (Result<RowSet, PgError>,)>(&mut store, "query")
+        .get_typed_func::<(String, Vec<SqlValue>), (QueryResponse,)>(&mut store, "query")
         .expect("guest query export");
-    let (rows,) = store.run_concurrent(async |accessor| query.call_concurrent(accessor, (
-        "SELECT $1::integer, current_user = $2 AND pg_has_role(current_user, 'wamn_query', 'MEMBER') AND NOT pg_has_role(current_user, 'wamn_app', 'MEMBER')".into(),
-        vec![SqlValue::Int32(17), SqlValue::Text(query_login)],
-    )).await).await.unwrap().unwrap();
-    let rows = rows.expect("application reads through the query login");
+    let (_, rows) = store.run_concurrent(async |accessor| {
+        let (response,) = query.call_concurrent(accessor, (
+            "SELECT $1::integer, current_user = $2 AND pg_has_role(current_user, 'wamn_query', 'MEMBER') AND NOT pg_has_role(current_user, 'wamn_app', 'MEMBER')".into(),
+            vec![SqlValue::Int32(17), SqlValue::Text(query_login)],
+        )).await?;
+        collect(accessor, response).await
+    }).await.unwrap().unwrap().expect("application reads through the query login");
     assert!(
-        matches!(rows.rows.as_slice(), [row] if matches!(row.as_slice(), [SqlValue::Int32(17), SqlValue::Boolean(true)]))
+        matches!(rows.as_slice(), [row] if matches!(row.as_slice(), [SqlValue::Int32(17), SqlValue::Boolean(true)]))
     );
-    let (write,) = store
+    let write = store
         .run_concurrent(async |accessor| {
-            query
+            let (response,) = query
                 .call_concurrent(
                     accessor,
                     (
@@ -86,7 +87,8 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
                         Vec::new(),
                     ),
                 )
-                .await
+                .await?;
+            collect(accessor, response).await
         })
         .await
         .unwrap()
@@ -95,6 +97,91 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
         matches!(write, Err(PgError::PermissionDenied)),
         "database grants refuse the sequence write: {write:?}"
     );
+}
+
+type QueryResponse = Result<
+    (
+        Vec<String>,
+        wash_runtime::wasmtime::component::StreamReader<Vec<SqlValue>>,
+        wash_runtime::wasmtime::component::FutureReader<Result<(), PgError>>,
+    ),
+    PgError,
+>;
+
+async fn collect(
+    accessor: &wash_runtime::wasmtime::component::Accessor<SharedCtx>,
+    response: QueryResponse,
+) -> wash_runtime::wasmtime::Result<Result<(Vec<String>, Vec<Vec<SqlValue>>), PgError>> {
+    let (columns, rows, end) = match response {
+        Ok(response) => response,
+        Err(error) => return Ok(Err(error)),
+    };
+    let (done, received) = tokio::sync::oneshot::channel();
+    let (closed, completion) = tokio::sync::oneshot::channel();
+    accessor.with(|mut access| {
+        rows.pipe(
+            &mut access,
+            Rows {
+                values: Vec::new(),
+                done: Some(done),
+            },
+        )?;
+        end.pipe(&mut access, Completion(Some(closed)))
+    })?;
+    let rows = received.await?;
+    Ok(completion.await?.map(|()| (columns, rows)))
+}
+
+struct Rows {
+    values: Vec<Vec<SqlValue>>,
+    done: Option<tokio::sync::oneshot::Sender<Vec<Vec<SqlValue>>>>,
+}
+impl Drop for Rows {
+    fn drop(&mut self) {
+        if let Some(done) = self.done.take() {
+            let _ = done.send(std::mem::take(&mut self.values));
+        }
+    }
+}
+impl<D> wash_runtime::wasmtime::component::StreamConsumer<D> for Rows {
+    type Item = Vec<SqlValue>;
+    fn poll_consume(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        mut store: wash_runtime::wasmtime::StoreContextMut<D>,
+        mut source: wash_runtime::wasmtime::component::Source<Self::Item>,
+        finish: bool,
+    ) -> std::task::Poll<
+        wash_runtime::wasmtime::Result<wash_runtime::wasmtime::component::StreamResult>,
+    > {
+        let count = source.remaining(&mut store);
+        let this = self.get_mut();
+        this.values.reserve(count);
+        source.read(&mut store, &mut this.values)?;
+        std::task::Poll::Ready(Ok(if count == 0 && finish {
+            wash_runtime::wasmtime::component::StreamResult::Cancelled
+        } else {
+            wash_runtime::wasmtime::component::StreamResult::Completed
+        }))
+    }
+}
+struct Completion(Option<tokio::sync::oneshot::Sender<Result<(), PgError>>>);
+impl<D> wash_runtime::wasmtime::component::FutureConsumer<D> for Completion {
+    type Item = Result<(), PgError>;
+    fn poll_consume(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        store: wash_runtime::wasmtime::StoreContextMut<D>,
+        mut source: wash_runtime::wasmtime::component::Source<Self::Item>,
+        _: bool,
+    ) -> std::task::Poll<wash_runtime::wasmtime::Result<()>> {
+        let mut value = None;
+        source.read(store, &mut value)?;
+        if let Some(done) = self.get_mut().0.take() {
+            let _ = done.send(value.unwrap_or(Err(PgError::ConnectionUnavailable)));
+        }
+        std::task::Poll::Ready(Ok(()))
+    }
 }
 
 const QUERY_GUEST: &str = r#"(component
@@ -112,15 +199,10 @@ const QUERY_GUEST: &str = r#"(component
       (case "json" string)
       (case "uuid" string)))
     (export "sql-value" (type $sql-value (eq $sql-value')))
-    (type $column' (record (field "name" string) (field "type-name" string)))
-    (export "column" (type $column (eq $column')))
-    (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value)))))
-    (export "row-set" (type $row-set (eq $row-set')))
     (type $pg-error' (variant
       (case "serialization-failure")
       (case "connection-unavailable")
       (case "statement-timeout")
-      (case "row-limit-exceeded" u64)
       (case "unique-violation" string)
       (case "foreign-key-violation" string)
       (case "check-violation" string)
@@ -129,16 +211,14 @@ const QUERY_GUEST: &str = r#"(component
       (case "query-error" (tuple string string))))
     (export "pg-error" (type $pg-error (eq $pg-error')))))
   (alias export $types "sql-value" (type $sql-value))
-  (alias export $types "row-set" (type $row-set))
   (alias export $types "pg-error" (type $pg-error))
   (import "wamn:postgres/client@0.4.0" (instance $client
     (export "sql-value" (type (eq $sql-value)))
     (export "pg-error" (type (eq $pg-error)))
-    (export "row-set" (type (eq $row-set)))
     (export "query" (func async
       (param "sql" string)
       (param "params" (list $sql-value))
-      (result (result $row-set (error $pg-error)))))))
+      (result (result (tuple (list string) (stream (list $sql-value)) (future (result (error $pg-error)))) (error $pg-error)))))))
   (core module $memory
     (memory (export "memory") 1)
     (global $next (mut i32) (i32.const 1024))
@@ -150,32 +230,24 @@ const QUERY_GUEST: &str = r#"(component
   (core instance $memory (instantiate $memory))
   (core func $query (canon lower (func $client "query")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
-  (core func $return (canon task.return (result (result $row-set (error $pg-error)))
+  (core func $return (canon task.return (result (result (tuple (list string) (stream (list $sql-value)) (future (result (error $pg-error)))) (error $pg-error)))
     (memory $memory "memory")))
   (core module $main
     (import "memory" "memory" (memory 1))
     (import "host" "query" (func $query (param i32 i32 i32 i32 i32)))
-    (import "host" "return" (func $return (param i32 i32 i64 i32 i32 i32)))
+    (import "host" "return" (func $return (param i32 i32 i32 i32 i32 i32)))
     (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
     (func (export "query") (param $sql i32) (param $len i32) (param $params i32) (param $count i32) (result i32)
       local.get $sql local.get $len local.get $params local.get $count
       i32.const 512 call $query
-      ;; Lift the canonical result from memory into task.return's flat values.
-      i32.const 512 i32.load8_u if
-        i32.const 1 i32.const 520 i32.load8_u
-        i32.const 520 i32.load8_u i32.const 3 i32.eq if (result i64)
-          i32.const 528 i64.load
-        else i32.const 528 i32.load i64.extend_i32_u end
-        i32.const 532 i32.load i32.const 536 i32.load i32.const 540 i32.load
-        call $return
-      else
-        i32.const 0 i32.const 520 i32.load i32.const 524 i32.load i64.extend_i32_u
-        i32.const 528 i32.load i32.const 532 i32.load i32.const 0 call $return
-      end i32.const 0))
+      i32.const 512 i32.load8_u i32.const 516 i32.load
+      i32.const 520 i32.load i32.const 524 i32.load
+      i32.const 528 i32.load i32.const 532 i32.load call $return
+      i32.const 0))
   (core instance $main (instantiate $main (with "memory" (instance $memory))
     (with "host" (instance (export "query" (func $query)) (export "return" (func $return))))))
   (func (export "query") async (param "sql" string) (param "params" (list $sql-value))
-    (result (result $row-set (error $pg-error)))
+    (result (result (tuple (list string) (stream (list $sql-value)) (future (result (error $pg-error)))) (error $pg-error)))
     (canon lift (core func $main "query") (memory $memory "memory")
       (realloc (func $memory "realloc")) async (callback (func $main "callback"))))
 )"#;

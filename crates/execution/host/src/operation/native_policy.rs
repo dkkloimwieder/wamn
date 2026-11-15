@@ -1,6 +1,6 @@
 //! Apply WAMN invocation authority at native component binding and dispatch boundaries.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, RwLock};
 
 use anyhow::Context as _;
@@ -15,19 +15,16 @@ use wamn_http_capability::{self, CONNECTION_HTTP_ID, ConnectionHttp};
 use wamn_postgres_capability::invocation::{
     AuthorizedInvocation, InvocationRequest, PrincipalVerification,
 };
-use wamn_postgres_capability::{
-    PreparedStatementMembers, PreparedStatementSet, UnprovisionedPrincipal, WAMN_POSTGRES_ID,
-    WamnPostgres,
-};
+use wamn_postgres_capability::{UnprovisionedPrincipal, WAMN_POSTGRES_ID, WamnPostgres};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::wasi_logging::TracingLogger;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
+use super::NodeAcquisition;
 use super::invocation_policy::{InvocationPolicy, InvocationScope};
 use super::native_call::{NativeCallFailure, NativeInvocation};
 use super::native_workload::{NativeComponent, native_component_name};
-use super::{NodeAcquisition, prepare_statement_members, prepare_statement_sets};
 
 mod logging;
 
@@ -62,11 +59,9 @@ impl std::fmt::Debug for NativePolicyResources {
 #[derive(Debug)]
 struct ComponentPolicy {
     fact: AdmittedComponent,
-    statements: BTreeMap<String, PreparedStatementSet>,
+    reads: BTreeSet<String>,
     /// Signing authority comes only from the release-pinned descriptor.
     signed_results: BTreeMap<String, wamn_catalog::SignedFileReads>,
-    /// The set of each named `statements` import, one per member.
-    members: PreparedStatementMembers,
     runtime_schema: Option<String>,
     /// The environment map name of the application that holds this component, which
     /// every call binds as `app.application`.
@@ -155,50 +150,54 @@ pub(super) fn new_native_policy(
             })
             .context("component-not-in-carried-release")
     };
-    let policy =
-        |fact: &AdmittedComponent, served: &ServingComponent, members: PreparedStatementMembers| {
-            let mut signed_results = BTreeMap::new();
-            for (name, operation) in &served.descriptor.operations {
-                if let Some(reads) = wamn_catalog::signed_file_reads(operation)? {
-                    signed_results.insert(name.clone(), reads);
-                }
+    let policy = |fact: &AdmittedComponent, served: &ServingComponent| {
+        let mut signed_results = BTreeMap::new();
+        for (name, operation) in &served.descriptor.operations {
+            if let Some(reads) = wamn_catalog::signed_file_reads(operation)? {
+                signed_results.insert(name.clone(), reads);
             }
-            Ok::<_, anyhow::Error>(Arc::new(ComponentPolicy {
-                signed_results,
-                fact: fact.clone(),
-                statements: prepare_statement_sets(served, &manifest.routes),
-                members,
-                runtime_schema: served.runtime_schema.clone(),
-                application: if served.package_id == wamn_catalog::PALETTE_PACKAGE_ID {
-                    None
-                } else {
-                    Some(
-                        wamn_catalog::application_for_package(
-                            &resources.release.target().applications,
-                            &served.package_id,
-                        )
-                        .with_context(|| {
-                            format!(
-                                "package {} must belong to exactly one declared application",
-                                served.package_id
-                            )
-                        })?
-                        .to_owned(),
+        }
+        Ok::<_, anyhow::Error>(Arc::new(ComponentPolicy {
+            signed_results,
+            fact: fact.clone(),
+            reads: manifest
+                .routes
+                .iter()
+                .filter(|route| {
+                    route.package_id == served.package_id
+                        && route.component == served.descriptor.component
+                        && route.type_.is_read()
+                })
+                .map(|route| route.operation.clone())
+                .collect(),
+            runtime_schema: served.runtime_schema.clone(),
+            application: if served.package_id == wamn_catalog::PALETTE_PACKAGE_ID {
+                None
+            } else {
+                Some(
+                    wamn_catalog::application_for_package(
+                        &resources.release.target().applications,
+                        &served.package_id,
                     )
-                },
-            }))
-        };
+                    .with_context(|| {
+                        format!(
+                            "package {} must belong to exactly one declared application",
+                            served.package_id
+                        )
+                    })?
+                    .to_owned(),
+                )
+            },
+        }))
+    };
     let mut facts = BTreeMap::new();
-    for NativeComponent { fact, bytes } in components {
+    for NativeComponent { fact, bytes: _ } in components {
         let name = native_component_name(fact)?;
         if facts.contains_key(&name) {
             continue;
         }
         let served = served_of(fact)?;
-        let instances = wamn_engine::statement_instances::statement_instances(bytes)
-            .context("statement-instance-wiring")?;
-        let members = prepare_statement_members(&instances, served)?;
-        facts.insert(name, ServedPolicies::from([policy(fact, served, members)?]));
+        facts.insert(name, ServedPolicies::from([policy(fact, served)?]));
     }
     Ok(Arc::new(NativePolicy {
         resources: Arc::new(resources),
@@ -300,12 +299,7 @@ impl InvocationPolicy for NativePolicy {
                     .as_deref(),
                 causation: facts.acquisition.causation.clone(),
                 invocation: Some(facts.acquisition.invocation.clone()),
-                statements: component
-                    .statements
-                    .get(operation)
-                    .context("native invocation statement set is missing")?
-                    .clone(),
-                members: component.members.clone(),
+                read: component.reads.contains(operation),
                 principal: PrincipalVerification::Required,
             },
         )
@@ -402,14 +396,43 @@ impl InvocationPolicy for NativePolicy {
             &component.fact.component,
             &request.operation,
         );
-        // HTTP already owns the claim. Palette and event-handler exports have no write envelope.
+        // HTTP borrows the transaction that its entry already opened.
         if !matches!(
             request.facts.acquisition.invocation.entry,
             wamn_capability_authority::connection::InvocationEntry::Wiring(_)
-        ) || route.is_none_or(|route| {
+        ) {
+            return super::native_call::invoke_raw(target, request).await;
+        }
+        if route.is_none_or(|route| {
             route.type_.is_read() || route.type_ == wamn_catalog::OperationType::EventHandler
         }) {
-            return super::native_call::invoke_raw(target, request).await;
+            let operation = &component.fact.operations[&request.operation];
+            if !component.reads.contains(&request.operation) && !operation.host_transaction {
+                return super::native_call::invoke_raw(target, request).await;
+            }
+            let authority = request
+                .facts
+                .authority
+                .as_ref()
+                .context("invocation is not prepared")?;
+            let postgres = &self.resources.postgres;
+            let transaction = postgres
+                .begin_operation_transaction(authority.id())
+                .await
+                .map_err(|error| anyhow::anyhow!("begin operation transaction: {error:?}"))?;
+            postgres.bind_operation_transaction(authority.id(), &transaction)?;
+            let scope = authority.id().to_owned();
+            let outcome = super::native_call::invoke_raw(target, request).await;
+            postgres.revoke_operation_transaction(&scope);
+            match &outcome {
+                Err(_) | Ok(super::native_call::NativeOutcome::Json(Err(_))) => {
+                    transaction.rollback().await.map_err(|error| {
+                        anyhow::anyhow!("roll back operation transaction: {error:?}")
+                    })?;
+                }
+                _ => transaction.commit().await?,
+            }
+            return outcome;
         }
         let route = route.expect("a workflow write has a released route");
         let super::native_call::NativeInput::Encoded(input) = &request.input else {

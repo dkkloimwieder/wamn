@@ -143,9 +143,7 @@ pub async fn quality_create_inspection(event: &str, receipt_id: &str) -> Result<
         ));
     }
     let receipt_id = parse_uuid(receipt_id, "new.id")?;
-    let mut connection = Connection::new();
-    let mut transaction = connection
-        .begin()
+    let mut transaction = wamn_postgres_statements::operation_transaction()
         .await
         .map_err(|source| AccessError::from_statement("begin inspection creation", &source))?;
     let inserted = create_sql::insert_inspection(&mut transaction, receipt_id.clone())
@@ -165,10 +163,6 @@ pub async fn quality_create_inspection(event: &str, receipt_id: &str) -> Result<
             "quality_inspection returned a different receipt id",
         ));
     }
-    transaction
-        .commit()
-        .await
-        .map_err(|source| AccessError::from_statement("commit inspection creation", &source))?;
     Ok(())
 }
 

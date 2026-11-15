@@ -63,15 +63,13 @@ An overlay package pins each base by digest in `base_dependencies`.
 The overlay build composes each pinned base whose operations the overlay imports into the overlay component, and admission refuses a composed base that the package does not pin under that digest.
 A composed component also exports the interfaces of its members. The host routes only to declared operations.
 Each export declares its external connections. The component connection list is derived from its operations. An undeclared connection does not resolve for the call.
-Each export carries its own statements, and the host begins a transaction for an export whose admitted operation declares one ([data access](data-access.md#inputs-queries-and-transactions)).
+Each export keeps its permission, and the host begins its operation transaction ([data access](data-access.md#inputs-queries-and-transactions)).
 Each member that imports `wamn:postgres/statements` gets its own outer import, named by its position: `sql-0`, `sql-1`.
 Each import is labelled as an instance of the one statements interface, so policy admits it by that interface.
 The composer emits a separate instance type for each import, so each member retains its resource ownership.
-A custom section of the composed component, `wamn:statement-instances`, records the digest of the member that each import was made for.
-Admission reads the instantiation graph and refuses the component unless each import reaches exactly that member.
-Admission copies that record into the admitted descriptor as `statement-instances`, and the imports fingerprint covers it.
-Publish writes each member's own statement set into the served component, keyed by import name: the overlay's from the component's own operations, and each base's from its admitted descriptor.
-The host binds each import from that served set only, and it refuses to load a composition whose release has no set for it.
+Every named SQL import borrows the same host operation transaction.
+The descriptor and release carry no per-member SQL sets or SQL ownership digests.
+The host executes the SQL text that each member supplies under the operation's database identity.
 Base membership alone does not authorize an operation. The [execution rules](execution.md) test the entry's own grant.
 
 The serving manifest reads each export from its component descriptor.

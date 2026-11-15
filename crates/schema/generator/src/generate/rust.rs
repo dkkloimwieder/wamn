@@ -91,9 +91,15 @@ pub(super) fn emit_static_sql_projection(
     for (name, statement) in compiled.statements {
         writeln!(
             source,
-            "pub(crate) const {}_STATEMENT: &str = {:?};",
+            "pub(crate) const {}_STATEMENT: &str = include_str!({:?});",
             name.to_ascii_uppercase(),
-            statement.path
+            format!(
+                "../{}",
+                statement
+                    .path
+                    .strip_prefix("generated/")
+                    .unwrap_or(&statement.path)
+            )
         )
         .expect("writing to a String cannot fail");
     }
@@ -145,7 +151,7 @@ fn emit_static_sql_wamn_accessor(
     .expect("writing to a String cannot fail");
     writeln!(
         source,
-        "    let rows = {}.run({}, vec![",
+        "    let rows = {}.query({}, vec![",
         if transactional {
             "transaction"
         } else {
@@ -644,9 +650,10 @@ pub(super) fn emit_projection(
         for (index, path) in paths.iter().enumerate() {
             writeln!(
                 source,
-                "{} const {}: &str = {path:?};",
+                "{} const {}: &str = include_str!({:?});",
                 api.statement_visibility.source(),
-                statement_constant_name(action, index, paths.len())
+                statement_constant_name(action, index, paths.len()),
+                format!("../{}", path.strip_prefix("generated/").unwrap_or(path))
             )
             .expect("writing to a String cannot fail");
         }
@@ -750,7 +757,7 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
     .expect("writing to a String cannot fail");
     writeln!(
         source,
-        "    let rows = {}.run({}, vec![",
+        "    let rows = {}.query({}, vec![",
         if transactional {
             "transaction"
         } else {

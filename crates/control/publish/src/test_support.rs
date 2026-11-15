@@ -42,7 +42,6 @@ pub fn closure_component(component: &str, registered_operation: Option<&str>) ->
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
                 parameters: Vec::new(),
-                statements: BTreeMap::new(),
             },
         )]),
         component_digest: DIGEST.to_owned(),

@@ -1,37 +1,7 @@
 package wamn:postgres@0.4.0;
 
-/// 0.4.0 is 0.3.0 without the participant path (owner ruling of 2026-10-14,
-/// wamn-ponya.2): `statements` drops `selected-participation`,
-/// `transaction.select-participant`, `participant-view` and the
-/// `transaction-view` resource. A component built against 0.3.0 does not fit.
-/// This is the one version in the tree, and the host serves only it.
-
-/// Host-plugin interface for project-targeted Postgres access.
-/// Security invariants (enforced by the HOST, invisible to the guest):
-/// - The guest NEVER holds a socket. It holds resources or targeted views. Connections
-///   live in the plugin's pool.
-/// - RLS identity (project/user/role) are derived from the executing
-///   workload's identity and injected by the plugin via SET LOCAL inside
-///   the plugin-managed transaction. There is deliberately NO way for a
-///   guest to set or override its own identity through this interface.
-/// - Statement timeout and row limits are applied host-side per project
-///   policy; guests cannot raise them.
-/// - Abnormal instance death destroys the underlying connection (never
-///   returned to the pool). See plan 2.2.
-/// - No LISTEN/NOTIFY surface (event delivery is outbox + dispatcher).
-/// - Schema selection is host-injected per-workload config (`wamn.schema`),
-///   like the project identity: the guest names tables unqualified and cannot
-///   choose its own schema. It is NOT part of this interface (validated in
-///   S6, where a test host swapped in an ephemeral schema with zero guest
-///   change).
-///
-/// `client` exposes only dynamic read queries. `statements` owns admitted SQL
-/// and its transactions. The separate `wamn:operation` package
-/// provides entry-owned begin and commit.
+/// SQL values and errors shared by both SQL interfaces.
 interface types {
-  /// Typed SQL values. `numeric` and `timestamptz` travel as canonical
-  /// strings to preserve exactness (plan 3.3: material quantities are
-  /// exact-decimal; float coercion is forbidden for them).
   variant sql-value {
     null,
     boolean(bool),
@@ -50,21 +20,9 @@ interface types {
     uuid(string),
   }
 
-  record column {
-    name: string,
-    /// Postgres type name as reported (e.g. "numeric", "timestamptz").
-    type-name: string,
-  }
+  type column-name = string;
+  type row = list<sql-value>;
 
-  record row-set {
-    columns: list<column>,
-    rows: list<list<sql-value>>,
-  }
-
-  /// Error taxonomy mirrors the runner retry semantics so SDKs can
-  /// map mechanically: serialization-failure / connection-unavailable
-  /// -> retryable; timeout -> retryable (bounded); the rest -> terminal
-  /// unless the node decides otherwise.
   variant pg-error {
     /// 40001 / 40P01: safe to retry the whole transaction.
     serialization-failure,
@@ -72,8 +30,6 @@ interface types {
     connection-unavailable,
     /// Host-enforced statement timeout exceeded.
     statement-timeout,
-    /// Host-enforced row limit exceeded (value = limit).
-    row-limit-exceeded(u64),
     /// 23505 with constraint name.
     unique-violation(string),
     /// 23503 with constraint name.
@@ -90,89 +46,34 @@ interface types {
   }
 }
 
+/// Dynamic reads on the SELECT-only login in a host read transaction.
 interface client {
-  use types.{sql-value, row-set, pg-error};
+  use types.{sql-value, column-name, row, pg-error};
 
-  /// Run one dynamic statement on the SELECT-only login in a read-only
-  /// transaction. The host binds identity and commits on success.
-  /// Use $1..$n parameters for data and keyset paging for multiple pages.
-  /// The host holds no query state between calls.
-  query: async func(sql: string, params: list<sql-value>) -> result<row-set, pg-error>;
+  /// Column names arrive first. Consume the rows, then await completion.
+  /// Dropping the rows before completion aborts the read transaction.
+  query: async func(sql: string, params: list<sql-value>) -> result<tuple<list<column-name>, stream<row>, future<result<_, pg-error>>>, pg-error>;
 }
 
-/// Execute only SQL statements admitted for the active operation.
-///
-/// The guest supplies a statement, by its package-relative SQL path, and
-/// values, never SQL bytes. The host resolves the statement inside the active
-/// operation's verified statement set, validates the value and result shapes,
-/// and executes the admitted exact bytes through the same identity-aware runner
-/// as `client`.
+/// SQL in the host transaction shared by an operation and its composed members.
 interface statements {
-  use types.{sql-value, column, row-set, pg-error};
+  use types.{sql-value, column-name, row, pg-error};
 
-  /// Request the current WAL position in the same pipeline as the read.
-
-  enum contract-part {
-    binds,
-    columns,
-  }
-
-  record value-shape {
-    count: u32,
-    types: list<string>,
-  }
-
-  record contract-mismatch {
-    statement: string,
-    part: contract-part,
-    expected: value-shape,
-    observed: value-shape,
-  }
-
+  // Numbering is removed by the numbering lane.
   variant statement-error {
-    unknown-statement(string),
-    statement-contract-mismatch(contract-mismatch),
     postgres(pg-error),
   }
 
+  /// A borrowed handle. Only the host can finish the transaction.
   resource transaction {
-    run: async func(statement: string, binds: list<sql-value>) -> result<row-set, statement-error>;
-    commit: async func() -> result<_, statement-error>;
-    rollback: async func() -> result<_, statement-error>;
+    /// Column names, streamed rows, and the closing result of one query.
+    query: async func(sql: string, params: list<sql-value>) -> result<tuple<list<column-name>, stream<row>, future<result<_, pg-error>>>, pg-error>;
+    /// Execute SQL without parameters in the same host transaction.
+    query-batch: async func(sql: string) -> result<_, pg-error>;
   }
 
-  /// Run the statement. Read metadata stays in the host invocation record.
-  run: async func(statement: string, binds: list<sql-value>) -> result<row-set, statement-error>;
-
-  /// Run one admitted statement and return its rows as the server sends them.
-  ///
-  /// The host executes the exact prepared statement once, with the same identity
-  /// as `run`. Caller identity keep their transaction. Every row reads the
-  /// snapshot the statement took when it started. The result names the columns,
-  /// then carries each row on the stream. The future resolves after the last row: ok when the
-  /// statement read to its end, the error otherwise.
-  ///
-  /// Dropping the stream before its end closes its session, which ends the
-  /// query on the server. The project row limit does not apply, because
-  /// the statement's declared limit bounds the rows; the connection buffers
-  /// the result.
-  run-stream: async func(statement: string, binds: list<sql-value>) -> result<tuple<list<column>, stream<list<sql-value>>, future<result<_, statement-error>>>, statement-error>;
-
-  /// Begin a transaction that the guest commits or rolls back.
-  ///
-  /// Inside an operation that has a host transaction, `begin` refuses with
-  /// `postgres(query-error(("25001", ...)))`: the operation's work runs in the
-  /// host transaction only.
-  begin: async func() -> result<transaction, statement-error>;
-
-  /// The transaction that the host began for this operation.
-  ///
-  /// The host commits or rolls it back after the call, or through the entry's
-  /// separate `operation.commit` import. Thus `commit` and
-  /// `rollback` on it refuse with `postgres(query-error(("2D000", ...)))`.
-  /// Dropping the handle leaves the transaction open. An operation without a
-  /// host transaction gets `postgres(permission-denied)`.
-  operation-transaction: async func() -> result<transaction, statement-error>;
+  /// Borrow the current operation transaction. Dropping the handle leaves it open.
+  operation-transaction: async func() -> result<transaction, pg-error>;
 
   /// Render the next number of sequence `name` of the composing application,
   /// and advance its counters in the operation transaction.
@@ -205,11 +106,3 @@ interface statements {
   /// answers `postgres(query-error)` with SQLSTATE `P0002` (`no_data_found`).
   peek-number: async func(name: string, keys: list<tuple<string, option<string>>>) -> result<string, statement-error>;
 }
-
-/// Prepared-statement plans are cached HOST-SIDE, keyed on (sql, connection).
-/// P0 verdict (S2): that internal cache reached 20427 qps / p99 1.98 ms with
-/// NO guest-visible prepare surface, so an explicit `prepare` resource stays
-/// OUT of frozen 0.1. Revisit for 0.2 only if a workload needs guest-controlled
-/// plan lifetime (no P0 workload did); such a resource must invalidate plans on
-/// the connection-destroy path (the abnormal-death invariant above), so it is
-/// deliberately not a free addition.

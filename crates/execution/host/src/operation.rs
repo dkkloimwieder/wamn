@@ -22,7 +22,7 @@ use wamn_capability_authority::connection::{
 };
 use wamn_capability_authority::effect_span::EffectEvidence;
 use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
-use wamn_catalog::{AdmittedComponent, ComponentSqlField, ServingComponent, ServingRoute};
+use wamn_catalog::{AdmittedComponent, ServingComponent, ServingRoute};
 use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
@@ -32,11 +32,8 @@ use wamn_event_wire::Causation;
 use wamn_http_capability::ConnectionHttp;
 use wamn_http_capability::transport::HttpTransport;
 use wamn_identity_protocol::PlatformComponent;
+use wamn_postgres_capability::WamnPostgres;
 use wamn_postgres_capability::valid_runner;
-use wamn_postgres_capability::{
-    PreparedStatementMembers, PreparedStatementSet, StatementField, VerifiedStatement,
-    VerifiedStatementSet, WamnPostgres,
-};
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
@@ -576,106 +573,6 @@ impl NodeAcquisition {
             ..self.identity.clone()
         }
     }
-}
-
-fn lower_statement_field(field: &ComponentSqlField) -> StatementField {
-    StatementField {
-        value_type: field.value_type,
-        nullable: field.nullable,
-    }
-}
-
-/// Lower and seal every operation's statement set out of the admitted facts.
-/// The complete admitted fact owns these immutable statements. An operation
-/// is a read when the release routes it as a get, query or projection.
-fn prepare_statement_sets(
-    served: &ServingComponent,
-    routes: &BTreeSet<ServingRoute>,
-) -> BTreeMap<String, PreparedStatementSet> {
-    served
-        .descriptor
-        .operations
-        .iter()
-        .map(|(operation, fact)| {
-            let read = routes.iter().any(|route| {
-                route.package_id == served.package_id
-                    && route.component == served.descriptor.component
-                    && &route.operation == operation
-                    && route.type_.is_read()
-            });
-            (
-                operation.clone(),
-                WamnPostgres::prepare_statement_set(lower_statement_set(&fact.statements), read),
-            )
-        })
-        .collect()
-}
-
-/// Lower and seal the statement set of each named `statements` import.
-///
-/// `instances` is the record verified in the component's bytes. Publish
-/// wrote each member's own set into the served component, keyed by import
-/// name, so the host binds from that field only.
-///
-/// # Errors
-///
-/// Refuses a composition whose served component does not carry a set for
-/// exactly its named imports.
-fn prepare_statement_members(
-    instances: &BTreeMap<String, String>,
-    served: &ServingComponent,
-) -> anyhow::Result<PreparedStatementMembers> {
-    anyhow::ensure!(
-        instances.keys().eq(served.statement_instances.keys())
-            && instances == &served.descriptor.statement_instances,
-        "statement-instances-unreleased: the component imports {:?}, the release binds {:?}",
-        instances.keys().collect::<Vec<_>>(),
-        served.statement_instances.keys().collect::<Vec<_>>()
-    );
-    Ok(WamnPostgres::prepare_statement_members(
-        served
-            .statement_instances
-            .iter()
-            .map(|(instance, statements)| {
-                (
-                    instance.clone(),
-                    WamnPostgres::prepare_statement_set(lower_statement_set(statements), false),
-                )
-            }),
-    ))
-}
-
-/// Lower and seal the statement set of each named `statements` import of the
-/// composed entry.
-///
-/// `instances` is the record verified in the entry's bytes. Publication keeps
-/// a composed application's named imports in the entry, so their sets are the
-/// composing member's. A plain application gets one named import there, whose
-/// set is the statements of all its operations.
-///
-/// # Errors
-///
-fn lower_statement_set(
-    statements: &BTreeMap<String, wamn_catalog::ComponentSqlStatement>,
-) -> VerifiedStatementSet {
-    statements
-        .iter()
-        .map(|(path, statement)| {
-            (
-                path.clone(),
-                VerifiedStatement {
-                    exact_sql: statement.sql.clone().into_boxed_str(),
-                    binds: statement.binds.iter().map(lower_statement_field).collect(),
-                    columns: statement
-                        .columns
-                        .iter()
-                        .map(lower_statement_field)
-                        .collect(),
-                    transactional: statement.transactional,
-                },
-            )
-        })
-        .collect()
 }
 
 #[cfg(test)]

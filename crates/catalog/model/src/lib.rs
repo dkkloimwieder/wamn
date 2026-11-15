@@ -38,9 +38,8 @@ pub use component_facts::{
     ComponentConnectionAlias, ComponentConnectionType, ComponentDeclaration, ComponentDescriptor,
     ComponentEffectProvenance, ComponentFactError, ComponentFactErrorType,
     ComponentOperationDeclaration, ComponentPackageCoordinate, ComponentParameterDeclaration,
-    ComponentPortDeclaration, ComponentSchema, ComponentSqlField, ComponentSqlStatement,
-    ConnectionMode, OperationConnection, bind_component_statement_facts, normalize_component_fact,
-    verify_stored_effect_projection,
+    ComponentPortDeclaration, ComponentSchema, ConnectionMode, OperationConnection,
+    normalize_component_fact, verify_stored_effect_projection,
 };
 pub use connection::{
     BlobstoreDefinition, BlobstoreProvider, CONNECTION_DESCRIPTOR_VERSION,

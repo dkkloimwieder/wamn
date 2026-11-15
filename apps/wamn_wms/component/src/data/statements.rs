@@ -1,7 +1,7 @@
 //! The statement accessors of the WMS commands, materialized in the package.
 //! The generated operations include their own, in [`crate::data::generated`].
 
-/// Runtime projections carrying only admitted statement paths.
+/// Generated accessors carrying SQL for the host transaction.
 pub(crate) mod wamn {
     /// Generated `inventory.adjust` transaction accessors.
     pub(crate) mod inventory_adjust {

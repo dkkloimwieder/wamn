@@ -2,7 +2,7 @@
 //! the package. The generated operations include their own, in
 //! [`crate::data::generated`].
 
-/// Runtime projections carrying only admitted statement paths.
+/// Generated accessors carrying SQL for the host transaction.
 pub(crate) mod wamn {
     /// Generated `location.list` projection.
     pub(crate) mod location_list {

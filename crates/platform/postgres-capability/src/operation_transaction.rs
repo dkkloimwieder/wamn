@@ -1,13 +1,7 @@
 //! The transaction that the host owns for one logged operation request element
 //! (`docs/history/host-transaction.md` 4.1).
 //!
-//! The host begins it before the guest call or through `operation.begin-operation`,
-//! under the call's identity, in a pipeline with its write-log claim. The guest works in
-//! it through `statements.operation-transaction`, and its `begin`, `run` and
-//! `run-stream` refuse while it is bound, because each would run on a
-//! connection of its own that the host's rollback does not reach. After the
-//! call the host commits or rolls it back. An entry uses `operation.commit`;
-//! dropping its Store rolls back unfinished work.
+//! The guest borrows a query handle. Only the host commits or rolls back.
 
 use crate::invocation::Authority;
 use std::sync::{Arc, Mutex};
@@ -16,14 +10,7 @@ use super::resources::{
     PgTransaction, StatementConnectionGuard, prepare_statement_transaction, take_conn,
     with_txn_conn,
 };
-use super::{PgError, StatementError, WamnPostgres};
-
-/// The SQLSTATE of a `begin`, `run` or `run-stream` inside an operation that
-/// has a host transaction: `active_sql_transaction`.
-pub(super) const HOST_TRANSACTION_REFUSED: &str = "25001";
-/// The SQLSTATE of a guest `commit` or `rollback` of the host transaction:
-/// `invalid_transaction_termination`.
-pub(super) const FINISH_REFUSED: &str = "2D000";
+use super::{PgError, WamnPostgres};
 
 /// The host transaction of one operation request element.
 ///
@@ -75,7 +62,7 @@ impl OperationTransaction {
     }
 
     /// A guest handle of this transaction. Dropping it leaves the transaction
-    /// open, and it refuses `commit` and `rollback`.
+    /// open. The SQL interface exposes no completion methods.
     pub(super) async fn lend(&self) -> Result<PgTransaction, PgError> {
         self.start().await?;
         Ok(self.transaction.lent())
@@ -112,6 +99,17 @@ impl OperationTransaction {
     /// The owned transaction, for the host's own statements in it.
     pub(super) fn transaction(&self) -> &PgTransaction {
         &self.transaction
+    }
+
+    /// Read the WAL position on the connection of this open transaction.
+    pub(super) async fn wal_position(&self) -> Result<String, PgError> {
+        self.with_host_connection(|mut connection| async move {
+            let result = sqlx::query_scalar("SELECT pg_current_wal_lsn()::text")
+                .fetch_one(connection.connection())
+                .await;
+            (connection, result)
+        })
+        .await
     }
 
     /// Commit the transaction.
@@ -224,14 +222,14 @@ impl WamnPostgres {
     ///
     /// # Errors
     ///
-    /// Returns the error of checkout or identity preparation. BEGIN waits for the claim.
+    /// Returns the error of checkout or binding the transaction identity.
     pub async fn begin_operation_transaction(
         &self,
         scope: &str,
     ) -> Result<OperationTransaction, PgError> {
         let project = self.project_for(scope);
         let (transaction, identity) = prepare_statement_transaction(self, scope, &project).await?;
-        Ok(OperationTransaction {
+        let transaction = OperationTransaction {
             transaction: Arc::new(transaction),
             identity: Arc::new(Mutex::new(Some(identity))),
             finish: Arc::new(Mutex::new(None)),
@@ -242,7 +240,16 @@ impl WamnPostgres {
                 self.current_run_for(scope)
             },
             application: self.application_for(scope),
-        })
+        };
+        transaction.start().await?;
+        Ok(transaction)
+    }
+
+    /// Whether the active operation uses a read transaction.
+    pub(super) fn active_read(&self, scope: &str) -> bool {
+        self.scopes
+            .read::<Authority, _>(scope, |record| record.read)
+            .unwrap_or(false)
     }
 
     /// Bind `transaction` as the operation transaction of `scope`.
@@ -277,22 +284,6 @@ impl WamnPostgres {
         self.scopes
             .read::<Authority, _>(scope, |record| record.transaction.clone())
             .flatten()
-    }
-
-    /// The refusal of `call` when `scope` has a host transaction, which the
-    /// work of the operation must run in.
-    pub(super) fn refuse_in_host_transaction(
-        &self,
-        scope: &str,
-        call: &str,
-    ) -> Result<(), StatementError> {
-        if self.operation_transaction_for(scope).is_none() {
-            return Ok(());
-        }
-        Err(StatementError::Postgres(PgError::QueryError((
-            HOST_TRANSACTION_REFUSED.to_owned(),
-            format!("the operation runs in its host transaction, so {call} is refused"),
-        ))))
     }
 }
 

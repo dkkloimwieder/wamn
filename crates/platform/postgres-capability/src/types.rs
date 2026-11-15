@@ -7,18 +7,12 @@ use sqlx::{
     Column as _, Decode, Encode, Row as _, Statement as _, Type, TypeInfo as _, ValueRef as _,
 };
 
-use super::{Column, PgError, SqlValue};
+use super::{PgError, SqlValue};
 
-pub(super) fn columns_of(stmt: &PgStatement) -> Vec<Column> {
+pub(super) fn columns_of(stmt: &PgStatement) -> Vec<String> {
     stmt.columns()
         .iter()
-        .map(|column| Column {
-            name: column.name().to_owned(),
-            type_name: match column.type_info().name() {
-                "CHAR" => "bpchar".into(),
-                name => name.to_ascii_lowercase(),
-            },
-        })
+        .map(|column| column.name().to_owned())
         .collect()
 }
 

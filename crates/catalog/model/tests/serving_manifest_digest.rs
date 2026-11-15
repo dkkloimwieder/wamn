@@ -35,7 +35,7 @@ fn components() -> BTreeSet<ServingComponent> {
     BTreeSet::from([
         ServingComponent {
             runtime_schema: None,
-            statement_instances: std::collections::BTreeMap::new(),
+
             package_id: "platform_fixture".into(),
             descriptor: {
                 let mut descriptor = ComponentDescriptor::named("transform", "0.1", COMPONENT_B);
@@ -49,7 +49,6 @@ fn components() -> BTreeSet<ServingComponent> {
                         parameters: Vec::new(),
                         committed_result_schema: None,
                         registered_operation: None,
-                        statements: BTreeMap::new(),
                     },
                 )]);
                 descriptor
@@ -57,7 +56,7 @@ fn components() -> BTreeSet<ServingComponent> {
         },
         ServingComponent {
             runtime_schema: None,
-            statement_instances: std::collections::BTreeMap::new(),
+
             package_id: "platform_fixture_overlay".into(),
             descriptor: {
                 let mut descriptor = ComponentDescriptor::named("http-request", "0.1", COMPONENT_A);
@@ -73,7 +72,6 @@ fn components() -> BTreeSet<ServingComponent> {
                         registered_operation: Some(
                             "platform-fixture-overlay:widget/get@3.0.0".into(),
                         ),
-                        statements: BTreeMap::new(),
                     },
                 )]);
                 descriptor
@@ -252,7 +250,6 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
         parameters: Vec::new(),
         registered_operation: None,
         committed_result_schema: None,
-        statements: BTreeMap::new(),
     };
     ServingManifest::new(
         ServingRelease {
@@ -264,7 +261,7 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
         BTreeSet::from([
             ServingComponent {
                 runtime_schema: None,
-                statement_instances: std::collections::BTreeMap::new(),
+
                 package_id: package.into(),
                 descriptor: {
                     let mut descriptor =
@@ -295,7 +292,7 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
             },
             ServingComponent {
                 runtime_schema: None,
-                statement_instances: std::collections::BTreeMap::new(),
+
                 package_id: "consumer".into(),
                 descriptor: {
                     let mut descriptor =

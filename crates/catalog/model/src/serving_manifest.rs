@@ -1,7 +1,7 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
 //! Format 11 closes over exact package membership, component digests, routes,
-//! the permission and SQL statements of each export, and route attachments.
+//! each export permission and route attachment.
 //! Each component is its package, its admitted descriptor (the bytes of the
 //! descriptor layer of its package artifact, docs/operations/building.md#reading-a-pushed-package
 //! ). The descriptor is the one
@@ -29,10 +29,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AdmittedComponent, AdmittedComponentOperation, ArtifactHash, AttachmentType,
-    CatalogIdentityError, ComponentConnection, ComponentDescriptor, ComponentSqlStatement,
-    DefinitionHash, HASH_PREFIX, HostAttachment, HostRouteSet, ManifestDigest, PackageCoordinate,
-    package::validate_canonical_operation_for_package, validate_digest, validate_text,
+    AdmittedComponent, ArtifactHash, AttachmentType, CatalogIdentityError, ComponentConnection,
+    ComponentDescriptor, DefinitionHash, HASH_PREFIX, HostAttachment, HostRouteSet, ManifestDigest,
+    PackageCoordinate, package::validate_canonical_operation_for_package, validate_digest,
+    validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
@@ -168,12 +168,6 @@ pub struct ServingComponent {
     /// the release is the one owner of component facts (R2): the name, the
     /// interface version and the digest are read from here.
     pub descriptor: ComponentDescriptor,
-    /// The statement set of each named `statements` import of a composed
-    /// component, keyed by import name: each member's own package's declared
-    /// statements (docs/architecture/components.md#grouping-and-publication).
-    /// Absent when empty, so a release without named instances keeps its bytes.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub statement_instances: BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>,
 }
 
 /// Components order by package, name, interface version, digest and
@@ -188,7 +182,6 @@ impl Ord for ServingComponent {
             &self.descriptor.component,
             &self.descriptor.interface_version,
             &self.descriptor.component_digest,
-            &self.statement_instances,
         )
             .cmp(&(
                 &other.package_id,
@@ -196,7 +189,6 @@ impl Ord for ServingComponent {
                 &other.descriptor.component,
                 &other.descriptor.interface_version,
                 &other.descriptor.component_digest,
-                &other.statement_instances,
             ))
             .then_with(|| {
                 let bytes = |descriptor: &ComponentDescriptor| {
@@ -219,11 +211,9 @@ impl ServingComponent {
     /// Project one admitted component.
     ///
     /// An application's components compose at build into one component, so a
-    /// call to a base is a component-model call inside these bytes, with no
-    /// host between. Every export carries its own permission and its own SQL
-    /// statements; each member reaches its own statements through its named
-    /// import ([`Self::with_statement_instances`]). The descriptor is `fact`
-    /// with its `connections`.
+    /// call to a base is a component-model call inside these bytes. The host
+    /// lends every member the same operation transaction. The descriptor is
+    /// `fact` with its `connections`.
     pub fn project(
         fact: &AdmittedComponent,
         connections: Vec<ComponentConnection>,
@@ -233,68 +223,8 @@ impl ServingComponent {
             package_id: fact.target.package_id.clone(),
             runtime_schema: None,
             descriptor: ComponentDescriptor::new(fact.clone(), connections),
-            statement_instances: BTreeMap::new(),
         })
     }
-
-    /// Carry the verified statement instance record of a composed component
-    /// and the statement set of each named import.
-    ///
-    /// `instances` maps each import name to its member's digest. A member
-    /// whose digest `base` resolves is a base, and its set is the union of
-    /// that base's own operations' statements. The one member that no base
-    /// matches is the overlay, whose bytes are composed into this component,
-    /// and its set is the union of this component's own operations'
-    /// statements.
-    ///
-    /// # Errors
-    ///
-    /// Refuses two members that match no base, and one statement path with
-    /// two different facts inside one package.
-    pub fn with_statement_instances<'a>(
-        mut self,
-        instances: &BTreeMap<String, String>,
-        base: &dyn Fn(&str) -> Option<&'a AdmittedComponent>,
-    ) -> Result<Self, CatalogIdentityError> {
-        let mut overlay = None;
-        let mut sets = BTreeMap::new();
-        for (name, digest) in instances {
-            let operations = if let Some(base) = base(digest) {
-                &base.operations
-            } else {
-                if let Some(previous) = overlay.replace(name) {
-                    return invalid(format!(
-                        "statement instances {previous:?} and {name:?} match no base"
-                    ));
-                }
-                &self.descriptor.operations
-            };
-            sets.insert(name.clone(), own_statements(operations)?);
-        }
-        self.descriptor.statement_instances = instances.clone();
-        self.statement_instances = sets;
-        Ok(self)
-    }
-}
-
-/// The union of the statements that `operations` declare.
-fn own_statements(
-    operations: &BTreeMap<String, AdmittedComponentOperation>,
-) -> Result<BTreeMap<String, ComponentSqlStatement>, CatalogIdentityError> {
-    let mut statements = BTreeMap::new();
-    for (path, statement) in operations
-        .values()
-        .flat_map(|operation| &operation.statements)
-    {
-        if let Some(previous) = statements.insert(path.clone(), statement.clone())
-            && &previous != statement
-        {
-            return invalid(format!(
-                "statement {path:?} has two different facts in one package"
-            ));
-        }
-    }
-    Ok(statements)
 }
 
 /// The contract type of one application operation.
@@ -980,11 +910,8 @@ impl ServingManifest {
             }
             if component.package_id == crate::PALETTE_PACKAGE_ID {
                 if component.runtime_schema.is_some()
-                    || !component.statement_instances.is_empty()
                     || component.descriptor.operations.values().any(|operation| {
-                        operation.registered_operation.is_some()
-                            || operation.host_transaction
-                            || !operation.statements.is_empty()
+                        operation.registered_operation.is_some() || operation.host_transaction
                     })
                 {
                     return invalid(
@@ -1030,15 +957,6 @@ impl ServingManifest {
                     operation.committed_result_schema.as_ref(),
                 ).map_err(|error| CatalogIdentityError::InvalidDefinition {
                     message: format!("serving component operation {export:?} carries invalid committed-result facts: {error}"),
-                })?;
-                crate::component_facts::validate_operation_statement_facts(
-                    export,
-                    &operation.statements,
-                )
-                .map_err(|error| CatalogIdentityError::InvalidDefinition {
-                    message: format!(
-                        "serving component operation {export:?} carries invalid statement facts: {error}"
-                    ),
                 })?;
             }
         }
@@ -1273,7 +1191,7 @@ mod tests {
         .into_iter()
         .map(|(package, component, digest, operation)| ServingComponent {
             runtime_schema: None,
-            statement_instances: BTreeMap::new(),
+
             package_id: package.into(),
             descriptor: ComponentDescriptor {
                 operations: BTreeMap::from([(
@@ -1598,109 +1516,6 @@ mod tests {
         }
     }
 
-    /// One overlay operation calls two members. Each member's import binds
-    /// only that member's own statements, and the overlay's binds its own.
-    #[test]
-    fn each_member_of_one_operation_binds_only_its_own_statements() {
-        const COMPONENT_C: &str =
-            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-        const OVERLAY_MEMBER: &str =
-            "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
-        let first = admitted(
-            "first",
-            "1.0.0",
-            COMPONENT_A,
-            vec![(
-                "first:op/run@1.0.0",
-                admitted_operation("first:op/run@1.0.0", Some("SELECT 'first'")),
-            )],
-        );
-        let second = admitted(
-            "second",
-            "1.0.0",
-            COMPONENT_C,
-            vec![(
-                "second:op/run@1.0.0",
-                admitted_operation("second:op/run@1.0.0", Some("SELECT 'second'")),
-            )],
-        );
-        let overlay = admitted(
-            "overlay",
-            "3.0.0",
-            COMPONENT_B,
-            vec![(
-                "overlay:op/run@3.0.0",
-                admitted_operation("overlay:op/run@3.0.0", Some("SELECT 'overlay'")),
-            )],
-        );
-        let bases = [&first, &second];
-        let base = |digest: &str| {
-            bases
-                .iter()
-                .copied()
-                .find(|base| base.component_digest == digest)
-        };
-        let instances = BTreeMap::from([
-            ("sql-0".to_owned(), COMPONENT_A.to_owned()),
-            ("sql-1".to_owned(), COMPONENT_C.to_owned()),
-            ("sql-2".to_owned(), OVERLAY_MEMBER.to_owned()),
-        ]);
-        let served = ServingComponent::project(&overlay, Vec::new())
-            .expect("the overlay projects")
-            .with_statement_instances(&instances, &base)
-            .expect("each member binds its own statements");
-
-        let sql = |instance: &str| {
-            served.statement_instances[instance]
-                .values()
-                .map(|statement| statement.sql.as_str())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(sql("sql-0"), ["SELECT 'first'"]);
-        assert_eq!(sql("sql-1"), ["SELECT 'second'"]);
-        assert_eq!(sql("sql-2"), ["SELECT 'overlay'"]);
-        assert_eq!(served.descriptor.statement_instances, instances);
-
-        let mut unmatched = instances;
-        unmatched.insert("sql-3".to_owned(), COMPONENT_B.to_owned());
-        ServingComponent::project(&overlay, Vec::new())
-            .expect("the overlay projects")
-            .with_statement_instances(&unmatched, &base)
-            .expect_err("two members that match no base are refused");
-    }
-
-    fn admitted_operation(
-        registered: &str,
-        statement: Option<&str>,
-    ) -> crate::AdmittedComponentOperation {
-        crate::AdmittedComponentOperation {
-            connections: Vec::new(),
-            registered_operation: Some(registered.into()),
-            committed_result_schema: None,
-            host_transaction: false,
-            input_ports: Vec::new(),
-            output_ports: Vec::new(),
-            parameters: Vec::new(),
-            statements: statement
-                .map(|sql| {
-                    let digest = wamn_digest::bytes_sha256(sql.as_bytes());
-                    BTreeMap::from([(
-                        digest,
-                        ComponentSqlStatement {
-                            name: "statement".into(),
-                            path: "statement.sql".into(),
-                            sql: sql.into(),
-                            binds: Vec::new(),
-                            columns: Vec::new(),
-                            relations: Vec::new(),
-                            transactional: true,
-                        },
-                    )])
-                })
-                .unwrap_or_default(),
-        }
-    }
-
     #[test]
     fn only_canonical_format_six_bytes_are_admitted() {
         let manifest = manifest();
@@ -1716,94 +1531,6 @@ mod tests {
             ServingManifest::from_canonical_bytes(&indented),
             Err(CatalogIdentityError::NonCanonicalJson)
         );
-    }
-
-    #[test]
-    fn statement_lookup_is_operation_targeted_and_revalidates_its_key() {
-        let operation = "base:widget/get@1.0.0";
-        let sql = "SELECT row_version FROM widget WHERE id = $1";
-        let path = "generated/sql/widget/get.sql".to_owned();
-        let mut components = components();
-        let mut base = components
-            .iter()
-            .find(|component| component.package_id == "base")
-            .expect("fixture has a base component")
-            .clone();
-        components.remove(&base);
-        base.descriptor
-            .operations
-            .get_mut(operation)
-            .expect("fixture has the base operation")
-            .statements
-            .insert(
-                path.clone(),
-                ComponentSqlStatement {
-                    name: "get".into(),
-                    path: path.clone(),
-                    sql: sql.into(),
-                    // A SELECT fixture: PostgreSQL classifies it as needing no
-                    // transaction.
-                    relations: Vec::new(),
-                    transactional: false,
-                    binds: Vec::new(),
-                    columns: Vec::new(),
-                },
-            );
-        components.insert(base.clone());
-
-        let manifest = ServingManifest::new(
-            release(),
-            components.clone(),
-            routes(),
-            BTreeMap::from([("orders".to_string(), attachment())]),
-        )
-        .expect("an exact operation-targeted statement enters the serving manifest");
-        let admitted = manifest
-            .components
-            .iter()
-            .find(|component| component.package_id == "base")
-            .expect("base component remains present")
-            .descriptor
-            .operations[operation]
-            .statement(&path);
-        assert!(admitted.is_some());
-        assert!(
-            manifest
-                .components
-                .iter()
-                .find(|component| component.package_id == "overlay")
-                .expect("overlay component remains present")
-                .descriptor
-                .operations["overlay:transform/map@3.0.0"]
-                .statement(&path)
-                .is_none()
-        );
-
-        let mut broken = components;
-        let mut base = broken
-            .iter()
-            .find(|component| component.package_id == "base")
-            .expect("fixture has a base component")
-            .clone();
-        broken.remove(&base);
-        base.descriptor
-            .operations
-            .get_mut(operation)
-            .expect("fixture has the base operation")
-            .statements
-            .get_mut(&path)
-            .expect("fixture has a statement")
-            .path
-            .push_str(".moved");
-        broken.insert(base);
-        let error = ServingManifest::new(
-            release(),
-            broken,
-            routes(),
-            BTreeMap::from([("orders".to_string(), attachment())]),
-        )
-        .expect_err("a statement may not move off its key");
-        assert!(error.to_string().contains("invalid statement facts"));
     }
 
     #[test]

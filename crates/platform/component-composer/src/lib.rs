@@ -11,17 +11,15 @@
 //! Each member that imports `wamn:postgres/statements` gets an outer import of
 //! its own, named by the member's position in the composition (`sql-0`,
 //! `sql-1`). Each import has a separate instance type and carries the same
-//! `(implements ..)` interface label. A custom section records the digest of
-//! the member each outer import was made for, so admission can test the wiring
-//! in the composed bytes and the host can bind each import to the statements of
-//! that member (docs/architecture/components.md#grouping-and-publication).
+//! `(implements ..)` interface label. Every import borrows the operation's
+//! host transaction. No per-member SQL ownership record is needed.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, bail};
 use wac_graph::types::{ItemKind, Package, Types};
 use wac_graph::{CompositionGraph, EncodeOptions, NodeId, PackageId};
-use wamn_component_policy::{STATEMENT_INSTANCES_SECTION, STATEMENTS_INTERFACE};
+use wamn_component_policy::STATEMENTS_INTERFACE;
 use wasmparser::{Parser, Payload};
 
 /// The HTTP entry exported only by the platform route component.
@@ -57,32 +55,11 @@ pub fn validate_application_member(bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-fn application_statement_instances(bytes: &[u8]) -> anyhow::Result<BTreeMap<String, String>> {
-    let mut depth = 0_usize;
-    for payload in Parser::new(0).parse_all(bytes) {
-        match payload.context("read application statement instances")? {
-            Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => depth += 1,
-            Payload::End(_) => depth = depth.saturating_sub(1),
-            Payload::CustomSection(section)
-                if depth == 0 && section.name() == STATEMENT_INSTANCES_SECTION =>
-            {
-                return serde_json::from_slice(section.data())
-                    .context("read application statement instance record");
-            }
-            _ => {}
-        }
-    }
-    Ok(BTreeMap::new())
-}
-
 /// One registered and instantiated member of the composition.
 #[derive(Debug, Clone, Copy)]
 struct Member {
     package: PackageId,
     instance: NodeId,
-    /// SHA-256 of the member's exact bytes.
-    digest: [u8; 32],
 }
 
 /// Composes the overlay and the bases it calls into one component.
@@ -161,13 +138,6 @@ pub fn compose(overlay: Vec<u8>, bases: Vec<Vec<u8>>) -> anyhow::Result<Vec<u8>>
         })
         .context("encode the composed component")?;
     composed = label_statement_imports(&composed, &statement_instances)?;
-    if !statement_instances.is_empty() {
-        append_custom_section(
-            &mut composed,
-            STATEMENT_INSTANCES_SECTION,
-            &serde_json::to_vec(&statement_instances)?,
-        );
-    }
     Ok(composed)
 }
 
@@ -186,12 +156,12 @@ fn names(bytes: &[u8], name: &str, exports: bool) -> anyhow::Result<BTreeSet<Str
 }
 
 /// Give each member that imports the statements interface an outer import of
-/// its own, named by its position, and return each name with its member's digest.
+/// its own, named by its position.
 fn name_statement_instances(
     graph: &mut CompositionGraph,
     members: &[Member],
-) -> anyhow::Result<BTreeMap<String, String>> {
-    let mut instances = BTreeMap::new();
+) -> anyhow::Result<BTreeSet<String>> {
+    let mut instances = BTreeSet::new();
     for (position, member) in members.iter().enumerate() {
         if !graph.types()[graph[member.package].ty()]
             .imports
@@ -201,7 +171,7 @@ fn name_statement_instances(
         }
         let name = format!("sql-{position}");
         statement_import(graph, *member, &name, STATEMENTS_INTERFACE)?;
-        instances.insert(name, wamn_digest::format_sha256(&member.digest));
+        instances.insert(name);
     }
     Ok(instances)
 }
@@ -226,10 +196,7 @@ fn statement_import(
     Ok(())
 }
 
-fn label_statement_imports(
-    bytes: &[u8],
-    instances: &BTreeMap<String, String>,
-) -> anyhow::Result<Vec<u8>> {
+fn label_statement_imports(bytes: &[u8], instances: &BTreeSet<String>) -> anyhow::Result<Vec<u8>> {
     use wasm_encoder::reencode::{ReencodeComponent as _, RoundtripReencoder};
     use wasm_encoder::{Component, ComponentExternName, ComponentImportSection, RawSection};
 
@@ -245,7 +212,7 @@ fn label_statement_imports(
                     let mut name = ComponentExternName::from(import.name.name);
                     name.external_id = import.name.external_id.map(Into::into);
                     name.version_suffix = import.name.version_suffix.map(Into::into);
-                    name.implements = if instances.contains_key(import.name.name) {
+                    name.implements = if instances.contains(import.name.name) {
                         Some(STATEMENTS_INTERFACE.into())
                     } else {
                         import.name.implements.map(Into::into)
@@ -272,51 +239,21 @@ fn label_statement_imports(
     Ok(output.finish())
 }
 
-/// Append one custom section to the end of a component binary.
-fn append_custom_section(bytes: &mut Vec<u8>, name: &str, payload: &[u8]) {
-    let mut content = Vec::with_capacity(5 + name.len() + payload.len());
-    leb128(&mut content, name.len());
-    content.extend_from_slice(name.as_bytes());
-    content.extend_from_slice(payload);
-    bytes.push(0);
-    leb128(bytes, content.len());
-    bytes.extend_from_slice(&content);
-}
-
-fn leb128(bytes: &mut Vec<u8>, mut value: usize) {
-    loop {
-        let byte = u8::try_from(value & 0x7f).expect("seven bits fit a byte");
-        value >>= 7;
-        if value == 0 {
-            bytes.push(byte);
-            return;
-        }
-        bytes.push(byte | 0x80);
-    }
-}
-
 fn instantiate(graph: &mut CompositionGraph, name: &str, bytes: Vec<u8>) -> anyhow::Result<Member> {
-    let digest = wamn_digest::sha256(&bytes);
     let package = Package::from_bytes(name, None, bytes, graph.types_mut())
         .with_context(|| format!("read member component {name}"))?;
     let package = graph
         .register_package(package)
         .with_context(|| format!("register member component {name}"))?;
     let instance = graph.instantiate(package);
-    Ok(Member {
-        package,
-        instance,
-        digest,
-    })
+    Ok(Member { package, instance })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeSet;
 
-    use sha2::{Digest, Sha256};
     use wac_graph::types::{Package, Types};
-    use wasmparser::{Parser, Payload};
 
     use super::{HTTP_HANDLER, compose, validate_application_member};
 
@@ -375,97 +312,6 @@ mod tests {
                 .collect::<BTreeSet<_>>(),
             BTreeSet::from(["test:base/op@1.0.0", "test:overlay/main@1.0.0"]),
             "every member export is a composed export"
-        );
-    }
-
-    const STATEMENTS_IMPORT: &str = r#"(import "wamn:postgres/statements@0.4.0" (instance
-        (export "run" (func (param "statement" string) (result u32)))))"#;
-
-    #[test]
-    fn resource_bearing_sql_imports_decode_after_overlay_composition() {
-        let sql = r#"(import "wamn:postgres/statements@0.4.0" (instance
-            (export "transaction" (type (sub resource)))
-            (type $row (record (field "value" string)))
-            (export "row" (type (eq $row)))))"#;
-        let base = component(sql, "test:base/op@1.0.0");
-        let overlay = component(
-            &format!("{sql}{}", operation_import("test:base/op@1.0.0")),
-            "test:overlay/main@1.0.0",
-        );
-        let application = compose(overlay, vec![base]).expect("Acme-shaped overlay composes");
-        wit_component::decode(&application).expect("overlay WIT decodes");
-        let mut types = Types::default();
-        Package::from_bytes("application", None, application.as_slice(), &mut types)
-            .expect("overlay graph decodes");
-        let provenance = super::application_statement_instances(&application).unwrap();
-        assert_eq!(provenance.len(), 2);
-    }
-
-    #[test]
-    fn each_statements_importer_gets_its_own_outer_import_with_its_digest() {
-        let overlay = component(
-            &format!(
-                "{STATEMENTS_IMPORT}{}",
-                operation_import("test:base/op@1.0.0")
-            ),
-            "test:overlay/main@1.0.0",
-        );
-        let base = component(STATEMENTS_IMPORT, "test:base/op@1.0.0");
-        let composed =
-            compose(overlay.clone(), vec![base.clone()]).expect("two statements importers compose");
-
-        let mut imports = Vec::new();
-        let mut section = None;
-        let mut depth = 0_usize;
-        for payload in Parser::new(0).parse_all(&composed) {
-            match payload.expect("the composed bytes parse") {
-                Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => depth += 1,
-                Payload::End(_) => depth = depth.saturating_sub(1),
-                Payload::ComponentImportSection(reader) if depth == 0 => {
-                    for import in reader {
-                        let import = import.expect("an import parses");
-                        imports.push((
-                            import.name.name.to_owned(),
-                            import.name.implements.map(str::to_owned),
-                        ));
-                    }
-                }
-                Payload::CustomSection(reader)
-                    if depth == 0
-                        && reader.name() == wamn_component_policy::STATEMENT_INSTANCES_SECTION =>
-                {
-                    section = Some(reader.data().to_vec());
-                }
-                _ => {}
-            }
-        }
-        let interface = Some(wamn_component_policy::STATEMENTS_INTERFACE.to_owned());
-        assert_eq!(
-            imports,
-            [
-                ("sql-0".to_owned(), interface.clone()),
-                ("sql-1".to_owned(), interface),
-            ],
-            "the base is member 0 and the overlay member 1, each with an outer import"
-        );
-        let recorded: BTreeMap<String, String> =
-            serde_json::from_slice(&section.expect("the provenance section exists"))
-                .expect("the provenance is a JSON object");
-        let hex = |bytes: &[u8]| {
-            Sha256::digest(bytes)
-                .iter()
-                .fold(String::new(), |mut hex, byte| {
-                    std::fmt::Write::write_fmt(&mut hex, format_args!("{byte:02x}"))
-                        .expect("writing to a String cannot fail");
-                    hex
-                })
-        };
-        assert_eq!(
-            recorded,
-            BTreeMap::from([
-                ("sql-0".to_owned(), format!("sha256:{}", hex(&base))),
-                ("sql-1".to_owned(), format!("sha256:{}", hex(&overlay))),
-            ])
         );
     }
 

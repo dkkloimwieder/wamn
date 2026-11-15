@@ -1,4 +1,4 @@
-//! Package-generator output carrying only admitted statement paths, for the
+//! Generated accessors carrying SQL, for the
 //! custom operations. The generated operations include their own, in
 //! [`crate::data::generated`].
 

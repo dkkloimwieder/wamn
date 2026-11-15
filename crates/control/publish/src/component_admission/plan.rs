@@ -1,7 +1,7 @@
 use super::{
     AdmittedComponent, BTreeMap, BTreeSet, ComponentConnection, ComponentConnectionRequirement,
     ComponentConnectionType, ComponentProjectionError, ComponentProjectionErrorType,
-    ConnectionTypeDescriptor, ExpectedOperationContract, GeneratedStatementContract, declared_sql,
+    ConnectionTypeDescriptor, ExpectedOperationContract,
 };
 
 /// Bind result signing only from the package's verified typed result fields.
@@ -106,9 +106,9 @@ pub fn portable_requirement(
 
 /// The exports among `selected` whose request element transaction the host begins, as
 /// the package manifest declares them.
-pub(super) fn host_transaction_exports<T>(
+pub(super) fn host_transaction_exports(
     manifest: &wamn_compiler::manifest::PackageManifest,
-    selected: &BTreeMap<String, T>,
+    selected: &BTreeSet<String>,
 ) -> Result<BTreeSet<String>, ComponentProjectionError> {
     let mut exports = BTreeSet::new();
     for local_operation in manifest.host_transaction_operations() {
@@ -122,7 +122,7 @@ pub(super) fn host_transaction_exports<T>(
                 format!("operation {local_operation:?} is not canonical: {error}"),
             )
         })?;
-        if selected.contains_key(&operation) {
+        if selected.contains(&operation) {
             exports.insert(operation);
         }
     }
@@ -337,89 +337,6 @@ pub(super) fn insert_expected_operation(
             ComponentProjectionErrorType::StatementOperationMismatch,
             format!("operation {operation:?} occurs more than once in the package manifest"),
         ));
-    }
-    Ok(())
-}
-
-/// Refuse a declared statement that the parsed test refuses
-/// ([`declared_sql`]).
-pub(super) fn require_statement_sql(
-    operation: &str,
-    statement: &str,
-    sql: &str,
-) -> Result<(), ComponentProjectionError> {
-    declared_sql::require_declared_statement(sql).map_err(|refusal| {
-        ComponentProjectionError::new(
-            ComponentProjectionErrorType::StatementRefused,
-            format!("operation {operation:?} statement {statement:?} is refused: {refusal}"),
-        )
-    })
-}
-
-/// Refuse a stored component whose declared SQL the parsed test refuses.
-///
-/// Publish reads the statements from the pushed descriptor, not from the
-/// package files, so it tests them again here.
-pub fn require_admitted_statements(
-    component: &AdmittedComponent,
-) -> Result<(), ComponentProjectionError> {
-    for (operation, admitted) in &component.operations {
-        for statement in admitted.statements.values() {
-            require_statement_sql(operation, &statement.name, &statement.sql)?;
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn validate_generated_statement_shape(
-    operation: &str,
-    statement: &GeneratedStatementContract,
-) -> Result<(), ComponentProjectionError> {
-    if !canonical_text(&statement.name) {
-        return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorType::StatementContractInvalid,
-            format!("operation {operation:?} carries an empty or non-canonical statement name"),
-        ));
-    }
-    for (type_, fields) in [("bind", &statement.binds), ("column", &statement.columns)] {
-        let mut names = BTreeSet::new();
-        for field in fields {
-            if !canonical_text(&field.name) || !names.insert(field.name.as_str()) {
-                return Err(ComponentProjectionError::new(
-                    ComponentProjectionErrorType::StatementContractInvalid,
-                    format!(
-                        "operation {operation:?} statement {:?} carries an empty, non-canonical, or duplicate {type_}",
-                        statement.name
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn canonical_text(value: &str) -> bool {
-    !value.is_empty() && value.trim() == value && !value.as_bytes().contains(&0)
-}
-
-pub(super) fn ensure_component_package_matches(
-    component: &AdmittedComponent,
-    package: &wamn_catalog::PackageCoordinate,
-) -> anyhow::Result<()> {
-    if component.target.package_id != package.package_id()
-        || component.target.package_version != package.package_version()
-    {
-        return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorType::PackageCoordinateMismatch,
-            format!(
-                "declaration names {}@{} but package directory names {}@{}",
-                component.target.package_id,
-                component.target.package_version,
-                package.package_id(),
-                package.package_version()
-            ),
-        )
-        .into());
     }
     Ok(())
 }

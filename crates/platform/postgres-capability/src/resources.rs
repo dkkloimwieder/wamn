@@ -1,34 +1,18 @@
-//! Query and admitted-statement host functions, with statement transaction resources.
+//! Streaming SQL and handles borrowed from the host operation transaction.
 
-use sqlx::Statement as _;
+use super::numbering::{NumberCall, statement_number};
+use super::pool::{Object, destroy_connection};
+use super::types::map_pg_error;
+use super::{
+    PgError, SqlValue, StatementError, WAMN_POSTGRES_ID, WamnPostgres, client, statement_wit,
+};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-
-use super::pool::Object;
-use futures_util::TryStreamExt as _;
-use tracing::Instrument as _;
-use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
-use wash_runtime::wasmtime::component::{Accessor, Resource};
-
 use wamn_capability_authority::effect_span::{
     EffectIdentity, EffectRun, effect_span, record_effect_ms, record_wiring,
 };
-
-use super::numbering::{NumberCall, statement_number};
-use super::pool::destroy_connection;
-use super::session_identity::{refuse_unattributed_statement, reject_identity_mutation};
-use super::statements::{
-    BoundStatementSet, VerifiedStatement, resolve_statement, validate_prepared_statement,
-    validate_statement_result,
-};
-use super::types::{PgParam, columns_of, decode_row, map_pg_error};
-use super::{
-    PgError, RowSet, SqlValue, StatementError, WAMN_POSTGRES_ID, WamnPostgres, client,
-    statement_wit,
-};
-
-#[cfg(feature = "wasm_component_model_implements")]
-use super::bindings;
+use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
+use wash_runtime::wasmtime::component::{Accessor, Resource};
 
 #[derive(Debug)]
 pub(super) struct TxnState {
@@ -52,7 +36,7 @@ pub(super) fn restore_connection(connection: StatementConnectionGuard, state: &S
     }
 }
 
-/// Connection owned by an admitted-statement or operation transaction.
+/// Connection owned by the host operation transaction.
 ///
 /// The [`Drop`] impl is the crash-safety guarantee: if the resource dies
 /// without an explicit finish — guest trap, epoch kill, store teardown — the
@@ -62,8 +46,6 @@ pub(super) fn restore_connection(connection: StatementConnectionGuard, state: &S
 pub struct PgTransaction {
     pub(super) state: SharedTxnState,
     pub(super) destroyed: Arc<AtomicU64>,
-    /// Row limit of the project this transaction's connection belongs to.
-    pub(super) row_limit: u64,
     /// A guest handle of an operation transaction that the host owns. It never
     /// finishes the transaction, and dropping it leaves the connection open.
     pub(super) lent: bool,
@@ -75,28 +57,16 @@ impl PgTransaction {
         Self {
             state: Arc::clone(&self.state),
             destroyed: Arc::clone(&self.destroyed),
-            row_limit: self.row_limit,
             lent: true,
         }
     }
 }
 
-/// Host side of a `wamn:postgres/statements.transaction`.
-///
-/// The operation's statement set is snapshotted at `begin`; changing or
-/// revoking the invocation scope cannot widen an already-open transaction.
+/// Guest handle of the transaction owned by the host operation.
+#[derive(Debug)]
 pub struct PgStatementTransaction {
     pub(super) transaction: PgTransaction,
     pub(super) owner_scope: String,
-    pub(super) statements: Option<Arc<BoundStatementSet>>,
-}
-
-impl std::fmt::Debug for PgStatementTransaction {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("PgStatementTransaction")
-            .finish_non_exhaustive()
-    }
 }
 
 impl Drop for PgTransaction {
@@ -176,120 +146,12 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Statement execution helpers
-// ---------------------------------------------------------------------------
-
-pub(super) async fn run_query(
-    conn: &mut sqlx::PgConnection,
-    sql: &str,
-    params: &[SqlValue],
-    row_limit: u64,
-) -> Result<RowSet, PgError> {
-    async {
-        reject_identity_mutation(sql)?;
-        let stmt = sqlx::Executor::prepare(
-            &mut *conn,
-            sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe((sql).to_string())),
-        )
-        .await
-        .map_err(|e| map_pg_error(&e))?;
-        let columns = columns_of(&stmt);
-        let mut query = sqlx::query(stmt.sql().clone());
-        for (index, param) in params.iter().enumerate() {
-            query = query.bind(PgParam::prepared(param, &stmt, index));
-        }
-        let stream = query.fetch(&mut *conn);
-        futures_util::pin_mut!(stream);
-        // Row decode was inside wamn.postgres.statement with no span of its own,
-        // so wire time and decode time were indistinguishable.
-        let rows = async {
-            let mut rows = Vec::new();
-            while let Some(row) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
-                if rows.len() as u64 >= row_limit {
-                    return Err(PgError::RowLimitExceeded(row_limit));
-                }
-                rows.push(decode_row(&row)?);
-            }
-            Ok::<_, PgError>(rows)
-        }
-        .instrument(tracing::info_span!("wamn.postgres.decode_rows"))
-        .await?;
-        Ok(RowSet { columns, rows })
-    }
-    .instrument(tracing::info_span!(
-        "wamn.postgres.statement",
-        db.system = "postgresql",
-        db.operation = "query",
-    ))
-    .await
-}
-
-pub(super) async fn run_verified_query(
-    conn: &mut sqlx::PgConnection,
-    statement_path: &str,
-    statement: &VerifiedStatement,
-    binds: &[SqlValue],
-    row_limit: u64,
-) -> Result<RowSet, StatementError> {
-    async {
-        // Admission parses declared SQL and refuses these constructs on the
-        // parse tree (`wamn_publish::component_admission`, `declared_sql`).
-        // This text guard stays as a second layer: a release admitted before
-        // that test, or a forged descriptor, was never parsed.
-        reject_identity_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;
-        let prepared = sqlx::Executor::prepare(
-            &mut *conn,
-            sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(statement.exact_sql.to_string())),
-        )
-        .await
-        .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
-        validate_prepared_statement(statement_path, statement, &prepared)?;
-        let columns = columns_of(&prepared);
-        let mut query = sqlx::query(prepared.sql().clone());
-        for (index, bind) in binds.iter().enumerate() {
-            query = query.bind(PgParam::prepared(bind, &prepared, index));
-        }
-        let stream = query.fetch(&mut *conn);
-        futures_util::pin_mut!(stream);
-        // This is the path a released route takes; run_query's decode loop is a
-        // different function and spanning only that one measured nothing here.
-        let rows = async {
-            let mut rows = Vec::new();
-            while let Some(row) = stream
-                .try_next()
-                .await
-                .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?
-            {
-                if rows.len() as u64 >= row_limit {
-                    return Err(StatementError::Postgres(PgError::RowLimitExceeded(
-                        row_limit,
-                    )));
-                }
-                rows.push(decode_row(&row).map_err(StatementError::Postgres)?);
-            }
-            Ok::<_, StatementError>(rows)
-        }
-        .instrument(tracing::info_span!("wamn.postgres.decode_rows"))
-        .await?;
-        validate_statement_result(statement_path, statement, &columns, &rows)?;
-        Ok(RowSet { columns, rows })
-    }
-    .instrument(tracing::info_span!(
-        "wamn.postgres.statement",
-        db.system = "postgresql",
-        db.operation = "verified-query",
-        statement.path = statement_path,
-    ))
-    .await
-}
-
 pub(super) fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<WamnPostgres>> {
     ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
 }
 
 /// [9.8] Guest DB-call latency histogram (ms), labelled by `db.operation`
-/// (query and admitted statements) and `wamn.project`. On the global
+/// (dynamic and operation SQL) and `wamn.project`. On the global
 /// meter beside the 9.1 `wamn.postgres` span — a no-op until a provider is
 /// installed (`OTEL_*`). Recorded around the awaited call at each `db_span` site.
 ///
@@ -331,13 +193,7 @@ pub(super) fn record_query_ms(op: &'static str, project: &str, elapsed: std::tim
 /// A call outside a node walk — a platform read, or a pooled instance between
 /// invocations — holds neither, and records the keys empty. `wamn.requirement`
 /// is empty on every postgres span: it names the connection requirement an
-/// HTTP effect was admitted under, and a DB call is admitted by its statement
-/// set instead, so this surface holds no such identity.
-fn db_span(plugin: &WamnPostgres, component_id: &str, op: &'static str) -> tracing::Span {
-    let project = plugin.project_for(component_id);
-    db_span_for_project(plugin, component_id, &project, op)
-}
-
+/// HTTP effect was admitted under. SQL uses the transaction identity.
 pub(super) fn db_span_for_project(
     plugin: &WamnPostgres,
     component_id: &str,
@@ -368,36 +224,6 @@ pub(super) fn db_span_for_project(
             .map(wamn_capability_authority::connection::ConnectionInvocation::effect_wiring),
     );
     span
-}
-
-pub async fn begin_statement_transaction(
-    plugin: &WamnPostgres,
-    component_id: &str,
-    project: &str,
-) -> Result<PgTransaction, PgError> {
-    let authorized = plugin
-        .scopes
-        .read::<crate::invocation::Authority, _>(component_id, |record| {
-            record.statements.active.is_some()
-        })
-        .unwrap_or(false);
-    if !authorized {
-        return Err(PgError::PermissionDenied);
-    }
-    let (transaction, mut identity) =
-        prepare_statement_transaction(plugin, component_id, project).await?;
-    let mut connection = StatementConnectionGuard::new(
-        take_conn(&transaction.state)?,
-        Arc::clone(&transaction.destroyed),
-    );
-    if let Some(run) = plugin.current_run_for(component_id) {
-        identity.causation = Some(super::session_identity::transactions::prepare_causation(
-            &run,
-        ));
-    }
-    identity.bind(connection.connection()).await?;
-    restore_connection(connection, &transaction.state);
-    Ok(transaction)
 }
 
 pub(super) async fn prepare_statement_transaction(
@@ -443,7 +269,6 @@ pub(super) async fn prepare_statement_transaction(
                 finished: false,
             })),
             destroyed: Arc::clone(&plugin.destroyed),
-            row_limit: policy.row_limit,
             lent: false,
         },
         identity,
@@ -457,74 +282,18 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
         accessor: &Accessor<T, Self>,
         sql: String,
         params: Vec<SqlValue>,
-    ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-        let (plugin, component_id, trace) = accessor.with(|mut access| {
-            let mut ctx = access.get();
-            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
-            Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
-                ctx.component_id.to_string(),
-                trace,
-            ))
-        })?;
-        trace
-            .run(async move {
-                let span = db_span(&plugin, &component_id, "query");
-                let project = plugin.project_for(&component_id);
-                let t0 = std::time::Instant::now();
-                let result = plugin
-                    .one_shot(&component_id, &sql, &params)
-                    .instrument(span)
-                    .await;
-                record_query_ms("query", &project, t0.elapsed());
-                Ok(result)
-            })
-            .await
+    ) -> super::query::QueryResult {
+        super::query::dynamic_query(accessor, sql, params).await
     }
 }
 
 impl statement_wit::Host for ActiveCtx<'_> {}
-
 impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
-    async fn run(
-        accessor: &Accessor<T, Self>,
-        statement_path: String,
-        binds: Vec<SqlValue>,
-    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        statement_run(accessor, None, statement_path, binds).await
-    }
-
-    async fn begin(
-        accessor: &Accessor<T, Self>,
-    ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
-    {
-        statement_begin(accessor, None).await
-    }
-
-    async fn run_stream(
-        accessor: &Accessor<T, Self>,
-        statement_path: String,
-        binds: Vec<SqlValue>,
-    ) -> wash_runtime::wasmtime::Result<
-        Result<
-            (
-                Vec<super::Column>,
-                wash_runtime::wasmtime::component::StreamReader<Vec<SqlValue>>,
-                wash_runtime::wasmtime::component::FutureReader<Result<(), StatementError>>,
-            ),
-            StatementError,
-        >,
-    > {
-        super::run_stream::run_stream(accessor, None, statement_path, binds).await
-    }
-
     async fn operation_transaction(
         accessor: &Accessor<T, Self>,
-    ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
-    {
-        lend_operation_transaction(accessor, None).await
+    ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, PgError>> {
+        lend_operation_transaction(accessor).await
     }
-
     async fn next_number(
         accessor: &Accessor<T, Self>,
         name: String,
@@ -543,157 +312,55 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
 }
 
 impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx {
-    async fn run(
+    async fn query(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
-        statement_path: String,
-        binds: Vec<SqlValue>,
-    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        statement_txn_run(accessor, rep, statement_path, binds).await
+        sql: String,
+        params: Vec<SqlValue>,
+    ) -> super::query::QueryResult {
+        super::query::transaction_query(accessor, rep, sql, params).await
     }
-
-    async fn commit(
+    async fn query_batch(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
-    ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
-        statement_txn_finish(accessor, rep, "COMMIT").await
-    }
-
-    async fn rollback(
-        accessor: &Accessor<T, Self>,
-        rep: Resource<PgStatementTransaction>,
-    ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
-        statement_txn_finish(accessor, rep, "ROLLBACK").await
+        sql: String,
+    ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
+        super::query::transaction_batch(accessor, rep, sql).await
     }
 }
 
 #[expect(
     clippy::unused_async_trait_impl,
-    reason = "the generated transaction destructor is async but only releases local state"
+    reason = "the generated destructor only releases a borrowed handle"
 )]
 impl statement_wit::HostTransaction for ActiveCtx<'_> {
     async fn drop(
         &mut self,
         rep: Resource<PgStatementTransaction>,
     ) -> wash_runtime::wasmtime::Result<()> {
-        // An unfinished transaction destroys its connection without suspending.
         drop(self.table.delete(rep)?);
         Ok(())
     }
 }
 
-/// Run one admitted statement on its own connection, resolved in the set of
-/// the `statements` import named `instance`.
-async fn statement_run<T: 'static>(
-    accessor: &Accessor<T, SharedCtx>,
-    instance: Option<&str>,
-    statement_path: String,
-    binds: Vec<SqlValue>,
-) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-    let (plugin, component_id, trace) = accessor.with(|mut access| {
-        let mut ctx = access.get();
-        let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
-        Ok::<_, wash_runtime::wasmtime::Error>((
-            plugin_of(&ctx)?,
-            ctx.component_id.to_string(),
-            trace,
-        ))
-    })?;
-    trace
-        .run(async move {
-            if let Err(refused) = plugin.refuse_in_host_transaction(&component_id, "run") {
-                return Ok(Err(refused));
-            }
-            let active = plugin.active_statement_set(&component_id, instance);
-            let read = plugin.active_read(&component_id);
-            let statement =
-                match resolve_statement(active.as_deref(), read, &statement_path, &binds) {
-                    Ok(statement) => statement,
-                    Err(error) => return Ok(Err(error)),
-                };
-            let project = plugin.project_for(&component_id);
-            let span = db_span_for_project(&plugin, &component_id, &project, "statement.run");
-            let started = std::time::Instant::now();
-            let result = plugin
-                .one_shot_statement(&component_id, &statement_path, &statement, &binds, read)
-                .instrument(span)
-                .await;
-            record_query_ms("statement.run", &project, started.elapsed());
-            Ok(result)
-        })
-        .await
-}
-
-/// Begin a guest transaction that runs the set of the `statements` import named `instance`.
-async fn statement_begin<T: 'static>(
-    accessor: &Accessor<T, SharedCtx>,
-    instance: Option<&str>,
-) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>> {
-    let (plugin, component_id, trace) = accessor.with(|mut access| {
-        let mut ctx = access.get();
-        let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
-        Ok::<_, wash_runtime::wasmtime::Error>((
-            plugin_of(&ctx)?,
-            ctx.component_id.to_string(),
-            trace,
-        ))
-    })?;
-    trace
-        .run(async move {
-            let Some(statements) = plugin.active_statement_set(&component_id, instance) else {
-                return Ok(Err(StatementError::Postgres(PgError::PermissionDenied)));
-            };
-            if let Err(refused) = plugin.refuse_in_host_transaction(&component_id, "begin") {
-                return Ok(Err(refused));
-            }
-            let project = plugin.project_for(&component_id);
-            let span = db_span_for_project(&plugin, &component_id, &project, "statement.begin");
-            let started = std::time::Instant::now();
-            let opened = begin_statement_transaction(&plugin, &component_id, &project)
-                .instrument(span)
-                .await;
-            record_query_ms("statement.begin", &project, started.elapsed());
-            match opened {
-                Ok(transaction) => accessor.with(|mut access| {
-                    access
-                        .get()
-                        .table
-                        .push(PgStatementTransaction {
-                            transaction,
-                            owner_scope: component_id.clone(),
-                            statements: Some(statements),
-                        })
-                        .map(Ok)
-                        .map_err(Into::into)
-                }),
-                Err(error) => Ok(Err(StatementError::Postgres(error))),
-            }
-        })
-        .await
-}
-
-/// Lend the operation's host transaction to the `statements` import named
-/// `instance`, with that import's statement set.
 async fn lend_operation_transaction<T: 'static>(
     accessor: &Accessor<T, SharedCtx>,
-    instance: Option<&str>,
-) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>> {
-    let (transaction, statements, component_id) = accessor.with(|mut access| {
+) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, PgError>> {
+    let (transaction, component_id) = accessor.with(|mut access| {
         let ctx = access.get();
         let plugin = plugin_of(&ctx)?;
         let component_id = ctx.component_id.to_string();
         Ok::<_, wash_runtime::wasmtime::Error>((
             plugin.operation_transaction_for(&component_id),
-            plugin.active_statement_set(&component_id, instance),
             component_id,
         ))
     })?;
     let Some(transaction) = transaction else {
-        return Ok(Err(StatementError::Postgres(PgError::PermissionDenied)));
+        return Ok(Err(PgError::PermissionDenied));
     };
     let transaction = match transaction.lend().await {
         Ok(transaction) => transaction,
-        Err(error) => return Ok(Err(StatementError::Postgres(error))),
+        Err(error) => return Ok(Err(error)),
     };
     accessor.with(|mut access| {
         access
@@ -702,166 +369,10 @@ async fn lend_operation_transaction<T: 'static>(
             .push(PgStatementTransaction {
                 transaction,
                 owner_scope: component_id,
-                statements,
             })
             .map(Ok)
             .map_err(Into::into)
     })
-}
-
-/// Run one admitted statement on a statement transaction, resolved in the
-/// set the transaction holds.
-async fn statement_txn_run<T: 'static>(
-    accessor: &Accessor<T, SharedCtx>,
-    rep: Resource<PgStatementTransaction>,
-    statement_path: String,
-    binds: Vec<SqlValue>,
-) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-    let (plugin, component_id, trace, state, destroyed, row_limit, statements) =
-        accessor.with(|mut access| {
-            let mut ctx = access.get();
-            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
-            let transaction = ctx.table.get(&rep)?;
-            wash_runtime::wasmtime::ensure!(
-                transaction.owner_scope == ctx.component_id.as_ref(),
-                "statement transaction belongs to a different invocation"
-            );
-            Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
-                ctx.component_id.to_string(),
-                trace,
-                Arc::clone(&transaction.transaction.state),
-                Arc::clone(&transaction.transaction.destroyed),
-                transaction.transaction.row_limit,
-                transaction.statements.clone(),
-            ))
-        })?;
-    trace
-        .run(async move {
-            let project = plugin.project_for(&component_id);
-            let statement = match admit_transaction_statement(
-                &plugin,
-                &component_id,
-                statements.as_deref(),
-                &statement_path,
-                &binds,
-            ) {
-                Ok(statement) => statement,
-                Err(error) => return Ok(Err(error)),
-            };
-            let mut connection = match take_conn(&state) {
-                Ok(connection) => StatementConnectionGuard::new(connection, Arc::clone(&destroyed)),
-                Err(error) => return Ok(Err(StatementError::Postgres(error))),
-            };
-            let span = db_span_for_project(&plugin, &component_id, &project, "statement.txn.run");
-            let started = std::time::Instant::now();
-            let result = run_verified_query(
-                connection.connection(),
-                &statement_path,
-                &statement,
-                &binds,
-                row_limit,
-            )
-            .instrument(span)
-            .await;
-            record_query_ms("statement.txn.run", &project, started.elapsed());
-
-            if statement_run_disposition(&result) == StatementRunDisposition::Destroy {
-                if let Ok(mut transaction) = state.lock() {
-                    transaction.finished = true;
-                }
-                drop(connection);
-            } else {
-                restore_connection(connection, &state);
-            }
-            Ok(result)
-        })
-        .await
-}
-
-/// Resolve a statement for an explicit statement transaction.
-///
-/// A transactional statement with no executing principal is refused here,
-/// before the transaction's connection runs it.
-pub(super) fn admit_transaction_statement(
-    plugin: &WamnPostgres,
-    component_id: &str,
-    statements: Option<&BoundStatementSet>,
-    statement_path: &str,
-    binds: &[SqlValue],
-) -> Result<Arc<VerifiedStatement>, StatementError> {
-    let statement = resolve_statement(
-        statements,
-        plugin.active_read(component_id),
-        statement_path,
-        binds,
-    )?;
-    refuse_unattributed_statement(&statement, plugin.user_id_for(component_id).as_deref())
-        .map_err(StatementError::Postgres)?;
-    Ok(statement)
-}
-
-async fn statement_txn_finish<T: 'static>(
-    accessor: &Accessor<T, SharedCtx>,
-    rep: Resource<PgStatementTransaction>,
-    verb: &'static str,
-) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
-    let (plugin, component_id, trace, state, destroyed, lent) = accessor.with(|mut access| {
-        let mut ctx = access.get();
-        let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
-        let transaction = ctx.table.get(&rep)?;
-        wash_runtime::wasmtime::ensure!(
-            transaction.owner_scope == ctx.component_id.as_ref(),
-            "statement transaction belongs to a different invocation"
-        );
-        Ok::<_, wash_runtime::wasmtime::Error>((
-            plugin_of(&ctx)?,
-            ctx.component_id.to_string(),
-            trace,
-            Arc::clone(&transaction.transaction.state),
-            Arc::clone(&transaction.transaction.destroyed),
-            transaction.transaction.lent,
-        ))
-    })?;
-    // The host commits or rolls back the transaction it owns.
-    if lent {
-        return Ok(Err(StatementError::Postgres(PgError::QueryError((
-            super::operation_transaction::FINISH_REFUSED.to_owned(),
-            "the host finishes the operation transaction".to_owned(),
-        )))));
-    }
-    trace
-        .run(async move {
-            let project = plugin.project_for(&component_id);
-            let operation = match verb {
-                "COMMIT" => "statement.txn.commit",
-                "ROLLBACK" => "statement.txn.rollback",
-                _ => unreachable!("transaction finish verb is fixed"),
-            };
-            let span = db_span_for_project(&plugin, &component_id, &project, operation);
-            let started = std::time::Instant::now();
-            let result = finish_statement_txn(&state, &destroyed, verb)
-                .instrument(span)
-                .await
-                .map_err(StatementError::Postgres);
-            record_query_ms(operation, &project, started.elapsed());
-            Ok(result)
-        })
-        .await
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StatementRunDisposition {
-    Restore,
-    Destroy,
-}
-
-fn statement_run_disposition<T>(result: &Result<T, StatementError>) -> StatementRunDisposition {
-    if result.is_ok() {
-        StatementRunDisposition::Restore
-    } else {
-        StatementRunDisposition::Destroy
-    }
 }
 
 pub(super) async fn finish_statement_txn(
@@ -889,62 +400,19 @@ pub(super) async fn finish_statement_txn(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+#[cfg(feature = "wasm_component_model_implements")]
+impl super::bindings::named_imports::wamn::postgres::statements::Host for ActiveCtx<'_> {}
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl bindings::named_imports::wamn::postgres::statements::Host for ActiveCtx<'_> {}
-
-/// Each named import resolves statements in its own member's set. Methods on
-/// a transaction need no name: the transaction holds the set it was lent with.
-#[cfg(feature = "wasm_component_model_implements")]
-impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::HostWithStore<T>
+impl<T: 'static + Send> super::bindings::named_imports::wamn::postgres::statements::HostWithStore<T>
     for SharedCtx
 {
-    async fn run(
-        accessor: &Accessor<T, Self>,
-        id: super::NamedStatements,
-        statement_path: String,
-        binds: Vec<SqlValue>,
-    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        statement_run(accessor, Some(id.instance()), statement_path, binds).await
-    }
-
-    async fn run_stream(
-        accessor: &Accessor<T, Self>,
-        id: super::NamedStatements,
-        statement_path: String,
-        binds: Vec<SqlValue>,
-    ) -> wash_runtime::wasmtime::Result<
-        Result<
-            (
-                Vec<super::Column>,
-                wash_runtime::wasmtime::component::StreamReader<Vec<SqlValue>>,
-                wash_runtime::wasmtime::component::FutureReader<Result<(), StatementError>>,
-            ),
-            StatementError,
-        >,
-    > {
-        super::run_stream::run_stream(accessor, Some(id.instance()), statement_path, binds).await
-    }
-
-    async fn begin(
-        accessor: &Accessor<T, Self>,
-        id: super::NamedStatements,
-    ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
-    {
-        statement_begin(accessor, Some(id.instance())).await
-    }
-
     async fn operation_transaction(
         accessor: &Accessor<T, Self>,
-        id: super::NamedStatements,
-    ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
-    {
-        lend_operation_transaction(accessor, Some(id.instance())).await
+        _id: super::NamedStatements,
+    ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, PgError>> {
+        lend_operation_transaction(accessor).await
     }
-
     async fn next_number(
         accessor: &Accessor<T, Self>,
         _id: super::NamedStatements,
@@ -963,44 +431,35 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::Hos
         statement_number(accessor, name, keys, NumberCall::Peek).await
     }
 }
-
 #[cfg(feature = "wasm_component_model_implements")]
 impl<T: 'static + Send>
-    bindings::named_imports::wamn::postgres::statements::HostTransactionWithStore<T> for SharedCtx
+    super::bindings::named_imports::wamn::postgres::statements::HostTransactionWithStore<T>
+    for SharedCtx
 {
-    async fn run(
+    async fn query(
         accessor: &Accessor<T, Self>,
         _id: super::NamedStatements,
         rep: Resource<PgStatementTransaction>,
-        statement_path: String,
-        binds: Vec<SqlValue>,
-    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        statement_txn_run(accessor, rep, statement_path, binds).await
+        sql: String,
+        params: Vec<SqlValue>,
+    ) -> super::query::QueryResult {
+        super::query::transaction_query(accessor, rep, sql, params).await
     }
-
-    async fn commit(
+    async fn query_batch(
         accessor: &Accessor<T, Self>,
         _id: super::NamedStatements,
         rep: Resource<PgStatementTransaction>,
-    ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
-        statement_txn_finish(accessor, rep, "COMMIT").await
-    }
-
-    async fn rollback(
-        accessor: &Accessor<T, Self>,
-        _id: super::NamedStatements,
-        rep: Resource<PgStatementTransaction>,
-    ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
-        statement_txn_finish(accessor, rep, "ROLLBACK").await
+        sql: String,
+    ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
+        super::query::transaction_batch(accessor, rep, sql).await
     }
 }
-
 #[cfg(feature = "wasm_component_model_implements")]
 #[expect(
     clippy::unused_async_trait_impl,
-    reason = "the generated transaction destructor is async but only releases local state"
+    reason = "the generated destructor only releases a borrowed handle"
 )]
-impl bindings::named_imports::wamn::postgres::statements::HostTransaction for ActiveCtx<'_> {
+impl super::bindings::named_imports::wamn::postgres::statements::HostTransaction for ActiveCtx<'_> {
     async fn drop(
         &mut self,
         _id: super::NamedStatements,
@@ -1008,178 +467,5 @@ impl bindings::named_imports::wamn::postgres::statements::HostTransaction for Ac
     ) -> wash_runtime::wasmtime::Result<()> {
         drop(self.table.delete(rep)?);
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use crate::{ContractMismatch, ContractPart, ValueShape, WamnPostgresConfig};
-    use wamn_capability_authority::connection::{
-        ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
-    };
-    use wamn_capability_authority::effect_span::span_tests::{SpanHarness, expected_attributes};
-    use wamn_event_wire::Causation;
-
-    const COMPONENT_ID: &str = "component-store-7";
-    const COMPONENT_DIGEST: &str = "sha256:aaaa";
-
-    /// A plugin that opens no connection, so a span test needs no database.
-    fn offline_plugin() -> WamnPostgres {
-        let plugin = WamnPostgres::new(WamnPostgresConfig {
-            credentials: None,
-            guest_pool_max_size: 1,
-            platform_pool_max_size: 1,
-            wait_timeout_ms: 1,
-            statement_timeout_ms: 1,
-            row_limit: 1,
-        })
-        .expect("an offline postgres plugin opens no connection");
-        plugin
-            .set_project_env_key(COMPONENT_ID, "org--dev--a")
-            .expect("the project identity is valid");
-        plugin
-    }
-
-    /// The invocation the router driver binds before the pooled instance runs.
-    fn invocation() -> ConnectionInvocation {
-        ConnectionInvocation {
-            origin: ConnectionOrigin {
-                package_id: "package_a".to_string(),
-                component_digest: COMPONENT_DIGEST.to_string(),
-                component: "orders".to_string(),
-                interface_version: "1.0.0".to_string(),
-                operation: "orders:notify/dispatch@1.0.0".to_string(),
-            },
-            entry: wamn_capability_authority::connection::InvocationEntry::Wiring(
-                wamn_capability_authority::connection::WiringPosition {
-                    configuration: Default::default(),
-                    package_id: "package_a".to_string(),
-                    wiring_hash: format!("sha256:{}", "a".repeat(64)),
-                    wiring_id: "orders".to_string(),
-                    wiring_version: 3,
-                    node_id: "record".to_string(),
-                    occurrence: 2,
-                },
-            ),
-            package_id: "package_a".to_string(),
-            component_digest: COMPONENT_DIGEST.to_string(),
-            component: "recorder".to_string(),
-            operation: "orders:notify/dispatch@1.0.0".to_string(),
-            closure: ConnectionExecutionClosure::Released,
-            effects: None,
-        }
-    }
-
-    /// A DB call inside a node walk names its run and its node on the span
-    /// itself. A mutant that drops either registry read fails here.
-    #[test]
-    fn a_db_call_inside_a_node_walk_carries_its_run_and_node_identity() {
-        let plugin = offline_plugin();
-        plugin.set_current_run(
-            COMPONENT_ID,
-            Some(Causation {
-                run: "run-42".to_string(),
-                root: "root-1".to_string(),
-                depth: 1,
-            }),
-        );
-        plugin
-            .bind_invocation(COMPONENT_ID, invocation())
-            .expect("the fresh registry accepts its first invocation");
-
-        let harness = SpanHarness::install("postgres-node-walk-span-test");
-        drop(db_span_for_project(
-            &plugin,
-            COMPONENT_ID,
-            "project-a",
-            "query",
-        ));
-
-        assert_eq!(
-            harness.attributes("wamn.postgres"),
-            expected_attributes(
-                ["org--dev--a", "project-a", COMPONENT_ID],
-                [
-                    "package_a",
-                    "orders",
-                    "3",
-                    "record",
-                    "2",
-                    COMPONENT_DIGEST,
-                    "recorder",
-                    "orders:notify/dispatch@1.0.0",
-                ],
-                &[
-                    ("db.system", "postgresql"),
-                    ("db.operation", "query"),
-                    ("wamn.run_id", "run-42"),
-                    // A DB call uses its statement set, not a named connection requirement.
-                    ("wamn.requirement", ""),
-                ],
-            ),
-        );
-    }
-
-    /// A call outside a node walk holds neither identity. The wiring keys are
-    /// still emitted, empty, so "raised outside a walk" never reads as "the
-    /// enrichment was dropped".
-    #[test]
-    fn a_db_call_outside_a_node_walk_records_the_wiring_keys_empty() {
-        let plugin = offline_plugin();
-
-        let harness = SpanHarness::install("postgres-no-walk-span-test");
-        drop(db_span_for_project(
-            &plugin,
-            COMPONENT_ID,
-            "project-a",
-            "query",
-        ));
-
-        assert_eq!(
-            harness.attributes("wamn.postgres"),
-            expected_attributes(
-                ["org--dev--a", "project-a", COMPONENT_ID],
-                ["", "", "0", "", "0", "", "", ""],
-                &[("db.system", "postgresql"), ("db.operation", "query")],
-            ),
-        );
-    }
-
-    fn mismatch() -> StatementError {
-        StatementError::StatementContractMismatch(ContractMismatch {
-            statement: "sql/statement.sql".into(),
-            part: ContractPart::Columns,
-            expected: ValueShape {
-                count: 1,
-                types: vec!["text".into()],
-            },
-            observed: ValueShape {
-                count: 1,
-                types: vec!["null".into()],
-            },
-        })
-    }
-
-    #[test]
-    fn explicit_statement_run_restores_only_after_success() {
-        assert_eq!(
-            statement_run_disposition(&Ok::<_, StatementError>(())),
-            StatementRunDisposition::Restore
-        );
-        for error in [
-            mismatch(),
-            StatementError::Postgres(PgError::RowLimitExceeded(100)),
-            StatementError::Postgres(PgError::QueryError((
-                "WAMN1".into(),
-                "result decode failed".into(),
-            ))),
-        ] {
-            assert_eq!(
-                statement_run_disposition(&Err::<(), _>(error)),
-                StatementRunDisposition::Destroy
-            );
-        }
     }
 }

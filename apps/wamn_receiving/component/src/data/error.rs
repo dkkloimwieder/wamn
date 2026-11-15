@@ -253,9 +253,6 @@ fn classify(
         | StatementErrorType::ForeignKeyViolation
         | StatementErrorType::CheckViolation
         | StatementErrorType::ExclusionViolation
-        | StatementErrorType::UnknownStatement
-        | StatementErrorType::StatementContractMismatch
-        | StatementErrorType::RowLimitExceeded
         | StatementErrorType::QueryError
         | StatementErrorType::InvalidResult => (AccessErrorType::InternalError, None),
     }
@@ -370,10 +367,6 @@ mod tests {
             (
                 StatementErrorType::PermissionDenied,
                 AccessErrorType::PermissionDenied,
-            ),
-            (
-                StatementErrorType::RowLimitExceeded,
-                AccessErrorType::InternalError,
             ),
             (
                 StatementErrorType::QueryError,

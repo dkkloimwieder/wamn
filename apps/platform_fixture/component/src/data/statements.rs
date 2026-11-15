@@ -3,7 +3,7 @@
 //! The generated operations include their own accessors, in
 //! [`crate::data::generated`].
 
-/// Runtime projections carrying only admitted statement paths.
+/// Generated accessors carrying SQL for the host transaction.
 pub(crate) mod wamn {
     /// Generated `number.issue` accessor.
     pub(crate) mod number_issue {

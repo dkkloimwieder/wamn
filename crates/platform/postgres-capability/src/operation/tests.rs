@@ -3,14 +3,13 @@
 use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
-use wamn_scalar::SqlValueType;
 
 use serde_json::json;
 use tokio::sync::oneshot;
 use wamn_catalog::{
     AdmittedComponentOperation, AttachmentTarget, AttachmentType, ComponentDescriptor,
-    ComponentSqlField, ComponentSqlStatement, DefinitionHash, OperationType, PackageCoordinate,
-    ServingAttachment, ServingComponent, ServingManifest, ServingRelease, ServingRoute,
+    DefinitionHash, OperationType, PackageCoordinate, ServingAttachment, ServingComponent,
+    ServingManifest, ServingRelease, ServingRoute,
 };
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{
@@ -41,19 +40,6 @@ const RESULT: &str = "{ \"value\" : 7 }";
 
 fn release() -> Arc<LoadedRelease> {
     let digest = |c: char| format!("sha256:{}", c.to_string().repeat(64));
-    let statement = ComponentSqlStatement {
-        name: "update".into(),
-        path: "update.sql".into(),
-        sql: "UPDATE widget SET value = value + 1 WHERE id = 1 RETURNING value".into(),
-        binds: Vec::new(),
-        columns: vec![ComponentSqlField {
-            name: "value".into(),
-            value_type: SqlValueType::Int32,
-            nullable: false,
-        }],
-        relations: Vec::new(),
-        transactional: true,
-    };
     let mut manifest = ServingManifest::new(
 ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base", "1.0.0").unwrap()]) },
 BTreeSet::from([ServingComponent {
@@ -63,19 +49,12 @@ BTreeSet::from([ServingComponent {
 connections: Vec::new(), host_transaction: false, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
                 registered_operation: None,
                 committed_result_schema: None,
-                statements: BTreeMap::from([("read.sql".into(), ComponentSqlStatement {
-                    name: "read".into(), path: "read.sql".into(),
-                    sql: "SELECT value FROM widget WHERE id = 1".into(),
-                    relations: Vec::new(),
-                    transactional: false, ..statement.clone()
-                })]),
+
             }), (OPERATION.into(), AdmittedComponentOperation {
 connections: Vec::new(), host_transaction: true, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
                 registered_operation: Some(OPERATION.into()),
                 committed_result_schema: None,
-                statements: BTreeMap::from([("update.sql".into(), statement)]),
             })]); descriptor },
-            statement_instances: BTreeMap::new(),
 
         }]),
 BTreeSet::from([ServingRoute {
@@ -259,7 +238,6 @@ async fn fixture(pool: &sqlx::PgPool) -> (url::Url, Arc<WamnPostgres>, Arc<Loade
         platform_pool_max_size: 1,
         wait_timeout_ms: 2_000,
         statement_timeout_ms: 5_000,
-        row_limit: 10,
     })
     .unwrap();
     let postgres = Arc::new(postgres);
@@ -370,7 +348,6 @@ fn offline_fixture() -> (Arc<WamnPostgres>, Arc<LoadedRelease>) {
             platform_pool_max_size: 1,
             wait_timeout_ms: 1000,
             statement_timeout_ms: 1000,
-            row_limit: 10,
         })
         .unwrap(),
     );
@@ -436,21 +413,16 @@ async fn missing_principal_returns_permission_denied(pool: sqlx::PgPool) {
     run_guest(postgres, release, 24).await;
 }
 
-#[tokio::test]
-async fn refused_statement_authority_returns_unknown_statement() {
-    let (postgres, release) = offline_fixture();
-    run_guest(postgres, release, 25).await;
-}
-
-#[tokio::test]
-async fn anonymous_read_authorization_needs_no_database_credentials() {
-    let (postgres, release) = offline_fixture();
+#[sqlx::test(migrations = false)]
+async fn anonymous_read_authorization_uses_a_read_transaction(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let (_, postgres, release) = fixture(&pool).await;
     run_guest(Arc::clone(&postgres), release, 19).await;
     assert!(postgres.scopes.is_empty());
 }
 
 #[sqlx::test(migrations = false)]
-async fn reads_authorize_without_a_transaction_and_refuse_begin(pool: sqlx::PgPool) {
+async fn reads_use_a_host_transaction_and_refuse_write_claims(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture(&pool).await;
     for _ in 0..2 {
@@ -474,7 +446,6 @@ async fn unbound_control_entry_links_but_refuses_every_operation_call() {
             platform_pool_max_size: 1,
             wait_timeout_ms: 1000,
             statement_timeout_ms: 1000,
-            row_limit: 10,
         })
         .unwrap(),
     );
@@ -710,7 +681,6 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
         platform_pool_max_size: 1,
         wait_timeout_ms: 1000,
         statement_timeout_ms: 1000,
-        row_limit: 10,
     })
     .unwrap();
     let postgres = Arc::new(postgres);

@@ -126,19 +126,18 @@ pub(crate) fn application_runtime_schema(
     manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
     components: &BTreeSet<ServingComponent>,
 ) -> anyhow::Result<Option<String>> {
-    let member_digests = components
-        .iter()
-        .filter(|component| component.package_id == manifest.package.id)
-        .flat_map(|component| component.descriptor.statement_instances.values())
-        .collect::<BTreeSet<_>>();
     let mut members = vec![manifest];
     for dependency in manifest.base_dependencies.values() {
-        let composed = member_digests.contains(&dependency.digest)
-            || components.iter().any(|component| {
-                component.package_id == dependency.package
-                    && member_digests.contains(&component.descriptor.component_digest)
-            });
-        if composed {
+        let prefix = format!("{}:", dependency.package.replace('_', "-"));
+        if components
+            .iter()
+            .filter(|component| component.package_id == manifest.package.id)
+            .any(|component| {
+                component.descriptor.operations.keys().any(|name| {
+                    name.starts_with(&prefix) && name.ends_with(&format!("@{}", dependency.version))
+                })
+            })
+        {
             members.push(
                 manifests
                     .get(&dependency.package)
@@ -183,21 +182,17 @@ pub fn composes_integration(
     components: &BTreeSet<ServingComponent>,
 ) -> bool {
     manifest.base_dependencies.values().any(|dependency| {
+        let prefix = format!("{}:", dependency.package.replace('_', "-"));
         dependency.package == "wamn_integration"
-            && components.iter().any(|application| {
-                application.package_id == manifest.package.id
-                    && application
-                        .descriptor
-                        .statement_instances
-                        .values()
-                        .any(|digest| {
-                            digest == &dependency.digest
-                                || components.iter().any(|base| {
-                                    base.package_id == dependency.package
-                                        && &base.descriptor.component_digest == digest
-                                })
-                        })
-            })
+            && components
+                .iter()
+                .filter(|component| component.package_id == manifest.package.id)
+                .any(|component| {
+                    component.descriptor.operations.keys().any(|name| {
+                        name.starts_with(&prefix)
+                            && name.ends_with(&format!("@{}", dependency.version))
+                    })
+                })
     })
 }
 
@@ -292,12 +287,7 @@ pub(super) fn project_components(
         .facts
         .values()
         .flatten()
-        .map(|fact| {
-            components.with_statement_instances(project_serving_component(
-                fact,
-                components.connections(fact)?,
-            )?)
-        })
+        .map(|fact| project_serving_component(fact, components.connections(fact)?))
         .collect()
 }
 
@@ -358,12 +348,10 @@ pub(super) fn project_routes(
             package_manifests,
             rule,
         )?;
-        components.insert(
-            component_facts.with_statement_instances(project_serving_component(
-                fact,
-                component_facts.connections(fact)?,
-            )?)?,
-        );
+        components.insert(project_serving_component(
+            fact,
+            component_facts.connections(fact)?,
+        )?);
         routes.insert(ServingRoute {
             package_id: attachment.package_id.clone(),
             component: component.clone(),

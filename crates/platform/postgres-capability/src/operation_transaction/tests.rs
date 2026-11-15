@@ -1,9 +1,7 @@
 use sqlx::Row as _;
 use std::collections::HashMap;
 use std::sync::Arc;
-use wamn_scalar::SqlValueType;
 
-use sha2::Digest as _;
 use tokio::sync::oneshot;
 use wamn_catalog::ManifestDigest;
 use wash_runtime::engine::ctx::SharedCtx;
@@ -18,8 +16,8 @@ use wash_runtime::wit::WitInterface;
 
 use crate::session_identity::tests::{LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url};
 use crate::{
-    ClassCredentials, ReleaseIdentity, SessionIdentity, StatementField, VerifiedStatement,
-    WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
+    ClassCredentials, ReleaseIdentity, SessionIdentity, WAMN_POSTGRES_ID, WamnPostgres,
+    WamnPostgresConfig,
 };
 use wamn_capability_authority::connection::{
     ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
@@ -119,146 +117,57 @@ impl GuestCall for RunOwner {
 fn operation_owner_component(statement: &str) -> String {
     let length = statement.len();
     format!(
-        r#"
-(component
+        r#"(component
   (import "wamn:postgres/types@0.4.0" (instance $types
-    (type $sql-value' (variant (case "null") (case "boolean" bool) (case "int32" s32)
-      (case "int64" s64) (case "float64" f64) (case "text" string) (case "bytes" (list u8))
-      (case "numeric" string) (case "timestamptz" string) (case "json" string) (case "uuid" string)))
-    (export "sql-value" (type $sql-value (eq $sql-value')))
-    (type $column' (record (field "name" string) (field "type-name" string)))
-    (export "column" (type $column (eq $column')))
-    (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value)))))
-    (export "row-set" (type $row-set (eq $row-set')))
     (type $pg-error' (variant (case "serialization-failure") (case "connection-unavailable")
-      (case "statement-timeout") (case "row-limit-exceeded" u64) (case "unique-violation" string)
+      (case "statement-timeout") (case "unique-violation" string)
       (case "foreign-key-violation" string) (case "check-violation" string)
       (case "exclusion-violation" string) (case "permission-denied")
       (case "query-error" (tuple string string))))
     (export "pg-error" (type $pg-error (eq $pg-error')))))
-  (alias export $types "sql-value" (type $sql-value))
-  (alias export $types "column" (type $column))
-  (alias export $types "row-set" (type $row-set))
   (alias export $types "pg-error" (type $pg-error))
   (import "wamn:postgres/statements@0.4.0" (instance $statements
-
-    (type $contract-part' (enum "binds" "columns"))
-    (export "contract-part" (type $contract-part (eq $contract-part')))
-    (type $value-shape' (record (field "count" u32) (field "types" (list string))))
-    (export "value-shape" (type $value-shape (eq $value-shape')))
-    (type $contract-mismatch' (record (field "statement" string) (field "part" $contract-part)
-      (field "expected" $value-shape) (field "observed" $value-shape)))
-    (export "contract-mismatch" (type $contract-mismatch (eq $contract-mismatch')))
-    (type $statement-error' (variant (case "unknown-statement" string)
-      (case "statement-contract-mismatch" $contract-mismatch) (case "postgres" $pg-error)))
-    (export "statement-error" (type $statement-error (eq $statement-error')))
     (export "transaction" (type $transaction (sub resource)))
     (export "operation-transaction" (func async
-      (result (result (own $transaction) (error $statement-error)))))
-    (export "begin" (func async
-      (result (result (own $transaction) (error $statement-error)))))
-    (export "run" (func async (param "statement" string) (param "binds" (list $sql-value))
-      (result (result $row-set (error $statement-error)))))
-    (export "run-stream" (func async (param "statement" string) (param "binds" (list $sql-value))
-      (result (result (tuple (list $column) (stream (list $sql-value))
-        (future (result (error $statement-error)))) (error $statement-error)))))
-    (export "[method]transaction.run" (func async (param "self" (borrow $transaction))
-      (param "statement" string) (param "binds" (list $sql-value))
-      (result (result $row-set (error $statement-error)))))
-    (export "[method]transaction.commit" (func async
-      (param "self" (borrow $transaction)) (result (result (error $statement-error)))))))
+      (result (result (own $transaction) (error $pg-error)))))
+    (export "[method]transaction.query-batch" (func async (param "self" (borrow $transaction))
+      (param "sql" string) (result (result (error $pg-error)))))))
   (alias export $statements "transaction" (type $transaction))
   (core module $memory
     (memory (export "memory") 1)
     (data (i32.const 512) "{statement}")
-    (global $next (mut i32) (i32.const 1024))
-    (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
-      (local $ptr i32)
-      global.get $next
-      local.get $align i32.const 1 i32.sub i32.add
-      i32.const 0 local.get $align i32.sub i32.and
-      local.tee $ptr local.get $size i32.add global.set $next
-      local.get $ptr))
+    (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const 1024))
   (core instance $memory (instantiate $memory))
-  (core func $operation-transaction (canon lower (func $statements "operation-transaction")
+  (core func $transaction (canon lower (func $statements "operation-transaction")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
-  (core func $begin (canon lower (func $statements "begin")
-    (memory $memory "memory") (realloc (func $memory "realloc"))))
-  (core func $run (canon lower (func $statements "run")
-    (memory $memory "memory") (realloc (func $memory "realloc"))))
-  (core func $run-stream (canon lower (func $statements "run-stream")
-    (memory $memory "memory") (realloc (func $memory "realloc"))))
-  (core func $transaction-run (canon lower (func $statements "[method]transaction.run")
-    (memory $memory "memory") (realloc (func $memory "realloc"))))
-  (core func $commit (canon lower (func $statements "[method]transaction.commit")
+  (core func $query (canon lower (func $statements "[method]transaction.query-batch")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $drop (canon resource.drop $transaction))
   (core func $return (canon task.return (result bool)))
   (core module $main
     (import "memory" "memory" (memory 1))
-    (import "host" "operation-transaction" (func $operation-transaction (param i32)))
-    (import "host" "begin" (func $begin (param i32)))
-    (import "host" "run" (func $run (param i32 i32 i32 i32 i32)))
-    (import "host" "run-stream" (func $run-stream (param i32 i32 i32 i32 i32)))
-    (import "host" "transaction-run" (func $transaction-run (param i32 i32 i32 i32 i32 i32)))
-    (import "host" "commit" (func $commit (param i32 i32)))
+    (import "host" "transaction" (func $transaction (param i32)))
+    (import "host" "query" (func $query (param i32 i32 i32 i32)))
     (import "host" "drop" (func $drop (param i32)))
     (import "host" "return" (func $return (param i32)))
-    ;; Whether the result at $at is err(postgres(query-error((state, _)))) with
-    ;; a five-byte SQLSTATE whose first four bytes are $state.
-    (func $refused (param $at i32) (param $state i32) (result i32)
-      local.get $at i32.load8_u i32.const 1 i32.eq
-      local.get $at i32.const 8 i32.add i32.load8_u i32.const 2 i32.eq i32.and
-      local.get $at i32.const 16 i32.add i32.load8_u i32.const 9 i32.eq i32.and
-      local.get $at i32.const 28 i32.add i32.load i32.const 5 i32.eq i32.and
-      local.get $at i32.const 24 i32.add i32.load i32.load local.get $state i32.eq i32.and)
     (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
-    (func (export "run") (result i32) (local $transaction i32)
-      i32.const 64 call $operation-transaction
+    (func (export "run") (result i32) (local $handle i32)
+      i32.const 64 call $transaction
       i32.const 64 i32.load8_u if
-        ;; Outside a host transaction, run and begin work as before.
-        i32.const 512 i32.const {length} i32.const 0 i32.const 0 i32.const 320 call $run
-        i32.const 320 i32.load8_u if unreachable end
-        i32.const 448 call $begin
-        i32.const 448 i32.load8_u if unreachable end
-        i32.const 456 i32.load call $drop
         i32.const 0 call $return i32.const 0 return end
-      i32.const 72 i32.load local.set $transaction
-      ;; "2500" of 25001, active_sql_transaction.
-      i32.const 256 call $begin
-      i32.const 256 i32.const 0x30303532 call $refused
-      i32.eqz if i32.const 0 call $return i32.const 0 return end
-      ;; run and run-stream would each commit on a connection of their own.
-      i32.const 512 i32.const {length} i32.const 0 i32.const 0 i32.const 320 call $run
-      i32.const 320 i32.const 0x30303532 call $refused
-      i32.eqz if i32.const 0 call $return i32.const 0 return end
-      i32.const 512 i32.const {length} i32.const 0 i32.const 0 i32.const 384 call $run-stream
-      i32.const 384 i32.const 0x30303532 call $refused
-      i32.eqz if i32.const 0 call $return i32.const 0 return end
-      ;; The same statement runs in the host transaction.
-      local.get $transaction i32.const 512 i32.const {length} i32.const 0 i32.const 0
-      i32.const 448 call $transaction-run
-      i32.const 448 i32.load8_u if i32.const 0 call $return i32.const 0 return end
-      ;; "2D00" of 2D000, invalid_transaction_termination.
-      local.get $transaction i32.const 192 call $commit
-      i32.const 192 i32.const 0x30304432 call $refused
-      i32.eqz if i32.const 0 call $return i32.const 0 return end
-      local.get $transaction call $drop
-      i32.const 1 call $return
-      i32.const 0))
+      i32.const 68 i32.load local.set $handle
+      local.get $handle i32.const 512 i32.const {length} i32.const 128 call $query
+      i32.const 128 i32.load8_u if unreachable end
+      local.get $handle call $drop
+      i32.const 1 call $return i32.const 0))
   (core instance $main (instantiate $main
     (with "memory" (instance $memory))
-    (with "host" (instance
-      (export "operation-transaction" (func $operation-transaction))
-      (export "begin" (func $begin))
-      (export "run" (func $run)) (export "run-stream" (func $run-stream))
-      (export "transaction-run" (func $transaction-run))
-      (export "commit" (func $commit))
-      (export "drop" (func $drop)) (export "return" (func $return))))))
+    (with "host" (instance (export "transaction" (func $transaction))
+      (export "query" (func $query)) (export "drop" (func $drop))
+      (export "return" (func $return))))))
   (func (export "run") async (result bool)
     (canon lift (core func $main "run") (memory $memory "memory")
-      (realloc (func $memory "realloc")) async (callback (func $main "callback")))))
-"#
+      (realloc (func $memory "realloc")) async (callback (func $main "callback")))))"#
     )
 }
 
@@ -278,7 +187,6 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it(pool:
             platform_pool_max_size: 1,
             wait_timeout_ms: 2_000,
             statement_timeout_ms: 5_000,
-            row_limit: 10,
         })
         .expect("live postgres plugin"),
     );
@@ -302,32 +210,6 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it(pool:
         .bind_invocation(OPERATION_OWNER, invocation(OWNER_OPERATION, "base"))
         .expect("invocation binds");
     let sql = "UPDATE operation_transaction_roundtrip SET value = value + 1 RETURNING value";
-    let digest = format!(
-        "sha256:{}",
-        hex::encode(sha2::Sha256::digest(sql.as_bytes()))
-    );
-    postgres
-        .bind_statement_operation(
-            OPERATION_OWNER,
-            OWNER_OPERATION,
-            [(
-                digest.clone(),
-                VerifiedStatement {
-                    exact_sql: sql.into(),
-                    binds: Box::new([]),
-                    columns: Box::new([StatementField {
-                        value_type: SqlValueType::Int32,
-                        nullable: false,
-                    }]),
-                    transactional: true,
-                },
-            )]
-            .into(),
-        )
-        .expect("owner statement binds");
-    postgres
-        .activate_statement_operation(OPERATION_OWNER, OWNER_OPERATION)
-        .expect("owner statement activates");
     let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -359,7 +241,7 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it(pool:
                 service: None,
                 components: vec![WorkloadComponent {
                     name: "owner".into(),
-                    bytes: wat::parse_str(operation_owner_component(&digest))
+                    bytes: wat::parse_str(operation_owner_component(sql))
                         .unwrap()
                         .into(),
                     ..WorkloadComponent::default()
@@ -416,7 +298,11 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it(pool:
         matches!(owner, Val::Bool(false)),
         "without a host transaction the owner gets none: {owner:?}"
     );
-    assert_eq!(value().await, 2, "without a host transaction run commits");
+    assert_eq!(
+        value().await,
+        1,
+        "without a host transaction SQL is refused"
+    );
 
     for commit in [true, false] {
         let mut transaction = postgres
@@ -431,23 +317,18 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it(pool:
             matches!(owner, Val::Bool(true)),
             "the owner works in the host transaction: {owner:?}"
         );
-        assert!(
-            postgres
-                .refuse_in_host_transaction(OPERATION_OWNER, "run-stream")
-                .is_err()
-        );
         postgres.revoke_operation_transaction(OPERATION_OWNER);
         assert_eq!(
             value().await,
-            if commit { 2 } else { 3 },
+            if commit { 1 } else { 2 },
             "nothing commits before the host"
         );
         if commit {
             transaction.commit().await.expect("the host commits");
-            assert_eq!(value().await, 3, "the owner's update commits");
+            assert_eq!(value().await, 2, "the owner's update commits");
         } else {
             transaction.rollback().await.expect("the host rolls back");
-            assert_eq!(value().await, 3, "the owner's update rolls back");
+            assert_eq!(value().await, 2, "the owner's update rolls back");
         }
     }
 }

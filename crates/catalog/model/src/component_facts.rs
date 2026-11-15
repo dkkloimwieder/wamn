@@ -2,8 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::{Component as PathComponent, Path};
-use wamn_scalar::SqlValueType;
 
 use boon::{Compiler, Draft, Schemas};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -372,35 +370,6 @@ pub enum ComponentEffectProvenance {
     Imported,
 }
 
-/// One ordered bind or result column in an admitted SQL statement.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ComponentSqlField {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub value_type: SqlValueType,
-    pub nullable: bool,
-}
-
-/// Exact SQL bytes and typed shape admitted under their path, the map key.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ComponentSqlStatement {
-    pub name: String,
-    pub path: String,
-    pub sql: String,
-    pub binds: Vec<ComponentSqlField>,
-    pub columns: Vec<ComponentSqlField>,
-    /// Relation effects recorded by the compiler for these SQL bytes.
-    pub relations: Vec<crate::profile::RelationProfile>,
-    /// Whether this statement NEEDS A TRANSACTION, as PostgreSQL itself reports
-    /// it at build time: the generic plan contains a `ModifyTable` node (it
-    /// writes, including a data-modifying CTE) or a `LockRows` node (it takes a
-    /// row lock, which autocommit would drop the instant the statement
-    /// returned). Authored routine calls also require a transaction.
-    pub transactional: bool,
-}
-
 /// One normalized operation exported by an admitted component.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -416,24 +385,13 @@ pub struct AdmittedComponentOperation {
     pub committed_result_schema: Option<ComponentSchema>,
     /// Whether the host begins the request element transaction this export works in: the
     /// package manifest's `transaction = explicit_per_input` on a command, or a
-    /// generated create, update or delete. Bound from the manifest at
+    /// generated create, update or delete, or a SQL event handler. Bound from the manifest at
     /// admission, never authored in a declaration.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub host_transaction: bool,
     pub input_ports: Vec<AdmittedComponentPort>,
     pub output_ports: Vec<AdmittedComponentPort>,
     pub parameters: Vec<AdmittedComponentParameter>,
-    /// Exact SQL available while this export is active, keyed by its
-    /// package-relative path.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub statements: BTreeMap<String, ComponentSqlStatement>,
-}
-
-impl AdmittedComponentOperation {
-    /// Resolve one statement only inside this operation's admitted authority.
-    pub fn statement(&self, path: &str) -> Option<&ComponentSqlStatement> {
-        self.statements.get(path)
-    }
 }
 
 /// Complete package-owned fact that byte admission produces.
@@ -470,37 +428,13 @@ impl AdmittedComponent {
 pub struct AdmittedComponentFacts {
     pub component: AdmittedComponent,
     pub connections: Vec<ComponentConnection>,
-    /// Each named `statements` import of a composed component and the digest
-    /// of the member it was composed for, as admission verified them in the
-    /// bytes. Empty for every other component.
-    pub statement_instances: BTreeMap<String, String>,
 }
 
-impl AdmittedComponentFacts {
-    /// Record the verified statement instances and fold them into the
-    /// imports fingerprint, so a changed wiring changes the fingerprint and
-    /// the descriptor digest.
-    pub fn bind_statement_instances(&mut self, instances: BTreeMap<String, String>) {
-        self.component.imports_fingerprint =
-            imports_fingerprint(&self.component.imports, &instances);
-        self.statement_instances = instances;
-    }
-}
-
-/// The fingerprint of a component's imports and its statement instances.
-///
-/// With no statement instance it is the digest of the import list alone, as
-/// it was before instances existed.
-fn imports_fingerprint(
-    imports: &[String],
-    statement_instances: &BTreeMap<String, String>,
-) -> String {
-    let value = if statement_instances.is_empty() {
-        serde_json::to_value(imports).expect("a string list serializes")
-    } else {
-        serde_json::json!({"imports": imports, "statement-instances": statement_instances})
-    };
-    wamn_digest::canonical_json_sha256(&value)
+/// Fingerprint of the imported interfaces.
+fn imports_fingerprint(imports: &[String]) -> String {
+    wamn_digest::canonical_json_sha256(
+        &serde_json::to_value(imports).expect("a string list serializes"),
+    )
 }
 
 /// The admitted facts of one component as a package artifact carries them
@@ -515,13 +449,6 @@ pub struct ComponentDescriptor {
     pub component_digest: String,
     pub operations: BTreeMap<String, AdmittedComponentOperation>,
     pub imports: Vec<String>,
-    /// Each named `statements` import and the digest of its member, as
-    /// admission verified them
-    /// (docs/architecture/components.md#grouping-and-publication).
-    /// `imports-fingerprint` covers it. Absent when empty, so other descriptors
-    /// keep their bytes.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub statement_instances: BTreeMap<String, String>,
     pub imports_fingerprint: String,
     pub effects: Vec<AdmittedComponentEffect>,
     pub connections: Vec<ComponentConnection>,
@@ -553,17 +480,7 @@ impl ComponentDescriptor {
             imports_fingerprint: component.imports_fingerprint,
             effects: component.effects,
             connections,
-            statement_instances: BTreeMap::new(),
         }
-    }
-
-    /// This descriptor with the verified statement instance record of its
-    /// component. `component` must carry the fingerprint that covers it, as
-    /// [`AdmittedComponentFacts::bind_statement_instances`] leaves it.
-    #[must_use]
-    pub fn with_statement_instances(mut self, instances: BTreeMap<String, String>) -> Self {
-        self.statement_instances = instances;
-        self
     }
 
     /// A descriptor of `component` with no operation, import, effect or
@@ -583,7 +500,6 @@ impl ComponentDescriptor {
             imports_fingerprint: String::new(),
             effects: Vec::new(),
             connections: Vec::new(),
-            statement_instances: BTreeMap::new(),
         }
     }
 
@@ -601,7 +517,6 @@ impl ComponentDescriptor {
                 effects: self.effects,
             },
             connections: self.connections,
-            statement_instances: self.statement_instances,
         }
     }
 }
@@ -625,9 +540,6 @@ pub enum ComponentFactErrorType {
     DuplicateConnection,
     UnimportedConnection,
     UndeclaredConnection,
-    UnexpectedOperationStatements,
-    InvalidStatementFact,
-    DuplicateStatementField,
 }
 
 /// Refusal to mint a complete normalized component fact.
@@ -734,7 +646,6 @@ pub fn normalize_component_fact(
                 input_ports,
                 output_ports,
                 parameters,
-                statements: BTreeMap::new(),
             },
         );
     }
@@ -742,7 +653,7 @@ pub fn normalize_component_fact(
     let mut imports: Vec<_> = imports.into_iter().collect();
     imports.sort();
     imports.dedup();
-    let imports_fingerprint = imports_fingerprint(&imports, &BTreeMap::new());
+    let imports_fingerprint = imports_fingerprint(&imports);
     refuse_application_operation_imports(&imports)?;
     let effects = normalize_effects(effects, &imports)?;
     let mut by_alias = BTreeMap::new();
@@ -787,7 +698,6 @@ pub fn normalize_component_fact(
             effects,
         },
         connections,
-        statement_instances: BTreeMap::new(),
     })
 }
 
@@ -834,160 +744,9 @@ pub fn verify_stored_effect_projection(
         crate::signed_file_reads(operation).map_err(|error| {
             ComponentFactError::new(ComponentFactErrorType::InvalidSchema, error.to_string())
         })?;
-        validate_operation_statement_facts(export, &operation.statements)?;
     }
     refuse_application_operation_imports(&component.imports)?;
     normalize_effects(component.effects.clone(), &component.imports).map(|_| ())
-}
-
-/// Attach generated SQL facts to manifest-backed exports atomically.
-///
-/// The publisher supplies only manifest-backed exports. Public package
-/// operations are necessarily present through `registered-operation`; private
-/// package operations are admitted by their manifest match at the publisher
-/// and deliberately carry no authorization token. Unmentioned exports remain
-/// palette operations with no package SQL.
-///
-/// `host_transactions` names the manifest-backed exports whose request element
-/// transaction the host begins; each must be one of the supplied exports.
-pub fn bind_component_statement_facts(
-    component: &mut AdmittedComponent,
-    statements: BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>,
-    host_transactions: &BTreeSet<String>,
-) -> Result<(), ComponentFactError> {
-    let registered = component
-        .operations
-        .iter()
-        .filter_map(|(export, operation)| {
-            operation
-                .registered_operation
-                .as_ref()
-                .map(|_| export.clone())
-        })
-        .collect::<BTreeSet<_>>();
-    let exported = component
-        .operations
-        .keys()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let supplied = statements.keys().cloned().collect::<BTreeSet<_>>();
-    if !registered.is_subset(&supplied)
-        || !supplied.is_subset(&exported)
-        || !host_transactions.is_subset(&supplied)
-    {
-        let missing = registered.difference(&supplied).collect::<Vec<_>>();
-        let extra = supplied
-            .union(host_transactions)
-            .filter(|export| !exported.contains(*export) || !supplied.contains(*export))
-            .collect::<Vec<_>>();
-        return Err(ComponentFactError::new(
-            ComponentFactErrorType::UnexpectedOperationStatements,
-            format!(
-                "statement operation set differs from component exports: missing-public={missing:?}, extra={extra:?}"
-            ),
-        ));
-    }
-    for (export, operation_statements) in &statements {
-        validate_operation_statement_facts(export, operation_statements)?;
-        if !component.operations[export].connections.is_empty()
-            && (!operation_statements.is_empty() || host_transactions.contains(export))
-        {
-            return Err(ComponentFactError::new(
-                ComponentFactErrorType::InvalidStatementFact,
-                "an operation cannot combine SQL or a host transaction with an external connection",
-            ));
-        }
-    }
-    for (export, operation_statements) in statements {
-        let operation = component
-            .operations
-            .get_mut(&export)
-            .expect("the exact operation-set comparison confirmed this export exists");
-        operation.host_transaction = host_transactions.contains(&export);
-        operation.statements = operation_statements;
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_operation_statement_facts(
-    export: &str,
-    statements: &BTreeMap<String, ComponentSqlStatement>,
-) -> Result<(), ComponentFactError> {
-    let mut names = BTreeSet::new();
-    let mut paths = BTreeSet::new();
-    for (path, statement) in statements {
-        if *path != statement.path {
-            return Err(ComponentFactError::new(
-                ComponentFactErrorType::InvalidStatementFact,
-                format!(
-                    "operation {export:?} statement {:?} is keyed by {path:?}, not by its path",
-                    statement.name
-                ),
-            ));
-        }
-        validate_identity(&statement.name, "statement name")?;
-        if !is_safe_statement_path(&statement.path) {
-            return Err(ComponentFactError::new(
-                ComponentFactErrorType::InvalidStatementFact,
-                format!(
-                    "operation {export:?} statement {:?} path is not a canonical package-relative SQL path",
-                    statement.name
-                ),
-            ));
-        }
-        if !names.insert(&statement.name) || !paths.insert(&statement.path) {
-            return Err(ComponentFactError::new(
-                ComponentFactErrorType::InvalidStatementFact,
-                format!("operation {export:?} repeats a statement name or path"),
-            ));
-        }
-        validate_statement_fields(export, &statement.name, "bind", &statement.binds)?;
-        validate_statement_fields(export, &statement.name, "column", &statement.columns)?;
-    }
-    Ok(())
-}
-
-fn validate_statement_fields(
-    export: &str,
-    statement: &str,
-    field_type: &str,
-    fields: &[ComponentSqlField],
-) -> Result<(), ComponentFactError> {
-    let mut names = BTreeSet::new();
-    for field in fields {
-        validate_identity(&field.name, field_type)?;
-        if !names.insert(&field.name) {
-            return Err(ComponentFactError::new(
-                ComponentFactErrorType::DuplicateStatementField,
-                format!(
-                    "operation {export:?} statement {statement:?} repeats {field_type} {:?}",
-                    field.name
-                ),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn is_safe_statement_path(path: &str) -> bool {
-    let parsed = Path::new(path);
-    !parsed.as_os_str().is_empty()
-        && parsed
-            .extension()
-            .is_some_and(|extension| extension == "sql")
-        && !path.contains('\\')
-        && parsed
-            .components()
-            .all(|part| matches!(part, PathComponent::Normal(_)))
-        && parsed
-            .components()
-            .filter_map(|part| match part {
-                PathComponent::Normal(part) => part.to_str(),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("/")
-            == path
 }
 
 fn validate_registered_operation_target(
@@ -1432,41 +1191,6 @@ mod tests {
     }
 
     #[test]
-    fn the_imports_fingerprint_covers_the_statement_instances() {
-        let facts = normalize_component_fact(
-            declaration(),
-            format!("sha256:{}", "a".repeat(64)),
-            ["wamn:postgres/client@0.1.0".to_string()],
-            vec![postgres_effect()],
-        )
-        .expect("component fact normalizes");
-        let unbound = facts.component.imports_fingerprint.clone();
-        let first = format!("sha256:{}", "1".repeat(64));
-        let second = format!("sha256:{}", "2".repeat(64));
-        let mut wired = facts.clone();
-        wired.bind_statement_instances(BTreeMap::from([
-            ("sql-0".to_owned(), first.clone()),
-            ("sql-1".to_owned(), second.clone()),
-        ]));
-        let mut swapped = facts.clone();
-        swapped.bind_statement_instances(BTreeMap::from([
-            ("sql-0".to_owned(), second),
-            ("sql-1".to_owned(), first),
-        ]));
-        let mut empty = facts;
-        empty.bind_statement_instances(BTreeMap::new());
-        assert_ne!(wired.component.imports_fingerprint, unbound);
-        assert_ne!(
-            wired.component.imports_fingerprint, swapped.component.imports_fingerprint,
-            "a swapped wiring changes the fingerprint"
-        );
-        assert_eq!(
-            empty.component.imports_fingerprint, unbound,
-            "no instance leaves the fingerprint as it was"
-        );
-    }
-
-    #[test]
     fn persisted_component_target_uses_the_package_coordinate_guard() {
         assert!(serde_json::from_str::<ComponentPackageCoordinate>(
             r#"{"project_env_key":"first","project_env_key":"second","package-id":"orders","package-version":"1.0.0"}"#
@@ -1684,7 +1408,6 @@ mod tests {
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
-                    statements: BTreeMap::new(),
                 },
             )]),
             component_digest: format!("sha256:{}", "a".repeat(64)),
@@ -1945,146 +1668,6 @@ mod tests {
             .unwrap_err()
             .error_type(),
             ComponentFactErrorType::RemoteSchemaReference
-        );
-    }
-
-    fn sql_statement(sql: &str) -> (String, ComponentSqlStatement) {
-        (
-            "generated/sql/widget/get.sql".to_owned(),
-            ComponentSqlStatement {
-                name: "select_order".to_owned(),
-                path: "generated/sql/widget/get.sql".to_owned(),
-                sql: sql.to_owned(),
-                // A SELECT fixture: PostgreSQL classifies it as needing no
-                // transaction.
-                relations: Vec::new(),
-                transactional: false,
-                binds: vec![ComponentSqlField {
-                    name: "id".to_owned(),
-                    value_type: SqlValueType::Uuid,
-                    nullable: false,
-                }],
-                columns: vec![ComponentSqlField {
-                    name: "row_version".to_owned(),
-                    value_type: SqlValueType::Int64,
-                    nullable: false,
-                }],
-            },
-        )
-    }
-
-    #[test]
-    fn generated_statement_facts_bind_to_exact_registered_export() {
-        let registered = "orders:widget/get@1.2.0";
-        let mut declared = declaration();
-        let mut operation = declared.operations.remove("map").expect("map operation");
-        operation.registered_operation = Some(registered.to_owned());
-        declared.operations.insert(registered.to_owned(), operation);
-        let mut component = normalize_component_fact(
-            declared,
-            format!("sha256:{}", "a".repeat(64)),
-            Vec::new(),
-            Vec::new(),
-        )
-        .expect("declaration normalizes before package evidence is attached")
-        .component;
-        let statement = sql_statement("SELECT row_version FROM widget WHERE id = $1");
-
-        bind_component_statement_facts(
-            &mut component,
-            BTreeMap::from([(registered.to_owned(), BTreeMap::from([statement.clone()]))]),
-            &BTreeSet::from([registered.to_owned()]),
-        )
-        .expect("exact generated statement facts bind");
-
-        assert_eq!(
-            component.operations[registered].statement(&statement.0),
-            Some(&statement.1)
-        );
-        assert!(component.operations[registered].host_transaction);
-        verify_stored_effect_projection(&component)
-            .expect("a stored component re-verifies its exact SQL bytes");
-    }
-
-    #[test]
-    fn manifest_matched_private_operation_can_carry_sql_without_an_auth_token() {
-        let mut component = migration_defaulted_fact(&[]);
-        let statement = sql_statement("SELECT row_version FROM widget WHERE id = $1");
-
-        bind_component_statement_facts(
-            &mut component,
-            BTreeMap::from([("map".to_owned(), BTreeMap::from([statement.clone()]))]),
-            &BTreeSet::new(),
-        )
-        .expect("the publisher may bind a manifest-matched private operation");
-
-        assert_eq!(
-            component.operations["map"].statement(&statement.0),
-            Some(&statement.1)
-        );
-        assert!(!component.operations["map"].host_transaction);
-    }
-
-    #[test]
-    fn statement_authority_refuses_wrong_operation_path_and_shape() {
-        let mut component = migration_defaulted_fact(&[]);
-        let statement = sql_statement("SELECT row_version FROM widget WHERE id = $1");
-        assert_eq!(
-            bind_component_statement_facts(
-                &mut component,
-                BTreeMap::from([("unknown".to_owned(), BTreeMap::new())]),
-                &BTreeSet::new(),
-            )
-            .unwrap_err()
-            .error_type(),
-            ComponentFactErrorType::UnexpectedOperationStatements
-        );
-        assert_eq!(
-            bind_component_statement_facts(
-                &mut component,
-                BTreeMap::from([("map".to_owned(), BTreeMap::new())]),
-                &BTreeSet::from(["unknown".to_owned()]),
-            )
-            .unwrap_err()
-            .error_type(),
-            ComponentFactErrorType::UnexpectedOperationStatements,
-            "a host transaction names only an export the manifest backs"
-        );
-
-        let operation = component.operations.get_mut("map").expect("map operation");
-        operation.registered_operation = Some("orders:widget/get@1.2.0".to_owned());
-        operation.statements =
-            BTreeMap::from([("generated/sql/other.sql".to_owned(), statement.1.clone())]);
-        assert_eq!(
-            verify_stored_effect_projection(&component)
-                .unwrap_err()
-                .error_type(),
-            ComponentFactErrorType::RegisteredOperationMismatch
-        );
-
-        let operation = component.operations.remove("map").expect("map operation");
-        component
-            .operations
-            .insert("orders:widget/get@1.2.0".to_owned(), operation);
-        assert_eq!(
-            verify_stored_effect_projection(&component)
-                .unwrap_err()
-                .error_type(),
-            ComponentFactErrorType::InvalidStatementFact
-        );
-
-        let operation = component
-            .operations
-            .get_mut("orders:widget/get@1.2.0")
-            .expect("registered operation");
-        let (path, mut malformed) = statement;
-        malformed.binds.push(malformed.binds[0].clone());
-        operation.statements = BTreeMap::from([(path, malformed)]);
-        assert_eq!(
-            verify_stored_effect_projection(&component)
-                .unwrap_err()
-                .error_type(),
-            ComponentFactErrorType::DuplicateStatementField
         );
     }
 }

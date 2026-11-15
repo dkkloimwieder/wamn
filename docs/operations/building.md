@@ -102,7 +102,7 @@ The build then composes each component of a package that pins bases in `base_dep
 It reads each base component from the base's `build.json`, so build the base first.
 The overlay imports each base operation that it calls under the base's export name, and the base supplies that operation.
 An overlay that imports no base operation stays as it is.
-Each member that imports `wamn:postgres/statements` gets its own outer import, `sql-0`, `sql-1`, in member order ([components](../architecture/components.md)).
+Each member that imports `wamn:postgres/statements` gets its own outer import, `sql-0`, `sql-1`, in member order ([components](../architecture/components.md)). Each import borrows the same host operation transaction. Generated accessors include their SQL bytes. Publication carries no admitted statement sets.
 The composed component exports every export of its members.
 Imports that no member supplies stay imports of the composed component.
 Each member is embedded with its bytes unchanged.

@@ -1,7 +1,5 @@
 //! PostgreSQL syntax facts used by compilation and release effect review.
 
-pub mod admission;
-
 use crate::manifest::FilterMatch;
 use pg_query::{NodeEnum, NodeRef};
 use std::collections::{BTreeMap, BTreeSet};

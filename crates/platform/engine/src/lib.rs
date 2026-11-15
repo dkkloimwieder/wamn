@@ -62,7 +62,6 @@ pub mod native_routes;
 pub mod operation;
 pub mod release_manifest;
 mod route_bindings;
-pub mod statement_instances;
 pub mod warm_reuse;
 
 pub use engine::{

@@ -45,11 +45,11 @@ pub fn read_palette(bytes: &[u8]) -> anyhow::Result<Palette> {
             crate::ArtifactHash::parse(digest.to_owned())?;
             crate::ArtifactHash::parse(pin.descriptor.component_digest.clone())?;
             anyhow::ensure!(
-                pin.descriptor.operations.values().all(|operation| operation
-                    .registered_operation
-                    .is_none()
-                    && !operation.host_transaction
-                    && operation.statements.is_empty()),
+                pin.descriptor
+                    .operations
+                    .values()
+                    .all(|operation| operation.registered_operation.is_none()
+                        && !operation.host_transaction),
                 "palette components cannot own application operations or SQL"
             );
             for connection in &pin.descriptor.connections {
@@ -59,8 +59,7 @@ pub fn read_palette(bytes: &[u8]) -> anyhow::Result<Palette> {
                 .descriptor
                 .into_admitted(palette_target("platform-palette"));
             crate::verify_stored_effect_projection(&facts.component)?;
-            let descriptor = ComponentDescriptor::new(facts.component, facts.connections)
-                .with_statement_instances(facts.statement_instances);
+            let descriptor = ComponentDescriptor::new(facts.component, facts.connections);
             Ok((
                 name,
                 PalettePin {

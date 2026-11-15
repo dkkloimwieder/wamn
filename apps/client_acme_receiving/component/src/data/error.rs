@@ -180,10 +180,7 @@ fn classify(
                 Some(constraint.expect("guarded").into()),
             )
         }
-        StatementErrorType::UnknownStatement
-        | StatementErrorType::StatementContractMismatch
-        | StatementErrorType::RowLimitExceeded
-        | StatementErrorType::UniqueViolation
+        StatementErrorType::UniqueViolation
         | StatementErrorType::ForeignKeyViolation
         | StatementErrorType::CheckViolation
         | StatementErrorType::ExclusionViolation

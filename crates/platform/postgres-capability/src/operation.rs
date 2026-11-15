@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use crate::invocation::{AuthorizedInvocation, InvocationRequest, PrincipalVerification};
 use anyhow::Context as _;
-use wamn_catalog::{ComponentSqlField, ComponentSqlStatement};
 use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::InvocationTrace;
@@ -16,8 +15,7 @@ use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTab
 use super::session_identity::{SessionIdentityError, SessionIdentityErrorType};
 use super::write_log::{Claim, WriteLogStore};
 use super::{
-    OperationTransaction, PgCommitFailure, PreparedStatementMembers, PreparedStatementSet,
-    ReleaseIdentity, SessionIdentity, StatementField, VerifiedStatement, WAMN_POSTGRES_ID,
+    OperationTransaction, PgCommitFailure, ReleaseIdentity, SessionIdentity, WAMN_POSTGRES_ID,
     WamnPostgres,
 };
 
@@ -59,13 +57,12 @@ pub(super) struct OperationWorkload {
     context: Arc<crate::invocation::ReleaseContext>,
     identity: SessionIdentity,
     operations: BTreeMap<String, OperationAuthority>,
-    members: PreparedStatementMembers,
     invoker: std::sync::RwLock<Option<std::sync::Weak<dyn OperationInvoker>>>,
 }
 
 #[derive(Debug)]
 struct OperationAuthority {
-    statements: PreparedStatementSet,
+    read: bool,
     grant: Option<String>,
     schema: Option<String>,
     invocation: wamn_capability_authority::connection::ConnectionInvocation,
@@ -179,10 +176,7 @@ impl WamnPostgres {
                 operations.insert(
                     id.clone(),
                     OperationAuthority {
-                        statements: Self::prepare_statement_set(
-                            lower_statements(&fact.statements),
-                            read,
-                        ),
+                        read,
                         grant: fact.registered_operation.clone(),
                         schema: component.runtime_schema.clone(),
                         invocation: wamn_capability_authority::connection::ConnectionInvocation {
@@ -207,32 +201,6 @@ impl WamnPostgres {
                 );
             }
         }
-        // Publication preserves the application's named SQL imports in the entry.
-        // The composed application's descriptor already binds every nested member.
-        let application = release
-            .manifest()
-            .composing_member()
-            .context("entry has no application members")?;
-        let mut members = BTreeMap::new();
-        if application.statement_instances.is_empty() {
-            let statements = application
-                .descriptor
-                .operations
-                .values()
-                .flat_map(|fact| fact.statements.clone())
-                .collect();
-            members.insert(
-                "sql-0".to_owned(),
-                Self::prepare_statement_set(lower_statements(&statements), false),
-            );
-        } else {
-            for (name, statements) in &application.statement_instances {
-                members.insert(
-                    name.clone(),
-                    Self::prepare_statement_set(lower_statements(statements), false),
-                );
-            }
-        }
         let mut workloads = self
             .operation_workloads
             .write()
@@ -253,7 +221,6 @@ impl WamnPostgres {
                 context,
                 identity,
                 operations,
-                members: Self::prepare_statement_members(members),
                 invoker: std::sync::RwLock::default(),
             }),
         );
@@ -309,29 +276,6 @@ impl WamnPostgres {
     }
 }
 
-fn lower_statements(
-    statements: &BTreeMap<String, ComponentSqlStatement>,
-) -> super::VerifiedStatementSet {
-    let field = |field: &ComponentSqlField| StatementField {
-        value_type: field.value_type,
-        nullable: field.nullable,
-    };
-    statements
-        .iter()
-        .map(|(path, statement)| {
-            (
-                path.clone(),
-                VerifiedStatement {
-                    exact_sql: statement.sql.clone().into_boxed_str(),
-                    binds: statement.binds.iter().map(field).collect(),
-                    columns: statement.columns.iter().map(field).collect(),
-                    transactional: statement.transactional,
-                },
-            )
-        })
-        .collect()
-}
-
 /// Store-local authority for a begun write or an authorized read.
 #[derive(Debug, Clone)]
 struct StoreOperation {
@@ -364,7 +308,7 @@ impl OpenOperation {
                 record.identity = SessionIdentity::default();
                 record.causation = None;
                 record.transaction = None;
-                record.statements = super::statements::StatementScope::default();
+                record.read = false;
             });
     }
 
@@ -560,6 +504,13 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
             return Ok(Err(Refusal::NotBegun));
         }
         let mut open = current.take().expect("authorized read exists");
+        if let Some(transaction) = open.transaction() {
+            if let Err(PgCommitFailure::RolledBack(error) | PgCommitFailure::Uncertain(error)) =
+                transaction.commit().await
+            {
+                return Ok(Err(Refusal::Postgres(error)));
+            }
+        }
         open.postgres
             .operation_metrics
             .record(&open.source, DeliveryClass::Delivered);
@@ -582,14 +533,10 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
         if open.settled {
             return Ok(Err(Refusal::NotBegun));
         }
-        Ok(open
-            .postgres
-            .scopes
-            .read::<crate::invocation::Authority, _>(open.scope(), |record| {
-                record.wal_position.clone()
-            })
-            .flatten()
-            .ok_or(Refusal::NotBegun))
+        let Some(transaction) = open.transaction() else {
+            return Ok(Err(Refusal::NotBegun));
+        };
+        Ok(transaction.wal_position().await.map_err(Refusal::Postgres))
     }
 
     async fn rollback(
@@ -844,7 +791,7 @@ async fn begin(
         .operations
         .get(&operation)
         .ok_or(Refusal::UnknownOperation)?;
-    if admitted.statements.is_read() && !authorize_only {
+    if admitted.read && !authorize_only {
         return Err(Refusal::ReadsClaimNothing);
     }
     // A present handle was issued for an attachment of this loaded release.
@@ -887,8 +834,7 @@ async fn begin(
                 depth: 0,
             }),
             invocation: Some(admitted.invocation.clone()),
-            statements: admitted.statements.clone(),
-            members: facts.members.clone(),
+            read: admitted.read,
             principal: if authorize_only {
                 PrincipalVerification::Authenticated
             } else {
@@ -917,6 +863,14 @@ async fn begin(
         settled: true,
     };
     if authorize_only {
+        let transaction = open
+            .postgres
+            .begin_operation_transaction(open.scope())
+            .await
+            .map_err(Refusal::Postgres)?;
+        open.postgres
+            .bind_operation_transaction(open.scope(), &transaction)
+            .map_err(|error| binding_error(OperationErrorType::Transaction, open.scope(), error))?;
         open.settled = false;
         return Ok((Some(open), Begun::New(delivery)));
     }

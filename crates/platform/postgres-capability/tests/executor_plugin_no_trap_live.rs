@@ -94,12 +94,6 @@ const GUEST_ID: &str = "no-trap-guest";
 /// here relies on, and it holds identically for all four plugins.
 const RET_OK_ERR: u32 = 768;
 
-/// The same address for a returned `result<T, E>` whose maximum case alignment
-/// is 8, so the payload starts at `align_to(1, 8) == 8`. Applies to
-/// `result<row-set, pg-error>`: `pg-error` carries a `u64` case
-/// (`row-limit-exceeded`), so its alignment is 8.
-const RET_ERR_ALIGN8: u32 = RET_OK_ERR + 8;
-
 /// Error-case discriminant for a returned `result<T, E>` whose maximum case
 /// alignment is 4. `connection-error` carries a string in its `transport` case,
 /// so its nested discriminant begins four bytes after the outer result tag.
@@ -214,7 +208,6 @@ fn offline_postgres() -> WamnPostgres {
         platform_pool_max_size: 1,
         wait_timeout_ms: 100,
         statement_timeout_ms: 100,
-        row_limit: 10,
     })
     .expect("offline postgres plugin builds")
 }
@@ -240,15 +233,10 @@ fn postgres_guest() -> String {
       (case "json" string)
       (case "uuid" string)))
     (export "sql-value" (type $sql-value (eq $sql-value')))
-    (type $column' (record (field "name" string) (field "type-name" string)))
-    (export "column" (type $column (eq $column')))
-    (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value)))))
-    (export "row-set" (type $row-set (eq $row-set')))
     (type $pg-error' (variant
       (case "serialization-failure")
       (case "connection-unavailable")
       (case "statement-timeout")
-      (case "row-limit-exceeded" u64)
       (case "unique-violation" string)
       (case "foreign-key-violation" string)
       (case "check-violation" string)
@@ -257,16 +245,14 @@ fn postgres_guest() -> String {
       (case "query-error" (tuple string string))))
     (export "pg-error" (type $pg-error (eq $pg-error')))))
   (alias export $types "sql-value" (type $sql-value))
-  (alias export $types "row-set" (type $row-set))
   (alias export $types "pg-error" (type $pg-error))
   (import "wamn:postgres/client@0.4.0" (instance $client
     (export "sql-value" (type (eq $sql-value)))
     (export "pg-error" (type (eq $pg-error)))
-    (export "row-set" (type (eq $row-set)))
     (export "query" (func async
       (param "sql" string)
       (param "params" (list $sql-value))
-      (result (result $row-set (error $pg-error)))))))
+      (result (result (tuple (list string) (stream (list $sql-value)) (future (result (error $pg-error)))) (error $pg-error)))))))
   (import "verdict" (func $verdict (param "code" u32)))
 {libc}
   (core func $query-lowered
@@ -312,7 +298,7 @@ fn postgres_guest() -> String {
         libc = libc_module("SELECT 1"),
         enter = MARK_ENTER,
         ok_err = RET_OK_ERR,
-        err_case = RET_ERR_ALIGN8,
+        err_case = RET_ERR_ALIGN4,
     )
 }
 

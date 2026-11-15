@@ -1196,12 +1196,10 @@ mod tests {
                             parameters: Vec::new(),
                             registered_operation: None,
                             committed_result_schema: None,
-                            statements: BTreeMap::new(),
                         },
                     )]);
                     descriptor
                 },
-                statement_instances: BTreeMap::new(),
             }]),
             BTreeSet::new(),
             BTreeMap::new(),

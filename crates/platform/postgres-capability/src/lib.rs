@@ -3,8 +3,8 @@
 //! Contract source of truth: `wit/wamn-postgres-0.4/package.wit`.
 //! Guest bindgen paths reference that canonical package directly.
 //! SQLx owns connection pooling and the prepared statement cache. The host
-//! binds each caller's identity inside its transaction. The shared parsed SQL
-//! policy refuses session changes, hidden execution, and platform writes.
+//! binds each caller's identity inside its transaction. Both SQL interfaces
+//! stream results under the database login permissions.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -25,12 +25,11 @@ mod operation;
 mod operation_transaction;
 mod pool;
 mod production_lease;
+mod query;
 #[cfg(test)]
 mod query_tests;
 mod resources;
-mod run_stream;
 mod session_identity;
-pub(crate) mod statements;
 mod types;
 pub mod write_log;
 pub use file_collection::FileCollection;
@@ -54,14 +53,7 @@ pub use production_lease::{
     ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult,
     ProductionWorkflow,
 };
-#[cfg(any(test, feature = "test-util"))]
-pub use resources::begin_statement_transaction;
 pub use resources::{PgStatementTransaction, PgTransaction};
-pub use session_identity::{UnprovisionedPrincipal, WamnPostgres};
-pub use statements::{
-    PreparedStatementMembers, PreparedStatementSet, StatementField, VerifiedStatement,
-    VerifiedStatementSet,
-};
 pub use types::canonical_timestamptz;
 /// Re-exported because [`ClassCredentials::with_class`] and
 /// [`ClassCredentials::without_class`] TAKE one: a composer outside this
@@ -124,30 +116,19 @@ mod bindings {
     });
 }
 
-/// The name of one member's `statements` import in a composed component.
-///
-/// The host binds each name to that member's own statement set, so the name is
-/// the member's identity, fixed at link
-/// (docs/architecture/components.md#grouping-and-publication).
+/// Each named SQL import borrows the same operation transaction.
 #[cfg(feature = "wasm_component_model_implements")]
 #[derive(Clone, Debug)]
-pub struct NamedStatements(Arc<str>);
-
-#[cfg(feature = "wasm_component_model_implements")]
-impl NamedStatements {
-    fn instance(&self) -> &str {
-        &self.0
-    }
-}
+pub struct NamedStatements;
 
 use bindings::wamn::postgres::client;
 use bindings::wamn::postgres::statements as statement_wit;
-use bindings::wamn::postgres::types::{Column, PgError, RowSet, SqlValue};
-use statement_wit::{ContractMismatch, ContractPart, StatementError, ValueShape};
+use bindings::wamn::postgres::types::{PgError, SqlValue};
+use statement_wit::StatementError;
 
 pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 
-/// Wire the `wamn:postgres` raw-client and verified-statement host functions.
+/// Link dynamic reads and SQL in the host operation transaction.
 /// The host path calls this from [`HostPlugin::on_workload_item_bind`]; the
 /// `pgbench` harness calls it to link the capability into a hand-built store.
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
@@ -334,7 +315,7 @@ impl WamnPostgres {
                 bindings::named_imports::wamn::postgres::statements::add_to_linker::<_, SharedCtx>(
                     linker,
                     component,
-                    |name| Ok(NamedStatements(Arc::from(name))),
+                    |_name| Ok(NamedStatements),
                     extract_active_ctx,
                 )?;
             }

@@ -130,11 +130,7 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
             facts.component.component_digest.clone(),
         );
         release_components
-            .insert(
-                facts.component,
-                facts.connections,
-                facts.statement_instances,
-            )
+            .insert(facts.component, facts.connections)
             .expect("each package names its component once");
     }
     (digests, release_components)

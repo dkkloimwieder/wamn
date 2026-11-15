@@ -329,7 +329,7 @@ mod tests {
             },
             BTreeSet::from([ServingComponent {
                 runtime_schema: None,
-                statement_instances: std::collections::BTreeMap::new(),
+
                 package_id: "cat".into(),
                 descriptor: {
                     let mut descriptor =
@@ -344,7 +344,6 @@ mod tests {
                             parameters: Vec::new(),
                             committed_result_schema: None,
                             registered_operation: None,
-                            statements: BTreeMap::new(),
                         },
                     )]);
                     descriptor
@@ -612,7 +611,6 @@ mod tests {
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
-                    statements: BTreeMap::new(),
                 },
             )]),
             component_digest: COMPONENT.into(),

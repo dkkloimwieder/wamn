@@ -34,7 +34,6 @@ uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-broker = { workspace = true }
 wamn-capability-authority = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-compiler = { workspace = true }
 wamn-connections = { workspace = true }
 wamn-digest = { workspace = true }
 wamn-engine = { workspace = true }

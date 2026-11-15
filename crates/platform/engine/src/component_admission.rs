@@ -38,7 +38,6 @@ pub enum ComponentAdmissionErrorType {
     OperationDependencyMismatch,
     OperationSignatureMismatch,
     InvalidComponentFacts,
-    StatementInstanceMismatch,
     IntegrationExportMismatch,
 }
 
@@ -390,17 +389,8 @@ pub fn validate_component_admission(
         )
     })?;
 
-    let statement_instances = crate::statement_instances::statement_instances(component_bytes)
-        .map_err(|source| {
-            ComponentAdmissionError::new(
-                ComponentAdmissionErrorType::StatementInstanceMismatch,
-                &component_name,
-                source,
-            )
-        })?;
-
     let component_digest = wamn_digest::bytes_sha256(component_bytes);
-    let mut facts = normalize_component_fact(
+    let facts = normalize_component_fact(
         request.declaration,
         component_digest,
         imports,
@@ -413,7 +403,6 @@ pub fn validate_component_admission(
             source,
         )
     })?;
-    facts.bind_statement_instances(statement_instances);
     Ok(facts)
 }
 

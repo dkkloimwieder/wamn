@@ -211,15 +211,19 @@ The manifest member `routes` sets how a generated route is published:
 
 A query that names an undeclared sort refuses with `invalid_input` on the field `sort`.
 
-Guests send statement identities and arguments through `wamn:postgres`.
-The `statements` interface uses native async calls for execution, transaction creation, commit, and rollback.
-Version 0.4.0 includes `run-stream`, `operation-transaction`, `next-number`, `peek-number`, and the separate `operation` interface. It is the one version, and the host serves only it.
-The host begins the transaction of one logged operation item, and `operation-transaction` gives it to the guest. Inside that operation, `begin` refuses with SQLSTATE `25001`, and `commit` or `rollback` of the host transaction refuses with `2D000`.
-An unnamed `statements` import runs the statement set of the active operation.
-In a composed component each member has its own named import, and the host links one instance per name.
-The host keys the active statement set by the invocation scope and the import name, so a member that names another member's statement gets `unknown-statement`, and so does a read (get, query or projection) that names a statement that writes or locks rows.
-Every instance lends the same host transaction. Only the statement set differs.
-The host resolves those identities to admitted SQL bytes and the operation's allowed statements.
+Guests send SQL text and parameter values through `wamn:postgres@0.4.0`.
+The `client` interface exposes dynamic `query` on the SELECT-only `wamn_query` login.
+Each dynamic query runs in a host read transaction.
+The `statements` interface lends the host operation transaction through `operation-transaction()`.
+Its handle exposes `query` and `query-batch` on the `wamn_app` login.
+Only the host can commit or roll back that transaction.
+Every composed member borrows the same operation transaction.
+Both query interfaces return column names, a stream of rows, and a closing result.
+The caller consumes the rows, then awaits the closing result to learn whether the query succeeded.
+Dropping the stream early aborts its query and destroys its connection.
+The host buffers a bounded number of rows and applies the statement timeout.
+It imposes no row limit.
+Generated accessors carry their SQL bytes. The host resolves no statement names and stores no admitted statement sets.
 Generation refuses PostgreSQL values that the production `wamn:postgres` type contract cannot represent.
 The compiler stores described statement facts in the compiled operation description.
 
@@ -393,18 +397,17 @@ A begin while one is open returns `already-begun` and leaves that operation open
 Commit clears the open operation on success or refusal. Any other refused begin leaves nothing open.
 The next begin on the same Store is allowed, with its own transaction and delivery id.
 Commit without a new open operation returns `not-begun`.
-Member statement handles borrow the same transaction.
-`statements.run`, `statements.run-stream`, and guest transaction creation remain refused inside it.
+Member SQL handles borrow the same transaction. Guests cannot create or finish a transaction through the SQL interface.
 
 The async `wal-position()` call returns `pg_current_wal_lsn()::text` on the open operation's connection.
 It leaves the operation open and returns `not-begun` when no operation is open.
 The call uses no separate connection or transaction.
 A read operation calls `authorize` in place of `begin-operation`.
-`authorize` takes the caller handle and the sealed operation id, makes sure of the caller and its grant, and binds the statement authority.
-It opens no transaction and claims no write-log key.
-`finish-read` ends the authorized read and records its delivery outcome without SQL.
+`authorize` takes the caller handle and the sealed operation id and makes sure of the caller and its grant.
+It opens a host read transaction and claims no write-log key.
+`finish-read` commits that transaction and records its delivery outcome.
 `begin-operation` on a read operation returns `reads-claim-nothing`.
-After `authorize`, `commit`, `rollback`, and `wal-position` return `not-begun`.
+After `authorize`, `wal-position` reads the position on the open read transaction. The write calls `commit` and `rollback` return `not-begun`.
 A read writes no causation message, so it does not invalidate a list tag.
 
 The interface returns typed refusals for conflicts, unknown operations, denied grants, invalid callers and invalid lifecycle calls.
@@ -435,18 +438,12 @@ Its typed `run` export returns the page. The host converts it to a JSON outcome 
 The generated `query` action declares a `limit` that defaults to 100 and accepts 1 to 100.
 The query's typed export fills the default and refuses a limit below 1.
 The entry refuses a limit above the declared maximum or the platform ceiling before the query runs.
-An application query reads through `statements.run` of `wamn:postgres` 0.4.0, with the WAL position on the same connection when the entry asks for it.
+An application query uses `query` on the handle from `statements.operation-transaction()`. The entry reads the WAL position on that connection.
 The statement reads one row past the limit, and that row says whether a next read has rows.
-The project row limit applies to that read.
-`statements.run-stream` stays in `wamn:postgres` for a workflow node that declares it, and no base read calls it.
 A custom projection declares its result class and typed result fields, and no row or byte limit.
 Its authored SQL decides how many rows it returns.
 A custom projection or command admits the result classes `one`, `optional_one`, and `bounded_list`.
 Generation refuses `page` on a custom operation, because `page` belongs to the generated `query` action.
-The host refuses a statement that returns more rows than its row limit.
-The row limit is `WAMN_PG_ROW_LIMIT`, default 100,000, or the `row_limit` of the project.
-The limit applies to each statement, and a projection runs one statement for each envelope item, up to 100 items.
-The host truncates nothing, and the refused item returns `internal_error`.
 No limit bounds the bytes of a result.
 Each guest linear memory is capped at 256 MiB, and the statement timeout bounds the duration of a statement.
 Unbounded JSON materialization is not a streaming or export interface.
@@ -454,7 +451,7 @@ Arbitrary project SQL remains subject to runtime authority and execution limits.
 Compile-time validation for arbitrary project components remains enabled on demand.
 
 1. A member's instance binds to the union of its own operations' declared statements. This is wider than today's per-entry binding (`operation.rs:661`): Receiving's record\_receipt code could name void\_receipt's statement, and a Receiving read could too. Accepted: a package trusts its own code, as a crate does; a read that writes is its author's bug, and the profile screen shows it. Composition never widens a set to another package.
-2. Mutating base-owned business state goes through the base's exports (`data-access.md:61-62`). Reading or locking base relations within a member's own admitted statements is allowed; Acme already locks `purchase_order` for its overlay-owned fields.
+2. Mutating base-owned business state goes through the base's exports (`data-access.md:61-62`). Reading or locking base relations through a member's SQL is allowed; Acme already locks `purchase_order` for its overlay-owned fields.
 3. Exports test again their preconditions from the database. A sibling in the same store can forge any record it passes (separate memories, shared data), so typestate from a sibling is not proof.
 4. Members never share host resources. Each obtains its own from its own import instance; none crosses an export (`components.md:44`).
 5. Authorization is the ACL row for the entry, on both sides: required = {entry}, held = the role's rows. The call graph never adds to or subtracts from either. What the entry reaches is the author's responsibility and the admin's information.
@@ -471,7 +468,7 @@ A second caller waits at step 2 for the whole of the first caller's work. A lock
 
 - `begin-operation` and `commit` exist only on the entry's import instance. No package member imports them: "read access but no transaction access" applied to the entry/member split. Publish refuses a member that imports them, and refuses an application that supplies its own `wasi:http/handler` export.
 - The transaction is keyed by Store, never by member instance. Base and overlay share one invocation, one connection, one commit, and the overlay still sequences base-exported steps before, between and after its own as component-model calls. A package with its own database (analytics) gets its own connection and transaction, as today. A cross-application call is host-mediated through the router with no shared transaction, as today.
-- `run` / `run-stream` stay refused inside a host transaction.
+- Every member executes SQL through its borrowed host transaction.
 - Authorization stays at publish; the only runtime test is the entry's grant, once, at `begin-operation` or at `authenticate`.
 - The composed application's digest depends on its source bytes. The separate route component has its own digest pin.
 - The guest supplies no trust data (ruled 2026-10-20 from the spike, `wamn-cbqzl`). The host mints the delivery id at `begin-operation`. `authenticate` returns an opaque caller handle, and `begin-operation` makes sure of it. The request hash and the result are the application's idempotency data, which the host stores without interpreting.
@@ -568,7 +565,6 @@ The application role has no write on `number_counter`.
 Only the three counter functions of the platform schema write it.
 They are `SECURITY DEFINER`, and each takes a sequence id.
 The plugin resolves that id from host state.
-Its statement admission refuses guest SQL that names a counter function or writes a `platform.*` relation.
 
 Env apply creates the `platform.number_sequence` row of each sequence that a package declares.
 The row belongs to the application that the `applications` map of `environment.k` names for the package.
@@ -597,7 +593,10 @@ The records are the single-column unique text columns of the application's schem
 It also refuses a `per=` counter, whose values never change.
 The route answers `invalid_input`, `sequence_not_found`, `counter_not_found`, `counter_assigned_per_key`, `number_live`, or `idempotency_conflict`.
 
-On Postgres the three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter`, so the application role keeps no `UPDATE` on `number_counter`. Each runs on the sequence id alone and refuses an id that is not a sequence. None reads the `app.application` identity, because guest SQL can rewrite it. The plugin knows the operation's application from host state. It resolves the application and the sequence name to the sequence id, and it passes that id to the function. An application guest writes through the statements its package declares. It may also read through `wamn:postgres/client`, which uses the SELECT-only login. Component admission guards declared statements. It parses each declared statement with PostgreSQL's own grammar (`pg_query`) and walks the whole parse tree. It refuses a statement that names `bump_counter`, `assign_counter` or `set_counter` (in any quoting, case or schema), that writes a `platform.*` relation, that holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` identifier or string, or that does not parse (owner ruling 2026-10-24). Publish runs the same test on the statements of each pushed descriptor. The compiler owns the parsed SQL policy. The host and component admission use that policy in `wamn-compiler::declared_sql`. The host applies it to both declared and raw SQL. So only the plugin reaches the functions. SQLite needs the same rule, because it has no roles. The identity stays set, for logging only. The rejected alternative — the renderer as a Postgres function via `pgrx` plus a registered SQLite function — kept the grant invariant but needed a custom Postgres image and ruled out managed Postgres.
+On Postgres the three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter`, so the application role keeps no `UPDATE` on `number_counter`. Each runs on the sequence id alone and refuses an id that is not a sequence. None reads the `app.application` identity, because guest SQL can rewrite it. The plugin knows the operation's application from host state. It resolves the application and the sequence name to the sequence id, and it passes that id to the function. Application guests execute SQL in their host operation transaction.
+PostgreSQL privileges and row policies govern the SQL.
+Dynamic queries run on the SELECT-only login in a host read transaction.
+SQLite needs the same rule, because it has no roles. The identity stays set, for logging only. The rejected alternative — the renderer as a Postgres function via `pgrx` plus a registered SQLite function — kept the grant invariant but needed a custom Postgres image and ruled out managed Postgres.
 
 - `per=`: look up `(counter, key_value)` with no lock — mappings are immutable, so a hit is safe to render. On a miss, `assign_counter(sequence, counter, key_value)` takes a per-key `pg_advisory_xact_lock`, looks again, and returns the existing mapping or allocates from the `''` allocator and inserts the key row with that value. Two concurrent misses for one key allocate once, so `per=` has no gaps. The first line of a batch pays the allocator lock; every later line pays only its own counter (owner ruling 2026-10-23).
 
@@ -905,7 +904,9 @@ The management variable is `WAMN_MANAGEMENT_PROJECT_ENV_KEY`, and `flow-http.jso
 The event subject keeps its separate organization, project, and short environment tokens.
 Auth invalidation keys still include the environment key, so equal principal IDs in separate environments keep separate cached grants and status.
 `wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key` or on a history table.
-`platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It tests no project and reads no claim. It refuses an id that is not a sequence with `undefined_object`. The `wamn:postgres` plugin decides which sequences a caller reaches: it takes the application from host state and resolves the sequence id by that application and the sequence name. Component admission parses each statement a package declares with PostgreSQL's grammar (`pg_query`). It refuses a statement that names a counter function, writes a `platform.*` relation, or holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` escape (`crates/schema/generator/src/sql_analysis/admission.rs`). Publish makes sure of the pushed descriptors again. Application guests write through declared statements. Dynamic queries use the SELECT-only login, so only the plugin calls these functions. The host applies the same parsed policy to declared statements and the raw `wamn:postgres/client` interface.
+`platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It tests no project and reads no claim. It refuses an id that is not a sequence with `undefined_object`. The `wamn:postgres` plugin decides which sequences a caller reaches: it takes the application from host state and resolves the sequence id by that application and the sequence name. Application guests execute SQL in their host operation transaction.
+PostgreSQL privileges and row policies govern that SQL.
+Dynamic queries use the SELECT-only login in a host read transaction.
 `platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and makes sure of the sequence id in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`.
 `platform.set_counter(sequence, counter, key, value)` is `SECURITY DEFINER` and makes sure of the sequence id in the same way. It is the write of the `number_counter.set` host route: under the row lock, it inserts the counter row with the value or sets the value of the row. It refuses a value below 1 with `invalid_parameter_value`.
 The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `user`, `role`, `user_role`, `permission`, and `environment`.
@@ -1081,7 +1082,7 @@ The read is one flat `bounded_list` over the history table of one relation:
 
 - Typed key inputs build `row_key` with `jsonb_build_object`, because the client refuses a JSON input.
 - The inputs `after_position` and `limit` select one page in ascending position order.
-- An authored `LIMIT` caps the `limit` input, and the host row limit also applies.
+- An authored `LIMIT` caps the `limit` input.
 - Each result row carries one entry, the current row image, and the head position of the row. No field is nullable.
 - `before`, `after`, and the current row are text fields that hold JSONB text, so the host and the client keep their spelling.
 - The current row comes from `wamn_history.row_image` with the alias of the relation, or from the declared columns on a relation that an overlay extends. A deleted row has the current image `{}`.
@@ -1254,4 +1255,4 @@ Package migration grants schema access and REFERENCES only while the owner creat
 
 Database connection configuration contains no password. One native basic-auth Secret stores each role's username and password. SQLx resolves that Secret and the cluster CA in the org namespace. Operator connections also require verified TLS.
 
-Applications may import `wamn:postgres/client@0.4.0` for dynamic SQL. The interface exposes only `query`. It has no write method, transaction resource or cursor resource. Each call uses a separate login that inherits `wamn_query`. This role has SELECT privileges and no application writer membership. Each dynamic call runs inside a read-only transaction. Prepared application statements retain their separate authority.
+Applications may import `wamn:postgres/client@0.4.0` for dynamic SQL. The interface exposes only `query`. It has no write method, transaction resource or cursor resource. Each call uses a separate login that inherits `wamn_query`. This role has SELECT privileges and no application writer membership. Each dynamic call runs inside a read-only transaction. Operation SQL uses the separate host transaction on `wamn_app`. Both interfaces stream their rows and report completion separately.

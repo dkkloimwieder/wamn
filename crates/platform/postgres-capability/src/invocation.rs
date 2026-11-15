@@ -95,7 +95,7 @@ pub struct Authority {
     pub invocation: Option<ConnectionInvocation>,
     pub transaction: Option<OperationTransaction>,
     pub wal_position: Option<String>,
-    pub(crate) statements: crate::statements::StatementScope,
+    pub(crate) read: bool,
 }
 
 impl wamn_engine::invocation_scope::InvocationAuthority for Authority {
@@ -130,8 +130,7 @@ pub struct InvocationRequest<'a> {
     pub registered_operation: Option<&'a str>,
     pub causation: Option<Causation>,
     pub invocation: Option<ConnectionInvocation>,
-    pub statements: crate::PreparedStatementSet,
-    pub members: crate::PreparedStatementMembers,
+    pub read: bool,
     pub principal: PrincipalVerification,
 }
 
@@ -149,8 +148,7 @@ impl AuthorizedInvocation {
             registered_operation,
             causation,
             invocation,
-            statements,
-            members,
+            read,
             principal,
         } = request;
         wamn_engine::native_routes::authorize_registered_operation(
@@ -164,20 +162,6 @@ impl AuthorizedInvocation {
         if let Some(context) = &context {
             validate_context(&identity, context)?;
         }
-        let external =
-            context
-                .as_ref()
-                .zip(invocation.as_ref())
-                .is_some_and(|(context, invocation)| {
-                    invocation
-                        .declaration(context.release.manifest())
-                        .is_some_and(|operation| !operation.connections.is_empty())
-                });
-        let statements = if external {
-            crate::statements::StatementScope::default()
-        } else {
-            crate::statements::StatementScope::active(statements, members)
-        };
         let lifetime = postgres.scopes.enter(
             scope,
             Authority {
@@ -185,7 +169,7 @@ impl AuthorizedInvocation {
                 context,
                 causation,
                 invocation,
-                statements,
+                read,
                 ..Authority::default()
             },
             InvocationTrace::capture(),
