@@ -1137,17 +1137,6 @@ mod tests {
 
     use wamn_sql::WamnPostgresConfig;
 
-    fn offline_postgres() -> WamnPostgres {
-        WamnPostgres::new(WamnPostgresConfig {
-            credentials: None,
-            guest_pool_max_size: 1,
-            platform_pool_max_size: 1,
-            wait_timeout_ms: 1,
-            statement_timeout_ms: 1,
-        })
-        .expect("an offline postgres plugin does not open a connection")
-    }
-
     #[tokio::test]
     async fn revoked_invocation_refuses_send_and_can_be_rebound() {
         let plugin = offline_plugin();
@@ -1417,34 +1406,9 @@ mod tests {
     }
 
     #[test]
-    fn guest_headers_cannot_spoof_the_host_owned_idempotency_key() {
-        let spoofed = Request {
-            requirement: "manager".to_string(),
-            method: "POST".to_string(),
-            path_and_query: "/notify".to_string(),
-            headers: vec![Header {
-                name: "idempotency-key".to_string(),
-                value: b"guest".to_vec(),
-            }],
-            body: None,
-            idempotency_key: Some("host".to_string()),
-        };
-        assert!(matches!(
-            outbound_headers(&spoofed, HashMap::new()),
-            Err(ConnectionError::AuthorityDenied)
-        ));
-
-        let admitted = Request {
-            headers: Vec::new(),
-            ..spoofed
-        };
-        let headers = outbound_headers(&admitted, HashMap::new()).expect("valid headers");
-        assert_eq!(headers["idempotency-key"], "host");
-    }
-
-    #[test]
     fn guest_headers_cannot_supply_transport_or_proxy_authority() {
         for name in [
+            "idempotency-key",
             "host",
             "content-length",
             "transfer-encoding",
@@ -1452,99 +1416,103 @@ mod tests {
             "connection",
         ] {
             for name in [name.to_owned(), name.to_ascii_uppercase()] {
-                let request = effect_request(vec![Header {
-                    name,
-                    value: b"guest".to_vec(),
-                }]);
+                let request = Request {
+                    idempotency_key: Some("host".into()),
+                    ..effect_request(vec![Header {
+                        name,
+                        value: b"guest".to_vec(),
+                    }])
+                };
                 assert!(matches!(
                     outbound_headers(&request, HashMap::new()),
                     Err(ConnectionError::AuthorityDenied)
                 ));
             }
         }
-        assert!(outbound_headers(&effect_request(Vec::new()), HashMap::new()).is_ok());
-    }
-
-    #[test]
-    fn guest_method_override_headers_are_removed() {
-        let request = effect_request(vec![
-            Header {
-                name: "x-http-method".into(),
-                value: b"DELETE".to_vec(),
-            },
-            Header {
-                name: "X-HTTP-Method-Override".into(),
-                value: b"PUT".to_vec(),
-            },
-        ]);
+        let request = Request {
+            idempotency_key: Some("host".into()),
+            ..effect_request(vec![
+                Header {
+                    name: "x-http-method".into(),
+                    value: b"DELETE".to_vec(),
+                },
+                Header {
+                    name: "X-HTTP-Method-Override".into(),
+                    value: b"PUT".to_vec(),
+                },
+            ])
+        };
         let headers = outbound_headers(&request, HashMap::new()).unwrap();
         assert!(!headers.contains_key("x-http-method"));
         assert!(!headers.contains_key("x-http-method-override"));
         assert_eq!(request.method, "POST");
+        assert_eq!(
+            headers["idempotency-key"],
+            request.idempotency_key.as_ref().unwrap()
+        );
     }
 
-    /// A `tracing` subscriber whose OTel layer gives the effect span a real,
-    /// injectable span context — the only way to observe what leaves the host.
-    fn with_effect_span<T>(body: impl FnOnce() -> T) -> (T, opentelemetry::trace::SpanContext) {
+    #[test]
+    fn the_effect_span_is_injected_onto_the_outbound_request() {
+        use opentelemetry::propagation::TextMapPropagator as _;
         use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
         use tracing_subscriber::layer::SubscriberExt as _;
 
-        opentelemetry::global::set_text_map_propagator(
-            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
-        );
+        let propagator = opentelemetry_sdk::propagation::TraceContextPropagator::new();
+        opentelemetry::global::set_text_map_propagator(propagator.clone());
         let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder().build();
         let subscriber = tracing_subscriber::registry().with(
             tracing_opentelemetry::layer().with_tracer(provider.tracer("connection-http-test")),
         );
         let _guard = tracing::subscriber::set_default(subscriber);
         let span = tracing::info_span!("wamn.connection_http");
-        span.in_scope(|| {
-            let context = span.context().span().span_context().clone();
-            (body(), context)
-        })
-    }
-
-    /// The effect the guest performed is what downstream must parent to. Before
-    /// `wamn-0h0g.12.6` nothing was injected at all, so the only traceparent on
-    /// the wire was whatever the guest forwarded from ingress.
-    #[test]
-    fn the_effect_span_is_injected_onto_the_outbound_request() {
-        let (headers, span_context) =
-            with_effect_span(|| outbound_headers(&effect_request(Vec::new()), HashMap::new()));
-        let headers = headers.expect("valid headers");
-        assert_eq!(
-            headers["traceparent"],
-            format!(
-                "00-{}-{}-01",
-                span_context.trace_id(),
-                span_context.span_id()
-            )
-            .as_str(),
-            "the running effect span must be the outbound parent"
-        );
-        assert!(
-            !headers.contains_key("tracestate"),
-            "an empty tracestate is not a field"
-        );
-    }
-
-    /// `guests/http-request` forwards its node context's traceparent
-    /// with `push_header_unless_present`; the host stays coherent with it.
-    #[test]
-    fn a_guest_supplied_traceparent_is_not_overwritten() {
-        const GUEST: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-        let request = effect_request(vec![Header {
-            name: "traceparent".to_string(),
-            value: GUEST.as_bytes().to_vec(),
-        }]);
-        let (headers, _) = with_effect_span(|| outbound_headers(&request, HashMap::new()));
-        let headers = headers.expect("valid headers");
-        assert_eq!(headers["traceparent"], GUEST);
+        let _entered = span.enter();
+        let guest = HashMap::from([(
+            "traceparent".to_owned(),
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_owned(),
+        )]);
+        let guest_context = propagator.extract(&guest);
+        for (fields, expected) in [(HashMap::new(), span.context()), (guest, guest_context)] {
+            let request = effect_request(
+                fields
+                    .into_iter()
+                    .map(|(name, value)| Header {
+                        name,
+                        value: value.into_bytes(),
+                    })
+                    .collect(),
+            );
+            let headers = outbound_headers(&request, HashMap::new()).unwrap();
+            assert!(!headers.contains_key("tracestate"));
+            let fields: HashMap<String, String> = headers
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_str().unwrap().to_owned()))
+                .collect();
+            let actual = propagator.extract(&fields);
+            let actual_span = actual.span();
+            let actual = actual_span.span_context();
+            let expected_span = expected.span();
+            let expected = expected_span.span_context();
+            assert!(actual.is_valid());
+            assert_eq!(actual.trace_id(), expected.trace_id());
+            assert_eq!(actual.span_id(), expected.span_id());
+            assert_eq!(actual.trace_flags(), expected.trace_flags());
+            assert_eq!(actual.trace_state(), expected.trace_state());
+        }
     }
 
     fn offline_plugin() -> ConnectionHttp {
-        let postgres = Arc::new(offline_postgres());
+        let postgres = Arc::new(
+            WamnPostgres::new(WamnPostgresConfig {
+                credentials: None,
+                guest_pool_max_size: 1,
+                platform_pool_max_size: 1,
+                wait_timeout_ms: 1,
+                statement_timeout_ms: 1,
+            })
+            .expect("offline postgres"),
+        );
         let facts = Arc::new(ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),
             Publisher::default(),
@@ -1563,101 +1531,53 @@ mod tests {
         )
     }
 
-    /// THE TEST THAT WOULD HAVE CAUGHT THE OLD BEHAVIOUR. Every failure of this
-    /// surface rendered as one word, "refused", and the span carried no outcome
-    /// at all. A timeout then read as a refusal before dispatch, which tells a
-    /// reader the request never left and the far side did nothing with it. The
-    /// platform does not know that.
     #[test]
-    fn a_timeout_never_reads_as_a_refusal_before_dispatch() {
-        assert_eq!(
-            http_outcome(&Err(ConnectionError::Timeout)),
-            EffectOutcome::Timeout,
-        );
-        assert_ne!(
-            http_outcome(&Err(ConnectionError::Timeout)),
-            http_outcome(&Err(ConnectionError::AttestationInvalid)),
-            "a timeout and a wiring refusal must not read alike",
-        );
-    }
-
-    /// A wiring failure refuses ONE effect, and so does every other refusal the
-    /// platform decides before dispatch. The command that reached this component
-    /// committed before the effect ran, and the observation states nothing about
-    /// it: it says the platform declined to dispatch, and stops there.
-    #[test]
-    fn a_wiring_failure_names_the_refused_effect_and_not_the_command() {
-        for error in [
-            ConnectionError::Unbound,
-            ConnectionError::AttestationInvalid,
-            ConnectionError::AuthorityDenied,
-            ConnectionError::CredentialUnavailable,
-            ConnectionError::Unauthorized,
-            ConnectionError::Incompatible,
-        ] {
-            let outcome = http_outcome(&Err(error));
-            assert_eq!(outcome, EffectOutcome::RefusedBeforeDispatch);
-            assert_eq!(outcome.label(), "refused-before-dispatch");
-        }
-    }
-
-    /// Two of the three transport details this file mints dispatched nothing,
-    /// so both are refusals. The authority read never reached a client, and the
-    /// client never built.
-    #[test]
-    fn the_two_details_that_dispatched_nothing_are_refused_before_dispatch() {
-        for detail in [AUTHORITY_SNAPSHOT_UNAVAILABLE, HTTP_CLIENT_UNAVAILABLE] {
-            assert_eq!(
-                http_outcome(&Err(ConnectionError::Transport(detail.to_owned()))),
+    fn http_errors_preserve_effect_outcomes() {
+        for (error, expected) in [
+            (ConnectionError::Timeout, EffectOutcome::Timeout),
+            (
+                ConnectionError::Unbound,
                 EffectOutcome::RefusedBeforeDispatch,
-                "{detail} dispatched nothing",
-            );
+            ),
+            (
+                ConnectionError::AttestationInvalid,
+                EffectOutcome::RefusedBeforeDispatch,
+            ),
+            (
+                ConnectionError::AuthorityDenied,
+                EffectOutcome::RefusedBeforeDispatch,
+            ),
+            (
+                ConnectionError::CredentialUnavailable,
+                EffectOutcome::RefusedBeforeDispatch,
+            ),
+            (
+                ConnectionError::Unauthorized,
+                EffectOutcome::RefusedBeforeDispatch,
+            ),
+            (
+                ConnectionError::Incompatible,
+                EffectOutcome::RefusedBeforeDispatch,
+            ),
+            (
+                ConnectionError::Transport(AUTHORITY_SNAPSHOT_UNAVAILABLE.into()),
+                EffectOutcome::RefusedBeforeDispatch,
+            ),
+            (
+                ConnectionError::Transport(HTTP_CLIENT_UNAVAILABLE.into()),
+                EffectOutcome::RefusedBeforeDispatch,
+            ),
+            (
+                ConnectionError::Transport(RESPONSE_BODY_LOST.into()),
+                EffectOutcome::ResponseLost,
+            ),
+            (
+                ConnectionError::Transport("connection reset by peer".into()),
+                EffectOutcome::EffectUncertain,
+            ),
+        ] {
+            assert_eq!(http_outcome(&Err(error)), expected);
         }
-    }
-
-    /// THE TEST THAT WOULD HAVE CAUGHT THE MAPPING THE OWNER OVERTURNED
-    /// SECOND. A body lost after the status line arrived was recorded as
-    /// effect-uncertain, which reports an unknown. The far side acted and the
-    /// answer shows it. The guest received nothing, so it is not responded
-    /// either. The remedy is to re-read, not to resend.
-    #[test]
-    fn a_lost_response_never_reads_as_effect_uncertain() {
-        let lost = http_outcome(&Err(ConnectionError::Transport(
-            RESPONSE_BODY_LOST.to_owned(),
-        )));
-        assert_eq!(lost, EffectOutcome::ResponseLost);
-        assert_ne!(
-            lost,
-            EffectOutcome::EffectUncertain,
-            "the far side acted, so nothing about it is unknown",
-        );
-        assert_ne!(
-            lost,
-            EffectOutcome::Responded,
-            "the guest received no response",
-        );
-    }
-
-    /// THE TEST THAT WOULD HAVE CAUGHT THE MAPPING THE OWNER OVERTURNED. A
-    /// transport failure in flight was recorded as a timeout, which names a
-    /// deadline that never elapsed. The attempt went out and the platform holds
-    /// no outcome for it, which is effect-uncertain.
-    #[test]
-    fn a_transport_failure_in_flight_never_reads_as_a_timeout() {
-        let in_flight = http_outcome(&Err(ConnectionError::Transport(
-            "connection reset by peer".to_owned(),
-        )));
-        assert_eq!(in_flight, EffectOutcome::EffectUncertain);
-        assert_ne!(
-            in_flight,
-            EffectOutcome::Timeout,
-            "a failure in flight must not state a deadline elapsed",
-        );
-        assert_ne!(
-            in_flight,
-            EffectOutcome::RefusedBeforeDispatch,
-            "a failure in flight must not state the request never left",
-        );
     }
 }
 

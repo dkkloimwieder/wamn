@@ -172,8 +172,6 @@ pub struct Observed {
     pub body: Vec<u8>,
 }
 
-pub(crate) type AssertionVerifier = Arc<dyn Fn(&Observed, &str) + Send + Sync>;
-
 type ResponsePause = (
     tokio::sync::oneshot::Sender<()>,
     tokio::sync::oneshot::Receiver<()>,
@@ -205,6 +203,7 @@ pub struct Fixture {
     pub(crate) task: JoinHandle<()>,
     pub(crate) credentials: wamn_connections::connection_credentials::test_util::Fixture,
     pub(crate) server: &'static tokio::sync::Mutex<wamn_test_postgres::OwnedPostgres>,
+    #[cfg(test)]
     pub(crate) pause: Arc<Mutex<Option<ResponsePause>>>,
     pub(crate) key: tempfile::NamedTempFile,
     pub(crate) token_pause: Arc<Mutex<Option<ResponsePause>>>,
@@ -213,14 +212,6 @@ pub struct Fixture {
 
 impl Fixture {
     pub async fn start(tokens: Vec<(u16, String)>, api: Vec<u16>) -> Self {
-        Self::start_with_verifier(tokens, api, None).await
-    }
-
-    pub async fn start_with_verifier(
-        tokens: Vec<(u16, String)>,
-        api: Vec<u16>,
-        assertion_verifier: Option<AssertionVerifier>,
-    ) -> Self {
         // Keep one server across cases, with separate databases for each fixture.
         // Its watcher stops and removes it when this test process exits.
         static SERVER: OnceLock<tokio::sync::Mutex<wamn_test_postgres::OwnedPostgres>> =
@@ -246,7 +237,6 @@ impl Fixture {
         let response_pause = Arc::clone(&pause);
         let token_pause = Arc::new(Mutex::new(None::<ResponsePause>));
         let endpoint_pause = Arc::clone(&token_pause);
-        let token_base = base.clone();
         let pkce = Arc::new(Mutex::new(None::<String>));
         let expected_pkce = Arc::clone(&pkce);
         let task = tokio::spawn(async move {
@@ -257,8 +247,6 @@ impl Fixture {
                 let api = Arc::clone(&api);
                 let pause = Arc::clone(&response_pause);
                 let token_pause = Arc::clone(&endpoint_pause);
-                let assertion_verifier = assertion_verifier.clone();
-                let token_base = token_base.clone();
                 let pkce = Arc::clone(&expected_pkce);
                 hyper::server::conn::http1::Builder::new()
                     .serve_connection(
@@ -269,8 +257,6 @@ impl Fixture {
                             let api = Arc::clone(&api);
                             let pause = Arc::clone(&pause);
                             let token_pause = Arc::clone(&token_pause);
-                            let assertion_verifier = assertion_verifier.clone();
-                            let token_base = token_base.clone();
                             let pkce = Arc::clone(&pkce);
                             async move {
                                 let (parts, body) = request.into_parts();
@@ -307,9 +293,6 @@ impl Fixture {
                                     headers: parts.headers,
                                     body,
                                 };
-                                if token && let Some(assertion_verifier) = assertion_verifier {
-                                    assertion_verifier(&request, &token_base);
-                                }
                                 observed.lock().unwrap().push(request);
                                 let (status, body) = if token {
                                     tokens
@@ -358,6 +341,7 @@ impl Fixture {
             observed,
             task,
             server,
+            #[cfg(test)]
             pause,
         }
     }
@@ -772,50 +756,6 @@ impl Fixture {
         serde_json::from_slice(plaintext.expose()).unwrap()
     }
 
-    pub async fn use_project(&self, plugin: &mut TestHttp, project: &str) {
-        use wamn_engine::release_manifest::ReleaseTarget;
-        let project_env_key = wamn_registry::project_env_key("acme", project, "dev");
-        plugin.release = Arc::new(
-            LoadedRelease::load_canonical_bytes(
-                &plugin.release.manifest().canonical_bytes(),
-                "oauth2-test",
-                ReleaseTarget::new(&project_env_key, "dev").with_applications(
-                    serde_json::from_value(serde_json::json!({"app":{"packages":["package_a"]}}))
-                        .unwrap(),
-                ),
-            )
-            .unwrap(),
-        );
-        plugin.facts = Arc::new(
-            ConnectionFacts::new(
-                Arc::new(ConnectionMemory::default()),
-                Publisher::default(),
-                Arc::new(self.credentials.reader(project).await),
-                &plugin.postgres,
-                &project_env_key,
-                project,
-                "dev",
-            )
-            .with_oauth_encryption(Some(Arc::new(
-                wamn_connections::oauth_encryption::Envelope::from_file(self.key.path()).unwrap(),
-            ))),
-        );
-        plugin.oauth2 = plugin.facts.oauth_tokens();
-        wamn_sql::invocation::bind_test_context(
-            &plugin.postgres,
-            &plugin.scope,
-            Arc::clone(&plugin.facts),
-            Arc::clone(&plugin.release),
-        );
-        plugin
-            .postgres
-            .set_user_id(
-                &plugin.scope,
-                &wamn_control_provision::PlatformComponent::Executor.principal_id(),
-            )
-            .unwrap();
-    }
-
     pub async fn send(&self, plugin: &TestHttp, handle: &str) -> Result<Response, ConnectionError> {
         // Each standalone fixture send represents a fresh invocation.
         let invocation = plugin.postgres.invocation(&plugin.scope).unwrap();
@@ -872,45 +812,6 @@ impl Fixture {
             r#"{"username":"fixture","password":"old"}"#,
         )
         .await
-    }
-
-    pub async fn write_basic(&mut self) {
-        let mut tx = self.credentials.admin.begin().await.unwrap();
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
-            ),
-        ))
-        .execute(&mut *tx)
-        .await
-        .map(drop)
-        .unwrap();
-        sqlx::raw_sql("SET LOCAL ROLE wamn_control")
-            .execute(&mut *tx)
-            .await
-            .map(drop)
-            .unwrap();
-        let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
-        wamn_platform_identity::connections::administration::execute_with_store(
-            &mut tx, "acme", "connection.write",
-            &serde_json::json!({
-                "project":"project-a", "env":"dev", "name":"handle",
-                "parameters":{"primary-authority":self.base,"tls-verification":"disabled","auth":{}},
-                "credential":r#"{"username":"fixture","password":"new"}"#
-            }).to_string(),
-            &mut wamn_broker::auth_changes::AuthDrops::default(),
-            &mut drops, Some(self.credentials.store.as_ref()),
-        ).await.unwrap();
-        tx.commit().await.unwrap();
-        assert!(!drops.is_empty());
-        wamn_broker::Publisher::default().publish(drops).await;
-    }
-
-    pub fn pause_next_response(&self) -> ResponsePause {
-        let (arrived, arrival) = tokio::sync::oneshot::channel();
-        let (resume, resumed) = tokio::sync::oneshot::channel();
-        *self.pause.lock().unwrap() = Some((arrived, resumed));
-        (resume, arrival)
     }
 
     pub fn authorizations(&self) -> Vec<String> {

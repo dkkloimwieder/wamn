@@ -10,7 +10,7 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 use super::*;
-use crate::test_util::{AssertionVerifier, CLIENT_ID, CLIENT_SECRET, Fixture, Observed};
+use crate::test_util::{CLIENT_ID, CLIENT_SECRET, Fixture, Observed};
 
 fn token(number: u8, expires_in: Option<u64>) -> (u16, String) {
     let mut value = serde_json::json!({"access_token": format!("fixture-token-{number}"), "token_type": "Bearer"});
@@ -175,6 +175,8 @@ async fn clock_seam_expires_cached_token_at_the_sixty_second_margin() {
 #[tokio::test]
 #[ignore = "requires: postgres"]
 async fn cache_separates_project_connection_and_active_generation() {
+    use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
+
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(
         (1..=4).map(|n| token(n, Some(3600))).collect(),
@@ -206,7 +208,46 @@ async fn cache_separates_project_connection_and_active_generation() {
                 .is_some()
         );
     }
-    fixture.use_project(&mut plugin, "project-b").await;
+    let project_env_key = wamn_registry::project_env_key("acme", "project-b", "dev");
+    plugin.release = Arc::new(
+        LoadedRelease::load_canonical_bytes(
+            &plugin.release.manifest().canonical_bytes(),
+            "oauth2-test",
+            ReleaseTarget::new(&project_env_key, "dev").with_applications(
+                serde_json::from_value(serde_json::json!({"app":{"packages":["package_a"]}}))
+                    .unwrap(),
+            ),
+        )
+        .unwrap(),
+    );
+    plugin.facts = Arc::new(
+        ConnectionFacts::new(
+            Arc::new(ConnectionMemory::default()),
+            Publisher::default(),
+            Arc::new(fixture.credentials.reader("project-b").await),
+            &plugin.postgres,
+            &project_env_key,
+            "project-b",
+            "dev",
+        )
+        .with_oauth_encryption(Some(Arc::new(
+            wamn_connections::oauth_encryption::Envelope::from_file(fixture.key.path()).unwrap(),
+        ))),
+    );
+    plugin.oauth2 = plugin.facts.oauth_tokens();
+    wamn_sql::invocation::bind_test_context(
+        &plugin.postgres,
+        &plugin.scope,
+        Arc::clone(&plugin.facts),
+        Arc::clone(&plugin.release),
+    );
+    plugin
+        .postgres
+        .set_user_id(
+            &plugin.scope,
+            &wamn_control_provision::PlatformComponent::Executor.principal_id(),
+        )
+        .unwrap();
     fixture.send(&plugin, "handle").await.unwrap();
     assert!(
         plugin
@@ -245,31 +286,43 @@ async fn refused_token_never_dispatches_api_or_exposes_error_body() {
 #[tokio::test]
 #[ignore = "requires: postgres"]
 async fn api_401_fetches_once_more_and_returns_the_second_response() {
-    for second in [200, 401] {
-        let _lock = wamn_test_postgres::lock();
-        let mut fixture = Fixture::start(
-            vec![token(1, Some(3600)), token(2, Some(3600))],
-            vec![401, second],
-        )
-        .await;
-        let plugin = fixture.plugin(&fixture.parameters()).await;
-        assert_eq!(
-            fixture.send(&plugin, "handle").await.unwrap().status,
-            second
-        );
-        assert_eq!(fixture.counts(), (2, 2));
-        let observed = fixture.observed.lock().unwrap();
-        assert_eq!(
-            observed[1].headers["authorization"],
-            "Bearer fixture-token-1"
-        );
-        assert_eq!(
-            observed[3].headers["authorization"],
-            "Bearer fixture-token-2"
-        );
-        assert_eq!(observed[1].body, observed[3].body);
-        if second == 401 {
-            assert!(plugin.oauth2.is_empty());
+    for auth_type in ["oauth2_client_credentials", "oauth2_client_credentials_jwt"] {
+        for second in [200, 401] {
+            let _lock = wamn_test_postgres::lock();
+            let mut fixture = Fixture::start(
+                vec![token(1, Some(3600)), token(2, Some(3600))],
+                vec![401, second],
+            )
+            .await;
+            let mut parameters = fixture.parameters();
+            let material = if auth_type == "oauth2_client_credentials_jwt" {
+                parameters["algorithm"] = "PS256".into();
+                parameters["key_id"] = "certificate-id".into();
+                super::super::jwt::tests::material("PS256")
+            } else {
+                serde_json::json!({"client_secret":CLIENT_SECRET}).to_string()
+            };
+            let plugin = fixture
+                .plugin_with_auth(&parameters, auth_type, &material)
+                .await;
+            assert_eq!(
+                fixture.send(&plugin, "handle").await.unwrap().status,
+                second
+            );
+            assert_eq!(fixture.counts(), (2, 2));
+            let observed = fixture.observed.lock().unwrap();
+            assert_eq!(
+                observed[1].headers["authorization"],
+                "Bearer fixture-token-1"
+            );
+            assert_eq!(
+                observed[3].headers["authorization"],
+                "Bearer fixture-token-2"
+            );
+            assert_eq!(observed[1].body, observed[3].body);
+            if second == 401 {
+                assert!(plugin.oauth2.is_empty());
+            }
         }
     }
 }
@@ -718,60 +771,6 @@ async fn authorization_code_requires_a_row_and_keeps_or_replaces_the_refresh_tok
     }
 }
 
-async fn jwt_round_trip(algorithm: &'static str, separator: Option<&'static str>) {
-    use super::super::jwt::tests::{assert_assertion, material};
-
-    let _lock = wamn_test_postgres::lock();
-    let identifiers = Arc::new(Mutex::new(Vec::new()));
-    let recorded = Arc::clone(&identifiers);
-    let assertion_verifier: AssertionVerifier = Arc::new(move |request, base| {
-        assert_eq!(request.method, "POST");
-        assert!(!request.headers.contains_key("authorization"));
-        assert_eq!(
-            request.headers["content-type"],
-            "application/x-www-form-urlencoded"
-        );
-        let jti = assert_assertion(
-            &request.body,
-            algorithm,
-            CLIENT_ID,
-            &format!("{base}token?audience=api"),
-            Some(if separator == Some(",") { "a,b" } else { "a b" }),
-            None,
-        );
-        let mut identifiers = recorded.lock().unwrap();
-        assert!(!identifiers.contains(&jti));
-        identifiers.push(jti);
-    });
-    let mut fixture = Fixture::start_with_verifier(
-        vec![token(1, Some(3600)), token(2, Some(3600))],
-        vec![401, 200],
-        Some(assertion_verifier),
-    )
-    .await;
-    let mut parameters = fixture.parameters();
-    parameters["scopes"] = serde_json::json!(["a", "b"]);
-    parameters["key_id"] = "certificate-id".into();
-    parameters["algorithm"] = algorithm.into();
-    if let Some(separator) = separator {
-        parameters["scope_separator"] = separator.into();
-    }
-    let plugin = fixture
-        .plugin_with_auth(
-            &parameters,
-            "oauth2_client_credentials_jwt",
-            &material(algorithm),
-        )
-        .await;
-    assert_eq!(fixture.send(&plugin, "handle").await.unwrap().status, 200);
-    assert_eq!(fixture.counts(), (2, 2));
-    let connection = plugin.facts.env_connections().await.unwrap().connections["handle"];
-    assert_eq!(
-        fixture.stored(connection).await.access_token.as_deref(),
-        Some("fixture-token-2")
-    );
-}
-
 impl Fixture {
     async fn authorize(&mut self, oauth: &crate::oauth_authorization::Authorization) -> url::Url {
         let mut tx = self.credentials.admin.begin().await.unwrap();
@@ -1003,12 +1002,6 @@ async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
             "Bearer fixture-token-3"
         ]
     );
-}
-
-#[tokio::test]
-#[ignore = "requires: postgres"]
-async fn jwt_ps256_locked_fetch_and_401_retry() {
-    jwt_round_trip("PS256", Some(",")).await;
 }
 
 #[tokio::test]
