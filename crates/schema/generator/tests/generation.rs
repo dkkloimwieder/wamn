@@ -843,7 +843,7 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
                 "schema": "inventory",
                 "table": "inventory_item",
                 "owner": "wamn_inventory",
-                "server_owned_fields": ["sequence_number", "created_at"],
+                "server_owned_fields": ["sequence_number"],
                 "audit_log": {"columns": ["created_at"], "retention": "none"},
                 "delete_mode": "hard",
                 "operations": {
@@ -1443,8 +1443,6 @@ fn audit_log_retention_is_none_unlimited_or_whole_days() {
 fn a_custom_operation_reads_a_history_table() {
     let mut manifest = with_audit_log(&json!(ALL_STAMP_COLUMNS), "unlimited");
     let mut operation = projection_operation();
-    operation["relations"][0]["table"] = json!("gadget_history");
-    operation["relations"][0]["select_fields"] = json!(["changed_by", "type"]);
     operation["statements"]["load_gadget_part"]["row"] =
         json!([{"name": "changed_by", "type": "uuid", "nullable": false}]);
     operation["result"]["fields"] =
@@ -1453,7 +1451,7 @@ fn a_custom_operation_reads_a_history_table() {
     let mut sources = QUERY_SOURCES.to_vec();
     sources.push(AuthoredSql::new(
         "query/quality_gadget_part.sql",
-        b"SELECT changed_by FROM gadget_history WHERE type = $1;\n",
+        b"SELECT changed_by FROM gadget_history WHERE row_key = $1::text;\n",
     ));
 
     run(&all_stamps_catalog(), &manifest, &sources)
@@ -1545,11 +1543,6 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
                     "row": [{"name": "type", "type": "text", "nullable": false}]
                 }
             },
-            "registration": {
-                "source_package": "platform_gadget",
-                "entity": "gadget",
-                "ops": ["insert"]
-            }
         });
         cases.push((
             label,
@@ -1568,12 +1561,33 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
         GenerateErrorType::InvalidModel,
         &long_object,
     ));
-    for (label, manifest, type_, object) in cases {
+    for (label, mut manifest, type_, object) in cases {
         let refusal = validate_operation_vocabulary(&parsed_manifest(&manifest)).expect_err(label);
         assert_eq!(refusal.error_type(), type_, "{label}");
         assert_eq!(refusal.object(), Some(object), "{label}");
+        let mut sources = QUERY_SOURCES.to_vec();
+        if let Some(operation) = manifest
+            .get_mut("custom_operations")
+            .and_then(|operations| operations.get_mut("gadget.record_history"))
+        {
+            let relation = &operation["relations"][0];
+            let sql = if !relation["insert_fields"].as_array().unwrap().is_empty() {
+                "INSERT INTO gadget_history(type) VALUES ($1::text) RETURNING type;"
+            } else if !relation["update_fields"].as_array().unwrap().is_empty() {
+                "UPDATE gadget_history SET type = $1::text RETURNING type;"
+            } else if relation["lock"] == true {
+                "SELECT type FROM gadget_history WHERE row_key = $1::text FOR UPDATE;"
+            } else {
+                "DELETE FROM gadget_history WHERE row_key = $1::text RETURNING type;"
+            };
+            operation.as_object_mut().unwrap().remove("relations");
+            sources.push(AuthoredSql::new(
+                "command/record_history/write_history.sql",
+                sql.as_bytes(),
+            ));
+        }
         assert_eq!(
-            run(&all_stamps_catalog(), &manifest, &QUERY_SOURCES)
+            run(&all_stamps_catalog(), &manifest, &sources)
                 .expect_err(label)
                 .error_type(),
             type_,

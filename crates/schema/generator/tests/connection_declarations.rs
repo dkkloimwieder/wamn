@@ -6,13 +6,19 @@ fn manifest() -> serde_json::Value {
     json!({"package":{"id":"fixture","version":"1.0.0"},
         "required_platform_policy_contract":{"id":"fixture_data_access","state":"satisfied"},
         "models":{},"components":{"fixture":{}},
+        "custom_operations":{"fixture.call":{
+            "type":"command","visibility":"public","permission":"fixture.call",
+            "idempotent_by":"stateless","input":{"fields":[]},
+            "result":{"class":"one","fields":[{"path":"id","type":"uuid","nullable":false}]},
+            "errors":["invalid_input","permission_denied","internal_error"]}},
         "connections":{"signed-upstream":{"interface":"wamn:modbus/read@1.0.0","mode":"read"}}})
 }
 
 #[test]
 fn connection_shape_round_trips_without_a_catalog() {
     let value = manifest();
-    let parsed = PackageManifest::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let parsed =
+        PackageManifest::from_authored_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
     assert_eq!(
         parsed.connections["signed-upstream"].mode,
         ConnectionMode::Read
@@ -40,7 +46,7 @@ fn connection_shape_refuses_missing_invalid_and_value_fields() {
         let mut value = manifest();
         value["connections"]["signed-upstream"] = entry;
         assert!(
-            PackageManifest::from_slice(&serde_json::to_vec(&value).unwrap()).is_err(),
+            PackageManifest::from_authored_slice(&serde_json::to_vec(&value).unwrap()).is_err(),
             "{value}"
         );
     }
@@ -80,6 +86,13 @@ manifest.Package {{
  required_platform_policy_contract = {{id = "fixture_data_access", state = "satisfied"}}
  models = {{}}
  components = {{fixture = {{}}}}
+ custom_operations = {{"fixture.call" = {{
+  type = "command", visibility = "public", permission = "fixture.call"
+  connection = None
+  idempotent_by = "stateless", input = {{fields = []}}
+  result = {{class = "one", fields = [{{path = "id", type = "uuid", nullable = False}}]}}
+  errors = ["invalid_input", "permission_denied", "internal_error"]
+ }}}}
  connections = {{erp = {{{entry}}}}}
 }}
 "#
@@ -108,7 +121,7 @@ fn connection_names_use_the_same_label_rule_as_install() {
         let mut value = manifest();
         let declaration = value["connections"]["signed-upstream"].clone();
         value["connections"] = json!({name.clone(): declaration});
-        let parsed = PackageManifest::from_slice(&serde_json::to_vec(&value).unwrap());
+        let parsed = PackageManifest::from_authored_slice(&serde_json::to_vec(&value).unwrap());
         assert_eq!(parsed.is_ok(), valid, "{name:?}: {parsed:?}");
     }
 }

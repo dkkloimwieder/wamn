@@ -899,7 +899,7 @@ pub(super) fn derive_relation_access(
         let analysis =
             crate::sql_analysis::analyze(source.bytes, relation_fields).map_err(|detail| {
                 GenerateError::for_path(
-                    GenerateErrorType::InvalidOperation,
+                    detail.error_type(),
                     format!(
                         "{} cannot derive exact relation access: {detail}",
                         statement.path

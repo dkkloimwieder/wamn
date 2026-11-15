@@ -631,9 +631,12 @@ impl HostRouteDelivery {
                 Err(_) => answer(503, json!({"error":{"code":"execution-failed"}})),
             },
             Err(
-                DeliveryError::PermissionDenied { .. }
-                | DeliveryError::FreshCredentialRequired { .. },
-            ) => answer(403, json!({"error":{"code":"permission-denied"}})),
+                DeliveryError::PermissionDenied(denial)
+                | DeliveryError::FreshCredentialRequired(denial),
+            ) => answer(
+                403,
+                json!({"error":{"code":"permission-denied", "operation": denial.operation}}),
+            ),
             _ => answer(503, json!({"error":{"code":"execution-failed"}})),
         }
     }

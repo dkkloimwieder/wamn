@@ -339,18 +339,12 @@ fn custom_state_and_claim_declarations_do_not_invent_input_key_links() {
         ("claim_stock", json!("claim")),
     ] {
         let identity = format!("example:entry/{name}@1.0.0");
-        let mut declaration = json!({
+        let declaration = json!({
             "operation": identity, "type": "command", "grant": identity,
             "permission_token": format!("entry.{name}"), "result": "one",
             "idempotent_by": idempotent_by,
             "relations": [{"schema": "inventory", "table": "stock"}]
         });
-        if name == "claim_stock" {
-            declaration["claim"] = json!({
-                "table": "stock_command", "identities": {"stock_id": "stock_id"},
-                "claim": "claim", "replay": "read_claim", "finalize": "finish_claim"
-            });
-        }
         insert_operation(
             &mut contracts,
             name,

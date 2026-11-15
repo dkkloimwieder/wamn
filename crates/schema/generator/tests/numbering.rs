@@ -138,8 +138,7 @@ fn text(package: &GeneratedPackage, path: &str) -> String {
 #[test]
 fn a_create_that_supplies_a_number_field_is_refused() {
     let mut manifest = numbered();
-    manifest["models"]["gadget"]["server_owned_fields"] =
-        json!(["status", "row_version", "created_at"]);
+    manifest["models"]["gadget"]["server_owned_fields"] = json!(["status", "row_version"]);
     manifest["models"]["gadget"]["operations"]["create"]["writable_fields"] =
         json!(["stock_id", "part_code"]);
     let (type_, message) = refusal(&catalog(false), &manifest);
@@ -162,10 +161,19 @@ fn a_command_that_writes_an_actor_field_is_refused() {
         .push(json!({"path": "idempotency_key", "type": "text", "nullable": false}));
     command["transaction"] = json!("explicit_per_input");
     command["automatic_retry"] = json!(false);
-    command["relations"][0]["update_fields"] = json!(["updated_by"]);
     manifest["custom_operations"] = json!({"quality.inspect_gadget": command});
-    let (type_, message) = refusal(&stamped_catalog(), &manifest);
-    assert_eq!(type_, GenerateErrorType::InvalidOperation, "{message}");
+    let mut sources = QUERY_SOURCES.to_vec();
+    sources.push(wamn_compiler::AuthoredSql::new(
+        "query/quality_gadget_part.sql",
+        b"UPDATE gadget SET updated_by = $1 RETURNING id;",
+    ));
+    let error = run(&stamped_catalog(), &manifest, &sources)
+        .expect_err("an authored command cannot supply the actor");
+    assert_eq!(
+        error.error_type(),
+        GenerateErrorType::InvalidOperation,
+        "{error}"
+    );
 }
 
 #[test]
@@ -196,7 +204,9 @@ fn an_integer_key_cannot_be_numbered_even_with_a_bare_counter() {
         manifest["models"]["gadget"]["fields"] = json!({"id": {"number": "gadget_number"}});
         let create = manifest["models"]["gadget"]["operations"]["create"].clone();
         manifest["models"]["gadget"]["operations"] = json!({"create": create});
-        let (error_type, message) = refusal(&integer_key_catalog(), &manifest);
+        let error = run(&integer_key_catalog(), &manifest, &[])
+            .expect_err("an integer key cannot be numbered");
+        let (error_type, message) = (error.error_type(), error.to_string());
         assert_eq!(error_type, GenerateErrorType::InvalidModel, "{message}");
     }
 }
@@ -472,10 +482,25 @@ fn an_overlay_command_cannot_write_inherited_number_or_actor_fields() {
             .push(json!({"path": "idempotency_key", "type": "text", "nullable": false}));
         command["transaction"] = json!("explicit_per_input");
         command["automatic_retry"] = json!(false);
-        command["relations"][0]["update_fields"] = json!([field]);
         overlay["custom_operations"] = json!({"quality.inspect_gadget": command});
-        let (type_, message) = refusal_with_base(&stamped_catalog(), &overlay, &base);
-        assert_eq!(type_, GenerateErrorType::InvalidOperation, "{message}");
+        let sql = format!("UPDATE gadget SET {field} = $1 RETURNING id;");
+        let mut sources = QUERY_SOURCES.to_vec();
+        sources.push(wamn_compiler::AuthoredSql::new(
+            "query/quality_gadget_part.sql",
+            sql.as_bytes(),
+        ));
+        let error = run_with_bases(
+            &stamped_catalog(),
+            &overlay,
+            &sources,
+            std::slice::from_ref(&base),
+        )
+        .expect_err("an overlay command cannot supply the owner's number or actor");
+        assert_eq!(
+            error.error_type(),
+            GenerateErrorType::InvalidOperation,
+            "{error}"
+        );
     }
 }
 

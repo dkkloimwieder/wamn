@@ -1,6 +1,7 @@
 //! PostgreSQL syntax facts used by compilation and release effect review.
 
 use crate::manifest::FilterMatch;
+use crate::{ManifestError, ManifestErrorType};
 use pg_query::{NodeEnum, NodeRef};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -216,14 +217,24 @@ pub struct StatementAnalysis {
 pub fn analyze(
     sql: &[u8],
     relations: &BTreeMap<String, BTreeSet<String>>,
-) -> Result<StatementAnalysis, &'static str> {
-    let parsed = parse(sql)?;
+) -> Result<StatementAnalysis, ManifestError> {
+    let invalid = |detail| ManifestError::new(ManifestErrorType::InvalidOperation, detail);
+    let parsed = parse(sql).map_err(invalid)?;
+    for (table, _) in &parsed.tables {
+        if !parsed.cte_names.contains(table) && !relations.contains_key(table) {
+            return Err(ManifestError::for_object(
+                ManifestErrorType::UnknownRelation,
+                "SQL references an undeclared relation",
+                table.as_str(),
+            ));
+        }
+    }
     let nodes = nodes(&parsed);
     if nodes
         .iter()
         .any(|node| matches!(node, NodeRef::MergeStmt(_)))
     {
-        return Err("MERGE effects are not supported");
+        return Err(invalid("MERGE effects are not supported"));
     }
     let deletes = nodes
         .iter()
@@ -244,7 +255,7 @@ pub fn analyze(
             _ => None,
         })
         .collect();
-    let access = relation_effects(&parsed, &nodes, relations)?;
+    let access = relation_effects(&parsed, &nodes, relations).map_err(invalid)?;
     Ok(StatementAnalysis {
         access,
         deletes,
@@ -255,7 +266,7 @@ pub fn analyze(
 pub fn relation_access(
     sql: &[u8],
     relations: &BTreeMap<String, BTreeSet<String>>,
-) -> Result<BTreeMap<String, RelationAccess>, &'static str> {
+) -> Result<BTreeMap<String, RelationAccess>, ManifestError> {
     analyze(sql, relations).map(|analysis| analysis.access)
 }
 
@@ -282,9 +293,6 @@ fn relation_effects(
     for (table, _) in &parsed.tables {
         if parsed.cte_names.contains(table) {
             continue;
-        }
-        if !relations.contains_key(table) {
-            return Err("SQL references an undeclared relation");
         }
         access.entry(table.clone()).or_default();
     }
