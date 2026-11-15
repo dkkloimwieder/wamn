@@ -189,7 +189,7 @@ It runs ignored cases one at a time.
 When an exact kind suite selects the aggregate journey, that suite owns the target and the root command omits it.
 A name filter that selects focused cases instead omits the aggregate suite.
 The selection runs the aggregate journey or its focused cases once.
-The guest numbering refusal test needs its Wasm example. Build it in the lane's existing target directory before running the named test through the private PostgreSQL runner:
+The selector prepares the guest numbering refusal test through `input:numbering-refusal`. For a direct Cargo run, build its Wasm example in the existing target directory first:
 
 ```sh
 cargo build --manifest-path apps/Cargo.toml -p wamn-postgres-statements --example numbering_refusal --target wasm32-wasip2

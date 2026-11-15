@@ -298,7 +298,7 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
 }
 
 #[sqlx::test(migrations = false)]
-#[ignore = "requires: built wasm numbering_refusal example; see running-tests.md"]
+#[ignore = "requires: input:numbering-refusal"]
 async fn live_an_invalid_timezone_setting_is_refused(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);

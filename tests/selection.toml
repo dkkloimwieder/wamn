@@ -97,6 +97,13 @@ commands = [
 ]
 
 [[preparation]]
+id = "numbering-refusal"
+outputs = {}
+commands = [
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "wamn-postgres-statements", "--example", "numbering_refusal"],
+]
+
+[[preparation]]
 id = "sync-bench"
 outputs = {WAMN_SYNC_BENCH_DIST = "{target}/sync-bench/web"}
 applications = ["apps/wamn_wms"]
