@@ -252,7 +252,8 @@ pub async fn reset_deployed(
                 &credentials.migration,
             )
             .await?;
-            resume_users(&platform, &document, &credentials.owner).await?;
+            ensure::ensure_cdc_inputs(&platform, &document, Some(&credentials.owner)).await?;
+            resume_users(&platform, &document).await?;
             Ok(serde_json::json!({"database": wamn_postgres::identity(&url)?.1, "result":"reset"}))
         })
         .await;
@@ -272,11 +273,7 @@ async fn stop_users(platform: &Platform, document: &EnvironmentDocument) -> anyh
     Ok(())
 }
 
-async fn resume_users(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    admin_url: &str,
-) -> anyhow::Result<()> {
+async fn resume_users(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<()> {
     use super::super::{readiness, write};
     let control = crate::platform::installed::InstalledPlatform::read(&platform.target)
         .await?
@@ -299,7 +296,6 @@ async fn resume_users(
         super::super::expand::expand(platform, document, &analysis, &actor).await?;
         applications.push(analysis);
     }
-    ensure::ensure_cdc_inputs(platform, document, Some(admin_url)).await?;
     for analysis in applications {
         let application = &analysis.application;
         let budget = std::time::Duration::from_secs(u64::try_from(

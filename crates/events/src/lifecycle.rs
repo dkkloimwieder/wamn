@@ -6,7 +6,7 @@ use std::time::Duration;
 use wamn_control_provision::{project_env_cdc_secret_name, sql};
 use wamn_registry::Triple;
 
-/// Restore the CDC slot, maps and grants through the project database administrator.
+/// Restore the CDC slot, maps and grants after package SQL creates the model schemas.
 pub async fn apply_cdc_sql(
     admin_database_url: &str,
     capture_database_url: &str,
@@ -126,8 +126,7 @@ fn cdc_schema_sql_bundle(schemas: &[String], cdc_name: &str, db_name: &str) -> S
     for schema in schemas {
         writeln!(
             bundle,
-            "\n{schema_guard};\n{entity_map};\n{exclusion_map};\n{grants}",
-            schema_guard = sql::ensure_schema_sql(schema),
+            "\n{entity_map};\n{exclusion_map};\n{grants}",
             entity_map = sql::ensure_entity_map_sql(schema),
             exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema),
             grants = sql::grant_replication_access_sql(db_name, cdc_name, schema),

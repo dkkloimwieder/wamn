@@ -135,12 +135,28 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
         "a reader row a failed apply left must not skip CDC"
     );
 
-    // The publication is the observation.
+    let missing_schema = wamn_events::lifecycle::apply_cdc_sql(
+        database.as_str(),
+        database.as_str(),
+        &schemas,
+        &cdc_name,
+        database.path().trim_start_matches('/'),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        missing_schema
+            .downcast_ref::<sqlx::Error>()
+            .and_then(|error| error.as_database_error())
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("3F000")
+    );
+
+    // The publication is the observation. Its model schemas already exist.
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
-            "{};\n{};\n{}",
-            sql::ensure_schema_sql("app"),
-            sql::ensure_schema_sql("other"),
+            "CREATE SCHEMA app; CREATE SCHEMA other; {}",
             sql::create_publication_schemas_sql(&cdc_name, &schemas)
         ))
             .to_string(),
