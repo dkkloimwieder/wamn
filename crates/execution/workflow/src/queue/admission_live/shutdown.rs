@@ -4,7 +4,7 @@ use sqlx::Row as _;
 use std::time::Duration;
 
 use tokio::time::timeout;
-use wamn_postgres_capability::WamnPostgres;
+use wamn_sql::WamnPostgres;
 use wash_runtime::engine::Engine;
 use wash_runtime::host::probes::Liveness;
 

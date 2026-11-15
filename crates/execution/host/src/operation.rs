@@ -16,12 +16,12 @@ use opentelemetry::propagation::Extractor;
 use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-use wamn_blobstore::plugin::WamnBlobstore;
-use wamn_capability_authority::connection::{
+use wamn_authority::connection::{
     ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
 };
-use wamn_capability_authority::effect_span::EffectEvidence;
-use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
+use wamn_authority::effect_span::EffectEvidence;
+use wamn_authority::identity::{ReleaseIdentity, SessionIdentity};
+use wamn_blobstore::plugin::WamnBlobstore;
 use wamn_catalog::AdmittedComponent;
 use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_engine::artifact_source::ArtifactSource;
@@ -29,11 +29,11 @@ use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::native_routes::bounded_node_deadline_ms;
 use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
 use wamn_event_wire::Causation;
-use wamn_http_capability::ConnectionHttp;
-use wamn_http_capability::transport::HttpTransport;
+use wamn_http::ConnectionHttp;
+use wamn_http::transport::HttpTransport;
 use wamn_identity_protocol::PlatformComponent;
-use wamn_postgres_capability::WamnPostgres;
-use wamn_postgres_capability::valid_runner;
+use wamn_sql::WamnPostgres;
+use wamn_sql::valid_runner;
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
@@ -167,7 +167,7 @@ pub struct OperationHost {
     blobstore: Arc<WamnBlobstore>,
     /// Shared by every driver in this process, independently of fresh stores.
     http_transport: Arc<HttpTransport>,
-    pub context: Arc<wamn_postgres_capability::invocation::ReleaseContext>,
+    pub context: Arc<wamn_sql::invocation::ReleaseContext>,
     logging: Arc<TracingLogger>,
     allowed_hosts: Arc<[AllowedHost]>,
     pub release: Arc<LoadedRelease>,
@@ -271,7 +271,7 @@ impl OperationHost {
             blobstore,
             http_transport,
             integrations: std::sync::OnceLock::new(),
-            context: Arc::new(wamn_postgres_capability::invocation::ReleaseContext::new(
+            context: Arc::new(wamn_sql::invocation::ReleaseContext::new(
                 Arc::clone(&release),
                 facts,
             )?),
@@ -579,10 +579,10 @@ impl NodeAcquisition {
 mod tests;
 
 #[async_trait::async_trait]
-impl wamn_postgres_capability::OperationInvoker for OperationHost {
+impl wamn_sql::OperationInvoker for OperationHost {
     async fn invoke(
         &self,
-        authority: Arc<wamn_postgres_capability::invocation::AuthorizedInvocation>,
+        authority: Arc<wamn_sql::invocation::AuthorizedInvocation>,
         operation: String,
         context: node_types::NodeContext,
         input: String,
@@ -629,7 +629,7 @@ impl wamn_postgres_capability::OperationInvoker for OperationHost {
 
     async fn sign_result(
         &self,
-        authority: Arc<wamn_postgres_capability::invocation::AuthorizedInvocation>,
+        authority: Arc<wamn_sql::invocation::AuthorizedInvocation>,
         operation: String,
         payload: String,
     ) -> anyhow::Result<String> {

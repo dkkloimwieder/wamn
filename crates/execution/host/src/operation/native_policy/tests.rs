@@ -8,12 +8,12 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 use tokio::time::{Instant, timeout};
-use wamn_blobstore::plugin::WamnBlobstore;
-use wamn_broker::Publisher;
-use wamn_capability_authority::connection::{
+use wamn_authority::connection::{
     ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
 };
-use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
+use wamn_authority::identity::{ReleaseIdentity, SessionIdentity};
+use wamn_blobstore::plugin::WamnBlobstore;
+use wamn_broker::Publisher;
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate, PackageCoordinate,
     SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest, ServingRelease,
@@ -23,10 +23,10 @@ use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_connections::connection_memory::ConnectionMemory;
 use wamn_digest::bytes_sha256;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_http_capability::ConnectionHttp;
-use wamn_http_capability::transport::HttpTransport;
+use wamn_http::ConnectionHttp;
+use wamn_http::transport::HttpTransport;
 use wamn_identity_protocol::PlatformComponent;
-use wamn_postgres_capability::{StaticCredentialProvider, WAMN_POSTGRES_ID, WamnPostgres};
+use wamn_sql::{StaticCredentialProvider, WAMN_POSTGRES_ID, WamnPostgres};
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::dispatch::DispatchTarget;
@@ -704,11 +704,7 @@ impl Fixture {
                 )),
                 blobstore: Arc::new(WamnBlobstore::new(Arc::clone(&postgres))),
                 context: Arc::new(
-                    wamn_postgres_capability::invocation::ReleaseContext::new(
-                        Arc::clone(&release),
-                        facts,
-                    )
-                    .unwrap(),
+                    wamn_sql::invocation::ReleaseContext::new(Arc::clone(&release), facts).unwrap(),
                 ),
                 postgres,
                 logging: Arc::new(TracingLogger::default()),
@@ -823,8 +819,8 @@ impl Fixture {
                             interface_version: self.root.interface_version.clone(),
                             operation: ROOT.into(),
                         },
-                        entry: wamn_capability_authority::connection::InvocationEntry::Wiring(
-                            wamn_capability_authority::connection::WiringPosition {
+                        entry: wamn_authority::connection::InvocationEntry::Wiring(
+                            wamn_authority::connection::WiringPosition {
                                 configuration: Default::default(),
                                 package_id: "workflow".into(),
                                 wiring_hash: format!("sha256:{}", "a".repeat(64)),

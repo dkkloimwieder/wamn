@@ -1,14 +1,20 @@
 [package]
-name = "wamn-http-capability"
+name = "wamn-http"
 description = "Bound HTTP host capability and OAuth authorization."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-capability-authority/test-util", "wamn-connections/test-util", "wamn-postgres-capability/test-util"]
+test-util = ["wamn-platform-identity/test-util", "wamn-control-provision/test-util", "dep:wamn-registry", "dep:wamn-postgres", "dep:wamn-control-provision", "dep:wamn-broker", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-authority/test-util", "wamn-connections/test-util", "wamn-sql/test-util", "dep:tempfile", "dep:wamn-test-postgres", "dep:wamn-test-infrastructure", "dep:rcgen", "dep:wat", "dep:wamn-digest", "hyper/server"]
 
 [dependencies]
+wamn-digest = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+wamn-test-postgres = { workspace = true, optional = true }
+wamn-test-infrastructure = { workspace = true, optional = true }
+rcgen = { workspace = true, optional = true }
+wat = { version = "=1.254.2", optional = true }
 anyhow = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
@@ -35,43 +41,34 @@ tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
-wamn-broker = { workspace = true }
-wamn-capability-authority = { workspace = true }
+wamn-broker = { workspace = true, optional = true }
+wamn-authority = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-connections = { workspace = true }
-wamn-control-provision = { workspace = true }
+wamn-control-provision = { workspace = true, optional = true }
 wamn-engine = { workspace = true }
-wamn-identity-protocol = { workspace = true }
+wamn-identity-protocol = { workspace = true, optional = true }
 wamn-kubernetes = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-platform-identity = { workspace = true }
-wamn-postgres = { workspace = true }
-wamn-postgres-capability = { workspace = true }
-wamn-registry = { workspace = true }
+wamn-postgres = { workspace = true, optional = true }
+wamn-sql = { workspace = true }
+wamn-registry = { workspace = true, optional = true }
 wash-runtime = { workspace = true }
-wasmtime = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
-wat = "=1.254.2"
-wamn-digest.workspace = true
-wamn-execution-host.workspace = true
-wamn-blobstore.workspace = true
 hyper = { workspace = true, features = ["server"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
-rcgen = { workspace = true }
-tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true, features = ["test-util"] }
-wamn-http-capability = { path = ".", features = ["test-util"] }
+wamn-http = { path = ".", features = ["test-util"] }
 wamn-kubernetes = { workspace = true, features = ["test-util"] }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-platform-identity = { workspace = true, features = ["test-util"] }
-wamn-test-infrastructure = { workspace = true }
-wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

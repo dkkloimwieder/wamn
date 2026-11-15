@@ -40,7 +40,7 @@ use wamn_platform_identity::application::{
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
 };
 use wamn_platform_identity::control::is_project_admin;
-use wamn_postgres_capability::WamnPostgres;
+use wamn_sql::WamnPostgres;
 
 use crate::control_route::{Refusal, parse};
 

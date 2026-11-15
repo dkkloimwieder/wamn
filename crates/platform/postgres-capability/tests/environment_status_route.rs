@@ -21,9 +21,7 @@ use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_postgres_capability::{
-    AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
-};
+use wamn_sql::{AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
 
 const PROJECT: &str = "project";
 const PROJECT_ENV_KEY: &str = "org-a--dev--project";

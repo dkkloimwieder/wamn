@@ -2,7 +2,7 @@
 use super::{CounterSet, CounterSetError, CounterSetRefusal};
 const LIVE_PRINCIPAL: &str = "5c2b7e1a-9d3f-4a6b-8c1e-2f4d6a8b0c3e";
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
-use wamn_postgres_capability::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
+use wamn_sql::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 const PROJECT_ENV_KEY: &str = "test--dev--numbering";
 const APPLICATION: &str = "receiving";
 const ADMINISTRATION_PASSWORD: &str = "numbering-administration";
@@ -115,7 +115,7 @@ impl Live {
     ) -> Result<i64, CounterSetError> {
         super::set_number_counter(
             &self.plugin,
-            wamn_postgres_capability::DEFAULT_PROJECT,
+            wamn_sql::DEFAULT_PROJECT,
             PROJECT_ENV_KEY,
             LIVE_PRINCIPAL,
             SET_OPERATION,

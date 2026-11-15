@@ -333,14 +333,11 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
             let envelope = Arc::new(wamn_connections::oauth_encryption::Envelope::open(
                 configuration,
             )?);
-            wamn_http_capability::oauth_authorization::Authorization::new(
-                &config.public_origin,
-                envelope,
-            )
-            .map(Arc::new)
+            wamn_http::oauth_authorization::Authorization::new(&config.public_origin, envelope)
+                .map(Arc::new)
         })
         .transpose()?;
-    let transport = Arc::new(wamn_http_capability::transport::HttpTransport::new()?);
+    let transport = Arc::new(wamn_http::transport::HttpTransport::new()?);
     let changes = wamn_broker::Publisher::connect(&config.nats.connection()).await?;
     let handlers = Arc::new(
         HostRouteDelivery::new(

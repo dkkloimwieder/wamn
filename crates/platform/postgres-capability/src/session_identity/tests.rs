@@ -4,7 +4,7 @@ use super::*;
 use std::collections::BTreeSet;
 use wamn_catalog::ManifestDigest;
 
-use wamn_capability_authority::connection::{ConnectionExecutionClosure, ConnectionOrigin};
+use wamn_authority::connection::{ConnectionExecutionClosure, ConnectionOrigin};
 
 fn candidate_binding(component: &str, alias: &str) -> serde_json::Value {
     serde_json::json!({
@@ -350,8 +350,8 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
             interface_version: "0.1.0".to_string(),
             operation: "platform-fixture:widget/update@1.0.0".to_string(),
         },
-        entry: wamn_capability_authority::connection::InvocationEntry::Wiring(
-            wamn_capability_authority::connection::WiringPosition {
+        entry: wamn_authority::connection::InvocationEntry::Wiring(
+            wamn_authority::connection::WiringPosition {
                 configuration: Default::default(),
                 package_id: "package_a".to_string(),
                 wiring_hash: format!("sha256:{}", "a".repeat(64)),
@@ -377,7 +377,7 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
         StaticCredentialProvider::default_only(None),
     )));
     let deployment = |key: &str, project: &str| {
-        let release = wamn_capability_authority::connection::test_release(key);
+        let release = wamn_authority::connection::test_release(key);
         let facts = Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
             Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
             wamn_broker::Publisher::default(),
@@ -1001,9 +1001,9 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
     );
 
     let lookup = ConnectionEffectLookup {
-        entry: wamn_capability_authority::identity::ConnectionEntryLookup {
+        entry: wamn_authority::identity::ConnectionEntryLookup {
             package_id: "catalog",
-            wiring: Some(wamn_capability_authority::identity::WiringLookup {
+            wiring: Some(wamn_authority::identity::WiringLookup {
                 wiring_id: "wiring",
                 wiring_version: 1,
                 node_id: "node",
@@ -1030,7 +1030,7 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
         "org--dev--a",
         &lookup,
         &facts,
-        &wamn_capability_authority::connection::test_release("org--dev--a"),
+        &wamn_authority::connection::test_release("org--dev--a"),
     )
     .await
     .expect_err("a disagreeing project_env_key is refused");
@@ -1042,7 +1042,7 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
         "org--dev--b",
         &lookup,
         &facts,
-        &wamn_capability_authority::connection::test_release("org--dev--a"),
+        &wamn_authority::connection::test_release("org--dev--a"),
     )
     .await
     .expect_err("an offline plugin has no connection to resolve against");
@@ -1090,9 +1090,9 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
     );
 
     let lookup = ConnectionEffectLookup {
-        entry: wamn_capability_authority::identity::ConnectionEntryLookup {
+        entry: wamn_authority::identity::ConnectionEntryLookup {
             package_id: "catalog",
-            wiring: Some(wamn_capability_authority::identity::WiringLookup {
+            wiring: Some(wamn_authority::identity::WiringLookup {
                 wiring_id: "wiring",
                 wiring_version: 1,
                 node_id: "node",
@@ -1118,7 +1118,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
             "org--dev--a",
             &lookup,
             &facts,
-            &wamn_capability_authority::connection::test_release("org--dev--a"),
+            &wamn_authority::connection::test_release("org--dev--a"),
         )
         .await
         .expect_err("an unbound identity scope resolves nothing");
@@ -1686,12 +1686,12 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears(pool: sq
         statement_timeout_ms: 5_000,
     })
     .expect("the plugin builds from the guest generation's url");
-    pg.auth = Arc::new(wamn_capability_authority::auth_cache::AuthCache::with_ttl(
+    pg.auth = Arc::new(wamn_authority::auth_cache::AuthCache::with_ttl(
         std::time::Duration::from_secs(3600),
     ));
     let pg = Arc::new(pg);
-    let (_nats, client) = wamn_capability_authority::auth_cache::test_util::nats().await;
-    wamn_capability_authority::auth_cache::test_util::watched(
+    let (_nats, client) = wamn_authority::auth_cache::test_util::nats().await;
+    wamn_authority::auth_cache::test_util::watched(
         &client,
         Some(PROJECT_ENV_KEY),
         Arc::clone(pg.auth_cache()),
@@ -1769,12 +1769,10 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgP
     })
     .expect("the plugin builds from the guest generation's url");
     let ttl = std::time::Duration::from_secs(3600);
-    pg.auth = Arc::new(wamn_capability_authority::auth_cache::AuthCache::with_ttl(
-        ttl,
-    ));
+    pg.auth = Arc::new(wamn_authority::auth_cache::AuthCache::with_ttl(ttl));
     let pg = Arc::new(pg);
-    let (_nats, client) = wamn_capability_authority::auth_cache::test_util::nats().await;
-    let writer = wamn_capability_authority::auth_cache::test_util::watched(
+    let (_nats, client) = wamn_authority::auth_cache::test_util::nats().await;
+    let writer = wamn_authority::auth_cache::test_util::watched(
         &client,
         Some(PROJECT_ENV_KEY),
         Arc::clone(pg.auth_cache()),
@@ -1809,7 +1807,7 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgP
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     drops.principal(PROJECT_ENV_KEY, LIVE_PRINCIPAL);
     writer.publish(drops).await;
-    wamn_capability_authority::auth_cache::test_util::until("the drop reaches the memory", || {
+    wamn_authority::auth_cache::test_util::until("the drop reaches the memory", || {
         pg.auth_cache()
             .grants(PROJECT_ENV_KEY, LIVE_PRINCIPAL)
             .is_err()
@@ -2241,7 +2239,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot(pool: sqlx::PgPoo
 /// (docs/architecture/execution.md#environment-workflows).
 #[test]
 fn session_and_pat_callers_act_with_their_single_role() {
-    let grants = |roles: &[&str]| wamn_capability_authority::auth_cache::PrincipalGrants {
+    let grants = |roles: &[&str]| wamn_authority::auth_cache::PrincipalGrants {
         present: true,
         active: true,
         user: true,

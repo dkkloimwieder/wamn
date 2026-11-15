@@ -1,7 +1,7 @@
 //! Resolve the authority of one admitted invocation before an external call.
 
 use crate::{ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres};
-use wamn_capability_authority::connection::{
+use wamn_authority::connection::{
     ConnectionExecutionClosure, authorize_candidate_closure, authorize_release_closure,
     entry_lookup,
 };

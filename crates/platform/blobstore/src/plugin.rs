@@ -11,16 +11,16 @@ use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use wamn_capability_authority::effect_span::{EffectIdentity, effect_span, record_wiring};
+use wamn_authority::effect_span::{EffectIdentity, effect_span, record_wiring};
 
 use super::binding::{self, BindingError};
 use super::store::{BoundContainer, ConnectionAuthority};
 use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider};
 
-use wamn_capability_authority::connection::ConnectionInvocation;
+use wamn_authority::connection::ConnectionInvocation;
 use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_connections::connection_memory::{ConnectionFact, ConnectionStatus};
-use wamn_postgres_capability::WamnPostgres;
+use wamn_sql::WamnPostgres;
 
 /// Plugin id, as the host registry knows it.
 pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
@@ -66,7 +66,7 @@ impl WamnBlobstore {
     /// Open file storage after the native host authorizes its package binding.
     pub async fn file_store(
         &self,
-        context: &wamn_postgres_capability::invocation::ReleaseContext,
+        context: &wamn_sql::invocation::ReleaseContext,
         connection_name: &str,
         read_only: bool,
         deadline: tokio::time::Instant,
@@ -148,11 +148,10 @@ impl WamnBlobstore {
         component_id: &str,
         store_alias: &str,
     ) -> Result<BoundContainer, BindingError> {
-        let context =
-            wamn_postgres_capability::invocation::context(&self.postgres.scopes, component_id)
-                .map_err(|_| BindingError::unauthorized())?;
+        let context = wamn_sql::invocation::context(&self.postgres.scopes, component_id)
+            .map_err(|_| BindingError::unauthorized())?;
         let facts = &context.connections;
-        let snapshot = wamn_postgres_capability::connection_binding::resolve(
+        let snapshot = wamn_sql::connection_binding::resolve(
             &self.postgres,
             component_id,
             store_alias,
@@ -376,7 +375,7 @@ pub(super) fn blobstore_span(
     component_id: &str,
     operation: &'static str,
 ) -> tracing::Span {
-    let make_span = |identity: Option<&wamn_capability_authority::identity::SessionIdentity>| {
+    let make_span = |identity: Option<&wamn_authority::identity::SessionIdentity>| {
         effect_span!(
             "wamn.blobstore",
             EffectIdentity {
@@ -396,7 +395,7 @@ pub(super) fn blobstore_span(
     let span = plugin
         .postgres
         .scopes
-        .read::<wamn_postgres_capability::invocation::Authority, _>(component_id, |record| {
+        .read::<wamn_sql::invocation::Authority, _>(component_id, |record| {
             make_span(Some(&record.identity))
         })
         .unwrap_or_else(|| make_span(None));
@@ -405,7 +404,7 @@ pub(super) fn blobstore_span(
         &span,
         invocation
             .as_ref()
-            .map(wamn_capability_authority::connection::ConnectionInvocation::effect_wiring),
+            .map(wamn_authority::connection::ConnectionInvocation::effect_wiring),
     );
     span
 }

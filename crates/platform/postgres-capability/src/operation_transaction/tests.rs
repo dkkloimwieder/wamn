@@ -19,7 +19,7 @@ use crate::{
     ClassCredentials, ReleaseIdentity, SessionIdentity, WAMN_POSTGRES_ID, WamnPostgres,
     WamnPostgresConfig,
 };
-use wamn_capability_authority::connection::{
+use wamn_authority::connection::{
     ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
 };
 use wamn_engine::engine::build_engine;
@@ -37,8 +37,8 @@ fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
             interface_version: "0.1.0".into(),
             operation: OWNER_OPERATION.into(),
         },
-        entry: wamn_capability_authority::connection::InvocationEntry::Wiring(
-            wamn_capability_authority::connection::WiringPosition {
+        entry: wamn_authority::connection::InvocationEntry::Wiring(
+            wamn_authority::connection::WiringPosition {
                 configuration: Default::default(),
                 package_id: "overlay".into(),
                 wiring_hash: format!("sha256:{}", "a".repeat(64)),

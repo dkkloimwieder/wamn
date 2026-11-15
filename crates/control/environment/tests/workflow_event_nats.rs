@@ -7,7 +7,7 @@ use sqlx::Row as _;
 mod event_batch {
     use super::*;
     use futures_util::StreamExt as _;
-    use wamn_events_capability::WamnJetstreamConfig;
+    use wamn_events::WamnJetstreamConfig;
 
     #[sqlx::test(migrations = false)]
     #[ignore = "requires: nats, env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]

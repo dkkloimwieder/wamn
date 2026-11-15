@@ -22,7 +22,7 @@ use wamn_identity_client::PatIssuerConfig;
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::control::{control_projects_page, is_org_admin, org_projects_page};
 use wamn_platform_identity::paging::Order;
-use wamn_postgres_capability::WamnPostgres;
+use wamn_sql::WamnPostgres;
 
 use crate::application_route::ApplicationRoutes;
 use crate::control_route::{ControlRoutes, Refusal, control_page};
@@ -98,7 +98,7 @@ pub struct HostRouteDelivery {
     handlers: HostRouteHandlers,
     files: Option<Arc<crate::file_route::FileRoutes>>,
     connection_health: Option<Arc<crate::connection_health::ConnectionHealth>>,
-    oauth: Option<Arc<wamn_http_capability::oauth_authorization::Authorization>>,
+    oauth: Option<Arc<wamn_http::oauth_authorization::Authorization>>,
     control_authenticator:
         Option<Arc<wamn_authentication::route_authentication::ControlRouteAuthenticator>>,
 }
@@ -169,7 +169,7 @@ impl HostRouteDelivery {
     /// Share the control callback configuration with the administration routes.
     pub fn with_oauth(
         mut self,
-        oauth: Option<Arc<wamn_http_capability::oauth_authorization::Authorization>>,
+        oauth: Option<Arc<wamn_http::oauth_authorization::Authorization>>,
     ) -> Self {
         self.oauth = oauth;
         self

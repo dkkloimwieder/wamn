@@ -7,17 +7,17 @@ use anyhow::Context as _;
 use tracing::Instrument as _;
 use wash_runtime::host::probes::Liveness;
 
-use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
+use wamn_authority::identity::{ReleaseIdentity, SessionIdentity};
 use wamn_connections::production_lease::{
     ProductionCompletionResult, ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult,
 };
 use wamn_engine::native_routes::{OperationRefusal, OperationRefusalType};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
-use wamn_events_capability::{DerivedPublishRequest, WamnJetstream};
+use wamn_events::{DerivedPublishRequest, WamnJetstream};
 use wamn_identity_protocol::PlatformComponent;
-use wamn_postgres_capability::WamnPostgres;
 use wamn_run_state::FailType;
+use wamn_sql::WamnPostgres;
 
 use crate::resolution::{WorkflowResolutionError, WorkflowResolutionErrorType};
 use crate::router_action::{ProductionRouterAction, production_router_action};

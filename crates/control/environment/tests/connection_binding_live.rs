@@ -8,17 +8,15 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use wamn_authority::identity::{CandidateConnectionBinding, ConnectionEffectLookup};
 use wamn_broker::connection_changes::ConnectionDrops;
-use wamn_capability_authority::identity::{CandidateConnectionBinding, ConnectionEffectLookup};
 use wamn_catalog::{AdmittedComponentOperation, WiringDocument, WiringNode, WiringTerminal};
 use wamn_connections::connection_credentials::ConnectionCredentials;
 use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_connections::connection_memory::ConnectionMemory;
 use wamn_environment::apply_package::{self, ApplyPackageRequest};
 use wamn_environment::environment::{bindings, document::EnvironmentDocument};
-use wamn_postgres_capability::{
-    ClassCredentials, DEFAULT_PROJECT, WamnPostgres, WamnPostgresConfig,
-};
+use wamn_sql::{ClassCredentials, DEFAULT_PROJECT, WamnPostgres, WamnPostgresConfig};
 
 const PROJECT_ENV_KEY: &str = "connection-binding-project--dev--fixture";
 const ENVIRONMENT: &str = "dev";
@@ -37,7 +35,7 @@ async fn connect(url: &str) -> Client {
 
 async fn runtime_credentials(database: &url::Url) -> ClassCredentials {
     use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
-    use wamn_postgres_capability::AuthorityClass;
+    use wamn_sql::AuthorityClass;
     let name = database.path().trim_start_matches('/');
     let mut observer = connect(database.as_str()).await;
     let mut credentials = ClassCredentials::default();
@@ -410,11 +408,11 @@ fn provision_project_components_for_http_manifest()
 
 #[sqlx::test(migrations = false)]
 async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(pool: sqlx::PgPool) {
-    use wamn_capability_authority::connection::{
+    use wamn_authority::connection::{
         ConnectionError, ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
         InvocationEntry, WiringPosition,
     };
-    use wamn_http_capability::{ConnectionHttp, transport::HttpTransport};
+    use wamn_http::{ConnectionHttp, transport::HttpTransport};
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
     let mut project = connect(database.as_str()).await;
@@ -535,7 +533,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
         closure: ConnectionExecutionClosure::Released,
         effects: None,
     };
-    wamn_postgres_capability::invocation::bind_test_context(
+    wamn_sql::invocation::bind_test_context(
         &postgres,
         COMPONENT_ID,
         Arc::clone(&facts),
@@ -567,9 +565,9 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
             .await
             .is_err()
     );
-    let entry = wamn_capability_authority::identity::ConnectionEntryLookup {
+    let entry = wamn_authority::identity::ConnectionEntryLookup {
         package_id: PACKAGE,
-        wiring: Some(wamn_capability_authority::identity::WiringLookup {
+        wiring: Some(wamn_authority::identity::WiringLookup {
             wiring_id: "http_read",
             wiring_version: 1,
             node_id: "read",
@@ -623,13 +621,13 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
         component: "http-sidecar".into(),
         interface_version: "0.1.0".into(),
         binding_world: Arc::new(
-            wamn_capability_authority::identity::CandidateBindingWorld::from_json(
+            wamn_authority::identity::CandidateBindingWorld::from_json(
                 serde_json::to_value([forged]).unwrap(),
             )
             .unwrap(),
         ),
     };
-    wamn_postgres_capability::invocation::bind_test_context(
+    wamn_sql::invocation::bind_test_context(
         &postgres,
         COMPONENT_ID,
         Arc::clone(&facts),
@@ -665,13 +663,13 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
         ComponentDescriptor, ConnectionMode, PALETTE_PACKAGE_ID,
     };
 
-    use wamn_blobstore::binding;
-    use wamn_capability_authority::connection::{
+    use wamn_authority::connection::{
         ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
         WiringPosition,
     };
-    use wamn_capability_authority::identity::CandidateBindingWorld;
-    use wamn_postgres_capability::connection_binding::resolve;
+    use wamn_authority::identity::CandidateBindingWorld;
+    use wamn_blobstore::binding;
+    use wamn_sql::connection_binding::resolve;
     const DIGEST: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
     const OPERATION: &str = "wamn:node/handler@0.1.0";
     let _lock = wamn_test_postgres::lock();
@@ -816,7 +814,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
         closure: ConnectionExecutionClosure::Released,
         effects: None,
     };
-    wamn_postgres_capability::invocation::bind_test_context(
+    wamn_sql::invocation::bind_test_context(
         &postgres,
         COMPONENT_ID,
         Arc::clone(&facts),

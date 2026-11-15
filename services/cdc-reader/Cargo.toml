@@ -25,7 +25,6 @@ async-nats = { workspace = true, features = ["jetstream"] }
 rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
-futures-util = { workspace = true }
 # The CDC replication session uses the pinned fork for typed keepalive events.
 pg_walstream = { workspace = true }
 # The event records and source identity contract.
@@ -37,6 +36,7 @@ postgres-protocol = { workspace = true }
 workspace = true
 
 [dev-dependencies]
+futures-util = { workspace = true }
 wamn-registry.workspace = true
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }

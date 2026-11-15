@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/events", "crates/events/wire", "crates/platform/postgres", "crates/platform/digest", "crates/platform/scalar", "services/host", "services/control", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "xtask/build", "tests/journeys", "test-support/application", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/run-state", "crates/execution/workflow", "crates/schema/generator", "crates/schema/introspection", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/engine", "crates/platform/capability-authority", "crates/platform/connections", "crates/platform/postgres-capability", "crates/platform/http-capability", "crates/platform/blobstore", "crates/platform/authentication", "crates/platform/events-capability", "crates/platform/component-artifact", "crates/platform/integrations", "crates/control/publish", "crates/control/release", "crates/control/environment", "crates/control/platform-install", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/protocol", "crates/kubernetes", "crates/broker"]
+members = ["crates/events", "crates/events/wire", "crates/platform/postgres", "crates/platform/digest", "crates/platform/scalar", "services/host", "services/control", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "xtask/build", "tests/journeys", "test-support/application", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/run-state", "crates/execution/workflow", "crates/schema/generator", "crates/schema/introspection", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/engine", "crates/platform/capability-authority", "crates/platform/connections", "crates/platform/postgres-capability", "crates/platform/http-capability", "crates/platform/blobstore", "crates/platform/authentication", "crates/platform/component-artifact", "crates/platform/integrations", "crates/control/publish", "crates/control/release", "crates/control/environment", "crates/control/platform-install", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/protocol", "crates/kubernetes", "crates/broker"]
 default-members = [
   "crates/catalog/model",
   "crates/execution/host",
@@ -15,10 +15,10 @@ default-members = [
   "crates/platform/http-capability",
   "crates/platform/blobstore",
   "crates/platform/authentication",
-  "crates/platform/events-capability",
   "crates/platform/component-artifact",
   "services/host",
   "services/identity",
+  "crates/events",
 ]
 # Guest components are built separately for wasm32-wasip2 (see apps/*).
 exclude = ["apps"]
@@ -255,13 +255,12 @@ wamn-identity-client = { path = "crates/identity/client", version = "0.1.0" }
 wamn-identity-protocol = { path = "crates/identity/protocol", version = "0.1.0" }
 wamn-record-history = { path = "apps/platform/data/record-history", version = "0.1.0" }
 wamn-run-state = { path = "crates/execution/run-state", version = "0.1.0" }
-wamn-capability-authority = { path = "crates/platform/capability-authority", version = "0.1.0" }
+wamn-authority = { path = "crates/platform/capability-authority", version = "0.1.0" }
 wamn-connections = { path = "crates/platform/connections", version = "0.1.0" }
-wamn-postgres-capability = { path = "crates/platform/postgres-capability", version = "0.1.0" }
-wamn-http-capability = { path = "crates/platform/http-capability", version = "0.1.0" }
+wamn-sql = { path = "crates/platform/postgres-capability", version = "0.1.0" }
+wamn-http = { path = "crates/platform/http-capability", version = "0.1.0" }
 wamn-blobstore = { path = "crates/platform/blobstore", version = "0.1.0" }
 wamn-authentication = { path = "crates/platform/authentication", version = "0.1.0" }
-wamn-events-capability = { path = "crates/platform/events-capability", version = "0.1.0" }
 wamn-component-artifact = { path = "crates/platform/component-artifact", version = "0.1.0" }
 wamn-integrations = { path = "crates/platform/integrations", version = "0.1.0" }
 wamn-compiler = { path = "crates/schema/generator", version = "0.1.0" }

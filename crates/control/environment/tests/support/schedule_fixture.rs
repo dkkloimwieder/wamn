@@ -20,14 +20,12 @@ pub use wamn_engine::component_admission::{
 };
 pub use wamn_engine::engine::build_engine;
 pub use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-pub use wamn_events_capability::WamnJetstream;
+pub use wamn_events::WamnJetstream;
 pub use wamn_execution_host::{OperationHost, OperationHostConfig};
-pub use wamn_http_capability::transport::HttpTransport;
+pub use wamn_http::transport::HttpTransport;
 pub use wamn_identity_protocol::{PlatformComponent, workflow_user_id};
-pub use wamn_postgres_capability::{
-    AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
-};
 pub use wamn_registry::Triple;
+pub use wamn_sql::{AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig};
 pub use wamn_workflow::author_workflow::{
     AuthorWorkflowError, AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution,
     WorkflowTrigger, author_workflow_in_databases,
@@ -542,7 +540,7 @@ impl Fixture {
             driver,
             Arc::clone(&self.postgres),
             Arc::new(
-                WamnJetstream::new(wamn_events_capability::WamnJetstreamConfig::default())
+                WamnJetstream::new(wamn_events::WamnJetstreamConfig::default())
                     .await
                     .expect("event transport initializes"),
             ),
@@ -583,7 +581,7 @@ pub fn lifecycle_refusal(result: Result<(), WorkflowLifecycleError>) -> Workflow
     result.expect_err("the enable refuses").error_type()
 }
 
-pub use wamn_events_capability::EventBatchAdmission;
+pub use wamn_events::EventBatchAdmission;
 pub use wamn_workflow::admission::ScheduleRunAdmitted;
 
 pub async fn event(fixture: &mut Fixture, id: &str, sequence: i64, role: Option<&str>) {

@@ -11,10 +11,10 @@ use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, work
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wamn_environment::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
 use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
-use wamn_postgres_capability::{
+use wamn_publish::component_admission::ComponentAdmission;
+use wamn_sql::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
-use wamn_publish::component_admission::ComponentAdmission;
 
 const PROJECT_ENV_KEY: &str = "rest--test--publication";
 const OPERATION: &str = "rest-consumer-fixture:item/record@0.1.1";
@@ -476,11 +476,9 @@ pub async fn invoke(
     use wamn_engine::artifact_source::LocalComponentSource;
     use wamn_engine::operation::native_workload::NativeComponent;
     use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-    use wamn_http_capability::transport::HttpTransport;
+    use wamn_http::transport::HttpTransport;
 
-    use wamn_capability_authority::connection::{
-        ConnectionExecutionClosure, InvocationEntry, WiringPosition,
-    };
+    use wamn_authority::connection::{ConnectionExecutionClosure, InvocationEntry, WiringPosition};
     use wash_runtime::plugin::wasi_logging::TracingLogger;
 
     let release = Arc::new(LoadedRelease::load_canonical_bytes(

@@ -33,7 +33,7 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-control-provision` | Provisioning SQL and credential roles |
 | `wamn-broker` | NATS connections, streams, shared memory buckets, and authorization |
 | `wamn-event-wire` | Tagged event records and stable source identity |
-| `wamn-events` | Run admission, CDC configuration, reader lifecycle and capture recovery |
+| `wamn-events` | Event publication, run admission, CDC configuration, reader lifecycle and capture recovery |
 | `wamn-kubernetes` | Kubernetes HTTP client, Secrets, Job execution, and command runners |
 | `wamn-catalog` | Component, wiring, and release facts |
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
@@ -49,7 +49,7 @@ Publication and release charts have separate owners. Environment deployment read
 The control crates never depend on `wamn-ctl`.
 
 Authentication owns the user, permission, and environment-status reads.
-The Postgres capability owns pools and host transactions.
+`wamn-sql` owns pools and host transactions.
 Workflow owns queue restart reads. Connections owns lease operations over the authorized database transport.
 The execution host owns file collection and counter-set routes. Guests render document numbers with SQL in the host transaction.
 `wamn-publish` owns standalone web artifacts in `web_artifact`.
@@ -330,7 +330,7 @@ Five layers run a component, and each layer depends only on the layers below it:
 
 1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) owns run admission, leases, settlement and pruning on authorized connections. Concrete operation owners hold their own claim storage.
 2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, `invoke_operation`, and the host side of the `wamn:operation` binding that the separate route component calls. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
-3. The capability crates implement PostgreSQL (`wamn-postgres-capability`), HTTP (`wamn-http-capability`), storage (`wamn-blobstore`), authentication (`wamn-authentication`) and events (`wamn-events-capability`). Shared identity, connection policy and effect evidence live in `wamn-capability-authority`. `wamn-connections` owns connection facts, credentials and resource leases. `wamn-integrations` links and dispatches declared wasm imports. Connection readers use the Postgres capability’s authorized executor pool. The engine keeps the one invocation scope registry. `wamn-component-artifact` adapts the shared registry client to the engine’s artifact interface.
+3. The capability crates implement PostgreSQL (`wamn-sql`), HTTP (`wamn-http`), storage (`wamn-blobstore`), authentication (`wamn-authentication`) and events (`wamn-events`). Shared identity, connection policy and effect evidence live in `wamn-authority`. `wamn-connections` owns connection facts, credentials and resource leases. `wamn-integrations` links and dispatches declared wasm imports. Connection readers use the Postgres capability’s authorized executor pool. The engine keeps the one invocation scope registry. `wamn-component-artifact` adapts the shared registry client to the engine’s artifact interface.
 4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) holds `OperationHost`, native platform endpoints and release readiness.
 5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) owns the private graph walk, the node invocation driver, the durable queue, and the workflow contract (start, park, release, list). It indexes catalog graphs directly. A route never enters it.
 

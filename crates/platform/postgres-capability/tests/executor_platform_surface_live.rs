@@ -5,13 +5,13 @@ use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 
 use url::Url;
-use wamn_capability_authority::identity::ReleaseIdentity;
+use wamn_authority::identity::ReleaseIdentity;
 use wamn_connections::production_lease::{
     ProductionCompletion, ProductionCompletionResult, ProductionLeaseRenewal,
     ProductionLeaseResult, ProductionReapResult,
 };
 use wamn_control_provision::{WorkloadRoleFamily, sql};
-use wamn_postgres_capability::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
+use wamn_sql::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 
 /// The generation login every leg runs as.
 ///

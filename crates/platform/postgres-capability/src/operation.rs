@@ -65,7 +65,7 @@ struct OperationAuthority {
     read: bool,
     grant: Option<String>,
     schema: Option<String>,
-    invocation: wamn_capability_authority::connection::ConnectionInvocation,
+    invocation: wamn_authority::connection::ConnectionInvocation,
     application: String,
     transaction: bool,
 }
@@ -179,20 +179,21 @@ impl WamnPostgres {
                         read,
                         grant: fact.registered_operation.clone(),
                         schema: component.runtime_schema.clone(),
-                        invocation: wamn_capability_authority::connection::ConnectionInvocation {
-                            origin: wamn_capability_authority::connection::ConnectionOrigin {
+                        invocation: wamn_authority::connection::ConnectionInvocation {
+                            origin: wamn_authority::connection::ConnectionOrigin {
                                 package_id: component.package_id.clone(),
                                 component_digest: component.descriptor.component_digest.clone(),
                                 component: component.descriptor.component.clone(),
                                 interface_version: component.descriptor.interface_version.clone(),
                                 operation: id.clone(),
                             },
-                            entry: wamn_capability_authority::connection::InvocationEntry::Route,
+                            entry: wamn_authority::connection::InvocationEntry::Route,
                             package_id: component.package_id.clone(),
                             component_digest: component.descriptor.component_digest.clone(),
                             component: component.descriptor.component.clone(),
                             operation: id.clone(),
-                            closure: wamn_capability_authority::connection::ConnectionExecutionClosure::Released,
+                            closure:
+                                wamn_authority::connection::ConnectionExecutionClosure::Released,
                             effects: None,
                         },
                         application: application.to_owned(),

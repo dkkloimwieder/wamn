@@ -246,25 +246,25 @@ target = ["test:platform_apply_kind"]
 tests = ["connection_and_caller_kind"]
 features = []
 prerequisites = []
-inputs = ["^crates/control/dev/", "^crates/platform/(capability-authority|connections|postgres-capability|http-capability|blobstore|authentication|events-capability|component-artifact|integrations)/", "^crates/execution/host/", "^services/host/"]
+inputs = ["^crates/control/dev/", "^crates/platform/(capability-authority|connections|postgres-capability|http-capability|blobstore|authentication|component-artifact|integrations)/", "^crates/execution/host/", "^crates/events/", "^services/host/"]
 execution = "libtest"
 mode = "local"
-select_packages = ["wamn-capability-authority", "wamn-connections", "wamn-postgres-capability", "wamn-http-capability", "wamn-blobstore", "wamn-authentication", "wamn-events-capability", "wamn-component-artifact", "wamn-integrations", "wamn-execution-host", "wamn-host", "wamn-dev"]
+select_packages = ["wamn-authority", "wamn-connections", "wamn-sql", "wamn-http", "wamn-blobstore", "wamn-authentication", "wamn-events", "wamn-component-artifact", "wamn-integrations", "wamn-execution-host", "wamn-host", "wamn-dev"]
 resource_lock = ""
 
 [[suites]]
 id = "jetstream"
 tier = "live-nats"
 workspace = "root"
-package = "wamn-events-capability"
-target = ["lib:wamn_events_capability"]
-tests = ["tests::live_derived_publish_replay_converges_through_jetstream_dedup"]
+package = "wamn-events"
+target = ["lib:wamn_events"]
+tests = ["transport::tests::live_derived_publish_replay_converges_through_jetstream_dedup"]
 features = []
 prerequisites = []
 inputs = []
 execution = "libtest"
 mode = "local"
-select_packages = ["wamn-events-capability"]
+select_packages = ["wamn-events"]
 resource_lock = "jetstream"
 
 [[suites]]

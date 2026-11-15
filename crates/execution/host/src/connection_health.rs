@@ -8,7 +8,7 @@ use wamn_engine::integration::{Integration, IntegrationBinding};
 use wamn_package_artifact::registry_credentials::RegistryCredentialSource;
 use wamn_package_artifact::{PackageRegistry, Repository};
 
-use wamn_http_capability::{self, transport::HttpTransport};
+use wamn_http::{self, transport::HttpTransport};
 
 /// Process-owned artifact cache. Candidate instances have fresh stores.
 pub struct ConnectionHealth {
@@ -53,17 +53,15 @@ impl ConnectionHealth {
     ) -> Result<(), String> {
         match runtime {
             "host" => match integration_type {
-                "http" => {
-                    wamn_http_capability::health(&self.transport, parameters, auth_type, credential)
-                        .await
-                        .map_err(|error| {
-                            if matches!(error.parse::<u16>(), Ok(401 | 403 | 500..=599)) {
-                                error
-                            } else {
-                                "HTTP health failed".to_owned()
-                            }
-                        })
-                }
+                "http" => wamn_http::health(&self.transport, parameters, auth_type, credential)
+                    .await
+                    .map_err(|error| {
+                        if matches!(error.parse::<u16>(), Ok(401 | 403 | 500..=599)) {
+                            error
+                        } else {
+                            "HTTP health failed".to_owned()
+                        }
+                    }),
                 "gcs" | "s3" => {
                     wamn_blobstore::plugin::health(integration_type, parameters, credential)
                         .await

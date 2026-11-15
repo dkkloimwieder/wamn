@@ -23,7 +23,6 @@ anyhow.workspace = true
 wamn-scalar.workspace = true
 wamn-digest.workspace = true
 wamn-record-history = { workspace = true }
-wit-parser = { workspace = true }
 croner = { workspace = true }
 boon = { workspace = true }
 schemars = { workspace = true }
@@ -46,8 +45,6 @@ sqlx = { workspace = true, optional = true, features = ["postgres", "runtime-tok
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 proptest.workspace = true
 wamn-catalog = { path = ".", features = ["test-util"] }
-wamn-control-provision = { workspace = true }
-wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

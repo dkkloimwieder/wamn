@@ -2,11 +2,11 @@ use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex;
 
-use wamn_capability_authority::connection_authority::{
+use wamn_authority::connection_authority::{
     AuthorityError, AuthorityErrorType, DnsResolver, HttpScheme, TlsIdentity, TlsPolicy,
     parse_http_connection_authority, resolve_http_request,
 };
-use wamn_capability_authority::{CanonicalHttpTarget, normalize_portable_http_target};
+use wamn_authority::{CanonicalHttpTarget, normalize_portable_http_target};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 #[derive(Debug, Default)]
@@ -110,7 +110,7 @@ async fn canonical_request_pins_dns_and_preserves_host_and_tls_identity() {
     assert_eq!(decision.host_header.as_ref(), "erp.example");
     assert_eq!(
         decision.transport,
-        wamn_capability_authority::connection_authority::PinnedEndpoint {
+        wamn_authority::connection_authority::PinnedEndpoint {
             address: selected,
             tls_identity: Some(TlsIdentity::Dns("erp.example".into())),
         }
@@ -143,7 +143,7 @@ async fn exact_http_service_authority_with_non_default_port_reaches_the_resolver
     assert_eq!(decision.host_header.as_ref(), "serve-echo:8091");
     assert_eq!(
         decision.transport,
-        wamn_capability_authority::connection_authority::PinnedEndpoint {
+        wamn_authority::connection_authority::PinnedEndpoint {
             address: selected,
             tls_identity: None,
         }

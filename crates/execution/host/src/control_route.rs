@@ -169,7 +169,7 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) changes: &'a Publisher,
     #[cfg(feature = "test-util")]
     pub(crate) projection_pause: Option<&'a ProjectionPause>,
-    pub(crate) oauth: Option<&'a wamn_http_capability::oauth_authorization::Authorization>,
+    pub(crate) oauth: Option<&'a wamn_http::oauth_authorization::Authorization>,
     pub(crate) connection_health: Option<&'a crate::connection_health::ConnectionHealth>,
 }
 

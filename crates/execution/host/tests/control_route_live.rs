@@ -1941,7 +1941,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         },
     )
     .await?;
-    let (_nats_server, nats) = wamn_capability_authority::auth_cache::test_util::nats().await;
+    let (_nats_server, nats) = wamn_authority::auth_cache::test_util::nats().await;
     let bucket = wamn_broker::auth_changes::auth_bucket(&nats).await?;
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
@@ -2253,7 +2253,7 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
     )
     .await?;
     invite_member(&mut admin, &user, ORG, &MemberGrants::default()).await?;
-    let (_server, broker) = wamn_capability_authority::auth_cache::test_util::nats().await;
+    let (_server, broker) = wamn_authority::auth_cache::test_util::nats().await;
     let changes = Publisher::new(broker.clone());
     let bucket = wamn_broker::auth_changes::auth_bucket(&broker).await?;
     let delivery = async || -> anyhow::Result<HostRouteDelivery> {

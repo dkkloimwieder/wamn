@@ -1,5 +1,5 @@
 [package]
-name = "wamn-capability-authority"
+name = "wamn-authority"
 description = "Host invocation identity, connection policy and effect evidence."
 version.workspace = true
 edition.workspace = true
@@ -13,9 +13,7 @@ opentelemetry_sdk = { workspace = true, features = ["trace", "testing"], optiona
 tracing-subscriber = { workspace = true, optional = true }
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream", "kv"] }
-bytes = { workspace = true }
 futures-util = { workspace = true }
-hex = { workspace = true }
 hyper = { workspace = true, features = ["client", "http1", "http2"] }
 moka = { workspace = true, features = ["sync"] }
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
@@ -34,9 +32,10 @@ wamn-identity-protocol = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-registry = { workspace = true }
 wash-runtime = { workspace = true }
-wasmtime = { workspace = true }
 
 [dev-dependencies]
+wamn-authority = { path = ".", features = ["test-util"] }
+wamn-broker = { workspace = true, features = ["test-util"] }
 
 hyper = { workspace = true, features = ["server"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }

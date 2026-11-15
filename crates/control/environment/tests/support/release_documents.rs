@@ -577,9 +577,7 @@ pub mod workflow {
     ) -> anyhow::Result<String> {
         use std::sync::Arc;
         use wamn_engine::native_routes::{DeliveryRequest, Source};
-        use wamn_postgres_capability::{
-            AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
-        };
+        use wamn_sql::{AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig};
 
         sqlx::query("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING").bind(&ENABLER).execute(&mut *project).await.map(|result| result.rows_affected())?;
         let bytes: Vec<u8> = sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2").bind(&environment.project_env_key).bind(&environment.digest).fetch_one(&mut *project)
@@ -704,9 +702,7 @@ pub mod workflow {
         input: &Value,
         key: &str,
     ) -> anyhow::Result<String> {
-        use wamn_postgres_capability::{
-            AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
-        };
+        use wamn_sql::{AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig};
 
         let bytes: Vec<u8> = sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2").bind(&environment.project_env_key).bind(&environment.digest).fetch_one(&mut *project)
         .await?

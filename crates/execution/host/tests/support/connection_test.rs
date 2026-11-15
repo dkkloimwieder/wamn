@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 
 use super::*;
 use wamn_execution_host::connection_health::ConnectionHealth;
-use wamn_http_capability::transport::HttpTransport;
+use wamn_http::transport::HttpTransport;
 use wamn_package_artifact::{
     PackageRegistry,
     registry_credentials::{RegistryCredentialSource, read_registry_credentials},
@@ -144,7 +144,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         RegistryCredentialSource::Fixed(read_registry_credentials(&auth_file, &registry.address)?);
     let health = ConnectionHealth::new(Arc::new(HttpTransport::with_tls_config(tls)))
         .with_registry(configuration.clone(), credentials);
-    let (_nats, nats) = wamn_capability_authority::auth_cache::test_util::nats().await;
+    let (_nats, nats) = wamn_authority::auth_cache::test_util::nats().await;
     let live = Arc::new(HealthStatus::default());
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),

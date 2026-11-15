@@ -19,9 +19,7 @@ use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, work
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
-use wamn_postgres_capability::{
-    AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
-};
+use wamn_sql::{AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
 
 use super::session_fixture::{self, AUDIENCE, ORG, Server, claims};
 

@@ -6,7 +6,7 @@ use sqlx::Row as _;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
-use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
+use wamn_authority::identity::{ReleaseIdentity, SessionIdentity};
 use wamn_catalog::{ComponentDeclaration, ServingManifest, WiringDocument};
 use wamn_connections::connection_credentials::ConnectionCredentials;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
@@ -15,11 +15,11 @@ use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_compo
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::CredentialType;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_events_capability::EventBatchAdmission;
-use wamn_events_capability::WamnJetstream;
-use wamn_http_capability::transport::HttpTransport;
+use wamn_events::EventBatchAdmission;
+use wamn_events::WamnJetstream;
+use wamn_http::transport::HttpTransport;
 use wamn_postgres::schema::BareSchemaName;
-use wamn_postgres_capability::{
+use wamn_sql::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 use wash_runtime::host::probes::Liveness;
@@ -335,7 +335,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
         environment: "test".to_owned(),
     };
     let jetstream =
-        Arc::new(WamnJetstream::new(wamn_events_capability::WamnJetstreamConfig::default()).await?);
+        Arc::new(WamnJetstream::new(wamn_events::WamnJetstreamConfig::default()).await?);
     let client = wamn_postgres::connect(database.as_str()).await?;
 
     let workflows = WorkflowsFixture {

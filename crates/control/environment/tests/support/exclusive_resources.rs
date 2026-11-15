@@ -1,9 +1,9 @@
 //! Exclusive calls through the existing registry, Modbus and application fixtures.
 
 use super::*;
+use wamn_authority::auth_cache::test_util::{nats, until};
 use wamn_broker::Publisher;
 use wamn_broker::connection_changes::ConnectionDrops;
-use wamn_capability_authority::auth_cache::test_util::{nats, until};
 use wamn_connections::resource_lease::ResourceLeases;
 
 struct Host {
@@ -22,7 +22,7 @@ struct Fixture {
     packages: Vec<wamn_compiler::manifest::PackageManifest>,
     release: wamn_engine::release_manifest::LoadedRelease,
     credentials: Arc<ConnectionCredentials>,
-    postgres: Arc<wamn_postgres_capability::WamnPostgres>,
+    postgres: Arc<wamn_sql::WamnPostgres>,
     reader_url: String,
     registry: PackageRegistry,
     registry_credentials: RegistryCredentialSource,
@@ -168,14 +168,12 @@ impl Fixture {
             wamn_postgres::pool(reader_url.as_str(), 4).await?,
             "acme",
         ));
-        let postgres = Arc::new(
-            wamn_postgres_capability::WamnPostgres::from_env_for_project(
-                "one",
-                Some(wamn_postgres_capability::ClassCredentials::every_class(
-                    project_database.as_str().to_owned(),
-                )),
-            )?,
-        );
+        let postgres = Arc::new(wamn_sql::WamnPostgres::from_env_for_project(
+            "one",
+            Some(wamn_sql::ClassCredentials::every_class(
+                project_database.as_str().to_owned(),
+            )),
+        )?);
         let mut fixture = Self {
             admin,
             database,

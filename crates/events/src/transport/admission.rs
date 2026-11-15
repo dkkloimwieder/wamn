@@ -11,12 +11,12 @@ impl WamnJetstream {
     /// Attach only to provisioned consumers. The workflow owner selects and admits events.
     pub async fn admit_application_events(
         &self,
-        postgres: &wamn_postgres_capability::WamnPostgres,
+        postgres: &wamn_sql::WamnPostgres,
         project: &str,
         release: &wamn_engine::release_manifest::LoadedRelease,
         sources: &[(&str, &str, &str)],
         admit: impl AsyncFn(
-            &wamn_postgres_capability::WamnPostgres,
+            &wamn_sql::WamnPostgres,
             &str,
             &wamn_engine::release_manifest::LoadedRelease,
             &EventBatchAdmission<'_>,

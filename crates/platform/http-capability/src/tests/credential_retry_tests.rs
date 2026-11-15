@@ -1,7 +1,7 @@
 use base64::Engine as _;
 
-use super::oauth2_tests::Fixture;
 use super::*;
+use crate::test_util::Fixture;
 
 fn request() -> Request {
     Request {

@@ -8,10 +8,10 @@ use super::*;
 use sqlx::Row as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use wamn_capability_authority::auth_cache::test_util::{nats, until};
+use wamn_authority::auth_cache::test_util::{nats, until};
 use wamn_connections::connection_memory::{ConnectionFact, ConnectionStatus};
 use wamn_connections::resource_lease::ResourceLeases;
-use wamn_postgres_capability::WamnPostgresConfig;
+use wamn_sql::WamnPostgresConfig;
 
 async fn facts(
     client: &async_nats::Client,

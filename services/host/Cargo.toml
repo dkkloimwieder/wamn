@@ -11,7 +11,6 @@ wamn-kubernetes.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
-wamn-digest.workspace = true
 mimalloc = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-package-artifact = { workspace = true }
@@ -20,16 +19,14 @@ wamn-execution-host = { workspace = true }
 wamn-workflow = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-registry = { workspace = true }
-wamn-platform-identity = { workspace = true }
-wamn-identity-client = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-capability-authority = { workspace = true }
+wamn-authority = { workspace = true }
 wamn-connections = { workspace = true }
-wamn-postgres-capability = { workspace = true, features = ["wasm_component_model_implements"] }
-wamn-http-capability = { workspace = true }
+wamn-sql = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-http = { workspace = true }
 wamn-blobstore = { workspace = true }
 wamn-authentication = { workspace = true }
-wamn-events-capability = { workspace = true }
+wamn-events = { workspace = true }
 wamn-component-artifact = { workspace = true }
 wamn-engine = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel", "wasmcloud-nats", "wasm_component_model_implements"] }
@@ -55,13 +52,13 @@ url = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 futures-util = { workspace = true }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
-wamn-capability-authority = { workspace = true, features = ["test-util"] }
+wamn-authority = { workspace = true, features = ["test-util"] }
 wamn-connections = { workspace = true, features = ["test-util"] }
-wamn-postgres-capability = { workspace = true, features = ["test-util"] }
-wamn-http-capability = { workspace = true, features = ["test-util"] }
+wamn-sql = { workspace = true, features = ["test-util"] }
+wamn-http = { workspace = true, features = ["test-util"] }
 wamn-blobstore = { workspace = true, features = ["test-util"] }
 wamn-authentication = { workspace = true, features = ["test-util"] }
-wamn-events-capability = { workspace = true, features = ["test-util"] }
+wamn-events = { workspace = true, features = ["test-util"] }
 wamn-component-artifact = { workspace = true, features = ["test-util"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 tracing-opentelemetry = { workspace = true }

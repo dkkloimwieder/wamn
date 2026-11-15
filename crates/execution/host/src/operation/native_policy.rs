@@ -11,11 +11,9 @@ use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_scope::INVOCATION_SCOPES_ID;
 use wamn_engine::native_routes::{OperationRefusal, OperationRefusalType};
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_http_capability::{self, CONNECTION_HTTP_ID, ConnectionHttp};
-use wamn_postgres_capability::invocation::{
-    AuthorizedInvocation, InvocationRequest, PrincipalVerification,
-};
-use wamn_postgres_capability::{UnprovisionedPrincipal, WAMN_POSTGRES_ID, WamnPostgres};
+use wamn_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
+use wamn_sql::invocation::{AuthorizedInvocation, InvocationRequest, PrincipalVerification};
+use wamn_sql::{UnprovisionedPrincipal, WAMN_POSTGRES_ID, WamnPostgres};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::wasi_logging::TracingLogger;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -38,7 +36,7 @@ pub(super) struct NativePolicyResources {
     pub(super) logging: Arc<TracingLogger>,
     pub(super) connection_http: Arc<ConnectionHttp>,
     pub(super) blobstore: Arc<WamnBlobstore>,
-    pub(super) context: Arc<wamn_postgres_capability::invocation::ReleaseContext>,
+    pub(super) context: Arc<wamn_sql::invocation::ReleaseContext>,
     pub(super) release: Arc<LoadedRelease>,
     pub(super) project: String,
 }
@@ -233,11 +231,9 @@ impl NativePolicy {
                 && acquisition.invocation.operation == operation
                 && acquisition.identity.project.as_deref() == Some(self.resources.project.as_str())
                 && acquisition.identity.release.as_ref()
-                    == Some(
-                        &wamn_capability_authority::identity::ReleaseIdentity::from_loaded(
-                            &self.resources.release
-                        )
-                    ),
+                    == Some(&wamn_authority::identity::ReleaseIdentity::from_loaded(
+                        &self.resources.release
+                    )),
             "native-invocation-component-identity-mismatch"
         );
         fact.operations
@@ -274,7 +270,7 @@ impl InvocationPolicy for NativePolicy {
         }
         let application = match component.application.as_deref() {
             Some(application) => application,
-            None => wamn_capability_authority::connection::released_invocation_application(
+            None => wamn_authority::connection::released_invocation_application(
                 self.resources.release.manifest(),
                 self.resources.release.target(),
                 &facts.acquisition.invocation,
@@ -399,7 +395,7 @@ impl InvocationPolicy for NativePolicy {
         // HTTP borrows the transaction that its entry already opened.
         if !matches!(
             request.facts.acquisition.invocation.entry,
-            wamn_capability_authority::connection::InvocationEntry::Wiring(_)
+            wamn_authority::connection::InvocationEntry::Wiring(_)
         ) {
             return super::native_call::invoke_raw(target, request).await;
         }
@@ -566,7 +562,7 @@ impl NativePolicy {
             wamn_engine::flow_http_routing::add_to_linker(linker)?;
         }
         if interfaces.contains("wamn", "connection", &["http"]) {
-            wamn_http_capability::add_to_linker(linker)?;
+            wamn_http::add_to_linker(linker)?;
         }
         if interfaces.contains(
             "wasmcloud",

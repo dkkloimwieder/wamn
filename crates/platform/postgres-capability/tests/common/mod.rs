@@ -5,10 +5,10 @@ use sqlx::Row as _;
 use std::sync::Arc;
 
 use url::Url;
-use wamn_capability_authority::identity::ReleaseIdentity;
+use wamn_authority::identity::ReleaseIdentity;
 use wamn_connections::production_lease::ProductionLeaseResult;
 use wamn_identity_protocol::AuthorityClass;
-use wamn_postgres_capability::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
+use wamn_sql::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 
 pub const PROJECT_ENV_KEY: &str = "lease-live-org--test--lease-live-project";
 pub const COMPONENT: &str = "lease-live-runner";

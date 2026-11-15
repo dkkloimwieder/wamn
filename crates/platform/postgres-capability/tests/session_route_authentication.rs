@@ -21,11 +21,9 @@ use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType, FlowHttpRouting};
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_postgres_capability::{
-    AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
-};
+use wamn_sql::{AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
 
-#[path = "../../postgres-capability/tests/support/session_fixture.rs"]
+#[path = "support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared fixture also provides verifier-only fetch barriers."

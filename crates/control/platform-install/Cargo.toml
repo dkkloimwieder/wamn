@@ -31,7 +31,6 @@ wamn-postgres.workspace = true
 wamn-registry.workspace = true
 wamn-control-provision.workspace = true
 wamn-platform-identity.workspace = true
-wamn-identity-client.workspace = true
 wamn-identity-protocol.workspace = true
 wamn-package-artifact.workspace = true
 wamn-release-control.workspace = true
@@ -45,8 +44,6 @@ toml.workspace = true
 sqlx = { workspace = true, features = ["macros"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-fixture-package = { workspace = true }
-wamn-environment = { workspace = true }
-wamn-connections = { workspace = true }
 wamn-test-postgres.workspace = true
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true

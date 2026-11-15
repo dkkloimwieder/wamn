@@ -182,7 +182,7 @@ mod tests {
         }
     }
     fn decision() -> AuthorityDecision {
-        use wamn_capability_authority::connection_authority::{
+        use wamn_authority::connection_authority::{
             PinnedEndpoint, TlsPolicy, parse_http_connection_authority,
         };
         let authority =

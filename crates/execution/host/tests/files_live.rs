@@ -23,10 +23,10 @@ use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wamn_execution_host::file_route::{FileRefusal, FileRoutes, RegistryFileConnections};
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 
-use wamn_blobstore::plugin::WamnBlobstore;
-use wamn_capability_authority::connection::{
+use wamn_authority::connection::{
     ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
 };
+use wamn_blobstore::plugin::WamnBlobstore;
 use wasmtime_wasi_http::WasiBody;
 
 #[path = "support/application_fixture.rs"]
@@ -85,12 +85,12 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
 
 struct FileHost {
     administration_url: String,
-    postgres: Arc<wamn_postgres_capability::WamnPostgres>,
+    postgres: Arc<wamn_sql::WamnPostgres>,
     writer: sqlx::PgConnection,
     routes: Arc<FileRoutes>,
     delivery: HostRouteDelivery,
     blobstore: Arc<WamnBlobstore>,
-    context: Arc<wamn_postgres_capability::invocation::ReleaseContext>,
+    context: Arc<wamn_sql::invocation::ReleaseContext>,
     registry: files::Registry,
     minio: files::Minio,
     // Keep the database server alive until its targeted clients and pools drop.
@@ -175,7 +175,7 @@ impl FileHost {
             PROJECT,
             "dev",
         ));
-        let context = Arc::new(wamn_postgres_capability::invocation::ReleaseContext::new(
+        let context = Arc::new(wamn_sql::invocation::ReleaseContext::new(
             Arc::clone(&release),
             Arc::clone(&facts),
         )?);
@@ -1206,7 +1206,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     use wamn_execution_host::{
         NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig, component_invocation,
     };
-    use wamn_http_capability::transport::HttpTransport;
+    use wamn_http::transport::HttpTransport;
     use wash_runtime::plugin::wasi_logging::TracingLogger;
 
     let package = signed_read::signed_read_fixture(PROJECT_ENV_KEY)?;
@@ -1314,8 +1314,8 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
                     invocation: component_invocation(
                         &package.component,
                         signed_read::OPERATION,
-                        wamn_capability_authority::connection::InvocationEntry::Route,
-                        wamn_capability_authority::connection::ConnectionExecutionClosure::Released,
+                        wamn_authority::connection::InvocationEntry::Route,
+                        wamn_authority::connection::ConnectionExecutionClosure::Released,
                         None,
                     ),
                     causation: None,

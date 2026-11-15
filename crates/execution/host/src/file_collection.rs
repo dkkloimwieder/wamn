@@ -1,7 +1,7 @@
 //! SELECT-only file reads and a session lock for one native collector.
 
-use wamn_postgres_capability::WamnPostgres;
 use wamn_registry::identifiers::{valid_project, valid_project_env_key};
+use wamn_sql::WamnPostgres;
 
 /// A dedicated reader releases its advisory lock when its connection closes.
 #[derive(Debug)]

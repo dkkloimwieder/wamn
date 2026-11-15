@@ -1,7 +1,7 @@
 //! Restart pins and release bytes for the workflow queue.
 
-use wamn_postgres_capability::WamnPostgres;
 use wamn_run_state::persistence;
+use wamn_sql::WamnPostgres;
 
 /// Read restart pins through this project's executor credential.
 pub async fn unfinished_releases(

@@ -1,6 +1,6 @@
 //! Validate a storage binding before building a client.
 
-use wamn_capability_authority::identity::ConnectionEffectSnapshot;
+use wamn_authority::identity::ConnectionEffectSnapshot;
 use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider, ConnectionTypeDescriptor};
 
 /// A storage refusal before a client or container is exposed.
@@ -65,7 +65,7 @@ pub fn resolve(
     snapshot: &ConnectionEffectSnapshot,
     provider: BlobstoreProvider,
 ) -> Result<BlobstoreDefinition, BindingError> {
-    wamn_capability_authority::connection::authorize_snapshot(
+    wamn_authority::connection::authorize_snapshot(
         snapshot,
         &ConnectionTypeDescriptor::blobstore_v1(),
     )

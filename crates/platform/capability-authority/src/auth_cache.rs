@@ -97,7 +97,7 @@ struct Tokens {
 }
 
 /// The auth facts one host keeps. One instance lives in
-/// [`WamnPostgres`](wamn_postgres_capability::WamnPostgres), so the
+/// [`WamnPostgres`](wamn_sql::WamnPostgres), so the
 /// route authenticator and the identity binding share it.
 pub struct AuthCache {
     memory: KvMemory<Answer>,

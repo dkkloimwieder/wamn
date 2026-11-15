@@ -12,7 +12,7 @@ use std::sync::RwLock;
 use std::time::Duration;
 use tokio::sync::watch;
 use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
-use wamn_capability_authority::auth_cache::replicate;
+use wamn_authority::auth_cache::replicate;
 use wamn_connections::connection_credentials::ConnectionCredentials;
 use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_connections::connection_memory::{self, ConnectionMemory};
@@ -23,18 +23,18 @@ use wamn_engine::flow_http_routing::{
     authentication_unavailable,
 };
 use wamn_engine::release_manifest::ReleaseTarget;
-use wamn_events_capability::WamnJetstream;
-use wamn_events_capability::WamnJetstreamConfig;
+use wamn_events::WamnJetstream;
+use wamn_events::WamnJetstreamConfig;
 use wamn_execution_host::OperationHostConfig;
-use wamn_http_capability::transport::HttpTransport;
+use wamn_http::transport::HttpTransport;
 use wamn_kubernetes::environment_state::{ProjectResidency, Residency};
-use wamn_postgres_capability::AuthorityClass;
-use wamn_postgres_capability::WamnPostgres;
-use wamn_postgres_capability::{
+use wamn_registry::{Triple, environment_nats_user, project_env_key};
+use wamn_sql::AuthorityClass;
+use wamn_sql::WamnPostgres;
+use wamn_sql::{
     CredentialProvider, ProjectConfig, ResolvedCredential, StaticCredentialProvider,
     WamnPostgresConfig,
 };
-use wamn_registry::{Triple, environment_nats_user, project_env_key};
 use wash_runtime::plugin;
 
 #[derive(Debug)]
@@ -637,7 +637,7 @@ mod tests {
             .insert(
                 "healthy".into(),
                 ProjectConfig {
-                    credentials: wamn_postgres_capability::ClassCredentials::default().with_class(
+                    credentials: wamn_sql::ClassCredentials::default().with_class(
                         AuthorityClass::ExecutorPlatform,
                         "postgres://executor:secret@localhost/healthy",
                     ),

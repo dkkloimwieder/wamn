@@ -19,10 +19,10 @@ pub(super) fn allows(address: SocketAddr) -> bool {
 mod tests {
     use std::sync::Mutex;
 
-    use wamn_capability_authority::normalize_portable_http_target;
+    use wamn_authority::normalize_portable_http_target;
 
     use super::*;
-    use wamn_capability_authority::connection_authority::{
+    use wamn_authority::connection_authority::{
         AuthorityError, AuthorityErrorType, DnsResolver, TlsPolicy,
         parse_http_connection_authority, resolve_http_request,
     };

@@ -1,6 +1,6 @@
 //! The host key reader accepts the permissions rendered by the chart.
 
-#[path = "../../environment/tests/support/render_fixture.rs"]
+#[path = "support/render_fixture.rs"]
 pub mod render_fixture;
 use std::fs;
 use std::path::{Path, PathBuf};

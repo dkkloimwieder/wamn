@@ -419,15 +419,13 @@ mod tests {
         reader: wamn_connections::connection_credentials::ConnectionCredentials,
         project: &str,
     ) -> Arc<wamn_connections::connection_facts::ConnectionFacts> {
-        let postgres = wamn_postgres_capability::WamnPostgres::new(
-            wamn_postgres_capability::WamnPostgresConfig {
-                credentials: None,
-                guest_pool_max_size: 1,
-                platform_pool_max_size: 1,
-                wait_timeout_ms: 1,
-                statement_timeout_ms: 1,
-            },
-        )
+        let postgres = wamn_sql::WamnPostgres::new(wamn_sql::WamnPostgresConfig {
+            credentials: None,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 1,
+            statement_timeout_ms: 1,
+        })
         .unwrap();
         Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
             Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
