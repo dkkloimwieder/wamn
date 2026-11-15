@@ -10,14 +10,18 @@ use wamn_package_artifact::{
 };
 
 /// Select the immutable development version for an authored version and content digest.
-pub fn version(authored: &str, digest: &wamn_digest::Digest) -> anyhow::Result<String> {
+pub fn version(
+    authored: &wamn_catalog::package_version::PackageVersion,
+    digest: &wamn_digest::Digest,
+) -> anyhow::Result<wamn_catalog::package_version::PackageVersion> {
     let base = authored
+        .as_str()
         .split(['-', '+'])
         .next()
         .context("authored package version")?;
     let version = format!("{base}-dev.h{}", &digest.hex()[..12]);
-    wamn_package_artifact::ensure_tag(&version)?;
-    Ok(version)
+    let tag = wamn_package_artifact::tag::OciTag::try_from(version)?;
+    Ok(String::from(tag).try_into()?)
 }
 
 /// Delete expired dev tags except coordinates pinned by any published release.
@@ -26,14 +30,25 @@ pub async fn prune(
     registry: &PackageRegistry,
     releases: &[ServingManifest],
     now: DateTime<Utc>,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<Vec<wamn_package_artifact::tag::OciTag>> {
     let pinned: BTreeSet<_> = releases
         .iter()
         .flat_map(|release| &release.release.packages)
-        .map(|package| format!("{}-{}", package.package_id(), package.package_version()))
+        .map(|package| {
+            format!("{}-{}", package.package_id(), package.package_version())
+                .parse::<wamn_package_artifact::tag::OciTag>()
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?
+        .into_iter()
         .collect();
-    let repository = Repository::open(registry, "latest")?;
-    let mut manifests = std::collections::BTreeMap::<_, (Vec<String>, Vec<u8>)>::new();
+    let repository = Repository::open(
+        registry,
+        &"latest"
+            .parse::<wamn_package_artifact::tag::OciTag>()
+            .unwrap(),
+    )?;
+    let mut manifests =
+        std::collections::BTreeMap::<_, (Vec<wamn_package_artifact::tag::OciTag>, Vec<u8>)>::new();
     for tag in repository.tags().await? {
         if let Some((bytes, digest)) = Repository::open(registry, &tag)?.manifest().await? {
             manifests
@@ -77,7 +92,9 @@ mod tests {
     #[test]
     fn development_versions_require_a_content_digest() {
         let digest = wamn_digest::bytes_sha256(b"source");
-        let version = super::version("1.0.0", &digest).unwrap();
-        assert!(wamn_package_artifact::is_dev_tag(&version));
+        let version = super::version(&"1.0.0".parse().unwrap(), &digest).unwrap();
+        assert!(wamn_package_artifact::is_dev_tag(
+            &version.to_string().parse().unwrap()
+        ));
     }
 }

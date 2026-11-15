@@ -319,7 +319,7 @@ impl fmt::Display for PatId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatRecord {
     id: PatId,
-    prefix: Box<str>,
+    prefix: wamn_identity_protocol::pat_prefix::PatPrefix,
     label: Box<str>,
     created_at: Box<str>,
     expires_at: Box<str>,
@@ -333,7 +333,7 @@ impl PatRecord {
     }
 
     /// Return the non-secret lookup half, which also addresses revocation.
-    pub fn prefix(&self) -> &str {
+    pub fn prefix(&self) -> &wamn_identity_protocol::pat_prefix::PatPrefix {
         &self.prefix
     }
 
@@ -770,10 +770,9 @@ fn decide_pat(
 /// harmless. An unknown prefix is `NotFound`.
 pub async fn revoke_pat(
     client: &mut sqlx::PgConnection,
-    prefix: &str,
+    prefix: &wamn_identity_protocol::pat_prefix::PatPrefix,
     drops: &mut AuthDrops,
 ) -> Result<PatRecord, IdentityError> {
-    let prefix = require_pat_prefix(prefix)?;
     let row = sqlx::query(REVOKE_PAT_SQL)
         .bind(prefix)
         .fetch_optional(&mut *client)
@@ -971,14 +970,15 @@ fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {
 
 fn decode_pat(row: &Row) -> Result<PatRecord, IdentityError> {
     let id: String = row.try_get(0).map_err(|error| database_error(&error))?;
-    let prefix: String = row.try_get(1).map_err(|error| database_error(&error))?;
+    let prefix: wamn_identity_protocol::pat_prefix::PatPrefix =
+        row.try_get(1).map_err(|error| database_error(&error))?;
     let label: String = row.try_get(2).map_err(|error| database_error(&error))?;
     let created_at: String = row.try_get(3).map_err(|error| database_error(&error))?;
     let expires_at: String = row.try_get(4).map_err(|error| database_error(&error))?;
     let revoked_at: Option<String> = row.try_get(5).map_err(|error| database_error(&error))?;
     Ok(PatRecord {
         id: PatId(id.into()),
-        prefix: prefix.into(),
+        prefix,
         label: label.into(),
         created_at: created_at.into(),
         expires_at: expires_at.into(),
@@ -1006,16 +1006,6 @@ fn require_pat_ttl(ttl: Duration) -> Result<i64, IdentityError> {
     }
     // Bounded by MAX_PAT_TTL above, so the cast cannot wrap.
     Ok(ttl.as_secs().cast_signed())
-}
-
-fn require_pat_prefix(value: &str) -> Result<&str, IdentityError> {
-    if !PatToken::valid_lookup(value) {
-        return Err(IdentityError::new(
-            IdentityErrorType::InvalidInput,
-            "token prefix must be 16 lowercase hex digits",
-        ));
-    }
-    Ok(value)
 }
 
 fn canonical_subject(value: &str) -> Result<String, IdentityError> {
@@ -1240,17 +1230,6 @@ mod tests {
         assert_eq!(require_pat_ttl(Duration::from_secs(3600)).unwrap(), 3600);
         assert!(require_pat_ttl(Duration::ZERO).is_err());
         assert!(require_pat_ttl(MAX_PAT_TTL + Duration::from_secs(1)).is_err());
-        for invalid in [
-            "",
-            "0123456789ABCDEF",
-            "0123456789abcde",
-            "0123456789abcdeg",
-        ] {
-            assert!(
-                require_pat_prefix(invalid).is_err(),
-                "accepted prefix {invalid:?}"
-            );
-        }
     }
 }
 

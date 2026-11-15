@@ -15,7 +15,7 @@ pub struct IssuePatRequest<S = String> {
 #[serde(deny_unknown_fields)]
 pub struct PatResponse<S = String> {
     pub token: S,
-    pub token_prefix: S,
+    pub token_prefix: crate::pat_prefix::PatPrefix,
     pub principal_id: PrincipalId,
     pub created_at: S,
     pub expires_at: S,

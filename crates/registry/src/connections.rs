@@ -23,7 +23,7 @@ pub struct ConnectionFact {
 #[derive(Clone, Debug)]
 pub struct ConnectionGeneration {
     pub name: String,
-    pub integration_type: String,
+    pub integration_type: crate::integration_code::IntegrationCode,
     pub runtime_type: String,
     pub auth_type: String,
     pub external_system: Option<String>,
@@ -142,7 +142,7 @@ pub async fn environment(
 /// Returns database errors.
 pub async fn integration_version(
     connection: &mut PgConnection,
-    integration_type: &str,
+    integration_type: &crate::integration_code::IntegrationCode,
     version: Option<i32>,
 ) -> Result<Option<IntegrationVersion>, sqlx::Error> {
     Ok(sqlx::query_as::<_, (i32, Option<wamn_digest::Digest>)>(

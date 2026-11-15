@@ -745,9 +745,9 @@ impl FileRoutes {
             .descriptor
             .operations
             .get(&invocation.operation)
-            .and_then(|operation| operation.registered_operation.as_deref())
+            .and_then(|operation| operation.registered_operation.as_ref())
             .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
-        if !caller.permits(operation) {
+        if !caller.permits(operation.as_str()) {
             return Err(refused(FileRefusal::PermissionDenied, "operation"));
         }
         let principal: PrincipalId = caller
@@ -1212,7 +1212,9 @@ mod tests {
         }];
         let mut manifest = ServingManifest::new(
             ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new("app", "1.0.0").unwrap()]),
+                packages: BTreeSet::from([
+                    PackageCoordinate::new("app", "1.0.0".parse().unwrap()).unwrap()
+                ]),
             },
             BTreeSet::from([ServingComponent {
                 package_id: "app".into(),

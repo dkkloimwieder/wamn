@@ -156,10 +156,11 @@ pub enum ConnectionExecutionClosure {
 pub fn test_release(project_env_key: &str) -> Arc<LoadedRelease> {
     let manifest = ServingManifest::new(
         wamn_catalog::ServingRelease {
-            packages: [
-                wamn_catalog::PackageCoordinate::new("capability_fixture", "1.0.0")
-                    .expect("fixture package coordinate"),
-            ]
+            packages: [wamn_catalog::PackageCoordinate::new(
+                "capability_fixture",
+                "1.0.0".parse().unwrap(),
+            )
+            .expect("fixture package coordinate")]
             .into(),
         },
         Default::default(),

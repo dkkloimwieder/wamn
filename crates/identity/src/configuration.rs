@@ -68,7 +68,7 @@ pub struct ExternalSystem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Integration {
     pub id: String,
-    pub integration_type: String,
+    pub integration_type: wamn_registry::integration_code::IntegrationCode,
     pub external_system_id: Option<String>,
     pub name: String,
     pub status: String,
@@ -79,7 +79,7 @@ pub struct Integration {
 pub struct Connection {
     pub id: String,
     pub integration_id: String,
-    pub integration_type: String,
+    pub integration_type: wamn_registry::integration_code::IntegrationCode,
     pub status: String,
 }
 

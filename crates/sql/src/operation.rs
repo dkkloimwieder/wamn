@@ -63,7 +63,7 @@ pub(super) struct OperationWorkload {
 #[derive(Debug)]
 struct OperationAuthority {
     read: bool,
-    grant: Option<String>,
+    grant: Option<wamn_catalog::registered_operation::RegisteredOperation>,
     schema: Option<String>,
     invocation: wamn_authority::connection::ConnectionInvocation,
     application: String,
@@ -828,7 +828,7 @@ async fn begin(
             scope: wamn_engine::operation::next_scope(workload).into_string(),
             identity,
             caller: caller.cloned(),
-            registered_operation: admitted.grant.as_deref(),
+            registered_operation: admitted.grant.as_ref(),
             causation: Some(wamn_event_wire::Causation {
                 run: delivery.clone(),
                 root: delivery.clone(),

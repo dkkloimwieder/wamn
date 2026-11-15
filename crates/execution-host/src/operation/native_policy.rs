@@ -292,7 +292,7 @@ impl InvocationPolicy for NativePolicy {
                 caller: facts.caller.clone(),
                 registered_operation: component.fact.operations[operation]
                     .registered_operation
-                    .as_deref(),
+                    .as_ref(),
                 causation: facts.acquisition.causation.clone(),
                 invocation: Some(facts.acquisition.invocation.clone()),
                 read: component.reads.contains(operation),

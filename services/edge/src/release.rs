@@ -285,14 +285,14 @@ pub(crate) mod test_util {
             input_ports: Vec::new(),
             output_ports: Vec::new(),
             parameters: Vec::new(),
-            registered_operation: Some(OPERATION.into()),
+            registered_operation: Some(OPERATION.parse().unwrap()),
             committed_result_schema: None,
         };
         let fact = AdmittedComponent {
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a".into(),
                 package_id: "scale".into(),
-                package_version: "1.0.0".into(),
+                package_version: "1.0.0".parse().unwrap(),
             },
             component: "device".into(),
             interface_version: "0.1".into(),
@@ -300,7 +300,7 @@ pub(crate) mod test_util {
             operations: BTreeMap::from([(
                 OPERATION.into(),
                 AdmittedComponentOperation {
-                    registered_operation: Some(OPERATION.into()),
+                    registered_operation: Some(OPERATION.parse().unwrap()),
                     committed_result_schema: None,
                     host_transaction: false,
                     input_ports: Vec::new(),
@@ -314,7 +314,11 @@ pub(crate) mod test_util {
         };
         let manifest = ServingManifest::new(
             ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new("scale", "1.0.0").unwrap()]),
+                packages: BTreeSet::from([PackageCoordinate::new(
+                    "scale",
+                    "1.0.0".parse().unwrap(),
+                )
+                .unwrap()]),
             },
             BTreeSet::from([ServingComponent {
                 runtime_schema: None,

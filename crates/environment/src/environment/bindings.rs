@@ -46,7 +46,7 @@ pub struct Binding {
     pub application: String,
     pub alias: String,
     pub connection_id: String,
-    pub integration_type: String,
+    pub integration_type: wamn_registry::integration_code::IntegrationCode,
     pub exclusive: bool,
     pub version: i32,
     pub generation: i64,
@@ -156,7 +156,7 @@ pub async fn analyse(
             {
                 return Err(refuse("integration_version_missing", &at));
             }
-            let integration_type: String = row.get(1);
+            let integration_type: wamn_registry::integration_code::IntegrationCode = row.get(1);
             let exports: Vec<String> = row.get(9);
             if !exports_satisfy(&exports, std::slice::from_ref(&declaration.interface)) {
                 return Err(refuse("integration_import_unsatisfied", at));
@@ -173,7 +173,7 @@ pub async fn analyse(
                 Some(crate::org_connection::ResolvedConnection {
                     requirement_type,
                     definition: row.get(3),
-                    credential_handle: (integration_type != "gcs")
+                    credential_handle: (integration_type.as_str() != "gcs")
                         .then(|| format!("org:{}:{integration}", document.org)),
                     org_connection_name: Some(integration.name.clone()),
                 })

@@ -95,7 +95,11 @@ esac
     .await
     .map(drop)?;
     transaction.commit().await?;
-    wamn_environment::provision_system::set_platform_domain(&mut system, "example.invalid").await?;
+    wamn_environment::provision_system::set_platform_domain(
+        &mut system,
+        &"example.invalid".parse().unwrap(),
+    )
+    .await?;
     sqlx::raw_sql("RESET ROLE")
         .execute(&mut system)
         .await
@@ -104,7 +108,9 @@ esac
         &triple.org,
         &triple.project,
         &triple.env,
-        "aaaaaaa1",
+        &"aaaaaaa1"
+            .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
+            .unwrap(),
     );
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(

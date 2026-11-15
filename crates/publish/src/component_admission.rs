@@ -170,7 +170,7 @@ impl ComponentAdmission {
     }
 
     /// Exact package version carried by the admitted component facts.
-    pub fn package_version(&self) -> &str {
+    pub fn package_version(&self) -> &wamn_catalog::package_version::PackageVersion {
         &self.component.target.package_version
     }
 
@@ -225,7 +225,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         validate_component_operation_assignment(&package_manifest, &admitted, &expected)?;
     let host_transactions = host_transaction_exports(&package_manifest, &selected)?;
     for (name, operation) in &mut admitted.operations {
-        operation.host_transaction = host_transactions.contains(name);
+        operation.host_transaction = host_transactions.contains(name.as_str());
     }
     bind_signed_file_results(&mut admitted, &package_manifest)
         .context("bind package signed file results")?;
@@ -472,7 +472,7 @@ mod tests {
         let declaration = manifest.custom_operations.get_mut("audit.observe").unwrap();
         declaration.type_ = wamn_compiler::manifest::CustomOperationType::Projection;
         declaration.visibility = wamn_compiler::manifest::OperationVisibility::Public;
-        declaration.permission = Some("audit.observe".into());
+        declaration.permission = Some("audit.observe".parse().unwrap());
         declaration.errors.push("permission_denied".into());
         declaration.result = Some(
             serde_json::from_value(serde_json::json!({
@@ -483,7 +483,7 @@ mod tests {
         );
         let export = wamn_compiler::manifest::canonical_operation_identity(
             &manifest.package,
-            "audit.observe",
+            &"audit.observe".parse().unwrap(),
         )
         .unwrap();
         let mut component = stranger(&manifest, "observer_fixture", Some(&export));
@@ -496,9 +496,9 @@ mod tests {
                     schema: serde_json::json!({"type": "array"}),
                 },
             });
-        component.operations.insert(export.clone(), operation);
+        component.operations.insert(export.to_string(), operation);
         super::bind_signed_file_results(&mut component, &manifest).unwrap();
-        let reads = wamn_catalog::signed_file_reads(&component.operations[&export])
+        let reads = wamn_catalog::signed_file_reads(&component.operations[export.as_str()])
             .unwrap()
             .unwrap();
 
@@ -506,7 +506,11 @@ mod tests {
         assert!(!reads.fields[0].nullable);
         // A component cannot add its own signing authority through an annotation.
         assert!(super::bind_signed_file_results(&mut component, &manifest).is_err());
-        component.operations.get_mut(&export).unwrap().output_ports[0]
+        component
+            .operations
+            .get_mut(export.as_str())
+            .unwrap()
+            .output_ports[0]
             .schema
             .schema
             .as_object_mut()
@@ -538,7 +542,7 @@ mod tests {
     fn stranger(
         manifest: &wamn_compiler::manifest::PackageManifest,
         name: &str,
-        registered: Option<&str>,
+        registered: Option<&wamn_catalog::registered_operation::RegisteredOperation>,
     ) -> AdmittedComponent {
         AdmittedComponent {
             target: wamn_catalog::ComponentPackageCoordinate {
@@ -552,7 +556,7 @@ mod tests {
                 "wamn:node/handler@0.1.0".to_owned(),
                 AdmittedComponentOperation {
                     committed_result_schema: None,
-                    registered_operation: registered.map(str::to_owned),
+                    registered_operation: registered.cloned(),
                     host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
@@ -670,7 +674,7 @@ mod tests {
                     target: ComponentPackageCoordinate {
                         project_env_key: "org-a".to_owned(),
                         package_id: "orders".to_owned(),
-                        package_version: "1.0.0".to_owned(),
+                        package_version: "1.0.0".parse().unwrap(),
                     },
                     component: "round-trip".to_owned(),
                     interface_version: "0.1.0".to_owned(),

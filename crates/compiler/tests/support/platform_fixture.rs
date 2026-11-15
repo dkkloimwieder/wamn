@@ -130,7 +130,7 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
         // template keeps the operation path.
         let identity = format!("platform-fixture:{model}/{}@2.1.1", name.replace('_', "-"));
         (
-            identity.clone(),
+            identity.parse().unwrap(),
             RouteIr {
                 method: "POST".to_owned(),
                 template: if model == "feed-line" {

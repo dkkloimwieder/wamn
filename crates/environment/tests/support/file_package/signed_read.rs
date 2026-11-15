@@ -85,7 +85,7 @@ pub(super) fn signed_read_fixture(project_env_key: &str) -> anyhow::Result<Signe
         &wamn_catalog::ComponentPackageCoordinate {
             project_env_key: project_env_key.into(),
             package_id: "file_fixture".into(),
-            package_version: "0.1.0".into(),
+            package_version: "0.1.0".parse().unwrap(),
         },
         None,
     )?;
@@ -114,7 +114,7 @@ pub(super) fn signed_read_fixture(project_env_key: &str) -> anyhow::Result<Signe
         &BTreeMap::from([("file_fixture".into(), package.as_path())]),
         "file_fixture",
         "signed_read",
-        OPERATION,
+        &OPERATION.parse()?,
     )?;
     let definition = json!({"id": ATTACHMENT, "type": "http", "route": {"path": "/files/signed-read"},
         "input-schema": {"type": "array"}, "raw-body-bytes": {"maximum": 1_048_576}});

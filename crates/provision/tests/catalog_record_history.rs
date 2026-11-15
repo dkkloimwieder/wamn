@@ -6,7 +6,11 @@ async fn catalog_stamps_require_an_actor_and_preserve_creation(pool: sqlx::PgPoo
     wamn_catalog::test_database::project(database.as_str()).await;
     let principals = format!(
         "BEGIN; {} COMMIT;",
-        wamn_control_provision::platform_principals_sql("example.invalid").unwrap()
+        wamn_control_provision::platform_principals_sql(
+            &"example.invalid"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap()
+        )
     );
     let mut batches = vec![
         include_str!("../../../deploy/sql/app-schema.sql"),

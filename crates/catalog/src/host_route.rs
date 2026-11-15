@@ -39,14 +39,14 @@ struct ControlContract {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ControlClientPackage {
-    name: String,
+    name: crate::client_package_name::ClientPackageName,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ControlPackage {
     id: String,
-    version: String,
+    version: crate::package_version::PackageVersion,
 }
 
 #[derive(Deserialize)]
@@ -67,7 +67,7 @@ pub fn host_route_package() -> &'static str {
 }
 
 /// The authored version of the host route contract.
-pub fn host_route_version() -> &'static str {
+pub fn host_route_version() -> &'static crate::package_version::PackageVersion {
     &CONTRACT.package.version
 }
 
@@ -832,7 +832,7 @@ pub struct HostAttachment {
     pub route: &'static HostRoute,
     /// The sealed operation id, such as `wamn-control:permission/mine@0.9.0`.
     /// A host-run write stamps it.
-    pub operation: String,
+    pub operation: crate::registered_operation::RegisteredOperation,
     /// The operation id without its version, as a stored permission names it.
     pub reference: String,
     pub definition: Value,
@@ -846,12 +846,14 @@ impl HostAttachment {
 
     /// The operation an `admin`-only or a granted route requires. A member
     /// route requires none.
-    pub fn registered_operation(&self) -> Option<&str> {
+    pub fn registered_operation(
+        &self,
+    ) -> Option<&crate::registered_operation::RegisteredOperation> {
         matches!(
             self.route.authority,
             HostRouteAuthority::Admin | HostRouteAuthority::Granted
         )
-        .then_some(self.operation.as_str())
+        .then_some(&self.operation)
     }
 }
 
@@ -871,9 +873,9 @@ static ATTACHMENTS: LazyLock<BTreeMap<(HostRouteSet, String), HostAttachment>> =
                 let operation = operation_token(
                     &CONTRACT.package.id,
                     &CONTRACT.package.version,
-                    model,
-                    action,
-                );
+                    &route.operation.parse().expect("fixed local host operation"),
+                )
+                .expect("fixed registered host operation");
                 let method = if route.type_.is_read() { "GET" } else { "POST" };
                 let modes = match route.set {
                     HostRouteSet::Application => {
@@ -884,7 +886,7 @@ static ATTACHMENTS: LazyLock<BTreeMap<(HostRouteSet, String), HostAttachment>> =
                 };
                 let attachment = HostAttachment {
                     route,
-                    reference: sealed_operation_reference(&operation).to_owned(),
+                    reference: sealed_operation_reference(operation.as_str()).to_owned(),
                     operation,
                     definition: json!({
                         "id": id,
@@ -919,7 +921,7 @@ impl HostRouteSet {
     /// The package name of the generated TypeScript client of this set, as
     /// an application's `client_package` names its client. Each set has its
     /// own client, because the two sets share operation ids.
-    pub fn client_package(self) -> &'static str {
+    pub fn client_package(self) -> &'static crate::client_package_name::ClientPackageName {
         match self {
             Self::Application => &CONTRACT.client_package.name,
             Self::Control => &CONTRACT.control_client_package.name,
@@ -936,7 +938,10 @@ mod tests {
         let application = HostRouteSet::Application
             .attachment("wamn-control-permission-mine-http")
             .expect("permission.mine is an application host route");
-        assert_eq!(application.operation, "wamn-control:permission/mine@0.9.0");
+        assert_eq!(
+            application.operation,
+            "wamn-control:permission/mine@0.9.0".parse().unwrap()
+        );
         assert_eq!(application.reference, "wamn-control:permission/mine");
         assert_eq!(application.registered_operation(), None);
         assert_eq!(
@@ -953,7 +958,10 @@ mod tests {
         let control = HostRouteSet::Control
             .attachment("wamn-control-control-mine-http")
             .expect("control.mine is a control host route");
-        assert_eq!(control.operation, "wamn-control:control/mine@0.9.0");
+        assert_eq!(
+            control.operation,
+            "wamn-control:control/mine@0.9.0".parse().unwrap()
+        );
         {
             let observed = &(control.auth_policy);
             assert_eq!(observed["modes"].as_array().expect("array").len(), 1);
@@ -981,7 +989,7 @@ mod tests {
         assert_eq!(users.operation, members.operation);
         assert_eq!(
             users.registered_operation(),
-            Some("wamn-control:user/list@0.9.0")
+            Some(&"wamn-control:user/list@0.9.0".parse().unwrap())
         );
         assert_eq!(host_route_path_prefix(), "/wamn_control/");
 
@@ -991,7 +999,7 @@ mod tests {
         assert_eq!(counter.reference, "wamn-control:number-counter/set");
         assert_eq!(
             counter.registered_operation(),
-            Some("wamn-control:number-counter/set@0.9.0")
+            Some(&"wamn-control:number-counter/set@0.9.0".parse().unwrap())
         );
         assert!(is_granted_host_route_operation(
             "wamn-control:number-counter/set"
@@ -1006,7 +1014,7 @@ mod tests {
         assert_eq!(start.reference, "wamn-control:workflow/start");
         assert_eq!(
             start.registered_operation(),
-            Some("wamn-control:workflow/start@0.9.0")
+            Some(&"wamn-control:workflow/start@0.9.0".parse().unwrap())
         );
         assert!(is_granted_host_route_operation(
             "wamn-control:workflow/start"

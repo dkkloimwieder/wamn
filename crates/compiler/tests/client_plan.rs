@@ -1,4 +1,5 @@
 use serde_json::json;
+use wamn_catalog::registered_operation::RegisteredOperation;
 use wamn_compiler::client_ir::{ClientContractIr, FieldIr, OperationIr, leaf_fields};
 use wamn_compiler::client_plan::{
     ChosenRevision, ClientPlan, LinkReason, NoRole, RecordRead, ResolvedColumn, Role, RowLink,
@@ -35,7 +36,9 @@ fn screens_drop_event_handlers_and_sort_within_their_model() {
     let mut handler = operation(&mut ir, "get").clone();
     handler.name = "widget_archived".to_owned();
     handler.type_ = "event_handler".to_owned();
-    handler.operation = "platform-fixture:widget/widget-archived@2.1.1".to_owned();
+    handler.operation = "platform-fixture:widget/widget-archived@2.1.1"
+        .parse()
+        .unwrap();
     let widget = fixture::widget_index(&ir);
     ir.models[widget].operations.push(handler);
     ir.models[widget].operations.reverse();
@@ -204,7 +207,12 @@ fn revision_bindings_name_the_read_operation_that_supplies_them() {
     let binding = screen(&plan, "delete")
         .revision
         .expect("a revision delete reads its current revision first");
-    assert_eq!(binding.read_operation, "platform-fixture:widget/get@2.1.1");
+    assert_eq!(
+        binding.read_operation,
+        &"platform-fixture:widget/get@2.1.1"
+            .parse::<RegisteredOperation>()
+            .unwrap()
+    );
     assert_eq!(binding.read_key_input, "id");
     assert_eq!(binding.key_field, "id");
     assert_eq!(binding.revision_field, "edit_version");
@@ -215,7 +223,12 @@ fn revision_bindings_name_the_read_operation_that_supplies_them() {
     let update = screen(&plan, "update")
         .revision
         .expect("a revision update reads its current revision first");
-    assert_eq!(update.read_operation, "platform-fixture:widget/get@2.1.1");
+    assert_eq!(
+        update.read_operation,
+        &"platform-fixture:widget/get@2.1.1"
+            .parse::<RegisteredOperation>()
+            .unwrap()
+    );
     assert_eq!(update.command_revision_input, "expected_edit_version");
     for name in ["archive", "create", "get", "query"] {
         assert!(screen(&plan, name).revision.is_none(), "{name}");
@@ -297,11 +310,11 @@ fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
         plan.unsupported(),
         [
             (
-                screen(&plan, "archive").contract.operation.as_str(),
+                &screen(&plan, "archive").contract.operation,
                 NoRole::UnknownType
             ),
             (
-                screen(&plan, "get").contract.operation.as_str(),
+                &screen(&plan, "get").contract.operation,
                 NoRole::UnsupportedResult
             ),
         ],
@@ -541,7 +554,7 @@ fn row_links_open_the_record_read_and_the_revision_command() {
         assert_eq!(
             screen(&plan, name).row_links,
             [RowLink {
-                operation: screen(&plan, "get").contract.operation.as_str(),
+                operation: &screen(&plan, "get").contract.operation,
                 reason: LinkReason::Record,
             }],
             "{name} rows open the record read"
@@ -551,11 +564,11 @@ fn row_links_open_the_record_read_and_the_revision_command() {
         screen(&plan, "get").row_links,
         [
             RowLink {
-                operation: screen(&plan, "delete").contract.operation.as_str(),
+                operation: &screen(&plan, "delete").contract.operation,
                 reason: LinkReason::Revision,
             },
             RowLink {
-                operation: screen(&plan, "update").contract.operation.as_str(),
+                operation: &screen(&plan, "update").contract.operation,
                 reason: LinkReason::Revision,
             }
         ],
@@ -570,10 +583,11 @@ fn row_links_open_the_record_read_and_the_revision_command() {
     operation(&mut unserved, "get").route = None;
     let plan = ClientPlan::from_ir(&unserved);
     assert!(
-        plan.screens().all(|screen| screen
-            .row_links
-            .iter()
-            .all(|link| link.operation != "platform-fixture:widget/get@2.1.1")),
+        plan.screens()
+            .all(|screen| screen.row_links.iter().all(|link| link.operation
+                != &"platform-fixture:widget/get@2.1.1"
+                    .parse::<RegisteredOperation>()
+                    .unwrap())),
         "an unserved operation is no link target"
     );
 }
@@ -649,7 +663,9 @@ fn the_plan_states_the_list_that_offers_each_referenced_input() {
     let maker = populated("record_batch", "value.maker_id");
     assert_eq!(
         maker.list_operation,
-        "platform-fixture:widget-maker/query@2.1.1"
+        &"platform-fixture:widget-maker/query@2.1.1"
+            .parse::<RegisteredOperation>()
+            .unwrap()
     );
     assert_eq!(maker.key_field, "id");
     assert_eq!(maker.display_field, "name", "the declared display field");
@@ -667,7 +683,12 @@ fn the_plan_states_the_list_that_offers_each_referenced_input() {
 
     // A nested reference inside a repeated group, narrowed by a sibling.
     let line = populated("record_batch", "value.line[].widget_id");
-    assert_eq!(line.list_operation, "platform-fixture:widget/list@2.1.1");
+    assert_eq!(
+        line.list_operation,
+        &"platform-fixture:widget/list@2.1.1"
+            .parse::<RegisteredOperation>()
+            .unwrap()
+    );
     assert_eq!(
         line.display_field, "code",
         "an authored display field wins over the default"
@@ -688,7 +709,9 @@ fn the_plan_states_the_list_that_offers_each_referenced_input() {
     let update = populated("update", "change.maker_id");
     assert_eq!(
         update.list_operation,
-        "platform-fixture:widget-maker/query@2.1.1"
+        &"platform-fixture:widget-maker/query@2.1.1"
+            .parse::<RegisteredOperation>()
+            .unwrap()
     );
 
     // An input that names no record states nothing.
@@ -720,14 +743,22 @@ fn selectors_whose_list_declares_no_display_filter_are_reported() {
         plan.unsearchable(),
         [
             UnsearchableSelector {
-                operation: "platform-fixture:widget/archive@2.1.1",
+                operation: &"platform-fixture:widget/archive@2.1.1"
+                    .parse::<RegisteredOperation>()
+                    .unwrap(),
                 input: "id",
-                list_operation: "platform-fixture:widget/list@2.1.1",
+                list_operation: &"platform-fixture:widget/list@2.1.1"
+                    .parse::<RegisteredOperation>()
+                    .unwrap(),
             },
             UnsearchableSelector {
-                operation: "platform-fixture:widget/record-batch@2.1.1",
+                operation: &"platform-fixture:widget/record-batch@2.1.1"
+                    .parse::<RegisteredOperation>()
+                    .unwrap(),
                 input: "value.line[].widget_id",
-                list_operation: "platform-fixture:widget/list@2.1.1",
+                list_operation: &"platform-fixture:widget/list@2.1.1"
+                    .parse::<RegisteredOperation>()
+                    .unwrap(),
             },
         ],
         "the report names the screen, the input and the list"
@@ -735,7 +766,7 @@ fn selectors_whose_list_declares_no_display_filter_are_reported() {
 }
 
 /// Every selector as (screen, input, list), for screens of the fixture.
-fn selectors(plan: &ClientPlan<'_>) -> Vec<(String, String, String)> {
+fn selectors(plan: &ClientPlan<'_>) -> Vec<(RegisteredOperation, String, RegisteredOperation)> {
     plan.screens()
         .filter(|screen| !screen.name.starts_with("added_"))
         .flat_map(|screen| {
@@ -764,7 +795,9 @@ fn added_list(ir: &ClientContractIr, model: &str, name: &str) -> OperationIr {
         .unwrap()
         .clone();
     list.name = format!("added_{name}");
-    list.operation = format!("platform-fixture:widget/added-{name}@2.1.1");
+    list.operation = format!("platform-fixture:widget/added-{name}@2.1.1")
+        .parse()
+        .unwrap();
     list.input_fields.clear();
     list
 }
@@ -807,7 +840,12 @@ fn a_narrowed_selector_reads_a_list_that_takes_the_narrowing() {
         .iter()
         .find(|input| input.input == "value.line[].widget_id")
         .expect("the line selector has a list");
-    assert_eq!(line.list_operation, "platform-fixture:widget/list@2.1.1");
+    assert_eq!(
+        line.list_operation,
+        &"platform-fixture:widget/list@2.1.1"
+            .parse::<RegisteredOperation>()
+            .unwrap()
+    );
     let narrowing = line.narrowed_by.expect("the line list is narrowed");
     assert_eq!(
         (narrowing.input, narrowing.list_input),
@@ -829,7 +867,9 @@ fn a_narrowing_no_list_takes_is_refused() {
     assert_eq!(
         plan.unsatisfied_narrowings(),
         [UnsatisfiedNarrowing {
-            operation: "platform-fixture:widget/record-batch@2.1.1",
+            operation: &"platform-fixture:widget/record-batch@2.1.1"
+                .parse::<RegisteredOperation>()
+                .unwrap(),
             input: "value.line[].widget_id",
             narrowed_by: "value.maker_id",
         }]
@@ -922,7 +962,7 @@ fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
             || maker_rows
                 .row_forms
                 .iter()
-                .all(|form| form.operation != maker_rows.contract.operation),
+                .all(|form| form.operation != &maker_rows.contract.operation),
         "a screen never opens itself"
     );
 
@@ -934,16 +974,21 @@ fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
     // value.inspector_id. No declared path says which one a maker row is, so
     // the row fills neither (wamn-6jcm).
     assert!(
-        makers
-            .row_forms
-            .iter()
-            .all(|form| form.operation != "platform-fixture:widget/record-batch@2.1.1"),
+        makers.row_forms.iter().all(|form| form.operation
+            != &"platform-fixture:widget/record-batch@2.1.1"
+                .parse::<RegisteredOperation>()
+                .unwrap()),
         "a row fills no input when two inputs name its model"
     );
     let update = makers
         .row_forms
         .iter()
-        .find(|form| form.operation == "platform-fixture:widget/update@2.1.1")
+        .find(|form| {
+            form.operation
+                == &"platform-fixture:widget/update@2.1.1"
+                    .parse::<RegisteredOperation>()
+                    .unwrap()
+        })
         .expect("a maker row opens the update form");
     assert_eq!(
         update.pairs,
@@ -955,7 +1000,12 @@ fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
     let line = widgets
         .row_forms
         .iter()
-        .find(|form| form.operation == "platform-fixture:widget/record-batch@2.1.1")
+        .find(|form| {
+            form.operation
+                == &"platform-fixture:widget/record-batch@2.1.1"
+                    .parse::<RegisteredOperation>()
+                    .unwrap()
+        })
         .expect("a widget row opens the batch form");
     assert_eq!(line.pairs, [("id", "value.line[].widget_id")]);
 
@@ -997,7 +1047,9 @@ fn a_table_column_that_names_a_record_states_the_read_that_shows_it() {
         widgets.resolved_columns,
         [ResolvedColumn {
             column: "maker_id",
-            read_operation: "platform-fixture:widget-maker/get@2.1.1",
+            read_operation: &"platform-fixture:widget-maker/get@2.1.1"
+                .parse::<RegisteredOperation>()
+                .unwrap(),
             read_model: "widget_maker",
             read_name: "get",
             key_input: "id",
@@ -1029,7 +1081,9 @@ fn a_table_column_that_names_a_record_states_the_read_that_shows_it() {
     assert_eq!(
         plan.unresolved(),
         [UnresolvedColumn {
-            operation: "platform-fixture:widget/query@2.1.1",
+            operation: &"platform-fixture:widget/query@2.1.1"
+                .parse::<RegisteredOperation>()
+                .unwrap(),
             column: "maker_id",
             model: "widget_maker",
         }]
@@ -1054,7 +1108,9 @@ fn a_selector_states_the_read_that_loads_a_record_off_its_list() {
     assert_eq!(
         read("update", "change.maker_id"),
         Some(RecordRead {
-            operation: "platform-fixture:widget-maker/get@2.1.1",
+            operation: &"platform-fixture:widget-maker/get@2.1.1"
+                .parse::<RegisteredOperation>()
+                .unwrap(),
             model: "widget_maker",
             name: "get",
             key_input: "id",
@@ -1171,7 +1227,12 @@ fn a_keyed_command_sends_the_revision_of_the_record_it_names() {
         .iter()
         .find(|populated| populated.input == "id")
         .unwrap_or_else(|| panic!("the widget is chosen from a list: {:?}", archive.population));
-    assert_eq!(id.list_operation, "platform-fixture:widget/list@2.1.1");
+    assert_eq!(
+        id.list_operation,
+        &"platform-fixture:widget/list@2.1.1"
+            .parse::<RegisteredOperation>()
+            .unwrap()
+    );
     assert_eq!(
         id.revision,
         Some(ChosenRevision {

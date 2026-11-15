@@ -101,8 +101,8 @@ async fn recover_and_close_record_each_capture_gap() {
     validate_project_env_cdc(&org, PROJECT, ENV).expect("valid names");
     let postgres = wamn_test_postgres::start(&[("wal_level", "logical")])
         .expect("start a PostgreSQL 18 server with wal_level=logical");
-    let database = project_env_database_name(&org, PROJECT, ENV, INSTANCE);
-    let slot = cdc_object_name(&org, PROJECT, ENV, INSTANCE);
+    let database = project_env_database_name(&org, PROJECT, ENV, &INSTANCE.parse().unwrap());
+    let slot = cdc_object_name(&org, PROJECT, ENV, &INSTANCE.parse().unwrap());
     let stream = wamn_event_wire::stream_name(&org, PROJECT, ENV);
     let super_url = postgres.database("postgres").unwrap().url().to_owned();
     let system_url = postgres.database(SYSTEM_DB).unwrap().url().to_owned();

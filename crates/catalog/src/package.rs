@@ -4,47 +4,17 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{CatalogIdentityError, validate_text};
 
-/// Validate the repository's exact canonical application-operation identity.
-pub(crate) fn validate_canonical_operation(value: &str) -> Result<(), CatalogIdentityError> {
-    validate_text(value, "registered-operation")?;
-    let Some((package_id, local)) = value.split_once(':') else {
-        return invalid(
-            "registered operation must be <package-id>:<module>/<action>@<package-version>",
-        );
-    };
-    if local.contains(':') {
-        return invalid("registered operation contains more than one package separator");
-    }
-    let Some((local, package_version)) = crate::split_sealed_operation(local) else {
-        return invalid("registered operation must carry an exact package version");
-    };
-    if local.contains('@') {
-        return invalid("registered operation contains more than one version separator");
-    }
-    validate_kebab_identifier(package_id, "registered-operation package-id")?;
-    refuse_reserved_package_id(package_id)?;
-    validate_package_version(package_version)?;
-    let Some((owner, action)) = local.split_once('/') else {
-        return invalid("local operation must be <module>/<action>");
-    };
-    if action.contains('/') {
-        return invalid("local operation contains more than one action separator");
-    }
-    validate_kebab_identifier(owner, "registered-operation owner")?;
-    validate_kebab_identifier(action, "registered-operation action")
-}
-
 /// Validate one operation token against its package-owned coordinate.
 pub(crate) fn validate_canonical_operation_for_package(
-    value: &str,
+    value: &crate::registered_operation::RegisteredOperation,
     package_id: &str,
-    package_version: &str,
+    package_version: &crate::package_version::PackageVersion,
 ) -> Result<(), CatalogIdentityError> {
-    validate_canonical_operation(value)?;
     let native_package_id = package_id.replace('_', "-");
     let expected_prefix = format!("{native_package_id}:");
     let expected_suffix = format!("@{package_version}");
-    if !value.starts_with(&expected_prefix) || !value.ends_with(&expected_suffix) {
+    if !value.as_str().starts_with(&expected_prefix) || !value.as_str().ends_with(&expected_suffix)
+    {
         return invalid(format!(
             "registered operation {value:?} does not belong to package {package_id:?} version {package_version:?}"
         ));
@@ -65,19 +35,6 @@ fn validate_snake_identifier(value: &str, field: &'static str) -> Result<(), Cat
     Ok(())
 }
 
-fn validate_kebab_identifier(value: &str, field: &'static str) -> Result<(), CatalogIdentityError> {
-    validate_text(value, field)?;
-    let mut bytes = value.bytes();
-    if !bytes.next().is_some_and(|byte| byte.is_ascii_lowercase())
-        || !bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        || value.ends_with('-')
-        || value.contains("--")
-    {
-        return Err(CatalogIdentityError::NonCanonicalIdentity { field });
-    }
-    Ok(())
-}
-
 /// The package id reserved for the platform. Its operation tokens start with
 /// `wamn:`, the platform principal namespace.
 const RESERVED_PACKAGE_ID: &str = "wamn";
@@ -85,16 +42,6 @@ const RESERVED_PACKAGE_ID: &str = "wamn";
 fn refuse_reserved_package_id(value: &str) -> Result<(), CatalogIdentityError> {
     if value == RESERVED_PACKAGE_ID {
         return invalid(format!("package id {RESERVED_PACKAGE_ID:?} is reserved"));
-    }
-    Ok(())
-}
-
-fn validate_package_version(value: &str) -> Result<(), CatalogIdentityError> {
-    validate_text(value, "package-version")?;
-    if value.contains('@') || value.contains(':') || value.contains('/') {
-        return Err(CatalogIdentityError::NonCanonicalIdentity {
-            field: "package-version",
-        });
     }
     Ok(())
 }
@@ -110,7 +57,7 @@ fn invalid<T>(message: impl Into<String>) -> Result<T, CatalogIdentityError> {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PackageCoordinate {
     package_id: String,
-    package_version: String,
+    package_version: crate::package_version::PackageVersion,
 }
 
 impl<'de> Deserialize<'de> for PackageCoordinate {
@@ -122,7 +69,7 @@ impl<'de> Deserialize<'de> for PackageCoordinate {
         #[serde(rename_all = "kebab-case", deny_unknown_fields)]
         struct Wire {
             package_id: String,
-            package_version: String,
+            package_version: crate::package_version::PackageVersion,
         }
 
         let wire = Wire::deserialize(deserializer)?;
@@ -134,17 +81,19 @@ impl PackageCoordinate {
     /// Construct one exact package identity.
     pub fn new(
         package_id: impl Into<String>,
-        package_version: impl Into<String>,
+        package_version: crate::package_version::PackageVersion,
     ) -> Result<Self, CatalogIdentityError> {
         let package_id = package_id.into();
-        let package_version = package_version.into();
         validate_snake_identifier(&package_id, "package-id")?;
         refuse_reserved_package_id(&package_id)?;
-        validate_package_version(&package_version)?;
         Ok(Self {
             package_id,
             package_version,
         })
+    }
+
+    pub(crate) fn into_parts(self) -> (String, crate::package_version::PackageVersion) {
+        (self.package_id, self.package_version)
     }
 
     /// Package-local identity.
@@ -153,16 +102,14 @@ impl PackageCoordinate {
     }
 
     /// Exact authored package version.
-    pub fn package_version(&self) -> &str {
+    pub fn package_version(&self) -> &crate::package_version::PackageVersion {
         &self.package_version
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        PackageCoordinate, validate_canonical_operation, validate_canonical_operation_for_package,
-    };
+    use super::PackageCoordinate;
 
     #[test]
     fn persisted_coordinates_preserve_constructor_invariants() {
@@ -173,53 +120,52 @@ mod tests {
             .is_err()
         );
         for package_id in ["not-snake", "orders_", "orders__api"] {
-            assert!(PackageCoordinate::new(package_id, "1.0.0").is_err());
-        }
-        for package_version in ["", " 1.0.0", "1.0.0 ", "1\0.0", "1@0", "1::0"] {
-            assert!(PackageCoordinate::new("orders", package_version).is_err());
-            let wire = serde_json::json!({
-                "package-id": "orders",
-                "package-version": package_version,
-            });
-            assert!(serde_json::from_value::<PackageCoordinate>(wire).is_err());
+            assert!(PackageCoordinate::new(package_id, "1.0.0".parse().unwrap()).is_err());
         }
     }
 
     #[test]
     fn package_id_wamn_is_reserved() {
-        assert!(PackageCoordinate::new("wamn", "1.0.0").is_err());
+        assert!(PackageCoordinate::new("wamn", "1.0.0".parse().unwrap()).is_err());
         assert!(
             serde_json::from_str::<PackageCoordinate>(
                 r#"{"package-id":"wamn","package-version":"1.0.0"}"#
             )
             .is_err()
         );
-        assert!(validate_canonical_operation("wamn:widget-maker/get@1.0.0").is_err());
-        assert!(PackageCoordinate::new("wamn_fixture", "1.0.0").is_ok());
+        assert!(PackageCoordinate::new("wamn_fixture", "1.0.0".parse().unwrap()).is_ok());
     }
+}
 
+#[cfg(test)]
+mod operation_membership_tests {
+    use super::validate_canonical_operation_for_package;
     #[test]
     fn operation_tokens_use_the_native_component_export_grammar() {
-        let token = "wamn-fixture:widget-maker/get@1.0.0";
-        assert_eq!(validate_canonical_operation(token), Ok(()));
-        assert_eq!(
-            validate_canonical_operation_for_package(token, "wamn_fixture", "1.0.0"),
-            Ok(())
+        let token = "wamn-fixture:widget-maker/get@1.0.0".parse().unwrap();
+        assert!(
+            validate_canonical_operation_for_package(
+                &token,
+                "wamn_fixture",
+                &"1.0.0".parse().unwrap()
+            )
+            .is_ok()
         );
-
-        for malformed in [
-            "wamn_fixture@1.0.0::widget_maker.get",
-            "wamn_fixture:widget-maker/get@1.0.0",
-            "wamn-fixture:widget_maker/get@1.0.0",
-            "wamn-fixture:widget-maker.get@1.0.0",
-            "wamn-fixture:widget-maker/get",
-        ] {
-            assert!(
-                validate_canonical_operation(malformed).is_err(),
-                "{malformed}"
-            );
-        }
-        assert!(validate_canonical_operation_for_package(token, "other_package", "1.0.0").is_err());
-        assert!(validate_canonical_operation_for_package(token, "wamn_fixture", "2.0.0").is_err());
+        assert!(
+            validate_canonical_operation_for_package(
+                &token,
+                "other_package",
+                &"1.0.0".parse().unwrap()
+            )
+            .is_err()
+        );
+        assert!(
+            validate_canonical_operation_for_package(
+                &token,
+                "wamn_fixture",
+                &"2.0.0".parse().unwrap()
+            )
+            .is_err()
+        );
     }
 }

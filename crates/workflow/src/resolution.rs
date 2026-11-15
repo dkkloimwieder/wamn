@@ -14,7 +14,6 @@ pub struct ResolvedActiveWiring {
     /// The release the wiring resolved under, as its manifest digest.
     pub manifest_digest: wamn_digest::Digest,
     pub graph_hash: wamn_digest::Digest,
-    pub package_version: String,
     pub document: WiringDocument,
     /// Complete admitted facts selected by each exact wiring node.
     pub node_components: Arc<BTreeMap<String, AdmittedComponent>>,
@@ -169,7 +168,6 @@ pub fn resolve_workflow_in_release(
         version: run.version,
         manifest_digest: run.manifest_digest.to_owned(),
         graph_hash: *stored_hash,
-        package_version: String::new(),
         document,
         node_components: std::sync::Arc::new(node_components),
         components: Arc::clone(components),
@@ -253,7 +251,7 @@ mod tests {
             target: ComponentPackageCoordinate {
                 project_env_key: "t1".to_owned(),
                 package_id: APPLICATION.to_owned(),
-                package_version: "1.0.0".to_owned(),
+                package_version: "1.0.0".parse().unwrap(),
             },
             component: "data".to_owned(),
             interface_version: "0.1".to_owned(),
@@ -261,7 +259,7 @@ mod tests {
                 ORDERS_GET.to_owned(),
                 AdmittedComponentOperation {
                     committed_result_schema: None,
-                    registered_operation: Some(ORDERS_GET.to_owned()),
+                    registered_operation: Some(ORDERS_GET.parse().unwrap()),
                     host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
@@ -277,7 +275,11 @@ mod tests {
         };
         ServingManifest::new(
             ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new(APPLICATION, "1.0.0").unwrap()]),
+                packages: BTreeSet::from([PackageCoordinate::new(
+                    APPLICATION,
+                    "1.0.0".parse().unwrap(),
+                )
+                .unwrap()]),
             },
             BTreeSet::from([ServingComponent::project(&fact, Vec::new())]),
             BTreeSet::new(),
@@ -340,7 +342,6 @@ mod tests {
         .expect("the frozen digest is a component of the release");
         assert_eq!(resolved.node_components["node"].component_digest, *DIGEST);
         assert_eq!(resolved.manifest_digest, *RELEASE);
-        assert_eq!(resolved.package_version, "");
         assert_eq!(resolved.graph_hash, hash);
     }
 

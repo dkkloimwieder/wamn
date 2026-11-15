@@ -47,11 +47,13 @@ impl Fixture {
     }
 
     pub async fn put(&mut self, name: &str, value: &str, projects: &[&str]) {
-        self.put_type(name, value, projects, "http").await;
+        self.put_type(name, value, projects, &"http".parse().unwrap())
+            .await;
     }
 
     pub async fn put_store(&mut self, name: &str, value: &str, projects: &[&str]) {
-        self.put_type(name, value, projects, "s3").await;
+        self.put_type(name, value, projects, &"s3".parse().unwrap())
+            .await;
     }
 
     async fn put_type(
@@ -59,9 +61,9 @@ impl Fixture {
         name: &str,
         value: &str,
         projects: &[&str],
-        integration_type: &str,
+        integration_type: &wamn_registry::integration_code::IntegrationCode,
     ) {
-        let parameters = if integration_type == "s3" {
+        let parameters = if integration_type.as_str() == "s3" {
             serde_json::json!({"provider":"s3","endpoint":"http://fixture.invalid","container":"files","prefix":"test/"})
         } else {
             serde_json::json!({"primary-authority":"https://fixture.invalid/","tls-verification":"verify-authority"})
@@ -82,7 +84,7 @@ impl Fixture {
         projects: &[&str],
         (auth_type, auth): (&str, serde_json::Value),
     ) {
-        self.put_configuration(name, value, projects, ("http", auth_type,
+        self.put_configuration(name, value, projects, (&"http".parse().unwrap(), auth_type,
             serde_json::json!({"primary-authority":"https://fixture.invalid/","tls-verification":"verify-authority","auth":auth}))).await;
     }
 
@@ -91,7 +93,11 @@ impl Fixture {
         name: &str,
         value: &str,
         projects: &[&str],
-        (integration_type, auth_type, parameters): (&str, &str, serde_json::Value),
+        (integration_type, auth_type, parameters): (
+            &wamn_registry::integration_code::IntegrationCode,
+            &str,
+            serde_json::Value,
+        ),
     ) {
         for project in projects {
             let mut tx = self.admin.begin().await.unwrap();

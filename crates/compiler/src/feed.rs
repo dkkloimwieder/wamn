@@ -29,14 +29,20 @@ fn table_ref(table: &Table) -> FeedTable {
     }
 }
 
-fn refusal(operation: &str, reason: impl std::fmt::Display) -> GenerateError {
+fn refusal(
+    operation: &wamn_catalog::local_operation::LocalOperation,
+    reason: impl std::fmt::Display,
+) -> GenerateError {
     GenerateError::new(
         GenerateErrorType::InvalidOperation,
         format!("{operation} feed: {reason}"),
     )
 }
 
-fn parse(sql: &str, operation: &str) -> Result<pg_query::ParseResult, GenerateError> {
+fn parse(
+    sql: &str,
+    operation: &wamn_catalog::local_operation::LocalOperation,
+) -> Result<pg_query::ParseResult, GenerateError> {
     pg_query::parse(sql).map_err(|error| refusal(operation, format!("cannot read SELECT: {error}")))
 }
 
@@ -109,7 +115,7 @@ pub(crate) fn derive(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     sources: &[AuthoredSql<'_>],
-    name: &str,
+    name: &wamn_catalog::local_operation::LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<Option<FeedSource>, GenerateError> {
     if operation.feed != Some(true) {
@@ -624,7 +630,11 @@ fn view_from<'a>(
 }
 
 /// Warn about missing indexes on base columns used by a feed's links.
-pub(crate) fn missing_indexes(catalog: &CatalogIr, name: &str, source: &FeedSource) -> Vec<String> {
+pub(crate) fn missing_indexes(
+    catalog: &CatalogIr,
+    name: &wamn_catalog::local_operation::LocalOperation,
+    source: &FeedSource,
+) -> Vec<String> {
     let mut missing = BTreeSet::new();
     for link in &source.join_path {
         let from = &link.foreign_key_table;
@@ -732,8 +742,8 @@ mod tests {
                 "audit_log": {"columns": [], "retention": "P30D"}
             }))).collect::<BTreeMap<_, _>>()),
             "connections": {}, "components": {},
-            "custom_operations": {"load": {
-                "type": "projection", "visibility": "public", "permission": "load", "feed": true,
+            "custom_operations": {"feed.load": {
+                "type": "projection", "visibility": "public", "permission": "feed.load", "feed": true,
                 "input": {"fields": []}, "errors": [],
                 "lists": {"model": "line", "key_field": "id"},
                 "statements": {"load": {"path": "query/load.sql", "fetch": "bounded_list", "row": []}}
@@ -754,8 +764,8 @@ mod tests {
             catalog,
             manifest,
             &[AuthoredSql::new("query/load.sql", sql.as_bytes())],
-            "load",
-            &manifest.custom_operations["load"],
+            &"feed.load".parse().unwrap(),
+            &manifest.custom_operations["feed.load"],
         )
         .map(Option::unwrap)
     }
@@ -789,7 +799,10 @@ mod tests {
             source.join_path[1].foreign_key_columns[0].column(),
             "order_id"
         );
-        assert_eq!(missing_indexes(&catalog, "load", &source).len(), 2);
+        assert_eq!(
+            missing_indexes(&catalog, &"feed.load".parse().unwrap(), &source).len(),
+            2
+        );
         let line = catalog
             .tables()
             .iter()
@@ -812,7 +825,7 @@ mod tests {
                 .collect(),
         );
         let indexed = CatalogIr::new(vec![indexed, table("item", &[]), table("orders", &[])]);
-        assert!(missing_indexes(&indexed, "load", &source).is_empty());
+        assert!(missing_indexes(&indexed, &"feed.load".parse().unwrap(), &source).is_empty());
     }
 
     #[test]
@@ -820,7 +833,7 @@ mod tests {
         let mut manifest = manifest();
         manifest
             .custom_operations
-            .get_mut("load")
+            .get_mut("feed.load")
             .unwrap()
             .statements
             .get_mut("load")
@@ -833,7 +846,7 @@ mod tests {
             });
         let _error = derive_sql(&catalog(RECEIPT), &manifest, "SELECT id FROM screen").unwrap_err();
         let mut manifest = self::manifest();
-        manifest.custom_operations.get_mut("load").unwrap().result = Some(serde_json::from_value(json!({"class": "bounded_list", "fields": [{"path": "row_version", "type": "int64", "nullable": false}]})).unwrap());
+        manifest.custom_operations.get_mut("feed.load").unwrap().result = Some(serde_json::from_value(json!({"class": "bounded_list", "fields": [{"path": "row_version", "type": "int64", "nullable": false}]})).unwrap());
         let _error = derive_sql(&catalog(RECEIPT), &manifest, "SELECT id FROM screen").unwrap_err();
     }
 
@@ -841,7 +854,7 @@ mod tests {
     fn authored_feed_emits_snapshot_statements_and_typed_variants() {
         let catalog = catalog(RECEIPT);
         let mut document = serde_json::to_value(manifest()).unwrap();
-        let mut operation = document["custom_operations"]["load"].take();
+        let mut operation = document["custom_operations"]["feed.load"].take();
         operation["permission"] = json!("line.load");
         operation["connection"] = json!("postgres");
         operation["input"]["fields"] =

@@ -167,7 +167,7 @@ fn admitted(bytes: &[u8]) -> AdmittedComponent {
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a".to_owned(),
                 package_id: "orders".to_owned(),
-                package_version: "1.0.0".to_owned(),
+                package_version: "1.0.0".parse().unwrap(),
             },
             component: "transform".to_owned(),
             interface_version: "0.1.0".to_owned(),

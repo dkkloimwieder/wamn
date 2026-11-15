@@ -511,14 +511,14 @@ fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
                 .expect("qualified operation")
                 .0
                 .into(),
-            package_version: "1.0.0".into(),
+            package_version: "1.0.0".parse().unwrap(),
         },
         component: "node".into(),
         interface_version: "0.1.0".into(),
         operations: BTreeMap::from([(
             operation.into(),
             AdmittedComponentOperation {
-                registered_operation: registered.then(|| operation.into()),
+                registered_operation: registered.then(|| operation.parse().unwrap()),
                 committed_result_schema: None,
                 host_transaction: false,
                 input_ports: Vec::new(),
@@ -640,7 +640,7 @@ impl Fixture {
                     .iter()
                     .chain(&callees)
                     .map(|fact| {
-                        PackageCoordinate::new(&fact.target.package_id, "1.0.0")
+                        PackageCoordinate::new(&fact.target.package_id, "1.0.0".parse().unwrap())
                             .expect("package coordinate")
                     })
                     .collect(),
@@ -1362,7 +1362,9 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         composed_entry: None,
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
-            packages: BTreeSet::from([PackageCoordinate::new("root", "1.0.0").unwrap()]),
+            packages: BTreeSet::from([
+                PackageCoordinate::new("root", "1.0.0".parse().unwrap()).unwrap()
+            ]),
         },
         components: BTreeSet::from([served]),
         routes: BTreeSet::new(),

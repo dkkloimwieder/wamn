@@ -60,8 +60,11 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
          FOR EACH ROW EXECUTE FUNCTION pat_test.record_writer();").to_string())).execute(&mut admin)
         .await
         .expect("install test-only writer observation");
-    let (token, management_token, token_prefix): (String, String, String) =
-        panic!("wamn-eulfr.12.10: no product first-PAT observation fixture");
+    let (token, management_token, token_prefix): (
+        String,
+        String,
+        wamn_identity_protocol::pat_prefix::PatPrefix,
+    ) = panic!("wamn-eulfr.12.10: no product first-PAT observation fixture");
     let writers = sqlx::query(sqlx::AssertSqlSafe(
         ("SELECT writer::text FROM pat_test.writers ORDER BY writer").to_string(),
     ))

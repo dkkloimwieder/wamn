@@ -182,7 +182,7 @@ fn validate_resolved_edges(
             ));
         }
         crate::component_facts::validate_committed_result_schema(
-            operation.registered_operation.as_deref(),
+            operation.registered_operation.as_ref(),
             operation.committed_result_schema.as_ref(),
         )
         .map_err(|error| {
@@ -471,7 +471,7 @@ mod tests {
         ComponentPackageCoordinate {
             project_env_key: "t1".to_string(),
             package_id: "app".to_string(),
-            package_version: "1.0.0".to_string(),
+            package_version: "1.0.0".parse().unwrap(),
         }
     }
 
@@ -549,7 +549,7 @@ mod tests {
         assert!(validate_wiring_compatibility(&wiring, &target(), &facts).is_err());
         let registered = "app:order/read@1.0.0";
         let mut operation = facts[0].operations.remove("read").unwrap();
-        operation.registered_operation = Some(registered.to_owned());
+        operation.registered_operation = Some(registered.parse().unwrap());
         facts[0].operations.insert(registered.to_owned(), operation);
         wiring.nodes.get_mut("source").unwrap().operation = registered.to_owned();
         validate_wiring_compatibility(&wiring, &target(), &facts)
@@ -574,7 +574,7 @@ mod tests {
     fn resolved_cross_package_facts_keep_their_exact_target_targets() {
         let mut facts = components();
         facts[1].target.package_id = "base".to_owned();
-        facts[1].target.package_version = "3.1.0".to_owned();
+        facts[1].target.package_version = "3.1.0".parse().unwrap();
         let resolved = BTreeMap::from([
             ("source".to_owned(), facts[0].clone()),
             ("target".to_owned(), facts[1].clone()),
@@ -585,7 +585,10 @@ mod tests {
 
         assert_eq!(resolved["source"].target, target());
         assert_eq!(resolved["target"].target.package_id, "base");
-        assert_eq!(resolved["target"].target.package_version, "3.1.0");
+        assert_eq!(
+            resolved["target"].target.package_version,
+            "3.1.0".parse().unwrap()
+        );
     }
 
     #[test]
@@ -623,7 +626,7 @@ mod tests {
     #[test]
     fn stale_target_and_invalid_parameter_refuse_before_publish() {
         let mut stale = components();
-        stale[0].target.package_version = "2.0.0".to_string();
+        stale[0].target.package_version = "2.0.0".parse().unwrap();
         assert_eq!(
             validate_wiring_compatibility(&wiring(), &target(), &stale)
                 .unwrap_err()

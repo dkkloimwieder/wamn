@@ -743,7 +743,7 @@ mod tests {
                 target: ComponentPackageCoordinate {
                     project_env_key: "org-a".to_string(),
                     package_id: "orders".to_string(),
-                    package_version: "1.0.0".to_string(),
+                    package_version: "1.0.0".parse().unwrap(),
                 },
                 component: "transform".to_string(),
                 interface_version: "0.1.0".to_string(),

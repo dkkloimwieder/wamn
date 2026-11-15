@@ -9,11 +9,21 @@ use super::{
 
 pub(super) fn resolve_component_dependency_closure(
     roots: &BTreeMap<String, AdmittedComponent>,
-    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    component_facts: &BTreeMap<
+        (String, wamn_catalog::package_version::PackageVersion),
+        Vec<AdmittedComponent>,
+    >,
     package_manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
     rule: DependencyDigestRule,
 ) -> Result<Vec<AdmittedComponent>, PublishManifestError> {
-    let mut closure = BTreeMap::<(String, String, wamn_digest::Digest), AdmittedComponent>::new();
+    let mut closure = BTreeMap::<
+        (
+            String,
+            wamn_catalog::package_version::PackageVersion,
+            wamn_digest::Digest,
+        ),
+        AdmittedComponent,
+    >::new();
     let mut visited = BTreeSet::new();
     for component in roots.values() {
         insert_closure_component(&mut closure, component)?;
@@ -34,7 +44,14 @@ pub(super) fn resolve_component_dependency_closure(
 }
 
 fn insert_closure_component(
-    closure: &mut BTreeMap<(String, String, wamn_digest::Digest), AdmittedComponent>,
+    closure: &mut BTreeMap<
+        (
+            String,
+            wamn_catalog::package_version::PackageVersion,
+            wamn_digest::Digest,
+        ),
+        AdmittedComponent,
+    >,
     component: &AdmittedComponent,
 ) -> Result<(), PublishManifestError> {
     let key = (
@@ -57,13 +74,23 @@ fn insert_closure_component(
 
 /// Resolve each base the package `(package, version)` pins, then its bases.
 fn visit_base_dependencies(
-    (package, version): (&str, &str),
-    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    (package, version): (&str, &wamn_catalog::package_version::PackageVersion),
+    component_facts: &BTreeMap<
+        (String, wamn_catalog::package_version::PackageVersion),
+        Vec<AdmittedComponent>,
+    >,
     package_manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
     rule: DependencyDigestRule,
-    path: &mut Vec<(String, String)>,
-    visited: &mut BTreeSet<(String, String)>,
-    closure: &mut BTreeMap<(String, String, wamn_digest::Digest), AdmittedComponent>,
+    path: &mut Vec<(String, wamn_catalog::package_version::PackageVersion)>,
+    visited: &mut BTreeSet<(String, wamn_catalog::package_version::PackageVersion)>,
+    closure: &mut BTreeMap<
+        (
+            String,
+            wamn_catalog::package_version::PackageVersion,
+            wamn_digest::Digest,
+        ),
+        AdmittedComponent,
+    >,
 ) -> Result<(), PublishManifestError> {
     let coordinate = (package.to_owned(), version.to_owned());
     if path.contains(&coordinate) {
@@ -77,7 +104,7 @@ fn visit_base_dependencies(
     }
     let Some(manifest) = package_manifests
         .get(package)
-        .filter(|manifest| manifest.package.version == version)
+        .filter(|manifest| &manifest.package.version == version)
     else {
         return Ok(());
     };
@@ -104,7 +131,10 @@ fn visit_base_dependencies(
 /// digest, or under the development rule every component of the coordinate.
 fn resolve_base_dependency<'a>(
     requirement: &wamn_compiler::manifest::BaseDependencyRequirement,
-    component_facts: &'a BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    component_facts: &'a BTreeMap<
+        (String, wamn_catalog::package_version::PackageVersion),
+        Vec<AdmittedComponent>,
+    >,
     rule: DependencyDigestRule,
 ) -> Result<Vec<&'a AdmittedComponent>, PublishManifestError> {
     let Some(facts) =
@@ -187,7 +217,7 @@ fn refuse_anonymous_reach(
     operation: &AdmittedComponentOperation,
     site: &str,
 ) -> Result<(), PublishManifestError> {
-    if let Some(operation) = operation.registered_operation.as_deref() {
+    if let Some(operation) = operation.registered_operation.as_ref() {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::UnauthenticatedRegisteredOperation,
             format!(

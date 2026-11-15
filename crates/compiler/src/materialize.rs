@@ -356,7 +356,7 @@ fn materialize_host_route_set(output: &Path, set: wamn_catalog::HostRouteSet) ->
                     method: String::new(),
                     template,
                     input_schema: None,
-                    terminal_operation: Some(attachment.operation.clone()),
+                    terminal_operation: Some(attachment.operation.to_string()),
                     direct: true,
                     response: crate::client_ir::ResponseIr::default(),
                     replay: None,
@@ -382,11 +382,15 @@ fn materialize_host_route_set(output: &Path, set: wamn_catalog::HostRouteSet) ->
     }
     let descriptions = parts
         .into_iter()
-        .map(|(name, parts)| {
-            serde_json::from_value(serde_json::to_value(parts)?)
-                .map(|description| (name, description))
+        .map(|(name, parts)| -> Result<_> {
+            Ok((
+                name.parse::<wamn_catalog::local_operation::LocalOperation>()?,
+                serde_json::from_value(serde_json::to_value(parts)?)?,
+            ))
         })
-        .collect::<Result<BTreeMap<String, crate::OperationDescription>, _>>()?;
+        .collect::<Result<
+            BTreeMap<wamn_catalog::local_operation::LocalOperation, crate::OperationDescription>,
+        >>()?;
     let ir = ClientContractIr::from_operations(
         wamn_catalog::host_route_package(),
         &descriptions,

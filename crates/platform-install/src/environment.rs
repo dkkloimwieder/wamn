@@ -36,7 +36,7 @@ pub fn resource(objects: Vec<Value>, type_: &str) -> anyhow::Result<Value> {
 
 pub fn publication_values(
     triple: &wamn_registry::Triple,
-    instance: &str,
+    instance: &wamn_registry::instance_suffix::InstanceSuffix,
     cluster: &str,
     name: &str,
     schemas: &[String],

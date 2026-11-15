@@ -243,7 +243,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         } else {
             let packed = wamn_publish::web_artifact::platform_ui::pack(
                 &root.join("apps/platform_ui/dist"),
-                &version,
+                &version.parse()?,
             )?;
             let reference: oci_client::Reference =
                 format!("{}/wamn/platform-ui:{}", args.registry, packed.tag).parse()?;
@@ -269,7 +269,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                     insecure_registry: loopback(&args.registry),
                     oci_ca_paths: Vec::new(),
                 },
-                reference.tag().context("platform UI tag is absent")?,
+                &packed.tag,
                 auth,
             )?;
             Some(

@@ -410,8 +410,12 @@ async fn operator_pat_issuance_over_https() {
             .is_none(),
         "known prefix alone is insufficient"
     );
-    let prefix = service_pat["token_prefix"].as_str().expect("PAT prefix");
-    revoke_pat(&mut system, prefix, &mut AuthDrops::default())
+    let prefix = service_pat["token_prefix"]
+        .as_str()
+        .expect("PAT prefix")
+        .parse()
+        .expect("valid PAT prefix");
+    revoke_pat(&mut system, &prefix, &mut AuthDrops::default())
         .await
         .expect_redacted("revoke service-issued PAT");
     assert!(
@@ -562,7 +566,7 @@ async fn success(
     system: &mut Client,
 ) -> Value {
     let before = snapshots(system, true).await;
-    let previous_pats = pat_versions(system, "").await;
+    let previous_pats = pat_versions(system, None).await;
     let response = request(client, endpoint, principal, label, 3600)
         .send()
         .await
@@ -624,7 +628,13 @@ async fn success(
         previous_pats
             == pat_versions(
                 system,
-                value["token_prefix"].as_str().expect("new PAT prefix")
+                Some(
+                    value["token_prefix"]
+                        .as_str()
+                        .expect("new PAT prefix")
+                        .parse()
+                        .expect("valid PAT prefix")
+                )
             )
             .await,
         "issuance adds exactly one PAT and leaves every older token unchanged"
@@ -632,8 +642,11 @@ async fn success(
     value
 }
 
-async fn pat_versions(system: &mut Client, exclude_prefix: &str) -> Vec<String> {
-    sqlx::query("SELECT coalesce(array_agg(md5(row_to_json(t)::text)||':'||t.xmin::text||':'||t.ctid::text ORDER BY t.ctid),ARRAY[]::text[]) FROM identity.pats t WHERE token_prefix <> $1").bind(&exclude_prefix).fetch_one(&mut *system)
+async fn pat_versions(
+    system: &mut Client,
+    exclude_prefix: Option<wamn_identity_protocol::pat_prefix::PatPrefix>,
+) -> Vec<String> {
+    sqlx::query("SELECT coalesce(array_agg(md5(row_to_json(t)::text)||':'||t.xmin::text||':'||t.ctid::text ORDER BY t.ctid),ARRAY[]::text[]) FROM identity.pats t WHERE ($1::text IS NULL OR token_prefix <> $1)").bind(exclude_prefix).fetch_one(&mut *system)
         .await.expect_redacted("opaque PAT row-version snapshot").get(0)
 }
 
@@ -781,7 +794,14 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
         project: "pattest".into(),
         env: "dev".into(),
     };
-    let mut database = project_env_database_name("acme", "pattest", "dev", "pattest1");
+    let mut database = project_env_database_name(
+        "acme",
+        "pattest",
+        "dev",
+        &"pattest1"
+            .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
+            .unwrap(),
+    );
     let role = workload_login(
         WorkloadRoleFamily::SessionRoleReader,
         WorkloadRoleIdentity::ProjectEnvironment {
@@ -801,7 +821,9 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
     url.set_fragment(None);
     SessionTarget::new(
         &triple,
-        "pattest1",
+        &"pattest1"
+            .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
+            .unwrap(),
         &wamn_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str()),
         url.as_str(),
     )

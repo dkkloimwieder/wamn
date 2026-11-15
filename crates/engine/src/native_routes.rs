@@ -163,21 +163,26 @@ pub fn authorize_released_operation(
     caller: Option<&AuthenticatedCaller>,
     released: &AdmittedComponentOperation,
 ) -> Result<(), OperationRefusal> {
-    authorize_registered_operation(caller, released.registered_operation.as_deref())
+    authorize_registered_operation(caller, released.registered_operation.as_ref())
 }
 
 /// Make sure that the originating caller holds the registered operation grant.
 pub fn authorize_registered_operation(
     caller: Option<&AuthenticatedCaller>,
-    operation: Option<&str>,
+    operation: Option<&wamn_catalog::registered_operation::RegisteredOperation>,
 ) -> Result<(), OperationRefusal> {
     let Some(operation) = operation else {
         return Ok(());
     };
     caller
-        .filter(|caller| caller.permits(operation))
+        .filter(|caller| caller.permits(operation.as_str()))
         .map(|_| ())
-        .ok_or_else(|| OperationRefusal::new(OperationRefusalType::PermissionDenied, operation))
+        .ok_or_else(|| {
+            OperationRefusal::new(
+                OperationRefusalType::PermissionDenied,
+                operation.to_string(),
+            )
+        })
 }
 
 /// The host call ceiling in milliseconds. The constant is well under an hour,

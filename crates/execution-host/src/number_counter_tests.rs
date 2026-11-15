@@ -118,7 +118,7 @@ impl Live {
             wamn_sql::DEFAULT_PROJECT,
             PROJECT_ENV_KEY,
             LIVE_PRINCIPAL,
-            SET_OPERATION,
+            &SET_OPERATION.parse().unwrap(),
             request_id,
             &CounterSet {
                 application: APPLICATION.to_owned(),

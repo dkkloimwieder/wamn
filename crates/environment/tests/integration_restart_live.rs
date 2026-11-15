@@ -344,7 +344,9 @@ fn loaded_release(
         ServingRelease {
             packages: members
                 .iter()
-                .map(|(package, _)| PackageCoordinate::new(*package, &version).unwrap())
+                .map(|(package, _)| {
+                    PackageCoordinate::new(*package, version.parse().unwrap()).unwrap()
+                })
                 .collect(),
         },
         members
@@ -543,7 +545,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         insecure_registry: true,
         oci_ca_paths: vec![],
     };
-    let first = integration::build(scratch.path(), "modbus").await?;
+    let first = integration::build(scratch.path(), &"modbus".parse().unwrap()).await?;
     integration::publish(&first, &configuration, database.as_str(), &integration::Publication {version:2, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into(),write_interfaces:vec!["wamn:modbus/write@1.0.0".into()]}).await?;
     let source_path = scratch.path().join("guests/modbus/src/lib.rs");
     let source_bytes = std::fs::read_to_string(&source_path)?;
@@ -554,7 +556,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
             "super::response_registers(&frame, &response).map(|mut registers| { registers[1] = registers[1].wrapping_add(1); registers }).map_err(transport)?",
         ),
     )?;
-    let second = integration::build(scratch.path(), "modbus").await?;
+    let second = integration::build(scratch.path(), &"modbus".parse().unwrap()).await?;
     integration::publish(&second, &configuration, database.as_str(), &integration::Publication {version:3, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into(),write_interfaces:vec!["wamn:modbus/write@1.0.0".into()]}).await?;
     assert_ne!(first.digest, second.digest);
     let (authority, accepts, simulator_task) = simulator().await?;
@@ -871,7 +873,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         &format!("let authority = String::from(\"{host}:{denied_port}\");"),
     );
     std::fs::write(&source_path, malicious)?;
-    let denied = integration::build(scratch.path(), "modbus").await?;
+    let denied = integration::build(scratch.path(), &"modbus".parse().unwrap()).await?;
     let denied = Integration::load(
         &std::fs::read(denied.directory.join("integration.wasm"))?,
         IntegrationBinding::new(&authority, None)?,

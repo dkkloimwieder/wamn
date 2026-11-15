@@ -316,7 +316,7 @@ pub struct ServingAttachment {
     /// Exact operation authority selected by this attachment. Attachments that
     /// do not invoke a package operation carry no token; callers never infer one
     /// from route, wiring, or component syntax.
-    pub registered_operation: Option<String>,
+    pub registered_operation: Option<crate::registered_operation::RegisteredOperation>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -333,7 +333,7 @@ struct AttachmentWire {
     definition: Value,
     auth_policy: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    registered_operation: Option<String>,
+    registered_operation: Option<crate::registered_operation::RegisteredOperation>,
 }
 
 impl TryFrom<AttachmentWire> for ServingAttachment {
@@ -442,7 +442,7 @@ pub struct RouteAttachment {
     pub auth_policy: Value,
     /// Exact operation authority selected by this attachment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_operation: Option<String>,
+    pub registered_operation: Option<crate::registered_operation::RegisteredOperation>,
 }
 
 /// One borrowed route attachment.
@@ -476,9 +476,11 @@ impl<'a> AttachmentRef<'a> {
         }
     }
 
-    pub fn registered_operation(self) -> Option<&'a str> {
+    pub fn registered_operation(
+        self,
+    ) -> Option<&'a crate::registered_operation::RegisteredOperation> {
         match self {
-            Self::Route(attachment) => attachment.registered_operation.as_deref(),
+            Self::Route(attachment) => attachment.registered_operation.as_ref(),
         }
     }
 
@@ -523,7 +525,9 @@ impl<'a> ServedAttachment<'a> {
         }
     }
 
-    pub fn registered_operation(self) -> Option<&'a str> {
+    pub fn registered_operation(
+        self,
+    ) -> Option<&'a crate::registered_operation::RegisteredOperation> {
         match self {
             Self::Authored(attachment) => attachment.registered_operation(),
             Self::Host(attachment) => attachment.registered_operation(),
@@ -602,6 +606,8 @@ impl ServingManifest {
             .map(|component| {
                 let version = if component.package_id == crate::PALETTE_PACKAGE_ID {
                     crate::PALETTE_PACKAGE_VERSION
+                        .parse()
+                        .expect("fixed palette package version")
                 } else {
                     self.release
                         .packages
@@ -611,6 +617,7 @@ impl ServingManifest {
                             message: "component package absent from release".to_owned(),
                         })?
                         .package_version()
+                        .clone()
                 };
                 let target = crate::ComponentPackageCoordinate::new(
                     project_env_key,
@@ -927,12 +934,12 @@ impl ServingManifest {
                 validate_registered_operation(
                     &package_versions,
                     &component.package_id,
-                    operation.registered_operation.as_deref(),
+                    operation.registered_operation.as_ref(),
                 )?;
                 if operation
                     .registered_operation
-                    .as_deref()
-                    .is_some_and(|registered| registered != export)
+                    .as_ref()
+                    .is_some_and(|registered| registered.as_str() != export)
                 {
                     return invalid(format!(
                         "component export {export:?} and registered operation {:?} differ",
@@ -940,7 +947,7 @@ impl ServingManifest {
                     ));
                 }
                 crate::component_facts::validate_committed_result_schema(
-                    operation.registered_operation.as_deref(),
+                    operation.registered_operation.as_ref(),
                     operation.committed_result_schema.as_ref(),
                 ).map_err(|error| CatalogIdentityError::InvalidDefinition {
                     message: format!("serving component operation {export:?} carries invalid committed-result facts: {error}"),
@@ -999,7 +1006,7 @@ impl ServingManifest {
                 &attachment.package_id,
                 &attachment.definition,
                 &attachment.auth_policy,
-                attachment.registered_operation.as_deref(),
+                attachment.registered_operation.as_ref(),
             )?;
         }
 
@@ -1039,8 +1046,8 @@ fn validate_route_target(
     }
     if attachment
         .registered_operation
-        .as_deref()
-        .is_some_and(|registered| registered != operation)
+        .as_ref()
+        .is_some_and(|registered| registered.as_str() != operation)
     {
         return invalid(format!(
             "attachment {attachment_id:?} registered operation {:?} differs from its route operation {operation:?}",
@@ -1052,12 +1059,12 @@ fn validate_route_target(
 
 /// The tests that every attachment passes, whatever it targets.
 fn validate_attachment(
-    package_versions: &BTreeMap<&str, &str>,
+    package_versions: &BTreeMap<&str, &crate::package_version::PackageVersion>,
     attachment_id: &str,
     package_id: &str,
     definition: &Value,
     auth_policy: &Value,
-    registered_operation: Option<&str>,
+    registered_operation: Option<&crate::registered_operation::RegisteredOperation>,
 ) -> Result<(), CatalogIdentityError> {
     if !definition.is_object() {
         return invalid("attachment definition must be a JSON object");
@@ -1079,7 +1086,7 @@ fn validate_attachment(
 }
 
 fn validate_package_member(
-    package_versions: &BTreeMap<&str, &str>,
+    package_versions: &BTreeMap<&str, &crate::package_version::PackageVersion>,
     package_id: &str,
 ) -> Result<(), CatalogIdentityError> {
     validate_text(package_id, "package-id")?;
@@ -1092,9 +1099,9 @@ fn validate_package_member(
 }
 
 fn validate_registered_operation(
-    package_versions: &BTreeMap<&str, &str>,
+    package_versions: &BTreeMap<&str, &crate::package_version::PackageVersion>,
     package_id: &str,
-    operation: Option<&str>,
+    operation: Option<&crate::registered_operation::RegisteredOperation>,
 ) -> Result<(), CatalogIdentityError> {
     let Some(operation) = operation else {
         return Ok(());
@@ -1155,8 +1162,8 @@ mod tests {
     fn release() -> ServingRelease {
         ServingRelease {
             packages: BTreeSet::from([
-                PackageCoordinate::new("base", "1.0.0").unwrap(),
-                PackageCoordinate::new("overlay", "3.0.0").unwrap(),
+                PackageCoordinate::new("base", "1.0.0".parse().unwrap()).unwrap(),
+                PackageCoordinate::new("overlay", "3.0.0".parse().unwrap()).unwrap(),
             ]),
         }
     }
@@ -1180,7 +1187,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     operation.into(),
                     crate::AdmittedComponentOperation {
-                        registered_operation: Some(operation.into()),
+                        registered_operation: Some(operation.parse().unwrap()),
                         committed_result_schema: None,
                         host_transaction: false,
                         input_ports: Vec::new(),
@@ -1233,7 +1240,7 @@ mod tests {
                 "route": {"host": "*", "path": "/orders", "method": "POST"}
             }),
             auth_policy: serde_json::json!({"modes": ["pat"]}),
-            registered_operation: Some("base:widget/get@1.0.0".into()),
+            registered_operation: Some("base:widget/get@1.0.0".parse().unwrap()),
         }
     }
 
@@ -1521,23 +1528,10 @@ mod tests {
     }
 
     #[test]
-    fn attachment_operation_is_explicit_and_canonical() {
-        let mut malformed = attachment();
-        malformed.registered_operation = Some("widget.get".into());
-        let _error = ServingManifest::new(
-            release(),
-            components(),
-            routes(),
-            BTreeMap::from([("orders".to_string(), malformed)]),
-        )
-        .expect_err("an attachment cannot smuggle a local-only operation token");
-    }
-
-    #[test]
     fn registered_operations_match_the_containing_package_coordinate() {
         for operation in ["overlay:widget/get@3.0.0", "base:widget/get@2.0.0"] {
             let mut mismatched = attachment();
-            mismatched.registered_operation = Some(operation.into());
+            mismatched.registered_operation = Some(operation.parse().unwrap());
             let _error = ServingManifest::new(
                 release(),
                 components(),
@@ -1557,7 +1551,8 @@ mod tests {
             .values_mut()
             .next()
             .expect("fixture component has an operation");
-        component_operation.registered_operation = Some("overlay:widget/get@3.0.0".into());
+        component_operation.registered_operation =
+            Some("overlay:widget/get@3.0.0".parse().unwrap());
         mismatched_components.insert(component);
         let _error =
             ServingManifest::new(release(), mismatched_components, routes(), BTreeMap::new())
@@ -1697,7 +1692,7 @@ mod tests {
         let mut duplicate = release();
         duplicate
             .packages
-            .insert(PackageCoordinate::new("base", "2.0.0").unwrap());
+            .insert(PackageCoordinate::new("base", "2.0.0".parse().unwrap()).unwrap());
         let error = ServingManifest::new(duplicate, components(), routes(), BTreeMap::new())
             .expect_err("two versions of one package must refuse");
         assert_eq!(
@@ -1782,7 +1777,7 @@ mod tests {
         ));
 
         let mut mismatched = route_attachment();
-        mismatched.registered_operation = Some("base:widget/list@1.0.0".into());
+        mismatched.registered_operation = Some("base:widget/list@1.0.0".parse().unwrap());
         let _error = ServingManifest::new(
             release(),
             components(),

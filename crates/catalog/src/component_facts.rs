@@ -18,22 +18,23 @@ const SCHEMA_URI: &str = "mem://wamn-component-schema.json";
 pub struct ComponentPackageCoordinate {
     pub project_env_key: String,
     pub package_id: String,
-    pub package_version: String,
+    pub package_version: crate::package_version::PackageVersion,
 }
 
 impl ComponentPackageCoordinate {
     pub fn new(
         project_env_key: impl Into<String>,
         package_id: impl Into<String>,
-        package_version: impl Into<String>,
+        package_version: crate::package_version::PackageVersion,
     ) -> Result<Self, CatalogIdentityError> {
         let project_env_key = project_env_key.into();
-        let coordinate = PackageCoordinate::new(package_id, package_version)?;
+        let (package_id, package_version) =
+            PackageCoordinate::new(package_id, package_version)?.into_parts();
         validate_text(&project_env_key, "project_env_key")?;
         Ok(Self {
             project_env_key,
-            package_id: coordinate.package_id().to_owned(),
-            package_version: coordinate.package_version().to_owned(),
+            package_id,
+            package_version,
         })
     }
 }
@@ -94,7 +95,9 @@ impl<'de> Deserialize<'de> for ComponentPackageCoordinate {
         };
         let project_env_key = take("project_env_key")?;
         let package_id = take("package-id")?;
-        let package_version = take("package-version")?;
+        let package_version = take("package-version")?
+            .parse()
+            .map_err(serde::de::Error::custom)?;
         if let Some(name) = fields.keys().next() {
             return Err(serde::de::Error::unknown_field(
                 name,
@@ -249,7 +252,7 @@ pub struct ComponentConnection {
 pub struct ComponentOperationDeclaration {
     /// Explicit application permission identity. Palette operations carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_operation: Option<String>,
+    pub registered_operation: Option<crate::registered_operation::RegisteredOperation>,
     /// A matching successful payload shows that this registered command committed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<Value>,
@@ -335,7 +338,7 @@ pub enum ComponentEffectProvenance {
 pub struct AdmittedComponentOperation {
     /// Explicit application permission identity. Never inferred from the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_operation: Option<String>,
+    pub registered_operation: Option<crate::registered_operation::RegisteredOperation>,
     /// The admitted success schema for this registered command's committed result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<ComponentSchema>,
@@ -527,7 +530,7 @@ pub fn normalize_component_fact(
     ComponentPackageCoordinate::new(
         &declaration.target.project_env_key,
         &declaration.target.package_id,
-        &declaration.target.package_version,
+        declaration.target.package_version.clone(),
     )
     .map_err(|error| {
         ComponentFactError::new(
@@ -550,14 +553,14 @@ pub fn normalize_component_fact(
         validate_registered_operation_target(
             &declaration.target,
             &export,
-            operation.registered_operation.as_deref(),
+            operation.registered_operation.as_ref(),
         )?;
         let committed_result_schema = operation
             .committed_result_schema
             .map(|schema| normalize_schema(schema, "committed-result"))
             .transpose()?;
         validate_committed_result_schema(
-            operation.registered_operation.as_deref(),
+            operation.registered_operation.as_ref(),
             committed_result_schema.as_ref(),
         )?;
         let input_ports = normalize_ports(
@@ -622,7 +625,7 @@ pub fn verify_stored_effect_projection(
     ComponentPackageCoordinate::new(
         &component.target.project_env_key,
         &component.target.package_id,
-        &component.target.package_version,
+        component.target.package_version.clone(),
     )
     .map_err(|error| {
         ComponentFactError::new(
@@ -641,10 +644,10 @@ pub fn verify_stored_effect_projection(
         validate_registered_operation_target(
             &component.target,
             export,
-            operation.registered_operation.as_deref(),
+            operation.registered_operation.as_ref(),
         )?;
         validate_committed_result_schema(
-            operation.registered_operation.as_deref(),
+            operation.registered_operation.as_ref(),
             operation.committed_result_schema.as_ref(),
         )?;
         crate::signed_file_reads(operation).map_err(|error| {
@@ -658,7 +661,7 @@ pub fn verify_stored_effect_projection(
 fn validate_registered_operation_target(
     target: &ComponentPackageCoordinate,
     export: &str,
-    operation: Option<&str>,
+    operation: Option<&crate::registered_operation::RegisteredOperation>,
 ) -> Result<(), ComponentFactError> {
     let Some(operation) = operation else {
         return Ok(());
@@ -674,7 +677,7 @@ fn validate_registered_operation_target(
             error.to_string(),
         )
     })?;
-    if operation != export {
+    if operation.as_str() != export {
         return Err(ComponentFactError::new(
             ComponentFactErrorType::RegisteredOperationMismatch,
             format!("registered operation {operation:?} must equal exported operation {export:?}"),
@@ -876,7 +879,7 @@ fn normalize_parameters(
 }
 
 pub(crate) fn validate_committed_result_schema(
-    registered_operation: Option<&str>,
+    registered_operation: Option<&crate::registered_operation::RegisteredOperation>,
     schema: Option<&ComponentSchema>,
 ) -> Result<(), ComponentFactError> {
     let Some(schema) = schema else {
@@ -976,7 +979,7 @@ mod tests {
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a".to_string(),
                 package_id: "orders".to_string(),
-                package_version: "1.2.0".to_string(),
+                package_version: "1.2.0".parse().unwrap(),
             },
             component: "transform".to_string(),
             interface_version: "0.1.0".to_string(),
@@ -1039,7 +1042,7 @@ mod tests {
         .expect("component fact normalizes");
         let fact = facts.component;
 
-        assert_eq!(fact.target.package_version, "1.2.0");
+        assert_eq!(fact.target.package_version, "1.2.0".parse().unwrap());
         let operation = fact.operation("map").expect("map operation is admitted");
         assert_eq!(operation.registered_operation, None);
         assert_eq!(operation.input_ports[0].name, "input");
@@ -1157,7 +1160,7 @@ mod tests {
 
         let registered = "orders:widget/create@1.2.0";
         let mut operation = palette.operations.remove("map").unwrap();
-        operation.registered_operation = Some(registered.to_owned());
+        operation.registered_operation = Some(registered.parse().unwrap());
         palette.operations.insert(registered.to_owned(), operation);
         let facts = normalize_component_fact(
             palette.clone(),
@@ -1212,7 +1215,7 @@ mod tests {
         let mut declared = declaration();
         let registered = "orders:widget/get@1.2.0";
         let mut operation = declared.operations.remove("map").expect("map operation");
-        operation.registered_operation = Some(registered.to_string());
+        operation.registered_operation = Some(registered.parse().unwrap());
         declared
             .operations
             .insert(registered.to_string(), operation);
@@ -1228,29 +1231,13 @@ mod tests {
         assert_eq!(
             facts.component.operations[registered]
                 .registered_operation
-                .as_deref(),
-            Some(registered)
-        );
-
-        let mut malformed = declaration();
-        operation_mut(&mut malformed).registered_operation = Some("widget.get".to_string());
-        assert_eq!(
-            normalize_component_fact(
-                malformed,
-                (format!("sha256:{}", "a".repeat(64)))
-                    .parse::<wamn_digest::Digest>()
-                    .unwrap(),
-                ["wasi:clocks/monotonic-clock@0.2.3".to_string()],
-                Vec::new(),
-            )
-            .unwrap_err()
-            .error_type(),
-            ComponentFactErrorType::NonCanonicalIdentity
+                .as_ref(),
+            Some(&registered.parse().unwrap())
         );
 
         for operation in ["other:widget/get@1.2.0", "orders:widget/get@2.0.0"] {
             let mut mismatched = declaration();
-            operation_mut(&mut mismatched).registered_operation = Some(operation.to_string());
+            operation_mut(&mut mismatched).registered_operation = Some(operation.parse().unwrap());
             assert_eq!(
                 normalize_component_fact(
                     mismatched,
@@ -1268,7 +1255,7 @@ mod tests {
 
         let mut unequal = declaration();
         operation_mut(&mut unequal).registered_operation =
-            Some("orders:widget/get@1.2.0".to_string());
+            Some("orders:widget/get@1.2.0".parse().unwrap());
         assert_eq!(
             normalize_component_fact(
                 unequal,
@@ -1288,7 +1275,7 @@ mod tests {
             .operations
             .get_mut("map")
             .expect("map operation")
-            .registered_operation = Some("other:widget/get@1.2.0".into());
+            .registered_operation = Some("other:widget/get@1.2.0".parse().unwrap());
         assert_eq!(
             verify_stored_effect_projection(&stored)
                 .unwrap_err()
@@ -1305,7 +1292,7 @@ mod tests {
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a".to_string(),
                 package_id: "orders".to_string(),
-                package_version: "1.2.0".to_string(),
+                package_version: "1.2.0".parse().unwrap(),
             },
             component: "transform".to_string(),
             interface_version: "0.1.0".to_string(),

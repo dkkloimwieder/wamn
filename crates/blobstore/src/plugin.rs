@@ -251,8 +251,10 @@ pub(crate) struct StoreClient {
     signer: Arc<dyn object_store::signer::Signer>,
 }
 
-fn provider(integration_type: &str) -> anyhow::Result<BlobstoreProvider> {
-    match integration_type {
+fn provider(
+    integration_type: &wamn_registry::integration_code::IntegrationCode,
+) -> anyhow::Result<BlobstoreProvider> {
+    match integration_type.as_str() {
         "s3" => Ok(BlobstoreProvider::S3),
         "gcs" => Ok(BlobstoreProvider::Gcs),
         _ => anyhow::bail!("not a storage integration"),
@@ -329,7 +331,7 @@ fn build_gcs_store(container: &str) -> anyhow::Result<Arc<object_store::gcp::Goo
 
 /// List the first object under candidate storage coordinates without writing facts.
 pub async fn health(
-    integration_type: &str,
+    integration_type: &wamn_registry::integration_code::IntegrationCode,
     parameters: &serde_json::Value,
     credential: Option<&str>,
 ) -> anyhow::Result<()> {

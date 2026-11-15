@@ -15,7 +15,8 @@ mod platform_claim_release;
 const READ: &str = "example:entry/read-projection@1.0.0";
 const UPDATE: &str = "example:entry/apply-title@1.0.0";
 
-type Contracts = BTreeMap<String, wamn_compiler::OperationDescription>;
+type Contracts =
+    BTreeMap<wamn_catalog::local_operation::LocalOperation, wamn_compiler::OperationDescription>;
 
 fn insert_operation(
     contracts: &mut Contracts,
@@ -25,7 +26,7 @@ fn insert_operation(
     result: Value,
 ) {
     contracts.insert(
-        format!("entry.{name}"),
+        format!("entry.{name}").parse().unwrap(),
         wamn_compiler::OperationDescription {
             operation: serde_json::from_value(operation).unwrap(),
             input,
@@ -47,7 +48,10 @@ fn direct_route(operation: &str) -> RouteIr {
     }
 }
 
-fn records() -> (Contracts, BTreeMap<String, RouteIr>) {
+fn records() -> (
+    Contracts,
+    BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>,
+) {
     let mut contracts = BTreeMap::new();
     insert_operation(
         &mut contracts,
@@ -88,13 +92,16 @@ fn records() -> (Contracts, BTreeMap<String, RouteIr>) {
         ]}),
     );
     let routes = BTreeMap::from([
-        (READ.into(), direct_route(READ)),
-        (UPDATE.into(), direct_route(UPDATE)),
+        (READ.parse().unwrap(), direct_route(READ)),
+        (UPDATE.parse().unwrap(), direct_route(UPDATE)),
     ]);
     (contracts, routes)
 }
 
-fn project(contracts: &Contracts, routes: &BTreeMap<String, RouteIr>) -> ClientContractIr {
+fn project(
+    contracts: &Contracts,
+    routes: &BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>,
+) -> ClientContractIr {
     ClientContractIr::from_operations("example", contracts, routes)
         .expect("declared contract projection")
 }
@@ -114,7 +121,9 @@ fn change(contracts: &mut Contracts, path: &str, pointer: &str, value: Value) {
         .unwrap()
         .rsplit_once('.')
         .unwrap();
-    let description = contracts.get_mut(&format!("{module}.{name}")).unwrap();
+    let description = contracts
+        .get_mut(format!("{module}.{name}").as_str())
+        .unwrap();
     let mut document = serde_json::to_value(&*description).unwrap();
     *document
         .get_mut(part)
@@ -135,7 +144,7 @@ fn declared_type_and_record_mappings_bind_operations_with_unrelated_names() {
     assert_eq!(
         update.revision_binding,
         Some(RevisionBindingIr {
-            read_operation: READ.into(),
+            read_operation: READ.parse().unwrap(),
             read_key_input: "lookup_key".into(),
             key_field: "stock_id".into(),
             revision_field: "edit_version".into(),
@@ -164,7 +173,7 @@ fn declared_delete_needs_a_compatible_exposed_read_for_its_revision() {
         assert_eq!(delete.requires_composition, !exposed);
         if exposed {
             let binding = delete.revision_binding.as_ref().unwrap();
-            assert_eq!(binding.read_operation, READ);
+            assert_eq!(binding.read_operation, READ.parse().unwrap());
             assert_eq!(binding.revision_field, "edit_version");
             assert_eq!(binding.command_revision_input, "version_seen");
         } else {
@@ -565,11 +574,11 @@ fn a_direct_route_states_the_relations_it_reads_and_writes() {
     );
     let routes = BTreeMap::from([
         (
-            "example:entry/history@1.0.0".into(),
+            "example:entry/history@1.0.0".parse().unwrap(),
             direct_route("example:entry/history@1.0.0"),
         ),
         (
-            "example:entry/unstated@1.0.0".into(),
+            "example:entry/unstated@1.0.0".parse().unwrap(),
             direct_route("example:entry/unstated@1.0.0"),
         ),
     ]);
@@ -837,7 +846,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
         column: None,
     };
     let routes = BTreeMap::from([(
-        identity.to_owned(),
+        identity.parse().unwrap(),
         RouteIr {
             method: "POST".to_owned(),
             template: "/widget/get".to_owned(),

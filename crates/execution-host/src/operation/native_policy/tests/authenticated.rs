@@ -212,7 +212,11 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
 pub(super) async fn platform_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
     project_env_key_postgres(admin_url).await?;
     let mut admin = connect(admin_url).await?;
-    let principals = wamn_control_provision::platform_principals_sql("platform.example.invalid")?;
+    let principals = wamn_control_provision::platform_principals_sql(
+        &"platform.example.invalid"
+            .parse::<wamn_registry::platform_domain::PlatformDomain>()
+            .unwrap(),
+    );
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {principals} COMMIT;")))
         .execute(&mut admin)
         .await
@@ -533,14 +537,14 @@ fn member_admission_request(child_digest: &wamn_digest::Digest) -> ComponentAdmi
             target: ComponentPackageCoordinate {
                 project_env_key: PROJECT_ENV_KEY.into(),
                 package_id: "root".into(),
-                package_version: "1.0.0".into(),
+                package_version: "1.0.0".parse().unwrap(),
             },
             component: "node".into(),
             interface_version: "0.1.0".into(),
             operations: BTreeMap::from([(
                 ROOT.into(),
                 ComponentOperationDeclaration {
-                    registered_operation: Some(ROOT.into()),
+                    registered_operation: Some(ROOT.parse().unwrap()),
                     committed_result_schema: None,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),

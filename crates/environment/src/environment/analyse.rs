@@ -39,15 +39,15 @@ pub struct Policy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentRow {
     pub disposable: bool,
-    pub instance_suffix: String,
+    pub instance_suffix: wamn_registry::instance_suffix::InstanceSuffix,
     pub policy_name: String,
 }
 
 /// One installed package in the project database.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Installed {
     /// The installed package baseline.
-    pub current: String,
+    pub current: wamn_catalog::package_version::PackageVersion,
 }
 
 /// What the project database holds.

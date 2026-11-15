@@ -69,7 +69,8 @@ pub struct ConnectionFacts {
     project: String,
     environment: String,
     generations: Cache<(uuid::Uuid, i64), Arc<ConnectionGeneration>>,
-    versions: Cache<(String, i32), Arc<IntegrationVersion>>,
+    versions:
+        Cache<(wamn_registry::integration_code::IntegrationCode, i32), Arc<IntegrationVersion>>,
     secrets: Cache<uuid::Uuid, Arc<Secret>>,
     /// The last fact this host saw of each connection.
     seen: Mutex<HashMap<uuid::Uuid, ConnectionFact>>,
@@ -358,7 +359,7 @@ impl ConnectionFacts {
     /// newest published version, read from Postgres each time.
     pub async fn version(
         &self,
-        integration_type: &str,
+        integration_type: &wamn_registry::integration_code::IntegrationCode,
         version: Option<i32>,
     ) -> anyhow::Result<Arc<IntegrationVersion>> {
         if let Some(version) = version

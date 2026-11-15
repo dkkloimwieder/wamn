@@ -125,7 +125,7 @@ pub struct InvocationRequest<'a> {
     pub identity: SessionIdentity,
     pub context: Option<Arc<ReleaseContext>>,
     pub caller: Option<AuthenticatedCaller>,
-    pub registered_operation: Option<&'a str>,
+    pub registered_operation: Option<&'a wamn_catalog::registered_operation::RegisteredOperation>,
     pub causation: Option<Causation>,
     pub invocation: Option<ConnectionInvocation>,
     pub read: bool,

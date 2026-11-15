@@ -7,8 +7,14 @@ use wamn_registry::Triple;
 
 fn target() -> SessionTarget {
     let triple = Triple::new("acme", "dev", "widgets");
-    let database =
-        wamn_control_provision::project_env_database_name("acme", "widgets", "dev", "k3m9x2p7");
+    let database = wamn_control_provision::project_env_database_name(
+        "acme",
+        "widgets",
+        "dev",
+        &"k3m9x2p7"
+            .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
+            .unwrap(),
+    );
     let username = workload_login(
         WorkloadRoleFamily::SessionRoleReader,
         WorkloadRoleIdentity::ProjectEnvironment {
@@ -35,7 +41,9 @@ fn target() -> SessionTarget {
     };
     SessionTarget::new(
         &triple,
-        "k3m9x2p7",
+        &"k3m9x2p7"
+            .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
+            .unwrap(),
         &wamn_registry::project_env_key("acme", "widgets", "dev"),
         &connection.to_json().unwrap(),
     )

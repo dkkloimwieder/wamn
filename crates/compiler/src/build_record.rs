@@ -27,7 +27,7 @@ pub struct BuildRecord {
 #[serde(deny_unknown_fields)]
 pub struct BuildPackage {
     pub id: String,
-    pub version: String,
+    pub version: wamn_catalog::package_version::PackageVersion,
 }
 
 /// One base package of an overlay.
@@ -35,7 +35,7 @@ pub struct BuildPackage {
 #[serde(deny_unknown_fields)]
 pub struct BuildDependency {
     pub id: String,
-    pub version: String,
+    pub version: wamn_catalog::package_version::PackageVersion,
     /// The digest of the base's canonical `wamn.json`, until a package
     /// artifact digest replaces it.
     pub digest: wamn_digest::Digest,

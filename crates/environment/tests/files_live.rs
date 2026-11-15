@@ -21,7 +21,7 @@ fn file_fixture_declares_each_binding_mode() {
         &wamn_catalog::ComponentPackageCoordinate {
             project_env_key: "file-fixture".into(),
             package_id: "file_fixture".into(),
-            package_version: "0.1.0".into(),
+            package_version: "0.1.0".parse().unwrap(),
         },
         None,
     )

@@ -133,7 +133,12 @@ mod tests {
                 insecure_registry: true,
                 oci_ca_paths: Vec::new(),
             },
-            server.reference.tag().unwrap(),
+            &server
+                .reference
+                .tag()
+                .unwrap()
+                .parse::<crate::tag::OciTag>()
+                .unwrap(),
             RegistryAuth::Anonymous,
         )
         .unwrap()

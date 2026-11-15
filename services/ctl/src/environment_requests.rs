@@ -27,7 +27,7 @@ pub struct Delete {
 #[derive(Debug, Args)]
 pub struct RevokePat {
     #[arg(long)]
-    pub prefix: String,
+    pub prefix: wamn_identity_protocol::pat_prefix::PatPrefix,
 }
 
 pub async fn revoke_pat(args: RevokePat) -> anyhow::Result<()> {

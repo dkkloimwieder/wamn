@@ -6,9 +6,9 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use wamn_registry::{Triple, identifiers::valid_project_env_key};
+use wamn_registry::{Triple, identifiers::valid_project_env_key, instance_suffix::InstanceSuffix};
 
-use crate::name::{project_env_database_name, validate_instance_suffix, validate_project_env};
+use crate::name::{project_env_database_name, validate_project_env};
 use wamn_postgres::ConnectionConfig;
 
 /// The Secret key mounted as one explicitly configured target file.
@@ -43,12 +43,10 @@ pub fn validate_session_project_env_key(project_env_key: &str) -> Result<(), Ses
 /// Derive the exact instance-aware audience from validated provisioning coordinates.
 pub fn session_audience(
     triple: &Triple,
-    instance_suffix: &str,
+    instance_suffix: &InstanceSuffix,
 ) -> Result<String, SessionTargetError> {
     validate_project_env(&triple.org, &triple.project, triple.env.as_str())
         .map_err(|_| refused("session target coordinates refused"))?;
-    validate_instance_suffix(instance_suffix)
-        .map_err(|_| refused("session target instance refused"))?;
     Ok(wamn_registry::name::project_audience(
         &triple.org,
         &triple.project,
@@ -93,7 +91,7 @@ struct TargetDocument {
     org: String,
     project: String,
     env: String,
-    instance_suffix: String,
+    instance_suffix: InstanceSuffix,
     project_env_key: String,
     connection: SessionConnection,
 }
@@ -119,7 +117,7 @@ impl SessionTarget {
     /// Bind a provisioned instance and trusted project to its exact reader credential.
     pub fn new(
         triple: &Triple,
-        instance_suffix: &str,
+        instance_suffix: &InstanceSuffix,
         project_env_key: &str,
         database_url: &str,
     ) -> Result<Self, SessionTargetError> {
@@ -211,7 +209,7 @@ impl SessionTarget {
         &self.triple
     }
     /// Borrow the provisioned instance suffix.
-    pub fn instance_suffix(&self) -> &str {
+    pub fn instance_suffix(&self) -> &InstanceSuffix {
         &self.document.instance_suffix
     }
     /// Borrow the trusted project identity used in every role predicate.
@@ -231,7 +229,7 @@ mod tests {
     #[test]
     fn session_connections_keep_their_target_for_cluster_and_local_inputs() {
         let triple = Triple::new("acme", "dev", "orders");
-        let instance = "aaaaaaa1";
+        let instance = &"aaaaaaa1".parse::<InstanceSuffix>().unwrap();
         let database = project_env_database_name("acme", "orders", "dev", instance);
         let username = crate::workload_login(
             crate::WorkloadRoleFamily::SessionRoleReader,

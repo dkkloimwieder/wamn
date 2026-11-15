@@ -1,5 +1,6 @@
 //! Compiled release facts, immutable catalog identities, and definition hashing.
 
+pub mod client_package_name;
 mod component_artifact_reference;
 mod component_facts;
 mod connection;
@@ -9,10 +10,13 @@ pub mod feed;
 mod host_route;
 mod http_route_data;
 pub mod http_routes;
+pub mod local_operation;
 pub mod manifest;
 mod package;
+pub mod package_version;
 pub mod profile;
 pub mod read_query;
+pub mod registered_operation;
 mod route_identity;
 pub mod schema;
 mod serving_manifest;

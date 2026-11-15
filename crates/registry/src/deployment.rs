@@ -2,12 +2,12 @@
 
 use sqlx::PgConnection;
 
-use crate::{Triple, sql};
+use crate::{Triple, instance_suffix::InstanceSuffix, sql};
 
 /// Physical placement recorded for one project deployment.
 #[derive(Debug)]
 pub struct DatabasePlacement {
-    pub instance_suffix: String,
+    pub instance_suffix: InstanceSuffix,
     pub placement_type: String,
     pub pool_cluster: Option<String>,
     pub policy_name: String,
@@ -26,7 +26,7 @@ pub struct Registration<'a> {
     pub triple: &'a Triple,
     pub secret_name: &'a str,
     pub secret_namespace: Option<&'a str>,
-    pub instance_suffix: &'a str,
+    pub instance_suffix: &'a InstanceSuffix,
     pub disposable: Option<bool>,
     pub policy: &'a str,
     pub target_id: &'a str,
@@ -80,7 +80,7 @@ pub async fn org_placement(
 pub async fn instance_suffix(
     connection: &mut PgConnection,
     triple: &Triple,
-) -> Result<Option<String>, sqlx::Error> {
+) -> Result<Option<InstanceSuffix>, sqlx::Error> {
     sqlx::query_scalar("SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3")
         .bind(&triple.org).bind(&triple.project).bind(triple.env.as_str()).fetch_optional(connection).await
 }
@@ -193,20 +193,21 @@ pub async fn target_id(
 pub async fn record(
     connection: &mut PgConnection,
     registration: &Registration<'_>,
-) -> Result<String, sqlx::Error> {
+) -> Result<InstanceSuffix, sqlx::Error> {
     let r = registration;
-    let (suffix, _): (String, bool) = sqlx::query_as(sql::upsert_project_env_with_policy_sql())
-        .bind(&r.triple.org)
-        .bind(&r.triple.project)
-        .bind(r.triple.env.as_str())
-        .bind(r.secret_name)
-        .bind(r.secret_namespace)
-        .bind(r.instance_suffix)
-        .bind(r.disposable)
-        .bind(r.policy)
-        .bind(r.target_id)
-        .fetch_one(connection)
-        .await?;
+    let (suffix, _): (InstanceSuffix, bool) =
+        sqlx::query_as(sql::upsert_project_env_with_policy_sql())
+            .bind(&r.triple.org)
+            .bind(&r.triple.project)
+            .bind(r.triple.env.as_str())
+            .bind(r.secret_name)
+            .bind(r.secret_namespace)
+            .bind(r.instance_suffix)
+            .bind(r.disposable)
+            .bind(r.policy)
+            .bind(r.target_id)
+            .fetch_one(connection)
+            .await?;
     Ok(suffix)
 }
 

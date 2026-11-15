@@ -4,8 +4,13 @@ use crate::Repository;
 
 impl Repository {
     /// List every tag, following the registry's pagination.
-    pub async fn tags(&self) -> anyhow::Result<Vec<String>> {
-        self.source.tags(&self.reference, &self.auth).await
+    pub async fn tags(&self) -> anyhow::Result<Vec<crate::tag::OciTag>> {
+        self.source
+            .tags(&self.reference, &self.auth)
+            .await?
+            .into_iter()
+            .map(|tag| Ok(tag.try_into()?))
+            .collect()
     }
 
     /// Delete an immutable manifest digest. The caller must protect all of its tag references.

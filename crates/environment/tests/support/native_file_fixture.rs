@@ -70,7 +70,7 @@ pub async fn build_fixture(
     let coordinate = wamn_catalog::ComponentPackageCoordinate::new(
         wamn_registry::project_env_key(ORG, PROJECT, "files"),
         "file_fixture",
-        "0.1.0",
+        "0.1.0".parse()?,
     )?;
     let mut admissions = Vec::new();
     for name in ["fixture", "blob-put"] {
@@ -126,7 +126,7 @@ pub fn release_request() -> anyhow::Result<wamn_publish::publish_release::Publis
         environment: "files".into(),
         packages: vec![wamn_catalog::PackageCoordinate::new(
             "file_fixture",
-            "0.1.0",
+            "0.1.0".parse()?,
         )?],
     })
 }

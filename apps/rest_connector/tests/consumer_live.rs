@@ -370,7 +370,12 @@ pub async fn install(
     .await
     .map(drop)?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::platform_principals_sql("example.test")?).to_string(),
+        (&wamn_control_provision::platform_principals_sql(
+            &"example.test"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        ))
+            .to_string(),
     ))
     .execute(&mut *admin)
     .await

@@ -27,6 +27,8 @@ pub mod registry_transport;
 pub mod release_manifest_artifact;
 pub mod release_manifest_source;
 mod repository;
+pub mod tag;
+use tag::OciTag;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -54,10 +56,14 @@ pub const PACKAGE_ARTIFACT_TYPE: &str = "application/vnd.wamn.package.v2";
 pub const CREATED_ANNOTATION: &str = "org.opencontainers.image.created";
 
 /// Whether a coordinate ends with the development content digest suffix.
-pub fn is_dev_tag(tag: &str) -> bool {
-    tag.rsplit_once("-dev.h").is_some_and(|(prefix, hex)| {
-        !prefix.is_empty() && hex.len() == 12 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
-    })
+pub fn is_dev_tag(tag: &OciTag) -> bool {
+    tag.as_str()
+        .rsplit_once("-dev.h")
+        .is_some_and(|(prefix, hex)| {
+            !prefix.is_empty()
+                && hex.len() == 12
+                && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
 }
 
 /// Media type of a component descriptor layer.
@@ -140,7 +146,7 @@ pub struct PackageRegistry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoPackageArtifact {
     pub package_id: String,
-    pub version: String,
+    pub version: wamn_catalog::package_version::PackageVersion,
 }
 
 impl std::fmt::Display for NoPackageArtifact {
@@ -181,25 +187,6 @@ pub struct PulledPackage {
     pub annotations: BTreeMap<String, String>,
 }
 
-/// Refuse a tag that the OCI distribution grammar does not admit.
-///
-/// # Errors
-///
-/// When `tag` is not an OCI tag.
-pub fn ensure_tag(tag: &str) -> anyhow::Result<()> {
-    let bytes = tag.as_bytes();
-    ensure!(
-        !bytes.is_empty()
-            && bytes.len() <= 128
-            && (bytes[0].is_ascii_alphanumeric() || bytes[0] == b'_')
-            && bytes
-                .iter()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')),
-        "package tag {tag:?} is not an OCI tag"
-    );
-    Ok(())
-}
-
 /// Whether `error` says the artifact does not exist.
 pub fn artifact_is_absent(error: &OciDistributionError) -> bool {
     match error {
@@ -233,30 +220,12 @@ pub fn registry_auth(credentials: Option<&RegistryCredentials>) -> RegistryAuth 
 /// A tag or a parsed immutable artifact identity.
 #[derive(Debug, Clone, Copy)]
 pub enum ArtifactReference<'a> {
-    Tag(&'a str),
+    Tag(&'a OciTag),
     Digest(wamn_digest::Digest),
 }
 
-impl<'a> ArtifactReference<'a> {
-    /// Read a full digest or an OCI tag at an input boundary.
-    pub fn parse(value: &'a str) -> anyhow::Result<Self> {
-        if value.starts_with("sha256:") {
-            Ok(Self::Digest(value.parse()?))
-        } else {
-            ensure_tag(value)?;
-            Ok(Self::Tag(value))
-        }
-    }
-}
-
-impl<'a> From<&'a str> for ArtifactReference<'a> {
-    fn from(tag: &'a str) -> Self {
-        Self::Tag(tag)
-    }
-}
-
-impl<'a> From<&'a String> for ArtifactReference<'a> {
-    fn from(tag: &'a String) -> Self {
+impl<'a> From<&'a OciTag> for ArtifactReference<'a> {
+    fn from(tag: &'a OciTag) -> Self {
         Self::Tag(tag)
     }
 }
@@ -328,14 +297,11 @@ impl Repository {
                 base.repository().to_owned(),
                 digest.to_string(),
             ),
-            ArtifactReference::Tag(tag) => {
-                ensure_tag(tag)?;
-                Reference::with_tag(
-                    base.registry().to_owned(),
-                    base.repository().to_owned(),
-                    tag.to_owned(),
-                )
-            }
+            ArtifactReference::Tag(tag) => Reference::with_tag(
+                base.registry().to_owned(),
+                base.repository().to_owned(),
+                tag.to_string(),
+            ),
         };
         let source = RegistrySource::new(base, registry.insecure_registry, REGISTRY_IO_TIMEOUT)
             .with_ca_bundles(ca_bundles);
@@ -470,19 +436,22 @@ impl Repository {
 pub async fn pull_package(
     registry: &PackageRegistry,
     package_id: &str,
-    version: &str,
+    version: &wamn_catalog::package_version::PackageVersion,
 ) -> anyhow::Result<(wamn_digest::Digest, Vec<PackedLayer>)> {
-    Repository::open(registry, &format!("{package_id}-{version}"))?
-        .pull()
-        .await?
-        .map(|package| (package.digest, package.layers))
-        .ok_or_else(|| {
-            NoPackageArtifact {
-                package_id: package_id.to_owned(),
-                version: version.to_owned(),
-            }
-            .into()
-        })
+    Repository::open(
+        registry,
+        &format!("{package_id}-{version}").parse::<OciTag>()?,
+    )?
+    .pull()
+    .await?
+    .map(|package| (package.digest, package.layers))
+    .ok_or_else(|| {
+        NoPackageArtifact {
+            package_id: package_id.to_owned(),
+            version: version.clone(),
+        }
+        .into()
+    })
 }
 
 /// Parse one descriptor layer. Its bytes must be the canonical JSON of the
@@ -515,7 +484,7 @@ pub fn parse_descriptor(bytes: &[u8]) -> anyhow::Result<ComponentDescriptor> {
 pub async fn read_descriptors(
     registry: &PackageRegistry,
     package_id: &str,
-    version: &str,
+    version: &wamn_catalog::package_version::PackageVersion,
 ) -> anyhow::Result<Vec<ComponentDescriptor>> {
     let (_, layers) = pull_package(registry, package_id, version).await?;
     let mut descriptors = layers
@@ -587,18 +556,10 @@ mod tests {
     }
 
     #[test]
-    fn a_tag_follows_the_oci_grammar() {
-        assert!(ensure_tag("wamn_wms-2.1.0").is_ok());
-        assert!(ensure_tag("").is_err());
-        assert!(ensure_tag("-leading").is_err());
-        assert!(ensure_tag("has/slash").is_err());
-    }
-
-    #[test]
     fn the_refusal_is_found_through_context() {
         let error = anyhow::Error::new(NoPackageArtifact {
             package_id: "orders".to_owned(),
-            version: "1.0.0".to_owned(),
+            version: "1.0.0".parse().unwrap(),
         })
         .context("open the package");
         let found = NoPackageArtifact::find(&error).expect("the refusal is in the chain");

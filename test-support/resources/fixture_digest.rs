@@ -72,7 +72,8 @@ pub fn write_build_record(root: &Path) {
             version: manifest["package"]["version"]
                 .as_str()
                 .expect("fixture package version")
-                .to_owned(),
+                .parse()
+                .expect("valid fixture package version"),
         },
 
         dependencies: Vec::new(),

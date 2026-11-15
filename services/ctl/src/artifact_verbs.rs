@@ -76,13 +76,17 @@ pub async fn diff(args: DiffArgs) -> anyhow::Result<()> {
 
 /// Layer 0 of the package artifact whose full digest or tag is `package`.
 async fn layer_zero(registry: &PackageRegistry, package: &str) -> anyhow::Result<Vec<u8>> {
-    let artifact = Repository::open(
-        registry,
-        wamn_package_artifact::ArtifactReference::parse(package)?,
-    )?
-    .pull()
-    .await?
-    .with_context(|| format!("package artifact {package} does not exist in the registry"))?;
+    let tag;
+    let reference = if package.starts_with("sha256:") {
+        wamn_package_artifact::ArtifactReference::Digest(package.parse()?)
+    } else {
+        tag = package.parse::<wamn_package_artifact::tag::OciTag>()?;
+        wamn_package_artifact::ArtifactReference::Tag(&tag)
+    };
+    let artifact = Repository::open(registry, reference)?
+        .pull()
+        .await?
+        .with_context(|| format!("package artifact {package} does not exist in the registry"))?;
 
     let first = artifact
         .layers

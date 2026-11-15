@@ -24,7 +24,9 @@ pub fn palette_target(project_env_key: &str) -> ComponentPackageCoordinate {
     ComponentPackageCoordinate {
         project_env_key: project_env_key.to_owned(),
         package_id: PALETTE_PACKAGE_ID.to_owned(),
-        package_version: PALETTE_PACKAGE_VERSION.to_owned(),
+        package_version: PALETTE_PACKAGE_VERSION
+            .parse()
+            .expect("fixed palette package version"),
     }
 }
 

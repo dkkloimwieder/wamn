@@ -33,7 +33,11 @@ async fn claimed_requests_stop_at_the_invocation_deadline_or_cancellation() {
             .unwrap();
         let mut transaction = observer.begin().await.unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::platform_principals_sql("platform.example.test").unwrap(),
+            wamn_control_provision::platform_principals_sql(
+                &"platform.example.test"
+                    .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                    .unwrap(),
+            ),
         ))
         .execute(&mut *transaction)
         .await

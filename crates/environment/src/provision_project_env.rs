@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::{
     APP_ROLE, INSTANCE_SUFFIX_LEN, project_env_database_name, project_env_namespace,
-    project_env_secret_name, sql, validate_instance_suffix, validate_project_env,
+    project_env_secret_name, sql, validate_project_env,
 };
 use wamn_control_provision::{Org, Placement, cluster_of};
 use wamn_platform_identity::{
@@ -45,9 +45,7 @@ pub use output::{
     secret_annotation, secret_value, write_secret_json,
 };
 pub(crate) use pat_secrets::resolve_or_create_service;
-pub use pat_secrets::{
-    IssuedPatSecret, mint_management_author_pat, parse_pat_prefix, revoke_provisioning_pat,
-};
+pub use pat_secrets::{IssuedPatSecret, mint_management_author_pat, revoke_provisioning_pat};
 pub use registry::{
     read_project_env_instance, read_project_env_policy, require_connected, resolve_cluster,
 };
@@ -146,7 +144,7 @@ pub struct ProvisionProjectEnvRequest {
 pub struct ProvisionProjectEnvOutcome {
     pub triple: Triple,
     /// The environment's stored instance suffix.
-    pub instance: String,
+    pub instance: wamn_registry::instance_suffix::InstanceSuffix,
     pub database: String,
     pub cluster: String,
     /// The environment namespace the stored instance suffix names.

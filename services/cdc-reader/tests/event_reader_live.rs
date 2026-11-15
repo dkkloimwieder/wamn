@@ -279,7 +279,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .url()
         .to_owned();
 
-    let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
+    let cdc_name = cdc_object_name(ORG, PROJECT, ENV, &INSTANCE.parse().unwrap());
     let stream_name = wamn_event_wire::stream_name(ORG, PROJECT, ENV);
 
     // --- hermetic preamble (the M2 lesson: leftovers mask mutations) --------

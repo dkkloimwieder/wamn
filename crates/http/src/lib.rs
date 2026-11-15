@@ -1345,10 +1345,10 @@ mod tests {
         unrelated.package_id = "package_b".to_string();
         unrelated.descriptor.component = "unrelated".to_string();
         unrelated.descriptor.component_digest = digest('e');
-        manifest
-            .release
-            .packages
-            .insert(PackageCoordinate::new("package_b", "1.0.0").expect("unrelated package"));
+        manifest.release.packages.insert(
+            PackageCoordinate::new("package_b", "1.0.0".parse().unwrap())
+                .expect("unrelated package"),
+        );
         invocation.package_id.clone_from(&unrelated.package_id);
         invocation
             .component

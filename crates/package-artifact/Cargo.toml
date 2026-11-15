@@ -6,9 +6,12 @@ edition.workspace = true
 license.workspace = true
 
 [features]
+sqlx = ["dep:sqlx"]
 test-util = ["tokio/io-util", "tokio/net", "tokio/rt"]
 
 [dependencies]
+sqlx = { workspace = true, optional = true, features = ["postgres"] }
+wamn-registry.workspace = true
 wamn-kubernetes.workspace = true
 tower-service.workspace = true
 http-auth = { version = "0.1.10", default-features = false }

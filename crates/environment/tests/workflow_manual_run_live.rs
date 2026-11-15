@@ -303,7 +303,12 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
         .bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id())
         .execute(&mut admin).await.unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::platform_principals_sql("manual.invalid").unwrap()).to_string(),
+        (&wamn_control_provision::platform_principals_sql(
+            &"manual.invalid"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        ))
+            .to_string(),
     ))
     .execute(&mut admin)
     .await

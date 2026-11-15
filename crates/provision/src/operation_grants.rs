@@ -111,7 +111,8 @@ impl StdError for OperationGrantError {
 /// identity.
 pub fn operation_grant_tokens(
     manifest_bytes: &[u8],
-) -> Result<BTreeSet<String>, OperationGrantError> {
+) -> Result<BTreeSet<wamn_catalog::registered_operation::RegisteredOperation>, OperationGrantError>
+{
     let manifest = PackageManifest::from_slice(manifest_bytes).map_err(|source| {
         OperationGrantError::with_source(
             OperationGrantErrorType::InvalidManifest,
@@ -205,7 +206,11 @@ mod tests {
             .unwrap()
             .iter()
             .filter(|(_, operation)| operation["visibility"] == "public")
-            .map(|(name, _)| format!("grant-fixture:{name}").replace('.', "/") + "@1.0.0")
+            .map(|(name, _)| {
+                (format!("grant-fixture:{name}").replace('.', "/") + "@1.0.0")
+                    .parse()
+                    .unwrap()
+            })
             .collect();
         let bytes = serde_json::to_vec(&manifest).expect("serialize owned manifest");
         assert_eq!(
@@ -228,7 +233,7 @@ mod tests {
         assert_eq!(
             operation_grant_tokens(&bytes).expect("private operation remains valid"),
             ["grant-fixture:widget/archive@1.0.0"]
-                .map(str::to_owned)
+                .map(|value| value.parse().unwrap())
                 .into_iter()
                 .collect()
         );

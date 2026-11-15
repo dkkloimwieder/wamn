@@ -13,14 +13,14 @@ pub struct IntegrationArgs {
 enum IntegrationCommand {
     /// Build a local integration artifact.
     Build {
-        code: String,
+        code: wamn_registry::integration_code::IntegrationCode,
         /// Repository that contains integrations/<code>.
         #[arg(long, default_value = ".")]
         repository: PathBuf,
     },
     /// Build, push by digest, and record an integration version.
     Publish {
-        code: String,
+        code: wamn_registry::integration_code::IntegrationCode,
         /// Repository that contains integrations/<code>.
         #[arg(long, default_value = ".")]
         repository: PathBuf,

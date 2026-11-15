@@ -34,13 +34,10 @@ pub use name::{
     MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, control_administration_key,
     control_administration_secret_name, org_workload_secret_name, project_env_cdc_secret_name,
     project_env_database_name, project_env_guest_secret_name, project_env_key,
-    project_env_namespace, project_env_secret_name, validate_instance_suffix, validate_project_env,
-    validate_project_env_cdc, validate_project_id, workload_secret_name,
+    project_env_namespace, project_env_secret_name, validate_project_env, validate_project_env_cdc,
+    validate_project_id, workload_secret_name,
 };
-pub use platform_principals::{
-    PlatformDomainError, bind_platform_principal_sql, platform_principals_sql,
-    validate_platform_domain,
-};
+pub use platform_principals::{bind_platform_principal_sql, platform_principals_sql};
 pub use readers::{SystemReader, system_reader_identity_hash, system_reader_login};
 /// The platform component list, for callers that bind a component as the actor.
 pub use wamn_identity_protocol::PlatformComponent;

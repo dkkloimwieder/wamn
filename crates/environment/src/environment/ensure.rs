@@ -943,7 +943,7 @@ async fn enable_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
     schemas: &[String],
-    instance: &str,
+    instance: &wamn_registry::instance_suffix::InstanceSuffix,
 ) -> anyhow::Result<()> {
     platform.events.as_ref().context(
         "the environment captures application models and has no event broker; \

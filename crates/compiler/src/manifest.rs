@@ -9,6 +9,7 @@ use wamn_record_history::{
 };
 
 use crate::manifest_error::{ManifestError, ManifestErrorType};
+use wamn_catalog::local_operation::LocalOperation;
 
 pub use wamn_catalog::manifest::CONTROL_OWNED_RELATION_TABLES;
 
@@ -39,7 +40,7 @@ pub struct PackageManifest {
     #[serde(default)]
     pub internal_relations: BTreeMap<String, InternalRelationDeclaration>,
     #[serde(default)]
-    pub custom_operations: BTreeMap<String, CustomOperationDeclaration>,
+    pub custom_operations: BTreeMap<LocalOperation, CustomOperationDeclaration>,
     pub connections: BTreeMap<String, ConnectionDeclaration>,
     pub components: BTreeMap<String, ComponentDeclaration>,
     /// The route entries generation writes for the generated operations.
@@ -47,7 +48,7 @@ pub struct PackageManifest {
     pub routes: RoutesDeclaration,
     /// Build facts. Authored documents cannot state this member.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub compiled_operations: BTreeMap<String, crate::OperationDescription>,
+    pub compiled_operations: BTreeMap<LocalOperation, crate::OperationDescription>,
 }
 
 /// An external connection required by a package, without deployment values.
@@ -108,7 +109,7 @@ pub struct CustomOperationDeclaration {
     pub type_: CustomOperationType,
     pub visibility: OperationVisibility,
     #[serde(default)]
-    pub permission: Option<String>,
+    pub permission: Option<LocalOperation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -169,8 +170,8 @@ impl CustomOperationDeclaration {
     }
 
     /// Exact public permission, absent for a private operation.
-    pub fn permission(&self) -> Option<&str> {
-        self.permission.as_deref()
+    pub fn permission(&self) -> Option<&LocalOperation> {
+        self.permission.as_ref()
     }
 
     /// Optional package-local component group; omission selects the sole group.
@@ -581,7 +582,7 @@ impl PackageManifest {
 
     /// The local names of the operations whose request element transaction the host
     /// begins: generated writes, commands with explicit transactions, and SQL event handlers.
-    pub fn host_transaction_operations(&self) -> BTreeSet<String> {
+    pub fn host_transaction_operations(&self) -> Result<BTreeSet<LocalOperation>, ManifestError> {
         self.models
             .iter()
             .flat_map(|(model, declaration)| {
@@ -589,7 +590,9 @@ impl PackageManifest {
                     .operations
                     .keys()
                     .filter(|action| action.changes_records())
-                    .map(move |action| format!("{model}.{}", action.as_str()))
+                    .map(move |action| {
+                        LocalOperation::try_from(format!("{model}.{}", action.as_str()))
+                    })
             })
             .chain(
                 self.custom_operations
@@ -599,9 +602,10 @@ impl PackageManifest {
                             || (operation.type_ == CustomOperationType::EventHandler
                                 && !operation.statements.is_empty())
                     })
-                    .map(|(name, _)| name.clone()),
+                    .map(|(name, _)| Ok(name.clone())),
             )
-            .collect()
+            .collect::<Result<_, _>>()
+            .map_err(ManifestError::from)
     }
 
     /// Decode a compiled document. Authored input is checked by `from_authored_slice`.
@@ -721,9 +725,6 @@ impl PackageManifest {
         }
 
         validate_operation_vocabulary(manifest)?;
-        if let Some(client) = &manifest.client_package {
-            validate_client_package_name(&manifest.package.id, &client.name)?;
-        }
         for (name, operation) in &manifest.custom_operations {
             validate_count_text(name, operation)?;
             validate_lists(manifest, name, operation)?;
@@ -754,17 +755,17 @@ impl PackageManifest {
     }
 
     /// Package-local operation identities, without repeating document checks.
-    pub fn operation_identities(&self) -> BTreeSet<String> {
+    pub fn operation_identities(&self) -> Result<BTreeSet<LocalOperation>, ManifestError> {
         self.models
             .iter()
             .flat_map(|(name, model)| {
-                model
-                    .operations
-                    .keys()
-                    .map(move |action| format!("{name}.{}", action.as_str()))
+                model.operations.keys().map(move |action| {
+                    LocalOperation::try_from(format!("{name}.{}", action.as_str()))
+                })
             })
-            .chain(self.custom_operations.keys().cloned())
-            .collect()
+            .chain(self.custom_operations.keys().cloned().map(Ok))
+            .collect::<Result<_, _>>()
+            .map_err(ManifestError::from)
     }
 
     /// Resolve the host connections declared by one component.
@@ -855,7 +856,7 @@ impl PackageManifest {
 /// identical component groups refuse.
 pub fn validate_operation_vocabulary(
     manifest: &PackageManifest,
-) -> Result<BTreeSet<String>, ManifestError> {
+) -> Result<BTreeSet<LocalOperation>, ManifestError> {
     validate_package_identity(&manifest.package)?;
     validate_base_dependencies(manifest)?;
     validate_internal_relation_vocabulary(manifest)?;
@@ -870,7 +871,7 @@ pub fn validate_operation_vocabulary(
         validate_delete_mode(manifest, model_name, model)?;
         artifact_owners.insert(model_name.clone(), format!("model {model_name}"));
         for (action, operation) in &model.operations {
-            let identity = format!("{model_name}.{}", action.as_str());
+            let identity = LocalOperation::try_from(format!("{model_name}.{}", action.as_str()))?;
             if operation.permission != identity {
                 return Err(ManifestError::new(
                     ManifestErrorType::InvalidOperation,
@@ -889,7 +890,6 @@ pub fn validate_operation_vocabulary(
         }
     }
     for (operation_name, operation) in &manifest.custom_operations {
-        validate_operation_identity(operation_name)?;
         let artifact = custom_artifact_stem(operation_name);
         if let Some(existing) = artifact_owners.insert(
             artifact.clone(),
@@ -1154,7 +1154,7 @@ fn validate_routes(routes: &RoutesDeclaration) -> Result<(), ManifestError> {
 
 fn validate_component_groups(
     manifest: &PackageManifest,
-    component_by_operation: &BTreeMap<String, Option<&str>>,
+    component_by_operation: &BTreeMap<LocalOperation, Option<&str>>,
 ) -> Result<(), ManifestError> {
     if manifest.components.is_empty() {
         return Err(ManifestError::new(
@@ -1231,7 +1231,7 @@ fn validate_component_groups(
 
 fn validate_custom_operation(
     manifest: &PackageManifest,
-    operation_name: &str,
+    operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
     if operation.feed == Some(true)
@@ -1295,7 +1295,7 @@ fn validate_custom_operation(
 }
 
 fn validate_signed_reads(
-    operation: &str,
+    operation: &LocalOperation,
     visibility: OperationVisibility,
     result: &CustomOperationResultDeclaration,
 ) -> Result<(), ManifestError> {
@@ -1318,7 +1318,7 @@ fn validate_signed_reads(
 
 fn custom_operation_uses_sql(
     manifest: &PackageManifest,
-    name: &str,
+    name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> bool {
     operation.connection.is_some()
@@ -1334,7 +1334,7 @@ fn custom_operation_uses_sql(
 
 fn validate_custom_operation_type(
     manifest: &PackageManifest,
-    operation_name: &str,
+    operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
     match operation.type_ {
@@ -1447,7 +1447,7 @@ const EXPECTED_REVISION_FIELD: &str = "expected_row_version";
 /// here is inferred from the operation's other declarations. An inference is
 /// what let a pilot command ship with no idempotence and no test.
 fn validate_command_idempotence(
-    operation_name: &str,
+    operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
     let Some(idempotent_by) = &operation.idempotent_by else {
@@ -1505,7 +1505,7 @@ fn validate_command_idempotence(
 /// field is one its input already takes. Both are named here, so the emitted
 /// test says which row the guard protects instead of implying it.
 fn validate_state_guards(
-    operation_name: &str,
+    operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
     state: &StateGuardDeclaration,
 ) -> Result<(), ManifestError> {
@@ -1553,7 +1553,7 @@ fn validate_state_guards(
 /// A command that is idempotent by state owns no claim in the write log, so a
 /// repeat would insert its row again. It therefore inserts no row of its own.
 fn refuse_minted_identity(
-    operation_name: &str,
+    operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
     declared: &str,
 ) -> Result<(), ManifestError> {
@@ -1574,7 +1574,7 @@ fn refuse_minted_identity(
 }
 
 fn refuse_command_only_fields(
-    operation_name: &str,
+    operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
     if operation.transaction.is_some()
@@ -1591,7 +1591,7 @@ fn refuse_command_only_fields(
 }
 
 fn validate_custom_operation_input(
-    operation_name: &str,
+    operation_name: &LocalOperation,
     input: &CustomOperationInputDeclaration,
 ) -> Result<(), ManifestError> {
     // An input may be empty: a read whose only member was its request
@@ -1628,7 +1628,7 @@ fn validate_custom_operation_input(
 }
 
 fn validate_contract_fields(
-    operation_name: &str,
+    operation_name: &LocalOperation,
     contract: &str,
     fields: &[ContractFieldDeclaration],
 ) -> Result<(), ManifestError> {
@@ -1695,7 +1695,10 @@ fn validate_contract_fields(
     Ok(())
 }
 
-fn validate_contract_path(path: &str, operation_name: &str) -> Result<(), ManifestError> {
+fn validate_contract_path(
+    path: &str,
+    operation_name: &LocalOperation,
+) -> Result<(), ManifestError> {
     let valid = !path.is_empty()
         && path.split('.').all(|segment| {
             let name = segment.strip_suffix("[]").unwrap_or(segment);
@@ -1711,7 +1714,7 @@ fn validate_contract_path(path: &str, operation_name: &str) -> Result<(), Manife
     }
 }
 fn validate_custom_operation_errors(
-    operation_name: &str,
+    operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
     let errors = operation
@@ -1867,7 +1870,7 @@ fn shared_custom_error_detail(
 }
 
 fn validate_unconstrained_detail_keys(
-    operation: &str,
+    operation: &LocalOperation,
     code: &str,
     detail: &OperationErrorDetailDeclaration,
 ) -> Result<(), ManifestError> {
@@ -1888,7 +1891,7 @@ fn validate_unconstrained_detail_keys(
 
 fn validate_static_sql_declarations(
     manifest: &PackageManifest,
-    operation_name: &str,
+    operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
     let has_connection = operation.connection.is_some();
@@ -2050,7 +2053,7 @@ fn validate_static_sql_declarations(
 }
 
 fn validate_named_values(
-    operation: &str,
+    operation: &LocalOperation,
     type_: &str,
     values: &[String],
 ) -> Result<(), ManifestError> {
@@ -2068,7 +2071,7 @@ fn validate_named_values(
 }
 
 fn validate_static_sql_values(
-    operation: &str,
+    operation: &LocalOperation,
     statement: &str,
     type_: &str,
     values: &[StaticSqlValueDeclaration],
@@ -2126,7 +2129,7 @@ pub fn access_operation_error_detail(
 }
 
 fn validate_detail_keys(
-    operation: &str,
+    operation: &LocalOperation,
     code: &str,
     detail: &OperationErrorDetailDeclaration,
     required: &[OperationErrorDetailKey],
@@ -2152,19 +2155,11 @@ fn validate_detail_keys(
 /// Construct the one canonical package-qualified identity for a local operation.
 pub fn canonical_operation_identity(
     package: &PackageIdentity,
-    local_operation: &str,
-) -> Result<String, ManifestError> {
-    validate_operation_identity(local_operation)?;
-    let (module, operation) = local_operation
-        .split_once('.')
-        .expect("validated operation identity has one separator");
+    local_operation: &LocalOperation,
+) -> Result<wamn_catalog::registered_operation::RegisteredOperation, ManifestError> {
     validate_package_identity(package)?;
-    Ok(wamn_catalog::operation_token(
-        &package.id,
-        &package.version,
-        module,
-        operation,
-    ))
+    wamn_catalog::operation_token(&package.id, &package.version, local_operation)
+        .map_err(|error| ManifestError::new(ManifestErrorType::InvalidIdentity, error.to_string()))
 }
 
 /// Construct the native extern-name prefix owned by one package.
@@ -2185,7 +2180,7 @@ pub use wamn_catalog::sealed_operation_reference;
 pub fn resolve_operation_reference(
     owners: &OperationOwners,
     reference: &str,
-) -> Result<String, ManifestError> {
+) -> Result<wamn_catalog::registered_operation::RegisteredOperation, ManifestError> {
     let refuse = |reason: &str| {
         ManifestError::new(
             ManifestErrorType::InvalidIdentity,
@@ -2221,9 +2216,14 @@ pub fn resolve_operation_reference(
         interface.replace('-', "_"),
         operation.replace('-', "_")
     );
-    let sealed = canonical_operation_identity(&package, &local)
-        .map_err(|_| refuse("must be <package>:<interface>/<operation>"))?;
-    if sealed != format!("{reference}@{}", package.version) {
+    let sealed = canonical_operation_identity(
+        &package,
+        &local
+            .parse()
+            .map_err(|_| refuse("must be <package>:<interface>/<operation>"))?,
+    )
+    .map_err(|_| refuse("must be <package>:<interface>/<operation>"))?;
+    if sealed.as_str() != format!("{reference}@{}", package.version) {
         return Err(refuse("must be <package>:<interface>/<operation>"));
     }
     Ok(sealed)
@@ -2240,20 +2240,12 @@ fn validate_package_identity(package: &PackageIdentity) -> Result<(), ManifestEr
     validate_package_coordinate(&package.id, &package.version)
 }
 
-fn validate_package_coordinate(package: &str, version: &str) -> Result<(), ManifestError> {
+fn validate_package_coordinate(
+    package: &str,
+    _version: &wamn_catalog::package_version::PackageVersion,
+) -> Result<(), ManifestError> {
     validate_identifier(package, "package id")?;
-    if version.is_empty()
-        || version.trim() != version
-        || version.as_bytes().contains(&0)
-        || version.contains('@')
-        || version.contains(':')
-        || version.contains('/')
-    {
-        return Err(ManifestError::new(
-            ManifestErrorType::InvalidIdentity,
-            "package version must be canonical text without native operation-token separators",
-        ));
-    }
+
     Ok(())
 }
 
@@ -2277,7 +2269,7 @@ fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), Manifest
                 ),
             ));
         }
-        if requirement.version.bytes().any(|byte| {
+        if requirement.version.as_str().bytes().any(|byte| {
             byte.is_ascii_whitespace()
                 || matches!(byte, b'*' | b'^' | b'~' | b'<' | b'>' | b'=' | b',' | b'|')
         }) {
@@ -2294,7 +2286,6 @@ fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), Manifest
         }
         let mut operations = BTreeSet::new();
         for operation in &requirement.operations {
-            validate_operation_identity(operation)?;
             if !operations.insert(operation) {
                 return Err(ManifestError::new(
                     ManifestErrorType::InvalidOperation,
@@ -2304,23 +2295,6 @@ fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), Manifest
         }
     }
     Ok(())
-}
-
-fn validate_operation_identity(value: &str) -> Result<(), ManifestError> {
-    let Some((module, operation)) = value.split_once('.') else {
-        return Err(ManifestError::new(
-            ManifestErrorType::InvalidIdentity,
-            format!("operation `{value}` must have canonical module.operation form"),
-        ));
-    };
-    if operation.contains('.') {
-        return Err(ManifestError::new(
-            ManifestErrorType::InvalidIdentity,
-            format!("operation `{value}` must contain exactly one module separator"),
-        ));
-    }
-    validate_identifier(module, "operation module")?;
-    validate_identifier(operation, "operation name")
 }
 
 pub fn validate_identifier(value: &str, object: &str) -> Result<(), ManifestError> {
@@ -2459,7 +2433,7 @@ mod tests {
 #[serde(deny_unknown_fields)]
 pub struct PackageIdentity {
     pub id: String,
-    pub version: String,
+    pub version: wamn_catalog::package_version::PackageVersion,
 }
 
 /// The package name of the generated TypeScript client.
@@ -2471,7 +2445,7 @@ pub struct PackageIdentity {
 #[serde(deny_unknown_fields)]
 pub struct ClientPackage {
     /// The package name, optionally targeted.
-    pub name: String,
+    pub name: wamn_catalog::client_package_name::ClientPackageName,
 }
 
 /// The part of `wamn.json` that owns the version of each operation reference:
@@ -2513,9 +2487,9 @@ impl PackageManifest {
 #[serde(deny_unknown_fields)]
 pub struct BaseDependencyRequirement {
     pub package: String,
-    pub version: String,
+    pub version: wamn_catalog::package_version::PackageVersion,
     pub digest: wamn_digest::Digest,
-    pub operations: Vec<String>,
+    pub operations: Vec<LocalOperation>,
 }
 
 /// Platform policy contract required before package promotion.
@@ -2769,7 +2743,7 @@ pub struct OperationDeclaration {
     /// Whether a refusal leaves later entries for the row free to proceed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub append_only: bool,
-    pub permission: String,
+    pub permission: LocalOperation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component: Option<String>,
     #[serde(default)]
@@ -2941,7 +2915,7 @@ pub enum CursorDirection {
 pub struct RoutesDeclaration {
     /// Authored HTTP exposure for custom operations, keyed by local operation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub operations: BTreeMap<String, HttpExposure>,
+    pub operations: BTreeMap<LocalOperation, HttpExposure>,
     /// The authentication modes of each route. Absent means `pat` and `session`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_modes: Option<Vec<String>>,
@@ -2982,8 +2956,8 @@ pub struct ComponentDeclaration {
     pub parameters: BTreeMap<String, Vec<wamn_catalog::ComponentParameterDeclaration>>,
 }
 
-pub fn custom_artifact_stem(operation: &str) -> String {
-    operation.replace('.', "_")
+pub fn custom_artifact_stem(operation: &LocalOperation) -> String {
+    operation.as_str().replace('.', "_")
 }
 
 pub fn rust_type_identifier(value: &str) -> String {
@@ -2999,53 +2973,12 @@ pub fn rust_type_identifier(value: &str) -> String {
         .collect()
 }
 
-/// Refuse a client package name that a package manifest cannot carry.
-///
-/// The rule is npm's own: at most 214 characters, lowercase, one optional
-/// `@scope/` prefix, and each segment starting with a letter or a digit.
-fn validate_client_package_name(package: &str, name: &str) -> Result<(), ManifestError> {
-    let refuse = |reason: &str| {
-        Err(ManifestError::new(
-            ManifestErrorType::InvalidClientPackage,
-            format!("{package} declares client package name {name:?}: {reason}"),
-        ))
-    };
-    if name.is_empty() {
-        return refuse("the name must not be empty");
-    }
-    if name.len() > 214 {
-        return refuse("the name must be 214 characters or fewer");
-    }
-    let segments = match name.strip_prefix('@') {
-        Some(scoped) => match scoped.split_once('/') {
-            Some((scope, package)) => vec![scope, package],
-            None => return refuse("a scoped name needs a scope and a package, as @scope/name"),
-        },
-        None => vec![name],
-    };
-    for segment in segments {
-        if !segment
-            .bytes()
-            .next()
-            .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
-        {
-            return refuse("each part must start with a lowercase letter or a digit");
-        }
-        if !segment.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'.' | b'_')
-        }) {
-            return refuse("each part admits only lowercase letters, digits, and - . _");
-        }
-    }
-    Ok(())
-}
-
 /// Refuse screen text on the envelope bound, which has no screen.
 ///
 /// The `line` bound owns the repeated group a form renders. The envelope is
 /// the submission itself, and a label on it would be a member nothing reads.
 fn validate_count_text(
-    operation_name: &str,
+    operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
     let Some(envelope) = &operation.input.envelope else {
@@ -3111,7 +3044,7 @@ impl From<&ModelDeclaration> for wamn_catalog::manifest::ModelDeclaration {
 /// because the same row moves when the list changes.
 fn validate_lists(
     manifest: &PackageManifest,
-    operation_name: &str,
+    operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
     let refuse = |message: String| {

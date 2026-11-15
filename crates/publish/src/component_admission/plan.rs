@@ -3,6 +3,7 @@ use super::{
     ComponentConnectionType, ComponentProjectionError, ComponentProjectionErrorType,
     ConnectionTypeDescriptor, ExpectedOperationContract,
 };
+use wamn_catalog::registered_operation::RegisteredOperation;
 
 /// Bind result signing only from the package's verified typed result fields.
 pub(super) fn bind_signed_file_results(
@@ -28,7 +29,7 @@ pub(super) fn bind_signed_file_results(
                 let canonical =
                     wamn_compiler::manifest::canonical_operation_identity(&manifest.package, name)
                         .ok()?;
-                (canonical == *export)
+                (canonical.as_str() == export)
                     .then_some(declaration.result.as_ref())
                     .flatten()
             });
@@ -108,10 +109,15 @@ pub fn portable_requirement(
 /// the package manifest declares them.
 pub(super) fn host_transaction_exports(
     manifest: &wamn_compiler::manifest::PackageManifest,
-    selected: &BTreeSet<String>,
-) -> Result<BTreeSet<String>, ComponentProjectionError> {
+    selected: &BTreeSet<RegisteredOperation>,
+) -> Result<BTreeSet<RegisteredOperation>, ComponentProjectionError> {
     let mut exports = BTreeSet::new();
-    for local_operation in manifest.host_transaction_operations() {
+    for local_operation in manifest.host_transaction_operations().map_err(|error| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorType::StatementOperationMismatch,
+            error.to_string(),
+        )
+    })? {
         let operation = wamn_compiler::manifest::canonical_operation_identity(
             &manifest.package,
             &local_operation,
@@ -152,8 +158,8 @@ pub(super) fn host_transaction_exports(
 pub(super) fn validate_component_operation_assignment(
     manifest: &wamn_compiler::manifest::PackageManifest,
     component: &AdmittedComponent,
-    expected: &BTreeMap<String, ExpectedOperationContract>,
-) -> Result<BTreeSet<String>, ComponentProjectionError> {
+    expected: &BTreeMap<RegisteredOperation, ExpectedOperationContract>,
+) -> Result<BTreeSet<RegisteredOperation>, ComponentProjectionError> {
     if !manifest.components.contains_key(&component.component) {
         let registered = component
             .operations
@@ -161,7 +167,7 @@ pub(super) fn validate_component_operation_assignment(
             .filter_map(|(export, declared)| {
                 declared
                     .registered_operation
-                    .as_deref()
+                    .as_ref()
                     .map(|registered| format!("{export} -> {registered}"))
             })
             .collect::<Vec<_>>();
@@ -181,7 +187,7 @@ pub(super) fn validate_component_operation_assignment(
         .keys()
         .filter(|export| {
             expected
-                .get(*export)
+                .get(export.as_str())
                 .is_some_and(|operation| operation.component != component.component)
         })
         .collect::<Vec<_>>();
@@ -200,13 +206,9 @@ pub(super) fn validate_component_operation_assignment(
         .filter(|(_, operation)| operation.component == component.component)
         .map(|(operation, _)| operation.clone())
         .collect::<BTreeSet<_>>();
-    let exported_operations = component
-        .operations
-        .keys()
-        .cloned()
-        .collect::<BTreeSet<_>>();
     let missing = expected_component_operations
-        .difference(&exported_operations)
+        .iter()
+        .filter(|operation| !component.operations.contains_key(operation.as_str()))
         .collect::<Vec<_>>();
     let unexpected_public = component
         .operations
@@ -215,7 +217,7 @@ pub(super) fn validate_component_operation_assignment(
             declared
                 .registered_operation
                 .as_ref()
-                .filter(|_| !expected_component_operations.contains(export))
+                .filter(|_| !expected_component_operations.contains(export.as_str()))
                 .map(|_| export)
         })
         .collect::<Vec<_>>();
@@ -229,9 +231,9 @@ pub(super) fn validate_component_operation_assignment(
         ));
     }
     for operation in &expected_component_operations {
-        let declared = &component.operations[operation];
-        let expected_registration = expected[operation].public.then_some(operation.as_str());
-        if declared.registered_operation.as_deref() != expected_registration {
+        let declared = &component.operations[operation.as_str()];
+        let expected_registration = expected[operation].public.then_some(operation);
+        if declared.registered_operation.as_ref() != expected_registration {
             return Err(ComponentProjectionError::new(
                 ComponentProjectionErrorType::StatementOperationMismatch,
                 format!(
@@ -246,7 +248,7 @@ pub(super) fn validate_component_operation_assignment(
 
 pub(super) fn expected_operation_contracts(
     manifest: &wamn_compiler::manifest::PackageManifest,
-) -> Result<BTreeMap<String, ExpectedOperationContract>, ComponentProjectionError> {
+) -> Result<BTreeMap<RegisteredOperation, ExpectedOperationContract>, ComponentProjectionError> {
     let default_component = (manifest.components.len() == 1).then(|| {
         manifest
             .components
@@ -258,7 +260,16 @@ pub(super) fn expected_operation_contracts(
     let mut expected = BTreeMap::new();
     for (model, declaration) in &manifest.models {
         for (action, operation) in &declaration.operations {
-            let local_operation = format!("{model}.{}", action.as_str());
+            let local_operation = wamn_catalog::local_operation::LocalOperation::try_from(format!(
+                "{model}.{}",
+                action.as_str()
+            ))
+            .map_err(|error| {
+                ComponentProjectionError::new(
+                    ComponentProjectionErrorType::StatementOperationMismatch,
+                    error.to_string(),
+                )
+            })?;
             insert_expected_operation(
                 manifest,
                 &mut expected,
@@ -282,8 +293,8 @@ pub(super) fn expected_operation_contracts(
 
 pub(super) fn insert_expected_operation(
     manifest: &wamn_compiler::manifest::PackageManifest,
-    expected: &mut BTreeMap<String, ExpectedOperationContract>,
-    local_operation: &str,
+    expected: &mut BTreeMap<RegisteredOperation, ExpectedOperationContract>,
+    local_operation: &wamn_catalog::local_operation::LocalOperation,
     component: Option<&str>,
     public: bool,
 ) -> Result<(), ComponentProjectionError> {
@@ -324,7 +335,7 @@ pub(super) fn ensure_component_package_matches(
     package: &wamn_catalog::PackageCoordinate,
 ) -> anyhow::Result<()> {
     if component.target.package_id != package.package_id()
-        || component.target.package_version != package.package_version()
+        || &component.target.package_version != package.package_version()
     {
         return Err(ComponentProjectionError::new(
             ComponentProjectionErrorType::PackageCoordinateMismatch,

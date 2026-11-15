@@ -261,7 +261,7 @@ pub fn validate_component_in_release(
         .packages
         .iter()
         .find(|package| package.package_id() == component.target.package_id)
-        .map(wamn_catalog::PackageCoordinate::package_version)
+        .map(|package| package.package_version().as_str())
         .or_else(|| {
             (component.target.package_id == wamn_catalog::PALETTE_PACKAGE_ID)
                 .then_some(wamn_catalog::PALETTE_PACKAGE_VERSION)
@@ -316,7 +316,9 @@ mod tests {
     fn fixture() -> ServingManifest {
         ServingManifest::new(
             ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
+                packages: BTreeSet::from([
+                    PackageCoordinate::new("cat", "1.0.0".parse().unwrap()).unwrap()
+                ]),
             },
             BTreeSet::from([ServingComponent {
                 runtime_schema: None,
@@ -567,7 +569,7 @@ mod tests {
             target: wamn_catalog::ComponentPackageCoordinate {
                 project_env_key: "t1".into(),
                 package_id: "cat".into(),
-                package_version: "1.0.0".into(),
+                package_version: "1.0.0".parse().unwrap(),
             },
             component: "transform".into(),
             interface_version: "0.1".into(),
@@ -604,7 +606,7 @@ mod tests {
                 fact.target.project_env_key = "t2".into();
             }),
             ("another package version", |fact| {
-                fact.target.package_version = "2.0.0".into();
+                fact.target.package_version = "2.0.0".parse().unwrap();
             }),
             ("another digest", |fact| {
                 fact.component_digest =

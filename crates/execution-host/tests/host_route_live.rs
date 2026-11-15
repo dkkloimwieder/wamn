@@ -224,7 +224,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         .components
         .iter()
         .flat_map(|component| component.descriptor.operations.values())
-        .filter_map(|operation| operation.registered_operation.as_deref())
+        .filter_map(|operation| operation.registered_operation.as_ref())
         .map(|operation| wamn_catalog::sealed_operation_reference(operation).to_owned())
         .chain(
             manifest

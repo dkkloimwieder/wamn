@@ -9,6 +9,7 @@ pub const PAT_TOKEN_PREFIX: &str = "wamn_pat_";
 
 mod principal;
 pub use principal::{ParseIdentityError, PrincipalId, RoleName};
+pub mod pat_prefix;
 pub mod secret;
 #[cfg(feature = "test-util")]
 pub mod test_util;

@@ -67,7 +67,7 @@ impl Error for CompositionError {
 #[derive(Clone, Debug)]
 pub struct SelectedComponentArtifact {
     pub package_id: Box<str>,
-    pub package_version: Box<str>,
+    pub package_version: wamn_catalog::package_version::PackageVersion,
     pub component: Box<str>,
     pub path: PathBuf,
     pub digest: wamn_digest::Digest,

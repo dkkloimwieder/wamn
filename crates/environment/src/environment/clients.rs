@@ -93,13 +93,13 @@ mod tests {
         verify(
             &document.applications["fixture"],
             &web,
-            [("web_fixture", "2.0.0")].into_iter(),
+            [("web_fixture", &"2.0.0".parse().unwrap())].into_iter(),
         )
         .unwrap();
         verify(
             &document.applications["fixture"],
             &web,
-            [("web_fixture", "1.0.0")].into_iter(),
+            [("web_fixture", &"1.0.0".parse().unwrap())].into_iter(),
         )
         .unwrap();
         document
@@ -114,7 +114,7 @@ mod tests {
             verify(
                 &document.applications["fixture"],
                 &web,
-                [("web_fixture", "1.0.0")].into_iter()
+                [("web_fixture", &"1.0.0".parse().unwrap())].into_iter()
             )
             .is_err()
         );

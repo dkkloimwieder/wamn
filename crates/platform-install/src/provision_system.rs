@@ -18,7 +18,7 @@ use sqlx::Row as _;
 
 use sqlx::migrate::Migration;
 use wamn_control_provision::migrations::MigrationDatabase;
-use wamn_control_provision::{CONTROL_BOOTSTRAP_SQL, sql, validate_platform_domain};
+use wamn_control_provision::{CONTROL_BOOTSTRAP_SQL, sql};
 
 /// Inputs of one `provision-system` run.
 #[derive(Debug)]
@@ -28,13 +28,11 @@ pub struct ProvisionSystemRequest {
     /// The platform migration login's actual credential for explicit PostgreSQL access.
     pub migration_database_url: Option<String>,
     /// The email domain of the platform principal rows.
-    pub platform_domain: String,
+    pub platform_domain: wamn_registry::platform_domain::PlatformDomain,
 }
 
 /// Install the control store and record the platform domain.
 pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Result<()> {
-    validate_platform_domain(&request.platform_domain)
-        .context("make sure of the platform domain")?;
     let mut client = connect_system_database(&request.system_database_url)
         .await
         .context("connect to the system database")?;
@@ -93,7 +91,10 @@ async fn connect_system_database(url: &str) -> anyhow::Result<Client> {
 }
 
 /// Record the deployment domain with the provisioning actor.
-pub async fn set_platform_domain(client: &mut Client, domain: &str) -> anyhow::Result<()> {
+pub async fn set_platform_domain(
+    client: &mut Client,
+    domain: &wamn_registry::platform_domain::PlatformDomain,
+) -> anyhow::Result<()> {
     let mut transaction = crate::transaction::provisioning_transaction(client).await?;
     sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN)
         .bind(domain)

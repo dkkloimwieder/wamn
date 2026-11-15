@@ -21,7 +21,7 @@ use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
 use wamn_compiler::build_record::{self, BuildRecord};
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
-use wamn_package_artifact::{Repository, ensure_tag, registry_auth};
+use wamn_package_artifact::{Repository, registry_auth};
 
 use crate::package_artifact::PackageRegistry;
 
@@ -40,7 +40,7 @@ const EMPTY_CONFIG: &[u8] = b"{}";
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebManifest {
-    pub client_package: String,
+    pub client_package: wamn_catalog::client_package_name::ClientPackageName,
     /// The version from the package's `web/package.json`.
     pub version: String,
     /// `<package id>@<package version>` from the package build record.
@@ -142,7 +142,7 @@ pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtif
 /// One deterministic tar and its canonical OCI image manifest.
 #[derive(Debug)]
 pub struct PackedWebArtifact {
-    pub tag: String,
+    pub tag: wamn_package_artifact::tag::OciTag,
     pub digest: wamn_digest::Digest,
     pub manifest: Vec<u8>,
     pub tar: Vec<u8>,
@@ -175,10 +175,6 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
         bytes == metadata.to_bytes(),
         "web.json is not canonical JSON"
     );
-    ensure!(
-        !metadata.client_package.is_empty(),
-        "web.json has no client_package"
-    );
     ensure!(!metadata.version.is_empty(), "web.json has no version");
 
     let (package, version) = metadata
@@ -190,7 +186,7 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
         "web.json package must be <id>@<version>"
     );
     let tag = format!("{package}-web-{}", metadata.version);
-    ensure_tag(&tag)?;
+    let tag = tag.parse::<wamn_package_artifact::tag::OciTag>()?;
     let mut files = std::collections::BTreeMap::new();
     artifact_files(root, Path::new("dist"), &mut files)?;
     ensure!(
@@ -203,7 +199,7 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
 }
 
 fn pack_archive(
-    tag: String,
+    tag: wamn_package_artifact::tag::OciTag,
     files: std::collections::BTreeMap<PathBuf, Vec<u8>>,
     artifact_type: &str,
 ) -> anyhow::Result<PackedWebArtifact> {
@@ -272,7 +268,7 @@ pub enum WebPushDisposition {
 /// The immutable tag and digest after a successful web push.
 #[derive(Debug)]
 pub struct PushedWebArtifact {
-    pub tag: String,
+    pub tag: wamn_package_artifact::tag::OciTag,
     pub digest: wamn_digest::Digest,
     pub disposition: WebPushDisposition,
 }
@@ -468,15 +464,20 @@ pub async fn upload_web_to_store(
 ) -> anyhow::Result<(String, String, bool)> {
     let (metadata, tar) = pull_web(registry, digest).await?;
     let (package, _) = metadata.package.split_once('@').expect("verified web.json");
-    ensure_tag(package)?;
-    let root = [prefix.trim_matches('/'), "clients", package, &digest.hex()]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("/");
+    let package = package.parse::<wamn_package_artifact::tag::OciTag>()?;
+    let root = [
+        prefix.trim_matches('/'),
+        "clients",
+        package.as_str(),
+        &digest.hex(),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join("/");
     let index = object_store::path::Path::from(format!("{root}/index.html"));
     match store.head(&index).await {
-        Ok(_) => return Ok((package.to_owned(), root, false)),
+        Ok(_) => return Ok((package.to_string(), root, false)),
         Err(object_store::Error::NotFound { .. }) => {}
         Err(error) => return Err(error).context("read the web upload completion index"),
     }
@@ -495,7 +496,7 @@ pub async fn upload_web_to_store(
         content_type("index.html")?,
     )
     .await?;
-    Ok((package.to_owned(), root, true))
+    Ok((package.to_string(), root, true))
 }
 
 /// Write one object create-only with its content type. An

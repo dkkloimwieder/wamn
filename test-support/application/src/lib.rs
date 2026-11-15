@@ -181,7 +181,9 @@ impl Application {
         )?)
     }
 
-    async fn instance_suffix(&self) -> anyhow::Result<String> {
+    async fn instance_suffix(
+        &self,
+    ) -> anyhow::Result<wamn_registry::instance_suffix::InstanceSuffix> {
         let url = std::env::var("WAMN_SYSTEM_ADMIN_URL")?;
         let mut system = wamn_postgres::connect(&url).await?;
         sqlx::raw_sql("SET default_transaction_read_only = on")

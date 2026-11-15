@@ -56,7 +56,7 @@ pub fn release(
             .into_admitted(wamn_catalog::ComponentPackageCoordinate {
                 project_env_key: String::new(),
                 package_id: PACKAGE.to_owned(),
-                package_version: version.to_owned(),
+                package_version: version.parse()?,
             })
             .component;
         value["components"][0] =
@@ -75,7 +75,7 @@ pub fn fixture_device() -> anyhow::Result<wamn_catalog::ComponentDescriptor> {
         serde_json::to_value(&fixture.components.first().expect("a component").descriptor)
             .expect("a descriptor");
     device["component"] = json!("device");
-    device["operations"] = json!({"edge-device:sample/read@2.1.0": {"registered-operation": wamn_catalog::operation_token("edge_device", "2.1.0", "sample", "read"),"input-ports": [], "output-ports": [], "parameters": []}});
+    device["operations"] = json!({"edge-device:sample/read@2.1.0": {"registered-operation": wamn_catalog::operation_token("edge_device", &"2.1.0".parse().unwrap(), &"sample.read".parse().unwrap()).unwrap(),"input-ports": [], "output-ports": [], "parameters": []}});
     let device: wamn_catalog::ComponentDescriptor =
         serde_json::from_value(device).expect("a device descriptor");
     Ok(device)
@@ -399,7 +399,7 @@ pub mod http {
         let target = ComponentPackageCoordinate {
             project_env_key: wamn_registry::project_env_key(ORG, PROJECT, "http"),
             package_id: "http_fixture".to_owned(),
-            package_version: "1.0.0".to_owned(),
+            package_version: "1.0.0".parse().unwrap(),
         };
         let facts: Vec<_> = components
             .iter()
@@ -419,7 +419,7 @@ pub mod http {
             .packages
             .insert(wamn_catalog::PackageCoordinate::new(
                 "http_fixture",
-                "1.0.0",
+                "1.0.0".parse()?,
             )?);
         for (descriptor, fact) in components.into_iter().zip(&facts) {
             manifest

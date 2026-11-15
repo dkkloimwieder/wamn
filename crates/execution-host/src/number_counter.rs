@@ -149,7 +149,7 @@ pub async fn set_number_counter(
     project: &str,
     project_env_key: &str,
     user_id: &str,
-    operation: &str,
+    operation: &wamn_catalog::registered_operation::RegisteredOperation,
     request_id: &str,
     set: &CounterSet,
 ) -> Result<i64, CounterSetError> {
@@ -174,7 +174,7 @@ pub async fn set_number_counter(
         project_env_key: project_env_key.to_owned(),
         project: Some(project.to_owned()),
         user_id: Some(user_id.to_owned()),
-        operation: Some(operation.to_owned()),
+        operation: Some(operation.to_string()),
         application: Some(set.application.clone()),
         ..SessionIdentity::default()
     };
@@ -200,7 +200,7 @@ pub async fn set_number_counter(
 async fn set_in_transaction(
     postgres: &WamnPostgres,
     scope: &str,
-    operation: &str,
+    operation: &wamn_catalog::registered_operation::RegisteredOperation,
     request_id: &str,
     set: &CounterSet,
 ) -> Result<i64, CounterSetError> {
@@ -215,7 +215,7 @@ async fn set_in_transaction(
         &serde_json::to_vec(set).expect("a counter set serializes to JSON"),
     );
     let begun = match transaction
-        .begin_opaque(operation, request_id, request.as_bytes().to_vec())
+        .begin_opaque(operation.as_str(), request_id, request.as_bytes().to_vec())
         .await
     {
         Ok(begun) => begun,

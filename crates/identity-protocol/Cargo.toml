@@ -8,8 +8,10 @@ license.workspace = true
 [features]
 # A fixed token clock for tests. Never a production feature.
 test-util = []
+sqlx = ["dep:sqlx"]
 
 [dependencies]
+sqlx = { workspace = true, optional = true, features = ["postgres"] }
 wamn-digest.workspace = true
 async-trait = { workspace = true }
 base64 = { workspace = true }

@@ -347,9 +347,12 @@ impl Authority {
         )
     }
 }
-fn declarations(integration_type: &str, mode: &str) -> wamn_compiler::manifest::PackageManifest {
+fn declarations(
+    integration_type: &wamn_registry::integration_code::IntegrationCode,
+    mode: &str,
+) -> wamn_compiler::manifest::PackageManifest {
     let interface = "wamn:connection/http@0.1.0";
-    let connections = if integration_type == "s3" {
+    let connections = if integration_type.as_str() == "s3" {
         json!({"labels":{"interface":"wasmcloud:blobstore/blobstore@0.1.0","mode":"write"},"erp":{"interface":"wamn:connection/http@0.1.0","mode":"read"}})
     } else {
         json!({"erp":{"interface":interface,"mode":mode}})
@@ -437,8 +440,12 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
     let components = provision_project_components_for_http_manifest();
     let manifest = wamn_catalog::ServingManifest::new(
         wamn_catalog::ServingRelease {
-            packages: [wamn_catalog::PackageCoordinate::new(PACKAGE, PACKAGE_VERSION).unwrap()]
-                .into(),
+            packages: [wamn_catalog::PackageCoordinate::new(
+                PACKAGE,
+                PACKAGE_VERSION.parse().unwrap(),
+            )
+            .unwrap()]
+            .into(),
         },
         components,
         std::collections::BTreeSet::new(),
@@ -471,7 +478,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
             &mut project,
             database.as_str(),
             &declaration,
-            &[declarations("http", "read")],
+            &[declarations(&"http".parse().unwrap(), "read")],
         )
         .await;
     let postgres = Arc::new(
@@ -704,7 +711,8 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
             packages: [PACKAGE, "nested_origin"]
                 .into_iter()
                 .map(|package| {
-                    wamn_catalog::PackageCoordinate::new(package, PACKAGE_VERSION).unwrap()
+                    wamn_catalog::PackageCoordinate::new(package, PACKAGE_VERSION.parse().unwrap())
+                        .unwrap()
                 })
                 .collect(),
         },
@@ -733,7 +741,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     let packages: Vec<_> = [PACKAGE, "nested_origin"]
         .into_iter()
         .map(|package| {
-            let mut declaration = declarations("s3", "write");
+            let mut declaration = declarations(&"s3".parse().unwrap(), "write");
             declaration.package.id = package.into();
             declaration
         })

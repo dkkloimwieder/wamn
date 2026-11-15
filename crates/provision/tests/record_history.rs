@@ -103,7 +103,11 @@ async fn principal_rows_and_transaction_bindings_execute(pool: sqlx::PgPool) -> 
             .await?;
     }
     let mut transaction = connection.begin().await?;
-    let rows = platform_principals_sql("example.invalid")?;
+    let rows = platform_principals_sql(
+        &"example.invalid"
+            .parse::<wamn_registry::platform_domain::PlatformDomain>()
+            .unwrap(),
+    );
     sqlx::raw_sql(sqlx::AssertSqlSafe(rows.as_str()))
         .execute(&mut *transaction)
         .await?;

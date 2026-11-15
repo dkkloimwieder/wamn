@@ -380,8 +380,11 @@ async fn build_with_credentials(
 fn declaration() -> anyhow::Result<ComponentDeclaration> {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let template = PathBuf::from(format!("{root}/guests/http-request/declaration.json.in"));
-    let target =
-        wamn_catalog::ComponentPackageCoordinate::new(PROJECT_ENV_KEY, PACKAGE, PACKAGE_VERSION)?;
+    let target = wamn_catalog::ComponentPackageCoordinate::new(
+        PROJECT_ENV_KEY,
+        PACKAGE,
+        PACKAGE_VERSION.parse()?,
+    )?;
     let document = wamn_publish::component_declaration::render_palette_declaration(
         &template,
         &target,
@@ -568,7 +571,12 @@ async fn seed_with_client(
     .map(drop)
     .context("install the catalog and run-plane DDL")?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::platform_principals_sql("http-fixture.invalid")?.clone(),
+        wamn_control_provision::platform_principals_sql(
+            &"http-fixture.invalid"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        )
+        .clone(),
     ))
     .execute(&mut *client)
     .await

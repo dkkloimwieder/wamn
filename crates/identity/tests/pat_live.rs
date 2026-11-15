@@ -55,12 +55,12 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
         .await
         .expect("issue service token from trusted context");
     transaction.commit().await.expect("commit the issuance");
-    let issued_stamps = pat_stamps(&mut client, issued.record().prefix()).await;
+    let issued_stamps = pat_stamps(&mut client, *issued.record().prefix()).await;
     assert_eq!(issued_stamps.created_by, provisioning);
     assert_eq!(issued_stamps.updated_by, provisioning);
     assert_eq!(issued_stamps.created_at, issued_stamps.updated_at);
     let token = issued.token().to_owned();
-    let prefix = issued.record().prefix().to_owned();
+    let prefix = *issued.record().prefix();
     assert!(token.starts_with(PAT_TOKEN_PREFIX));
     assert_eq!(issued.record().label(), "laptop");
     assert!(issued.record().revoked_at().is_none());
@@ -73,7 +73,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
              FROM identity.pats WHERE token_prefix = $2",
     )
     .bind(&token)
-    .bind(&prefix)
+    .bind(prefix)
     .fetch_one(&mut client)
     .await
     .map(|row| (row.get(0), row.get(1)))
@@ -161,7 +161,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
         .await
         .expect("issue revocable token");
     transaction.commit().await.expect("commit the issuance");
-    let before = pat_stamps(&mut client, revocable.record().prefix()).await;
+    let before = pat_stamps(&mut client, *revocable.record().prefix()).await;
     let mut transaction = provisioning_transaction(&mut client).await;
     let revoked = revoke_pat(
         &mut transaction,
@@ -172,7 +172,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     .expect("revoke token");
     transaction.commit().await.expect("commit the revocation");
     assert!(revoked.revoked_at().is_some());
-    let after = pat_stamps(&mut client, revocable.record().prefix()).await;
+    let after = pat_stamps(&mut client, *revocable.record().prefix()).await;
     assert_eq!(after.created_at, before.created_at);
     assert_eq!(after.created_by, provisioning);
     assert_eq!(after.updated_by, provisioning);
@@ -183,7 +183,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
 
     // The rest of the fixture is platform setup, so it writes as wamn:provisioning.
     platform_principal_cannot_hold_a_token(&mut client, &provisioning).await;
-    token_rows_refuse_malformed_values(&mut client, user.id(), &prefix).await;
+    token_rows_refuse_malformed_values(&mut client, user.id(), prefix).await;
 
     let mut setup = provisioning_transaction(&mut client).await;
     // An elapsed expiry refuses without any revocation. The stamp trigger keeps
@@ -244,10 +244,14 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
         backdated.revoked_at()
     );
     assert_eq!(
-        revoke_pat(&mut *setup, &"0".repeat(16), &mut AuthDrops::default())
-            .await
-            .expect_err("unknown prefix must not revoke")
-            .error_type(),
+        revoke_pat(
+            &mut *setup,
+            &"0000000000000000".parse().unwrap(),
+            &mut AuthDrops::default()
+        )
+        .await
+        .expect_err("unknown prefix must not revoke")
+        .error_type(),
         IdentityErrorType::NotFound
     );
 
@@ -283,7 +287,6 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
             .collect::<Vec<_>>(),
         ["expiring", "revocable", "laptop"]
     );
-    assert!(listed.iter().all(|pat| pat.prefix().len() == 16));
     assert!(!format!("{listed:?}").contains(&token));
 
     // Disabling the principal refuses live tokens and further issuance.
@@ -345,13 +348,16 @@ struct PatStamps {
     updated_after_created: bool,
 }
 
-async fn pat_stamps(client: &mut Client, prefix: &str) -> PatStamps {
+async fn pat_stamps(
+    client: &mut Client,
+    prefix: wamn_identity_protocol::pat_prefix::PatPrefix,
+) -> PatStamps {
     let row = sqlx::query(
         "SELECT created_at::text, created_by::text, updated_at::text, updated_by::text, \
                     updated_at > created_at \
              FROM identity.pats WHERE token_prefix = $1",
     )
-    .bind(&prefix)
+    .bind(prefix)
     .fetch_one(&mut *client)
     .await
     .expect("read token stamps");
@@ -418,7 +424,7 @@ async fn platform_principal_cannot_hold_a_token(client: &mut Client, provisionin
 async fn token_rows_refuse_malformed_values(
     client: &mut Client,
     principal: &PrincipalId,
-    issued_prefix: &str,
+    issued_prefix: wamn_identity_protocol::pat_prefix::PatPrefix,
 ) {
     let (prefix, hash) = (
         "d".repeat(16),
@@ -427,7 +433,7 @@ async fn token_rows_refuse_malformed_values(
     for (case, token_prefix, token_hash, expiry, code) in [
         (
             "reused prefix",
-            issued_prefix.to_owned(),
+            issued_prefix.to_string(),
             hash.clone(),
             "now() + interval '1 hour'",
             "23505",

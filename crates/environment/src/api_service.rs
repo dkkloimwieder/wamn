@@ -68,7 +68,8 @@ pub async fn create(
     .fetch_optional(&mut system)
     .await?
     .context("the project deployment does not exist")?;
-    let suffix: String = deployment.try_get("instance_suffix")?;
+    let suffix: wamn_registry::instance_suffix::InstanceSuffix =
+        deployment.try_get("instance_suffix")?;
     let expected_database = wamn_registry::name::project_env_database_name(
         &request.org,
         &request.project,

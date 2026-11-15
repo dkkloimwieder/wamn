@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use wamn_catalog::package_version::PackageVersion;
 use wamn_catalog::{ComponentDeclaration, OperationType, PackageCoordinate};
 use wamn_digest::bytes_sha256;
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
@@ -18,22 +19,20 @@ const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 /// The fixture version, read from the compiled manifest that authors it. The
 /// base and the overlay move together, so the overlay carries the same one.
-fn package_version() -> &'static str {
-    static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        let manifest: serde_json::Value =
+fn package_version() -> &'static PackageVersion {
+    static VERSION: std::sync::LazyLock<PackageVersion> = std::sync::LazyLock::new(|| {
+        let mut manifest: serde_json::Value =
             serde_json::from_slice(&crate::test_support::fixture_manifest())
                 .expect("the compiled fixture manifest is JSON");
-        manifest["package"]["version"]
-            .as_str()
-            .expect("the compiled fixture manifest declares its version")
-            .to_owned()
+        serde_json::from_value(manifest["package"]["version"].take())
+            .expect("the compiled fixture manifest declares a canonical version")
     });
     &VERSION
 }
 
 struct PackageInput {
     id: &'static str,
-    version: &'static str,
+    version: &'static PackageVersion,
     root: PathBuf,
     component: &'static str,
     component_bytes: PathBuf,
@@ -148,7 +147,7 @@ fn base_and_overlay_project_admitted_routes() {
         .expect("consume exact package manifests and package contracts");
     let packages = inputs
         .iter()
-        .map(|input| PackageCoordinate::new(input.id, input.version).unwrap())
+        .map(|input| PackageCoordinate::new(input.id, input.version.clone()).unwrap())
         .collect::<BTreeSet<_>>();
     // Both packages name widget-get-http. The overlay's replaces the base's, so
     // the release carries a route to each package's component.

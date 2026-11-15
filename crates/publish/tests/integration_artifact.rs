@@ -56,11 +56,17 @@ async fn registry(root: &Path, label: &str) -> (local_registry::LocalRegistry, P
 #[tokio::test]
 async fn build_digest_tracks_source_bytes_and_survives_another_checkout() {
     let first = fixture();
-    let a = integration::build(first.path(), "fixture").await.unwrap();
-    let b = integration::build(first.path(), "fixture").await.unwrap();
+    let a = integration::build(first.path(), &"fixture".parse().unwrap())
+        .await
+        .unwrap();
+    let b = integration::build(first.path(), &"fixture".parse().unwrap())
+        .await
+        .unwrap();
     assert_eq!(a.digest, b.digest);
     let other = fixture();
-    let c = integration::build(other.path(), "fixture").await.unwrap();
+    let c = integration::build(other.path(), &"fixture".parse().unwrap())
+        .await
+        .unwrap();
     assert_eq!(a.digest, c.digest);
     let source = first.path().join("integrations/fixture/src/lib.rs");
     let bytes = std::fs::read_to_string(&source).unwrap();
@@ -69,7 +75,9 @@ async fn build_digest_tracks_source_bytes_and_survives_another_checkout() {
         format!("{bytes}\n// A source-only edit changes artifact identity.\n"),
     )
     .unwrap();
-    let edited = integration::build(first.path(), "fixture").await.unwrap();
+    let edited = integration::build(first.path(), &"fixture".parse().unwrap())
+        .await
+        .unwrap();
     assert_ne!(a.digest, edited.digest);
 }
 
@@ -82,7 +90,9 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx:
     sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('fixture','wasm',false)").execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
     let fixture = fixture();
     let (_registry, configuration) = registry(fixture.path(), "integration").await;
-    let built = integration::build(fixture.path(), "fixture").await.unwrap();
+    let built = integration::build(fixture.path(), &"fixture".parse().unwrap())
+        .await
+        .unwrap();
     integration::publish(
         &built,
         &configuration,
@@ -118,9 +128,13 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx:
     let (_, digest) = repository.manifest().await.unwrap().unwrap();
     assert_eq!(digest, built.digest);
 
-    let wasm = wamn_package_artifact::integration::pull(&configuration, "fixture", &built.digest)
-        .await
-        .unwrap();
+    let wasm = wamn_package_artifact::integration::pull(
+        &configuration,
+        &"fixture".parse().unwrap(),
+        &built.digest,
+    )
+    .await
+    .unwrap();
     let wit_component::DecodedWasm::Component(resolve, world) =
         wit_component::decode(&wasm).unwrap()
     else {
@@ -141,9 +155,13 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx:
         declared
     );
     assert!(
-        wamn_package_artifact::integration::pull(&configuration, "other", &built.digest)
-            .await
-            .is_err()
+        wamn_package_artifact::integration::pull(
+            &configuration,
+            &"other".parse().unwrap(),
+            &built.digest
+        )
+        .await
+        .is_err()
     );
     sqlx::raw_sql("SET ROLE wamn_control")
         .execute(&mut client)
@@ -184,7 +202,9 @@ async fn publish_refuses_an_unknown_integration_without_creating_catalog_rows(po
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
     let fixture = fixture();
     let (_registry, configuration) = registry(fixture.path(), "unknown-integration").await;
-    let built = integration::build(fixture.path(), "fixture").await.unwrap();
+    let built = integration::build(fixture.path(), &"fixture".parse().unwrap())
+        .await
+        .unwrap();
     let _error = integration::publish(
         &built,
         &configuration,

@@ -45,7 +45,12 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     let mut admin = connect(project.as_str()).await?;
     wamn_environment::platform_migrations::install_project(&mut admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::platform_principals_sql("example.invalid")?).to_string(),
+        (&wamn_control_provision::platform_principals_sql(
+            &"example.invalid"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        ))
+            .to_string(),
     ))
     .execute(&mut admin)
     .await
@@ -93,7 +98,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
-                    registered_operation: Some(OPERATION.into()),
+                    registered_operation: Some(OPERATION.parse().unwrap()),
                     committed_result_schema: None,
                 },
             )]);
@@ -104,7 +109,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         include_str!("../../publish/tests/fixtures/observer_package/generated/wamn.json"),
     )?;
     package.package.id = "integration".into();
-    package.package.version = "1.0.0".into();
+    package.package.version = "1.0.0".parse().unwrap();
     package.base_dependencies = serde_json::from_value(json!({
         "state": {"package":"wamn_integration", "version":"1.0.0", "digest":(format!("sha256:{}", "b".repeat(64))).parse::<wamn_digest::Digest>().unwrap(), "operations":[]},
         "consumer": {"package":"consumer", "version":"1.0.0", "digest":(format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(), "operations":["item.import"]}
@@ -114,7 +119,12 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     application.descriptor.component = "integration".into();
     application.descriptor.operations.clear();
     application.descriptor.operations.insert(
-        wamn_catalog::operation_token("wamn_integration", "1.0.0", "setting", "read"),
+        wamn_catalog::operation_token(
+            "wamn_integration",
+            &"1.0.0".parse().unwrap(),
+            &"setting.read".parse().unwrap(),
+        )?
+        .to_string(),
         serde_json::from_value(json!({
             "input-ports": [], "output-ports": [], "parameters": []
         }))?,

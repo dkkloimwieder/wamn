@@ -23,7 +23,7 @@ tracing = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-authority = { workspace = true }
-wamn-catalog = { workspace = true }
+wamn-catalog = { workspace = true, features = ["sqlx"] }
 wamn-connections = { workspace = true }
 wamn-digest = { workspace = true }
 wamn-engine = { workspace = true }

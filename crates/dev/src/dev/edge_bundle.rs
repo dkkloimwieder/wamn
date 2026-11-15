@@ -76,7 +76,7 @@ pub fn write_package(
         environment: target.environment.to_owned(),
         packages: vec![PackageCoordinate::new(
             admission.package_id(),
-            admission.package_version(),
+            admission.package_version().clone(),
         )?],
     };
     let assembled = assemble_release(
@@ -128,7 +128,12 @@ fn write_bundle(
             })
             .and_then(|served| served.descriptor.operations.get(&attachment.operation))
             .with_context(|| format!("attachment {id} names no released operation"))?;
-        permissions.extend(operation.registered_operation.iter().cloned());
+        permissions.extend(
+            operation
+                .registered_operation
+                .iter()
+                .map(ToString::to_string),
+        );
     }
     let mut grants = EdgeGrants::default();
     grants.roles.insert(ADMIN_ROLE.to_owned(), permissions);

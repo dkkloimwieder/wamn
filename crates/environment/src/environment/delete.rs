@@ -106,7 +106,7 @@ async fn delete_locked(
         ));
         return Ok(lines);
     };
-    let instance: String = row.get(0);
+    let instance: wamn_registry::instance_suffix::InstanceSuffix = row.get(0);
     let database = project_env_database_name(org, project, env, &instance);
     let project_env_key = wamn_control_provision::project_env_key(org, project, env);
 
@@ -193,7 +193,7 @@ async fn delete_locked(
         if !prefix.is_empty() {
             crate::provision_project_env::revoke_provisioning_pat(
                 admin_url,
-                &prefix,
+                &prefix.parse()?,
                 &platform.auth_changes().await?,
             )
             .await
@@ -377,7 +377,7 @@ async fn delete_locked(
     }
     // Resolve the publisher before the final commit, while retry inputs remain.
     let changes = platform.auth_changes().await?;
-    lines.extend(delete_registry_rows(&mut system, triple, &instance).await?);
+    lines.extend(delete_registry_rows(&mut system, triple).await?);
     let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
     drops.project_env_key(&project_env_key);
     changes.publish(drops).await;

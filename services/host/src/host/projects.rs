@@ -304,7 +304,8 @@ impl Environment {
         }
         let suffix = std::fs::read_to_string(directory.join("instance"))
             .context("read project database instance")?;
-        let database = project_env_database_name(org, project, environment, suffix.trim());
+        let suffix = suffix.trim().parse()?;
+        let database = project_env_database_name(org, project, environment, &suffix);
         for input in [&compiled, &dynamic, &executor, &http, &administration] {
             anyhow::ensure!(
                 wamn_postgres::identity(input)?.1 == database,
@@ -371,7 +372,7 @@ impl Environment {
                 args,
                 environment,
                 project,
-                suffix.trim(),
+                &suffix,
                 &http,
             )?)
         } else {

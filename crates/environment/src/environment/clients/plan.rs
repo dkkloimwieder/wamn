@@ -4,7 +4,7 @@ use anyhow::Context as _;
 pub(super) fn verify<'a>(
     selection: &ApplicationSelection,
     web: &WebManifest,
-    packages: impl Iterator<Item = (&'a str, &'a str)>,
+    packages: impl Iterator<Item = (&'a str, &'a wamn_catalog::package_version::PackageVersion)>,
 ) -> anyhow::Result<()> {
     let client = selection.client.as_ref().expect("a pinned client");
     let (package, version) = web
@@ -26,8 +26,8 @@ pub(super) fn verify<'a>(
                 selection.current
             )
         })?;
-    if selected_version != version {
-        tracing::warn!(%package, web_version = version, release_version = selected_version,
+    if selected_version.as_str() != version {
+        tracing::warn!(%package, web_version = version, release_version = %selected_version,
             "selected web artifact uses a different package version");
     }
     Ok(())

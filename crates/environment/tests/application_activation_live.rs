@@ -162,7 +162,7 @@ fn component(
         .into_admitted(wamn_catalog::ComponentPackageCoordinate::new(
             PROJECT_ENV_KEY,
             name,
-            "1.0.0",
+            "1.0.0".parse()?,
         )?);
     let config =
         wamn_engine::component_artifact::component_artifact_config_bytes(&admitted.component);
@@ -250,11 +250,11 @@ fn package(
     std::fs::write(root.join("generated/wamn.json"), &bytes)?;
     wamn_test_infrastructure::fixture_digest::write_build_record(&root);
     let packed = wamn_publish::package_artifact::pack_package(&root)?;
-    let tag = packed.tag();
+    let tag = packed.tag()?;
     artifact(
         objects,
         "packages",
-        &tag,
+        tag.as_str(),
         packed.manifest,
         packed
             .layers
@@ -274,8 +274,8 @@ fn release(
         format_version: wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         release: wamn_catalog::ServingRelease {
             packages: BTreeSet::from([
-                PackageCoordinate::new(&component.package_id, version)?,
-                PackageCoordinate::new("wamn_integration", "1.0.0")?,
+                PackageCoordinate::new(&component.package_id, version.parse()?)?,
+                PackageCoordinate::new("wamn_integration", "1.0.0".parse().unwrap())?,
             ]),
         },
         composed_entry: None,
@@ -400,7 +400,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
                 .unwrap(),
             ),
             system_database_url: system.url().into(),
-            platform_domain: "example.invalid".into(),
+            platform_domain: "example.invalid".parse().unwrap(),
         },
     )
     .await?;

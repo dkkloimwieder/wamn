@@ -22,13 +22,19 @@ use wamn_catalog::{AdmittedComponent, AdmittedComponentOperation, ComponentPacka
 
 pub const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-pub fn closure_component(component: &str, registered_operation: Option<&str>) -> AdmittedComponent {
-    let operation = registered_operation.unwrap_or("run");
+pub fn closure_component(
+    component: &str,
+    registered_operation: Option<&wamn_catalog::registered_operation::RegisteredOperation>,
+) -> AdmittedComponent {
+    let operation = registered_operation.map_or(
+        "run",
+        wamn_catalog::registered_operation::RegisteredOperation::as_str,
+    );
     AdmittedComponent {
         target: ComponentPackageCoordinate {
             project_env_key: "org-a--dev--fixture".to_owned(),
             package_id: "base".to_owned(),
-            package_version: "1.0.0".to_owned(),
+            package_version: "1.0.0".parse().unwrap(),
         },
         component: component.to_owned(),
         interface_version: "0.1.0".to_owned(),
@@ -36,7 +42,7 @@ pub fn closure_component(component: &str, registered_operation: Option<&str>) ->
             operation.to_owned(),
             AdmittedComponentOperation {
                 committed_result_schema: None,
-                registered_operation: registered_operation.map(str::to_owned),
+                registered_operation: registered_operation.cloned(),
                 host_transaction: false,
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),

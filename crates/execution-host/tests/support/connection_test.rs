@@ -242,7 +242,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()?;
-    let built = wamn_publish::integration::build(&repository, "modbus").await?;
+    let built = wamn_publish::integration::build(&repository, &"modbus".parse().unwrap()).await?;
     let schema = json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]});
     wamn_publish::integration::publish(
         &built,

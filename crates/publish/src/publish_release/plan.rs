@@ -11,7 +11,13 @@ pub fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
     let (package_id, package_version) = value
         .rsplit_once('@')
         .ok_or_else(|| "expected PACKAGE_ID@PACKAGE_VERSION".to_owned())?;
-    PackageCoordinate::new(package_id, package_version).map_err(|error| error.to_string())
+    PackageCoordinate::new(
+        package_id,
+        package_version
+            .parse::<wamn_catalog::package_version::PackageVersion>()
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())
 }
 
 /// The digests of an admitted application and of the members it embeds.
@@ -236,6 +242,7 @@ pub fn application_dependency_permissions(
                 )?;
                 permissions.insert(
                     canonical
+                        .as_str()
                         .split_once('@')
                         .expect("canonical operation has a version")
                         .0

@@ -30,14 +30,14 @@ impl Candidate {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchemaSource {
-    pub version: String,
+    pub version: wamn_catalog::package_version::PackageVersion,
     pub artifact: Option<wamn_digest::Digest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PackageDiff {
-    pub installed: Option<String>,
-    pub candidate: String,
+    pub installed: Option<wamn_catalog::package_version::PackageVersion>,
+    pub candidate: wamn_catalog::package_version::PackageVersion,
     pub source_artifact: Option<wamn_digest::Digest>,
     pub migrations: crate::migrations::SchemaReport,
 }
@@ -88,7 +88,7 @@ pub async fn database_state(url: &str, project_env_key: &str) -> anyhow::Result<
         .bind(project_env_key).fetch_all(&mut client).await? {
         let id: String = row.get(0);
         packages.insert(id.clone(), AppliedPackage {
-            coordinate: wamn_catalog::PackageCoordinate::new(&id, row.get::<&str, _>(1))?,
+            coordinate: wamn_catalog::PackageCoordinate::new(&id, row.try_get::<wamn_catalog::package_version::PackageVersion, _>(1)?)?,
             artifact_digest: row.get(2),
         });
     }
@@ -142,7 +142,7 @@ pub async fn release_candidates(
 pub(super) async fn open(
     platform: &Platform,
     id: &str,
-    version: &str,
+    version: &wamn_catalog::package_version::PackageVersion,
     digest: Option<&wamn_digest::Digest>,
 ) -> anyhow::Result<Candidate> {
     let artifact = stage::open(platform, id, version).await?;
@@ -157,7 +157,7 @@ pub(super) async fn open(
     let manifest =
         wamn_compiler::manifest::PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
     ensure!(
-        manifest.package.id == id && manifest.package.version == version,
+        manifest.package.id == id && &manifest.package.version == version,
         "package artifact does not declare {id}@{version}"
     );
     Ok(Candidate {
@@ -489,12 +489,8 @@ mod tests {
             },
         )]);
         validate_candidates(std::slice::from_ref(&candidate), &sources)?;
-        sources
-            .values_mut()
-            .next()
-            .unwrap()
-            .version
-            .push_str("-different");
+        let source = sources.values_mut().next().unwrap();
+        source.version = format!("{}-different", source.version).parse().unwrap();
         assert!(validate_candidates(&[candidate], &sources).is_err());
         Ok(())
     }

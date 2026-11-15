@@ -260,7 +260,7 @@ fn decode_response(
     let token_matches = response
         .token
         .parse::<PatToken>()
-        .is_ok_and(|token| token.lookup() == response.token_prefix);
+        .is_ok_and(|token| token.lookup() == &response.token_prefix);
     anyhow::ensure!(
         response.principal_id == *principal_id
             && token_matches
@@ -500,7 +500,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.token, input["token"].as_str().unwrap());
-        assert_eq!(result.token_prefix, PREFIX);
+        assert_eq!(result.token_prefix, PREFIX.parse().unwrap());
         assert!(!format!("{result:?}").contains(result.token.as_str()));
     }
 
@@ -718,7 +718,7 @@ mod tests {
             .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
             .await
             .unwrap();
-        assert_eq!(result.token_prefix, PREFIX);
+        assert_eq!(result.token_prefix, PREFIX.parse().unwrap());
         let request = fixture.received.recv().await.unwrap();
         assert!(request.starts_with("POST /identity/pats HTTP/1.1\r\n"));
         let (_, body) = request.split_once("\r\n\r\n").unwrap();
@@ -828,7 +828,7 @@ mod tests {
             .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
             .await
             .unwrap();
-        assert_eq!(result.token_prefix, PREFIX);
+        assert_eq!(result.token_prefix, PREFIX.parse().unwrap());
         fixture.received.recv().await.unwrap();
         assert_eq!(fixture.requests.load(Ordering::SeqCst), 1);
     }

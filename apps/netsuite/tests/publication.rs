@@ -40,7 +40,7 @@ fn fixture() -> Fixture {
     let target = ComponentPackageCoordinate {
         project_env_key: "rest--test--publication".into(),
         package_id: "netsuite".into(),
-        package_version: "0.1.1".into(),
+        package_version: "0.1.1".parse().unwrap(),
     };
     let documents: Vec<_> = [
         "netsuite_pull",
@@ -71,7 +71,7 @@ fn fixture() -> Fixture {
         environment: "test".into(),
         packages: ["wamn_integration", "netsuite", "rest_consumer_fixture"]
             .into_iter()
-            .map(|name| PackageCoordinate::new(name, "0.1.1").unwrap())
+            .map(|name| PackageCoordinate::new(name, "0.1.1".parse().unwrap()).unwrap())
             .collect(),
     };
     Fixture {

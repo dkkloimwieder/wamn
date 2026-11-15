@@ -153,8 +153,10 @@ pub enum RequirementType {
 
 impl RequirementType {
     /// Resolve the compiled connector implementation for a catalog integration.
-    pub fn for_integration(code: &str) -> Option<Self> {
-        match code {
+    pub fn for_integration(
+        code: &wamn_registry::integration_code::IntegrationCode,
+    ) -> Option<Self> {
+        match code.as_str() {
             "http" => Some(Self::Http),
             "gcs" | "s3" => Some(Self::Blobstore),
             _ => None,
@@ -523,18 +525,21 @@ mod tests {
     #[test]
     fn integration_dispatch_refuses_an_unimplemented_catalog_code() {
         assert_eq!(
-            RequirementType::for_integration("http"),
+            RequirementType::for_integration(&"http".parse().unwrap()),
             Some(RequirementType::Http)
         );
         assert_eq!(
-            RequirementType::for_integration("gcs"),
+            RequirementType::for_integration(&"gcs".parse().unwrap()),
             Some(RequirementType::Blobstore)
         );
         assert_eq!(
-            RequirementType::for_integration("s3"),
+            RequirementType::for_integration(&"s3".parse().unwrap()),
             Some(RequirementType::Blobstore)
         );
-        assert_eq!(RequirementType::for_integration("unimplemented"), None);
+        assert_eq!(
+            RequirementType::for_integration(&"unimplemented".parse().unwrap()),
+            None
+        );
     }
 
     #[test]

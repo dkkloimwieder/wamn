@@ -28,7 +28,7 @@ pub fn admit(
     let target = ComponentPackageCoordinate {
         project_env_key: "rest--test--publication".into(),
         package_id: manifest(package)["package"]["id"].as_str().unwrap().into(),
-        package_version: "0.1.1".into(),
+        package_version: "0.1.1".parse().unwrap(),
     };
     let declaration = render_package_declaration(package, name, &target.project_env_key).unwrap();
     let rendered = std::env::temp_dir().join(format!(

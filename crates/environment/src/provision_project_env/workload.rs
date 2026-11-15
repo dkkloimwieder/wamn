@@ -47,6 +47,7 @@ pub(crate) async fn provision(
         "instance".into(),
         super::read_project_env_instance(&platform.system_database_url, &triple)
             .await?
+            .to_string()
             .into(),
     );
     let mut application = None;

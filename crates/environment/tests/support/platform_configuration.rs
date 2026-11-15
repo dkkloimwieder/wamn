@@ -68,7 +68,7 @@ pub fn configuration(project: &str) -> PlatformConfiguration {
         }],
         integrations: vec![Integration {
             id: INTEGRATION_ID.to_owned(),
-            integration_type: "netsuite".to_owned(),
+            integration_type: "netsuite".parse().unwrap(),
             external_system_id: Some(EXTERNAL_SYSTEM_ID.to_owned()),
             name: "netsuite-orders".to_owned(),
             status: "active".to_owned(),
@@ -76,7 +76,7 @@ pub fn configuration(project: &str) -> PlatformConfiguration {
         connections: vec![Connection {
             id: CONNECTION_ID.to_owned(),
             integration_id: INTEGRATION_ID.to_owned(),
-            integration_type: "netsuite".to_owned(),
+            integration_type: "netsuite".parse().unwrap(),
             status: "active".to_owned(),
         }],
         number_sequences: vec![NumberSequence {

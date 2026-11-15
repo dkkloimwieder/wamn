@@ -534,7 +534,7 @@ impl ApplicationRoutes<'_> {
                 self.project,
                 project_env_key,
                 principal,
-                &attachment.operation,
+                attachment.operation.as_str(),
                 async |client| {
                     if lock {
                         sqlx::query(OPERATION_GRANT_LOCK_SQL)
@@ -557,8 +557,8 @@ impl ApplicationRoutes<'_> {
             .components
             .iter()
             .flat_map(|component| component.descriptor.operations.values())
-            .filter_map(|operation| operation.registered_operation.as_deref())
-            .map(sealed_operation_reference)
+            .filter_map(|operation| operation.registered_operation.as_ref())
+            .map(|operation| sealed_operation_reference(operation.as_str()))
             .collect();
         let host: BTreeMap<String, HostRouteAuthority> = self
             .release

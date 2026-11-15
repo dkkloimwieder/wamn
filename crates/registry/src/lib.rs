@@ -4,9 +4,12 @@ pub mod configuration;
 pub mod connections;
 pub mod deployment;
 pub mod identifiers;
+pub mod instance_suffix;
+pub mod integration_code;
 pub mod lifecycle_lock;
 pub mod migrations;
 pub mod name;
+pub mod platform_domain;
 pub mod sql;
 mod types;
 

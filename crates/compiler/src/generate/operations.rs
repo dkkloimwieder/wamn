@@ -85,7 +85,10 @@ pub(super) struct CustomDescription<'a> {
 pub(super) fn emit_model(
     files: &mut BTreeMap<String, Vec<u8>>,
     paths: super::OutputPaths<'_>,
-    operations: &mut BTreeMap<String, super::OperationDescription>,
+    operations: &mut BTreeMap<
+        wamn_catalog::local_operation::LocalOperation,
+        super::OperationDescription,
+    >,
     sql_corpus: &super::SqlCorpus,
     transactional: &StatementTransactionality,
     operation_sql: &BTreeMap<String, Vec<String>>,
@@ -114,7 +117,13 @@ pub(super) fn emit_model(
             operation,
             &api,
         )?;
-        operations.insert(format!("{model_name}.{}", action.as_str()), description);
+        operations.insert(
+            wamn_catalog::local_operation::LocalOperation::try_from(format!(
+                "{model_name}.{}",
+                action.as_str()
+            ))?,
+            description,
+        );
         compiled.insert(*action, facts);
     }
     let number = model.number_field().map(|(field, sequence)| {
@@ -248,13 +257,16 @@ pub(super) fn compile_custom<'a>(
 pub(super) fn emit_custom_operation(
     files: &mut BTreeMap<String, Vec<u8>>,
     paths: super::OutputPaths<'_>,
-    operations: &mut BTreeMap<String, super::OperationDescription>,
+    operations: &mut BTreeMap<
+        wamn_catalog::local_operation::LocalOperation,
+        super::OperationDescription,
+    >,
     sql_corpus: &super::SqlCorpus,
     transactional: &StatementTransactionality,
     catalog: &CatalogIr,
     manifest: &PackageManifest,
-    operation_name: &str,
-    compiled: &BTreeMap<String, CustomDescription<'_>>,
+    operation_name: &wamn_catalog::local_operation::LocalOperation,
+    compiled: &BTreeMap<wamn_catalog::local_operation::LocalOperation, CustomDescription<'_>>,
 ) -> Result<(), GenerateError> {
     let operation = &compiled[operation_name];
     operations.insert(
@@ -286,7 +298,7 @@ fn describe_custom_operation(
     transactional: &StatementTransactionality,
     catalog: &CatalogIr,
     manifest: &PackageManifest,
-    operation_name: &str,
+    operation_name: &wamn_catalog::local_operation::LocalOperation,
     compiled: &CustomDescription<'_>,
 ) -> Result<super::OperationDescription, GenerateError> {
     let operation = compiled.declaration;
@@ -666,7 +678,10 @@ fn describe_model_operation<'a>(
 ) -> Result<(super::OperationDescription, ModelOperation<'a>), GenerateError> {
     let operation_id = canonical_operation_identity(
         &manifest.package,
-        &format!("{model_name}.{}", action.as_str()),
+        &wamn_catalog::local_operation::LocalOperation::try_from(format!(
+            "{model_name}.{}",
+            action.as_str()
+        ))?,
     )?;
     let accessors = wamn_api
         .accessors

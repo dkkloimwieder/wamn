@@ -53,7 +53,7 @@ pub struct BuildRequest {
     /// Publication builds must leave this false.
     pub allow_stale_base_pins: bool,
     /// Exact development version supplied by the publication owner.
-    pub development_version: Option<String>,
+    pub development_version: Option<wamn_catalog::package_version::PackageVersion>,
 }
 
 impl BuildRequest {
@@ -117,7 +117,7 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
                 let [component] = built.outputs.components.as_slice() else {
                     bail!("development base {package} requires one built component");
                 };
-                dependency["version"] = built.package.version.into();
+                dependency["version"] = serde_json::Value::String(built.package.version.into());
                 dependency["digest"] = component.sha256.to_string().into();
             }
         }
@@ -428,8 +428,12 @@ async fn missing_paged_query_indexes(
         else {
             continue;
         };
-        let operation =
-            canonical_operation_identity(&manifest.package, &format!("{model_name}.query"))?;
+        let operation = canonical_operation_identity(
+            &manifest.package,
+            &wamn_catalog::local_operation::LocalOperation::try_from(format!(
+                "{model_name}.query"
+            ))?,
+        )?;
         let pagination = query
             .pagination
             .as_ref()

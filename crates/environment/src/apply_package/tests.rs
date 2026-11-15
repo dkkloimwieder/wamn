@@ -12,7 +12,12 @@ async fn auth_drops_ensure_admin_role_records_only_changed_grants(pool: sqlx::Pg
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::platform_principals_sql("example.invalid").unwrap()).to_string(),
+        (&wamn_control_provision::platform_principals_sql(
+            &"example.invalid"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        ))
+            .to_string(),
     ))
     .execute(&mut client)
     .await

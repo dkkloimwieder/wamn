@@ -80,7 +80,7 @@ pub fn snapshot() -> ConnectionEffectSnapshot {
         component: Some("notifier".to_string()),
         interface_version: Some("0.1".to_string()),
         operation: Some("orders:notify/dispatch@1.0.0".to_string()),
-        registered_operation: Some("package-a:orders/notify@1.0.0".to_string()),
+        registered_operation: Some("package-a:orders/notify@1.0.0".parse().unwrap()),
         requirement_json: Some(serde_json::json!({
             "component-digest": digest('a'),
             "store-alias": "erp",
@@ -115,7 +115,11 @@ pub fn manifest() -> ServingManifest {
         composed_entry: None,
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
-            packages: BTreeSet::from([PackageCoordinate::new("package_a", "1.0.0").unwrap()]),
+            packages: BTreeSet::from([PackageCoordinate::new(
+                "package_a",
+                "1.0.0".parse().unwrap(),
+            )
+            .unwrap()]),
         },
         components: BTreeSet::from([ServingComponent {
             runtime_schema: None,
