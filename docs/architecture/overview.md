@@ -1,283 +1,151 @@
 # Architecture overview
 
 WAMN runs application operations as WebAssembly components on wasmCloud.
-A wiring is a graph that connects admitted operations.
-Applications own business behavior, while native services own authority, deployment, and external resources.
-This page describes the main owners. The [architecture index](README.md) links each detailed contract.
+Applications declare data and operations in `wamn.k`.
+Native services own authority, deployment, and external resources. PostgreSQL stores durable platform state.
+The [architecture index](README.md) links the contracts for each part.
 
 ## Application ownership
 
-Each application lives under `apps/<exact-package-id>/`.
-The shared integration base lives under `apps/platform/wamn_integration/` and uses the same application workspace and output root.
-Its home contains the manifest, migrations, authored SQL, components, operator application, and tests.
-`wamn build` writes its generated output to `apps/target/wamn/<exact-package-id>/`, and Git holds none of it.
-Receiving, WMS, and the Acme Receiving overlay have separate homes.
-The application README maps its package to its Cargo crates and components.
+The root `Cargo.toml` owns native libraries, services, repository tasks, and native tests.
+`apps/Cargo.toml` owns application guests, platform guests, guest libraries, and guest fixtures.
+A package outside the workspace directory declares its workspace explicitly.
+Cargo owns membership, dependencies, features, and targets. Directory placement does not decide dependency ownership.
 
-A package owns its version and schema contribution.
-An overlay declares its exact base dependency and owns its added definitions and operations.
-A module organizes implementation within a package and creates no independent public identity.
-The [naming contract](naming.md) defines operation spelling, and [data access](data-access.md) defines ownership on shared relations.
+Applications live directly under `apps/<exact-package-id>/`.
+Each application keeps its manifest, migrations, authored SQL, component, browser code, and tests together.
+`wamn_integration` is an application base package beside its consumers.
+Overlays declare exact base versions and digests.
 
-The repository root owns the native Cargo workspace, including native application tests.
-`apps/Cargo.toml` owns the guest workspace.
-`apps/platform/` holds shared guests and guest libraries.
-The guests under `apps/platform/no-std/` use standard WASI in that same workspace.
-Cargo owns membership, dependencies, features, and targets. Application manifests own component declarations.
+`wamn build` writes generated application output to `apps/target/wamn/<exact-package-id>/`.
+Moving source directories does not move this output.
+Cargo writes compiled artifacts to `CARGO_TARGET_DIR`.
+The platform build publishes shared palette components separately from applications.
+[Components](components.md#guest-build-identity) defines guest identity and admission.
+[Building](../operations/building.md) owns commands and output formats.
 
-## Control and publication
+## Directory owners
 
-| Owner | Responsibility |
+Each library has one concern. Package names remain independent of directory names.
+
+| Directory | Owner and responsibility |
 | --- | --- |
-| `wamn-registry` | Org, environment and project coordinates, resource names, and registry SQL |
-| `wamn-control-provision` | Provisioning SQL and credential roles |
-| `wamn-broker` | NATS connections, streams, shared memory buckets, and authorization |
-| `wamn-event-wire` | Tagged event records and stable source identity |
-| `wamn-events` | Run admission, CDC configuration, reader lifecycle and capture recovery |
-| `wamn-kubernetes` | Kubernetes HTTP client, Secrets, Job execution, and command runners |
-| `wamn-catalog` | Component, wiring, and release facts |
-| `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
-| `wamn-publish` | Package admission, artifact construction, and package and release publication |
-| `wamn-release-control` | Release charts and deployment facts |
-| `wamn-environment` | Environment provisioning, package application, and schema lifecycle |
-| `wamn-platform-install` | Helm installation, platform configuration, and explicit bootstrap Jobs |
-| `wamn-dev` | Source builds and watched product deployment |
-| `wamn-ctl` | Command-line build, publication, and control client |
-
-The CLI and test support call each control crate directly.
-Publication and release charts have separate owners. Environment deployment reads both, and development drives the shared deployment path.
-The control crates never depend on `wamn-ctl`.
-
-Authentication owns the user, permission, and environment-status reads.
-The Postgres capability owns pools and host transactions.
-Workflow owns queue restart reads. Connections owns lease operations over the authorized database transport.
-The execution host owns file collection and counter-set routes. Guests render document numbers with SQL in the host transaction.
-`wamn-publish` owns standalone web artifacts in `web_artifact`.
-Package artifacts contain three tar layers and no browser files.
-`wamn build` compiles package components without Vite or a web output digest.
-`wamn web build` binds browser files to the compiled package manifest digest recorded in `build.json`.
-`wamn web push` publishes a deterministic OCI artifact under an immutable tag.
-[Web clients](../operations/web-upload.md#build-and-push) defines its layout and commands.
-A deployed service reads package facts through `wamn-package-artifact`.
-A control operation takes ordinary inputs, keeps its own validation, and returns its result without printing.
-
-`wamn-platform-install` lives under `crates/control/platform-install`.
-Helm records infrastructure in `platform/wamn-infrastructure` and platform services in `platform/wamn`.
-The org chart owns PostgreSQL clusters and backup resources in the org namespace.
-The environment chart owns databases, publications, worker accounts, and hosts in that same namespace.
-Credential Secrets and bootstrap SQL Jobs stay outside Helm values.
-Each org chart update derives its complete role list from registry facts and fixed platform definitions.
-Bootstrap declares only the fixed platform roles. Helm stores the derived list.
-Each worker fetches the selected chart by its immutable OCI digest.
-The installed-platform reader supplies registry and chart configuration to later operations.
-Host groups reference shared configuration through a ConfigMap.
-Cloud project, node pool, and OpenTofu tools live in xtask.
-
-The other control crates live under `crates/control/{publish,release,environment,dev}`.
-They run the `git`, `docker`, `kubectl`, and `cargo` processes that their work needs.
-The environment crate owns history retention. Its library interfaces enforce the retention login and coordinate.
-[Native control](control.md) owns the org control service and its operation worker.
-
-`wamn` lives at `services/ctl` and owns the user command line.
-`wamn-ctl` is an internal bootstrap worker.
-It holds the clap argument definitions, the printed output, and the exit codes.
-Each verb parses its arguments, calls its owner, and prints the result.
-The `<area>_verbs.rs` modules hold that surface.
-The development commands in `services/ctl/src/dev/` own argument parsing, output, and process signals.
-`wamn-dev::dev` owns the source watcher and serial development passes.
-The CLI uses the same build, publication, and authenticated deploy operations for every pass.
-Development uses an installed `kind` platform.
-The watcher stops after its active deployment finishes. The deployed release stays available.
-
-`apply-package` applies package SQL through SQLx `Migrator`.
-Authored and generated history migrations share each package's version sequence.
-The migration connection authenticates directly as the restricted migration login.
-A separate connection writes trusted catalog facts.
-Session locks and actor bindings last across the commits of individual migrations.
-Each package and environment has its own SQLx history table.
-System and project platform scopes use separate SQLx histories under their platform owners.
-Project initialization installs the history helpers and a privilege event trigger.
-The trigger refuses `GRANT`, `REVOKE`, and `ALTER DEFAULT PRIVILEGES` from the authenticated migration login.
-SQLx checksums refuse changes to applied migrations.
-
-Identity fills application user rows at provisioning and updates them when grants change.
-Project initialization installs platform SQL once. SQLx applies later platform changes.
-The provisioning owner locks and compares environment identity before refreshing its `project_env_key` projection.
-That refresh clears the instance assignment even when the suffix stays unchanged.
-The developer coordinator assigns an instance with one update and refuses a missing projection.
-
-Workflow authorship validates the graph against the environment’s serving release.
-The application tests exercise effects through runtime interfaces.
+| `crates/catalog` | `wamn-catalog`: served release, component, operation, and route facts |
+| `crates/compiler` | `wamn-compiler`: authored model, document rules, SQL descriptions, and generated outputs |
+| `crates/schema-introspection` | `wamn-schema-introspection`: PostgreSQL catalog descriptions |
+| `crates/digest` | `wamn-digest`: canonical JSON and SHA-256 identities |
+| `crates/scalar` | `wamn-scalar`: scalar formats and SQL value types |
+| `crates/number-pattern` | `wamn-number-pattern`: document number pattern parsing |
+| `crates/registry` | `wamn-registry`: hierarchy coordinates, resource names, and registry SQL |
+| `crates/provision` | `wamn-control-provision`: database roles and provisioning SQL |
+| `crates/publish` | `wamn-publish`: package, release, integration, and web publication |
+| `crates/package-artifact` | `wamn-package-artifact`: registry transport and artifact readers |
+| `crates/component-artifact` | `wamn-component-artifact`: engine artifact adapter and registry credential helper |
+| `crates/release` | `wamn-release-control`: release charts and deployment facts |
+| `crates/environment` | `wamn-environment`: environment lifecycle, package apply, and retention |
+| `crates/platform-install` | `wamn-platform-install`: chart installation and bootstrap |
+| `crates/dev` | `wamn-dev`: watched builds, publication, and deployment |
+| `crates/kubernetes` | `wamn-kubernetes`: Kubernetes transport, Secrets, and Job execution |
+| `crates/broker` | `wamn-broker`: NATS connections, streams, and shared memory buckets |
+| `crates/event-wire` | `wamn-event-wire`: event records and stable event identity |
+| `crates/events` | `wamn-events`: event admission, capture configuration, and reader lifecycle |
+| `crates/component-policy` | `wamn-component-policy`: import admission and capability declarations |
+| `crates/component-composer` | `wamn-component-composer`: overlay and base composition |
+| `crates/engine` | `wamn-engine`: native loading, dispatch, and the invocation scope registry |
+| `crates/execution-host` | `wamn-execution-host`: invocation authority, platform routes, and release readiness |
+| `crates/run-state` | `wamn-run-state`: persisted run admission, leases, and settlement |
+| `crates/workflow` | `wamn-workflow`: workflow lifecycle, graph traversal, and durable queue delivery |
+| `crates/platform/capability-authority` | `wamn-capability-authority`: shared invocation identity and effect evidence |
+| `crates/platform/postgres` | `wamn-postgres`: PostgreSQL connection configuration and transport |
+| `crates/platform/postgres-capability` | `wamn-postgres-capability`: host operation transactions and database authority |
+| `crates/platform/http-capability` | `wamn-http-capability`: authorized outbound HTTP and OAuth |
+| `crates/platform/connections` | `wamn-connections`: connection facts, credentials, and resource leases |
+| `crates/platform/integrations` | `wamn-integrations`: bound Wasm import dispatch |
+| `crates/platform/events-capability` | `wamn-events-capability`: guest event publication |
+| `crates/blobstore` | `wamn-blobstore`: authorized object storage |
+| `crates/authentication` | `wamn-authentication`: route authentication and session verification |
+| `crates/identity` | `wamn-platform-identity`: identity authority and its SQL |
+| `crates/identity-client` | `wamn-identity-client`: HTTPS client for identity administration |
+| `crates/identity-protocol` | `wamn-identity-protocol`: principals, roles, credential formats, and session tokens |
+| `crates/data-access` | `wamn-data-access`: guest cursors, pages, and scalar conversion |
+| `crates/postgres-statements` | `wamn-postgres-statements`: guest operation SQL and document numbering |
+| `crates/record-history` | `wamn-record-history`: reconstruction of a row from its history |
+| `guests/http-route` | HTTP matching and JSON invocation of typed application operations |
+| `guests/blob-put` | Palette node that writes one object |
+| `guests/jsonata` | Palette node that evaluates a JSONata expression |
+| `guests/http-page` | Palette node that reads HTTP pages |
+| `guests/http-request` | Palette node that makes an HTTP request |
+| `guests/label-render` | Palette node that renders label text |
+| `guests/modbus` | Bound Modbus register operations |
+| `guests/transform` | Palette node that transforms its input |
+| `services/host` | `wamn-host`: shared environment host for HTTP and queued operations |
+| `services/control` | `wamn-control`: authenticated org control service |
+| `services/identity` | `wamn-identity`: session issuer, passwords, PATs, and public verification keys |
+| `services/web-front` | `wamn-web-front`: browser files, runtime configuration, and password proxy |
+| `services/edge` | `wamn-edge`: local application host and device loop |
+| `services/cdc-reader` | `wamn-cdc-reader`: PostgreSQL change capture and broker acknowledgement |
+| `services/ctl` | `wamn`: user CLI. `wamn-ctl`: internal operation worker |
+| `test-support/application` | Shared product deployment fixtures for application tests |
+| `test-support/postgres` | Private TLS Postgres servers, SQLx test runner, and prerequisite parser |
+| `test-support/resources` | Temporary external resources, HTTP fixtures, and shared test adapters |
+| `test-support/fixtures/package` | Platform fixture application paths and inputs |
+| `test-support/fixtures/guests` | Guest components used by interface tests |
+| `tests/journeys` | Tests across services through product commands and routes |
+| `tests/selection.toml` | Non-Cargo inputs, preparation, and test suites |
+| `xtask` | Repository tasks, build orchestration, and test selection |
+| `xtask/build` | Shared package and guest build implementation |
+| `deploy/charts/infrastructure` | Cluster infrastructure chart |
+| `deploy/charts/installation` | Platform services and chart dependencies |
+| `deploy/charts/org` | Org PostgreSQL clusters and backup resources |
+| `deploy/charts/environment` | Environment databases, service accounts, and shared hosts |
+| `deploy/charts/release` | Application release and web selection |
+| `deploy/charts/identity` | Identity service deployment |
+| `deploy/charts/edge` | Web front deployment |
+| `deploy/sql` | Platform schemas and shared SQL definitions |
+| `deploy/infra` | Infrastructure configuration outside charts |
+| `deploy/platform` | Platform configuration outside charts |
+| `deploy/gcp` | Google Cloud deployment inputs |
+| `deploy/kind` | Local cluster deployment inputs |
+| `web` | Browser runtime, wfe packages, and shared browser tooling |
 
 ## Release identity
 
-A release fixes package versions, component digests, base pins, SQL, connections, routes, and wiring versions.
-Sealing prevents later changes to its content.
-Conflicting content refuses, and exact retries retain their original facts.
-
-The compiler creates the final publication documents once from typed operation descriptions.
-It writes routes with inline input schemas and computed definition hashes to `publication/attachments.json` in the build output.
-It writes component declarations with inline request and result schemas to `publication/components.json`.
-The compiled `wamn.json` carries operation types and described statement facts.
-Publication, admission, and clients consume these final documents. They do not merge authored files or resolve schema file references.
-Workflows are authored for an environment and name sealed operations from its release.
-Publication refuses a wiring with no edges, because a graph with no edges is a route.
-A registration or schedule can name a one-node wiring.
-
-Publication produces an immutable release manifest addressed by its digest.
-Deployment supplies that digest and artifact location to the host.
-A rollout changes the serving release.
-Runtime requests resolve wiring from the supplied release, independently of mutable activation pointers and PostgreSQL notifications.
-Frozen candidate execution retains its own admitted facts throughout the traversal.
+The compiler checks authored documents and writes final component and route declarations once.
+Publication verifies component bytes and writes immutable package and release artifacts.
+The catalog reads served facts. It does not repeat authoring rules.
+A release fixes package versions, component digests, base pins, SQL, connections, routes, and workflow identities.
+The separate HTTP route component calls application components through the host.
+Only overlays compose with their pinned bases.
 
 ## Environment lifecycle
 
-Each application has its own Helm release of `deploy/platform/release`.
-The release name is `r-<slug>-<hash>`, derived from `org/env/project/application`.
-The environment chart owns one host for each org and environment, shared by all projects.
-Its project projection names the allowed projects. Each project mounts its own connection configuration and event certificate.
-Each project has its own resource lock. A poisoned project refuses its operations while other projects keep working.
-The shared project index and byte cache survive interrupted insertion or eviction and can safely recover their locks.
-File selection skips failed projects when another project owns the requested route. An unavailable selection returns HTTP 503; an absent route returns 404.
-Residency reports unavailable project state as an error.
-Application releases contain no host Deployment or runtime-operator dependency.
-It adds one WorkloadDeployment for the `http` role.
-The `http` role starts the separate route component with `poolSize` 0. A Service of the same name routes to it.
+The registry owns desired environment configuration. Helm owns deployment attempts and rollback history.
+The org chart owns PostgreSQL clusters. The environment chart owns one shared host for each org and environment.
+Each project keeps its own database authority, connection facts, and loaded release selections.
+Unfinished runs pin the releases that they need.
+Retention removes unpinned release facts and expired development artifacts under the environment lock.
 
-When the environment has a route host, the chart also writes a ConfigMap.
-Its `release.json` names the host, the release digest, client packages in `clients`, and pinned web digests in `webs`.
-The platform image set lives only in the default values of the chart. `cargo xtask build-platform` stamps it.
-The release is named by its manifest digest alone.
+The control service authenticates each request and selects the operation worker, chart, credentials, and target.
+Workers apply package migrations through SQLx while logged in as the restricted migration role.
+Trusted catalog writes use a separate connection.
+Credential Secrets and bootstrap SQL Jobs stay outside Helm values.
+[Native control](control.md) defines the request boundary.
+[Deployment](../operations/deployment.md) defines lifecycle ordering, rollback, reset, and deletion.
 
-An environment is declared in one `environment.k` document.
-It names the coordinate, application hostnames, the policy, schema mode, clients, connections and integrations.
-`wamn-registry` reads and writes typed configuration rows under `registry.environment_projects`.
-The project row holds its revocation bound and optional schema mode.
-Child rows hold applications, desired releases, hostnames, client pins, connection aliases and integration versions.
-The shared environment row owns the target and policy. No configuration JSON remains.
-Postgres enforces bounds, valid schema modes and digests, paired client fields, and child ownership.
-Helm records deployment attempts and rollback history. Package membership comes from each release manifest.
+Development builds and publishes immutable source snapshots, then uses the same authenticated control routes as other deployments.
+It uses an installed `kind` platform.
+The watcher stops after its current deployment finishes. The deployed release stays available.
+[Development loop](../operations/development-loop.md) owns the procedure.
 
-Its optional `client` names a package id and an immutable web artifact digest.
-Analysis makes sure that the artifact matches its digest and its package coordinate appears in the release.
-Without `client`, the host serves no application web client.
-Revision values keep `webClients` for package ids and `webDigests` for web artifact digests.
-Apply reads the web artifact without owning it, so environments can share one artifact.
-`wamn web upload` copies that artifact’s `dist/` to the shared digest root.
-It writes files create-only, then the index.
-An existing index marks completion, so another upload writes nothing.
+## Execution and authority
 
-The Rust edge reads `release.json` for each request.
-It serves application files from `clients/<package>/<web digest hex>/` in the web bucket.
-The web digest must use `sha256:` and 64 lowercase hex digits.
-A host without a client package or web digest refuses with `the host has no web client`.
-The release digest does not select browser files.
-
-The Rust web front generates application `config.json` from the live release.
-It supplies `org`, `project`, `release` and `web`.
-A web-only apply changes the bundle and `web`, while `release` stays the same.
-The web front reads other files from the bucket without a process cache and serves `config.json` with `no-cache`.
-The platform UI uses `platform-ui/sha256-<digest>/`.
-The web front generates its org configuration from the live release.
-`wamn-web-front` owns response headers and proxies `/password/` to identity over HTTPS.
-TLS for browser traffic terminates at ingress.
-
-`wamn deploy`, `wamn rollback`, `wamn status`, and the schema commands call authenticated control routes.
-The CLI requires `WAMN_CONTROL_URL` and `WAMN_TOKEN` for these commands.
-It does not fall back to direct database or Kubernetes access.
-Build, dev and eject run locally. Bootstrap runs locally before control exists.
-
-The native service reads one public JSON configuration file through `--config`.
-Database connection objects refer to CNPG Secrets. The configuration holds no database passwords.
-Long application operations run in bounded Jobs through `wamn-kubernetes`.
-A Job receives its authenticated actor and environment coordinate from the service.
-SQL operations mount the owning project SQL and package migration credentials.
-They never mount a superuser credential or start another SQL Job.
-The registry owns the applied environment configuration. Helm owns release history.
-
-`apply` runs these steps:
-
-1. Analyse: Read each authority once. Compare the document with them. Return the plan or the refusals.
-2. Ensure: Create the missing substrate: the environment row, the `Database` resource, the project database, the run plane, the credential Secrets, and the admin grants.
-3. Expand: Write the policy and route host. Run the package stage. Enable each declared connection and bind it to the components of the release.
-4. Write: Record the desired release and client in the registry. Recover any pending Helm operation. Always run `helm upgrade --install` with `--wait`, the readiness budget of the policy, and no automatic rollback. A failed revision and its pods remain available for inspection.
-5. Readiness: Wait until each WorkloadDeployment of the release reports `Ready`.
-6. Drain: Read loaded releases and the unfinished runs that pin them. Report stranded runs without changing their state.
-7. Retain: Keep older release facts and permissions. Rollout performs no release cleanup.
-
-A separate retention operation removes unused release facts and generated permissions under the environment lock.
-It also removes dev package tags older than seven days unless a published release pins their package coordinate.
-Loaded releases, desired registry selections, observed Helm selections and unfinished runs keep their release facts.
-Status reports each application's loaded releases and run pins. It also reports unfinished runs whose release is not loaded.
-
-During analysis, apply reads each bound connection's type and the target type from the registry.
-For an exclusive connection on a cloud target, the body from `WAMN_RELEASE_HOST_GROUP` must name `replicas: 1`.
-Apply refuses another count or a missing key and names the connection.
-It never uses the chart default for this requirement.
-Local targets are exempt.
-
-The package stage runs in the project database before any Kubernetes write.
-It checks applied migration versions and checksums through SQLx and installs each new package from its verified artifact.
-It applies the stage of each successor and writes the release cache row.
-It also creates the number sequence row of each package default that the environment lacks.
-With `release = none`, `apply` uninstalls the release chart instead of writing it.
-Every step is an ensure that is judged by observation, so applying again repairs a crash.
-Initialization installs the platform, catalog and run schemas once.
-Explicit platform schema apply runs new SQLx migrations and refuses changed checksums.
-Application schema reset stops users, removes migration-owned objects and clears application state.
-It discards old replication changes and queued events, reapplies migrations, restores selected releases and resumes users.
-The database, credentials, platform schemas and CDC objects stay.
-
-After a failed or pending head, `rollback` restores the latest successful Helm revision.
-After a successful head, `rollback` compares successful revisions with the current release digest and client pin.
-It selects the newest revision with a different pair and status `deployed` or `superseded`.
-It restores that revision's release digest and client through `apply` and keeps the reason in the Helm description.
-If that revision has no client, rollback clears the current client.
-
-After a web-only apply, rollback restores the previous web digest with the same release digest.
-The web maps reach only the edge's release ConfigMap, so a web-only apply or rollback leaves host pod templates unchanged.
-
-Rollback never runs `helm rollback`.
-If no such revision exists, it refuses and writes nothing.
-
-`delete` is the one destructive verb, and every step runs only if its target is present.
-In order, it does these steps:
-
-1. Uninstall the release chart and wait for the drain.
-2. Revoke the provisioning tokens.
-3. Delete the credential Secrets and the event streams.
-4. Drop the replication slot and delete the `Database` resource.
-5. Delete the control rows and the environment row.
-
-The `Database` resource keeps `databaseReclaimPolicy: retain`, so the database stays on the cluster.
-With `--data`, the verb drops the database and the instance roles. It reads the coordinate again from a terminal first.
-
-The platform UI reads status through a control operation in the org namespace. Kubernetes supplies the shared host rollout and application workload conditions. The pod proxy supplies each application's resident releases and unfinished-run pins. Application history stays in Helm. An unreadable host leaves residency unknown.
-
-- Every step is safe to run twice. A missing object is a finished step, not a refusal.
-
-- The registry rows go last. Until they go, a second run can still read the instance suffix and the project.
-
-- The database and its CDC objects go before any role. The control rows go before the registry rows.
-
-- The verb turns off an immutability trigger for its one delete statement only, inside one transaction, and turns it on again before the commit. No other session sees the trigger off.
-
-- The source stream and the advisory stream are deleted by name, not purged. No NATS permission is added: the provisioning user of the stream already holds `STREAM.DELETE` and `CONSUMER.DELETE` (`test-support/infrastructure/event_broker.rs:101-131`).
-
-- The verb prints each step with its result on one line. It prints no credential.
-
-### Control rows during deletion
-
-6. Delete the environment’s control rows in one transaction.
-
-### Deletion refusals
-
-- The replication slot is active: a reader still streams from it.
-
-### Resources kept after deletion
-
-- The org, the project, `identity.project_roles` and every user principal.
-- The control-family login roles and their `author_login_projects` rows. They belong to the triple, not the instance, and a new provision of the triple uses the same names.
+A route invokes one component export. A workflow traverses its graph and invokes each selected node through the same host boundary.
+The engine dispatches Wasm. The host supplies invocation authority. The capabilities authorize access to external resources.
+A component digest shares code only. It grants no access to another project or environment.
+[Execution](execution.md) defines routing, authentication, queues, and service lifecycle.
+[Capabilities](capabilities.md) defines imports, bindings, credentials, and external effects.
+[Data access](data-access.md) defines SQL, transactions, migrations, and record history.
+[Edge](edge.md) defines local operation storage and device status.
 
 ## Registry hierarchy
 
@@ -321,44 +189,13 @@ It then marks the org membership inactive.
 The global principal and access in other orgs stay.
 Reactivation restores the org membership and no removed grants.
 
-A package schema change uses immutable SQLx migrations from a published release.
-Migrate mode preserves data. Reset mode clears application state before it reapplies those migrations.
+## Native and cloud boundaries
 
-## Runtime owners
+wasmCloud owns compilation, linking, stores, interruption, and cancellation.
+The host uses its guest logger with the host tracing exporter.
+WAMN retains its publication formats, invocation authority, and resource policies.
+[Native alignment](native-alignment.md) records retained implementations and their replacement conditions.
 
-Five layers run a component, and each layer depends only on the layers below it:
-
-1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) owns run admission, leases, settlement and pruning on authorized connections. Concrete operation owners hold their own claim storage.
-2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, `invoke_operation`, and the host side of the `wamn:operation` binding that the separate route component calls. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
-3. The capability crates implement PostgreSQL (`wamn-postgres-capability`), HTTP (`wamn-http-capability`), storage (`wamn-blobstore`), authentication (`wamn-authentication`) and events (`wamn-events-capability`). Shared identity, connection policy and effect evidence live in `wamn-capability-authority`. `wamn-connections` owns connection facts, credentials and resource leases. `wamn-integrations` links and dispatches declared wasm imports. Connection readers use the Postgres capability’s authorized executor pool. The engine keeps the one invocation scope registry. `wamn-component-artifact` adapts the shared registry client to the engine’s artifact interface.
-4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) holds `OperationHost`, native platform endpoints and release readiness.
-5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) owns the private graph walk, the node invocation driver, the durable queue, and the workflow contract (start, park, release, list). It indexes catalog graphs directly. A route never enters it.
-
-`wamn-package-artifact` owns shared registry clients, release artifact transfer and the pod metadata service.
-Its `http_client` module owns TLS trust and request deadlines for buffered native requests.
-`wamn-kubernetes::http_transport` builds Hyper connectors and clients for buffered and streaming callers, including the edge and web front.
-Callers select mutual TLS, extra or exclusive trust roots, redirects and address overrides there.
-The transport never retries a request or reads proxy configuration from the environment.
-Response reads keep the original request deadline. Callers retain their own body limits and boundary error mapping.
-The host uses wash-runtime's logger and its own tracing exporter.
-
-The services compose these layers.
-
-A route calls one component export through the route path. A wiring and queued work use the [execution driver](execution.md) in `wamn-workflow`.
-The driver coordinates graph decisions. The engine owns dispatch and workload loading, and the host owns invocation authority.
-The workflow crate resolves and drives runs. The run-state crate owns their persistence.
-The [capability owners](capabilities.md) supply database, HTTP, object storage, and event access without guest credentials.
-
-Development publishes the same artifacts and deploys through the same control routes as other environments.
-Each changed source snapshot gets an immutable prerelease coordinate derived from its build inputs.
-The installed platform resolves released wiring, connection requirements, and bindings from its normal registry and release records.
-The runtime owns project authority, run leases, credential generations, and effects.
-
-## Cloud providers
-
-A provider-specific piece is a named implementation behind one platform interface, never a switch inside the platform.
-The registry token source and the blob provider use this pattern.
-On Google Cloud they are the metadata server token of [registry credentials](capabilities.md#registry-credentials) and the `gcs` blob provider.
-A second provider adds one implementation of each and a values file.
-Nothing in the router, the generator, or the applications changes, and no piece uses a service account key.
-The kind clusters run the platform with none of these implementations.
+Provider implementations supply registry tokens and object storage through the same platform interfaces.
+Google Cloud uses metadata credentials. Local clusters use their declared local resources.
+Provider selection does not change application operation contracts.

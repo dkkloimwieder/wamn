@@ -21,20 +21,22 @@ Start with the [documentation index](docs/README.md) or the [architecture overvi
 | [apps/platform_fixture_overlay](apps/platform_fixture_overlay/) | The minimal overlay above the platform fixture |
 | [apps/rest_connector](apps/rest_connector/README.md) | Scheduled REST integration and consumer event workflow |
 | [apps/rest_consumer_fixture](apps/rest_consumer_fixture/README.md) | Domain items consumed from the REST integration |
-| [apps/platform](apps/platform/) | Shared platform guests and guest libraries |
+| [apps/wamn_integration](apps/wamn_integration/README.md) | Shared integration state application |
+| [guests](guests/) | Platform components in the guest workspace |
 | [services](services/) | Deployable native processes, including the combined HTTP and queue host, and their service tests |
-| [crates](crates/) | Platform libraries, grouped by responsibility |
+| [crates](crates/) | Libraries with one directory per concern |
 | [web](web/README.md) | Browser runtime, wfe packages, shared Vite tooling, and the sync read-shape bench |
-| [tools](tools/) | Repository scripts, lint, benchmark and journey runners, and installers |
+| [xtask](xtask/) | Repository commands, build orchestration, lint, benchmarks, and test selection |
 | [tests](tests/) | Cross-service journeys and test selection |
-| [test-support](test-support/) | Shared test functions, fixtures, and infrastructure |
-| [deploy](deploy/) | Infrastructure, platform manifests, test Jobs, and SQL |
+| [test-support](test-support/) | Shared application fixtures, guest fixtures, Postgres servers, and temporary resources |
+| [deploy](deploy/) | Charts, deployment configuration, and platform SQL |
 | [docs](docs/README.md) | Architecture, operations, testing methods, and plans |
 
 ## Development and operations
 
 The [operations index](docs/operations/README.md) connects commands to their prerequisites and cleanup rules.
 The application READMEs above link each app's scenario, source, generated output, and tests.
+The [directory map](docs/architecture/overview.md#directory-owners) names the library, service, and chart owners.
 Select the relevant instructions:
 
 - [Building](docs/operations/building.md): Pinned toolchains, native binaries, guest selection, and isolated worktrees.

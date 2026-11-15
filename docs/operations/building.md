@@ -6,6 +6,8 @@ Native builds require system compiler tools and `protoc`.
 The web workspace uses Node 24.21.0 LTS and pnpm 12.9.1.
 TypeScript 7 compiles the web packages. The TypeScript 6 compatibility package supplies the API that ESLint requires.
 The guest workspace is `apps/Cargo.toml`.
+It includes application components, platform components under `guests/`, guest libraries under `crates/`, and guest fixtures under `test-support/fixtures/guests/`.
+Each moved guest package declares that workspace explicitly. Native workspace exclusions keep the two owners distinct.
 [Components](../architecture/components.md) defines artifact and interface boundaries.
 
 Before a lane or test run, prepare the checkout once from its repository root:
@@ -28,7 +30,7 @@ These files own each schema.
 
 ## Platform version
 
-The platform version lives in `deploy/platform/release/Chart.yaml`.
+The platform version lives in `deploy/charts/release/Chart.yaml`.
 Keep `version` and `appVersion` equal.
 `cargo xtask build-platform` reads this version to tag images and role components.
 The published defaults keep the host image at `platform.host.image`.
@@ -82,7 +84,7 @@ It also maps the toolchain's `rust-src` tree to `/rustc/<commit-hash>`, so a too
 The build refuses a built guest that contains `/home/`, the Cargo home, or the repository path.
 A guest crate can hold a pin file beside its `Cargo.toml`, named for the artifact, for example `http_route.wasm.sha256`.
 The build and the Dockerfile stage refuse a guest that does not match its pin.
-If you change the router on purpose, write its new digest to `apps/platform/ingress/http-route/http_route.wasm.sha256`.
+If you change the router on purpose, write its new digest to `guests/http-route/http_route.wasm.sha256`.
 A plain `cargo build` of a guest does not use the guest RUSTFLAGS, so its bytes depend on the machine. Do not pin such a guest.
 The release publisher also needs the pinned `http-route` guest.
 The ctl image carries it at `/usr/local/share/wamn/http_route.wasm`.
@@ -114,7 +116,8 @@ Last, the build copies each component that the package owns to `components/<name
 Source publication and the dev loop read `build.json` for the bytes of each component.
 `push-package` refuses a component without an entry, and a file whose digest differs from its entry.
 For the `build.json` that `push-package` needs, see [Pushing a package](#pushing-a-package).
-The dev loop watches the package roots, `apps/platform`, and the shared platform WIT sources, so an edit of any of them rebuilds the components.
+The dev loop watches package roots, `guests/`, shared WIT, and the local Cargo dependency closure.
+An edit to these inputs rebuilds the affected components.
 
 WIT bindings read canonical package directories through ordered `path` lists. Put dependencies before the consumer world.
 Shared WIT packages define the node, PostgreSQL, connection, JetStream, HTTP authentication, and blobstore interfaces.
@@ -197,11 +200,11 @@ It reads the version, URL and checksum from `mise.toml`.
 Package builds install it when it is absent.
 Set `WAMN_KCL` to use another binary of the pinned version.
 The compiler runs KCL and never installs tools.
-Platform document schemas live with their document types in `crates/control/environment/kcl/`.
+Platform document schemas live with their document types in `crates/environment/kcl/`.
 The OpenTofu renderer reads `ProjectDocument` in that same crate.
-The compiler owns the authored model in `crates/schema/generator/src/manifest.rs`. It checks document rules once and derives inherited model fields once. Catalog readers decode compiled facts without repeating document checks.
+The compiler owns the authored model in `crates/compiler/src/manifest.rs`. It checks document rules once and derives inherited model fields once. Catalog readers decode compiled facts without repeating document checks.
 
-The schema module that `wamn.k` imports as `manifest` is [`crates/schema/generator/kcl/manifest`](../../crates/schema/generator/kcl/manifest/manifest.k).
+The schema module that `wamn.k` imports as `manifest` is [`crates/compiler/kcl/manifest`](../../crates/compiler/kcl/manifest/manifest.k).
 
 - Plain English names in the schema module; use `type` for variant names; no plurals that the manifest does not already use.
 
@@ -323,7 +326,7 @@ They accept these registry flags: `--artifact-base`, `--registry-auth-file`, `--
   --registry-auth-file <auth file>
 ```
 
-**Contract A** (`wamn-vavs4.1`, `crates/control/publish/src/package_artifact.rs`). A component artifact is the object `push-package` pushes for each component. `push-component` is gone (`wamn-vavs4.7`). Its tag is the 64 hex digits of the component digest. Its image manifest has media type `application/vnd.oci.image.manifest.v1+json`, `schemaVersion` 2 and no `artifactType`. Its config is `application/vnd.wamn.component.config.v1+json`, the canonical JSON `{format-version: "0.1", component-digest, imports, imports-fingerprint}` (`component_artifact_config_bytes`). It has one layer, `application/vnd.wamn.component.v1+wasm`, with the exact wasm bytes. These media types live in `crates/platform/engine/src/component_artifact.rs`.
+**Contract A** (`wamn-vavs4.1`, `crates/publish/src/package_artifact.rs`). A component artifact is the object `push-package` pushes for each component. `push-component` is gone (`wamn-vavs4.7`). Its tag is the 64 hex digits of the component digest. Its image manifest has media type `application/vnd.oci.image.manifest.v1+json`, `schemaVersion` 2 and no `artifactType`. Its config is `application/vnd.wamn.component.config.v1+json`, the canonical JSON `{format-version: "0.1", component-digest, imports, imports-fingerprint}` (`component_artifact_config_bytes`). It has one layer, `application/vnd.wamn.component.v1+wasm`, with the exact wasm bytes. These media types live in `crates/engine/src/component_artifact.rs`.
 
 A package artifact has the tag `<package_id>-<version>`. Its image manifest has media type `application/vnd.oci.image.manifest.v1+json` and `artifactType` `application/vnd.wamn.package.v2` (a v1 reader requires exactly one layer). Its config is `application/vnd.oci.empty.v1+json` with the bytes `{}`. Its layers are always present, in this order; `title` is the annotation `org.opencontainers.image.title`:
 
@@ -341,7 +344,7 @@ A web source or output edit leaves the packed package digest unchanged.
 
 The `generated/` paths of layers 2 and 3 are logical paths. `wamn build` writes those files below `apps/target/wamn/<package>/` without the `generated/` prefix, and pack reads them from there.
 
-A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/model/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type, mode}]}`, which is `AdmittedComponent` without its target plus its declared connection list. All operations of the component share its `connections`. Named Wasm imports use their alias. Host connections also carry their requirement type and mode. The reader supplies the target. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Only dev package manifests carry `org.opencontainers.image.created`, set at first publication. Repeat publication reuses that time and the same manifest. Release coordinates and release manifests carry no timestamp. The manifest is canonical JSON.
+A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type, mode}]}`, which is `AdmittedComponent` without its target plus its declared connection list. All operations of the component share its `connections`. Named Wasm imports use their alias. Host connections also carry their requirement type and mode. The reader supplies the target. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Only dev package manifests carry `org.opencontainers.image.created`, set at first publication. Repeat publication reuses that time and the same manifest. Release coordinates and release manifests carry no timestamp. The manifest is canonical JSON.
 
 `wamn-publish` builds and pushes both package and release artifacts.
 The artifact digest is the SHA-256 of the image manifest bytes. The registry records it, and it is what `artifact_digest` means. An unpacked artifact is not build output. The three tars keep their logical paths. Layer 0 goes to `generated/wamn.json`. Each descriptor goes to `descriptors/<name>.json`. Unpacked dev artifacts keep their original publication timestamp in `artifact-created-at`. Repacking reads that value and reproduces the published digest. Release coordinates need no timestamp. An unpacked artifact packs again offline to the pushed digest. `package_artifact_digest(root)` is that offline digest of a tree as it is. A source tree has no `descriptors/`, so its digest differs from the pushed digest. Only an unpacked tree packs to it.
@@ -349,7 +352,7 @@ The artifact digest is the SHA-256 of the image manifest bytes. The registry rec
 ## Host route clients
 
 The TypeScript clients of the host routes, `@wamn/control-client` and `@wamn/control-org-client`, are build output, and Git does not hold them.
-The generator makes them from the contracts in `crates/catalog/model/src/host_route`.
+The generator makes them from the contracts in `crates/catalog/src/host_route`.
 It writes them to `apps/target/wamn/wamn_control/client-ts` and `apps/target/wamn/wamn_control/control/client-ts`, below the output root of `wamn build`.
 It then copies them into each workspace package that names them in `package.json` `"wamn": { "clients": [...] }`, as `wamn build` does for an application client.
 The name `wamn_control` selects the application route client, and `wamn_control_org` selects the control route client.
@@ -405,7 +408,7 @@ That stage compiles every native package except `wamn-edge`, so the first image 
 They share the Cargo registry and Git caches with every checkout.
 The cache mounts are not in the image. The stage copies each binary out of the target cache to `/native-output`, and the image copies it from there.
 
-To bump the platform version, change `version` and `appVersion` in `deploy/platform/release/Chart.yaml` to the same new value.
+To bump the platform version, change `version` and `appVersion` in `deploy/charts/release/Chart.yaml` to the same new value.
 No other file holds the version.
 A version change runs the same BuildKit build with new output tags. BuildKit reuses unchanged layers.
 
