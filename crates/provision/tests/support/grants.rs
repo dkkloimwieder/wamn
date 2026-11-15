@@ -202,9 +202,12 @@ pub async fn rules(fixture: &mut Fixture, family: WorkloadRoleFamily) {
     );
 }
 
-pub async fn family(pool: sqlx::PgPool, family: WorkloadRoleFamily) {
-    let _lock = wamn_test_postgres::lock();
-    let mut fixture = prepare(&pool, family).await;
+pub async fn family(
+    pool: &sqlx::PgPool,
+    family: WorkloadRoleFamily,
+) -> (Fixture, wamn_test_postgres::ProcessLock) {
+    let lock = wamn_test_postgres::lock();
+    let mut fixture = prepare(pool, family).await;
     rules(&mut fixture, family).await;
     // A write rule covers every installed relation and every column grant.
     if matches!(
@@ -278,4 +281,5 @@ pub async fn family(pool: sqlx::PgPool, family: WorkloadRoleFamily) {
         &format!("SET ROLE {}", escape_identifier("wamn_db_owner")),
     )
     .await;
+    (fixture, lock)
 }

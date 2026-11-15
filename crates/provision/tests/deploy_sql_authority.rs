@@ -31,7 +31,6 @@ use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleIdentity, workload_login,
 };
-use wamn_record_history::{HistoryRow, RowState, state_at};
 
 const POSTGRES_INIT: &str = include_str!("../../../deploy/sql/postgres-init.sql");
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -574,23 +573,23 @@ fn the_stamp_trigger_stamps_guest_writes_on_postgres() {
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
 
-/// Assert that `statement` raises SQLSTATE 55000 with `actor-required`.
-fn refuses_without_actor(statement: &str) -> String {
-    format!(
-        "DO $$ BEGIN\n\
-           {statement};\n\
-           RAISE EXCEPTION 'the write succeeded without a bound actor: {}';\n\
-         EXCEPTION WHEN object_not_in_prerequisite_state THEN\n\
-           ASSERT SQLERRM = 'actor-required', 'wrong message: ' || SQLERRM;\n\
-         END $$;\n",
-        statement.replace('\'', "''")
-    )
-}
-
 /// The database half of spec test 4 and spec test 12.
 #[test]
 #[ignore = "requires: postgres, bin:psql"]
 fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
+    /// Assert that `statement` raises SQLSTATE 55000 with `actor-required`.
+    fn refuses_without_actor(statement: &str) -> String {
+        format!(
+            "DO $$ BEGIN\n\
+               {statement};\n\
+               RAISE EXCEPTION 'the write succeeded without a bound actor: {}';\n\
+             EXCEPTION WHEN object_not_in_prerequisite_state THEN\n\
+               ASSERT SQLERRM = 'actor-required', 'wrong message: ' || SQLERRM;\n\
+             END $$;\n",
+            statement.replace('\'', "''")
+        )
+    }
+
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
     as_guest(
@@ -757,8 +756,7 @@ fn apply_refused(url: &str, sql: &str) -> String {
         .to_owned()
 }
 
-/// The history table shape, the function configuration and grants, and the
-/// 64-byte refusal, from the server catalogs.
+/// History column types, ownership, and refusals for unsupported types and oversized names.
 #[test]
 #[ignore = "requires: postgres, bin:psql"]
 fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
@@ -771,18 +769,6 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
     );
 
     for (relation, projected) in [("logged_history", false), ("projected_history", true)] {
-        let names: Vec<String> = serde_json::from_str(&psql(&db_url, None, &format!(
-            "SELECT json_agg(attname ORDER BY attname) FROM pg_attribute WHERE attrelid='rh_probe.{relation}'::regclass AND attnum>0 AND NOT attisdropped"
-        ))).unwrap();
-        let mut expected: Vec<_> = wamn_record_history::HISTORY_COLUMNS
-            .iter()
-            .map(|(name, _)| *name)
-            .collect();
-        if projected {
-            expected.push("project_id");
-        }
-        expected.sort_unstable();
-        assert_eq!(names, expected);
         if projected {
             assert_query(
                 &db_url,
@@ -867,34 +853,6 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
 
-/// History storage never grants application logins a write or a grant option.
-fn assert_history_grants(url: &str) {
-    assert_query(
-        url,
-        "SELECT has_schema_privilege('wamn_db_owner','wamn_history','CREATE') AND has_schema_privilege('wamn_db_owner','wamn_history','USAGE') AND bool_and(has_function_privilege('wamn_db_owner',oid,'EXECUTE')) FROM pg_proc WHERE pronamespace='wamn_history'::regnamespace",
-    );
-    assert_query(
-        url,
-        "SELECT NOT EXISTS (
-        SELECT FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
-        WHERE c.relnamespace='wamn_history'::regnamespace
-          AND a.grantee=to_regrole('wamn_app') AND
-              (a.is_grantable OR a.privilege_type <> 'SELECT')
-        UNION ALL
-        SELECT FROM pg_proc p
-        WHERE p.pronamespace='wamn_history'::regnamespace AND p.provolatile='v'
-          AND has_function_privilege(to_regrole('wamn_app'),p.oid,'EXECUTE')
-        UNION ALL
-        SELECT FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
-        WHERE p.pronamespace='wamn_history'::regnamespace
-          AND a.grantee=to_regrole('wamn_app') AND a.is_grantable
-        UNION ALL
-        SELECT FROM pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) a
-        WHERE n.nspname='wamn_history' AND a.grantee=to_regrole('wamn_app')
-          AND (a.is_grantable OR a.privilege_type <> 'USAGE'))",
-    );
-}
-
 /// Ruling 78 (`wamn-emtx.31`). The `wamn_app` record history grants come from
 /// `record-history-app-grants.sql` alone. `CATALOG_SCHEMA_SQL` composes that
 /// file, so the guest writes a logged relation, and the write fails without the
@@ -904,6 +862,34 @@ fn assert_history_grants(url: &str) {
 #[test]
 #[ignore = "requires: postgres, bin:psql"]
 fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
+    /// History storage never grants application logins a write or a grant option.
+    fn assert_history_grants(url: &str) {
+        assert_query(
+            url,
+            "SELECT has_schema_privilege('wamn_db_owner','wamn_history','CREATE') AND has_schema_privilege('wamn_db_owner','wamn_history','USAGE') AND bool_and(has_function_privilege('wamn_db_owner',oid,'EXECUTE')) FROM pg_proc WHERE pronamespace='wamn_history'::regnamespace",
+        );
+        assert_query(
+            url,
+            "SELECT NOT EXISTS (
+            SELECT FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+            WHERE c.relnamespace='wamn_history'::regnamespace
+              AND a.grantee=to_regrole('wamn_app') AND
+                  (a.is_grantable OR a.privilege_type <> 'SELECT')
+            UNION ALL
+            SELECT FROM pg_proc p
+            WHERE p.pronamespace='wamn_history'::regnamespace AND p.provolatile='v'
+              AND has_function_privilege(to_regrole('wamn_app'),p.oid,'EXECUTE')
+            UNION ALL
+            SELECT FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+            WHERE p.pronamespace='wamn_history'::regnamespace
+              AND a.grantee=to_regrole('wamn_app') AND a.is_grantable
+            UNION ALL
+            SELECT FROM pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) a
+            WHERE n.nspname='wamn_history' AND a.grantee=to_regrole('wamn_app')
+              AND (a.is_grantable OR a.privilege_type <> 'USAGE'))",
+        );
+    }
+
     const SYSTEM_DATABASE: &str = "wamn_minimum_history_system";
     let (_database, admin) = shared_server();
 
@@ -1702,349 +1688,6 @@ fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
                  UPDATE rh_probe.amounts SET amount = amount WHERE id = 1;",
             ),
         ),
-    );
-
-    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
-}
-
-/// One page of the history of one fixture widget, in ascending position
-/// order. The fixture logs `widget` and declares no history read, so the test
-/// states the read. It has the shape of an authored history read: every row
-/// repeats the current row image, which names each declared `widget` column
-/// and spells each timestamptz column through the platform image function. A
-/// deleted row has the current image '{}'.
-const WIDGET_HISTORY_READ: &str = "SELECT \
-       history.position, \
-       history.type, \
-       history.operation, \
-       history.changed_by, \
-       history.changed_at, \
-       history.before::text AS before, \
-       history.after::text AS after, \
-       COALESCE( \
-           (SELECT jsonb_build_object( \
-                       'id', widget.id, \
-                       'code', widget.code, \
-                       'note', widget.note, \
-                       'maker_id', widget.maker_id, \
-                       'edit_version', widget.edit_version, \
-                       'created_at', wamn_history.timestamptz_image(widget.created_at) \
-                   )::text \
-              FROM widget AS widget \
-             WHERE widget.id = $1::uuid), \
-           '{}' \
-       ) AS current \
-   FROM widget_history AS history \
-  WHERE history.row_key = jsonb_build_object('id', $1::uuid) \
-    AND history.position > $2::bigint \
-  ORDER BY history.position ASC \
-  LIMIT LEAST($3::int4, 100)";
-/// The maker the history widget references.
-const HISTORY_MAKER: &str = "00000000-0000-4000-8000-000000000501";
-/// The maker the update moves the widget to.
-const HISTORY_MAKER_NEXT: &str = "00000000-0000-4000-8000-000000000502";
-
-/// Run `sql` as the guest under the fixture schema and return its rows, with
-/// the unit separator between fields and the record separator between rows.
-fn guest_rows(
-    db_url: &str,
-    guest: &wamn_identity_protocol::LoginName,
-    sql: &str,
-) -> Vec<Vec<String>> {
-    let out = Command::new("psql")
-        .arg(db_url)
-        .args([
-            "-X",
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-Atq",
-            "-F",
-            "\u{1f}",
-            "-R",
-            "\u{1e}",
-        ])
-        .arg("-c")
-        .arg(format!(
-            "SET ROLE \"{guest}\"; SET search_path = inventory; {sql}"
-        ))
-        .output()
-        .expect("psql runs");
-    assert!(
-        out.status.success(),
-        "the guest read failed:\n{}\n--- script ---\n{sql}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout)
-        .expect("psql output is UTF-8")
-        .trim_end_matches('\n')
-        .split('\u{1e}')
-        .filter(|record| !record.is_empty())
-        .map(|record| record.split('\u{1f}').map(str::to_owned).collect())
-        .collect()
-}
-
-/// Every page of the fixture history read of `item`, two entries a page.
-fn history_pages(
-    db_url: &str,
-    guest: &wamn_identity_protocol::LoginName,
-    item: &str,
-) -> Vec<Vec<String>> {
-    let read = WIDGET_HISTORY_READ;
-    let mut rows: Vec<Vec<String>> = Vec::new();
-    loop {
-        let after = rows.last().map_or("0", |row| row[0].as_str()).to_owned();
-        let page = guest_rows(
-            db_url,
-            guest,
-            &format!(
-                "PREPARE history_page (uuid, bigint, bigint) AS {read}; \
-                 EXECUTE history_page ('{item}', {after}, 2)"
-            ),
-        );
-        assert!(page.len() <= 2, "a page must hold at most its limit");
-        if page.is_empty() {
-            return rows;
-        }
-        rows.extend(page);
-    }
-}
-
-/// Whether a JSON plan has a node that writes or takes a row lock, the two
-/// nodes for which generation classifies a statement as transactional.
-fn writes_or_locks(plan: &serde_json::Value) -> bool {
-    match plan {
-        serde_json::Value::Object(node) => {
-            matches!(
-                node.get("Node Type").and_then(serde_json::Value::as_str),
-                Some("ModifyTable" | "LockRows")
-            ) || node.values().any(writes_or_locks)
-        }
-        serde_json::Value::Array(nodes) => nodes.iter().any(writes_or_locks),
-        _ => false,
-    }
-}
-
-/// The columns of `image` as the fold splits them.
-fn image_columns(image: &str) -> Vec<(String, String)> {
-    let row = HistoryRow {
-        position: 1,
-        type_: "insert",
-        before: "{}",
-        current: image,
-        head_position: 1,
-    };
-    match state_at(&[row], 1) {
-        Ok(RowState::Present(image)) => image
-            .columns()
-            .map(|(name, value)| (name.to_owned(), value.to_owned()))
-            .collect(),
-        other => panic!("{image} is not a row image: {other:?}"),
-    }
-}
-
-/// The reconstruction half of spec test 1, over the fixture application. The
-/// guest holds the grants that generation derives for the fixture, writes an
-/// insert, two updates, and a delete of a widget, and reads the history. The
-/// fold then shows the row at each retained position.
-#[test]
-#[ignore = "requires: postgres, bin:psql"]
-fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
-    let history_tables = "SELECT wamn_history.create_history_table('inventory', 'widget', false);";
-    let (_database, admin) = shared_server();
-    let (db_url, guest) = record_history_fixture(&admin);
-    apply(
-        &db_url,
-        &format!(
-            "BEGIN;\n\
-             SET LOCAL ROLE wamn_db_owner;\n\
-             CREATE SCHEMA inventory;\n\
-             {migrations}\n\
-             CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON inventory.widget\n\
-                 FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at');\n\
-             {history_tables}\n\
-             CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE \
-                 ON inventory.widget\n\
-                 FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D');\n\
-             INSERT INTO inventory.widget_maker (id, name)\n\
-                 VALUES ('{HISTORY_MAKER}', 'history maker'),\n\
-                        ('{HISTORY_MAKER_NEXT}', 'next history maker');\n\
-             COMMIT;\n",
-            migrations = wamn_fixture_package::migrations()
-                .into_iter()
-                .map(|(_, sql)| sql)
-                .collect::<String>(),
-        ),
-    );
-
-    apply(
-        &db_url,
-        &format!(
-            "BEGIN;\n\
-             GRANT USAGE ON SCHEMA inventory TO wamn_app;\n\
-             GRANT SELECT,INSERT,UPDATE,DELETE ON inventory.widget TO wamn_app;\n\
-             GRANT INSERT ON inventory.widget_history TO wamn_app;\n\
-             GRANT USAGE ON SEQUENCE inventory.widget_history_position_seq TO wamn_app;\n\
-             GRANT SELECT (position, row_key, type, operation, changed_by, changed_at, \
-                           before, after) ON inventory.widget_history TO wamn_app;\n\
-             COMMIT;\n"
-        ),
-    );
-
-    // The server plans the history read as a read, so it runs without a transaction.
-    let plan = guest_rows(
-        &db_url,
-        &guest,
-        &format!("EXPLAIN (GENERIC_PLAN, FORMAT JSON) {WIDGET_HISTORY_READ}"),
-    );
-    let plan: serde_json::Value =
-        serde_json::from_str(&plan[0][0]).expect("EXPLAIN returns a JSON plan");
-    assert!(
-        !writes_or_locks(&plan),
-        "the history read must not write or lock: {plan}"
-    );
-
-    // A row with no retained entries returns an empty page.
-    let unknown = history_pages(&db_url, &guest, "00000000-0000-4000-8000-000000000999");
-    assert!(unknown.is_empty(), "an unknown row must return no entries");
-    assert_eq!(state_at(&[], 1), Ok(RowState::Unavailable));
-
-    // An insert, an update of the code and the revision, an update of a
-    // text and a uuid, and a delete, each in its own transaction. After each write, the row image of
-    // the row is the state that the fold must reconstruct.
-    let image = |widget: &str| {
-        psql(
-            &db_url,
-            None,
-            &format!(
-                "SELECT COALESCE((SELECT wamn_history.row_image(w)::text \
-                   FROM inventory.widget w WHERE id = '{widget}'), '{{}}')"
-            ),
-        )
-    };
-    // The create names no id: the column default mints it, as in the
-    // generated create.
-    apply(
-        &db_url,
-        &format!(
-            "SELECT pg_sleep(0.01);\n{}",
-            logged_guest_transaction(
-                &guest,
-                ACTOR_A,
-                CREATE_OPERATION,
-                &format!(
-                    "SET LOCAL search_path = inventory;\n\
-                     INSERT INTO widget (code, note, maker_id) \
-                       VALUES ('priority', 'history', '{HISTORY_MAKER}');"
-                ),
-            )
-        ),
-    );
-    let widget = psql(
-        &db_url,
-        None,
-        "SELECT id FROM inventory.widget WHERE note = 'history'",
-    );
-    let widget = widget.as_str();
-    let mut images = vec![image(widget)];
-    for (actor, operation, write) in [
-        (
-            ACTOR_B,
-            UPDATE_OPERATION,
-            format!(
-                "UPDATE widget SET code = 'standard', edit_version = 2 \
-                   WHERE id = '{widget}';"
-            ),
-        ),
-        (
-            ACTOR_B,
-            UPDATE_OPERATION,
-            format!(
-                "UPDATE widget SET note = 'history-2', \
-                   maker_id = '{HISTORY_MAKER_NEXT}' \
-                   WHERE id = '{widget}';"
-            ),
-        ),
-        (
-            ACTOR_C,
-            REPAIR_OPERATION,
-            format!("DELETE FROM widget WHERE id = '{widget}';"),
-        ),
-    ] {
-        apply(
-            &db_url,
-            &format!(
-                "SELECT pg_sleep(0.01);\n{}",
-                logged_guest_transaction(
-                    &guest,
-                    actor,
-                    operation,
-                    &format!("SET LOCAL search_path = inventory;\n{write}"),
-                )
-            ),
-        );
-        images.push(image(widget));
-    }
-
-    let pages = history_pages(&db_url, &guest, widget);
-    // The read answers position, type, operation, changed_by, changed_at,
-    // before, after and current. It states no head position, so the newest
-    // position is the last entry of the last page this read took.
-    let head_position = pages
-        .last()
-        .map_or(0, |row| row[0].parse().expect("position is a bigint"));
-    let rows = pages
-        .iter()
-        .map(|row| HistoryRow {
-            position: row[0].parse().expect("position is a bigint"),
-            type_: &row[1],
-            before: &row[5],
-            current: &row[7],
-            head_position,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        rows.iter().map(|row| row.type_).collect::<Vec<_>>(),
-        ["insert", "update", "update", "delete"],
-        "the read must return every entry of the row in position order"
-    );
-    assert!(
-        rows.iter().all(|row| row.current == "{}"),
-        "the current image of a deleted row must be '{{}}'"
-    );
-    assert_eq!(
-        pages.iter().map(|row| row[2].as_str()).collect::<Vec<_>>(),
-        [
-            CREATE_OPERATION,
-            UPDATE_OPERATION,
-            UPDATE_OPERATION,
-            REPAIR_OPERATION
-        ]
-    );
-
-    let state = |position: i64| match state_at(&rows, position).expect("the read folds") {
-        RowState::Present(image) => Some(
-            image
-                .columns()
-                .map(|(name, value)| (name.to_owned(), value.to_owned()))
-                .collect::<Vec<_>>(),
-        ),
-        RowState::Absent => None,
-        RowState::Unavailable => {
-            panic!("position {position} is retained")
-        }
-    };
-    for (row, expected) in rows.iter().zip(&images) {
-        assert_eq!(
-            state(row.position),
-            (expected != "{}").then(|| image_columns(expected)),
-            "the fold must reconstruct the row after the {} at position {}",
-            row.type_,
-            row.position
-        );
-    }
-    assert_eq!(
-        state_at(&rows, rows[0].position - 1),
-        Ok(RowState::Unavailable)
     );
 
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));

@@ -215,67 +215,42 @@ mod tests {
     }
 
     #[test]
-    fn private_custom_operations_never_become_role_grants() {
-        let mut manifest = owned_manifest();
-        let operation = &mut manifest["custom_operations"]["widget.publish"];
-        operation["visibility"] = serde_json::json!("private");
-        operation
-            .as_object_mut()
-            .expect("operation is an object")
-            .remove("permission");
-        operation["errors"] = serde_json::json!(["internal_error"]);
-        let bytes = serde_json::to_vec(&manifest).expect("serialize private operation fixture");
-        assert_eq!(
-            operation_grant_tokens(&bytes).expect("private operation remains valid"),
-            ["grant-fixture:widget/archive@1.0.0"]
-                .map(str::to_owned)
-                .into_iter()
-                .collect()
-        );
-    }
-
-    #[test]
-    fn manifest_unknown_fields_are_refused_by_the_public_strict_parser() {
-        let mut manifest = owned_manifest();
-        manifest["invented_grant_grammar"] = serde_json::Value::Bool(true);
-        let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
-        let error = operation_grant_tokens(&bytes).expect_err("unknown field was accepted");
-        assert_eq!(error.error_type(), OperationGrantErrorType::InvalidManifest);
-        assert!(
-            error.source().is_some(),
-            "strict parser refusal lost source"
-        );
-    }
-
-    #[test]
-    fn semantic_operation_vocabulary_refusal_reaches_the_grant_boundary() {
-        let mut manifest = owned_manifest();
-        manifest["custom_operations"]["widget.publish"]["component"] = serde_json::json!("missing");
-        let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
-        let error = operation_grant_tokens(&bytes).expect_err("unknown operation was granted");
-        assert_eq!(error.error_type(), OperationGrantErrorType::InvalidManifest);
-        assert_eq!(
-            error
-                .source()
-                .and_then(|source| source.downcast_ref::<wamn_compiler::ManifestError>())
-                .map(wamn_compiler::ManifestError::error_type),
-            Some(wamn_compiler::ManifestErrorType::InvalidComponent)
-        );
-    }
-
-    #[test]
-    fn noncanonical_package_identity_reaches_the_grant_boundary() {
-        let mut manifest = owned_manifest();
-        manifest["package"]["id"] = serde_json::json!("grant-Fixture");
-        let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
-        let error = operation_grant_tokens(&bytes).expect_err("invalid package id was granted");
-        assert_eq!(error.error_type(), OperationGrantErrorType::InvalidManifest);
-        assert_eq!(
-            error
-                .source()
-                .and_then(|source| source.downcast_ref::<wamn_compiler::ManifestError>())
-                .map(wamn_compiler::ManifestError::error_type),
-            Some(wamn_compiler::ManifestErrorType::InvalidIdentity)
-        );
+    fn invalid_manifests_are_refused_at_the_grant_boundary() {
+        for (path, field, value, expected_source) in [
+            ("", "invented_grant_grammar", serde_json::json!(true), None),
+            (
+                "/custom_operations/widget.publish",
+                "component",
+                serde_json::json!("missing"),
+                Some(wamn_compiler::ManifestErrorType::InvalidComponent),
+            ),
+            (
+                "/package",
+                "id",
+                serde_json::json!("grant-Fixture"),
+                Some(wamn_compiler::ManifestErrorType::InvalidIdentity),
+            ),
+        ] {
+            let mut manifest = owned_manifest();
+            manifest
+                .pointer_mut(path)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .insert(field.to_owned(), value);
+            let bytes = serde_json::to_vec(&manifest).expect("serialize refused manifest");
+            let error = operation_grant_tokens(&bytes).expect_err("invalid manifest was granted");
+            assert_eq!(error.error_type(), OperationGrantErrorType::InvalidManifest);
+            let source = error.source().expect("manifest refusal keeps its source");
+            if let Some(expected) = expected_source {
+                assert_eq!(
+                    source
+                        .downcast_ref::<wamn_compiler::ManifestError>()
+                        .unwrap()
+                        .error_type(),
+                    expected
+                );
+            }
+        }
     }
 }

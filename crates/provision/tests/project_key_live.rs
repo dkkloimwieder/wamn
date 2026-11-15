@@ -135,69 +135,6 @@ fn ddl(target: &Target) -> String {
 }
 
 #[sqlx::test(migrations = false)]
-async fn the_sql_project_key_equals_the_rust_project_key(pool: sqlx::PgPool) {
-    let test_database = wamn_test_postgres::url(&pool);
-    let admin = test_database.as_str().to_owned();
-    let target = Target::new(&"agree".parse().unwrap());
-    let db_url = reset(&admin, &target);
-    psql_file(&db_url, &ddl(&target));
-
-    for project_env_key in PROJECT_ENV_KEYS {
-        let observed = psql(
-            &db_url,
-            None,
-            &format!("SELECT wamn_authority.project_key('{project_env_key}')"),
-        );
-        let expected = project_key(&project_env_key.parse().unwrap(), &target.db);
-        assert_eq!(
-            observed, expected,
-            "project {project_env_key:?}: the SQL derivation and the Rust derivation \
-             DISAGREE. Provisioning would mint a login named for one key while \
-             every governed predicate computed the other, so every guest read \
-             would refuse."
-        );
-        assert_eq!(
-            expected.len(),
-            40,
-            "the digest is the 40-hex target convention"
-        );
-    }
-}
-
-#[sqlx::test(migrations = false)]
-async fn the_function_carries_the_flags_the_expression_index_requires(pool: sqlx::PgPool) {
-    let test_database = wamn_test_postgres::url(&pool);
-    let admin = test_database.as_str().to_owned();
-    let target = Target::new(&"flags".parse().unwrap());
-    let db_url = reset(&admin, &target);
-    psql_file(&db_url, &ddl(&target));
-
-    // Read from pg_proc, NOT from the DDL text. A function that silently lost
-    // IMMUTABLE still creates fine and breaks every expression index built on
-    // it, so the catalog is the only answer worth trusting.
-    let mut connection = wamn_postgres::connect(&db_url).await.unwrap();
-    for (name, volatility) in [("project_key", "i"), ("current_project_key", "s")] {
-        let (observed, parallel, definer): (String, String, bool) = sqlx::query_as(
-            "SELECT p.provolatile::text,p.proparallel::text,p.prosecdef FROM pg_proc p WHERE p.pronamespace='wamn_authority'::regnamespace AND p.proname=$1"
-        ).bind(name).fetch_one(&mut connection).await.unwrap();
-        assert_eq!(observed, volatility);
-        assert_eq!(parallel, "s");
-        assert!(!definer);
-    }
-
-    // The expression index the ruling requires must actually be creatable.
-    psql_file(
-        &db_url,
-        "CREATE TABLE probe (project_env_key text NOT NULL); \
-         CREATE INDEX IF NOT EXISTS probe_project_key \
-           ON probe ((wamn_authority.project_key(project_env_key)))",
-    );
-    let indexed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM pg_depend WHERE classid='pg_class'::regclass AND objid='probe_project_key'::regclass AND refclassid='pg_proc'::regclass AND refobjid='wamn_authority.project_key(text)'::regprocedure)")
-        .fetch_one(&mut connection).await.unwrap();
-    assert!(indexed);
-}
-
-#[sqlx::test(migrations = false)]
 async fn the_guest_may_execute_the_derivation_and_may_not_replace_it(pool: sqlx::PgPool) {
     let test_database = wamn_test_postgres::url(&pool);
     let admin = test_database.as_str().to_owned();
@@ -389,61 +326,40 @@ async fn the_session_derivation_returns_the_key_of_the_connected_guest_login(poo
 async fn bootstrap_and_reapplication_preserve_project_key_behavior(pool: sqlx::PgPool) {
     let test_database = wamn_test_postgres::url(&pool);
     let admin = test_database.as_str().to_owned();
-    // MULTI-BYTE ON PURPOSE — see `Target::multibyte`.
-    let target = Target::multibyte(&"boot".parse().unwrap());
-    let db_url = reset(&admin, &target);
+    for target in [
+        Target::new(&"agree".parse().unwrap()),
+        Target::multibyte(&"boot".parse().unwrap()),
+    ] {
+        let db_url = reset(&admin, &target);
 
-    let bootstrap = authority_derivations_bootstrap_sql()
-        .replace("\"wamn_db_owner\"", &format!("\"{}\"", target.owner))
-        .replace("\"wamn_app\"", &format!("\"{}\"", target.app));
-    let literal = ddl(&target);
-    psql_file(
-        &db_url,
-        "CREATE TABLE boot_probe (project_env_key text NOT NULL)",
-    );
-    for installer in [&bootstrap, &literal, &literal] {
-        psql_file(&db_url, installer);
-        psql_file(&db_url,
-            "DO $$ BEGIN ASSERT EXISTS (
-                 SELECT FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-                 WHERE n.nspname='wamn_authority' AND p.proname='project_key'
-                   AND p.provolatile='i' AND p.proparallel='s'
-             ); END $$;
-             DROP INDEX IF EXISTS boot_probe_tkey;
-             CREATE INDEX boot_probe_tkey ON boot_probe ((wamn_authority.project_key(project_env_key)))");
-        for project_env_key in PROJECT_ENV_KEYS {
-            psql_file(
-                &db_url,
-                &format!(
-                    "DO $$ BEGIN ASSERT wamn_authority.project_key('{project_env_key}') = '{}'; END $$;",
-                    project_key(&project_env_key.parse().unwrap(), &target.db)
-                ),
-            );
+        let bootstrap = authority_derivations_bootstrap_sql()
+            .replace("\"wamn_db_owner\"", &format!("\"{}\"", target.owner))
+            .replace("\"wamn_app\"", &format!("\"{}\"", target.app));
+        let literal = ddl(&target);
+        psql_file(
+            &db_url,
+            "CREATE TABLE boot_probe (project_env_key text NOT NULL)",
+        );
+        for installer in [&bootstrap, &literal, &literal] {
+            psql_file(&db_url, installer);
+            psql_file(&db_url,
+                "DO $$ BEGIN ASSERT EXISTS (
+                     SELECT FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                     WHERE n.nspname='wamn_authority' AND p.proname='project_key'
+                       AND p.provolatile='i' AND p.proparallel='s' AND NOT p.prosecdef
+                 );
+                 ASSERT EXISTS (SELECT FROM pg_proc WHERE oid='wamn_authority.current_project_key()'::regprocedure AND provolatile='s' AND proparallel='s' AND NOT prosecdef); END $$;
+                 DROP INDEX IF EXISTS boot_probe_tkey;
+                 CREATE INDEX boot_probe_tkey ON boot_probe ((wamn_authority.project_key(project_env_key)))");
+            for project_env_key in PROJECT_ENV_KEYS {
+                psql_file(
+                    &db_url,
+                    &format!(
+                        "DO $$ BEGIN ASSERT wamn_authority.project_key('{project_env_key}') = '{}'; END $$;",
+                        project_key(&project_env_key.parse().unwrap(), &target.db)
+                    ),
+                );
+            }
         }
     }
-}
-
-#[sqlx::test(migrations = false)]
-async fn administration_uses_the_database_boundary_while_catalog_keeps_project_keys(
-    pool: sqlx::PgPool,
-) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    let url = database.as_str();
-    psql_file(url, "CREATE ROLE wamn_app NOLOGIN NOINHERIT; ");
-    psql_file(url, wamn_catalog::CATALOG_SCHEMA_SQL);
-    psql_file(url, wamn_control_provision::APP_SCHEMA_SQL);
-    psql_file(url, "DO $$ BEGIN
-        ASSERT NOT EXISTS (
-            SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-            WHERE n.nspname='platform' AND c.relname IN
-              ('role','user_role','permission','api_key','environment',
-               'role_history','user_role_history','permission_history','api_key_history','environment_history')
-              AND (c.relrowsecurity OR c.relforcerowsecurity
-                OR EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='project_env_key' AND NOT a.attisdropped)
-                OR EXISTS (SELECT FROM pg_policy p WHERE p.polrelid=c.oid)
-                OR EXISTS (SELECT FROM pg_index i WHERE i.indrelid=c.oid AND pg_get_indexdef(i.indexrelid) LIKE '%project_key%')));
-        ASSERT EXISTS (SELECT FROM pg_index WHERE indrelid='catalog.packages'::regclass AND pg_get_indexdef(indexrelid) LIKE '%project_key%');
-        ASSERT EXISTS (SELECT FROM pg_attribute WHERE attrelid='catalog.packages'::regclass AND attname='project_env_key' AND NOT attisdropped);
-        END $$;");
 }

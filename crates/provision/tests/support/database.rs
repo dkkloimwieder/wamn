@@ -120,59 +120,6 @@ pub async fn package_migration_input(
     Ok(url.into())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[sqlx::test(migrations = false)]
-    async fn a_control_login_reads_and_writes_only_its_own_org(pool: sqlx::PgPool) {
-        let _lock = wamn_test_postgres::lock();
-        let database = wamn_test_postgres::url(&pool);
-        system(database.as_str()).await;
-        {
-            let batches: &[&str] = &[
-                &seed_org_project_env_sql("acme", "orders", &"dev".parse().unwrap()),
-                &seed_org_project_env_sql("other", "orders", &"dev".parse().unwrap()),
-            ];
-            let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
-            for batch in batches {
-                sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
-                    .execute(&mut setup_connection)
-                    .await
-                    .unwrap();
-            }
-        }
-        let login = crate::workload_login(
-            crate::WorkloadRoleFamily::Control,
-            crate::WorkloadRoleIdentity::Org {
-                org: "acme",
-                database: database.path().trim_start_matches('/'),
-            },
-        )
-        .unwrap();
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "CREATE ROLE {login} LOGIN INHERIT NOSUPERUSER NOBYPASSRLS; \
-             GRANT wamn_control TO {login}; SET SESSION AUTHORIZATION {login}; \
-             SET ROLE wamn_control; \
-             INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture'); \
-             DO $isolation$ BEGIN \
-                 ASSERT EXISTS (SELECT FROM registry.projects WHERE org='acme'); \
-                 ASSERT NOT EXISTS (SELECT FROM registry.projects WHERE org<>'acme'); \
-                 INSERT INTO registry.projects(org,id) VALUES ('acme','allowed'); \
-                 BEGIN \
-                     INSERT INTO registry.projects(org,id) VALUES ('other','refused'); \
-                     RAISE EXCEPTION 'cross-org write succeeded'; \
-                 EXCEPTION WHEN insufficient_privilege THEN NULL; END; \
-                 BEGIN \
-                     PERFORM registry.configure_external_system('other','external_system.list','{{\"project\":\"orders\"}}'::jsonb); \
-                     RAISE EXCEPTION 'cross-org function succeeded'; \
-                 EXCEPTION WHEN insufficient_privilege THEN NULL; END; \
-             END $isolation$; \
-             RESET SESSION AUTHORIZATION; DROP ROLE {login};"
-        ))).execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
-    }
-}
-
 /// Install a role for an isolated database interface test. Production roles belong to CNPG.
 pub fn login_sql(
     family: crate::WorkloadRoleFamily,

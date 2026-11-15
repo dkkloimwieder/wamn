@@ -14,27 +14,25 @@ use wamn_control_provision::sql;
 /// stay unchanged when provisioning removes an unauthorized privilege.
 #[sqlx::test(migrations = false)]
 async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sqlx::PgPool) {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let admin = test_database.as_str().to_owned();
-    let database = query(&admin, "SELECT current_database()");
-    reset(&admin, &database);
+    /// The host establishes caller identity before a login reads product rows.
+    fn bound_query(url: &str, statement: &str) -> String {
+        query(
+            url,
+            &format!(
+                "BEGIN; {} {statement}; COMMIT;",
+                wamn_control_provision::bind_platform_principal_sql(
+                    wamn_control_provision::PlatformComponent::Executor
+                )
+            ),
+        )
+    }
 
+    let (fixture, _lock) = grants::family(&pool, WorkloadRoleFamily::HttpAdmitter).await;
+    let admin = wamn_test_postgres::url(&pool).to_string();
     let stable = WorkloadRoleFamily::HttpAdmitter.acl_role();
-    let login = generation(WorkloadRoleFamily::HttpAdmitter, &database);
+    let login = &fixture.login;
     let surface = sql::grant_http_admitter_surface_sql("wamn_run");
-    run_admin(&admin, "converge the callable-HTTP surface", &surface);
     run_admin(&admin, "replay the convergent surface", &surface);
-    run_admin(
-        &admin,
-        "prepare the callable-HTTP generation",
-        &wamn_control_provision::test_database::login_sql(
-            WorkloadRoleFamily::HttpAdmitter,
-            &database,
-            &login,
-            GENERATION_PW,
-        ),
-    );
 
     // Convergence, same as the executor arm: a run-plane privilege handed to
     // this family out of band is REMOVED by a re-apply, not merely unmentioned.
@@ -54,7 +52,7 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
          FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
          WHERE c.relkind='S' AND n.nspname NOT LIKE 'pg_%'",
     )
-    .bind(&login)
+    .bind(login)
     .fetch_all(&pool)
     .await
     .unwrap();
@@ -68,7 +66,7 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
          FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
          WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'",
     )
-    .bind(&login)
+    .bind(login)
     .fetch_all(&pool)
     .await
     .unwrap();
@@ -136,16 +134,16 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
         ),
     );
 
-    let as_login = role_url(&admin, &login, GENERATION_PW);
+    let as_login = &fixture.url;
     for statement in [
         "SELECT name FROM platform.role",
         "SELECT created_by FROM catalog.workflows",
     ] {
-        assert_eq!(sqlstate(&as_login, statement).as_deref(), Some("42501"));
+        assert_eq!(sqlstate(as_login, statement).as_deref(), Some("42501"));
     }
     assert!(
         !bound_query(
-            &as_login,
+            as_login,
             "SELECT (rolsuper OR rolbypassrls)::text FROM pg_roles WHERE rolname = current_user"
         )
         .parse::<bool>()
@@ -162,7 +160,7 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
     for relation in relations.lines() {
         assert_eq!(
             bound_query(
-                &as_login,
+                as_login,
                 &format!("SELECT count(*) FROM catalog.{relation}")
             )
             .parse::<i64>()
@@ -177,7 +175,7 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
     }
     assert_eq!(
         bound_query(
-            &as_login,
+            as_login,
             "SELECT count(graph_json) FROM catalog.workflows \
               WHERE project_env_key = 'org-a--prod--orders' AND environment = 'prod' \
                 AND application = 'orders' AND workflow_id = 'send' AND version = 1"
@@ -190,7 +188,7 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
     );
     assert_eq!(
         bound_query(
-            &as_login,
+            as_login,
             "SELECT count(*) FROM platform.permission \
               WHERE role_name = 'widget-reader' \
                 AND permission = 'wamn-widgets:widget/get'"
@@ -202,7 +200,7 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
     );
     assert_eq!(
         bound_query(
-            &as_login,
+            as_login,
             "SELECT p.permission FROM platform.\"user\" u \
              JOIN platform.user_role ur ON ur.user_id = u.id \
              JOIN platform.permission p ON p.role_name = ur.role_name \
@@ -212,9 +210,4 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
         "wamn-widgets:widget/get",
         "the callable-HTTP generation cannot read the user's fresh permission"
     );
-}
-
-#[sqlx::test(migrations = false)]
-async fn http_admitter_refusals_and_catalog_rules(pool: sqlx::PgPool) {
-    grants::family(pool, WorkloadRoleFamily::HttpAdmitter).await;
 }

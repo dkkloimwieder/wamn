@@ -423,6 +423,11 @@ Enable the feature on a dev-dependency. These functions do not take the process 
 | project | `wamn_catalog::test_database::project(url).await` | `CATALOG_SCHEMA_SQL` and the `wamn_app` role |
 | project+platform | `wamn_platform_identity::test_database::project_platform(url).await` | the project base grants and `deploy/sql/app-schema.sql` |
 
+`wamn-control-provision --lib` tests names, target documents, templates, and operation grants without Postgres.
+Its database tests live under `crates/provision/tests/`.
+The `apply_grants` target tests the apply login, and `control_grants` tests org isolation.
+Reader grant targets each cover one login family.
+
 A test of provisioning, migrations, or grants executes that operation and starts without a setup function that already performed it.
 Exercise the intended role because a superuser bypasses row security.
 Ignored tests use the same SQLx interface.

@@ -5,16 +5,10 @@ mod grants;
 use wamn_control_provision::WorkloadRoleFamily;
 
 #[sqlx::test(migrations = false)]
-async fn app_refusals_and_catalog_rules(pool: sqlx::PgPool) {
-    grants::family(pool, WorkloadRoleFamily::App).await;
-}
-
-#[sqlx::test(migrations = false)]
 async fn application_logins_cannot_reach_mapped_platform_logins(pool: sqlx::PgPool) {
     use wamn_control_provision::{WorkloadRoleIdentity, workload_login};
 
-    let _lock = wamn_test_postgres::lock();
-    let mut fixture = grants::prepare(&pool, WorkloadRoleFamily::App).await;
+    let (mut fixture, _lock) = grants::family(&pool, WorkloadRoleFamily::App).await;
     let database_url = wamn_test_postgres::url(&pool);
     let database = database_url.path().trim_start_matches('/');
     let query_login = workload_login(

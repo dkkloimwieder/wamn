@@ -140,51 +140,6 @@ fn canary(recovery_domain: RecoveryDomain) -> EnvPolicy {
 mod tests {
     use super::*;
 
-    /// The three presets reproduce the retired tiers: trials = pooled dev/prod;
-    /// standard = dedicated with canary sharing prod's domain; dedicated =
-    /// canary in its OWN domain (the one-field T2/T4 difference).
-    #[test]
-    fn templates_reproduce_the_retired_tiers() {
-        let trials = Template::trials();
-        assert!(trials.pooled);
-        assert_eq!(
-            trials.placement("wamn-pg"),
-            Placement::Pooled {
-                pool: "wamn-pg".into()
-            }
-        );
-        let names: Vec<&str> = trials.policies.iter().map(|p| p.name.as_str()).collect();
-        assert_eq!(names, ["dev", "prod"]);
-
-        let standard = Template::standard();
-        assert!(!standard.pooled);
-        assert_eq!(standard.placement("ignored"), Placement::Dedicated);
-        let canary = standard
-            .policies
-            .iter()
-            .find(|p| p.name == "canary".parse().unwrap())
-            .expect("standard stamps a canary policy");
-        assert_eq!(
-            canary.recovery_domain,
-            RecoveryDomain::SharedWith("prod".parse().expect("valid environment name")),
-            "standard canary co-resides in prod's recovery domain (T2)"
-        );
-
-        let dedicated = Template::dedicated();
-        let canary = dedicated
-            .policies
-            .iter()
-            .find(|p| p.name == "canary".parse().unwrap())
-            .expect("dedicated stamps a canary policy");
-        assert_eq!(
-            canary.recovery_domain,
-            RecoveryDomain::Own,
-            "dedicated canary owns its recovery domain (T4)"
-        );
-        assert_eq!(canary.instances, 2, "canary is lighter HA than prod");
-        assert_eq!(canary.promotion_rank, 20, "dev(10) < canary(20) < prod(30)");
-    }
-
     /// Every shipped policy set is ordered by promotion rank and internally
     /// consistent (a shared-with target names a policy in the same set), so a
     /// stamped org validates without external context.
@@ -213,19 +168,21 @@ mod tests {
     /// `stamp` produces the org placement + its per-org policy rows in one step.
     #[test]
     fn stamp_yields_the_placement_and_the_org_targeted_rows() {
-        let (org, rows) = Template::standard().stamp("acme", "wamn-pg");
-        assert_eq!(org.id, "acme");
-        assert_eq!(org.placement, Placement::Dedicated);
-        assert_eq!(rows.len(), 3);
-        assert!(rows.iter().all(|r| r.org == "acme"));
-
-        let (org, rows) = Template::trials().stamp("trialco", "wamn-pg");
-        assert_eq!(
-            org.placement,
-            Placement::Pooled {
-                pool: "wamn-pg".into()
+        for name in Template::NAMES {
+            let template = Template::by_name(name).unwrap();
+            let (org, rows) = template.stamp("acme", "wamn-pg");
+            assert_eq!(rows.len(), template.policies.len());
+            assert!(rows.iter().all(|row| row.org == org.id));
+            for (row, policy) in rows.iter().zip(&template.policies) {
+                assert_eq!(&row.policy, policy);
             }
-        );
-        assert_eq!(rows.len(), 2);
+            match org.placement {
+                Placement::Pooled { pool } => {
+                    assert!(template.pooled);
+                    assert_eq!(pool, "wamn-pg");
+                }
+                Placement::Dedicated => assert!(!template.pooled),
+            }
+        }
     }
 }

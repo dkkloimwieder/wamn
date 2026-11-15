@@ -11,36 +11,13 @@ use wamn_control_provision::sql;
 /// THE EXECUTOR-PLATFORM SURFACE, AS THE SERVER SEES IT.
 #[sqlx::test(migrations = false)]
 async fn the_executor_platform_role_holds_exactly_its_measured_lease_surface(pool: sqlx::PgPool) {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let admin = test_database.as_str().to_owned();
-    let database = query(&admin, "SELECT current_database()");
-    reset(&admin, &database);
-
+    let (fixture, _lock) = grants::family(&pool, WorkloadRoleFamily::ExecutorPlatform).await;
+    let admin = wamn_test_postgres::url(&pool).to_string();
     let stable = WorkloadRoleFamily::ExecutorPlatform.acl_role();
-    let login = generation(WorkloadRoleFamily::ExecutorPlatform, &database);
-    // The convergent grant batch, applied TWICE: a replay against an already
-    // correct database must be a no-op, not a widening and not an error.
+    let login = &fixture.login;
     let surface = sql::grant_executor_platform_surface_sql("wamn_run");
-    run_admin(&admin, "converge the executor-platform surface", &surface);
     run_admin(&admin, "replay the convergent surface", &surface);
-    run_admin(
-        &admin,
-        "prepare the executor-platform generation",
-        &wamn_control_provision::test_database::login_sql(
-            WorkloadRoleFamily::ExecutorPlatform,
-            &database,
-            &login,
-            GENERATION_PW,
-        ),
-    );
-    run_admin(
-        &admin,
-        "member the family into the platform base grants arm",
-        &sql::platform_group_membership_sql(WorkloadRoleFamily::ExecutorPlatform),
-    );
 
-    let expected = load_role_grants(&admin, stable).await;
     let direct: bool = sqlx::query_scalar(
         "SELECT NOT EXISTS (
           SELECT FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a WHERE a.grantee=$1::text::regrole
@@ -49,7 +26,7 @@ async fn the_executor_platform_role_holds_exactly_its_measured_lease_surface(poo
           UNION ALL SELECT FROM pg_proc c CROSS JOIN LATERAL aclexplode(c.proacl) a WHERE a.grantee=$1::text::regrole
           UNION ALL SELECT FROM pg_database c CROSS JOIN LATERAL aclexplode(c.datacl) a WHERE a.grantee=$1::text::regrole
             AND (c.datname<>current_database() OR a.privilege_type<>'CONNECT' OR a.is_grantable))"
-    ).bind(&login).fetch_one(&pool).await.unwrap();
+    ).bind(login).fetch_one(&pool).await.unwrap();
     assert!(
         direct,
         "the login has only CONNECT directly and inherits its operation privileges"
@@ -68,12 +45,14 @@ async fn the_executor_platform_role_holds_exactly_its_measured_lease_surface(poo
         ),
     );
     run_admin(&admin, "re-converge after the widening", &surface);
-    assert_eq!(
-        load_role_grants(&admin, stable).await,
-        expected,
-        "the surface ADDS but does not NARROW: a hand-granted table, column and \
-         routine privilege survived a re-apply"
-    );
+    for statement in [
+        "INSERT INTO wamn_run.runs DEFAULT VALUES",
+        "UPDATE wamn_run.runs SET input_json=input_json",
+        "SELECT * FROM catalog.wiring_tombstones",
+        "SELECT wamn_run.guard_event_lineage_immutable()",
+    ] {
+        grants::refuses(&fixture.url, statement).await;
+    }
 
     // --- 4. THE POST-STATE, IN THE GENERATION'S OWN SESSION -----------------
     //
@@ -95,10 +74,10 @@ async fn the_executor_platform_role_holds_exactly_its_measured_lease_surface(poo
             package_hash = "d".repeat(64),
         ),
     );
-    let as_login = role_url(&admin, &login, GENERATION_PW);
+    let as_login = &fixture.url;
     assert_eq!(
         sqlstate(
-            &as_login,
+            as_login,
             &format!(
                 "BEGIN; {} UPDATE wamn_run.runs SET status = 'running' WHERE run_id = 'r1'; COMMIT;",
                 wamn_control_provision::bind_platform_principal_sql(
@@ -120,7 +99,7 @@ async fn the_executor_platform_role_holds_exactly_its_measured_lease_surface(poo
     );
     assert_eq!(
         sqlstate(
-            &as_login,
+            as_login,
             &format!("BEGIN; {} UPDATE wamn_run.runs SET input_json = '{{\"b\":2}}' WHERE run_id = 'r1'; COMMIT;", wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Executor)),
         )
         .as_deref(),
@@ -137,9 +116,4 @@ async fn the_executor_platform_role_holds_exactly_its_measured_lease_surface(poo
         .unwrap()["a"],
         1
     );
-}
-
-#[sqlx::test(migrations = false)]
-async fn executor_platform_refusals_and_catalog_rules(pool: sqlx::PgPool) {
-    grants::family(pool, WorkloadRoleFamily::ExecutorPlatform).await;
 }

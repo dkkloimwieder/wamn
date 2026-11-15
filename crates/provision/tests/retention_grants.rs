@@ -6,5 +6,5 @@ use wamn_control_provision::WorkloadRoleFamily;
 
 #[sqlx::test(migrations = false)]
 async fn retention_refusals_and_catalog_rules(pool: sqlx::PgPool) {
-    grants::family(pool, WorkloadRoleFamily::Retention).await;
+    grants::family(&pool, WorkloadRoleFamily::Retention).await;
 }
