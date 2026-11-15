@@ -21,6 +21,8 @@ Guest input cannot choose a database, schema, or database role.
 
 The release pins one runtime schema per SQL-bearing application in each serving component's `runtime-schema` field.
 Publication derives this schema from the application's models and internal relations, including models that use a base package's schema.
+A SQL wrapper can name the base relations it uses as models owned by the base, with no model operations.
+Those references select the base schema and leave table ownership with the base.
 Declared SQL relations must use that same schema.
 Publication refuses an application that spans multiple schemas.
 The host binds the pinned schema before it opens the application's transactions, including transactions shared by composed members.

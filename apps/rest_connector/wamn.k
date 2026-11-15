@@ -17,7 +17,19 @@ manifest.Package {
             operations = ["item.record"]
         }
     }
-    models = {}
+    # The composed base owns these relations. They select its SQL schema.
+    models = {
+        setting = manifest.Model("setting", "wamn_integration") {
+            table = "setting"
+            owner = "wamn_integration"
+            operations = {}
+        }
+        log = manifest.Model("log", "wamn_integration") {
+            table = "log"
+            owner = "wamn_integration"
+            operations = {}
+        }
+    }
     custom_operations = {
         "sync.finish" = manifest.Command("sync.finish") {
             permission = None
