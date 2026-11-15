@@ -1175,147 +1175,8 @@ mod tests {
             platform_pool_max_size: 1,
             wait_timeout_ms: 1,
             statement_timeout_ms: 1,
-            row_limit: 1,
         })
         .expect("an offline postgres plugin does not open a connection")
-    }
-
-    #[tokio::test]
-    async fn connection_resolution_scopes_sql_and_external_authority() {
-        use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
-        use wamn_engine::entry_operation::postgres_types::PgError;
-        use wamn_postgres_capability::invocation::{
-            AuthorizedInvocation, InvocationRequest, PrincipalVerification, ReleaseContext,
-        };
-        use wamn_postgres_capability::{VerifiedStatement, begin_statement_transaction};
-
-        let project_env_key = wamn_registry::project_env_key("acme", "project-a", "dev");
-        let postgres = Arc::new(offline_postgres());
-        let mut manifest = manifest();
-        let mut component = manifest.components.pop_first().unwrap();
-        for operation in component.descriptor.operations.values_mut() {
-            operation.registered_operation = None;
-            operation.host_transaction = true;
-        }
-        let mut external = component
-            .descriptor
-            .operations
-            .values()
-            .next()
-            .unwrap()
-            .clone();
-        external.host_transaction = false;
-        let connection = wamn_catalog::ComponentConnection {
-            store_alias: "manager".into(),
-            requirement_type: wamn_catalog::ComponentConnectionType::Http,
-            mode: wamn_catalog::ConnectionMode::Write,
-        };
-        component.descriptor.connections = vec![connection.clone()];
-        external.connections = vec![connection.into()];
-        component
-            .descriptor
-            .operations
-            .insert("external".into(), external);
-        manifest.components.insert(component);
-        let release = Arc::new(
-            LoadedRelease::load_canonical_bytes(
-                &manifest.canonical_bytes(),
-                "connection authority test",
-                wamn_engine::release_manifest::ReleaseTarget::new(&project_env_key, "dev")
-                    .with_applications(
-                        serde_json::from_value(
-                            serde_json::json!({"app": {"packages": ["package_a"]}}),
-                        )
-                        .unwrap(),
-                    ),
-            )
-            .unwrap(),
-        );
-        let memory = Arc::new(ConnectionMemory::default());
-        memory.seed_release(
-            &project_env_key,
-            release.release().manifest_digest.as_str(),
-            Default::default(),
-        );
-        let facts = Arc::new(ConnectionFacts::new(
-            memory,
-            Publisher::default(),
-            Arc::new(ConnectionCredentials::empty()),
-            &postgres,
-            &project_env_key,
-            "project-a",
-            "dev",
-        ));
-        let context = Arc::new(ReleaseContext::new(release, facts).unwrap());
-        let statements = WamnPostgres::prepare_statement_set(
-            BTreeMap::from([(
-                "query/read.sql".into(),
-                VerifiedStatement {
-                    exact_sql: "SELECT 1".into(),
-                    binds: Box::default(),
-                    columns: Box::default(),
-                    transactional: false,
-                },
-            )]),
-            false,
-        );
-        let members =
-            WamnPostgres::prepare_statement_members([("sql-0".into(), statements.clone())]);
-        let mut invocation = invocation();
-        if let InvocationEntry::Wiring(position) = &mut invocation.entry {
-            position.package_id = "app".into();
-        }
-        let sql_operation = invocation.operation.clone();
-        for (operation, allowed) in [("external", true), (sql_operation.as_str(), false)] {
-            invocation.operation = operation.into();
-            invocation.origin.operation = operation.into();
-            let owner = AuthorizedInvocation::enter(
-                &postgres,
-                InvocationRequest {
-                    scope: operation.into(),
-                    identity: SessionIdentity {
-                        project_env_key: project_env_key.clone(),
-                        project: Some("project-a".into()),
-                        release: Some(ReleaseIdentity::from_loaded(&context.release)),
-                        ..SessionIdentity::default()
-                    },
-                    context: Some(Arc::clone(&context)),
-                    caller: None,
-                    registered_operation: None,
-                    causation: None,
-                    invocation: Some(invocation.clone()),
-                    statements: statements.clone(),
-                    members: members.clone(),
-                    principal: PrincipalVerification::Authenticated,
-                },
-            )
-            .await
-            .unwrap();
-            let resolved = wamn_postgres_capability::connection_binding::resolve(
-                &postgres,
-                owner.id(),
-                "manager",
-            )
-            .await;
-            if allowed {
-                assert!(resolved.unwrap().node_permitted);
-                assert!(matches!(
-                    begin_statement_transaction(&postgres, owner.id(), "project-a").await,
-                    Err(PgError::PermissionDenied)
-                ));
-                assert!(
-                    wamn_postgres_capability::connection_binding::resolve(
-                        &postgres,
-                        owner.id(),
-                        "manager"
-                    )
-                    .await
-                    .is_ok()
-                );
-            } else {
-                assert!(resolved.is_err());
-            }
-        }
     }
 
     #[tokio::test]
@@ -1462,7 +1323,6 @@ mod tests {
             },
             components: BTreeSet::from([ServingComponent {
                 runtime_schema: None,
-                statement_instances: std::collections::BTreeMap::new(),
                 descriptor: {
                     let mut descriptor = wamn_catalog::ComponentDescriptor::named(
                         snapshot.component.clone().expect("component"),
@@ -1483,7 +1343,6 @@ mod tests {
                             committed_result_schema: None,
 
                             registered_operation: snapshot.registered_operation,
-                            statements: BTreeMap::new(),
                         },
                     )]);
                     descriptor

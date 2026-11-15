@@ -481,7 +481,6 @@ impl Fixture {
                     platform_pool_max_size: 1,
                     wait_timeout_ms: 5_000,
                     statement_timeout_ms: 10_000,
-                    row_limit: 10_000,
                 },
             );
         }

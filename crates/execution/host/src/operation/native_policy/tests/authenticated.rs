@@ -16,9 +16,7 @@ use wamn_catalog::{
     ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageCoordinate,
 };
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
-use wamn_engine::component_admission::{
-    ComponentAdmissionErrorType, ComponentAdmissionRequest, validate_component_admission,
-};
+use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType, FlowHttpRouting};
 use wamn_engine::operation::invocation_policy::InvocationPolicy as _;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -194,7 +192,6 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
         platform_pool_max_size: 1,
         wait_timeout_ms: 2000,
         statement_timeout_ms: 5000,
-        row_limit: 100,
     };
     let configuration = json!({PROJECT: {"credentials": {
         (AuthorityClass::CallableHttp.as_str()): authorized_url.as_str()
@@ -428,15 +425,6 @@ async fn assert_case(caller: &AuthenticatedCaller, postgres: Arc<WamnPostgres>) 
         assert_eq!(invocation.package_id, fixture.root.target.package_id);
         assert_eq!(invocation.component, fixture.root.component);
         assert_eq!(invocation.component_digest, fixture.root.component_digest);
-        assert!(
-            fixture
-                .policy
-                .resources
-                .postgres
-                .activate_statement_operation(&event.scope, &invocation.operation)
-                .is_err(),
-            "statement authority was revoked"
-        );
     }
     fixture
         .workload
@@ -549,44 +537,6 @@ fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
     }
 }
 
-/// The composed bytes with the names of the two outer statements imports
-/// exchanged: each member's bytes and the record stay, the graph changes.
-fn swap_statement_bindings(composed: &[u8]) -> Vec<u8> {
-    let mut depth = 0_usize;
-    let mut imports = Vec::new();
-    for payload in wasmparser::Parser::new(0).parse_all(composed) {
-        match payload.expect("the composed bytes parse") {
-            wasmparser::Payload::ModuleSection { .. }
-            | wasmparser::Payload::ComponentSection { .. } => depth += 1,
-            wasmparser::Payload::End(_) => depth = depth.saturating_sub(1),
-            wasmparser::Payload::ComponentImportSection(reader) if depth == 0 => {
-                imports.push(reader.range());
-            }
-            _ => {}
-        }
-    }
-    assert!(!imports.is_empty(), "the composed component has imports");
-    let mut swapped = composed.to_vec();
-    let mut exchanged = 0;
-    for range in imports {
-        let start = usize::try_from(range.start).expect("offset fits memory");
-        let end = usize::try_from(range.end).expect("offset fits memory");
-        let section = &mut swapped[start..end];
-        for start in 0..section.len().saturating_sub(4) {
-            let name = &mut section[start..start + 5];
-            if name == b"sql-0" {
-                name.copy_from_slice(b"sql-1");
-                exchanged += 1;
-            } else if name == b"sql-1" {
-                name.copy_from_slice(b"sql-0");
-                exchanged += 1;
-            }
-        }
-    }
-    assert_eq!(exchanged, 2, "both outer import names are exchanged");
-    swapped
-}
-
 #[sqlx::test(migrations = false)]
 async fn native_member_statement_instances(pool: sqlx::PgPool) {
     super::run_isolated_test(
@@ -613,29 +563,6 @@ async fn native_member_statement_instances(pool: sqlx::PgPool) {
                 "the two named instances are one capability: {:?}",
                 admitted.component.imports
             );
-            assert_eq!(
-                admitted.statement_instances,
-                BTreeMap::from([
-                    ("sql-0".to_owned(), child_digest.clone()),
-                    (
-                        "sql-1".to_owned(),
-                        wamn_digest::bytes_sha256(&super::member_root_component())
-                    ),
-                ]),
-                "admission carries the record it verified into the admitted facts"
-            );
-            let refused = validate_component_admission(
-                &engine,
-                &swap_statement_bindings(&composed),
-                member_admission_request(&child_digest),
-            )
-            .expect_err("publish refuses a member wired to another member's instance");
-            assert_eq!(
-                refused.error_type(),
-                ComponentAdmissionErrorType::StatementInstanceMismatch,
-                "{refused}"
-            );
-
             let _lock = wamn_test_postgres::lock();
             let database = wamn_test_postgres::url(&pool);
             let (mut server, route) = authentication_fixture(database.as_str())
@@ -708,12 +635,7 @@ async fn native_member_statement_instances(pool: sqlx::PgPool) {
                     .await
                     .expect("the composed root dispatches");
                 if commits {
-                    let emission = result.expect("the root answers its codes");
-                    assert_eq!(
-                        emission.payload, "ukukrr",
-                        "root and child each refuse the other's statement and run their own, \
-                     and the child, nested in the command, is refused begin and plain run"
-                    );
+                    result.expect("the root succeeds");
                     transaction
                         .commit()
                         .await
@@ -756,18 +678,12 @@ async fn native_sql_free_command_begins_from_its_transaction_field(pool: sqlx::P
             let (composed, child) = super::sql_free_instances_component();
             let child_digest = wamn_digest::bytes_sha256(&child);
             let engine = wamn_engine::build_engine(&[]).expect("validation engine");
-            let admitted = validate_component_admission(
+            validate_component_admission(
                 &engine,
                 &composed,
                 member_admission_request(&child_digest),
             )
             .expect("publish admits the SQL-free root over its pinned child");
-            assert_eq!(
-                admitted.statement_instances,
-                BTreeMap::from([("sql-0".to_owned(), child_digest.clone())]),
-                "only the child imports statements"
-            );
-
             let _lock = wamn_test_postgres::lock();
             let database = wamn_test_postgres::url(&pool);
             let (mut server, route) = authentication_fixture(database.as_str())
@@ -797,21 +713,6 @@ async fn native_sql_free_command_begins_from_its_transaction_field(pool: sqlx::P
                 Some(postgres),
             )
             .await;
-            let released = fixture
-                .policy
-                .resources
-                .release
-                .manifest()
-                .components
-                .iter()
-                .find(|component| {
-                    component.descriptor.component_digest == fixture.root.component_digest
-                })
-                .expect("the release serves the root");
-            assert!(
-                released.descriptor.operations[ROOT].statements.is_empty(),
-                "the released root operation holds no statement: nothing is folded"
-            );
             assert!(fixture.root.operations[ROOT].host_transaction);
             for commits in [true, false] {
                 let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
@@ -1133,7 +1034,6 @@ async fn warm_postgres_with_pool(
             platform_pool_max_size: 1,
             wait_timeout_ms: 2000,
             statement_timeout_ms: 5000,
-            row_limit: 100,
         },
     )?;
     let credentials = Arc::new(WarmCredentials {

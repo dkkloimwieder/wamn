@@ -130,9 +130,6 @@ fn component(
     descriptor.operations = serde_json::from_value(json!({
         "run": {"input-ports": [], "output-ports": [], "parameters": []}
     }))?;
-    descriptor
-        .statement_instances
-        .insert("state".into(), STATE_DIGEST.into());
     descriptor.connections = aliases
         .iter()
         .map(|alias| wamn_catalog::ComponentConnection {
@@ -178,7 +175,6 @@ fn component(
         package_id: name.into(),
         descriptor,
         runtime_schema: None,
-        statement_instances: BTreeMap::new(),
     })
 }
 

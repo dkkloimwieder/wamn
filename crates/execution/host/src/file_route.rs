@@ -1268,7 +1268,6 @@ mod tests {
                 platform_pool_max_size: 1,
                 wait_timeout_ms: 1,
                 statement_timeout_ms: 1,
-                row_limit: 1,
             })
             .unwrap(),
         );

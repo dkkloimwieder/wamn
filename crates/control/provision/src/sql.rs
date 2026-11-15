@@ -839,7 +839,11 @@ pub fn control_surface_grants_sql() -> String {
     let mut sql = format!(
         "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA {plane} FROM {role}; \
          REVOKE ALL PRIVILEGES ON SCHEMA {plane} FROM {role}; \
-         GRANT USAGE ON SCHEMA {schemas} TO {role};"
+         GRANT USAGE ON SCHEMA {schemas}, platform, wamn_authority TO {role}; \
+         GRANT INSERT ON platform.tx_identity TO {role}; \
+         GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), \
+           wamn_authority.current_user_id(), wamn_authority.current_role(), \
+           wamn_authority.current_application() TO {role};"
     );
     for (schema, relation, privileges) in CONTROL_SURFACE {
         write!(

@@ -75,14 +75,8 @@
 -- wamn_app: only the table owner holds it.
 --
 -- IDENTITY INTEGRATION (3.5 / 4.2): `user.id` is a `uuid` — the ownership target
--- the 3.5 RLS builder reads as NULLIF(current_setting('app.user_id', true),
--- '')::uuid, so a data table's owner column referencing a user resolves. Role
--- NAMES (`role.name`, text) are what the builder reads as
--- COALESCE(current_setting('app.role', true), '') IN (...). The identity fields
--- themselves are INJECTED by the plugin from a resolved user/session (4.2) —
--- this schema is the SUBSTRATE, not the auth logic: NO password hashing / JWT /
--- session management here. `api_key.key_hash` is a one-way digest column (the
--- raw key is shown once at creation, never stored; hashing is 4.2's job).
+-- row policies read through wamn_authority.current_identity() and its accessors.
+-- The host inserts the caller before application SQL runs.
 
 CREATE SCHEMA IF NOT EXISTS platform AUTHORIZATION CURRENT_USER;
 
@@ -595,7 +589,7 @@ END $platform_configuration_history$;
 -- number a record already carries is caught by that model's UQ.
 --
 -- The database is the org boundary, so no function tests a project. No
--- function reads the app.application identity, which guest SQL can rewrite.
+-- function reads the application from the transaction caller.
 -- Each takes a sequence id and refuses an id that is not a sequence with
 -- undefined_object. The renderer of the wamn:postgres plugin resolves the
 -- sequence id from the application in host state and the sequence name, and

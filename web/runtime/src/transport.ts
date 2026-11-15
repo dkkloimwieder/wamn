@@ -403,7 +403,6 @@ const KNOWN_SOURCES: readonly string[] = [
   "not_null_violation",
   "permission_denied",
   "query_error",
-  "row_limit_exceeded",
   "connection_unavailable",
   "serialization_failure",
   "statement_timeout",

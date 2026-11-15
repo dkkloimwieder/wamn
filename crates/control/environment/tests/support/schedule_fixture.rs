@@ -360,7 +360,6 @@ pub async fn targeted_postgres(admin: &mut Client, url: &str) -> (Arc<WamnPostgr
             platform_pool_max_size: 2,
             wait_timeout_ms: 5000,
             statement_timeout_ms: 10000,
-            row_limit: 100,
         })
         .unwrap(),
     );

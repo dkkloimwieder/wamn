@@ -358,7 +358,6 @@ fn provision_project_components_for_http_manifest()
             input_ports: Vec::new(),
             output_ports: Vec::new(),
             parameters: Vec::new(),
-            statements: BTreeMap::new(),
         },
     );
     [wamn_catalog::ServingComponent {
@@ -380,13 +379,11 @@ fn provision_project_components_for_http_manifest()
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
                     registered_operation: None,
-                    statements: BTreeMap::new(),
                     committed_result_schema: None,
                 },
             )]);
             descriptor
         },
-        statement_instances: BTreeMap::new(),
     }]
     .into()
 }
@@ -469,7 +466,6 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
             platform_pool_max_size: 1,
             wait_timeout_ms: 2000,
             statement_timeout_ms: 5000,
-            row_limit: 100,
         })
         .unwrap(),
     );
@@ -712,7 +708,6 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
             package_id: PALETTE_PACKAGE_ID.into(),
             runtime_schema: None,
             descriptor,
-            statement_instances: BTreeMap::new(),
         }]
         .into(),
         Default::default(),
@@ -756,7 +751,6 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
             platform_pool_max_size: 1,
             wait_timeout_ms: 2000,
             statement_timeout_ms: 5000,
-            row_limit: 100,
         })
         .unwrap(),
     );

@@ -1922,12 +1922,10 @@ host:
                             parameters: Vec::new(),
                             committed_result_schema: None,
                             registered_operation: None,
-                            statements: BTreeMap::new(),
                         },
                     )]);
                     descriptor
                 },
-                statement_instances: BTreeMap::new(),
             }]),
             BTreeSet::from([ServingRoute {
                 package_id: "cat".into(),

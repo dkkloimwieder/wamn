@@ -7,8 +7,8 @@
 //! read deployment configuration, so this module tests the platform domain
 //! and writes the email.
 //!
-//! A platform component that writes binds its principal id as `app.user_id`
-//! and its `wamn:<component>` name as `app.operation`, so the record-history
+//! A platform component that writes binds its principal id in `platform.tx_identity.user_id`
+//! and its `wamn:<component>` name in `platform.tx_identity.operation`, so the record-history
 //! triggers record that component.
 
 use std::fmt::Write as _;
@@ -52,16 +52,15 @@ impl std::error::Error for PlatformDomainError {}
 /// Render the statement that binds `component` as the actor and the operation
 /// of the current transaction.
 ///
-/// The statement binds the principal id as `app.user_id` and the
-/// `wamn:<component>` name as `app.operation`. The binding is
+/// The statement binds the principal id in `platform.tx_identity.user_id` and the
+/// `wamn:<component>` name in `platform.tx_identity.operation`. The binding is
 /// transaction-local, so the caller runs the statement inside the transaction
 /// that writes.
 pub fn bind_platform_principal_sql(component: PlatformComponent) -> String {
     format!(
-        "SELECT pg_catalog.set_config({}, {}, true), pg_catalog.set_config({}, {}, true);\n",
-        escape_literal("app.user_id"),
+        "INSERT INTO platform.tx_identity (xid, user_id, role, application, operation) \
+         VALUES (pg_current_xact_id(), {}::uuid, '', '', {});\n",
         escape_literal(&component.principal_id().to_string()),
-        escape_literal("app.operation"),
         escape_literal(&component.principal_name()),
     )
 }
@@ -148,29 +147,6 @@ pub fn validate_platform_domain(domain: &str) -> Result<(), PlatformDomainError>
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_platform_binding_names_the_actor_and_the_operation() {
-        for component in PlatformComponent::ALL {
-            assert_eq!(
-                bind_platform_principal_sql(component),
-                format!(
-                    "SELECT pg_catalog.set_config('app.user_id', '{}', true), \
-                     pg_catalog.set_config('app.operation', '{}', true);\n",
-                    component.principal_id(),
-                    component.principal_name(),
-                )
-            );
-        }
-        assert!(
-            platform_principals_sql("example.invalid")
-                .expect("a domain name renders")
-                .starts_with(&bind_platform_principal_sql(
-                    PlatformComponent::Provisioning
-                )),
-            "the platform rows are written as wamn:provisioning"
-        );
-    }
 
     #[test]
     fn a_platform_row_that_is_already_there_is_kept() {

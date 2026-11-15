@@ -507,7 +507,7 @@ fn custom_operation_error_origin(operation: &CustomOperationDeclaration, literal
         }),
         "internal_error" => json!({
             "literal": literal,
-            "from": ["query_error", "row_limit_exceeded", "undeclared_constraint"],
+            "from": ["query_error", "undeclared_constraint"],
         }),
         "idempotency_conflict" if operation.claims() => json!({
             "literal": literal,
@@ -1194,7 +1194,7 @@ fn error_contract(
             Code::InternalError,
             json!({
                 "literal": "internal_error",
-                "from": ["query_error", "row_limit_exceeded"],
+                "from": "query_error",
             }),
         ),
     ];

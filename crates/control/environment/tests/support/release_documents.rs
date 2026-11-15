@@ -5,7 +5,6 @@ use wamn_environment::environment::{
     self,
     document::{DeclaredRelease, EnvironmentDocument},
 };
-use wamn_events::admission::{ManualRunAdmission, ManualRunAdmitted};
 use wamn_publish::publish_release::compose_application;
 
 use anyhow::{Context as _, ensure};
@@ -487,6 +486,7 @@ pub mod workflow {
     use std::collections::BTreeMap;
     use std::path::Path;
     use wamn_environment::environment::document::{DeclaredRelease, EnvironmentDocument};
+    use wamn_events::admission::{ManualRunAdmission, ManualRunAdmitted};
     const ENVIRONMENT: &str = "integration";
     const CONSUMER: &str = "rest_consumer_fixture";
     use wamn_broker::Publisher;
@@ -628,7 +628,6 @@ pub mod workflow {
             platform_pool_max_size: 2,
             wait_timeout_ms: 5_000,
             statement_timeout_ms: 10_000,
-            row_limit: 10_000,
         })?);
         let held = postgres
             .session_operation_permissions(
@@ -734,7 +733,6 @@ pub mod workflow {
             platform_pool_max_size: 2,
             wait_timeout_ms: 5_000,
             statement_timeout_ms: 10_000,
-            row_limit: 10_000,
         })?;
         let workflow = postgres
             .executor_read("default", environment.project_env_key, async |connection| {

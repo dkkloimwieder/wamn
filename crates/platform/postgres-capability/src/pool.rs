@@ -1,7 +1,5 @@
-//! Connection pooling + credential resolution for `wamn:postgres` (SR4 split,
-//! wamn-cjv.18): the per-project config/policy, the `CredentialProvider` seam,
-//! the live `ProjectPool`, the R18 connect-time assertion, and connection
-//! teardown. The pool/identity METHODS live on `WamnPostgres` in `identity.rs`.
+//! Connection pools keyed by project and login, credential resolution, and teardown.
+//! Pool and identity methods live on `WamnPostgres` in `session_identity.rs`.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -45,8 +43,6 @@ pub struct WamnPostgresConfig {
     pub wait_timeout_ms: u64,
     /// Host-enforced `statement_timeout`, injected per transaction.
     pub statement_timeout_ms: u32,
-    /// Host-enforced cap on rows returned by a single query.
-    pub row_limit: u64,
 }
 
 impl WamnPostgresConfig {
@@ -77,7 +73,6 @@ impl WamnPostgresConfig {
                 "WAMN_PG_STATEMENT_TIMEOUT_MS",
                 5_000,
             )),
-            row_limit: num("WAMN_PG_ROW_LIMIT", 100_000),
         }
     }
 }
@@ -164,8 +159,8 @@ impl ClassCredentials {
 }
 
 /// Per-project credentials + policy. In production one project = one database
-/// (plan 2.3); the pool, statement timeout, and row limit are all per-project so
-/// one noisy project cannot starve or over-fetch on behalf of another. The
+/// (plan 2.3); the pool and statement timeout are per-project so
+/// one noisy project cannot starve another. The
 /// CREDENTIAL is per authority class, because two authorities in one database
 /// are two different logins.
 #[derive(Clone, Debug)]
@@ -175,7 +170,6 @@ pub struct ProjectConfig {
     pub platform_pool_max_size: usize,
     pub wait_timeout_ms: u64,
     pub statement_timeout_ms: u32,
-    pub row_limit: u64,
 }
 
 impl ProjectConfig {
@@ -188,7 +182,6 @@ impl ProjectConfig {
             platform_pool_max_size,
             wait_timeout_ms,
             statement_timeout_ms,
-            row_limit,
         } = cfg;
         Some(Self {
             credentials: credentials?,
@@ -196,7 +189,6 @@ impl ProjectConfig {
             platform_pool_max_size,
             wait_timeout_ms,
             statement_timeout_ms,
-            row_limit,
         })
     }
 
@@ -208,7 +200,6 @@ impl ProjectConfig {
             platform_pool_max_size: cfg.platform_pool_max_size,
             wait_timeout_ms: cfg.wait_timeout_ms,
             statement_timeout_ms: cfg.statement_timeout_ms,
-            row_limit: cfg.row_limit,
         }
     }
 
@@ -221,7 +212,6 @@ impl ProjectConfig {
             platform_pool_max_size: self.platform_pool_max_size,
             wait_timeout_ms: self.wait_timeout_ms,
             statement_timeout_ms: self.statement_timeout_ms,
-            row_limit: self.row_limit,
         })
     }
 }
@@ -235,7 +225,6 @@ pub struct ResolvedCredential {
     pub platform_pool_max_size: usize,
     pub wait_timeout_ms: u64,
     pub statement_timeout_ms: u32,
-    pub row_limit: u64,
 }
 
 /// Resolves a project id to its database connection + policy. This is the seam
@@ -300,7 +289,7 @@ impl StaticCredentialProvider {
     }
 
     /// Parse `{ "<project>": { "url"?: .., "credentials"?: { "<class>": .. },
-    /// "row_limit"?: .., .. }, .. }`; unset per-project fields fall back to
+    /// .. }, .. }`; unset per-project fields fall back to
     /// `base`. Public so the route-authentication harnesses can build a
     /// multi-project [`StaticCredentialProvider`] from one JSON literal instead
     /// of assembling every [`ProjectConfig`] field by hand.
@@ -355,7 +344,6 @@ impl StaticCredentialProvider {
                         "statement_timeout_ms",
                         u64::from(base.statement_timeout_ms),
                     )),
-                    row_limit: u64_or("row_limit", base.row_limit),
                 },
             );
         }
@@ -455,69 +443,25 @@ impl CredentialProvider for StaticCredentialProvider {
 // Plugin
 // ---------------------------------------------------------------------------
 
-/// A pool belongs to one project, authority and project environment.
+/// A pool belongs to one project and authenticated login.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct PoolKey {
     project: Box<str>,
-    class: AuthorityClass,
-    project_env_key: Option<Box<str>>,
+    login: Box<str>,
 }
 
 impl PoolKey {
-    pub(super) fn new(project: &str, class: AuthorityClass, project_env_key: Option<&str>) -> Self {
+    pub(super) fn new(project: &str, login: String) -> Self {
         Self {
             project: project.into(),
-            class,
-            project_env_key: project_env_key.map(Into::into),
+            login: login.into_boxed_str(),
         }
-    }
-    #[cfg(test)]
-    pub(super) fn project(&self) -> &str {
-        &self.project
     }
 }
 
 pub(super) struct ProjectPool {
     pub(super) pool: PgPool,
     pub(super) statement_timeout_ms: u32,
-    pub(super) row_limit: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum PoolLifecycle {
-    Guest,
-    Platform,
-}
-
-impl PoolLifecycle {
-    /// Which pool cache an authority class draws from.
-    ///
-    /// The class SUBSUMES the lifecycle, so a caller never pairs the two by
-    /// hand and a guest-sql checkout against the platform cache is
-    /// unrepresentable rather than merely unreviewed. Exhaustive on purpose: a
-    /// new class is a compile error here, not a silent Platform default.
-    pub(super) const fn for_class(class: AuthorityClass) -> Self {
-        match class {
-            AuthorityClass::GuestSql | AuthorityClass::DynamicSql => Self::Guest,
-            AuthorityClass::ExecutorPlatform
-            | AuthorityClass::CallableHttp
-            | AuthorityClass::Administration => Self::Platform,
-        }
-    }
-
-    pub(super) const fn label(self) -> &'static str {
-        match self {
-            Self::Guest => "guest",
-            Self::Platform => "platform",
-        }
-    }
-
-    pub(super) const fn max_size(self, config: &ResolvedCredential) -> usize {
-        match self {
-            Self::Guest => config.guest_pool_max_size,
-            Self::Platform => config.platform_pool_max_size,
-        }
-    }
 }
 
 /// Raw checkout state, observed before any identity injection. Condition probes use
@@ -556,7 +500,6 @@ mod tests {
             platform_pool_max_size: 1,
             wait_timeout_ms: 1,
             statement_timeout_ms: 1,
-            row_limit: 1,
         }
     }
 
@@ -567,7 +510,6 @@ mod tests {
             platform_pool_max_size: 2,
             wait_timeout_ms: 100,
             statement_timeout_ms: 100,
-            row_limit: 10,
         }
     }
 

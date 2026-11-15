@@ -170,50 +170,31 @@ async fn composed_sql_uses_released_schemas(
             .get(0);
         assert_eq!(schema, expected_schema);
         if package == "rest_connector" {
-            let statements: Vec<_> = component
-                .statement_instances
-                .values()
-                .flat_map(|set| set.values())
-                .collect();
-            let sql = |path: &str| {
-                statements
-                    .iter()
-                    .find(|statement| statement.path == path)
-                    .unwrap()
-                    .sql
-                    .as_str()
-            };
-            sqlx::query(sqlx::AssertSqlSafe(
-                (sql("command/setting/write.sql")).to_string(),
-            ))
-            .bind(&"last_synced_at")
-            .bind(&json!("2026-10-21T12:00:00Z"))
-            .fetch_all(&mut *transaction)
-            .await?;
-            let value: serde_json::Value = sqlx::query(sqlx::AssertSqlSafe(
-                (sql("command/setting/read.sql")).to_string(),
-            ))
-            .bind(&"last_synced_at")
-            .fetch_one(&mut *transaction)
-            .await?
-            .get(0);
+            let sql = |path: &str| std::fs::read_to_string(roots[0].join(path));
+            sqlx::query(sqlx::AssertSqlSafe(sql("command/setting/write.sql")?))
+                .bind(&"last_synced_at")
+                .bind(&json!("2026-10-21T12:00:00Z"))
+                .fetch_all(&mut *transaction)
+                .await?;
+            let value: serde_json::Value =
+                sqlx::query(sqlx::AssertSqlSafe(sql("command/setting/read.sql")?))
+                    .bind(&"last_synced_at")
+                    .fetch_one(&mut *transaction)
+                    .await?
+                    .get(0);
             assert_eq!(value, json!("2026-10-21T12:00:00Z"));
-            sqlx::query(sqlx::AssertSqlSafe(
-                (sql("command/setting/write.sql")).to_string(),
-            ))
-            .bind(&"last_synced_at")
-            .bind(&json!("2026-10-21T12:01:00Z"))
-            .fetch_one(&mut *transaction)
-            .await?;
-            sqlx::query(sqlx::AssertSqlSafe(
-                (sql("command/log/append.sql")).to_string(),
-            ))
-            .bind(&"delivery")
-            .bind(&"item")
-            .bind(&"pushed")
-            .bind(&None::<serde_json::Value>)
-            .fetch_all(&mut *transaction)
-            .await?;
+            sqlx::query(sqlx::AssertSqlSafe(sql("command/setting/write.sql")?))
+                .bind(&"last_synced_at")
+                .bind(&json!("2026-10-21T12:01:00Z"))
+                .fetch_one(&mut *transaction)
+                .await?;
+            sqlx::query(sqlx::AssertSqlSafe(sql("command/log/append.sql")?))
+                .bind(&"delivery")
+                .bind(&"item")
+                .bind(&"pushed")
+                .bind(&None::<serde_json::Value>)
+                .fetch_all(&mut *transaction)
+                .await?;
             assert!(
                 sqlx::query("SELECT to_regclass('item') IS NULL")
                     .fetch_one(&mut *transaction)
@@ -227,14 +208,8 @@ async fn composed_sql_uses_released_schemas(
                 .bind(&vec![1_u8])
                 .fetch_one(&mut *transaction)
                 .await?;
-            let statement = component
-                .descriptor
-                .operations
-                .values()
-                .flat_map(|operation| operation.statements.values())
-                .next()
-                .unwrap();
-            let key: String = sqlx::query(sqlx::AssertSqlSafe((&statement.sql).to_string()))
+            let sql = std::fs::read_to_string(roots[1].join("command/item/record.sql"))?;
+            let key: String = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(&"item")
                 .bind(&"name")
                 .bind(&source)

@@ -24,7 +24,6 @@ use super::pool::{
     ClassCredentials, CredentialProvider, PoolKey, ProjectConfig, ProjectPool,
     StaticCredentialProvider, WamnPostgresConfig,
 };
-use super::statements::VerifiedStatement;
 use super::{DEFAULT_PROJECT, PgError};
 use crate::invocation::Authority;
 
@@ -244,12 +243,8 @@ pub struct WamnPostgres {
         std::sync::RwLock<HashMap<String, Arc<super::operation::OperationWorkload>>>,
     /// Resolves a project id → its database connection + policy.
     provider: Arc<dyn CredentialProvider>,
-    /// Guest-visible project pools, built lazily and never shared with host-owned
-    /// identity or authorization work.
-    guest_pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
-    /// Host-owned identity, authorization, and plan-supply project pools. Keeping a
-    /// distinct cache makes cross-lifecycle session reuse unrepresentable.
-    platform_pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
+    /// Pools indexed by project and authenticated login.
+    pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
     /// The single invocation and workload authority registry.
     pub scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
     /// Connections destroyed instead of repooled (chaos-acceptance-test observability).
@@ -294,7 +289,7 @@ impl UnprovisionedPrincipal {
         &self.project
     }
 
-    /// The `app.user_id` identity that named no row.
+    /// The caller identity that named no row.
     #[must_use]
     pub fn principal_id(&self) -> &str {
         &self.principal_id
@@ -312,34 +307,6 @@ impl std::fmt::Display for UnprovisionedPrincipal {
 }
 
 impl std::error::Error for UnprovisionedPrincipal {}
-
-/// Apply the shared parsed SQL policy before running guest SQL.
-pub(super) fn reject_identity_mutation(sql: &str) -> Result<(), PgError> {
-    wamn_compiler::declared_sql::require_declared_statement(sql)
-        .map_err(|error| PgError::QueryError(("WAMN0".into(), error.to_string())))
-}
-
-/// Refuse a transactional statement that has no executing principal.
-///
-/// A write stamps its executing principal, so such a statement is a platform
-/// defect. The host refuses it before it reaches PostgreSQL, with the SQLSTATE
-/// and message that the record-history trigger raises.
-pub(super) fn refuse_unattributed_statement(
-    statement: &VerifiedStatement,
-    user_id: Option<&str>,
-) -> Result<(), PgError> {
-    if statement.transactional && user_id.is_none() {
-        tracing::warn!(
-            target: "wamn::security",
-            "refused a transactional statement with no executing principal"
-        );
-        return Err(PgError::QueryError((
-            "55000".to_string(),
-            "actor-required".to_string(),
-        )));
-    }
-    Ok(())
-}
 
 /// Reject a malformed session identity before it is bound (R16). Since R2 these
 /// validators are NO LONGER the injection boundary — every identity value binds as a
@@ -415,26 +382,22 @@ fn validate_session_identity(
     Ok(())
 }
 
-/// An `app.operation`: a non-empty operation token or platform component name.
+/// A non-empty operation token or platform component name.
 /// The value binds as a parameter, so no charset rule applies. `''` is the
 /// unbound value, so it is not an identity.
 fn valid_operation(operation: &str) -> bool {
     !operation.is_empty()
 }
 
-/// An `app.application`: a non-empty application name. The value binds as a
+/// A non-empty application name. The value binds as a
 /// parameter, so no charset rule applies. `''` is the unbound value, so it is
 /// not an identity.
 fn valid_application(application: &str) -> bool {
     !application.is_empty()
 }
 
-/// A caller's `app.user_id`: the canonical `8-4-4-4-12` hex uuid a `users.id`
-/// renders as. Local rather than imported because this identity is a uuid, not one
-/// of the `[A-Za-z0-9_-]` identities `wamn-registry` owns. Since R2 it
-/// is not the injection boundary (the value binds as `$6`); it fails closed on a
-/// value the compiled `NULLIF(…, '')::uuid` coercion would raise 22P02 on inside
-/// every ownership predicate.
+/// A caller's canonical `8-4-4-4-12` UUID. The value binds as a parameter
+/// and is stored in the transaction identity's UUID column.
 fn valid_user_id(user_id: &str) -> bool {
     let mut groups = user_id.split('-');
     for len in [8, 4, 4, 4, 12] {
@@ -446,12 +409,6 @@ fn valid_user_id(user_id: &str) -> bool {
     groups.next().is_none()
 }
 
-/// True if `sql`'s first keyword is `SET` (covers `SET LOCAL` / `SET SESSION` /
-/// `SET ROLE` / `SET SESSION AUTHORIZATION`) or `RESET`, or if it calls
-/// `set_config` anywhere (CTE, sub-select, target list). `current_setting`
-/// (a *read* of a GUC) is deliberately allowed. Matching is case-insensitive;
-/// leading whitespace and SQL comments are stripped so a comment prefix cannot
-/// hide the keyword.
 impl WamnPostgres {
     /// Plugin over a single default database (the [`WamnPostgresConfig`]
     /// credentials). Pools are built lazily; `credentials: None` ⇒ every call
@@ -466,8 +423,7 @@ impl WamnPostgres {
     pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
         Self {
             provider,
-            guest_pools: std::sync::RwLock::new(HashMap::new()),
-            platform_pools: std::sync::RwLock::new(HashMap::new()),
+            pools: std::sync::RwLock::new(HashMap::new()),
             scopes: Arc::default(),
             operation_workloads: std::sync::RwLock::default(),
             operation_metrics: super::operation::OperationMetrics::default(),
@@ -702,12 +658,8 @@ impl WamnPostgres {
             .flatten()
     }
 
-    /// Register the durable-queue lease owner for a component id (fqg.4). When
-    /// set, every transaction the plugin opens for that component also runs
-    /// `SET LOCAL app.runner`, so a runner replica reads a stable owner to
-    /// identity/renew queue rows under. The bench harness calls this directly (a
-    /// distinct owner per replica); the host path feeds it from the
-    /// `wamn.runner` workload config.
+    /// Register the durable queue lease owner for a component id.
+    /// Each transaction records it in the protected caller identity.
     pub fn set_runner(&self, component_id: &str, runner: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_runner(runner),
@@ -725,12 +677,8 @@ impl WamnPostgres {
             .flatten()
     }
 
-    /// Register the caller's `app.role` identity for a component id (4.2). When
-    /// set, every transaction the plugin opens for that component binds
-    /// `app.role`, so a compiled per-role RLS policy conditions on the caller's role
-    /// instead of the `''` minimum that denies it. Host-injected identity like the
-    /// project_env_key: the guest has no path to it, and [`reject_identity_mutation`] refuses
-    /// an in-band override.
+    /// Register the caller's role for a component id.
+    /// Each transaction records it for the compiled row policies.
     pub fn set_role(&self, component_id: &str, role: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             role.parse::<wamn_identity_protocol::RoleName>()
@@ -749,10 +697,8 @@ impl WamnPostgres {
             .flatten()
     }
 
-    /// Register the executing principal's `app.user_id` identity for a component
-    /// id. When set, every transaction the plugin opens for that component
-    /// binds `app.user_id`, so the record-history triggers stamp that
-    /// `users.id`. Host-injected identity like the project_env_key.
+    /// Register the executing principal for a component id.
+    /// Each transaction records it for the record history triggers.
     pub fn set_user_id(&self, component_id: &str, user_id: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_user_id(user_id),
@@ -770,10 +716,8 @@ impl WamnPostgres {
             .flatten()
     }
 
-    /// Register the `app.operation` identity for a component id. When set, every
-    /// transaction the plugin opens for that component binds `app.operation`,
-    /// so the record-history log records the source of each write.
-    /// Host-injected identity like the project_env_key.
+    /// Register the operation for a component id.
+    /// Each transaction records it as the source of each write.
     pub fn set_operation(&self, component_id: &str, operation: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_operation(operation),
@@ -791,10 +735,8 @@ impl WamnPostgres {
             .flatten()
     }
 
-    /// Register the `app.application` identity for a component id. When set,
-    /// every transaction the plugin opens for that component binds
-    /// `app.application`, the declared application that runs the operation.
-    /// Host-injected identity like the project_env_key.
+    /// Register the application that runs the component's operation.
+    /// Each transaction records it in the protected caller identity.
     pub fn set_application(&self, component_id: &str, application: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_application(application),
@@ -942,7 +884,6 @@ impl WamnPostgres {
         self.scopes.update::<Authority, _>(component_id, |record| {
             record.identity = identity.clone();
             record.causation = None;
-            record.statements.active = None;
         });
         Ok(())
     }
@@ -1037,7 +978,6 @@ impl WamnPostgres {
             .update_existing::<Authority, _>(component_id, |record| {
                 record.identity = SessionIdentity::default();
                 record.causation = None;
-                record.statements.active = None;
             });
     }
 
@@ -1443,14 +1383,7 @@ impl WamnPostgres {
         Ok(held)
     }
 
-    /// Run `work` in a host-owned READ COMMITTED transaction under the
-    /// administration credential of `project`, for a host route
-    /// (docs/architecture/execution.md#host-run-routes). The transaction binds
-    /// the caller and the route's sealed operation id as `app.user_id` and
-    /// `app.operation`, so every row it writes is stamped with them. It commits
-    /// when `work` returns `Ok` and rolls back when `work` returns `Err`, whose
-    /// value is the inner result. The outer error is a failure of the
-    /// transaction itself. Whether the environment of `project_env_key` is inactive,
+    /// Whether the environment of `project_env_key` is inactive,
     /// from its row of `platform.environment`, read as `wamn_app`
     /// (docs/architecture/execution.md#routing-and-availability). No row means
     /// active. The host keeps the answer in its [auth

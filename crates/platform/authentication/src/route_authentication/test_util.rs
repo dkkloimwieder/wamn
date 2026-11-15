@@ -23,7 +23,6 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
         },
         BTreeSet::from([ServingComponent {
             runtime_schema: None,
-            statement_instances: std::collections::BTreeMap::new(),
             package_id: "cat".into(),
             descriptor: {
                 let mut descriptor =
@@ -38,7 +37,6 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
                         parameters: Vec::new(),
                         committed_result_schema: None,
                         registered_operation: None,
-                        statements: BTreeMap::new(),
                     },
                 )]);
                 descriptor

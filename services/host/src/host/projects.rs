@@ -330,7 +330,6 @@ impl Environment {
                     platform_pool_max_size: cfg.platform_pool_max_size,
                     wait_timeout_ms: cfg.wait_timeout_ms,
                     statement_timeout_ms: cfg.statement_timeout_ms,
-                    row_limit: cfg.row_limit,
                 },
             );
         let key = project_env_key(org, project, environment);
@@ -646,7 +645,6 @@ mod tests {
                     platform_pool_max_size: 1,
                     wait_timeout_ms: 1000,
                     statement_timeout_ms: 1000,
-                    row_limit: 1,
                 },
             );
         let credentials = Arc::new(Credentials(Arc::clone(&projects)));

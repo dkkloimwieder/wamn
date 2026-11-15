@@ -736,7 +736,8 @@ Run this transaction in `psql` on that administrative connection:
 \prompt 'Replacement email: ' replacement_email
 BEGIN;
 SET LOCAL ROLE wamn_system;
-SELECT set_config('app.user_id', :'administrator_id', true);
+INSERT INTO platform.tx_identity(user_id, role, application, operation)
+VALUES (:'administrator_id'::uuid, '', '', 'admin:change-email');
 SELECT EXISTS (
     SELECT 1 FROM identity.principals
     WHERE id = :'principal_id'::uuid AND type = 'user'
@@ -904,3 +905,20 @@ The HTTP interface keeps its `credential-unavailable` result.
 
 `wamn-kubernetes` owns Secret reads and writes. Each update preserves `resourceVersion` and retries concurrent changes.
 `wamn-broker` owns the NATS authorization Secret. Platform install and environment provisioning call the same writer.
+
+### Transaction identity retention
+
+The control service removes expired transaction identities every minute.
+It connects to each configured project through its platform SQL credential and acts as `wamn_db_owner`.
+It also cleans the control database as `wamn_system`.
+It deletes rows with `xid < pg_snapshot_xmin(pg_current_snapshot())`.
+The UNLOGGED table `platform.tx_identity` stays outside CDC publications. A crash discards its rows.
+
+Before merging an identity change, measure read COMMIT latency against the deployed primary and its synchronous standby configuration:
+
+```sh
+python3 test-support/measure-tx-identity.py 'service=project-primary' --samples 200
+```
+
+The script needs psycopg 3 and a login that can insert identity rows.
+It reports COMMIT round trips with and without the insert. It creates no schema and changes no server configuration.

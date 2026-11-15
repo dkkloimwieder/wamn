@@ -51,7 +51,7 @@ pub fn seed_org_project_env_sql(org: &str, project: &str, env: &str) -> String {
     let env = escape_literal(env);
     let actor = crate::PlatformComponent::Provisioning.principal_id();
     format!(
-        "SELECT set_config('app.user_id', '{actor}', true); \
+        "INSERT INTO platform.tx_identity(user_id,role,application) VALUES('{actor}','','fixture') ON CONFLICT(xid) DO NOTHING; \
          INSERT INTO registry.orgs(id,placement_type) VALUES ({org},'dedicated') ON CONFLICT DO NOTHING; \
          INSERT INTO registry.projects(org,id) VALUES ({org},{project}) ON CONFLICT DO NOTHING; \
          INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) \
@@ -131,7 +131,7 @@ mod tests {
             "CREATE ROLE {login} LOGIN INHERIT NOSUPERUSER NOBYPASSRLS; \
              GRANT wamn_control TO {login}; SET SESSION AUTHORIZATION {login}; \
              SET ROLE wamn_control; \
-             SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',false); \
+             INSERT INTO platform.tx_identity(user_id,role,application) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture'); \
              SELECT set_config('app.project_env_key','other--dev--orders',false); \
              DO $isolation$ BEGIN \
                  ASSERT EXISTS (SELECT FROM registry.projects WHERE org='acme'); \

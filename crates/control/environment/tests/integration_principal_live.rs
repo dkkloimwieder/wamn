@@ -96,12 +96,10 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
                     parameters: Vec::new(),
                     registered_operation: Some(OPERATION.into()),
                     committed_result_schema: None,
-                    statements: std::collections::BTreeMap::new(),
                 },
             )]);
             descriptor
         },
-        statement_instances: std::collections::BTreeMap::new(),
     });
     let mut package: wamn_compiler::manifest::PackageManifest = serde_json::from_str(
         include_str!("../../publish/tests/fixtures/observer_package/generated/wamn.json"),
@@ -122,10 +120,6 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             "input-ports": [], "output-ports": [], "parameters": []
         }))?,
     );
-    application
-        .descriptor
-        .statement_instances
-        .insert("state".into(), format!("sha256:{}", "b".repeat(64)));
     manifest.components.insert(application);
     let mut declaration_only = package.clone();
     declaration_only.package.id = "declaration_only".into();

@@ -309,6 +309,8 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     let database = config.database.to_json()?;
     let pool = wamn_postgres::pool(&database, 4).await?;
     let cleanup_pool = pool.clone();
+    let identity_databases = config.administration_dir.clone();
+    let identity_system = config.apply_database.to_json()?;
     let mut cleanup_ticks = tokio::time::interval(std::time::Duration::from_secs(60));
     let keys = wamn_authentication::session_keys::IssuerKeys::new(
         wamn_authentication::session_keys::IssuerKeysConfig::new(
@@ -391,6 +393,9 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         tokio::select! {
             signal = &mut shutdown => { signal?; break; }
             _ = cleanup_ticks.tick() => {
+                if let Err(error) = retention::identities(&identity_databases, &identity_system).await {
+                    tracing::warn!(%error, "transaction identity retention failed");
+                }
                 if let Err(error) = async { wamn_execution_host::credential_cleanup::collect(&mut *cleanup_pool.acquire().await?, &org).await }.await {
                     tracing::warn!(%error, "credential collection failed");
                 }

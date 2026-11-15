@@ -198,7 +198,6 @@ pub(super) fn credentials(
         platform_pool_max_size: 1,
         wait_timeout_ms: 2000,
         statement_timeout_ms: 5000,
-        row_limit: 100,
     };
     let mut classes = json!({
         (AuthorityClass::CallableHttp.as_str()): admitter,

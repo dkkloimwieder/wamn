@@ -6,7 +6,6 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
-use wamn_scalar::SqlValueType;
 
 use tokio::sync::Notify;
 use tokio::time::{Instant, timeout};
@@ -18,9 +17,8 @@ use wamn_capability_authority::connection::{
 };
 use wamn_capability_authority::identity::{ReleaseIdentity, SessionIdentity};
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate, ComponentSqlField,
-    ComponentSqlStatement, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
-    ServingManifest, ServingRelease,
+    AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate, PackageCoordinate,
+    SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest, ServingRelease,
 };
 use wamn_connections::connection_credentials::ConnectionCredentials;
 use wamn_connections::connection_facts::ConnectionFacts;
@@ -208,67 +206,34 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
     .expect("encode the complete node ABI fixture")
 }
 
-/// The member statements imports: types, the two calls a member makes in the
-/// host transaction, and the two calls that would leave it.
-/// The statements instance exports the types it uses, as `use` in WIT does.
+/// SQL imports borrowed by both members of the composition.
 const MEMBER_POSTGRES: &str = r#"
       (import "wamn:postgres/types@0.4.0" (instance $types
-        (type $sql-value' (variant (case "null") (case "boolean" bool) (case "int32" s32)
-          (case "int64" s64) (case "float64" f64) (case "text" string) (case "bytes" (list u8))
-          (case "numeric" string) (case "timestamptz" string) (case "json" string) (case "uuid" string)))
-        (export "sql-value" (type $sql-value (eq $sql-value')))
-        (type $column' (record (field "name" string) (field "type-name" string)))
-        (export "column" (type $column (eq $column')))
-        (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value)))))
-        (export "row-set" (type $row-set (eq $row-set')))
         (type $pg-error' (variant (case "serialization-failure") (case "connection-unavailable")
-          (case "statement-timeout") (case "row-limit-exceeded" u64) (case "unique-violation" string)
+          (case "statement-timeout") (case "unique-violation" string)
           (case "foreign-key-violation" string) (case "check-violation" string)
           (case "exclusion-violation" string) (case "permission-denied")
           (case "query-error" (tuple string string))))
         (export "pg-error" (type $pg-error (eq $pg-error')))))
-      (alias export $types "sql-value" (type $sql-value))
-      (alias export $types "row-set" (type $row-set))
       (alias export $types "pg-error" (type $pg-error))
       (import "wamn:postgres/statements@0.4.0" (instance $statements
-        (export "sql-value" (type $used-sql-value (eq $sql-value)))
-        (export "row-set" (type $used-row-set (eq $row-set)))
         (export "pg-error" (type $used-pg-error (eq $pg-error)))
-
-        (type $contract-part' (enum "binds" "columns"))
-        (export "contract-part" (type $contract-part (eq $contract-part')))
-        (type $value-shape' (record (field "count" u32) (field "types" (list string))))
-        (export "value-shape" (type $value-shape (eq $value-shape')))
-        (type $contract-mismatch' (record (field "statement" string) (field "part" $contract-part)
-          (field "expected" $value-shape) (field "observed" $value-shape)))
-        (export "contract-mismatch" (type $contract-mismatch (eq $contract-mismatch')))
-        (type $statement-error' (variant (case "unknown-statement" string)
-          (case "statement-contract-mismatch" $contract-mismatch) (case "postgres" $used-pg-error)))
-        (export "statement-error" (type $statement-error (eq $statement-error')))
         (export "transaction" (type $transaction (sub resource)))
         (export "operation-transaction" (func async
-          (result (result (own $transaction) (error $statement-error)))))
-        (export "[method]transaction.run" (func async (param "self" (borrow $transaction))
-          (param "statement" string) (param "binds" (list $used-sql-value))
-          (result (result $used-row-set (error $statement-error)))))
-        (export "begin" (func async
-          (result (result (own $transaction) (error $statement-error)))))
-        (export "run" (func async (param "statement" string) (param "binds" (list $used-sql-value))
-          (result (result $used-row-set (error $statement-error)))))))
+          (result (result (own $transaction) (error $used-pg-error)))))
+        (export "[method]transaction.query-batch" (func async (param "self" (borrow $transaction))
+          (param "sql" string) (result (result (error $used-pg-error)))))))
 "#;
 
-/// A member's memory with both statement paths, its lowered calls, and
-/// `$code`, which reads one `run` result as `k` (rows), `u` (unknown
-/// statement) or `e` (another error), and reads a `begin` or `run` result as
-/// `r` when it is refused with SQLSTATE 25001 (active_sql_transaction).
 fn member_prelude() -> String {
     format!(
         r#"
       (core module $memory
         (memory (export "memory") 16)
-        (data (i32.const 16) "{MEMBER_ROOT_SQL_PATH}")
-        (data (i32.const 48) "{MEMBER_CHILD_SQL_PATH}")
-        (global $next (mut i32) (i32.const 1024))
+        (data (i32.const 4096) {MEMBER_ROOT_SQL:?})
+        (data (i32.const 8192) {MEMBER_CHILD_SQL:?})
+        (data (i32.const 700) "37")
+        (global $next (mut i32) (i32.const 16384))
         (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
           (local $ptr i32) global.get $next local.get $align i32.const 1 i32.sub i32.add
           i32.const 0 local.get $align i32.sub i32.and local.tee $ptr
@@ -276,82 +241,39 @@ fn member_prelude() -> String {
       (core instance $memory (instantiate $memory))
       (core func $transaction (canon lower (func $statements "operation-transaction")
         (memory $memory "memory") (realloc (func $memory "realloc"))))
-      (core func $run (canon lower (func $statements "[method]transaction.run")
-        (memory $memory "memory") (realloc (func $memory "realloc"))))
-      (core func $begin (canon lower (func $statements "begin")
-        (memory $memory "memory") (realloc (func $memory "realloc"))))
-      (core func $plain-run (canon lower (func $statements "run")
-        (memory $memory "memory") (realloc (func $memory "realloc"))))
-      (core module $code
-        (import "memory" "memory" (memory 16))
-        (func (export "code") (param $result i32) (result i32)
-          local.get $result i32.load8_u i32.eqz if i32.const 0x6b return end
-          local.get $result i32.load8_u offset=8 i32.eqz if i32.const 0x75 return end
-          i32.const 0x65)
-        ;; err(postgres(query-error((state, _)))) whose state begins "2500".
-        (func (export "refused") (param $result i32) (result i32)
-          local.get $result i32.load8_u i32.const 1 i32.eq
-          local.get $result i32.load8_u offset=8 i32.const 2 i32.eq i32.and
-          local.get $result i32.load8_u offset=16 i32.const 9 i32.eq i32.and
-          local.get $result i32.load offset=28 i32.const 5 i32.eq i32.and
-          local.get $result i32.load offset=24 i32.load i32.const 0x30303532 i32.eq i32.and
-          if (result i32) i32.const 0x72 else i32.const 0x65 end))
-      (core instance $code (instantiate $code (with "memory" (instance $memory))))"#
+      (core func $batch (canon lower (func $statements "[method]transaction.query-batch")
+        (memory $memory "memory") (realloc (func $memory "realloc"))))"#
     )
 }
 
-/// The child member: `run` takes the host transaction through its own
-/// instance, names the root's statement, then its own. Then it does what an
-/// existing read export does, `begin` a guest transaction, and calls `run`
-/// outside the host transaction. It returns the four codes, the own run's in
-/// the low byte, the root's in the second, `begin`'s in the third and plain
-/// `run`'s in the fourth.
+/// The child writes through its own import of the same host transaction.
 fn member_child_component() -> Vec<u8> {
     wat::parse_str(format!(
         r#"(component
       {MEMBER_POSTGRES}{prelude}
       (core module $main
         (import "host" "transaction" (func $transaction (param i32)))
-        (import "host" "run" (func $run (param i32 i32 i32 i32 i32 i32)))
-        (import "host" "code" (func $code (param i32) (result i32)))
-        (import "host" "begin" (func $begin (param i32)))
-        (import "host" "plain-run" (func $plain-run (param i32 i32 i32 i32 i32 i32 i32)))
-        (import "host" "refused" (func $refused (param i32) (result i32)))
+        (import "host" "batch" (func $batch (param i32 i32 i32 i32)))
         (import "memory" "memory" (memory 16))
-        (func (export "run") (result i32) (local $transaction i32) (local $foreign i32)
-          i32.const 64 call $transaction
-          i32.const 64 i32.load8_u if i32.const 0x7878 return end
-          i32.const 72 i32.load local.set $transaction
-          local.get $transaction i32.const 16 i32.const {root_len} i32.const 0 i32.const 0
-          i32.const 128 call $run
-          i32.const 128 call $code local.set $foreign
-          local.get $transaction i32.const 48 i32.const {child_len} i32.const 0 i32.const 0
-          i32.const 256 call $run
-          local.get $foreign i32.const 8 i32.shl i32.const 256 call $code i32.or
-          i32.const 384 call $begin
-          i32.const 384 call $refused i32.const 16 i32.shl i32.or
-          i32.const 48 i32.const {child_len} i32.const 0 i32.const 0 i32.const 0 i32.const 0 i32.const 448 call $plain-run
-          i32.const 448 call $refused i32.const 24 i32.shl i32.or))
+        (func (export "run") (result i32)
+          i32.const 128 call $transaction
+          i32.const 128 i32.load8_u if unreachable end
+          i32.const 132 i32.load i32.const 8192 i32.const {child_len} i32.const 256 call $batch
+          i32.const 256 i32.load8_u if unreachable end
+          i32.const 37))
       (core instance $main (instantiate $main (with "memory" (instance $memory))
         (with "host" (instance (export "transaction" (func $transaction))
-          (export "run" (func $run)) (export "code" (func $code "code"))
-          (export "begin" (func $begin)) (export "plain-run" (func $plain-run))
-          (export "refused" (func $code "refused"))))))
+          (export "batch" (func $batch))))))
       (func $run async (result u32) (canon lift (core func $main "run")))
       (instance $out (export "run" (func $run)))
       (export "{CHILD}" (instance $out)))"#,
         prelude = member_prelude(),
-        root_len = MEMBER_ROOT_SQL_PATH.len(),
-        child_len = MEMBER_CHILD_SQL_PATH.len(),
+        child_len = MEMBER_CHILD_SQL.len(),
     ))
     .expect("encode the child member")
 }
 
-/// The root member: `run` takes the host transaction through its own
-/// instance, names the child's statement, then its own, then calls the child.
-/// It answers the four codes, root then child, each foreign before own, then
-/// the child's `begin` and plain `run` codes. An input of `[]` makes it fail
-/// after all of that, so the host rolls back.
+/// The root writes, calls the child, then returns or refuses the whole operation.
 fn member_root_component() -> Vec<u8> {
     wat::parse_str(format!(
         r#"(component
@@ -364,36 +286,25 @@ fn member_root_component() -> Vec<u8> {
       (core module $main
         (import "memory" "memory" (memory 16))
         (import "host" "transaction" (func $transaction (param i32)))
-        (import "host" "run" (func $run (param i32 i32 i32 i32 i32 i32)))
-        (import "host" "code" (func $code (param i32) (result i32)))
+        (import "host" "batch" (func $batch (param i32 i32 i32 i32)))
         (import "host" "child" (func $child (result i32)))
-        (import "host" "return" (func $return
-          (param i32 i32 i32 i32 i32 i32 i32 i32 i64)))
+        (import "host" "return" (func $return (param i32 i32 i32 i32 i32 i32 i32 i32 i64)))
         (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
-        (func (export "run") (param $input i32) (result i32) (local $transaction i32) (local $child i32)
-          i32.const 64 call $transaction
-          i32.const 64 i32.load8_u if unreachable end
-          i32.const 72 i32.load local.set $transaction
-          local.get $transaction i32.const 48 i32.const {child_len} i32.const 0 i32.const 0
-          i32.const 128 call $run
-          i32.const 700 i32.const 128 call $code i32.store8
-          local.get $transaction i32.const 16 i32.const {root_len} i32.const 0 i32.const 0
-          i32.const 256 call $run
-          i32.const 701 i32.const 256 call $code i32.store8
-          call $child local.set $child
-          i32.const 702 local.get $child i32.const 8 i32.shr_u i32.store8
-          i32.const 703 local.get $child i32.store8
-          i32.const 704 local.get $child i32.const 16 i32.shr_u i32.store8
-          i32.const 705 local.get $child i32.const 24 i32.shr_u i32.store8
+        (func (export "run") (param $input i32) (result i32)
+          i32.const 128 call $transaction
+          i32.const 128 i32.load8_u if unreachable end
+          i32.const 132 i32.load i32.const 4096 i32.const {root_len} i32.const 256 call $batch
+          i32.const 256 i32.load8_u if unreachable end
+          call $child drop
           local.get $input i32.load offset=100 i32.const 2 i32.eq if
             i32.const 1 i32.const 2 i32.const 0 i32.const 0 i32.const 0 i32.const 0
             i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0 return end
-          i32.const 0 i32.const 700 i32.const 6 i32.const 0 i32.const 0 i32.const 0
+          i32.const 0 i32.const 700 i32.const 2 i32.const 0 i32.const 0 i32.const 0
           i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0))
       (core instance $main (instantiate $main (with "memory" (instance $memory))
         (with "host" (instance (export "transaction" (func $transaction))
-          (export "run" (func $run)) (export "code" (func $code "code"))
-          (export "child" (func $child)) (export "return" (func $return))))))
+          (export "batch" (func $batch)) (export "child" (func $child))
+          (export "return" (func $return))))))
       (func $run async (param "ctx" $context) (param "input" $json)
         (result (result $emission (error $error)))
         (canon lift (core func $main "run") (memory $memory "memory")
@@ -403,8 +314,7 @@ fn member_root_component() -> Vec<u8> {
         (export "run" (func $run)))
       (export "{ROOT}" (instance $handler)))"#,
         prelude = member_prelude(),
-        root_len = MEMBER_ROOT_SQL_PATH.len(),
-        child_len = MEMBER_CHILD_SQL_PATH.len(),
+        root_len = MEMBER_ROOT_SQL.len(),
     ))
     .expect("encode the root member")
 }
@@ -476,31 +386,10 @@ fn sql_free_instances_component() -> (Vec<u8>, Vec<u8>) {
 
 /// The root's statement inserts `a`.
 const MEMBER_ROOT_SQL: &str = "INSERT INTO native_policy_members VALUES ('a') RETURNING value";
-const MEMBER_ROOT_SQL_PATH: &str = "sql/root.sql";
 /// The child's statement inserts `b` and the count of rows it sees, so `b1`
 /// shows that it ran in the root's open transaction.
 const MEMBER_CHILD_SQL: &str = "INSERT INTO native_policy_members \
      SELECT 'b' || count(*) FROM native_policy_members RETURNING value";
-const MEMBER_CHILD_SQL_PATH: &str = "sql/child.sql";
-
-fn member_statement(path: &str, sql: &str) -> BTreeMap<String, ComponentSqlStatement> {
-    BTreeMap::from([(
-        path.into(),
-        ComponentSqlStatement {
-            name: path.into(),
-            path: path.into(),
-            sql: sql.into(),
-            binds: Vec::new(),
-            columns: vec![ComponentSqlField {
-                name: "value".into(),
-                value_type: SqlValueType::Text,
-                nullable: false,
-            }],
-            relations: Vec::new(),
-            transactional: true,
-        },
-    )])
-}
 
 #[derive(Debug, Clone)]
 struct Observation {
@@ -638,7 +527,6 @@ fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
                 parameters: Vec::new(),
-                statements: BTreeMap::new(),
             },
         )]),
         component_digest: bytes_sha256(bytes),
@@ -706,13 +594,7 @@ impl Fixture {
         let members = matches!(case, Case::MemberInstances | Case::SqlFreeRoot);
         if callee || members {
             let child = if members {
-                let mut child = fact(CHILD, &member_child_component(), true);
-                child
-                    .operations
-                    .get_mut(CHILD)
-                    .expect("child operation")
-                    .statements = member_statement(MEMBER_CHILD_SQL_PATH, MEMBER_CHILD_SQL);
-                child
+                fact(CHILD, &member_child_component(), true)
             } else {
                 fact(CHILD, &component_bytes(CHILD, Case::Success), true)
             };
@@ -723,9 +605,6 @@ impl Fixture {
             let operation = root.operations.get_mut(ROOT).expect("root operation");
             // The manifest declares `transaction = explicit_per_input`.
             operation.host_transaction = true;
-            if matches!(case, Case::MemberInstances) {
-                operation.statements = member_statement(MEMBER_ROOT_SQL_PATH, MEMBER_ROOT_SQL);
-            }
             root.imports = vec![
                 "wamn:node/types@0.1.0".into(),
                 "wamn:postgres/types@0.4.0".into(),
@@ -739,17 +618,6 @@ impl Fixture {
             ServingComponent::project(&root, Vec::new()).expect("publish projects the root");
         if members {
             served.runtime_schema = Some("native_member".into());
-            // Publish binds each member's own set by import name, as the
-            // admitted descriptor's record names the members.
-            let instances = wamn_engine::statement_instances::statement_instances(&root_bytes)
-                .expect("the composed root's record matches its graph");
-            served = served
-                .with_statement_instances(&instances, &|digest| {
-                    callees
-                        .iter()
-                        .find(|callee| callee.component_digest == digest)
-                })
-                .expect("each member's own statements bind");
         }
         let native = vec![NativeComponent {
             fact: root.clone(),
@@ -1505,13 +1373,6 @@ async fn assert_call_owner() {
                 .invocation(&event.scope)
                 .is_none()
         );
-        assert!(
-            policy
-                .resources
-                .postgres
-                .activate_statement_operation(&event.scope, ROOT)
-                .is_err()
-        );
     }
 }
 
@@ -1521,23 +1382,6 @@ fn native_application_call_retains_owner_until_guest_cancellation() {
         "native_application_call_retains_owner_until_guest_cancellation",
         None,
         || assert_call_owner(),
-    );
-}
-
-/// A composition with named instances refuses at load when its served
-/// component carries no statement set for them.
-#[test]
-fn named_instances_without_released_sets_are_refused() {
-    let (composed, _) = member_instances_component();
-    let instances = wamn_engine::statement_instances::statement_instances(&composed)
-        .expect("the composed root's record matches its graph");
-    let root = fact(ROOT, &composed, true);
-    let served = ServingComponent::project(&root, Vec::new()).expect("the root projects");
-    let error = super::super::prepare_statement_members(&instances, &served)
-        .expect_err("a release without the member sets cannot bind the imports");
-    assert!(
-        format!("{error:#}").contains("statement-instances-unreleased"),
-        "{error:#}"
     );
 }
 

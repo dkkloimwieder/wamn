@@ -6,10 +6,9 @@ use std::sync::Arc;
 
 use url::Url;
 use wamn_capability_authority::identity::ReleaseIdentity;
+use wamn_connections::production_lease::ProductionLeaseResult;
 use wamn_identity_protocol::AuthorityClass;
-use wamn_postgres_capability::{
-    ClassCredentials, ProductionLeaseResult, WamnPostgres, WamnPostgresConfig,
-};
+use wamn_postgres_capability::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 
 pub const PROJECT_ENV_KEY: &str = "lease-live";
 pub const COMPONENT: &str = "lease-live-runner";
@@ -280,7 +279,6 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
         platform_pool_max_size: 8,
         wait_timeout_ms: 5_000,
         statement_timeout_ms: 10_000,
-        row_limit: 10_000,
     })?);
     let executor = wamn_identity_protocol::PlatformComponent::Executor;
     for component in [COMPONENT, ROLLED_COMPONENT] {

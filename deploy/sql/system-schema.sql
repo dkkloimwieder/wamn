@@ -199,7 +199,9 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 -- The deployment metadata seed binds the platform actor in its transaction.
 DO $meta$ BEGIN
-  PERFORM pg_catalog.set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true);
+  INSERT INTO platform.tx_identity (user_id, role, application, operation)
+    VALUES ('770df186-ac15-579e-b46b-c297cae2011b', '', '', 'wamn:provisioning')
+    ON CONFLICT (xid) DO NOTHING;
   INSERT INTO registry.meta DEFAULT VALUES;
 END $meta$;
 
@@ -419,7 +421,9 @@ CREATE TRIGGER wamn_record_history_stamp
 -- The wamn:provisioning row is the first identity row. The block binds
 -- that principal for the current transaction, so the row stamps itself.
 DO $provisioning$ BEGIN
-  PERFORM pg_catalog.set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true);
+  INSERT INTO platform.tx_identity (user_id, role, application, operation)
+    VALUES ('770df186-ac15-579e-b46b-c297cae2011b', '', '', 'wamn:provisioning')
+    ON CONFLICT (xid) DO NOTHING;
   INSERT INTO identity.principals (id, type, subject, display_name)
   VALUES ('770df186-ac15-579e-b46b-c297cae2011b', 'platform',
           'wamn:provisioning', 'wamn:provisioning');

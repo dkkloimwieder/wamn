@@ -45,7 +45,6 @@ async fn project_env_key_database(
             platform_pool_max_size: 1,
             wait_timeout_ms: 2_000,
             statement_timeout_ms: 5_000,
-            row_limit: 10,
         })
         .expect("live postgres plugin"),
     );
@@ -260,7 +259,6 @@ async fn model_versions_follow_wal_without_a_counter(pool: sqlx::PgPool) {
         platform_pool_max_size: 1,
         wait_timeout_ms: 5_000,
         statement_timeout_ms: 5_000,
-        row_limit: 10,
     })
     .unwrap();
     sqlx::raw_sql(
@@ -404,8 +402,7 @@ async fn cancellation_retains_external_claims_and_rolls_back_transactional_claim
                 registered_operation: None,
                 causation: None,
                 invocation: None,
-                statements: WamnPostgres::prepare_statement_set(Default::default(), false),
-                members: WamnPostgres::prepare_statement_members(std::iter::empty()),
+                read: false,
                 principal: PrincipalVerification::Authenticated,
             },
         )

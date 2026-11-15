@@ -251,7 +251,6 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
             platform_pool_max_size: 2,
             wait_timeout_ms: 5000,
             statement_timeout_ms: 10000,
-            row_limit: 100,
         }),
     );
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(provider)));

@@ -90,3 +90,47 @@ pub async fn runs(config: Configuration, args: Runs) -> anyhow::Result<()> {
     println!("{removed}");
     Ok(())
 }
+
+async fn prune_identities(
+    input: &str,
+    scope: wamn_control_provision::migrations::MigrationDatabase,
+) -> anyhow::Result<()> {
+    let configuration = scope.configuration(input)?;
+    let mut connection = wamn_postgres::connect(&configuration).await?;
+    scope.require_login(&mut connection).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "SET ROLE {}",
+        scope.owner_role()
+    )))
+    .execute(&mut connection)
+    .await?;
+    sqlx::query(
+        "DELETE FROM platform.tx_identity WHERE xid < pg_snapshot_xmin(pg_current_snapshot())",
+    )
+    .execute(&mut connection)
+    .await?;
+    Ok(())
+}
+
+/// Remove identities that no running transaction can still use.
+pub(crate) async fn identities(directory: &std::path::Path, system: &str) -> anyhow::Result<()> {
+    use wamn_control_provision::migrations::MigrationDatabase;
+    if let Err(error) = prune_identities(system, MigrationDatabase::System).await {
+        tracing::warn!(%error, "system transaction identity retention failed");
+    }
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        if entry.file_name().to_string_lossy().starts_with('.') || !entry.path().is_file() {
+            continue;
+        }
+        let result = async {
+            let input = std::fs::read_to_string(entry.path())?;
+            prune_identities(&input, MigrationDatabase::Project).await
+        }
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(%error, database = ?entry.file_name(), "transaction identity retention failed");
+        }
+    }
+    Ok(())
+}

@@ -321,7 +321,6 @@ fn project_postgres(class: AuthorityClass, url: &str) -> anyhow::Result<Arc<Wamn
         platform_pool_max_size: 2,
         wait_timeout_ms: 2_000,
         statement_timeout_ms: 5_000,
-        row_limit: 100,
     };
     let configuration = serde_json::json!({
         PROJECT: {"credentials": {(class.as_str()): url}}

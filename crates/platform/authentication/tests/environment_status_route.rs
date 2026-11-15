@@ -149,7 +149,6 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         platform_pool_max_size: 1,
         wait_timeout_ms: 2000,
         statement_timeout_ms: 5000,
-        row_limit: 100,
     };
     let configuration =
         json!({PROJECT: {"credentials": {(AuthorityClass::GuestSql.as_str()): url.as_str()}}});

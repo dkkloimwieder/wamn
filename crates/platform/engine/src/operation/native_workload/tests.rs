@@ -53,7 +53,6 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
-                    statements: BTreeMap::new(),
                 },
             )]),
             component_digest: wamn_digest::bytes_sha256(&bytes),

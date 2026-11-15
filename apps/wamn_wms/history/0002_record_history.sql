@@ -6,7 +6,7 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog
 AS $stamp$
 DECLARE
-    actor uuid := NULLIF(current_setting('app.user_id', true), '')::uuid;
+    actor uuid := (SELECT wamn_authority.current_user_id());
 BEGIN
     IF actor IS NULL THEN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'actor-required';
@@ -43,7 +43,7 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog
 AS $stamp$
 DECLARE
-    actor uuid := NULLIF(current_setting('app.user_id', true), '')::uuid;
+    actor uuid := (SELECT wamn_authority.current_user_id());
 BEGIN
     IF actor IS NULL THEN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'actor-required';
@@ -69,8 +69,8 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog
 AS $log$
 DECLARE
-    actor uuid := NULLIF(current_setting('app.user_id', true), '')::uuid;
-    operation text := NULLIF(current_setting('app.operation', true), '');
+    actor uuid := (SELECT wamn_authority.current_user_id());
+    operation text := (SELECT (wamn_authority.current_identity()).operation);
     changed_before jsonb := '{}';
     changed_after jsonb := '{}';
 BEGIN
@@ -138,7 +138,7 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog
 AS $stamp$
 DECLARE
-    actor uuid := NULLIF(current_setting('app.user_id', true), '')::uuid;
+    actor uuid := (SELECT wamn_authority.current_user_id());
 BEGIN
     IF actor IS NULL THEN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'actor-required';
@@ -176,8 +176,8 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog
 AS $log$
 DECLARE
-    actor uuid := NULLIF(current_setting('app.user_id', true), '')::uuid;
-    operation text := NULLIF(current_setting('app.operation', true), '');
+    actor uuid := (SELECT wamn_authority.current_user_id());
+    operation text := (SELECT (wamn_authority.current_identity()).operation);
     changed_before jsonb := '{}';
     changed_after jsonb := '{}';
 BEGIN
@@ -274,7 +274,7 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog
 AS $stamp$
 DECLARE
-    actor uuid := NULLIF(current_setting('app.user_id', true), '')::uuid;
+    actor uuid := (SELECT wamn_authority.current_user_id());
 BEGIN
     IF actor IS NULL THEN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'actor-required';
@@ -304,7 +304,7 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog
 AS $stamp$
 DECLARE
-    actor uuid := NULLIF(current_setting('app.user_id', true), '')::uuid;
+    actor uuid := (SELECT wamn_authority.current_user_id());
 BEGIN
     IF actor IS NULL THEN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'actor-required';
@@ -329,8 +329,8 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog
 AS $log$
 DECLARE
-    actor uuid := NULLIF(current_setting('app.user_id', true), '')::uuid;
-    operation text := NULLIF(current_setting('app.operation', true), '');
+    actor uuid := (SELECT wamn_authority.current_user_id());
+    operation text := (SELECT (wamn_authority.current_identity()).operation);
     changed_before jsonb := '{}';
     changed_after jsonb := '{}';
 BEGIN

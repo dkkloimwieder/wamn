@@ -23,6 +23,8 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
             .await;
     sqlx::raw_sql("CREATE SEQUENCE public.dynamic_query_write; GRANT USAGE ON SEQUENCE public.dynamic_query_write TO wamn_app")
         .execute(&pool).await.expect("sequence writable by the application login");
+    sqlx::raw_sql("CREATE TABLE public.dynamic_query_probe(value integer); GRANT INSERT ON public.dynamic_query_probe TO wamn_query")
+        .execute(&pool).await.unwrap();
     let query_login =
         url::Url::parse(&app_url)
             .unwrap()
@@ -42,6 +44,8 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
         .set_project_env_key("application", "test--dev--dynamic")
         .unwrap();
     postgres.set_application("application", "dynamic").unwrap();
+    let user = "00000000-0000-4000-8000-000000000031";
+    postgres.set_user_id("application", user).unwrap();
     let engine = wamn_engine::build_engine(&[]).expect("application engine");
     let component =
         Component::new(engine.inner(), wat::parse_str(QUERY_GUEST).unwrap()).expect("query guest");
@@ -69,13 +73,13 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
         .expect("guest query export");
     let (_, rows) = store.run_concurrent(async |accessor| {
         let (response,) = query.call_concurrent(accessor, (
-            "SELECT $1::integer, current_user = $2 AND pg_has_role(current_user, 'wamn_query', 'MEMBER') AND NOT pg_has_role(current_user, 'wamn_app', 'MEMBER')".into(),
+            "SELECT $1::integer, current_user = $2 AND pg_has_role(current_user, 'wamn_query', 'MEMBER') AND NOT pg_has_role(current_user, 'wamn_app', 'MEMBER'), (wamn_authority.current_user_id())::text".into(),
             vec![SqlValue::Int32(17), SqlValue::Text(query_login)],
         )).await?;
         collect(accessor, response).await
     }).await.unwrap().unwrap().expect("application reads through the query login");
     assert!(
-        matches!(rows.as_slice(), [row] if matches!(row.as_slice(), [SqlValue::Int32(17), SqlValue::Boolean(true)]))
+        matches!(rows.as_slice(), [row] if matches!(row.as_slice(), [SqlValue::Int32(17), SqlValue::Boolean(true), SqlValue::Text(caller)] if caller == user))
     );
     let write = store
         .run_concurrent(async |accessor| {
@@ -97,6 +101,23 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
         matches!(write, Err(PgError::PermissionDenied)),
         "database grants refuse the sequence write: {write:?}"
     );
+    let write = store
+        .run_concurrent(async |accessor| {
+            let (response,) = query
+                .call_concurrent(
+                    accessor,
+                    (
+                        "INSERT INTO public.dynamic_query_probe VALUES(1)".into(),
+                        Vec::new(),
+                    ),
+                )
+                .await?;
+            collect(accessor, response).await
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(write, Err(PgError::QueryError((code, _))) if code == "25006"));
 }
 
 type QueryResponse = Result<

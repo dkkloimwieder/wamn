@@ -350,7 +350,6 @@ fn loaded_release(
             .into_iter()
             .map(|(package, byte)| ServingComponent {
                 runtime_schema: None,
-                statement_instances: BTreeMap::new(),
                 package_id: package.into(),
                 descriptor: {
                     let mut descriptor = wamn_catalog::ComponentDescriptor::named(
@@ -368,7 +367,6 @@ fn loaded_release(
                             parameters: Vec::new(),
                             committed_result_schema: None,
                             registered_operation: None,
-                            statements: BTreeMap::new(),
                         },
                     )]);
                     descriptor

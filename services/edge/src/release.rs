@@ -284,7 +284,6 @@ pub(crate) mod test_util {
             parameters: Vec::new(),
             registered_operation: Some(OPERATION.into()),
             committed_result_schema: None,
-            statements: BTreeMap::new(),
         };
         let fact = AdmittedComponent {
             target: ComponentPackageCoordinate {
@@ -305,7 +304,6 @@ pub(crate) mod test_util {
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
-                    statements: BTreeMap::new(),
                 },
             )]),
             imports: Vec::new(),
@@ -318,7 +316,6 @@ pub(crate) mod test_util {
             },
             BTreeSet::from([ServingComponent {
                 runtime_schema: None,
-                statement_instances: BTreeMap::new(),
                 package_id: "scale".into(),
                 descriptor: {
                     let mut descriptor =

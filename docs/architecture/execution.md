@@ -199,7 +199,7 @@ The contracts retain version 0.9.0. `environment.status` and `release.profile` r
 Every other org route needs a current `org-admin` row of the caller in the token's org, and answers 403 `permission-denied` without it.
 A project route needs that row, or a current `project-admin` row of the caller in the project that the request names.
 A write runs in one transaction on a second `control` login, which holds one write at a time.
-The transaction binds `app.user_id` to the caller and `app.operation` to the sealed operation id, and it makes sure of the role again.
+The transaction inserts the caller and sealed operation id into `platform.tx_identity`, then checks the role again.
 The writes are the functions of [`wamn_platform_identity::org`](../../crates/identity/platform/src/org.rs), which `wamn-ctl invite` and `provision-org --admin` also call.
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the environment's `wamn_administration` login.
@@ -457,8 +457,9 @@ Leases and exhausted-run reaping ignore effect-attempt records.
 Workflow runs have no event ordering guarantee.
 
 The host opens each identity transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on.
-The guest transaction of a read (get, query or projection) opens with `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, so its statements read one snapshot.
-For a new logged update, the host runs `BEGIN`, local identity, and the write-log claim in that order before it runs the guest.
+A read operation opens with `BEGIN ISOLATION LEVEL REPEATABLE READ`. The host inserts its caller, then runs `SET TRANSACTION READ ONLY`.
+Its statements read one snapshot. Dynamic SQL follows the same steps on `wamn_query`.
+For a new logged update, the host runs `BEGIN`, the identity insert, and the write-log claim before the guest.
 A duplicate reads the stored claim and never runs the guest.
 The guest waits for its SQL result before it returns the value that the write log stores.
 The host then runs the write-log finish, the transactional causation message when present, and `COMMIT` in that order.
@@ -467,7 +468,7 @@ SQLx runs each statement on the same connection and waits for its result before 
 A cold connection also prepares its statements.
 No counter trigger, changed-relation read, or counter reset runs on the write path.
 
-The host binds the executing principal as `app.user_id` in each identity transaction that it opens.
+The host stores the executing principal in `platform.tx_identity.user_id` for each transaction.
 [Record history](data-access.md#record-history) stamps that principal on every write.
 
 - An authenticated caller of a route binds its principal id.
@@ -477,14 +478,14 @@ The host binds the executing principal as `app.user_id` in each identity transac
 - A workflow run binds its execution principal.
 - A legacy queue delivery or management candidate case binds `wamn:executor`.
 
-The same transaction binds the executing operation as `app.operation`.
+The same row stores the executing operation in `operation`.
 A node binds the operation token of the entry that it runs. A composed callee runs under that token.
 An event workflow binds the token of its operation.
 A host queue lease, reap, renew, or complete transaction binds the `wamn:executor` credential-class identity.
-An absent operation binds an empty value, so a pooled connection keeps no earlier operation.
+An absent operation stores NULL. Each transaction has its own identity row.
 The [record history log](data-access.md#history-tables-and-the-log-trigger) records the operation in each entry.
 
-The same transaction binds the operation's application name from the `environment.k` map as `app.application`.
+The same row stores the operation's application name from `environment.k` in `application`.
 A base operation uses the map application that holds its declaring package.
 A component outside the composed entry uses the same map.
 The `number_counter.set` route binds the requested application after it finds the name in that map.
@@ -493,15 +494,11 @@ Other host routes, host queue transactions, and platform reads bind no applicati
 An absent application binds an empty value, so a pooled connection keeps no earlier application.
 [Numbering](data-access.md#numbering) reads the host-bound application through `wamn_authority.current_application()` in the operation transaction.
 
-A platform identity transaction that only reads binds no principal and no operation.
-A bound principal alone does not move a read out of the autocommit path.
+A platform transaction that only reads binds no principal and no operation.
+Every host read still has its own identity row. There is no autocommit read path.
+The host keeps `search_path` and `statement_timeout` local to the transaction.
+The accessors in `wamn_authority` read only its caller row. A guest cannot replace that row or select the identity table.
 
-For that path, the host applies the schema and runner before it sends the read.
-An absent schema restores the server default, and an absent runner clears the prior runner.
-This reuse stores no principal, role, operation, or application identity. Those identity fields stay local to each transaction.
-
-The [session identity owner](../../crates/platform/postgres-capability/src/session_identity.rs) refuses a transactional statement with no executing principal before it reaches PostgreSQL.
-That refusal carries SQLSTATE `55000` and the message `actor-required`, as the stamp trigger does.
 
 ## Workflows
 

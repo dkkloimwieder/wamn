@@ -31,7 +31,7 @@ const route: OperationRoute = {
     errors: [
       { literal: "retry", required: [], sources: ["connection_unavailable", "serialization_failure"], text: null },
       { literal: "timeout", required: [], sources: ["statement_timeout"], text: null },
-      { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded"], text: null },
+      { literal: "internal_error", required: [], sources: ["query_error"], text: null },
       {
         literal: "unique_violation",
         required: ["constraint"],

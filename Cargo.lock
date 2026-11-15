@@ -6392,6 +6392,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "uuid",
+ "wamn-digest",
  "wamn-package-artifact",
  "wamn-test-application",
  "wamn-test-postgres",
@@ -6736,6 +6737,7 @@ dependencies = [
  "wamn-postgres",
  "wamn-registry",
  "wamn-test-infrastructure",
+ "wamn-test-postgres",
 ]
 
 [[package]]

@@ -152,9 +152,7 @@ impl GuestCall for Run {
                         let ctx = &access.get().active_ctx;
                         assert_eq!(
                             ctx.get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
-                                .operation_transaction_for(&ctx.component_id)
-                                .expect("open operation has a host transaction")
-                                .application
+                                .application_for(&ctx.component_id)
                                 .as_deref(),
                             Some("receiving"),
                         );
@@ -214,7 +212,7 @@ async fn fixture(pool: &sqlx::PgPool) -> (url::Url, Arc<WamnPostgres>, Arc<Loade
             include_str!("../../../../../deploy/sql/record-history.sql"),
             include_str!("../../../../../deploy/sql/record-history-app-grants.sql"),
             "CREATE TABLE widget(id int PRIMARY KEY, value int NOT NULL, \
-           CONSTRAINT application_identity CHECK (value = 1 OR current_setting('app.application', true) IS NOT DISTINCT FROM 'receiving')); \
+           CONSTRAINT application_identity CHECK (value = 1 OR wamn_authority.current_application() IS NOT DISTINCT FROM 'receiving')); \
          INSERT INTO widget VALUES (1, 1); \
          SELECT wamn_history.create_history_table('public', 'widget', false); \
          CREATE TRIGGER widget_history AFTER UPDATE ON widget FOR EACH ROW \

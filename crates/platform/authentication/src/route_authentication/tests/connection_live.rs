@@ -85,7 +85,6 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         platform_pool_max_size: 1,
         wait_timeout_ms: 2000,
         statement_timeout_ms: 5000,
-        row_limit: 100,
     };
     let sources = StaticCredentialProvider::projects_from_json(&json!({"host-project":{"credentials":{(AuthorityClass::CallableHttp.as_str()):reader.to_string()}}}).to_string(),&base).unwrap();
     let mut postgres =
@@ -379,7 +378,6 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         platform_pool_max_size: 1,
         wait_timeout_ms: 2_000,
         statement_timeout_ms: 5_000,
-        row_limit: 100,
     };
     let projects = StaticCredentialProvider::projects_from_json(
         &serde_json::json!({"project": {"credentials": {
