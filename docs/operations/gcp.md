@@ -252,7 +252,18 @@ gcloud storage buckets create gs://wamn-dev-web --project wamn-dev \
 gcloud storage buckets create gs://wamn-dev-backups --project wamn-dev \
   --location us-central1 --uniform-bucket-level-access
 gcloud storage buckets create gs://wamn-dev-labels --project wamn-dev --location us-central1 \
-  --uniform-bucket-level-access --public-access-prevention
+  --uniform-bucket-level-access --public-access-prevention \
+  --lifecycle-file=deploy/gcp/file-bucket-lifecycle.json
+```
+
+The [file bucket policy](../../deploy/gcp/file-bucket-lifecycle.json) aborts incomplete multipart uploads after one day.
+The bucket creation command installs it through [`--lifecycle-file`](https://docs.cloud.google.com/sdk/gcloud/reference/storage/buckets/create#--lifecycle-file).
+The collector handles completed staging objects, because cleanup depends on their metadata rows.
+For an existing file bucket, apply the policy once:
+
+```bash
+gcloud storage buckets update gs://wamn-dev-labels --project wamn-dev \
+  --lifecycle-file=deploy/gcp/file-bucket-lifecycle.json
 ```
 
 Grant each rendered worker access with the commands in section 1, items 4 and 15.

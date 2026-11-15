@@ -2,7 +2,7 @@
 //!
 //! The native caller authorizes the application binding before opening this store.
 //! Upload to `<environment>/_wamn_files/staging/<id>`, commit metadata, then call `finish`.
-//! Only the environment staging namespace receives an object age lifecycle rule.
+//! The collector repairs committed staging and removes aged staging with no metadata row.
 //! Public copies use `<environment>/public/_wamn_files/live/<id>` beneath the binding prefix.
 
 use std::{
@@ -28,16 +28,19 @@ use super::store::{BoundContainer, StoreError};
 pub const FILE_PREFIX: &str = "_wamn_files/";
 /// Maximum lifetime of a file signed URL.
 pub const MAX_URL_LIFETIME: Duration = Duration::from_mins(15);
+/// Wait one minute beyond the longest invocation before removing uncommitted staging.
+pub const MIN_STAGING_AGE: Duration =
+    wamn_engine::engine::MAX_HOST_CALL_DURATION.saturating_add(Duration::from_mins(1));
 
-/// One canonical live object returned by the confined collector listing.
+/// One canonical live or staged object returned by the confined collector listing.
 #[derive(Debug)]
-pub struct LiveFileObject {
+pub struct FileObject {
     path: object_store::path::Path,
     pub blob_key: String,
     pub last_modified: SystemTime,
 }
 
-impl LiveFileObject {
+impl FileObject {
     /// The exact bucket key, including the binding prefix and public namespace.
     pub fn object_key(&self) -> &str {
         self.path.as_ref()
@@ -203,20 +206,21 @@ fn public_key(blob_key: &str) -> String {
 }
 
 impl FileStore {
-    /// Stream canonical private and public live objects beneath this generation's prefix.
+    /// Stream canonical live, public and staged objects beneath this generation's prefix.
     /// Malformed keys are logged and skipped. Listing never buffers the whole bucket.
     pub async fn live_objects(
         &self,
-    ) -> Result<BoxStream<'_, Result<LiveFileObject, FileStorageError>>, FileStorageError> {
+    ) -> Result<BoxStream<'_, Result<FileObject, FileStorageError>>, FileStorageError> {
         self.run("collect", async {
             self.permit("collect", true).await?;
             let private = self.path(&format!("{}/{FILE_PREFIX}live", self.environment))?;
             let public = self.path(&format!("{}/public/{FILE_PREFIX}live", self.environment))?;
-            Ok(futures_util::stream::iter([private, public])
+            let staged = self.path(&format!("{}/{FILE_PREFIX}staging", self.environment))?;
+            Ok(futures_util::stream::iter([private, public, staged])
                 .flat_map(move |prefix| {
                     let directory = format!("{prefix}/");
                     deadline_stream(self.bound.store.list(Some(&prefix)), self.deadline)
-                        .map_err(|error| backend("list live files", error))
+                        .map_err(|error| backend("list files", error))
                         .try_filter_map(move |meta| {
                             let key = meta.location.as_ref();
                             let parsed = key.strip_prefix(&directory).and_then(|suffix| {
@@ -225,7 +229,7 @@ impl FileStore {
                                     .ok()
                                     .filter(|id| id.to_string() == suffix)
                             });
-                            let object = parsed.map(|id| LiveFileObject {
+                            let object = parsed.map(|id| FileObject {
                                 path: meta.location.clone(),
                                 blob_key: live_key(&self.environment, id),
                                 last_modified: meta.last_modified.into(),
@@ -248,23 +252,12 @@ impl FileStore {
     /// Re-read its age so a replacement since listing remains protected.
     pub async fn delete_collected(
         &self,
-        object: &LiveFileObject,
+        object: &FileObject,
         cutoff: SystemTime,
     ) -> Result<bool, FileStorageError> {
         self.run("collect", async {
             self.permit("collect", true).await?;
-            if !object
-                .blob_key
-                .starts_with(&format!("{}/{FILE_PREFIX}live/", self.environment))
-                || (object.path != self.path(&object.blob_key)?
-                    && object.path != self.path(&public_key(&object.blob_key))?)
-            {
-                return Err(FileStorageError::new(
-                    FileStorageErrorType::Refused,
-                    "collect",
-                    "listed object belongs to another prefix",
-                ));
-            }
+            self.collected_is_staged(object)?;
             let meta = match self.bound.store.head(&object.path).await {
                 Ok(meta) => meta,
                 Err(object_store::Error::NotFound { .. }) => return Ok(false),
@@ -278,6 +271,60 @@ impl FileStore {
                 Err(object_store::Error::NotFound { .. }) => Ok(false),
                 Err(error) => Err(backend("delete orphan", error)),
             }
+        })
+        .await
+    }
+
+    fn collected_is_staged(&self, object: &FileObject) -> Result<bool, FileStorageError> {
+        let staged = self.path(&staging_key(&object.blob_key))?;
+        if !object
+            .blob_key
+            .starts_with(&format!("{}/{FILE_PREFIX}live/", self.environment))
+            || (object.path != self.path(&object.blob_key)?
+                && object.path != self.path(&public_key(&object.blob_key))?
+                && object.path != staged)
+        {
+            return Err(FileStorageError::new(
+                FileStorageErrorType::Refused,
+                "collect",
+                "listed object belongs to another prefix",
+            ));
+        }
+        Ok(object.path == staged)
+    }
+
+    /// Reconcile one listed object after an exact catalog lookup in this physical store.
+    /// A row keeps live bytes and promotes staging. Absence permits only aged deletion.
+    /// `now` and `live_cutoff` come from the collector's clock at the start of its pass.
+    pub async fn reconcile_collected(
+        &self,
+        object: &FileObject,
+        row_blob_key: Option<&str>,
+        live_cutoff: SystemTime,
+        now: SystemTime,
+    ) -> Result<bool, FileStorageError> {
+        self.run("collect", async {
+            self.permit("collect", true).await?;
+            let staged = self.collected_is_staged(object)?;
+            if let Some(key) = row_blob_key {
+                if key != object.blob_key {
+                    return Err(FileStorageError::new(
+                        FileStorageErrorType::Refused,
+                        "collect",
+                        "catalog row belongs to another object",
+                    ));
+                }
+                if staged {
+                    self.repair(key).await?;
+                }
+                return Ok(false);
+            }
+            let cutoff = if staged {
+                now - MIN_STAGING_AGE
+            } else {
+                live_cutoff
+            };
+            self.delete_collected(object, cutoff).await
         })
         .await
     }
@@ -708,6 +755,103 @@ mod tests {
             files.get(&live_key("dev", id)).await.unwrap_err().type_,
             FileStorageErrorType::NotFound
         );
+    }
+
+    #[tokio::test]
+    async fn collection_deletes_uncommitted_staging_only_after_the_safety_window() {
+        let (files, backend) = store(false, None);
+        let staged = files.stage(Uuid::new_v4(), &b"orphan"[..]).await.unwrap();
+        let object = files
+            .live_objects()
+            .await
+            .unwrap()
+            .try_next()
+            .await
+            .unwrap()
+            .unwrap();
+        let old_enough = object.last_modified + MIN_STAGING_AGE;
+        assert!(
+            !files
+                .reconcile_collected(
+                    &object,
+                    None,
+                    object.last_modified,
+                    old_enough - Duration::from_millis(1),
+                )
+                .await
+                .unwrap()
+        );
+        assert!(backend.head(&object.path).await.is_ok());
+        assert!(
+            files
+                .reconcile_collected(
+                    &object,
+                    None,
+                    object.last_modified,
+                    old_enough + Duration::from_millis(1),
+                )
+                .await
+                .unwrap()
+        );
+        assert!(matches!(
+            backend.head(&object.path).await,
+            Err(object_store::Error::NotFound { .. })
+        ));
+        assert!(matches!(
+            backend.head(&files.path(&staged.blob_key).unwrap()).await,
+            Err(object_store::Error::NotFound { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn collection_promotes_staging_with_a_catalog_row_and_removes_staging() {
+        let (files, backend) = store(false, None);
+        let bytes = b"committed before the host stopped";
+        let row = files.stage(Uuid::new_v4(), bytes.as_slice()).await.unwrap();
+        let object = files
+            .live_objects()
+            .await
+            .unwrap()
+            .try_next()
+            .await
+            .unwrap()
+            .unwrap();
+        // The catalog lookup returns the canonical live key, even while bytes remain staged.
+        assert!(
+            !files
+                .reconcile_collected(
+                    &object,
+                    Some(&row.blob_key),
+                    object.last_modified,
+                    object.last_modified,
+                )
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            backend
+                .get(&files.path(&row.blob_key).unwrap())
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+                .as_ref(),
+            bytes
+        );
+        assert!(matches!(
+            backend.head(&object.path).await,
+            Err(object_store::Error::NotFound { .. })
+        ));
+        files
+            .reconcile_collected(
+                &object,
+                Some(&row.blob_key),
+                object.last_modified,
+                object.last_modified,
+            )
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

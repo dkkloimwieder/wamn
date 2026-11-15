@@ -1,0 +1,8 @@
+{
+  "rule": [
+    {
+      "action": {"type": "AbortIncompleteMultipartUpload"},
+      "condition": {"age": 1}
+    }
+  ]
+}

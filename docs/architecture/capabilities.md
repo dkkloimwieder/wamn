@@ -277,7 +277,10 @@ Native uploads stream through multipart storage and abort unfinished uploads on 
 Guest effects and native file operations share their caller's absolute deadline.
 Native HTTP file requests use the host's 30-second limit.
 Storage clients cap requests and retries at that limit. The caller timeout enforces any earlier invocation deadline.
-A completed staging write can remain without a metadata row after timeout. Staging retention removes it.
+The collector lists live and staged objects beneath the environment's file prefix.
+Its storage API promotes staging with a metadata row and removes staging without a row after 90 seconds.
+The host must supply the catalog lookup before it calls that API.
+Bucket creation installs a [one-day rule for incomplete multipart uploads](../operations/gcp.md#2-project-resources).
 A storage handle retains its connection generation.
 Each operation refuses a disabled connection or a changed generation before calling storage.
 The blobstore plugin shares storage clients by connection and generation in a bounded cache.
