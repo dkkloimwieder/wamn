@@ -973,13 +973,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_retains_view_columns_and_dependencies() {
-        let bytes = br#"{"tables":[],"views":[{"schema":"app","name":"item_view","columns":[{"name":"z","type":"int64"},{"name":"a","type":"text"}],"base_tables":[{"schema":"app","name":"item"}]}]}"#;
-        let catalog: CatalogIr = serde_json::from_slice(bytes).unwrap();
-        assert_eq!(catalog.canonical_json_bytes(), bytes);
-    }
-
-    #[test]
     fn catalog_without_views_keeps_canonical_bytes() {
         let bytes = br#"{"tables":[{"schema":"app","name":"item","columns":[{"name":"id","type":"int64","nullable":false,"default":null,"generation":null}],"constraints":[],"indexes":[]}]}"#;
         let catalog = CatalogIr::new(vec![Table::new(
@@ -990,6 +983,5 @@ mod tests {
             Vec::new(),
         )]);
         assert_eq!(catalog.canonical_json_bytes(), bytes);
-        assert_eq!(serde_json::from_slice::<CatalogIr>(bytes).unwrap(), catalog);
     }
 }

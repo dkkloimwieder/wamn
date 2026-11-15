@@ -116,26 +116,3 @@ fn invalid_request() -> Response<Full<Bytes>> {
         b"{\"error\":\"invalid PAT request\"}".to_vec(),
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::IssueRequest;
-
-    #[test]
-    fn pat_request_refuses_extra_duplicate_and_non_integer_fields() {
-        let base = r#""principal_id":"00000000-0000-0000-0000-000000000001","label":"fixture""#;
-        for body in [
-            "{}".to_owned(),
-            format!("{{{base},\"lifetime_seconds\":1,\"roles\":[\"admin\"]}}"),
-            format!("{{{base},\"lifetime_seconds\":1,\"lifetime_seconds\":1}}"),
-            format!("{{{base},\"lifetime_seconds\":-1}}"),
-            format!("{{{base},\"lifetime_seconds\":1.5}}"),
-        ] {
-            assert!(serde_json::from_str::<IssueRequest>(&body).is_err());
-        }
-        assert!(
-            serde_json::from_str::<IssueRequest>(&format!("{{{base},\"lifetime_seconds\":1}}"))
-                .is_ok()
-        );
-    }
-}

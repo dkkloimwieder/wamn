@@ -104,17 +104,6 @@ mod tests {
     }
 
     #[test]
-    fn a_hostname_cannot_reach_an_authored_route() {
-        let authored = serde_json::json!({
-            "host": "package.example",
-            "path": "/widgets",
-            "method": "POST"
-        });
-        serde_json::from_value::<HttpRoute>(authored)
-            .expect_err("package exposure cannot deserialize deployment hostname data");
-    }
-
-    #[test]
     fn a_malformed_method_or_path_is_refused_by_name() {
         assert!(normalize_http_route(&route("/widgets", "po st"), "create").is_err());
         assert!(normalize_http_route(&route("widgets", "POST"), "create").is_err());

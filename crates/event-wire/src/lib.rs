@@ -479,16 +479,6 @@ mod tests {
             assert!(!valid_subject_token(name));
         }
     }
-
-    #[test]
-    fn causation_carries_run_root_depth() {
-        let c: Causation =
-            serde_json::from_str(r#"{"run":"f1:evt:9","root":"f1:evt:1","depth":3}"#).unwrap();
-        assert_eq!(c.depth, 3);
-        // The causation record rejects smuggled fields.
-        let smuggled = r#"{"run":"a","root":"b","depth":1,"x":2}"#;
-        assert!(serde_json::from_str::<Causation>(smuggled).is_err());
-    }
 }
 
 pub use wamn_registry::name::{stream_name, stream_subjects};

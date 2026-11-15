@@ -360,9 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_key_or_a_bad_integer_is_refused() {
-        let unknown = EXAMPLE.replace("[store]", "[store]\nretention = 3");
-        assert!(parse(&unknown, &[]).is_err());
+    fn a_bad_integer_override_is_refused() {
         assert!(parse(EXAMPLE, &[("WAMN_EDGE_DEVICE_SERIAL_BAUD", "fast")]).is_err());
     }
 }

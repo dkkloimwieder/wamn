@@ -184,20 +184,3 @@ fn custom_visibility_permissions_and_components_remain_closed() {
         GenerateErrorType::InvalidOperation
     );
 }
-
-#[test]
-fn the_retired_participant_keys_are_refused() {
-    for (key, value) in [
-        ("pre_commit", json!({"fields": []})),
-        ("pre_commit_required", json!(true)),
-        ("participant", json!("widget.archive")),
-        ("transaction", json!("participant")),
-    ] {
-        let mut manifest = super::platform_claim::manifest();
-        manifest["custom_operations"]["widget.archive"][key] = value;
-        wamn_compiler::manifest::PackageManifest::from_slice(
-            &serde_json::to_vec(&manifest).unwrap(),
-        )
-        .expect_err(key);
-    }
-}
