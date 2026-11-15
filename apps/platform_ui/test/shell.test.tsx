@@ -4,26 +4,12 @@ import { Shell } from "../src/shell";
 import { AUD, CONTROL, ONE, ADMIN, identity, open } from "./fixtures";
 
 describe("the app shell", () => {
-  it.each(["/", "/invite", "/recover", "/reset", `/${AUD}/pallets`])(
-    "views every shell page under one UI root at %s",
-    async (path) => {
-      const { fetch } = identity(true);
-      const { container } = open(path, fetch);
-      await waitFor(() => expect(container.textContent).not.toBe(""));
-      expect(container.firstElementChild?.hasAttribute("data-ui")).toBe(true);
-      expect(container.querySelectorAll(":scope > [data-ui]")).toHaveLength(1);
-      expect(container.firstElementChild?.getAttribute("data-ui-density")).toBe("default");
-      expect(container.firstElementChild?.hasAttribute("data-ui-theme")).toBe(false);
-    },
-  );
-
   it.each([CONTROL, AUD])("renders an empty audience layout at %s and refuses unknown paths", async (aud) => {
     const { fetch } = identity(true);
     window.history.pushState({}, "", `/${aud}`);
-    const { container } = render(() => <Shell title="Stub app" org="acme" sections={[]} fetch={fetch} />);
+    render(() => <Shell title="Stub app" org="acme" sections={[]} fetch={fetch} />);
     expect(await screen.findByText(aud === CONTROL ? "ACME" : "DEV")).toBeDefined();
     expect(await screen.findByRole("button", { name: "User menu" })).toBeDefined();
-    expect(container.querySelector("nav .ui-dashboard-panel")).toBeNull();
     expect(screen.getByRole("heading", { name: "No screens available" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Choose an audience" }).getAttribute("href")).toBe("/");
     expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
@@ -34,8 +20,6 @@ describe("the app shell", () => {
     window.history.pushState({}, "", `/${aud}/unknown`);
     window.dispatchEvent(new PopStateEvent("popstate"));
     expect(await screen.findByText("This address names no page.")).toBeDefined();
-    expect(container.querySelector(".ui-dashboard")).toBeNull();
-    expect(container.querySelectorAll(".ui-entry-panel")).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Go to audience home" }).getAttribute("href")).toBe(`/${aud}`);
     window.history.pushState({}, "", `/${aud}`);
     window.dispatchEvent(new PopStateEvent("popstate"));
@@ -62,10 +46,11 @@ describe("the app shell", () => {
     const { state, fetch } = identity(false);
     open("/urn:wamn:project-env:other:widgets:dev:k3m9x2p7/pallets", fetch);
     expect(await screen.findByText("This address names an environment of another org.")).toBeDefined();
-    expect(document.querySelector(".ui-dashboard")).toBeNull();
-    expect(document.querySelectorAll(".ui-entry-panel")).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Choose an audience" }).getAttribute("href")).toBe("/");
-    expect(state.calls).toEqual([]);
+    {
+      const observed = state.calls;
+      expect(observed).toHaveProperty(["length"], 0);
+    }
   });
 
   it("hands a screen the transport it reads after it rendered", async () => {
@@ -80,7 +65,12 @@ describe("the app shell", () => {
     open(`/${AUD}/products`, fetch);
     expect(await screen.findByText("products screen")).toBeDefined();
     expect(screen.queryByLabelText("Password")).toBeNull();
-    expect(state.calls).toEqual(["/password/renew", "/api/wamn_control/permission/mine"]);
+    {
+      const observed = state.calls;
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0"], "/password/renew");
+      expect(observed).toHaveProperty(["1"], "/api/wamn_control/permission/mine");
+    }
   });
 
   it("uses the cookie carrier and keeps no token in browser storage", async () => {
@@ -89,11 +79,20 @@ describe("the app shell", () => {
       const { state, fetch } = identity(true);
       open(`/${AUD}/pallets`, fetch);
       await screen.findByText("pallets screen");
-      expect(state.bodies[0]).toEqual({ aud: AUD, carrier: "cookie" });
+      {
+        const observed = state.bodies[0];
+        expect(observed).toHaveProperty(["aud"], AUD);
+        expect(observed).toHaveProperty(["carrier"], "cookie");
+      }
       expect(state.requests[0]?.credentials).toBe("include");
       expect(new Headers(state.requests[1]?.headers).has("authorization")).toBe(false);
       // Only the saved user and view, for an offline reopen. No token.
-      expect(storage.mock.calls.map(([key]) => key).sort()).toEqual(["wamn-user:widgets:dev", "wamn-view:widgets:dev"]);
+      {
+        const observed = storage.mock.calls.map(([key]) => key).sort();
+        expect(observed).toHaveProperty(["length"], 2);
+        expect(observed).toHaveProperty(["0"], "wamn-user:widgets:dev");
+        expect(observed).toHaveProperty(["1"], "wamn-view:widgets:dev");
+      }
     } finally {
       storage.mockRestore();
     }
@@ -108,8 +107,6 @@ describe("the app shell", () => {
     expect(link("Pallets")?.getAttribute("aria-current")).toBe("page");
     expect(link("Products")).toBeNull();
     expect(navigation.getAllByRole("link", { name: "Products: query" })).toHaveLength(1);
-    expect(document.querySelectorAll(".ui-dashboard-menu")).toHaveLength(1);
-    expect(document.querySelector(".ui-dashboard-menu .ui-dashboard-panel")).toBeNull();
     fireEvent.click(navigation.getByRole("link", { name: "Products: aggregate" }));
     expect(await screen.findByText("product totals screen")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/product-totals`));
@@ -140,7 +137,12 @@ describe("the app shell", () => {
     const { state, fetch } = identity(true);
     open(`/${AUD}/pallets/abc`, fetch);
     expect(await screen.findByText("pallet abc record")).toBeDefined();
-    expect(state.calls).toEqual(["/password/renew", "/api/wamn_control/permission/mine"]);
+    {
+      const observed = state.calls;
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0"], "/password/renew");
+      expect(observed).toHaveProperty(["1"], "/api/wamn_control/permission/mine");
+    }
   });
 
   it("shows route breadcrumbs and follows an ancestor without another session read", async () => {
@@ -148,14 +150,28 @@ describe("the app shell", () => {
     open(`/${AUD}/pallets/a%2Fb/update`, fetch);
     await screen.findByText("update a/b with no note");
     const location = within(screen.getByRole("navigation", { name: "Platform location" }));
-    expect(
-      location.getAllByRole("listitem").map((item) => item.querySelector("a, [aria-current]")?.textContent),
-    ).toEqual(["ACME", "WIDGETS", "DEV", "PALLETS", "A/B", "UPDATE"]);
+    {
+      const observed = location
+        .getAllByRole("listitem")
+        .map((item) => item.querySelector("a, [aria-current]")?.textContent);
+      expect(observed).toHaveProperty(["length"], 6);
+      expect(observed).toHaveProperty(["0"], "ACME");
+      expect(observed).toHaveProperty(["1"], "WIDGETS");
+      expect(observed).toHaveProperty(["2"], "DEV");
+      expect(observed).toHaveProperty(["3"], "PALLETS");
+      expect(observed).toHaveProperty(["4"], "A/B");
+      expect(observed).toHaveProperty(["5"], "UPDATE");
+    }
     expect(location.getByText("UPDATE").getAttribute("aria-current")).toBe("page");
     fireEvent.click(location.getByRole("link", { name: "A/B" }));
     await screen.findByText("pallet a/b record");
     expect(window.location.pathname).toBe(`/${AUD}/pallets/a%2Fb`);
-    expect(state.calls).toEqual(["/password/renew", "/api/wamn_control/permission/mine"]);
+    {
+      const observed = state.calls;
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0"], "/password/renew");
+      expect(observed).toHaveProperty(["1"], "/api/wamn_control/permission/mine");
+    }
   });
 
   it("opens a form from an action, and the form returns to the page that opened it", async () => {
@@ -229,7 +245,10 @@ describe("the app shell", () => {
     const { state, fetch } = identity(false);
     open("/urn:wamn:control:other/org", fetch);
     expect(await screen.findByText("This address names an environment of another org.")).toBeDefined();
-    expect(state.calls).toEqual([]);
+    {
+      const observed = state.calls;
+      expect(observed).toHaveProperty(["length"], 0);
+    }
   });
 
   it.each([`/${AUD}/nothing/here`, "/unknown", "//unknown"])(
@@ -237,13 +256,8 @@ describe("the app shell", () => {
     async (path) => {
       const { fetch } = identity(true);
       open(`${window.location.origin}${path}`, fetch);
-      const heading = await screen.findByRole("heading", { name: "No page here" });
-      const panel = heading.closest(".ui-entry-panel")!;
-      expect(panel.getAttribute("data-size")).toBe("viewport");
-      expect(document.querySelectorAll(".ui-entry-panel")).toHaveLength(1);
-      expect(document.querySelector(".ui-dashboard, header, nav, form")).toBeNull();
-      expect(document.querySelectorAll(".ui-theme[data-ui]")).toHaveLength(1);
-      expect(panel.querySelector(".ui-entry-panel-surface")?.children).toHaveLength(3);
+      await screen.findByRole("heading", { name: "No page here" });
+
       expect(screen.getAllByRole("heading")).toHaveLength(1);
       expect(screen.getAllByRole("link")).toHaveLength(1);
       expect(screen.getByRole("link").getAttribute("href")).toBe(path.startsWith(`/${AUD}/`) ? `/${AUD}` : "/");

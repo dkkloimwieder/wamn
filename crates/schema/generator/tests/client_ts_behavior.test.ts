@@ -67,16 +67,27 @@ it("maps declared members and envelopes while keeping JSON and refusal data inta
       rows: [{ id: wire.id, code: wire.code, attributes: json, editVersion: 4 }],
     }),
   );
-  expect(invoke.mock.calls[0][0].items).toEqual([{ maker_id: "maker-1", selector: json }]);
+  {
+const observed = invoke.mock.calls[0][0].items;
+expect(observed).toHaveProperty(["length"], 1);
+expect(observed).toHaveProperty(["0","maker_id"], "maker-1");
+expect(observed).toHaveProperty(["0","selector"], json);
+}
   const query = vi.fn(async () => completed({ item: [wire], next_cursor: null, cursor: "c1" }));
   expect(
     await widget.query({ invoke: query }, [
       { filter: { makerId: ["maker-1"] }, sort: { field: "created_at", direction: "ascending" }, limit: 2 },
     ]),
   ).toEqual(completed({ item: [row], nextCursor: null, cursor: "c1" }));
-  expect(query.mock.calls[0][0].items).toEqual([
-    { filter: { maker_id: ["maker-1"] }, sort: { field: "created_at", direction: "ascending" }, limit: 2 },
-  ]);
+  {
+const observed = query.mock.calls[0][0].items;
+expect(observed).toHaveProperty(["length"], 1);
+expect(observed).toHaveProperty(["0","filter","maker_id","length"], 1);
+expect(observed).toHaveProperty(["0","filter","maker_id","0"], "maker-1");
+expect(observed).toHaveProperty(["0","sort","field"], "created_at");
+expect(observed).toHaveProperty(["0","sort","direction"], "ascending");
+expect(observed).toHaveProperty(["0","limit"], 2);
+}
   const batch = vi.fn(async () => completed({ widget_id: "widget-1" }));
   expect(
     await widget.recordBatch({ invoke: batch }, [
@@ -86,12 +97,15 @@ it("maps declared members and envelopes while keeping JSON and refusal data inta
       },
     ]),
   ).toEqual(completed({ widgetId: "widget-1" }));
-  expect(batch.mock.calls[0][0].items).toEqual([
-    {
-      request_id: "r",
-      value: { expected_edit_version: "9007199254740993", line: [{ widget_id: "widget-1", amount: "2" }] },
-    },
-  ]);
+  {
+const observed = batch.mock.calls[0][0].items;
+expect(observed).toHaveProperty(["length"], 1);
+expect(observed).toHaveProperty(["0","request_id"], "r");
+expect(observed).toHaveProperty(["0","value","expected_edit_version"], "9007199254740993");
+expect(observed).toHaveProperty(["0","value","line","length"], 1);
+expect(observed).toHaveProperty(["0","value","line","0","widget_id"], "widget-1");
+expect(observed).toHaveProperty(["0","value","line","0","amount"], "2");
+}
   for (const outcome of [
     { status: "partiallyCompleted", committedResult: wire, failedOutcome: json },
     { status: "refused", code: "invalid_input", detail: json },
@@ -132,18 +146,37 @@ it("follows pages and changes with the first cursor, cap and cancellation signal
     next_cursor: "c3",
     complete: false,
   });
-  expect(invoke.mock.calls.map(([request]) => request.items)).toEqual([
-    [{ limit: 100 }],
-    [{ limit: 100, cursor: "p2" }],
-    [{ feed: { cursor: "c1", limit: 50 } }],
-  ]);
-  expect(invoke.mock.calls.map(([, options]) => options.signal)).toEqual([signal, signal, signal]);
+  {
+const observed = invoke.mock.calls.map(([request]) => request.items);
+expect(observed).toHaveProperty(["length"], 3);
+expect(observed).toHaveProperty(["0","length"], 1);
+expect(observed).toHaveProperty(["0","0","limit"], 100);
+expect(observed).toHaveProperty(["1","length"], 1);
+expect(observed).toHaveProperty(["1","0","limit"], 100);
+expect(observed).toHaveProperty(["1","0","cursor"], "p2");
+expect(observed).toHaveProperty(["2","length"], 1);
+expect(observed).toHaveProperty(["2","0","feed","cursor"], "c1");
+expect(observed).toHaveProperty(["2","0","feed","limit"], 50);
+}
+  {
+const observed = invoke.mock.calls.map(([, options]) => options.signal);
+expect(observed).toHaveProperty(["length"], 3);
+expect(observed).toHaveProperty(["0"], signal);
+expect(observed).toHaveProperty(["1"], signal);
+expect(observed).toHaveProperty(["2"], signal);
+}
   await expect(feed.changes({}, "expired")).rejects.toMatchObject({ name: "CursorExpired" });
   const capped = widget.widgetFeed(
     { invoke: async () => completed({ item: [wire], next_cursor: "p2", cursor: "c1" }) },
     1,
   );
-  expect(await capped.list({})).toEqual({ rows: [row], cursor: "c1", complete: false });
+  {
+const observed = await capped.list({});
+expect(observed).toHaveProperty(["rows","length"], 1);
+expect(observed).toHaveProperty(["rows","0"], row);
+expect(observed).toHaveProperty(["cursor"], "c1");
+expect(observed).toHaveProperty(["complete"], false);
+}
   await expect(widget.widgetFeed({ invoke: async () => ({ status: "uncertain" }) }).list({})).rejects.toThrow();
 });
 
@@ -185,7 +218,10 @@ it("omits unserved bindings and opt-out feeds while keeping target keys stable",
   for (const name of ["get", "WIDGET_GET_ROUTE", "widgetArchived", "WIDGET_WIDGET_ARCHIVED_ROUTE"]) {
     expect(hidden).not.toHaveProperty(name);
   }
-  expect(hidden.WIDGET_GET_REQUEST_FIELDS).toEqual({ id: "id" });
+  {
+const observed = hidden.WIDGET_GET_REQUEST_FIELDS;
+expect(observed).toHaveProperty(["id"], "id");
+}
   for (const name of ["changes", "widgetFeed", "widgetCollection", "widgetWrite"])
     expect(noFeed).not.toHaveProperty(name);
   expect(widget.widgetKey({ filter: { code: ["priority"], note: ["a"] } })).toBe(
@@ -194,7 +230,13 @@ it("omits unserved bindings and opt-out feeds while keeping target keys stable",
   expect(widget.widgetKey({ filter: { code: ["priority"] } })).not.toBe(
     widget.widgetKey({ filter: { code: ["standard"] } }),
   );
-  expect(JSON.parse(widget.widgetKey({}))).toEqual(["widget", widget.WIDGET_SHAPE_DIGEST, "{}"]);
+  {
+const observed = JSON.parse(widget.widgetKey({}));
+expect(observed).toHaveProperty(["length"], 3);
+expect(observed).toHaveProperty(["0"], "widget");
+expect(observed).toHaveProperty(["1"], widget.WIDGET_SHAPE_DIGEST);
+expect(observed).toHaveProperty(["2"], "{}");
+}
 });
 
 it("exposes authored descriptions through TypeScript symbols", () => {

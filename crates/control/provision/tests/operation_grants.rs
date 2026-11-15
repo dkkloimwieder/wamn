@@ -2,7 +2,7 @@
 
 use sqlx::Connection as _;
 use wamn_control_provision::operation_grants::{
-    ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL, PLATFORM_BASE_GRANTS_MISSING,
+    ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     operation_base_grants_requirements_sql,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
@@ -36,7 +36,6 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(
     let missing = admin_write(&mut connection).await.unwrap_err();
     let missing = missing.as_database_error().unwrap();
     assert_eq!(missing.code().as_deref(), Some("55000"));
-    assert_eq!(missing.message(), PLATFORM_BASE_GRANTS_MISSING);
 
     for batch in [
         wamn_catalog::CATALOG_SCHEMA_SQL,

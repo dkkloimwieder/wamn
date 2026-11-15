@@ -213,8 +213,8 @@ mod tests {
 
     #[test]
     fn matching_row_project_delivers_business_input_without_flow_or_run_identity() {
-        assert_eq!(
-            decide(
+        {
+            let Verdict::Deliver(observed) = decide(
                 &registration(None),
                 None,
                 &envelope(),
@@ -222,12 +222,13 @@ mod tests {
                 "t1",
                 Some("t1"),
                 16,
-            ),
-            Verdict::Deliver(json!({
-                "event": "insert",
-                "new": {"project_id": "t1", "status": "ready"}
-            }))
-        );
+            ) else {
+                panic!("delivery refused")
+            };
+            assert_eq!(observed["event"], serde_json::json!("insert"));
+            assert_eq!(observed["new"]["project_id"], serde_json::json!("t1"));
+            assert_eq!(observed["new"]["status"], serde_json::json!("ready"));
+        };
     }
 
     #[test]
@@ -395,17 +396,21 @@ mod tests {
 
     #[test]
     fn matching_derived_event_delivers_exact_arbitrary_payload() {
-        assert_eq!(
-            decide_derived(
+        {
+            let Verdict::Deliver(observed) = decide_derived(
                 &registration(None),
                 None,
                 &derived(3),
                 &known_packages(),
                 "t1",
                 16,
-            ),
-            Verdict::Deliver(json!(["arbitrary", {"status": "ready"}]))
-        );
+            ) else {
+                panic!("delivery refused")
+            };
+            assert_eq!(observed.as_array().unwrap().len(), 2);
+            assert_eq!(observed[0], serde_json::json!("arbitrary"));
+            assert_eq!(observed[1]["status"], serde_json::json!("ready"));
+        };
     }
 
     #[test]
@@ -480,17 +485,21 @@ mod tests {
         let source = verified_derived_source_event_id("t1", "app", "dev", &event, &[&message_id])
             .expect("host-targeted source identity verifies");
         assert_eq!(source.as_str(), message_id);
-        assert_eq!(
-            decide_derived(
+        {
+            let Verdict::Deliver(observed) = decide_derived(
                 &registration(None),
                 None,
                 &event,
                 &known_packages(),
                 "t1",
                 16,
-            ),
-            Verdict::Deliver(json!(["arbitrary", {"status": "ready"}]))
-        );
+            ) else {
+                panic!("delivery refused")
+            };
+            assert_eq!(observed.as_array().unwrap().len(), 2);
+            assert_eq!(observed[0], serde_json::json!("arbitrary"));
+            assert_eq!(observed[1]["status"], serde_json::json!("ready"));
+        };
     }
 
     #[test]

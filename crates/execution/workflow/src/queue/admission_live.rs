@@ -32,7 +32,7 @@ use wamn_identity_protocol::PlatformComponent;
 #[path = "admission_live/shutdown.rs"]
 mod shutdown;
 
-const PROJECT_ENV_KEY: &str = "automation-live";
+const PROJECT_ENV_KEY: &str = "automation--test--default";
 const SERVICE: &str = "00000000-0000-4000-8000-000000000074";
 const OPERATION: &str = "automation:echo/run@1.0.0";
 /// The stable reference that an authored role stores for [`OPERATION`].
@@ -111,6 +111,18 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
         .execute(&mut admin)
         .await
         .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_db_owner_role_sql(),
+    ))
+    .execute(&mut admin)
+    .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::set_database_owner_sql(
+            database.path().trim_start_matches('/'),
+        ),
+    ))
+    .execute(&mut admin)
+    .await?;
     wamn_environment::platform_migrations::install_project(&mut admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::platform_principals_sql("automation.invalid")?).to_string(),
@@ -212,7 +224,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
             }
         } else {
             WorkloadRoleIdentity::ProjectEnvironment {
-                org: PROJECT_ENV_KEY,
+                org: "automation",
                 project: "default",
                 environment: "test",
                 database: &db_name,

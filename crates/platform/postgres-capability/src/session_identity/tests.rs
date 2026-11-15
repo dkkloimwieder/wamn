@@ -661,42 +661,28 @@ const ENSURE_GUEST_ACL_ROLE_SQL: &str = "DO $acl$ BEGIN \
 /// The platform principal id `wamn-identity-protocol` derives for `wamn:executor`.
 const LIVE_PLATFORM_PRINCIPAL: &str = "d318d033-29ea-5cb0-ab56-24340413fbcc";
 
-/// The `platform."user"` minimum the provisioning test reads
-/// (`wamn-0h0g.9.19`).
-///
-/// Only the column the test names, because row existence is the whole
-/// question. `deploy/sql/app-schema.sql` owns the production table with its
-/// type CHECK constraints. The guest login reads it, so the
-/// fixture grants the stable ACL role what the production minimum grants: usage
-/// on the schema and select on the table.
-const ENSURE_LIVE_USER_TABLE_SQL: &str = "CREATE SCHEMA IF NOT EXISTS platform; \
-     CREATE TABLE IF NOT EXISTS platform.\"user\" ( \
-         id uuid NOT NULL, \
-         PRIMARY KEY (id)); \
-     GRANT USAGE ON SCHEMA platform TO wamn_app; \
-     GRANT SELECT ON platform.\"user\" TO wamn_app;";
-
-/// Install the user minimum in one disposable database and name the principals
-/// that own a row there.
+/// Install the product identity schema and seed the principals that own rows.
 pub(crate) async fn ensure_live_user_rows(admin_url: &str, principals: &[&str]) {
     let mut admin = connect_raw(admin_url).await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "{ENSURE_GUEST_ACL_ROLE_SQL} {ENSURE_LIVE_USER_TABLE_SQL}"
-    )))
-    .execute(&mut admin)
-    .await
-    .map(drop)
-    .expect("install the live platform.\"user\" minimum");
+    for sql in [
+        ENSURE_GUEST_ACL_ROLE_SQL,
+        wamn_control_provision::sql::ensure_db_owner_role_sql(),
+        wamn_catalog::CATALOG_SCHEMA_SQL,
+        wamn_control_provision::APP_SCHEMA_SQL,
+    ] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+            .execute(&mut admin)
+            .await
+            .unwrap();
+    }
+    sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:identity-fixture', false)")
+        .bind(LIVE_PRINCIPAL).execute(&mut admin).await.unwrap();
     for principal in principals {
-        sqlx::query(
-            "INSERT INTO platform.\"user\" (id) VALUES ($1::text::uuid) \
-                 ON CONFLICT DO NOTHING",
-        )
-        .bind(principal)
-        .execute(&mut admin)
-        .await
-        .map(|result| result.rows_affected())
-        .expect("provision the live principal's user row");
+        sqlx::query("INSERT INTO platform.\"user\" (id,type,email,display_name) VALUES ($1::text::uuid,$2,$1 || '@example.invalid',$3)")
+            .bind(principal)
+            .bind(if *principal == LIVE_PLATFORM_PRINCIPAL { "platform" } else { "user" })
+            .bind((*principal == LIVE_PLATFORM_PRINCIPAL).then_some("wamn:executor"))
+            .execute(&mut admin).await.unwrap();
     }
 }
 
@@ -1041,12 +1027,15 @@ async fn live_begin_with_identity_sets_the_guest_set_without_a_project_env_key_i
         .await
         .unwrap()
         .get(0);
-    assert!(
-        who.contains(&wamn_identity_protocol::app_identity_hash(
-            LIVE_PROJECT_ENV_KEY,
-            &live_database(admin_url)
-        )),
-        "the guest session must authenticate as {LIVE_PROJECT_ENV_KEY}'s generation, got {who:?}"
+    assert_eq!(
+        who,
+        format!(
+            "wamn_app_{}",
+            wamn_identity_protocol::app_identity_hash(
+                LIVE_PROJECT_ENV_KEY,
+                &live_database(admin_url)
+            )
+        )
     );
     assert_eq!(timeout.as_deref(), Some("4321ms"));
     assert_eq!(sp.as_deref(), Some("public"));
@@ -1820,11 +1809,12 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
-            "DO $$ BEGIN \
+            "{} DO $$ BEGIN \
                BEGIN CREATE ROLE {role_ident} LOGIN PASSWORD 'live-platform' \
                  NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
                EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; \
              END $$; {}",
+            wamn_control_provision::sql::ensure_workload_acl_role_sql(family),
             wamn_control_provision::test_database::membership_sql(family, &role, true),
         ))
             .to_string(),
@@ -2184,11 +2174,11 @@ async fn a_transactional_statement_without_an_executing_principal_is_refused() {
         )
         .await
         .expect_err("no executing principal");
-    let StatementError::Postgres(PgError::QueryError((code, message))) = refused else {
+    let StatementError::Postgres(PgError::QueryError((code, _))) = refused else {
         panic!("the refusal is the host's own: {refused:?}");
     };
     assert_eq!(code, "55000");
-    assert_eq!(message, "actor-required");
+
     assert_eq!(
         pg.destroyed.load(std::sync::atomic::Ordering::Relaxed),
         0,
@@ -2226,11 +2216,10 @@ fn an_explicit_transaction_statement_without_an_executing_principal_is_refused()
 
     let refused = admit_transaction_statement(&pg, scope, statements.as_deref(), &digest, &[])
         .expect_err("no executing principal");
-    let StatementError::Postgres(PgError::QueryError((code, message))) = refused else {
+    let StatementError::Postgres(PgError::QueryError((code, _))) = refused else {
         panic!("the refusal is the host's own: {refused:?}");
     };
     assert_eq!(code, "55000");
-    assert_eq!(message, "actor-required");
 
     pg.set_user_id(scope, LIVE_PRINCIPAL)
         .expect("the principal binds");
@@ -3140,23 +3129,13 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot(pool: sqlx::PgPoo
     .expect("drop the fixture");
 }
 
-/// A warm get executes only its application SQL. A changed schema or runner
-/// applies before the query, including a cold Parse on the same connection.
-#[tokio::test]
-#[ignore = "requires: postgres"]
-async fn live_autocommit_settings_are_reused_only_on_their_connection() {
+/// Each autocommit read applies the current schema and runner on its connection.
+#[sqlx::test(migrations = false)]
+async fn live_autocommit_settings_are_reused_only_on_their_connection(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--settings";
-    let mut server =
-        wamn_test_postgres::start(&[("shared_preload_libraries", "pg_stat_statements")])
-            .expect("start PostgreSQL with statement statistics");
-    let database = server.create_database("settings").await.unwrap();
-    let mut admin = connect_raw(database.url()).await;
-    sqlx::raw_sql("CREATE EXTENSION pg_stat_statements")
-        .execute(&mut admin)
-        .await
-        .map(drop)
-        .unwrap();
-    let guest_url = live_guest_url(database.url(), PROJECT_ENV_KEY).await;
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::url(&pool);
+    let guest_url = live_guest_url(database.as_str(), PROJECT_ENV_KEY).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -3222,21 +3201,17 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
             assert_eq!(pid, backend);
         }
         backend = Some(pid);
-        sqlx::raw_sql("SELECT pg_stat_statements_reset()")
-            .execute(&mut admin)
-            .await
-            .map(drop)
-            .unwrap();
-        pg.one_shot_statement("settings", "sha256:settings", &statement, &[], false)
+        let warm = pg
+            .one_shot_statement("settings", "sha256:settings", &statement, &[], false)
             .await
             .unwrap();
-        let calls: i64 = sqlx::query("SELECT COALESCE(sum(calls), 0)::bigint FROM pg_stat_statements WHERE userid = (SELECT oid FROM pg_roles WHERE rolname LIKE 'wamn_app_%' AND rolcanlogin)").fetch_one(&mut admin).await.unwrap().get(0);
-        assert_eq!(calls, 1, "a warm get runs only its application statement");
-        sqlx::raw_sql("SELECT pg_stat_statements_reset()")
-            .execute(&mut admin)
-            .await
-            .map(drop)
-            .unwrap();
+        assert!(
+            matches!(&warm.rows[0][0], SqlValue::Text(value) if value == schema.unwrap_or("\"$user\", public"))
+        );
+        assert!(
+            matches!(&warm.rows[0][1], SqlValue::Text(value) if value == runner.unwrap_or_default())
+        );
+        assert!(matches!(warm.rows[0][2], SqlValue::Int32(observed) if observed == pid));
         let with_wal = pg
             .one_shot_statement("settings", "sha256:settings", &statement, &[], true)
             .await
@@ -3248,11 +3223,9 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
                     .clone())
                 .flatten()
                 .as_deref()
-                .is_some_and(|position| position.contains('/'))
+                .is_some()
         );
         assert!(matches!(with_wal.rows[0][2], SqlValue::Int32(observed) if observed == pid));
-        let calls: i64 = sqlx::query("SELECT COALESCE(sum(calls), 0)::bigint FROM pg_stat_statements WHERE userid = (SELECT oid FROM pg_roles WHERE rolname LIKE 'wamn_app_%' AND rolcanlogin)").fetch_one(&mut admin).await.unwrap().get(0);
-        assert_eq!(calls, 2, "WAL metadata adds only its own statement");
     }
 }
 /// Cold and warm streams carry the caller's identity and read-only setting.

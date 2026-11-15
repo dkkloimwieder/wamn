@@ -121,9 +121,24 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx:
     let wasm = wamn_package_artifact::integration::pull(&configuration, "fixture", &built.digest)
         .await
         .unwrap();
+    let wit_component::DecodedWasm::Component(resolve, world) =
+        wit_component::decode(&wasm).unwrap()
+    else {
+        panic!("the published artifact is a component");
+    };
+    let declared = resolve.worlds[world]
+        .exports
+        .values()
+        .filter_map(|item| match item {
+            wit_parser::WorldItem::Interface { id, .. } => resolve.id_of(*id),
+            _ => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
-        row.get::<Vec<String>, _>(2),
-        wamn_publish::connection_requirement::exported_interfaces(&wasm).unwrap()
+        row.get::<Vec<String>, _>(2)
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        declared
     );
     assert!(
         wamn_package_artifact::integration::pull(&configuration, "other", &built.digest)

@@ -469,7 +469,11 @@ pub(crate) async fn assert_remaining_operations(
     let replayed = value(&answer, "ops-split-replay")?;
     anyhow::ensure!(
         replayed["new_packaging_id"] == new_packaging_id.as_str()
-            && replayed["transaction_ids"] == json!([split_transaction_id])
+            && ({
+                let observed = &(replayed["transaction_ids"]);
+                observed.as_array().is_some_and(|items| items.len() == 1)
+                    && observed[0] == serde_json::json!(split_transaction_id)
+            })
             && replayed["row_version"].as_i64() == Some(split_revision),
         "a replayed split returns the same new packaging {new_packaging_id}, not a second one: {replayed}"
     );

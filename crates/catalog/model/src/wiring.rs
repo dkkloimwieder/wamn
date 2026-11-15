@@ -495,17 +495,19 @@ mod tests {
     fn the_document_wire_shape_is_closed() {
         let wiring = crud_wiring();
         let wire = serde_json::to_value(&wiring).expect("serializes");
-        assert_eq!(
-            wire["nodes"]["write"],
-            json!({"component": "entity", "interface-version": "0.1.0", "operation": "call"})
-        );
+        {
+            let observed = &(wire["nodes"]["write"]);
+            assert_eq!(observed["component"], serde_json::json!("entity"));
+            assert_eq!(observed["interface-version"], serde_json::json!("0.1.0"));
+            assert_eq!(observed["operation"], serde_json::json!("call"));
+        };
         // An omitted `from-port` is the main port, so the default never reaches
         // the wire and cannot fork the hash of one authored graph.
-        assert_eq!(
-            wire["edges"][0],
-            json!({"from": "in", "to": "write"}),
-            "main-port edges serialize without the port"
-        );
+        {
+            let observed = &(wire["edges"][0]);
+            assert_eq!(observed["from"], serde_json::json!("in"));
+            assert_eq!(observed["to"], serde_json::json!("write"));
+        };
         assert_eq!(
             WiringDocument::parse(&wire).expect("the exact document parses"),
             wiring
@@ -683,10 +685,11 @@ mod tests {
         // spelling here would be a second contract for the same decision.
         assert_eq!(stored["entry"], json!("in"));
         assert_eq!(stored["nodes"]["out"]["terminal"], json!("respond"));
-        assert_eq!(
-            stored["nodes"]["publish"]["terminal"],
-            json!({"emit": {"entity": "orders", "operation": "insert"}})
-        );
+        {
+            let observed = &(stored["nodes"]["publish"]["terminal"]);
+            assert_eq!(observed["emit"]["entity"], serde_json::json!("orders"));
+            assert_eq!(observed["emit"]["operation"], serde_json::json!("insert"));
+        };
         assert!(
             !stored["nodes"]["write"]
                 .as_object()

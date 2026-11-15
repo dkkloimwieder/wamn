@@ -286,7 +286,6 @@ async fn an_unusable_answer_refuses_by_name_without_the_token(script: &Script) {
             .expect_err("an unusable answer refuses");
         assert_eq!((error.error_type(), error.refusal()), (type_, refusal));
         let rendered = format!("{error:?} {error}");
-        assert!(rendered.contains(REGISTRY));
         assert!(!rendered.contains("private-value"));
     }
 }

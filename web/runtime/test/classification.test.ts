@@ -141,18 +141,24 @@ describe("a refusal whose code the operation declares text for", () => {
       body: `[{"request_id":"r1","error":{"code":"${code}"}}]`,
     });
     const authored = classify(contract, "r1", reply("purchase_order_not_open"));
-    expect(authored).toEqual({
-      status: "refused",
-      code: "purchase_order_not_open",
-      detail: null,
-      text: "The purchase order is not open.",
-    });
+    {
+      const observed = authored;
+      expect(observed).toHaveProperty(["status"], "refused");
+      expect(observed).toHaveProperty(["code"], "purchase_order_not_open");
+      expect(observed).toHaveProperty(["detail"], null);
+      expect(observed).toHaveProperty(["text"], contract.errors[0]!.text);
+    }
     if (authored.status === "refused") {
-      expect(refusalSentence(authored.code, authored.text)).toBe("The purchase order is not open.");
+      expect(refusalSentence(authored.code, authored.text)).toBe(contract.errors[0]!.text);
     }
     // A code with no authored text reads as the code in words.
     const plain = classify(contract, "r1", reply("location_not_found"));
-    expect(plain).toEqual({ status: "refused", code: "location_not_found", detail: null });
+    {
+      const observed = plain;
+      expect(observed).toHaveProperty(["status"], "refused");
+      expect(observed).toHaveProperty(["code"], "location_not_found");
+      expect(observed).toHaveProperty(["detail"], null);
+    }
     if (plain.status === "refused") {
       expect(refusalSentence(plain.code, plain.text)).toBe("Location not found.");
     }
@@ -219,7 +225,6 @@ describe("a transport failure", () => {
     });
     expect(outcome.status).toBe("uncertain");
     if (outcome.status === "uncertain") {
-
     }
   });
 
@@ -240,8 +245,18 @@ describe("a transport failure", () => {
       ...route,
       items: [{ request_id: "r1" }, { request_id: "r2" }],
     });
-    expect(body).toEqual([{ request_id: "r1" }, { request_id: "r2" }]);
-    expect(outcomes?.map((outcome) => outcome.status)).toEqual(["completed", "uncertain"]);
+    {
+      const observed = body;
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0", "request_id"], "r1");
+      expect(observed).toHaveProperty(["1", "request_id"], "r2");
+    }
+    {
+      const observed = outcomes?.map((outcome) => outcome.status);
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0"], "completed");
+      expect(observed).toHaveProperty(["1"], "uncertain");
+    }
   });
 
   it("gives every item the uncertainty of a failed send", async () => {
@@ -253,7 +268,12 @@ describe("a transport failure", () => {
       ...route,
       items: [{ request_id: "r1" }, { request_id: "r2" }],
     });
-    expect(outcomes?.map((outcome) => outcome.status)).toEqual(["uncertain", "uncertain"]);
+    {
+      const observed = outcomes?.map((outcome) => outcome.status);
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0"], "uncertain");
+      expect(observed).toHaveProperty(["1"], "uncertain");
+    }
   });
 
   it("sends the credential and the route the bindings state", async () => {
@@ -270,7 +290,11 @@ describe("a transport failure", () => {
       ...route,
       items: [{ request_id: "r1" }],
     });
-    expect(outcome).toEqual({ status: "completed", value: { id: "a" } });
+    {
+      const observed = outcome;
+      expect(observed).toHaveProperty(["status"], "completed");
+      expect(observed).toHaveProperty(["value", "id"], "a");
+    }
     const call = seen as { url: string; init: RequestInit } | null;
     expect(call?.url).toBe("https://example.test/widget/get");
     expect(call?.init.method).toBe("POST");

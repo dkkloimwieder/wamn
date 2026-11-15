@@ -764,15 +764,13 @@ mod tests {
     /// is deliberate and visible in a diff.
     #[test]
     fn the_new_wire_spellings_are_pinned() {
-        let json = serde_json::to_string(&ConnectionTypeDescriptor::blobstore_v1())
-            .expect("descriptor serializes");
-        for spelling in [
-            "\"object-store-bucket\"",
-            "\"host-signed-request\"",
-            "\"bucket\"",
-            "\"prefix\"",
-        ] {
-            assert!(json.contains(spelling), "missing {spelling} in {json}");
+        let value = serde_json::to_value(ConnectionTypeDescriptor::blobstore_v1()).unwrap();
+        assert_eq!(value["authority-model"], "object-store-bucket");
+        assert_eq!(value["credential-injection"], "host-signed-request");
+        let fields = value["field-ownership"].as_array().unwrap();
+        for field in [ConnectionField::Bucket, ConnectionField::Prefix] {
+            let name = serde_json::to_value(field).unwrap();
+            assert!(fields.iter().any(|entry| entry["field"] == name));
         }
     }
     #[test]

@@ -2102,7 +2102,8 @@ impl Drop for TlsTokenEndpoint {
 async fn token_authority_health_allows_secret_and_jwt_and_refuses_other_origins() {
     let endpoint = TlsTokenEndpoint::start().await;
     let refused_endpoint = TlsTokenEndpoint::start().await;
-    let port = url::Url::parse(&endpoint.url).unwrap().port().unwrap();
+    let mut primary = url::Url::parse(&endpoint.url).unwrap();
+    primary.set_path("/");
     for auth_type in ["oauth2_client_credentials", "oauth2_client_credentials_jwt"] {
         let mut auth = serde_json::json!({"client_id":"client", "scopes":["a","b"], "token_url":endpoint.url, "token_authority":endpoint.authority()});
         let material = if auth_type == "oauth2_client_credentials_jwt" {
@@ -2112,7 +2113,7 @@ async fn token_authority_health_allows_secret_and_jwt_and_refuses_other_origins(
         } else {
             serde_json::json!({"client_secret":"secret"}).to_string()
         };
-        let mut parameters = serde_json::json!({"primary-authority":format!("https://{}:{port}/api/", super::interface_address()), "tls-verification":"verify-authority", "auth":auth});
+        let mut parameters = serde_json::json!({"primary-authority":primary.as_str(), "tls-verification":"verify-authority", "auth":auth});
         health(&endpoint.transport, &parameters, auth_type, Some(&material))
             .await
             .unwrap();

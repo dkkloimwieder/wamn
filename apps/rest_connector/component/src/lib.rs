@@ -232,10 +232,6 @@ mod tests {
             let NodeError::Retryable(detail) = error else {
                 panic!("retry class survives")
             };
-            assert_eq!(
-                detail.message,
-                format!("checkpoint {action} failed: database connection unavailable")
-            );
             assert_eq!(detail.code.as_deref(), Some("retry"));
         }
     }

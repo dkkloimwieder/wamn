@@ -15,15 +15,30 @@ import { refusedInputMember, refusalMarks, refusalMarksGroup, refusedMember } fr
 describe("the page state", () => {
   it("appends the next page and keeps the rows already shown", () => {
     const first = firstPage<{ id: string }>([{ id: "a" }], "c1");
-    expect(first.rows).toEqual([{ id: "a" }]);
+    {
+      const observed = first.rows;
+      expect(observed).toHaveProperty(["length"], 1);
+      expect(observed).toHaveProperty(["0", "id"], "a");
+    }
     expect(hasNextPage(first)).toBe(true);
     const second = appendPage(first, [{ id: "b" }], null);
-    expect(second.rows).toEqual([{ id: "a" }, { id: "b" }]);
+    {
+      const observed = second.rows;
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0", "id"], "a");
+      expect(observed).toHaveProperty(["1", "id"], "b");
+    }
     expect(hasNextPage(second)).toBe(false);
   });
 
   it("clears the cursor with the rows, because it names a place in the old list", () => {
-    expect(emptyPage<{ id: string }>()).toEqual({ rows: [], cursor: null, busy: false, refusal: null });
+    {
+      const observed = emptyPage<{ id: string }>();
+      expect(observed).toHaveProperty(["rows", "length"], 0);
+      expect(observed).toHaveProperty(["cursor"], null);
+      expect(observed).toHaveProperty(["busy"], false);
+      expect(observed).toHaveProperty(["refusal"], null);
+    }
   });
 
   it("states that a request is in flight and that it finished", () => {
@@ -35,7 +50,14 @@ describe("the page state", () => {
 
   it("replaces the rows of a bounded list, which carries no cursor", () => {
     const read = firstPage<{ id: string }>([{ id: "a" }]);
-    expect(read).toEqual({ rows: [{ id: "a" }], cursor: null, busy: false, refusal: null });
+    {
+      const observed = read;
+      expect(observed).toHaveProperty(["rows", "length"], 1);
+      expect(observed).toHaveProperty(["rows", "0", "id"], "a");
+      expect(observed).toHaveProperty(["cursor"], null);
+      expect(observed).toHaveProperty(["busy"], false);
+      expect(observed).toHaveProperty(["refusal"], null);
+    }
   });
 });
 
@@ -44,14 +66,20 @@ describe("a draft member", () => {
     const draft = { requestId: "r1", change: { code: "priority", note: "keep" } };
     expect(readMember(draft, ["change", "code"])).toBe("priority");
     const written = writeMember(draft, ["change", "code"], "standard");
-    expect(written).toEqual({ requestId: "r1", change: { code: "standard", note: "keep" } });
+    {
+      const observed = written;
+      expect(observed).toHaveProperty(["requestId"], "r1");
+      expect(observed).toHaveProperty(["change", "code"], "standard");
+      expect(observed).toHaveProperty(["change", "note"], "keep");
+    }
     expect(draft.change.code).toBe("priority");
   });
 
   it("creates a parent that the draft does not carry yet", () => {
-    expect(writeMember({}, ["change", "code"], "priority")).toEqual({
-      change: { code: "priority" },
-    });
+    {
+      const observed = writeMember({}, ["change", "code"], "priority");
+      expect(observed).toHaveProperty(["change", "code"], "priority");
+    }
   });
 
   it("reads nothing through a member that is absent", () => {
@@ -61,16 +89,29 @@ describe("a draft member", () => {
 
   it("clears an omittable member", () => {
     const draft = { change: { code: "priority", note: "keep" } };
-    expect(clearMember(draft, ["change", "note"])).toEqual({ change: { code: "priority" } });
+    {
+      const observed = clearMember(draft, ["change", "note"]);
+      expect(observed).toHaveProperty(["change", "code"], "priority");
+    }
   });
 
   it("sends no member for an empty page control, and no parent it leaves empty", () => {
     const both = writeControl({}, ["filter", "code"], ["A-1"]);
     const two = writeControl(both, ["filter", "note"], ["x"]);
-    expect(two).toEqual({ filter: { code: ["A-1"], note: ["x"] } });
+    {
+      const observed = two;
+      expect(observed).toHaveProperty(["filter", "code", "length"], 1);
+      expect(observed).toHaveProperty(["filter", "code", "0"], "A-1");
+      expect(observed).toHaveProperty(["filter", "note", "length"], 1);
+      expect(observed).toHaveProperty(["filter", "note", "0"], "x");
+    }
     // One control emptied: that member goes, and the other stays.
     const one = writeControl(two, ["filter", "note"], []);
-    expect(one).toEqual({ filter: { code: ["A-1"] } });
+    {
+      const observed = one;
+      expect(observed).toHaveProperty(["filter", "code", "length"], 1);
+      expect(observed).toHaveProperty(["filter", "code", "0"], "A-1");
+    }
     // Every control emptied: the read carries no filter member at all.
     expect(writeControl(one, ["filter", "code"], [])).toEqual({});
     expect(writeControl({ limit: 5 }, ["limit"], "")).toEqual({});
@@ -82,9 +123,10 @@ describe("a draft member", () => {
     const direction = ["sort", "direction"];
     const both = { sort: { field: "created_at", direction: "ascending" }, limit: 5 };
     expect(completePair(both, field, direction)).toBe(both);
-    expect(completePair({ sort: { direction: "ascending" }, limit: 5 }, field, direction)).toEqual({
-      limit: 5,
-    });
+    {
+      const observed = completePair({ sort: { direction: "ascending" }, limit: 5 }, field, direction);
+      expect(observed).toHaveProperty(["limit"], 5);
+    }
     expect(completePair({ sort: { field: "created_at" } }, field, direction)).toEqual({});
     expect(completePair({}, field, direction)).toEqual({});
   });

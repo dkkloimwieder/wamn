@@ -83,11 +83,11 @@ async fn the_edge_serves_a_route_to_a_session_whose_role_grants_it() {
 
     let (status, answer) = post(addr, Some(&session(&known, "key-one", &[ROLE])), body).await;
     assert_eq!(status, 200, "{answer}");
-    assert_eq!(
-        serde_json::from_str::<Value>(&answer).expect("a JSON body"),
-        json!([outcome("r-1", "12.5 kg")]),
-        "the device component trims the frame"
-    );
+    {
+        let observed = &(serde_json::from_str::<Value>(&answer).expect("a JSON body"));
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0], serde_json::json!(outcome("r-1", "12.5 kg")));
+    };
     assert_eq!(post(addr, None, body).await.0, 401, "no credential");
     assert_eq!(
         post(addr, Some(&session(&unknown, "key-other", &[ROLE])), body)

@@ -74,7 +74,7 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
         let screen_path = "/receiving/load_receipt_screen";
         for order in ["00000000-0000-0000-0000-000000000727", "00000000-0000-0000-0000-000000000999"] {
             let page = read(screen_path, json!({"purchase_order_id": order})).await?;
-            ensure!(page["item"] == json!([]), "an empty or missing order returned lines: {page}");
+            ensure!(({ let observed = &(page["item"]); observed.as_array().is_some_and(|items| items.len() == 0) }), "an empty or missing order returned lines: {page}");
             ensure!(page["cursor"].is_string());
         }
         let page = read(screen_path, json!({"purchase_order_id": "00000000-0000-0000-0000-000000000725"})).await?;

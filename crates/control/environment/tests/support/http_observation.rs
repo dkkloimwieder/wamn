@@ -8,7 +8,10 @@ pub fn assert_observed_request(status: u16, body: &str, log: &str) -> anyhow::Re
     let response: Value = serde_json::from_str(body)?;
     ensure!(response["status"] == 200, "guest response: {response}");
     ensure!(
-        response["body"] == json!({"id": 1}),
+        ({
+            let observed = &(response["body"]);
+            observed["id"] == serde_json::json!(1)
+        }),
         "guest body: {response}"
     );
     let records = route_requests(log)?;

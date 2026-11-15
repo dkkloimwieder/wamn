@@ -109,6 +109,10 @@ async fn native_loader_allows_repeated_export_only_handlers() {
     };
     let second = component("http-request", HANDLER, None, 37);
     assert_eq!(first.fact.component_digest, second.fact.component_digest);
+    let expected: std::collections::BTreeSet<String> = [&first, &second]
+        .map(|component| component.fact.component.clone())
+        .into_iter()
+        .collect();
     let workload = load(vec![first, repeat, second])
         .await
         .expect("shared handler exports retain separate admitted identities");
@@ -117,10 +121,7 @@ async fn native_loader_allows_repeated_export_only_handlers() {
         .values()
         .map(|fact| fact.component.as_str())
         .collect();
-    assert_eq!(
-        names,
-        std::collections::BTreeSet::from(["http-request", "transform"])
-    );
+    assert_eq!(names, expected.iter().map(String::as_str).collect());
     workload.unbind_all_plugins().await.expect("unbind");
 }
 

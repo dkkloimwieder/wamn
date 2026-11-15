@@ -27,13 +27,16 @@ describe("createCall", () => {
         ...options,
         request: { requestId: "second", label: "Box", idempotencyKey: "new" },
       });
-      expect(first.call).toEqual({
-        operation: options.operation,
-        request: { id: first.id, label: "Box" },
-        request_hash: await requestHash({ id: first.id, label: "Box" }),
-        expect: { model: "row", id: first.id },
-        append_only: true,
-      });
+      {
+        const observed = first.call;
+        expect(observed).toHaveProperty(["operation"], options.operation);
+        expect(observed).toHaveProperty(["request", "id"], first.id);
+        expect(observed).toHaveProperty(["request", "label"], "Box");
+        expect(observed).toHaveProperty(["request_hash"], await requestHash({ id: first.id, label: "Box" }));
+        expect(observed).toHaveProperty(["expect", "model"], "row");
+        expect(observed).toHaveProperty(["expect", "id"], first.id);
+        expect(observed).toHaveProperty(["append_only"], true);
+      }
       expect(first.call.request_hash).toBe(second.call.request_hash);
       expect(first.call.request_hash).not.toBe(await requestHash({ label: "Box" }));
     } finally {

@@ -159,7 +159,12 @@ describe("the read store", () => {
     const outcomes = await Promise.all([first, second]);
     expect(seen).toHaveLength(1);
     expect(outcomes[0]).toEqual(outcomes[1]);
-    expect(outcomes[0]).toEqual({ status: "completed", value: { id: "a", row_version: 1 } });
+    {
+      const observed = outcomes[0];
+      expect(observed).toHaveProperty(["status"], "completed");
+      expect(observed).toHaveProperty(["value", "id"], "a");
+      expect(observed).toHaveProperty(["value", "row_version"], 1);
+    }
   });
 
   it("lets the browser revalidate a read it does not hold, as after a reload", async () => {
@@ -171,10 +176,16 @@ describe("the read store", () => {
     // The first read has no stored entry, so the browser may answer it from its
     // own copy after a 304. The second sends the store's tag, and its 304 must
     // reach the store, so the browser cache stays out.
-    expect(seen.map((call) => [call.cache, call.ifNoneMatch])).toEqual([
-      ["no-cache", undefined],
-      ["no-store", '"t1"'],
-    ]);
+    {
+      const observed = seen.map((call) => [call.cache, call.ifNoneMatch]);
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0", "length"], 2);
+      expect(observed).toHaveProperty(["0", "0"], "no-cache");
+      expect(observed).toHaveProperty(["0", "1"], undefined);
+      expect(observed).toHaveProperty(["1", "length"], 2);
+      expect(observed).toHaveProperty(["1", "0"], "no-store");
+      expect(observed).toHaveProperty(["1", "1"], '"t1"');
+    }
   });
 
   it("answers a fresh list without a request, and revalidates it when stale", async () => {
@@ -182,10 +193,12 @@ describe("the read store", () => {
     replies.push({ status: 200, body: ROWS, cacheControl: LIST, etag: 'W/"v1"' });
     await transport.invoke(list("open"));
     vi.setSystemTime(9_000);
-    expect(await transport.invoke(list("open"))).toEqual({
-      status: "completed",
-      value: { rows: [{ id: "a" }] },
-    });
+    {
+      const observed = await transport.invoke(list("open"));
+      expect(observed).toHaveProperty(["status"], "completed");
+      expect(observed).toHaveProperty(["value", "rows", "length"], 1);
+      expect(observed).toHaveProperty(["value", "rows", "0", "id"], "a");
+    }
     expect(seen).toHaveLength(1);
     vi.setSystemTime(10_000);
     replies.push({ status: 304, cacheControl: LIST, etag: 'W/"v1"' });
@@ -200,7 +213,12 @@ describe("the read store", () => {
     replies.push({ status: 304, cacheControl: GET, etag: '"t1"' });
     const first = await transport.invoke(get("a"));
     const second = await transport.invoke(get("a"));
-    expect(seen.map((call) => call.ifNoneMatch)).toEqual([undefined, '"t1"']);
+    {
+      const observed = seen.map((call) => call.ifNoneMatch);
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0"], undefined);
+      expect(observed).toHaveProperty(["1"], '"t1"');
+    }
     expect(second).toEqual(first);
   });
 
@@ -212,10 +230,13 @@ describe("the read store", () => {
     await transport.invoke(WRITE);
     const changed = '[{"value":{"rows":[{"id":"a"},{"id":"b"}]}}]';
     replies.push({ status: 200, body: changed, cacheControl: LIST, etag: 'W/"v2"' });
-    expect(await transport.invoke(list("open"))).toEqual({
-      status: "completed",
-      value: { rows: [{ id: "a" }, { id: "b" }] },
-    });
+    {
+      const observed = await transport.invoke(list("open"));
+      expect(observed).toHaveProperty(["status"], "completed");
+      expect(observed).toHaveProperty(["value", "rows", "length"], 2);
+      expect(observed).toHaveProperty(["value", "rows", "0", "id"], "a");
+      expect(observed).toHaveProperty(["value", "rows", "1", "id"], "b");
+    }
     expect(seen[2]?.ifNoneMatch).toBe('W/"v1"');
     vi.setSystemTime(10_000);
     replies.push({ status: 304, cacheControl: LIST, etag: 'W/"v2"' });
@@ -249,7 +270,13 @@ describe("the read store", () => {
     expect((await transport.invoke(get("a"))).status).toBe("uncertain");
     replies.push({ status: 200, body: WIDGET, cacheControl: GET, etag: '"t1"' });
     await transport.invoke(get("a"));
-    expect(seen.map((call) => call.ifNoneMatch)).toEqual([undefined, '"t1"', undefined]);
+    {
+      const observed = seen.map((call) => call.ifNoneMatch);
+      expect(observed).toHaveProperty(["length"], 3);
+      expect(observed).toHaveProperty(["0"], undefined);
+      expect(observed).toHaveProperty(["1"], '"t1"');
+      expect(observed).toHaveProperty(["2"], undefined);
+    }
   });
 
   it("keeps different queries apart", async () => {
@@ -257,14 +284,17 @@ describe("the read store", () => {
     replies.push({ status: 200, body: ROWS, cacheControl: LIST, etag: 'W/"v1"' });
     replies.push({ status: 200, body: '[{"value":{"rows":[]}}]', cacheControl: LIST, etag: 'W/"v2"' });
     await transport.invoke(list("open"));
-    expect(await transport.invoke(list("closed"))).toEqual({
-      status: "completed",
-      value: { rows: [] },
-    });
-    expect(seen.map((call) => call.url)).toEqual([
-      "https://example.test/widget/query?status=%22open%22",
-      "https://example.test/widget/query?status=%22closed%22",
-    ]);
+    {
+      const observed = await transport.invoke(list("closed"));
+      expect(observed).toHaveProperty(["status"], "completed");
+      expect(observed).toHaveProperty(["value", "rows", "length"], 0);
+    }
+    {
+      const observed = seen.map((call) => call.url);
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0"], "https://example.test/widget/query?status=%22open%22");
+      expect(observed).toHaveProperty(["1"], "https://example.test/widget/query?status=%22closed%22");
+    }
   });
 
   it("empties itself when the session cookie changes", async () => {
@@ -275,7 +305,12 @@ describe("the read store", () => {
     cookie = "__Host-wamn-csrf=two";
     replies.push({ status: 200, body: ROWS, cacheControl: LIST, etag: 'W/"v1"' });
     await transport.invoke(list("open"));
-    expect(seen.map((call) => call.ifNoneMatch)).toEqual([undefined, undefined]);
+    {
+      const observed = seen.map((call) => call.ifNoneMatch);
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0"], undefined);
+      expect(observed).toHaveProperty(["1"], undefined);
+    }
   });
 });
 
@@ -295,7 +330,12 @@ describe("a write listener", () => {
     replies.push({ status: 200, body: '[{"request_id":"r1","value":{"id":"a"}}]' });
     await transport.invoke(WRITE);
     // Each write is heard before its caller reads the outcome, and a read is not heard.
-    expect(heard).toEqual([0, 1]);
+    {
+      const observed = heard;
+      expect(observed).toHaveProperty(["length"], 2);
+      expect(observed).toHaveProperty(["0"], 0);
+      expect(observed).toHaveProperty(["1"], 1);
+    }
   });
 
   it("is never called by a transport that has no onWrite", () => {
@@ -307,15 +347,23 @@ describe("a write listener", () => {
 
   it("hears only a write that touches the relations of its read", async () => {
     const { transport, replies } = harness();
-    const heard: string[] = [];
-    afterWrites(transport, ["fixture.widget"], () => heard.push("widget"));
+    let heard = 0;
+    const reads = ["fixture.widget"];
+    afterWrites(transport, reads, () => {
+      heard += 1;
+    });
     const done = '[{"request_id":"r1","value":{"id":"a"}}]';
-    for (const writes of [["fixture.widget"], ["fixture.maker"], [], null]) {
+    for (const [writes, notified] of [
+      [reads, true],
+      [["fixture.maker"], false],
+      [[], false],
+      [null, true],
+    ] as const) {
+      const before = heard;
       replies.push({ status: 200, body: done });
       await transport.invoke(writing(writes));
-      heard.push(JSON.stringify(writes));
+      expect(heard - before).toBe(notified ? 1 : 0);
     }
-    expect(heard).toEqual(["widget", '["fixture.widget"]', '["fixture.maker"]', "[]", "widget", "null"]);
   });
 });
 

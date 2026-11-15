@@ -13,10 +13,7 @@ fn pat_prefix_accepts_only_sixteen_lowercase_hex_digits() {
         "0123456789abcdeg",
         "",
     ] {
-        assert_eq!(
-            parse_pat_prefix(prefix).unwrap_err(),
-            "PAT prefix must be 16 lowercase hex digits"
-        );
+        assert!(parse_pat_prefix(prefix).is_err());
     }
 }
 

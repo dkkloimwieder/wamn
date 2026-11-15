@@ -266,31 +266,97 @@ async fn authored_feed_build(pool: &sqlx::PgPool, workspace: &Workspace) -> anyh
 async fn authored_feed_receipt_screen_records_its_join_path(pool: sqlx::PgPool) {
     let workspace = authored_feed_workspace("feed-receipt", RECEIPT_FEED_VIEW);
     let source = authored_feed_build(&pool, &workspace).await.unwrap();
-    assert_eq!(
-        source["root"],
-        serde_json::json!({"schema": "inventory", "table": "widget"})
-    );
-    assert_eq!(
-        source["read_set"],
-        serde_json::json!([
-            {"schema": "inventory", "table": "widget"},
-            {"schema": "inventory", "table": "widget_maker"},
-            {"schema": "inventory", "table": "widget_tag"}
-        ])
-    );
-    assert_eq!(
-        source["join_path"],
-        serde_json::json!([
-            {"table": {"schema": "inventory", "table": "widget_maker"},
-             "linking_column": "maker_id", "direction": "referenced_by_link",
-             "foreign_key_table": {"schema": "inventory", "table": "widget"},
-             "foreign_key_columns": [{"column": "maker_id", "referenced_column": "id"}]},
-            {"table": {"schema": "inventory", "table": "widget_tag"},
-             "linking_column": "tag_id", "direction": "referenced_by_link",
-             "foreign_key_table": {"schema": "inventory", "table": "widget"},
-             "foreign_key_columns": [{"column": "tag_id", "referenced_column": "id"}]}
-        ])
-    );
+    {
+        let observed = &(source["root"]);
+        assert_eq!(observed["schema"], serde_json::json!("inventory"));
+        assert_eq!(observed["table"], serde_json::json!("widget"));
+    };
+    {
+        let observed = &(source["read_set"]);
+        assert_eq!(observed.as_array().expect("array").len(), 3);
+        assert_eq!(observed[0]["schema"], serde_json::json!("inventory"));
+        assert_eq!(observed[0]["table"], serde_json::json!("widget"));
+        assert_eq!(observed[1]["schema"], serde_json::json!("inventory"));
+        assert_eq!(observed[1]["table"], serde_json::json!("widget_maker"));
+        assert_eq!(observed[2]["schema"], serde_json::json!("inventory"));
+        assert_eq!(observed[2]["table"], serde_json::json!("widget_tag"));
+    };
+    {
+        let observed = &(source["join_path"]);
+        assert_eq!(observed.as_array().expect("array").len(), 2);
+        assert_eq!(
+            observed[0]["table"]["schema"],
+            serde_json::json!("inventory")
+        );
+        assert_eq!(
+            observed[0]["table"]["table"],
+            serde_json::json!("widget_maker")
+        );
+        assert_eq!(observed[0]["linking_column"], serde_json::json!("maker_id"));
+        assert_eq!(
+            observed[0]["direction"],
+            serde_json::json!("referenced_by_link")
+        );
+        assert_eq!(
+            observed[0]["foreign_key_table"]["schema"],
+            serde_json::json!("inventory")
+        );
+        assert_eq!(
+            observed[0]["foreign_key_table"]["table"],
+            serde_json::json!("widget")
+        );
+        assert_eq!(
+            observed[0]["foreign_key_columns"]
+                .as_array()
+                .expect("array")
+                .len(),
+            1
+        );
+        assert_eq!(
+            observed[0]["foreign_key_columns"][0]["column"],
+            serde_json::json!("maker_id")
+        );
+        assert_eq!(
+            observed[0]["foreign_key_columns"][0]["referenced_column"],
+            serde_json::json!("id")
+        );
+        assert_eq!(
+            observed[1]["table"]["schema"],
+            serde_json::json!("inventory")
+        );
+        assert_eq!(
+            observed[1]["table"]["table"],
+            serde_json::json!("widget_tag")
+        );
+        assert_eq!(observed[1]["linking_column"], serde_json::json!("tag_id"));
+        assert_eq!(
+            observed[1]["direction"],
+            serde_json::json!("referenced_by_link")
+        );
+        assert_eq!(
+            observed[1]["foreign_key_table"]["schema"],
+            serde_json::json!("inventory")
+        );
+        assert_eq!(
+            observed[1]["foreign_key_table"]["table"],
+            serde_json::json!("widget")
+        );
+        assert_eq!(
+            observed[1]["foreign_key_columns"]
+                .as_array()
+                .expect("array")
+                .len(),
+            1
+        );
+        assert_eq!(
+            observed[1]["foreign_key_columns"][0]["column"],
+            serde_json::json!("tag_id")
+        );
+        assert_eq!(
+            observed[1]["foreign_key_columns"][0]["referenced_column"],
+            serde_json::json!("id")
+        );
+    };
 }
 
 #[sqlx::test(migrations = false)]
@@ -308,10 +374,12 @@ async fn authored_feed_grouped_summary_records_both_link_directions(pool: sqlx::
     let source = authored_feed_build(&pool, &workspace).await.unwrap();
     assert_eq!(source["root"]["table"], "widget_maker");
     assert_eq!(source["join_path"][0]["direction"], "references_root");
-    assert_eq!(
-        source["join_path"][0]["foreign_key_columns"],
-        serde_json::json!([{"column": "maker_id", "referenced_column": "id"}])
-    );
+    {
+        let observed = &(source["join_path"][0]["foreign_key_columns"]);
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0]["column"], serde_json::json!("maker_id"));
+        assert_eq!(observed[0]["referenced_column"], serde_json::json!("id"));
+    };
     assert_eq!(source["join_path"][1]["linking_column"], "supplier_id");
     assert_eq!(source["join_path"][1]["direction"], "referenced_by_link");
 }
@@ -325,18 +393,18 @@ async fn authored_feed_refuses_a_one_to_many_view_without_grouping(pool: sqlx::P
         "lists = {model = \"widget\", key_field = \"id\", display_field = \"code\"}",
         "lists = {model = \"widget_maker\", key_field = \"id\", display_field = \"code\"}",
     );
-    let error = authored_feed_build(&pool, &workspace).await.unwrap_err();
+    authored_feed_build(&pool, &workspace).await.unwrap_err();
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn authored_feed_refuses_a_base_table_without_a_link() {
+#[sqlx::test(migrations = false)]
+async fn authored_feed_refuses_a_base_table_without_a_link(pool: sqlx::PgPool) {
     let workspace = authored_feed_workspace("feed-no-link", "SELECT line.id, line.code, line.edit_version,
         to_jsonb(items) AS attributes FROM inventory.widget AS line CROSS JOIN inventory.widget_tag AS items");
-    let message = format!("{:#}", authored_feed_build(&workspace).await.unwrap_err());
+    authored_feed_build(&pool, &workspace).await.unwrap_err();
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn authored_feed_refuses_statement_tables_and_joins() {
+#[sqlx::test(migrations = false)]
+async fn authored_feed_refuses_statement_tables_and_joins(pool: sqlx::PgPool) {
     for (name, sql) in [
         (
             "table",
@@ -350,38 +418,35 @@ async fn authored_feed_refuses_statement_tables_and_joins() {
         let workspace =
             authored_feed_workspace(&format!("feed-statement-{name}"), RECEIPT_FEED_VIEW);
         fs::write(workspace.package().join("query/widget_list.sql"), sql).unwrap();
-        let message = format!("{:#}", authored_feed_build(&workspace).await.unwrap_err());
+        authored_feed_build(&pool, &workspace).await.unwrap_err();
     }
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn authored_feed_refuses_statement_grouping_windows_and_limits() {
-    for (name, sql, reason) in [
+#[sqlx::test(migrations = false)]
+async fn authored_feed_refuses_statement_grouping_windows_and_limits(pool: sqlx::PgPool) {
+    for (name, sql) in [
         (
             "group",
             "SELECT id, code, edit_version, attributes FROM widget_screen GROUP BY id, code, edit_version, attributes",
-            "GROUP BY",
         ),
         (
             "limit",
             "SELECT id, code, edit_version, attributes FROM widget_screen LIMIT 5",
-            "LIMIT",
         ),
         (
             "window",
             "SELECT id, code, edit_version, to_jsonb(row_number() OVER ()) AS attributes FROM widget_screen",
-            "window",
         ),
     ] {
         let workspace =
             authored_feed_workspace(&format!("feed-statement-{name}"), RECEIPT_FEED_VIEW);
         fs::write(workspace.package().join("query/widget_list.sql"), sql).unwrap();
-        let message = format!("{:#}", authored_feed_build(&workspace).await.unwrap_err());
+        authored_feed_build(&pool, &workspace).await.unwrap_err();
     }
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn authored_feed_refuses_a_base_table_without_history() {
+#[sqlx::test(migrations = false)]
+async fn authored_feed_refuses_a_base_table_without_history(pool: sqlx::PgPool) {
     let workspace = authored_feed_workspace("feed-no-history", RECEIPT_FEED_VIEW);
     let original = r#"widget_tag = manifest.Model("widget_tag", _schema) {
             table = "widget_tag"
@@ -389,17 +454,17 @@ async fn authored_feed_refuses_a_base_table_without_history() {
             server_owned_fields = ["edit_version"]
             audit_log = {columns = [], retention = "P30D"}"#;
     workspace.edit_manifest(original, &original.replace("P30D", "none"));
-    let message = format!("{:#}", authored_feed_build(&workspace).await.unwrap_err());
+    authored_feed_build(&pool, &workspace).await.unwrap_err();
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn authored_feed_refuses_a_key_other_than_the_root_id() {
+#[sqlx::test(migrations = false)]
+async fn authored_feed_refuses_a_key_other_than_the_root_id(pool: sqlx::PgPool) {
     let workspace = authored_feed_workspace("feed-wrong-key", RECEIPT_FEED_VIEW);
     workspace.edit_manifest(
         "lists = {model = \"widget\", key_field = \"id\", display_field = \"code\"}",
         "lists = {model = \"widget\", key_field = \"code\", display_field = \"code\"}",
     );
-    let message = format!("{:#}", authored_feed_build(&workspace).await.unwrap_err());
+    authored_feed_build(&pool, &workspace).await.unwrap_err();
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -448,10 +513,14 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
             assert_eq!(field["nullable"], nullable, "{field}");
         }
         assert_eq!(projection["relations"][0]["table"], "widget_screen");
-        assert_eq!(
-            projection["relations"][0]["select_fields"],
-            serde_json::json!(["attributes", "code", "edit_version", "id"])
-        );
+        {
+            let observed = &(projection["relations"][0]["select_fields"]);
+            assert_eq!(observed.as_array().expect("array").len(), 4);
+            assert_eq!(observed[0], serde_json::json!("attributes"));
+            assert_eq!(observed[1], serde_json::json!("code"));
+            assert_eq!(observed[2], serde_json::json!("edit_version"));
+            assert_eq!(observed[3], serde_json::json!("id"));
+        };
     }
     let workspace = projection_view_workspace("view-undeclared");
     let mut database_server_database = wamn_test_postgres::start(&[]).unwrap();

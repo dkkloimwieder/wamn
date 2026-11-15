@@ -1,73 +1,44 @@
-//! Test startup limits in disposable host processes.
+//! Test startup limits through disposable host processes.
 
 use std::time::Duration;
-
 use tokio::process::Command;
 
 async fn startup_limits(soft: u64, hard: u64) {
-    let missing_ca = std::env::temp_dir().join(format!(
-        "wamn-descriptor-missing-ca-{}-{hard}.pem",
-        std::process::id()
-    ));
-    let output = tokio::time::timeout(
-        Duration::from_secs(15),
-        Command::new("python3")
-            .args([
-                "-c",
-                "import os, resource, sys; resource.setrlimit(resource.RLIMIT_NOFILE, (int(sys.argv[1]), int(sys.argv[2]))); os.execv(sys.argv[3], sys.argv[3:])",
-                &soft.to_string(),
-                &hard.to_string(),
-                env!("CARGO_BIN_EXE_wamn-host"),
-                "host",
-                "--drain-bound-seconds=300",
-                "--oci-ca-path",
-            ])
-            .arg(missing_ca)
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .env("LANG", "C")
-            .env("NO_COLOR", "1")
-            .env("TERM", "dumb")
-            .env("TOKIO_WORKER_THREADS", "2")
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .expect("host startup exceeded 15 seconds")
-    .expect("start host with isolated descriptor limits");
-    let log = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(output.status.code(), Some(1), "{log}");
-    let events: Vec<_> = log
+    use wamn_test_infrastructure::process_input;
+    let files = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+    let input = files.path().join("ca.pem");
+    process_input::create(&input).unwrap();
+    let mut child = Command::new("python3")
+        .args(["-c", "import os,resource,sys; resource.setrlimit(resource.RLIMIT_NOFILE,tuple(map(int,sys.argv[1:3]))); os.execv(sys.argv[3],sys.argv[3:])"])
+        .args([soft.to_string(), hard.to_string()])
+        .args([env!("CARGO_BIN_EXE_wamn-host"), "host", "--drain-bound-seconds=300", "--oci-ca-path"])
+        .arg(&input)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("TOKIO_WORKER_THREADS", "2")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn().unwrap();
+    let writer = process_input::reader(&input, &mut child)
+        .await
+        .unwrap()
+        .expect("host reads its CA after descriptor initialization");
+    let limits = std::fs::read_to_string(format!("/proc/{}/limits", child.id().unwrap())).unwrap();
+    let fields = limits
         .lines()
-        .filter(|line| line.contains("native descriptor limits initialized"))
-        .collect();
-    assert_eq!(events.len(), 1, "{log}");
-    for (field, value) in [
-        ("descriptor_soft_limit", format!("Some({hard})")),
-        (
-            "default_max_connections",
-            (hard / 2).clamp(64, 32768).to_string(),
-        ),
-        (
-            "default_max_http_ingress_connections",
-            (hard / 4).clamp(256, 32768).to_string(),
-        ),
-    ] {
-        assert!(
-            events[0]
-                .split_whitespace()
-                .any(|item| item == format!("{field}={value}")),
-            "{field} differs from {value}: {log}"
-        );
-    }
-    let refusal = log
-        .find("trust the configured OCI CA bundles")
-        .expect("host reached the deliberate CA refusal");
-    assert!(log.find(events[0]).unwrap() < refusal, "{log}");
+        .find_map(|line| line.strip_prefix("Max open files"))
+        .unwrap()
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    assert_eq!(fields[0].parse::<u64>().unwrap(), hard);
+    assert_eq!(fields[1].parse::<u64>().unwrap(), hard);
+    drop(writer);
+    let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(status.code(), Some(1));
 }
 
 #[tokio::test]

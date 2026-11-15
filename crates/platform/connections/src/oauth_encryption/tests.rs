@@ -151,7 +151,10 @@ async fn kms_rest_wraps_and_unwraps_with_pod_identity_and_preserves_the_version(
                 assert_eq!(STANDARD.decode(&data_key).unwrap().len(), 32);
                 serde_json::json!({"name": format!("{name}/cryptoKeyVersions/7"), "ciphertext": STANDARD.encode(b"kms-wrapped-key")})
             } else {
-                assert_eq!(request, serde_json::json!({"ciphertext": STANDARD.encode(b"kms-wrapped-key")}));
+                {
+    let observed = &(request);
+    assert_eq!(observed["ciphertext"], serde_json::json!(STANDARD.encode(b"kms-wrapped-key")));
+};
                 serde_json::json!({"plaintext": data_key})
             }.to_string();
             stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{reply}", reply.len()).as_bytes()).await.unwrap();
@@ -270,10 +273,13 @@ async fn slow_kms_unwrap_allows_cached_decrypt_and_keeps_cache_bounded() {
             let (mut stream, _) = listener.accept().await.unwrap();
             let (headers, request) = read_request(&mut stream).await;
             assert!(headers.starts_with(&format!("POST /v1/{name}:decrypt HTTP/1.1")));
-            assert_eq!(
-                request,
-                serde_json::json!({"ciphertext": STANDARD.encode(b"slow")})
-            );
+            {
+                let observed = &(request);
+                assert_eq!(
+                    observed["ciphertext"],
+                    serde_json::json!(STANDARD.encode(b"slow"))
+                );
+            };
             streams.push(stream);
             received.send(()).unwrap();
         }

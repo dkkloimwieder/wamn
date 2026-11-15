@@ -3,8 +3,6 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use sqlx::Row as _;
-#[path = "../../../services/ctl/src/read_query.rs"]
-mod read_query;
 use wamn_test_application::{Application, Routes};
 
 #[path = "support/write_log.rs"]
@@ -154,8 +152,13 @@ async fn a_read_of_100000_rows_refuses_at_the_ceiling() -> anyhow::Result<()> {
     anyhow::ensure!(status == 200, "the refusal answers 200: {status} {answer}");
     anyhow::ensure!(
         answer[0]["error"]["code"] == "invalid_input"
-            && answer[0]["error"]["detail"]
-                == json!({"field": "limit", "minimum": "1", "maximum": "50000", "observed": "100000"}),
+            && ({
+                let observed = &(answer[0]["error"]["detail"]);
+                observed["field"] == serde_json::json!("limit")
+                    && observed["minimum"] == serde_json::json!("1")
+                    && observed["maximum"] == serde_json::json!("50000")
+                    && observed["observed"] == serde_json::json!("100000")
+            }),
         "the request above the ceiling is refused: {answer}"
     );
     // A limit at the ceiling passes it, and is not the ceiling refusal.
@@ -177,10 +180,12 @@ async fn a_read_of_100000_rows_refuses_at_the_ceiling() -> anyhow::Result<()> {
 
 async fn get(paths: &Routes, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
     let input = body[0].as_object().context("read input")?;
-    let query = read_query::encode_read_query(input);
+    let mut url = url::Url::parse(&format!("{}{path}", paths.endpoint))?;
+    url.query_pairs_mut()
+        .extend_pairs(input.iter().map(|(name, value)| (name, value.to_string())));
     let response = paths
         .client
-        .get(format!("{}{path}?{query}", paths.endpoint))
+        .get(url.as_str())
         .header("Host", &paths.host)
         .bearer_auth(&paths.bearer)
         .send()
@@ -218,13 +223,17 @@ async fn a_command_numbers_without_a_record_and_with_a_key_map() -> anyhow::Resu
                 }]),
             )
             .await?;
-            assert_eq!(
-                &answer[0]["value"],
-                &json!({
-                    "records": "0", "bare": format!("L-{index}"), "bare_peek": format!("L-{index}"),
-                    "keyed": keyed, "keyed_peek": keyed,
-                })
-            );
+            {
+                let observed = &(&answer[0]["value"]);
+                assert_eq!(observed["records"], serde_json::json!("0"));
+                assert_eq!(observed["bare"], serde_json::json!(format!("L-{index}")));
+                assert_eq!(
+                    observed["bare_peek"],
+                    serde_json::json!(format!("L-{index}"))
+                );
+                assert_eq!(observed["keyed"], serde_json::json!(keyed));
+                assert_eq!(observed["keyed_peek"], serde_json::json!(keyed));
+            };
         }
         Ok(())
     }

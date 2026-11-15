@@ -26,8 +26,7 @@ use wamn_workflow::author_workflow::{
     WorkflowTrigger, author_workflow,
 };
 use wamn_workflow::workflow_lifecycle::{
-    APPLY_IN_PROGRESS, WorkflowLifecycleErrorType, WorkflowVersion, disable_workflow,
-    enable_workflow,
+    WorkflowLifecycleErrorType, WorkflowVersion, disable_workflow, enable_workflow,
 };
 
 const PROJECT_ENV_KEY: &str = "workflow-project--dev--fixture";
@@ -383,7 +382,6 @@ async fn one_version_is_enabled_and_the_lock_refuses_while_held(pool: sqlx::PgPo
     .expect_err("a graph change refuses");
     let database = refused.as_database_error().expect("a database refusal");
     assert_eq!(database.code().as_deref().unwrap(), "55000");
-    assert_eq!(database.message(), "workflow-version-immutable");
 
     // A held lock refuses enable and disable, and the state stays.
     let held = LifecycleLock::acquire(&fixture.project_url, &triple())

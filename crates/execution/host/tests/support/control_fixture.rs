@@ -184,7 +184,9 @@ pub(super) async fn project_database(
     )
     .await?;
     std::fs::write(
-        logins.join(wamn_registry::project_env_key(ORG, project, "dev")),
+        logins.join(wamn_control_provision::control_administration_key(
+            project, "dev",
+        )),
         login,
     )?;
     Ok(target)

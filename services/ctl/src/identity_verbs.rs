@@ -286,13 +286,15 @@ mod tests {
             let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(body.as_array().unwrap().len(), 1);
             assert!(!body[0]["request_id"].as_str().unwrap().is_empty());
-            assert_eq!(
-                body[0]["value"],
-                serde_json::json!({
-                    "project": "billing", "env": "dev",
-                    "principal_id": "00112233-4455-6677-8899-aabbccddeeff"
-                })
-            );
+            {
+                let observed = &(body[0]["value"]);
+                assert_eq!(observed["project"], serde_json::json!("billing"));
+                assert_eq!(observed["env"], serde_json::json!("dev"));
+                assert_eq!(
+                    observed["principal_id"],
+                    serde_json::json!("00112233-4455-6677-8899-aabbccddeeff")
+                );
+            };
             let body = r#"[{"value":{}}]"#;
             stream
                 .write_all(format!(

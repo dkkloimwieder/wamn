@@ -77,6 +77,10 @@ fn crud_refuses_authored_protocol_metadata_but_custom_business_errors_remain_aut
         .iter()
         .find(|case| case["literal"] == "already_archived")
         .unwrap();
-    assert_eq!(business["detail"]["required"], json!(["field"]));
+    {
+        let observed = &(business["detail"]["required"]);
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0], serde_json::json!("field"));
+    };
     assert_eq!(business["from"], "transaction_invariant");
 }

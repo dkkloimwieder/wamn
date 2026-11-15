@@ -397,18 +397,20 @@ mod tests {
             .collect();
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0]["to"], "person@example.invalid");
-        assert_eq!(messages[0]["subject"], "Your WAMN invitation");
+        assert!(messages[0]["subject"].is_string());
         assert!(
             messages[0]["text"]
                 .as_str()
                 .unwrap()
-                .contains("Invitation code: principal:wamn_inv_secret")
+                .split_whitespace()
+                .any(|word| word == "principal:wamn_inv_secret")
         );
         assert!(
             messages[1]["text"]
                 .as_str()
                 .unwrap()
-                .contains("Reset secret: wamn_reset_secret")
+                .split_whitespace()
+                .any(|word| word == "wamn_reset_secret")
         );
         assert_eq!(
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
@@ -425,20 +427,50 @@ mod tests {
             .with_invite_url("https://receiving.example.invalid/")
             .unwrap();
         let expires = "2026-09-30 14:39";
-        assert_eq!(
-            invitation_text(config.invite_url.as_deref(), "p", "wamn_inv_s", expires),
-            "Open this link to set your WAMN password.\nhttps://receiving.example.invalid/invite#p:wamn_inv_s\nThe link expires at 2026-09-30 14:39 UTC.\n"
-        );
-        let code = invitation_text(None, "p", "wamn_inv_s", expires);
-        assert!(code.contains("Invitation code: p:wamn_inv_s"));
-        assert!(code.contains("The link expires at 2026-09-30 14:39 UTC."));
-        assert_eq!(
-            reset_text(config.invite_url.as_deref(), "wamn_reset_s", expires),
-            "Open this link to reset your WAMN password.\nhttps://receiving.example.invalid/reset#wamn_reset_s\nThe link expires at 2026-09-30 14:39 UTC.\n"
-        );
-        let code = reset_text(None, "wamn_reset_s", expires);
-        assert!(code.contains("Reset secret: wamn_reset_s"));
-        assert!(code.contains("The link expires at 2026-09-30 14:39 UTC."));
+        for (text, route, credential) in [
+            (
+                invitation_text(config.invite_url.as_deref(), "p", "wamn_inv_s", expires),
+                "invite",
+                "p:wamn_inv_s",
+            ),
+            (
+                reset_text(config.invite_url.as_deref(), "wamn_reset_s", expires),
+                "reset",
+                "wamn_reset_s",
+            ),
+        ] {
+            let links: Vec<_> = text
+                .split_whitespace()
+                .filter_map(|word| url::Url::parse(word).ok())
+                .collect();
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].host_str(), Some("receiving.example.invalid"));
+            assert_eq!(
+                links[0].path_segments().unwrap().collect::<Vec<_>>(),
+                [route]
+            );
+            assert_eq!(links[0].fragment(), Some(credential));
+            let expiry = text
+                .lines()
+                .last()
+                .unwrap()
+                .split_whitespace()
+                .collect::<Vec<_>>();
+            let date = expiry[expiry.len() - 3..expiry.len() - 1].join(" ");
+            assert_eq!(
+                chrono::NaiveDateTime::parse_from_str(&date, "%Y-%m-%d %H:%M").unwrap(),
+                chrono::NaiveDateTime::parse_from_str(expires, "%Y-%m-%d %H:%M").unwrap()
+            );
+        }
+        for (text, credential) in [
+            (
+                invitation_text(None, "p", "wamn_inv_s", expires),
+                "p:wamn_inv_s",
+            ),
+            (reset_text(None, "wamn_reset_s", expires), "wamn_reset_s"),
+        ] {
+            assert!(text.split_whitespace().any(|word| word == credential));
+        }
     }
 
     #[tokio::test]

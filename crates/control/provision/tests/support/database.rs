@@ -176,15 +176,12 @@ pub fn login_sql(
 ) -> String {
     use postgres_protocol::escape::{escape_identifier, escape_literal};
     format!(
-        "{} CREATE ROLE {} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; {} {}",
+        "{} CREATE ROLE {} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; {}; {} {}",
         crate::sql::ensure_workload_acl_role_sql(family),
         escape_identifier(role),
         escape_literal(password),
-        format!(
-            "{}; {}",
-            membership_sql(family, role, true),
-            sql::platform_group_membership_sql(family)
-        ),
+        membership_sql(family, role, true),
+        sql::platform_group_membership_sql(family),
         crate::sql::grant_workload_login_sql(family, database, role)
     )
 }

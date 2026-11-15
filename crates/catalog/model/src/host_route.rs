@@ -943,16 +943,22 @@ mod tests {
             application.definition["route"]["path"],
             "/wamn_control/permission/mine"
         );
-        assert_eq!(
-            application.auth_policy,
-            json!({"modes": ["pat", "session"]})
-        );
+        {
+            let observed = &(application.auth_policy);
+            assert_eq!(observed["modes"].as_array().expect("array").len(), 2);
+            assert_eq!(observed["modes"][0], serde_json::json!("pat"));
+            assert_eq!(observed["modes"][1], serde_json::json!("session"));
+        };
 
         let control = HostRouteSet::Control
             .attachment("wamn-control-control-mine-http")
             .expect("control.mine is a control host route");
         assert_eq!(control.operation, "wamn-control:control/mine@0.9.0");
-        assert_eq!(control.auth_policy, json!({"modes": ["session"]}));
+        {
+            let observed = &(control.auth_policy);
+            assert_eq!(observed["modes"].as_array().expect("array").len(), 1);
+            assert_eq!(observed["modes"][0], serde_json::json!("session"));
+        };
         assert!(
             HostRouteSet::Application
                 .attachment("wamn-control-control-mine-http")

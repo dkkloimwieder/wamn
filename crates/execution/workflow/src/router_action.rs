@@ -208,17 +208,23 @@ mod tests {
                 }),
             };
 
-            assert_eq!(
-                production_router_action(&outcome).expect("first verdict maps"),
-                ProductionRouterAction::Emit {
-                    event: serde_json::json!({"order": 42}),
-                    dedup_id: "wiring-1:7:first:d1".into(),
-                    entity: "orders".into(),
-                    operation: wamn_event_wire::Op::Insert,
-                    node_id: "first".into(),
-                },
-                "later {status:?} must not suppress the first emit verdict"
-            );
+            {
+                let ProductionRouterAction::Emit {
+                    event,
+                    dedup_id,
+                    entity,
+                    operation,
+                    node_id,
+                } = &(production_router_action(&outcome).expect("first verdict maps"))
+                else {
+                    panic!("unexpected outcome")
+                };
+                assert_eq!(event["order"], serde_json::json!(42));
+                assert_eq!(dedup_id, "wiring-1:7:first:d1");
+                assert_eq!(entity, "orders");
+                assert_eq!(*operation, wamn_event_wire::Op::Insert);
+                assert_eq!(node_id, "first");
+            };
         }
     }
 

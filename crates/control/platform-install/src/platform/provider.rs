@@ -673,9 +673,20 @@ mod tests {
             address: "172.18.0.3".parse().unwrap(),
             port: 5000,
         };
-        assert_eq!(
-            registry_hosts(&registry),
-            "server = \"http://existing-artifacts:5000\"\n[host.\"http://existing-artifacts:5000\"]\n  capabilities = [\"pull\", \"resolve\"]\n"
+        let hosts: toml::Value = toml::from_str(&registry_hosts(&registry)).unwrap();
+        let endpoint = format!("http://{}:{}", registry.container, registry.port);
+        assert_eq!(hosts["server"].as_str(), Some(endpoint.as_str()));
+        let capabilities = hosts["host"][&endpoint]["capabilities"].as_array().unwrap();
+        assert_eq!(capabilities.len(), 2);
+        assert!(
+            capabilities
+                .iter()
+                .any(|value| value.as_str() == Some("pull"))
+        );
+        assert!(
+            capabilities
+                .iter()
+                .any(|value| value.as_str() == Some("resolve"))
         );
     }
 

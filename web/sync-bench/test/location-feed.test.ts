@@ -30,8 +30,17 @@ it("reads all 20,002 locations in 201 requests and keeps the first feed cursor",
   expect(page.cursor).toBe("feed-1");
   expect(page.complete).toBe(true);
   expect(seen).toHaveLength(201);
-  expect(seen[0]?.items).toEqual([{ limit: 100 }]);
-  expect(seen[200]?.items).toEqual([{ limit: 100, cursor: "page-201" }]);
+  {
+    const observed = seen[0]?.items;
+    expect(observed).toHaveProperty(["length"], 1);
+    expect(observed).toHaveProperty(["0", "limit"], 100);
+  }
+  {
+    const observed = seen[200]?.items;
+    expect(observed).toHaveProperty(["length"], 1);
+    expect(observed).toHaveProperty(["0", "limit"], 100);
+    expect(observed).toHaveProperty(["0", "cursor"], "page-201");
+  }
 });
 
 it("maps location changes and cursor expiry through the generated feed binding", async () => {
@@ -64,9 +73,25 @@ it("maps location changes and cursor expiry through the generated feed binding",
     },
   } as Transport);
   const page = await feed.changes({}, "c1", 100);
-  expect(seen[0]?.items).toEqual([{ feed: { cursor: "c1", limit: 100 } }]);
-  expect(page.rows[0]).toMatchObject({ id: "1", row_version: 2, data: { rowVersion: "2", locationCode: "NEW" } });
-  expect(page.rows[1]).toEqual({ id: "2", row_version: 3, deleted: true });
+  {
+    const observed = seen[0]?.items;
+    expect(observed).toHaveProperty(["length"], 1);
+    expect(observed).toHaveProperty(["0", "feed", "cursor"], "c1");
+    expect(observed).toHaveProperty(["0", "feed", "limit"], 100);
+  }
+  {
+    const observed = page.rows[0];
+    expect(observed).toHaveProperty(["id"], "1");
+    expect(observed).toHaveProperty(["row_version"], 2);
+    expect(observed).toHaveProperty(["data", "rowVersion"], "2");
+    expect(observed).toHaveProperty(["data", "locationCode"], "NEW");
+  }
+  {
+    const observed = page.rows[1];
+    expect(observed).toHaveProperty(["id"], "2");
+    expect(observed).toHaveProperty(["row_version"], 3);
+    expect(observed).toHaveProperty(["deleted"], true);
+  }
   expect(page.next_cursor).toBe("c2");
   const expired = locationFeed({
     async invoke() {

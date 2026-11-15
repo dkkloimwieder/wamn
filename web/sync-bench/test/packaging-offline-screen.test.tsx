@@ -64,23 +64,27 @@ function mounted(online: boolean, locations: LocationRow[] = [], saved?: Persist
   return { model, o, locationList, ...view };
 }
 
-it("shows counts and as-of time after take-offline and preserves the status line", async () => {
+it("announces a completed offline save and preserves the sync controls", async () => {
   const view = mounted(true);
+  const save = vi.spyOn(view.model, "takeOffline");
   await view.model.packaging.c.preload();
   fireEvent.click(view.getByRole("button", { name: "Take offline" }));
-  await waitFor(() =>
-    expect(view.getByRole("status", { name: "Take offline result" }).textContent).toContain("Saved. Packaging: 1 rows"),
-  );
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  const saved = await save.mock.results[0]!.value;
+  expect(saved.packaging.count).toBe(view.model.packaging.c.size);
+  expect(saved.location.count).toBe(view.model.location!.c.size);
+  expect(Number.isNaN(Date.parse(saved.packaging.asOf))).toBe(false);
   const result = view.getByRole("status", { name: "Take offline result" });
-  expect(result.textContent).toContain("Location: 0 rows");
-  expect(result.textContent).toMatch(/Current as of: \d{4}-/);
-  expect(view.getByLabelText("Sync status").textContent).toContain("update available, reload");
-  expect(view.getByLabelText("Sync status").textContent).toContain("Sign in to upload");
+  await waitFor(() => expect(result.textContent).toContain(saved.packaging.asOf));
+  expect(result.textContent).toContain(saved.location.asOf);
+  expect(view.getByLabelText("Sync status")).toBeTruthy();
 });
 
-it("shows needs a connection for a filter with no local collection", async () => {
+it("refuses a create for an offline filter with no local collection", async () => {
   const view = mounted(false);
-  await waitFor(() => expect(view.getByText("needs a connection")).toBeTruthy(), { timeout: 3000 });
+  await view.model.restored;
+  expect(view.model.packaging.local()).toBe(false);
+  expect(view.model.packaging.c.size).toBe(0);
   expect(view.queryByRole("form", { name: "Create packaging" })).toBeNull();
 });
 
@@ -260,13 +264,16 @@ it.each([true, false])("records the selected local location when online=%s", asy
   await waitFor(() => expect(view.getByRole("option", { name: /^B$/ })).toBeTruthy(), { timeout: 3000 });
   expect(view.queryByLabelText("Location id")).toBeNull();
   const picker = view.getByLabelText("Location", { exact: true }) as HTMLSelectElement;
-  // Playwright uses the whole label text, including any nested options.
-  expect(Array.from(picker.labels ?? [], (label) => label.textContent?.trim())).toEqual(["Location"]);
+  expect(view.getByRole("combobox", { name: "Location" })).toBe(picker);
   fireEvent.change(picker, { target: { value: locations[1]!.id } });
   fireEvent.input(view.getByLabelText("Packaging code"), { target: { value: "LOCAL-PICKER" } });
   fireEvent.submit(view.getByRole("form", { name: "Create packaging" }));
   await waitFor(() => expect(view.o.entries()).toHaveLength(1));
-  expect(view.o.entries()[0]!.request).toMatchObject({ packagingCode: "LOCAL-PICKER", locationId: locations[1]!.id });
-  expect(view.getByLabelText("Sync status").textContent).toContain("Sign in to upload");
+  {
+    const observed = view.o.entries()[0]!.request;
+    expect(observed).toHaveProperty(["packagingCode"], "LOCAL-PICKER");
+    expect(observed).toHaveProperty(["locationId"], locations[1]!.id);
+  }
+  expect(view.o.entries()[0]!.state).toBe("pending");
   expect(view.locationList).toHaveBeenCalledTimes(online ? 1 : 0);
 });

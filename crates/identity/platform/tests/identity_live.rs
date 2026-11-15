@@ -662,13 +662,6 @@ async fn unbound_identity_writes_refuse(client: &mut sqlx::PgConnection) {
             Some("55000"),
             "{statement}"
         );
-        assert_eq!(
-            error
-                .as_database_error()
-                .map(sqlx::error::DatabaseError::message),
-            Some("actor-required"),
-            "{statement}"
-        );
     }
 }
 

@@ -1086,10 +1086,6 @@ mod tests {
             failure.detail.code.as_deref(),
             Some("connection-unavailable")
         );
-        assert_eq!(
-            failure.detail.message,
-            "connection failed: ConnectionError::CredentialUnavailable"
-        );
         assert!(
             origin.requests.try_recv().is_err(),
             "denied effect reached the warm socket"

@@ -367,7 +367,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let mut admin = connect(system.url()).await?;
     // CNPG supplies this database owner before the platform SQL operation.
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("CREATE ROLE wamn_system NOLOGIN NOINHERIT; ALTER DATABASE wamn_system OWNER TO wamn_system")
+        ("CREATE ROLE wamn_apply LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE; CREATE ROLE wamn_system NOLOGIN NOINHERIT; ALTER DATABASE wamn_system OWNER TO wamn_system")
             .to_string(),
     ))
     .execute(&mut admin)

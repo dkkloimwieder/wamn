@@ -54,6 +54,7 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
+wamn-identity = { path = "../../../services/identity" }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 chrono = { workspace = true, features = ["std", "clock"] }
 wamn-test-application = { workspace = true }

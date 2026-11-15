@@ -27,7 +27,6 @@
 //! The cases share one PostgreSQL server and hold its process lock.
 //! Each case rebuilds cluster-wide roles and owns a fresh `wamn` database.
 
-use std::fmt::Write as _;
 use std::process::Command;
 use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{
@@ -2098,25 +2097,9 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
 /// insert, two updates, and a delete of a widget, and reads the history. The
 /// fold then shows the row at each retained position.
 #[test]
-#[ignore = "requires: input:fixture, postgres, bin:psql"]
+#[ignore = "requires: postgres, bin:psql"]
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
-    let manifest = wamn_compiler::manifest::PackageManifest::from_slice(
-        &wamn_fixture_package::manifest_bytes(),
-    )
-    .expect("parse fixture manifest");
-    let mut history_tables = String::new();
-    for model in manifest
-        .models
-        .values()
-        .filter(|model| model.owner == manifest.package.id && model.log_retention().is_some())
-    {
-        writeln!(
-            history_tables,
-            "SELECT wamn_history.create_history_table('{}', '{}', false);",
-            model.schema, model.table
-        )
-        .expect("append history table creation");
-    }
+    let history_tables = "SELECT wamn_history.create_history_table('inventory', 'widget', false);";
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
     apply(
@@ -2147,6 +2130,10 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
         &db_url,
         &format!(
             "BEGIN;\n\
+             GRANT USAGE ON SCHEMA inventory TO wamn_app;\n\
+             GRANT SELECT,INSERT,UPDATE,DELETE ON inventory.widget TO wamn_app;\n\
+             GRANT INSERT ON inventory.widget_history TO wamn_app;\n\
+             GRANT USAGE ON SEQUENCE inventory.widget_history_position_seq TO wamn_app;\n\
              GRANT SELECT (position, row_key, type, operation, changed_by, changed_at, \
                            before, after) ON inventory.widget_history TO wamn_app;\n\
              COMMIT;\n"

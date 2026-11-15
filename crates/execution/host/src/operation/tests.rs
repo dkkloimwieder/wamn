@@ -4,20 +4,13 @@ use super::*;
 use wamn_engine::native_routes::{OperationRefusalType, authorize_registered_operation};
 
 #[test]
-#[ignore = "requires: input:fixture"]
 fn a_custom_read_refuses_a_caller_without_its_grant() {
-    let tokens = wamn_control_provision::operation_grants::operation_grant_tokens(
-        &wamn_fixture_package::manifest_bytes(),
-    )
-    .expect("parse the fixture manifest");
-    let operation = tokens
-        .get("platform-fixture:widget/list@2.1.1")
-        .expect("the custom list read is its own operation grant");
+    let operation = "grant-fixture:widget/list@1.0.0";
     let denial = authorize_registered_operation(None, Some(operation))
         .expect_err("a caller without the grant is refused");
     assert_eq!(
         (denial.refusal_type(), denial.operation()),
-        (OperationRefusalType::PermissionDenied, operation.as_str())
+        (OperationRefusalType::PermissionDenied, operation)
     );
 }
 

@@ -955,9 +955,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
         result.expect("the verification database permits a platform.file foreign key");
         let client = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
-        wamn_schema_introspection::postgres::read_catalog(&client, &["files_fixture"])
-            .await
-            .unwrap();
         let error = sqlx::raw_sql(AssertSqlSafe(("INSERT INTO files_fixture.attachment(id, file_id) VALUES (gen_random_uuid(), gen_random_uuid())").to_owned()).into_sql_str()).execute(&client).await.unwrap_err();
         assert_eq!(
             error

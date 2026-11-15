@@ -226,8 +226,9 @@ async fn assert_authority(credential: &mut Client) {
     assert_eq!(
         error
             .as_database_error()
-            .map(sqlx::error::DatabaseError::message),
-        Some("run-delete-nonterminal"),
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("55000"),
         "the refusal of the raw non-terminal delete: {error:?}"
     );
 

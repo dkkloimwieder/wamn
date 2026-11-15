@@ -1023,9 +1023,12 @@ async fn authority(
     restored?;
     ensure!(
         denied.status == hyper::StatusCode::FORBIDDEN
-            && denied.body
-                == json!({"error":{
-        "code":"permission-denied","operation":inputs.record_receipt_operation}}),
+            && ({
+                let observed = &(denied.body);
+                observed["error"]["code"] == serde_json::json!("permission-denied")
+                    && observed["error"]["operation"]
+                        == serde_json::json!(inputs.record_receipt_operation)
+            }),
         "REC-AUTHORITY expected exact operation denial: {denied:?}"
     );
     ensure!(

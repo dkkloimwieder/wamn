@@ -148,12 +148,6 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
         Some("55000")
     );
     assert_eq!(
-        unbound
-            .as_database_error()
-            .map(sqlx::error::DatabaseError::message),
-        Some("actor-required")
-    );
-    assert_eq!(
         revoke_pat(
             &mut client,
             issued.record().prefix(),

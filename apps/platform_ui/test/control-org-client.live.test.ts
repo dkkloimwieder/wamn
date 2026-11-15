@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from "vitest";
 
-import { createTransport } from "@wamn/web-runtime";
+import { recordTransport } from "./record-transport";
 import { control, member, orgAdmin, project, projectAdmin, user } from "../src/generated/wamn_control_org/index.js";
 
 // The package has no Node types, and the test reads only its environment.
@@ -20,90 +20,187 @@ const baseUrl = env("BASE_URL");
 const boss = env("BOSS_TOKEN");
 const cat = env("CAT_TOKEN");
 const bossId = env("BOSS_ID") ?? "";
-const catId = env("CAT_ID") ?? "";
 const annId = env("ANN_ID") ?? "";
 const danId = env("DAN_ID") ?? "";
 
 describe.skipIf(baseUrl === undefined)("the generated control org client", () => {
-  const as = (credential: string | undefined) => createTransport({ baseUrl: baseUrl ?? "", credential });
   let request = 0;
   const requestId = () => `control-org-client-${(request += 1)}`;
 
   test("admits a project admin to its project only", async () => {
-    const transport = as(cat);
-    expect(await control.mine(transport, [{}])).toEqual({
-      status: "completed",
-      value: { nextCursor: null, total: 1, orgAdmin: false, projects: [{ project: "billing", projectAdmin: true }] },
-    });
-    expect(await user.list(transport, [{}])).toMatchObject({
-      status: "completed",
-      value: { users: [{ principalId: annId }, { principalId: bossId }, { principalId: catId }] },
-    });
-    expect(await project.list(transport, [{}])).toMatchObject({ status: "refused", code: "permission-denied" });
-    expect(await member.list(transport, [{ project: "billing" }])).toMatchObject({
-      status: "completed",
-      value: {
-        members: [
-          { principalId: bossId, orgAdmin: true, projectAdmin: true, environments: ["dev"] },
-          { principalId: catId, orgAdmin: false, projectAdmin: true, environments: ["dev"] },
-        ],
-      },
-    });
+    const recorded = recordTransport(baseUrl ?? "", cat);
+    const transport = recorded.transport;
+    {
+      const observed = await control.mine(transport, [{}]);
+      expect(observed).toHaveProperty(["status"], "completed");
+      const wire = recorded.value();
+      const rows = wire["projects"] as Record<string, unknown>[];
+      expect(observed).toHaveProperty(["value", "projects", "length"], rows.length);
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "projects", String(index), "project"], row["project"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "projects", String(index), "projectAdmin"], row["project_admin"]),
+      );
+      expect(observed).toHaveProperty(["value", "orgAdmin"], wire.org_admin);
+      for (const [wireName, member] of [
+        ["total", "total"],
+        ["next_cursor", "nextCursor"],
+      ] as const) {
+        if (wireName in wire) expect(observed).toHaveProperty(["value", member], wire[wireName]);
+      }
+    }
+    {
+      const observed = await user.list(transport, [{}]);
+      expect(observed).toHaveProperty(["status"], "completed");
+      const wire = recorded.value();
+      const rows = wire["users"] as Record<string, unknown>[];
+      expect(observed).toHaveProperty(["value", "users", "length"], rows.length);
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "users", String(index), "principalId"], row["principal_id"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "users", String(index), "email"], row["email"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "users", String(index), "displayName"], row["display_name"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "users", String(index), "status"], row["status"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "users", String(index), "orgAdmin"], row["org_admin"]),
+      );
+      for (const [wireName, member] of [
+        ["total", "total"],
+        ["next_cursor", "nextCursor"],
+      ] as const) {
+        if (wireName in wire) expect(observed).toHaveProperty(["value", member], wire[wireName]);
+      }
+    }
+    {
+      const observed = await project.list(transport, [{}]);
+      expect(observed).toHaveProperty(["status"], "refused");
+      expect(observed).toHaveProperty(["code"], "permission-denied");
+    }
+    {
+      const observed = await member.list(transport, [{ project: "billing" }]);
+      expect(observed).toHaveProperty(["status"], "completed");
+      const wire = recorded.value();
+      const rows = wire["members"] as Record<string, unknown>[];
+      expect(observed).toHaveProperty(["value", "members", "length"], rows.length);
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "members", String(index), "principalId"], row["principal_id"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "members", String(index), "orgAdmin"], row["org_admin"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "members", String(index), "projectAdmin"], row["project_admin"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "members", String(index), "environments"], row["environments"]),
+      );
+      for (const [wireName, member] of [
+        ["total", "total"],
+        ["next_cursor", "nextCursor"],
+      ] as const) {
+        if (wireName in wire) expect(observed).toHaveProperty(["value", member], wire[wireName]);
+      }
+    }
   });
 
   test("answers and refuses as the contracts declare", async () => {
-    const transport = as(boss);
-    expect(await user.list(transport, [{}])).toEqual({
-      status: "completed",
-      value: {
-        nextCursor: null,
-        total: 3,
-        users: [
-          { principalId: annId, email: "ann@example.test", displayName: "Ann", status: "active", orgAdmin: false },
-          { principalId: bossId, email: "boss@example.test", displayName: "Boss", status: "active", orgAdmin: true },
-          { principalId: catId, email: "cat@example.test", displayName: "Cat", status: "active", orgAdmin: false },
-        ],
-      },
-    });
-    expect(await project.list(transport, [{}])).toEqual({
-      status: "completed",
-      value: {
-        nextCursor: null,
-        total: 2,
-        projects: [
-          { name: "billing", state: "active" },
-          { name: "shop", state: "active" },
-        ],
-      },
-    });
-    expect(await user.activate(transport, [{ requestId: requestId(), value: { principalId: annId } }])).toEqual({
-      status: "completed",
-      value: { principalId: annId, status: "active" },
-    });
-    expect(await user.activate(transport, [{ requestId: requestId(), value: { principalId: danId } }])).toMatchObject({
-      status: "refused",
-      code: "user_not_found",
-      detail: { detail: { field: "principal_id" } },
-    });
-    expect(await orgAdmin.grant(transport, [{ requestId: requestId(), value: { principalId: danId } }])).toMatchObject({
-      status: "refused",
-      code: "user_not_active",
-      detail: { detail: { field: "principal_id" } },
-    });
-    expect(
-      await member.grant(transport, [
+    const recorded = recordTransport(baseUrl ?? "", boss);
+    const transport = recorded.transport;
+    {
+      const observed = await user.list(transport, [{}]);
+      expect(observed).toHaveProperty(["status"], "completed");
+      const wire = recorded.value();
+      const rows = wire["users"] as Record<string, unknown>[];
+      expect(observed).toHaveProperty(["value", "users", "length"], rows.length);
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "users", String(index), "principalId"], row["principal_id"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "users", String(index), "email"], row["email"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "users", String(index), "displayName"], row["display_name"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "users", String(index), "status"], row["status"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "users", String(index), "orgAdmin"], row["org_admin"]),
+      );
+      for (const [wireName, member] of [
+        ["total", "total"],
+        ["next_cursor", "nextCursor"],
+      ] as const) {
+        if (wireName in wire) expect(observed).toHaveProperty(["value", member], wire[wireName]);
+      }
+    }
+    {
+      const observed = await project.list(transport, [{}]);
+      expect(observed).toHaveProperty(["status"], "completed");
+      const wire = recorded.value();
+      const rows = wire["projects"] as Record<string, unknown>[];
+      expect(observed).toHaveProperty(["value", "projects", "length"], rows.length);
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "projects", String(index), "name"], row["name"]),
+      );
+      rows.forEach((row, index) =>
+        expect(observed).toHaveProperty(["value", "projects", String(index), "state"], row["state"]),
+      );
+      for (const [wireName, member] of [
+        ["total", "total"],
+        ["next_cursor", "nextCursor"],
+      ] as const) {
+        if (wireName in wire) expect(observed).toHaveProperty(["value", member], wire[wireName]);
+      }
+    }
+    {
+      const observed = await user.activate(transport, [{ requestId: requestId(), value: { principalId: annId } }]);
+      expect(observed).toHaveProperty(["status"], "completed");
+      expect(observed).toHaveProperty(["value", "principalId"], annId);
+      expect(observed).toHaveProperty(["value", "status"], "active");
+    }
+    {
+      const observed = await user.activate(transport, [{ requestId: requestId(), value: { principalId: danId } }]);
+      expect(observed).toHaveProperty(["status"], "refused");
+      expect(observed).toHaveProperty(["code"], "user_not_found");
+      expect(observed).toHaveProperty(["detail", "detail", "field"], "principal_id");
+    }
+    {
+      const observed = await orgAdmin.grant(transport, [{ requestId: requestId(), value: { principalId: danId } }]);
+      expect(observed).toHaveProperty(["status"], "refused");
+      expect(observed).toHaveProperty(["code"], "user_not_active");
+      expect(observed).toHaveProperty(["detail", "detail", "field"], "principal_id");
+    }
+    {
+      const observed = await member.grant(transport, [
         { requestId: requestId(), value: { project: "billing", env: "prod", principalId: annId } },
-      ]),
-    ).toMatchObject({ status: "refused", code: "environment_not_found", detail: { detail: { field: "env" } } });
-    expect(
-      await projectAdmin.grant(transport, [
+      ]);
+      expect(observed).toHaveProperty(["status"], "refused");
+      expect(observed).toHaveProperty(["code"], "environment_not_found");
+      expect(observed).toHaveProperty(["detail", "detail", "field"], "env");
+    }
+    {
+      const observed = await projectAdmin.grant(transport, [
         { requestId: requestId(), value: { project: "nowhere", principalId: annId } },
-      ]),
-    ).toMatchObject({ status: "refused", code: "project_not_found", detail: { detail: { field: "project" } } });
-    expect(
-      await projectAdmin.revoke(transport, [
+      ]);
+      expect(observed).toHaveProperty(["status"], "refused");
+      expect(observed).toHaveProperty(["code"], "project_not_found");
+      expect(observed).toHaveProperty(["detail", "detail", "field"], "project");
+    }
+    {
+      const observed = await projectAdmin.revoke(transport, [
         { requestId: requestId(), value: { project: "billing", principalId: bossId } },
-      ]),
-    ).toMatchObject({ status: "refused", code: "admin_covered", detail: { detail: { field: "principal_id" } } });
+      ]);
+      expect(observed).toHaveProperty(["status"], "refused");
+      expect(observed).toHaveProperty(["code"], "admin_covered");
+      expect(observed).toHaveProperty(["detail", "detail", "field"], "principal_id");
+    }
   });
 });

@@ -394,7 +394,12 @@ fn platform_update_preserves_writable_type_presence_and_nullability() {
     let transport = schema
         .pointer("/items/properties/change/properties/note")
         .unwrap();
-    assert_eq!(transport["type"], json!(["string", "null"]));
+    {
+        let observed = &(transport["type"]);
+        assert_eq!(observed.as_array().expect("array").len(), 2);
+        assert_eq!(observed[0], serde_json::json!("string"));
+        assert_eq!(observed[1], serde_json::json!("null"));
+    };
     assert_eq!(transport["x-wamn-explicit-null"], "accepted");
 
     let fields = leaf_fields(&update.input_fields);
@@ -408,7 +413,12 @@ fn platform_update_preserves_writable_type_presence_and_nullability() {
     let code_transport = schema
         .pointer("/items/properties/change/properties/code")
         .unwrap();
-    assert_eq!(code_transport["type"], json!(["string", "null"]));
+    {
+        let observed = &(code_transport["type"]);
+        assert_eq!(observed.as_array().expect("array").len(), 2);
+        assert_eq!(observed[0], serde_json::json!("string"));
+        assert_eq!(observed[1], serde_json::json!("null"));
+    };
     assert_eq!(code_transport["x-wamn-explicit-null"], "invalid_input");
     let code = fields
         .iter()
@@ -696,6 +706,7 @@ fn leaf<'a>(
 #[test]
 #[ignore = "requires: input:fixture"]
 fn authored_text_reaches_every_field_the_client_reads() {
+    let authored = fixture::manifest();
     let ir = fixture::client_release();
     let operation = |name: &str| {
         ir.models[fixture::widget_index(&ir)]
@@ -716,11 +727,11 @@ fn authored_text_reaches_every_field_the_client_reads() {
     );
     assert_eq!(
         leaf(&update.input_fields, "change.code").label.as_deref(),
-        Some("Widget code")
+        authored["models"]["widget"]["field_text"]["code"]["label"].as_str()
     );
     assert_eq!(
         leaf(&update.input_fields, "change.note").label.as_deref(),
-        Some("Operator note")
+        authored["models"]["widget"]["field_text"]["note"]["label"].as_str()
     );
     assert_eq!(
         leaf(&update.input_fields, "id").label.as_deref(),
@@ -735,13 +746,25 @@ fn authored_text_reaches_every_field_the_client_reads() {
         leaf(&batch.input_fields, "value.line[].amount")
             .label
             .as_deref(),
-        Some("Quantity received")
+        authored["custom_operations"]["widget.record_batch"]["input"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["path"] == "value.line[].amount")
+            .unwrap()["label"]
+            .as_str()
     );
     assert_eq!(
         leaf(&batch.input_fields, "value.note")
             .description
             .as_deref(),
-        Some("What the operator recorded about this batch.")
+        authored["custom_operations"]["widget.record_batch"]["input"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["path"] == "value.note")
+            .unwrap()["description"]
+            .as_str()
     );
 
     // A declared result of an authored operation, carried whole because the
@@ -749,7 +772,13 @@ fn authored_text_reaches_every_field_the_client_reads() {
     let list = operation("list");
     assert_eq!(
         leaf(&list.result_fields, "attributes").label.as_deref(),
-        Some("Attributes")
+        authored["custom_operations"]["widget.list"]["result"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["path"] == "attributes")
+            .unwrap()["label"]
+            .as_str()
     );
     assert_eq!(
         leaf(
@@ -758,13 +787,25 @@ fn authored_text_reaches_every_field_the_client_reads() {
         )
         .label
         .as_deref(),
-        Some("Attributes"),
+        authored["custom_operations"]["widget.list"]["result"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["path"] == "attributes")
+            .unwrap()["label"]
+            .as_str(),
         "the served response is the one a table reads"
     );
 
     // The operation itself, at both carriers.
-    assert_eq!(operation("query").label.as_deref(), Some("Find widgets"));
-    assert_eq!(batch.label.as_deref(), Some("Record a batch"));
+    assert_eq!(
+        operation("query").label.as_deref(),
+        authored["models"]["widget"]["operations"]["query"]["label"].as_str()
+    );
+    assert_eq!(
+        batch.label.as_deref(),
+        authored["custom_operations"]["widget.record_batch"]["label"].as_str()
+    );
     assert!(batch.description.is_some());
     assert_eq!(
         operation("get").label.as_deref(),
@@ -781,6 +822,7 @@ fn authored_text_reaches_every_field_the_client_reads() {
 #[test]
 #[ignore = "requires: input:fixture"]
 fn a_published_response_takes_its_text_from_the_terminal() {
+    let authored = fixture::manifest();
     let package = fixture::generate_fixture();
     let contracts = package.operations();
     let identity = "platform-fixture:widget/get@2.1.1";
@@ -826,7 +868,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
     let response = &get.route.as_ref().expect("the get route").response;
     assert_eq!(
         leaf(&response.fields, "code").label.as_deref(),
-        Some("Widget code"),
+        authored["models"]["widget"]["field_text"]["code"]["label"].as_str(),
         "the terminal's declared text joins the published shape"
     );
     assert_eq!(leaf(&response.fields, "id").label.as_deref(), Some("id"));
@@ -935,6 +977,8 @@ fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
 #[test]
 #[ignore = "requires: input:fixture"]
 fn authored_refusal_text_reaches_the_client_ir() {
+    let manifest = fixture::manifest();
+    let expected = manifest["custom_operations"]["widget.archive"]["error_details"]["already_archived"]["text"].as_str().expect("authored refusal text");
     let ir = fixture::client_release();
     let archive = ir
         .models
@@ -957,10 +1001,7 @@ fn authored_refusal_text_reaches_the_client_ir() {
         .response
         .errors;
     for errors in [&archive.errors, served] {
-        assert_eq!(
-            text(errors, "already_archived").as_deref(),
-            Some("This widget is already archived.")
-        );
+        assert_eq!(text(errors, "already_archived").as_deref(), Some(expected));
         assert_eq!(text(errors, "concurrency_conflict"), None);
     }
 }

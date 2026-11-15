@@ -26,6 +26,14 @@ it("counts the generated list once and recognizes a feed poll in both driver cou
   await feed.list({});
   await feed.changes({}, "c1");
   expect(fetch).toHaveBeenCalledTimes(2);
-  expect(reads).toEqual({ list: 1, changes: 1 });
-  expect(window.listReads).toEqual({ started: 1, resolved: 1 });
+  {
+    const observed = reads;
+    expect(observed).toHaveProperty(["list"], 1);
+    expect(observed).toHaveProperty(["changes"], 1);
+  }
+  {
+    const observed = window.listReads;
+    expect(observed).toHaveProperty(["started"], 1);
+    expect(observed).toHaveProperty(["resolved"], 1);
+  }
 });

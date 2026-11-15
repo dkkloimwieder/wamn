@@ -257,6 +257,21 @@ The expected value of the test must not come from the code under test.
 - A schema rule is tested against the installed database: a refused write, a cascade, or a `pg_catalog` fact.
 - A new live test must not repeat an existing one. Extend the existing test when a rule has no other test.
 
+### Decisions: retained text contracts
+
+Exact text remains in the cases below because the bytes or literal are the public value being tested. The linked assertions hold the exact vectors. Do not copy those vectors into another fixture or use these exceptions for diagnostic wording.
+
+- [Record history projection](../../apps/platform/data/record-history/tests/fold.rs), `retained_columns_keep_their_raw_spelling_and_order` and `retained_timestamptz_columns_take_one_spelling_from_either_spelling`: retained JSON tokens keep their spelling and order. This includes `1.50`, `12.3400`, quoted JSON keys, the canonical UTC timestamp and `infinity`. Ordinary JSON response tests inspect fields.
+- [Connection requirement identity](../../crates/catalog/model/src/connection.rs), `the_requirement_hash_bytes_are_pinned`, and [catalog serialization](../../crates/schema/introspection/src/ir.rs), `catalog_retains_view_columns_and_dependencies` and `catalog_without_views_keeps_canonical_bytes`: canonical persisted bytes define identity. [Durable JSON identity](../../crates/platform/digest/src/lib.rs) also preserves numeric spelling, signed zero and canonical key order.
+- [SHA-256 vectors](../../crates/platform/digest/src/lib.rs), [Ed25519 vectors](../../crates/identity/protocol/src/token/tests.rs), [HMAC vectors](../../crates/platform/http-capability/src/authentication.rs) and [release label encoding](../../crates/platform/engine/src/release_manifest.rs): independent encoded vectors define the digest, signature or base32 value. A digest comparison is not a source-file snapshot.
+- Frozen serialized variants, refusal codes, media types, SQLSTATEs, reserved input paths, token prefixes and protocol identifiers remain literal comparisons. Their owners are [SQL values](../../crates/platform/scalar/src/lib.rs), [identity protocols](../../crates/identity/protocol/src), [component contracts](../../crates/catalog/model/src), [host route contracts](../../crates/catalog/model/src/host_route.rs) and the RFC protocols used by the transport. HTTP request lines, authorization schemes, metadata headers, health response tokens and canonical cache keys are wire values. Security allowlists remain independent of the implementation that installs the grants.
+- [TypeScript type spelling](../../crates/schema/generator/src/client_ts.rs), `every_contract_type_has_its_exact_typescript_spelling`: `boolean`, `number`, `Int64`, `string`, `number[]`, `Numeric`, `Timestamptz`, `JsonValue` and `Uuid` name generated language types.
+- [HTML escaping](../../crates/execution/host/src/oauth_callback.rs) and its [HTTP boundary](../../crates/execution/host/tests/support/oauth_authorization.rs): `&lt;script&gt;&quot;&amp;&#39;` and `&lt;script&gt;&amp;&quot;&#39;` encode the supplied attack text. The unescaped text must stay absent.
+- [Optimistic row state](../../web/sync-bench/test/packaging-writes.test.tsx): `tentative` is the visible pending-state marker. Tests observe the marker separately from the supplied row label. [The log viewer](../../apps/platform_ui/test/environment.test.tsx) must display the supplied log bytes unchanged; its fixture owns those bytes, and the assertions read them from the recorded response.
+- [Descriptor limit observation](../../services/host/tests/native_descriptor_limits.rs): `Max open files` identifies the Linux process limit record. The test parses its two numeric values while the real host runs.
+
+Secret-redaction checks still search for the actual supplied secret. Payload round trips compare the caller's original value. Authored labels and refusal text are compared with their source declarations. None of these checks owns a second wording or document snapshot.
+
 ## Local application business tests
 
 Receiving and WMS retain their business assertions.

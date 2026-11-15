@@ -1023,7 +1023,8 @@ mod tests {
     use wamn_event_wire::Causation;
 
     const COMPONENT_ID: &str = "component-store-7";
-    const COMPONENT_DIGEST: &str = "sha256:aaaa";
+    const COMPONENT_DIGEST: &str =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     /// A plugin that opens no connection, so a span test needs no database.
     fn offline_plugin() -> WamnPostgres {

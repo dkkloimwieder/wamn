@@ -1,6 +1,5 @@
 use serde_json::{Value, json};
 use sqlx::Row as _;
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use wamn_compiler::ManifestErrorType as GenerateErrorType;
@@ -146,14 +145,17 @@ fn a_component_with_no_operation_refuses_over_base_sql() {
 #[test]
 fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     let single = parsed_manifest(&manifest());
-    assert_eq!(
-        validate_operation_vocabulary(&single).unwrap(),
-        BTreeSet::from([
-            "gadget.get".to_owned(),
-            "gadget.query".to_owned(),
-            "gadget.update".to_owned(),
-        ])
-    );
+    let expected = single
+        .models
+        .iter()
+        .flat_map(|(model, definition)| {
+            definition
+                .operations
+                .keys()
+                .map(move |action| format!("{model}.{}", action.as_str()))
+        })
+        .collect();
+    assert_eq!(validate_operation_vocabulary(&single).unwrap(), expected);
     assert!(
         single.models["gadget"].operations[&CrudAction::Get]
             .component
@@ -328,13 +330,17 @@ async fn a_contains_filter_matches_a_part_of_a_text_field(pool: sqlx::PgPool) {
     ]);
     let package = run(&ir, &contains, &[]).unwrap();
     let input = description_json(&package, "gadget.query", "input");
-    assert_eq!(
-        input["filters"],
-        json!([
-            {"field": "stock_id", "binding": "json_array", "type": "uuid"},
-            {"field": "part_code", "binding": "json_array", "type": "text", "match": "contains"}
-        ])
-    );
+    {
+        let observed = &(input["filters"]);
+        assert_eq!(observed.as_array().expect("array").len(), 2);
+        assert_eq!(observed[0]["field"], serde_json::json!("stock_id"));
+        assert_eq!(observed[0]["binding"], serde_json::json!("json_array"));
+        assert_eq!(observed[0]["type"], serde_json::json!("uuid"));
+        assert_eq!(observed[1]["field"], serde_json::json!("part_code"));
+        assert_eq!(observed[1]["binding"], serde_json::json!("json_array"));
+        assert_eq!(observed[1]["type"], serde_json::json!("text"));
+        assert_eq!(observed[1]["match"], serde_json::json!("contains"));
+    };
     let sql = std::str::from_utf8(
         package
             .file("generated/sql/gadget/query_created_at_ascending.sql")
@@ -389,33 +395,58 @@ fn prefix_range_and_is_null_filters_match_their_fields() {
     ]);
     let package = run(&ir, &modes, &[]).unwrap();
     let input = description_json(&package, "gadget.query", "input");
-    assert_eq!(
-        input["filters"],
-        json!([
-            {"field": "part_code", "binding": "json_array", "type": "text", "match": "prefix"},
-            {"field": "created_at", "binding": "json_range", "type": "timestamptz", "match": "range"},
-            {"field": "weight", "binding": "json_range", "type": "numeric", "match": "range"},
-            {"field": "note", "binding": "json_boolean", "type": "text", "match": "is_null"}
-        ])
-    );
+    {
+        let observed = &(input["filters"]);
+        assert_eq!(observed.as_array().expect("array").len(), 4);
+        assert_eq!(observed[0]["field"], serde_json::json!("part_code"));
+        assert_eq!(observed[0]["binding"], serde_json::json!("json_array"));
+        assert_eq!(observed[0]["type"], serde_json::json!("text"));
+        assert_eq!(observed[0]["match"], serde_json::json!("prefix"));
+        assert_eq!(observed[1]["field"], serde_json::json!("created_at"));
+        assert_eq!(observed[1]["binding"], serde_json::json!("json_range"));
+        assert_eq!(observed[1]["type"], serde_json::json!("timestamptz"));
+        assert_eq!(observed[1]["match"], serde_json::json!("range"));
+        assert_eq!(observed[2]["field"], serde_json::json!("weight"));
+        assert_eq!(observed[2]["binding"], serde_json::json!("json_range"));
+        assert_eq!(observed[2]["type"], serde_json::json!("numeric"));
+        assert_eq!(observed[2]["match"], serde_json::json!("range"));
+        assert_eq!(observed[3]["field"], serde_json::json!("note"));
+        assert_eq!(observed[3]["binding"], serde_json::json!("json_boolean"));
+        assert_eq!(observed[3]["type"], serde_json::json!("text"));
+        assert_eq!(observed[3]["match"], serde_json::json!("is_null"));
+    };
     let route = published_input(&package, "gadget.query");
     let filter = &route["items"]["properties"]["filter"]["properties"];
-    assert_eq!(
-        filter["part_code"],
-        json!({"type": "array", "items": {"type": "string"}})
-    );
-    assert_eq!(
-        filter["created_at"],
-        json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "min": {"type": "string", "format": "date-time"},
-                "max": {"type": "string", "format": "date-time"},
-            },
-        })
-    );
-    assert_eq!(filter["note"], json!({"type": "boolean"}));
+    {
+        let observed = &(filter["part_code"]);
+        assert_eq!(observed["type"], serde_json::json!("array"));
+        assert_eq!(observed["items"]["type"], serde_json::json!("string"));
+    };
+    {
+        let observed = &(filter["created_at"]);
+        assert_eq!(observed["type"], serde_json::json!("object"));
+        assert_eq!(observed["additionalProperties"], serde_json::json!(false));
+        assert_eq!(
+            observed["properties"]["min"]["type"],
+            serde_json::json!("string")
+        );
+        assert_eq!(
+            observed["properties"]["min"]["format"],
+            serde_json::json!("date-time")
+        );
+        assert_eq!(
+            observed["properties"]["max"]["type"],
+            serde_json::json!("string")
+        );
+        assert_eq!(
+            observed["properties"]["max"]["format"],
+            serde_json::json!("date-time")
+        );
+    };
+    {
+        let observed = &(filter["note"]);
+        assert_eq!(observed["type"], serde_json::json!("boolean"));
+    };
     // A uuid holds no prefix, text has no order a range reads, and a column
     // that is never empty takes no is-null filter.
     for (field, mode) in [
@@ -451,15 +482,19 @@ async fn a_query_searches_its_declared_text_fields(pool: sqlx::PgPool) {
     query["search"] = json!({"fields": ["part_code", "note"]});
     let package = run(&ir, &search, &[]).unwrap();
     let input = description_json(&package, "gadget.query", "input");
-    assert_eq!(
-        input["search"],
-        json!({"fields": ["part_code", "note"], "binding": "text"})
-    );
+    {
+        let observed = &(input["search"]);
+        assert_eq!(observed["fields"].as_array().expect("array").len(), 2);
+        assert_eq!(observed["fields"][0], serde_json::json!("part_code"));
+        assert_eq!(observed["fields"][1], serde_json::json!("note"));
+        assert_eq!(observed["binding"], serde_json::json!("text"));
+    };
     let route = published_input(&package, "gadget.query");
-    assert_eq!(
-        route["items"]["properties"]["search"],
-        json!({"type": "string", "minLength": 1})
-    );
+    {
+        let observed = &(route["items"]["properties"]["search"]);
+        assert_eq!(observed["type"], serde_json::json!("string"));
+        assert_eq!(observed["minLength"], serde_json::json!(1));
+    };
     let sql = std::str::from_utf8(
         package
             .file("generated/sql/gadget/query_created_at_ascending.sql")
@@ -539,23 +574,23 @@ async fn a_required_band_reads_its_default_and_states_its_minimum(pool: sqlx::Pg
     }]);
     let package = run(&ir, &band, &[]).unwrap();
     let input = description_json(&package, "gadget.query", "input");
-    assert_eq!(
-        input["filters"],
-        json!([{
-            "field": "created_at",
-            "binding": "json_range",
-            "type": "timestamptz",
-            "match": "range",
-            "required": true,
-            "default": {"last_days": 30}
-        }])
-    );
+    {
+        let observed = &(input["filters"]);
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0]["field"], serde_json::json!("created_at"));
+        assert_eq!(observed[0]["binding"], serde_json::json!("json_range"));
+        assert_eq!(observed[0]["type"], serde_json::json!("timestamptz"));
+        assert_eq!(observed[0]["match"], serde_json::json!("range"));
+        assert_eq!(observed[0]["required"], serde_json::json!(true));
+        assert_eq!(observed[0]["default"]["last_days"], serde_json::json!(30));
+    };
     let route = published_input(&package, "gadget.query");
     let item = &route["items"];
-    assert_eq!(
-        item["properties"]["filter"]["properties"]["created_at"]["required"],
-        json!(["min"])
-    );
+    {
+        let observed = &(item["properties"]["filter"]["properties"]["created_at"]["required"]);
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0], serde_json::json!("min"));
+    };
     assert!(
         item.get("required").is_none(),
         "a band with a default is not sent: {item}"
@@ -606,11 +641,16 @@ async fn a_required_band_reads_its_default_and_states_its_minimum(pool: sqlx::Pg
         .remove("default");
     let package = run(&ir, &always, &[]).unwrap();
     let route = published_input(&package, "gadget.query");
-    assert_eq!(route["items"]["required"], json!(["filter"]));
-    assert_eq!(
-        route["items"]["properties"]["filter"]["required"],
-        json!(["created_at"])
-    );
+    {
+        let observed = &(route["items"]["required"]);
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0], serde_json::json!("filter"));
+    };
+    {
+        let observed = &(route["items"]["properties"]["filter"]["required"]);
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0], serde_json::json!("created_at"));
+    };
 
     // Only a required range over time is a band, and only a band has a
     // default of at least one day.

@@ -112,6 +112,9 @@ fn operator_ca_configuration_refuses_missing_or_malformed_roots() {
         let error = tls_config_with_operator_ca(&server.certificate, &server.key, roots)
             .expect_err("invalid operator CA refuses listener startup");
         let detail = format!("{error:?} {error}");
+        for line in std::str::from_utf8(&server.key).unwrap().lines() {
+            assert!(!detail.contains(line));
+        }
     }
 }
 

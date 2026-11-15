@@ -41,6 +41,7 @@ postgres-protocol.workspace = true
 hyper = { workspace = true }
 
 [dev-dependencies]
+toml.workspace = true
 sqlx = { workspace = true, features = ["macros"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-fixture-package = { workspace = true }

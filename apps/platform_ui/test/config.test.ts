@@ -16,13 +16,15 @@ function answering(status: number, body: string): typeof fetch {
 
 describe("the config of the page", () => {
   it("reads the org without a project", async () => {
-    await expect(readConfig(answering(200, '{"org":"acme"}'))).resolves.toEqual({
-      org: "acme",
-    });
+    const config = await readConfig(answering(200, '{"org":"acme"}'));
+    expect(config.org).toBe("acme");
+    expect(config).not.toHaveProperty("project");
   });
 
   it("does not carry a project filter from the file", async () => {
-    await expect(readConfig(answering(200, '{"org":"acme","project":"receiving"}'))).resolves.toEqual({ org: "acme" });
+    const config = await readConfig(answering(200, '{"org":"acme","project":"receiving"}'));
+    expect(config.org).toBe("acme");
+    expect(config).not.toHaveProperty("project");
   });
 
   it("refuse a missing file", async () => {

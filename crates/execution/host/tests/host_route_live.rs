@@ -7,6 +7,7 @@
 //! administration login.
 
 use sqlx::Row as _;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use wamn_broker::Publisher;
 
@@ -216,30 +217,33 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         .await
         .expect("an admin session is admitted")
         .expect("a host-owned caller");
+    let response = deliver(&delivery, &route, Some(caller))
+        .await
+        .expect("the host answers");
+    assert_eq!(response["admin"].as_bool(), Some(true));
+    let manifest = release.manifest();
+    let expected: BTreeSet<String> = manifest
+        .components
+        .iter()
+        .flat_map(|component| component.descriptor.operations.values())
+        .filter_map(|operation| operation.registered_operation.as_deref())
+        .map(|operation| wamn_catalog::sealed_operation_reference(operation).to_owned())
+        .chain(
+            manifest
+                .host_routes
+                .iter()
+                .flat_map(|set| set.attachments())
+                .map(|(_, attachment)| attachment.reference.clone()),
+        )
+        .collect();
+    let permissions = response["permissions"].as_array().expect("permissions");
+    assert_eq!(permissions.len(), expected.len());
     assert_eq!(
-        deliver(&delivery, &route, Some(caller))
-            .await
-            .expect("the host answers"),
-        json!({"admin": true, "permissions": [
-            "session-test:purchase/read",
-            "session-test:purchase/write",
-            "wamn-control:file/delete",
-            "wamn-control:file/expose",
-            "wamn-control:file/get",
-            "wamn-control:file/put",
-            "wamn-control:number-counter/set",
-            "wamn-control:permission/grant",
-            "wamn-control:permission/list",
-            "wamn-control:permission/mine",
-            "wamn-control:permission/revoke",
-            "wamn-control:role/create",
-            "wamn-control:role/delete",
-            "wamn-control:role/list",
-            "wamn-control:user-role/grant",
-            "wamn-control:user-role/revoke",
-            "wamn-control:user/list",
-            "wamn-control:workflow/start",
-        ]})
+        permissions
+            .iter()
+            .map(|permission| permission.as_str().expect("permission").to_owned())
+            .collect::<BTreeSet<_>>(),
+        expected
     );
 
     // A member holds the stored permissions of its roles.
@@ -252,11 +256,27 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         .await
         .expect("a member session is admitted")
         .expect("a host-owned caller");
+    let response = deliver(&delivery, &route, Some(caller))
+        .await
+        .expect("the host answers");
+    assert_eq!(response["admin"].as_bool(), Some(false));
+    let expected: BTreeSet<String> = sqlx::query_scalar(
+        "SELECT DISTINCT p.permission FROM platform.permission p
+         JOIN platform.user_role r ON r.role_name=p.role_name WHERE r.user_id=$1::text::uuid",
+    )
+    .bind(MEMBER)
+    .fetch_all(&mut admin)
+    .await?
+    .into_iter()
+    .collect();
+    let permissions = response["permissions"].as_array().expect("permissions");
+    assert_eq!(permissions.len(), expected.len());
     assert_eq!(
-        deliver(&delivery, &route, Some(caller))
-            .await
-            .expect("the host answers"),
-        json!({"admin": false, "permissions": ["session-test:purchase/read"]})
+        permissions
+            .iter()
+            .map(|permission| permission.as_str().expect("permission").to_owned())
+            .collect::<BTreeSet<_>>(),
+        expected
     );
 
     // A read route by cookie needs the CSRF JWT claim and no header.
@@ -379,78 +399,114 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         );
     }
 
-    assert_eq!(
-        answer("wamn-control:user/list", json!({})).await,
-        json!({"users": [
-            {"id": first, "email": "first@example.test", "display_name": null, "roles": ["admin"],
-             "admin_covered": false},
-            {"id": MEMBER, "email": "member@example.test", "display_name": null,
-             "roles": ["purchase-reader"], "admin_covered": false},
-        ]})
-    );
-    assert_eq!(
-        answer("wamn-control:role/list", json!({})).await,
-        json!({"roles": ["admin", "purchase-reader"]})
-    );
+    {
+        let observed = &(answer("wamn-control:user/list", json!({})).await);
+        assert_eq!(observed["users"].as_array().unwrap().len(), 2);
+        assert_eq!(observed["users"][0]["id"], serde_json::json!(first));
+        assert_eq!(
+            observed["users"][0]["email"],
+            serde_json::json!("first@example.test")
+        );
+        assert_eq!(
+            observed["users"][0]["display_name"],
+            serde_json::json!(null)
+        );
+        assert_eq!(observed["users"][0]["roles"].as_array().unwrap().len(), 1);
+        assert_eq!(observed["users"][0]["roles"][0], serde_json::json!("admin"));
+        assert_eq!(
+            observed["users"][0]["admin_covered"],
+            serde_json::json!(false)
+        );
+        assert_eq!(observed["users"][1]["id"], serde_json::json!(MEMBER));
+        assert_eq!(
+            observed["users"][1]["email"],
+            serde_json::json!("member@example.test")
+        );
+        assert_eq!(
+            observed["users"][1]["display_name"],
+            serde_json::json!(null)
+        );
+        assert_eq!(observed["users"][1]["roles"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            observed["users"][1]["roles"][0],
+            serde_json::json!("purchase-reader")
+        );
+        assert_eq!(
+            observed["users"][1]["admin_covered"],
+            serde_json::json!(false)
+        );
+    };
+    {
+        let observed = &(answer("wamn-control:role/list", json!({})).await);
+        assert_eq!(observed["roles"].as_array().unwrap().len(), 2);
+        assert_eq!(observed["roles"][0], serde_json::json!("admin"));
+        assert_eq!(observed["roles"][1], serde_json::json!("purchase-reader"));
+    };
 
     // Roles: admin is fixed.
-    assert_eq!(
-        answer("wamn-control:role/create", json!({"role": "clerk"})).await,
-        json!({"created": true})
-    );
-    assert_eq!(
-        answer("wamn-control:role/create", json!({"role": "clerk"})).await,
-        json!({"created": false})
-    );
-    assert_eq!(
-        refusal("wamn-control:role/create", json!({"role": "admin"})).await,
-        json!({"code": "admin_fixed", "detail": {"field": "role"}})
-    );
-    assert_eq!(
-        refusal("wamn-control:role/delete", json!({"role": "admin"})).await,
-        json!({"code": "admin_fixed", "detail": {"field": "role"}})
-    );
-    assert_eq!(
-        refusal("wamn-control:role/create", json!({"role": "Clerk"})).await,
-        json!({"code": "invalid_input", "detail": {"field": "role"}})
-    );
+    {
+        let observed = &(answer("wamn-control:role/create", json!({"role": "clerk"})).await);
+        assert_eq!(observed["created"], serde_json::json!(true));
+    };
+    {
+        let observed = &(answer("wamn-control:role/create", json!({"role": "clerk"})).await);
+        assert_eq!(observed["created"], serde_json::json!(false));
+    };
+    {
+        let observed = &(refusal("wamn-control:role/create", json!({"role": "admin"})).await);
+        assert_eq!(observed["code"], serde_json::json!("admin_fixed"));
+        assert_eq!(observed["detail"]["field"], serde_json::json!("role"));
+    };
+    {
+        let observed = &(refusal("wamn-control:role/delete", json!({"role": "admin"})).await);
+        assert_eq!(observed["code"], serde_json::json!("admin_fixed"));
+        assert_eq!(observed["detail"]["field"], serde_json::json!("role"));
+    };
+    {
+        let observed = &(refusal("wamn-control:role/create", json!({"role": "Clerk"})).await);
+        assert_eq!(observed["code"], serde_json::json!("invalid_input"));
+        assert_eq!(observed["detail"]["field"], serde_json::json!("role"));
+    };
 
     // Permissions: a grant stores one row.
     let read = "session-test:purchase/read";
     let write = "session-test:purchase/write";
-    assert_eq!(
-        answer(
+    {
+        let observed = &(answer(
             "wamn-control:permission/grant",
-            json!({"role": "clerk", "operation": write})
+            json!({"role": "clerk", "operation": write}),
         )
-        .await,
-        json!({"rows_added": 1})
-    );
-    assert_eq!(
-        answer(
+        .await);
+        assert_eq!(observed["rows_added"], serde_json::json!(1));
+    };
+    {
+        let observed = &(answer(
             "wamn-control:permission/grant",
-            json!({"role": "clerk", "operation": read})
+            json!({"role": "clerk", "operation": read}),
         )
-        .await,
-        json!({"rows_added": 1})
-    );
-    assert_eq!(
-        answer(
+        .await);
+        assert_eq!(observed["rows_added"], serde_json::json!(1));
+    };
+    {
+        let observed = &(answer(
             "wamn-control:permission/grant",
-            json!({"role": "clerk", "operation": "session-test:purchase/archive"})
+            json!({"role": "clerk", "operation": "session-test:purchase/archive"}),
         )
-        .await,
-        json!({"rows_added": 1}),
-        "a reference the loaded release does not serve is stored"
-    );
-    assert_eq!(
-        refusal(
+        .await);
+        assert_eq!(observed["rows_added"], serde_json::json!(1));
+    };
+    {
+        let observed = &(refusal(
             "wamn-control:permission/grant",
-            json!({"role": "clerk", "operation": "wamn-control:role/list"})
+            json!({"role": "clerk", "operation": "wamn-control:role/list"}),
         )
-        .await,
-        json!({"code": "operation_not_grantable", "detail": {"field": "operation"}})
-    );
+        .await);
+        assert_eq!(
+            observed["code"],
+            serde_json::json!("operation_not_grantable")
+        );
+        assert_eq!(observed["detail"]["field"], serde_json::json!("operation"));
+    };
     let listed = answer("wamn-control:permission/list", json!({"role": "clerk"})).await;
     let entry = |operation: &str| {
         listed["operations"]
@@ -461,54 +517,65 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             .cloned()
             .unwrap()
     };
-    assert_eq!(
-        entry(read),
-        json!({"operation": read, "served": true, "grantable": true, "admin_only": false,
-               "selected": true})
-    );
-    assert_eq!(
-        entry("wamn-control:role/list"),
-        json!({"operation": "wamn-control:role/list", "served": true, "grantable": false,
-               "admin_only": true, "selected": false})
-    );
+    {
+        let observed = &(entry(read));
+        assert_eq!(observed["operation"], serde_json::json!(read));
+        assert_eq!(observed["served"], serde_json::json!(true));
+        assert_eq!(observed["grantable"], serde_json::json!(true));
+        assert_eq!(observed["admin_only"], serde_json::json!(false));
+        assert_eq!(observed["selected"], serde_json::json!(true));
+    };
+    {
+        let observed = &(entry("wamn-control:role/list"));
+        assert_eq!(
+            observed["operation"],
+            serde_json::json!("wamn-control:role/list")
+        );
+        assert_eq!(observed["served"], serde_json::json!(true));
+        assert_eq!(observed["grantable"], serde_json::json!(false));
+        assert_eq!(observed["admin_only"], serde_json::json!(true));
+        assert_eq!(observed["selected"], serde_json::json!(false));
+    };
     assert_eq!(entry("wamn-control:permission/mine")["admin_only"], false);
 
     // A revoke removes the row, and refuses a row the role does not hold.
-    assert_eq!(
-        answer(
+    {
+        let observed = &(answer(
             "wamn-control:permission/revoke",
-            json!({"role": "clerk", "operation": read})
+            json!({"role": "clerk", "operation": read}),
         )
-        .await,
-        json!({})
-    );
-    assert_eq!(
-        refusal(
+        .await);
+        assert!(observed.as_object().unwrap().is_empty());
+    };
+    {
+        let observed = &(refusal(
             "wamn-control:permission/revoke",
-            json!({"role": "clerk", "operation": read})
+            json!({"role": "clerk", "operation": read}),
         )
-        .await,
-        json!({"code": "permission_not_held", "detail": {"field": "operation"}})
-    );
+        .await);
+        assert_eq!(observed["code"], serde_json::json!("permission_not_held"));
+        assert_eq!(observed["detail"]["field"], serde_json::json!("operation"));
+    };
 
     // User roles: a known user only, and admin stays under project-admin.
     for reference in [
         "wamn-control:user-role/grant",
         "wamn-control:user-role/revoke",
     ] {
-        assert_eq!(
-            refusal(reference, json!({"user_id": MEMBER, "role": "admin"})).await,
-            json!({"code":"admin_covered","detail":{"field":"user_id"}})
-        );
+        {
+            let observed = &(refusal(reference, json!({"user_id": MEMBER, "role": "admin"})).await);
+            assert_eq!(observed["code"], serde_json::json!("admin_covered"));
+            assert_eq!(observed["detail"]["field"], serde_json::json!("user_id"));
+        };
     }
-    assert_eq!(
-        answer(
+    {
+        let observed = &(answer(
             "wamn-control:user-role/grant",
-            json!({"user_id": MEMBER, "role": "clerk"})
+            json!({"user_id": MEMBER, "role": "clerk"}),
         )
-        .await,
-        json!({"granted": true})
-    );
+        .await);
+        assert_eq!(observed["granted"], serde_json::json!(true));
+    };
     let stamp = sqlx::query(
         "SELECT operation, changed_by::text FROM platform.user_role_history \
              WHERE (after ->> 'role_name') = 'clerk'",
@@ -523,14 +590,15 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         )
     );
     let stranger = "9b0c3a5e-6f0e-4c1e-8f33-1d5b2b7a6c11";
-    assert_eq!(
-        refusal(
+    {
+        let observed = &(refusal(
             "wamn-control:user-role/grant",
-            json!({"user_id": stranger, "role": "clerk"})
+            json!({"user_id": stranger, "role": "clerk"}),
         )
-        .await,
-        json!({"code": "user_not_found", "detail": {"field": "user_id"}})
-    );
+        .await);
+        assert_eq!(observed["code"], serde_json::json!("user_not_found"));
+        assert_eq!(observed["detail"]["field"], serde_json::json!("user_id"));
+    };
     sqlx::query(
         "INSERT INTO identity.project_roles (principal_id,org,project,role) VALUES ($1::text::uuid, $2, $3, 'project-admin')",
     )
@@ -550,30 +618,31 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             .collect::<Vec<_>>(),
         [(json!(first), json!(true)), (json!(MEMBER), json!(false))]
     );
-    assert_eq!(
-        refusal(
+    {
+        let observed = &(refusal(
             "wamn-control:user-role/revoke",
-            json!({"user_id": first, "role": "admin"})
+            json!({"user_id": first, "role": "admin"}),
         )
-        .await,
-        json!({"code": "admin_covered", "detail": {"field": "user_id"}})
-    );
+        .await);
+        assert_eq!(observed["code"], serde_json::json!("admin_covered"));
+        assert_eq!(observed["detail"]["field"], serde_json::json!("user_id"));
+    };
     sqlx::query("DELETE FROM identity.project_roles")
         .execute(admin)
         .await
         .map(|result| result.rows_affected())?;
-    assert_eq!(
-        answer(
+    {
+        let observed = &(answer(
             "wamn-control:user-role/revoke",
-            json!({"user_id": MEMBER, "role": "clerk"})
+            json!({"user_id": MEMBER, "role": "clerk"}),
         )
-        .await,
-        json!({"revoked": true})
-    );
-    assert_eq!(
-        answer("wamn-control:role/delete", json!({"role": "clerk"})).await,
-        json!({"deleted": true})
-    );
+        .await);
+        assert_eq!(observed["revoked"], serde_json::json!(true));
+    };
+    {
+        let observed = &(answer("wamn-control:role/delete", json!({"role": "clerk"})).await);
+        assert_eq!(observed["deleted"], serde_json::json!(true));
+    };
     host.server.stop().await;
     Ok(())
 }
@@ -664,7 +733,10 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
     )
     .await
     .expect("the grant answers");
-    assert_eq!(granted["value"], json!({"rows_added": 1}), "{granted}");
+    {
+        let observed = &(granted["value"]);
+        assert_eq!(observed["rows_added"], serde_json::json!(1));
+    };
 
     for application in ["session_test", "unknown"] {
         let mut invalid = request("po", 7);
@@ -672,18 +744,23 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
         let refused = call(&member_claims, set, application, invalid)
             .await
             .expect("the refusal answers");
-        assert_eq!(
-            refused["error"],
-            json!({"code": "invalid_input", "detail": {"field": "application"}})
-        );
+        {
+            let observed = &(refused["error"]);
+            assert_eq!(observed["code"], serde_json::json!("invalid_input"));
+            assert_eq!(
+                observed["detail"]["field"],
+                serde_json::json!("application")
+            );
+        };
     }
 
-    assert_eq!(
-        call(&member_claims, set, "set-7", request("po", 7))
+    {
+        let observed = &(call(&member_claims, set, "set-7", request("po", 7))
             .await
-            .expect("the set answers"),
-        json!({"request_id": "set-7", "value": {"value": 7}})
-    );
+            .expect("the set answers"));
+        assert_eq!(observed["request_id"], serde_json::json!("set-7"));
+        assert_eq!(observed["value"]["value"], serde_json::json!(7));
+    };
     let row = sqlx::query(
         "SELECT value, updated_by::text FROM platform.number_counter \
              WHERE counter = 'po' AND key_value = ''",
@@ -705,13 +782,20 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
         logged.get::<Option<String>, _>(0).as_deref(),
         Some(r#"{"value":7}"#)
     );
-    assert_eq!(
-        call(&member_claims, set, "nope", request("nope", 7))
+    {
+        let observed = &(call(&member_claims, set, "nope", request("nope", 7))
             .await
-            .expect("the set answers"),
-        json!({"request_id": "nope",
-               "error": {"code": "counter_not_found", "detail": {"field": "counter"}}})
-    );
+            .expect("the set answers"));
+        assert_eq!(observed["request_id"], serde_json::json!("nope"));
+        assert_eq!(
+            observed["error"]["code"],
+            serde_json::json!("counter_not_found")
+        );
+        assert_eq!(
+            observed["error"]["detail"]["field"],
+            serde_json::json!("counter")
+        );
+    };
     host.server.stop().await;
     Ok(())
 }
@@ -835,12 +919,23 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session(
         .await
         .expect("a project-admin session is admitted")
         .expect("a host-owned caller");
-    assert_eq!(
-        deliver(&delivery, &route, Some(caller))
+    {
+        let observed = &(deliver(&delivery, &route, Some(caller))
             .await
-            .expect("the host answers"),
-        json!({"next_cursor": null, "total": 1, "org_admin": false, "projects": [{"project": PROJECT, "project_admin": true}]})
-    );
+            .expect("the host answers"));
+        assert_eq!(observed["next_cursor"], serde_json::json!(null));
+        assert_eq!(observed["total"], serde_json::json!(1));
+        assert_eq!(observed["org_admin"], serde_json::json!(false));
+        assert_eq!(observed["projects"].as_array().expect("array").len(), 1);
+        assert_eq!(
+            observed["projects"][0]["project"],
+            serde_json::json!(PROJECT)
+        );
+        assert_eq!(
+            observed["projects"][0]["project_admin"],
+            serde_json::json!(true)
+        );
+    };
 
     // A cookie read needs the CSRF JWT claim. A PAT is never a control credential.
     let mut carried = session.clone();
@@ -915,15 +1010,20 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session(
         .expect("an org-admin session is admitted")
         .expect("a host-owned caller");
     let projects = [PROJECT, "shop"];
-    assert_eq!(
-        deliver(&delivery, &route, Some(caller.clone()))
+    {
+        let observed = &(deliver(&delivery, &route, Some(caller.clone()))
             .await
-            .expect("the host answers"),
-        json!({"next_cursor": null, "total": 2, "org_admin": true, "projects": projects
-            .iter()
-            .map(|project| json!({"project": project, "project_admin": true}))
-            .collect::<Vec<_>>()})
-    );
+            .expect("the host answers"));
+        assert_eq!(observed["next_cursor"], serde_json::json!(null));
+        assert_eq!(observed["total"], serde_json::json!(2));
+        assert_eq!(observed["org_admin"], serde_json::json!(true));
+        let returned = observed["projects"].as_array().expect("projects");
+        assert_eq!(returned.len(), projects.len());
+        for (returned, expected) in returned.iter().zip(projects) {
+            assert_eq!(returned["project"].as_str(), Some(expected));
+            assert_eq!(returned["project_admin"].as_bool(), Some(true));
+        }
+    };
     // Every page, not only the first, carries org_admin.
     let mut input = json!({"limit": 1});
     for (index, project) in projects.iter().enumerate() {
@@ -933,10 +1033,12 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session(
         let [request_element]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
         let page = &request_element["value"];
         assert_eq!(page["org_admin"], true);
-        assert_eq!(
-            page["projects"],
-            json!([{"project": project, "project_admin": true}])
-        );
+        {
+            let observed = &(page["projects"]);
+            assert_eq!(observed.as_array().expect("array").len(), 1);
+            assert_eq!(observed[0]["project"], serde_json::json!(project));
+            assert_eq!(observed[0]["project_admin"], serde_json::json!(true));
+        };
         assert!(page["total"].is_null());
         assert_eq!(page["next_cursor"].is_null(), index + 1 == projects.len());
         input = json!({"limit": 1, "cursor": page["next_cursor"]});

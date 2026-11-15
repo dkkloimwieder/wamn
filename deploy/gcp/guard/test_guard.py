@@ -81,8 +81,8 @@ def budget(cost, threshold=None, interval=OCTOBER):
 
 POOL = "https://container.googleapis.com/v1/projects/wamn-dev/locations/us-central1-a/clusters/wamn/nodePools"
 SCALED = [
-    ("POST", f"{POOL}/main:setSize", {"nodeCount": 0}),
-    ("POST", f"{POOL}/bench:setSize", {"nodeCount": 0}),
+    ("POST", f"{POOL}/{pool}:setSize", {"nodeCount": 0})
+    for pool in Session().pools
 ]
 UNLINKED = [
     (

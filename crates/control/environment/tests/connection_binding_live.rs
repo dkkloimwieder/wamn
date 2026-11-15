@@ -35,6 +35,55 @@ async fn connect(url: &str) -> Client {
     client
 }
 
+async fn runtime_credentials(database: &url::Url) -> ClassCredentials {
+    use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
+    use wamn_postgres_capability::AuthorityClass;
+    let name = database.path().trim_start_matches('/');
+    let mut observer = connect(database.as_str()).await;
+    let mut credentials = ClassCredentials::default();
+    for (family, class) in [
+        (
+            WorkloadRoleFamily::ExecutorPlatform,
+            AuthorityClass::ExecutorPlatform,
+        ),
+        (
+            WorkloadRoleFamily::HttpAdmitter,
+            AuthorityClass::CallableHttp,
+        ),
+        (
+            WorkloadRoleFamily::Administration,
+            AuthorityClass::Administration,
+        ),
+    ] {
+        let login = workload_login(
+            family,
+            WorkloadRoleIdentity::ProjectEnvironment {
+                org: "connection-binding-project",
+                project: DEFAULT_PROJECT,
+                environment: "dev",
+                database: name,
+            },
+        )
+        .unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::test_database::login_sql(
+                family,
+                name,
+                &login,
+                "binding-fixture",
+            ),
+        ))
+        .execute(&mut observer)
+        .await
+        .unwrap();
+        let mut url = database.clone();
+        url.set_username(&login).unwrap();
+        url.set_password(Some("binding-fixture")).unwrap();
+        credentials = credentials.with_class(class, url.to_string());
+    }
+    credentials
+}
+
 /// Provision the project and return the admitted components of the package.
 async fn provision_project(project: &mut Client, project_url: &str) {
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
@@ -62,24 +111,8 @@ async fn provision_project(project: &mut Client, project_url: &str) {
     .await
     .map(drop)
     .expect("let the package owner create schemas in this database");
-    // The plugin's platform checkout runs an R18 membership probe on every new
-    // connection: the connecting role must be a member of the class's ACL role
-    // (CallableHttp -> wamn_http_admitter). A superuser passes the probe once
-    // the role EXISTS; on a fresh server it does not.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::sql::ensure_workload_acl_role_sql(
-            wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
-        ))
-            .to_string(),
-    ))
-    .execute(&mut *project)
-    .await
-    .map(drop)
-    .expect("ensure the CallableHttp class ACL role the pool probes for");
-    sqlx::raw_sql("CREATE SCHEMA IF NOT EXISTS wamn_run")
-        .execute(&mut *project)
+    wamn_environment::platform_migrations::install_project(project)
         .await
-        .map(drop)
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run")).to_string(),
@@ -400,7 +433,6 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
     use wamn_http_capability::{ConnectionHttp, transport::HttpTransport};
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
     let mut project = connect(database.as_str()).await;
     provision_project(&mut project, database.as_str()).await;
     let document = WiringDocument::new(
@@ -464,7 +496,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
         .await;
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(database.as_str().to_owned())),
+            credentials: Some(runtime_credentials(&database).await),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 2000,
@@ -661,7 +693,6 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     const OPERATION: &str = "wamn:node/handler@0.1.0";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
     let mut project = connect(database.as_str()).await;
     provision_project(&mut project, database.as_str()).await;
     let mut descriptor = ComponentDescriptor::named("blob-put", "0.1.0", DIGEST);
@@ -751,7 +782,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     .unwrap();
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(database.as_str().to_owned())),
+            credentials: Some(runtime_credentials(&database).await),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 2000,

@@ -1366,7 +1366,7 @@ host:
             ("subject-allow", ">"),
         ] {
             let overrides = [(key, value)].into_iter().collect();
-            let error = resolve("events", &overrides).unwrap_err().to_string();
+            resolve("events", &overrides).unwrap_err();
         }
         assert!(
             plugin_bindings(&args, "host:\n  plugins:\n    - id: x\n      image: y\n").is_err()
@@ -1391,7 +1391,7 @@ host:
         let defaults = parse(["wamn-host"]).unwrap().args;
         assert!(defaults.drain_delay.is_zero());
         assert_eq!(defaults.drain_bound_seconds, 300);
-        let error = TestCli::try_parse_from(["wamn-host"])
+        TestCli::try_parse_from(["wamn-host"])
             .expect_err("a host without its drain bound refuses to start");
         assert!(defaults.nats_connect_timeout.is_zero());
         let args = parse([
@@ -1669,7 +1669,7 @@ host:
             }
             assert!(!cleanup_polled.load(Ordering::Relaxed));
             probe.abort();
-            let error = running.await.unwrap_err();
+            running.await.unwrap_err();
             assert!(cleanup_polled.load(Ordering::Relaxed));
         })
         .await

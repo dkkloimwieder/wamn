@@ -11,21 +11,6 @@ use crate::{ClassCredentials, SessionIdentity, WamnPostgres, WamnPostgresConfig}
 const PROJECT: &str = "default";
 const SCOPE: &str = "write-log-request-element";
 
-/// The write log section of the schema that every project database gets.
-fn write_log_sql() -> &'static str {
-    let schema = include_str!("../../../../../deploy/sql/app-schema.sql");
-    let start = schema
-        .find("CREATE TABLE IF NOT EXISTS platform.write_log")
-        .expect("the schema creates the write log");
-    let grant = "GRANT DELETE ON platform.write_log TO wamn_app;";
-    let end = schema[start..]
-        .find(grant)
-        .expect("the schema grants the write log")
-        + start
-        + grant.len();
-    &schema[start..end]
-}
-
 /// A plugin over a fresh database of `project_env_key`, with the write log installed.
 async fn project_env_key_database(
     pool: &sqlx::PgPool,
@@ -34,10 +19,6 @@ async fn project_env_key_database(
     let database = wamn_test_postgres::url(pool);
     let guest_url = live_guest_url(database.as_str(), project_env_key).await;
     ensure_live_user_rows(database.as_str(), &[LIVE_PRINCIPAL]).await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(write_log_sql()))
-        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
-        .await
-        .expect("install the write log");
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
             credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -198,7 +179,10 @@ async fn a_known_result_needs_no_update_and_a_missing_finish_rolls_back(pool: sq
     ));
     transaction.finish_opaque(OPERATION, "missing-other", json!({"value":1}).to_string());
     assert!(transaction.commit().await.is_err());
-    sqlx::raw_sql("ALTER TABLE platform.write_log ADD CHECK (result IS NOT NULL); CREATE FUNCTION public.refuse_log_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'unexpected update'; END $$; CREATE TRIGGER refuse_log_update BEFORE UPDATE ON platform.write_log FOR EACH ROW EXECUTE FUNCTION public.refuse_log_update()").execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
+    sqlx::raw_sql("REVOKE UPDATE (result) ON platform.write_log FROM wamn_app")
+        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await
+        .unwrap();
     let known = postgres
         .begin_operation_transaction(SCOPE)
         .await
@@ -241,7 +225,8 @@ async fn model_versions_follow_wal_without_a_counter(pool: sqlx::PgPool) {
     )
     .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "CREATE ROLE {} LOGIN PASSWORD 'wal-reader'; {}",
+        "{} CREATE ROLE {} LOGIN PASSWORD 'wal-reader'; {}",
+        wamn_control_provision::sql::ensure_workload_acl_role_sql(family),
         postgres_protocol::escape::escape_identifier(&role),
         wamn_control_provision::test_database::membership_sql(family, &role, true),
     )))

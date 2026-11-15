@@ -234,7 +234,12 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
             );
         } else {
             ensure!(
-                status == "completed" && body["status"] == 200 && body["body"] == json!({"id":1}),
+                status == "completed"
+                    && body["status"] == 200
+                    && ({
+                        let observed = &(body["body"]);
+                        observed["id"] == serde_json::json!(1)
+                    }),
                 "deployed connection must reach its upstream: {status}: {body}"
             );
             successful_response = body.to_string();

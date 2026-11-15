@@ -403,11 +403,16 @@ async fn a_sample_is_forwarded_once_across_kills() {
     let down = edge
         .wait_for(|state| state["samples"]["pending"] == 2)
         .await;
-    assert_eq!(
-        down["forward"],
-        json!({"credential_failures": 0, "stopped": false})
-    );
-    assert_eq!(down["samples"], json!({"pending": 2, "refused": []}));
+    {
+        let observed = &(down["forward"]);
+        assert_eq!(observed["credential_failures"], serde_json::json!(0));
+        assert_eq!(observed["stopped"], serde_json::json!(false));
+    };
+    {
+        let observed = &(down["samples"]);
+        assert_eq!(observed["pending"], serde_json::json!(2));
+        assert!(observed["refused"].as_array().expect("array").is_empty());
+    };
     edge.kill();
 
     // The platform applies the first sample and holds its answer.
@@ -534,11 +539,16 @@ async fn a_refused_pat_stops_the_forward_at_the_bound() {
     let stopped = edge
         .wait_for(|state| state["samples"]["pending"] == 2)
         .await;
-    assert_eq!(
-        stopped["forward"],
-        json!({"credential_failures": 1, "stopped": true})
-    );
-    assert_eq!(stopped["samples"], json!({"pending": 2, "refused": []}));
+    {
+        let observed = &(stopped["forward"]);
+        assert_eq!(observed["credential_failures"], serde_json::json!(1));
+        assert_eq!(observed["stopped"], serde_json::json!(true));
+    };
+    {
+        let observed = &(stopped["samples"]);
+        assert_eq!(observed["pending"], serde_json::json!(2));
+        assert!(observed["refused"].as_array().expect("array").is_empty());
+    };
     // Without the stop, the forward sends again after the first 5 s backoff.
     tokio::time::sleep(Duration::from_secs(7)).await;
     edge.kill();

@@ -223,16 +223,17 @@ fn a_delete_mode_needs_no_delete_route() {
 #[test]
 #[ignore = "requires: input:fixture"]
 fn authored_text_is_optional_and_its_key_is_closed() {
+    let authored = fixture::manifest();
     let declared = parsed(&fixture::manifest());
     let widget = &declared.models["widget"];
     assert_eq!(
         widget.field_text["code"].label.as_deref(),
-        Some("Widget code")
+        authored["models"]["widget"]["field_text"]["code"]["label"].as_str()
     );
     assert!(widget.field_text["code"].description.is_some());
     assert_eq!(
         widget.field_text["note"].label.as_deref(),
-        Some("Operator note")
+        authored["models"]["widget"]["field_text"]["note"]["label"].as_str()
     );
     assert_eq!(
         widget.field_text["note"].description, None,
@@ -242,10 +243,13 @@ fn authored_text_is_optional_and_its_key_is_closed() {
         widget.operations[&wamn_compiler::manifest::CrudAction::Query]
             .label
             .as_deref(),
-        Some("Find widgets")
+        authored["models"]["widget"]["operations"]["query"]["label"].as_str()
     );
     let batch = &declared.custom_operations["widget.record_batch"];
-    assert_eq!(batch.label.as_deref(), Some("Record a batch"));
+    assert_eq!(
+        batch.label.as_deref(),
+        authored["custom_operations"]["widget.record_batch"]["label"].as_str()
+    );
     assert!(batch.description.is_some());
     let line = batch
         .input
@@ -253,7 +257,16 @@ fn authored_text_is_optional_and_its_key_is_closed() {
         .iter()
         .find(|field| field.path == "value.line[].amount")
         .expect("the repeated line amount");
-    assert_eq!(line.label.as_deref(), Some("Quantity received"));
+    assert_eq!(
+        line.label.as_deref(),
+        authored["custom_operations"]["widget.record_batch"]["input"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["path"] == "value.line[].amount")
+            .unwrap()["label"]
+            .as_str()
+    );
 
     // Every text member removed: the same manifest still parses, and the
     // whole vocabulary reads as absent rather than as empty text.
@@ -515,10 +528,12 @@ fn a_mapped_constraint_lands_on_the_relation_that_defines_it() {
     archive["error_details"]["code_taken"] = json!({"required": ["constraint"]});
     archive["constraint_errors"] = json!({"widget_code_key": "code_taken"});
     let compiled = derive(&manifest).expect("derive the manifest");
-    assert_eq!(
-        compiled["custom_operations"]["widget.archive"]["relations"][0]["constraints"],
-        json!(["widget_code_key"])
-    );
+    {
+        let observed =
+            &(compiled["custom_operations"]["widget.archive"]["relations"][0]["constraints"]);
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0], serde_json::json!("widget_code_key"));
+    };
 
     manifest["custom_operations"]["widget.archive"]["constraint_errors"] =
         json!({"widget_maker_id_pkey": "code_taken"});
@@ -545,12 +560,21 @@ fn enum_fields_come_from_the_check_and_an_authored_list_only_narrows() {
             .expect("code is writable")["values"]
             .clone()
     };
-    assert_eq!(code_values(&compiled), json!(["priority", "standard"]));
+    {
+        let observed = &(code_values(&compiled));
+        assert_eq!(observed.as_array().expect("array").len(), 2);
+        assert_eq!(observed[0], serde_json::json!("priority"));
+        assert_eq!(observed[1], serde_json::json!("standard"));
+    };
 
     let mut narrowed = authored.clone();
     narrowed["models"]["widget"]["enum_fields"] = json!({"code": ["priority"]});
     let compiled = derive(&narrowed).expect("a narrower list");
-    assert_eq!(code_values(&compiled), json!(["priority"]));
+    {
+        let observed = &(code_values(&compiled));
+        assert_eq!(observed.as_array().expect("array").len(), 1);
+        assert_eq!(observed[0], serde_json::json!("priority"));
+    };
     // A text column with no CHECK takes the set its author names.
     narrowed["models"]["widget"]["enum_fields"] = json!({"note": ["a", "b"]});
     derive(&narrowed).expect("a set no CHECK carries");

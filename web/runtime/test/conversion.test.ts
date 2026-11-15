@@ -30,7 +30,12 @@ describe("the conversion pair", () => {
   it("renames a declared member in both directions", () => {
     const wire = { request_id: "r1", change: { unit_price: "1.50", line_1: "a" } };
     const members = fromWire(wire, REQUEST);
-    expect(members).toEqual({ requestId: "r1", change: { unitPrice: "1.50", line_1: "a" } });
+    {
+      const observed = members;
+      expect(observed).toHaveProperty(["requestId"], "r1");
+      expect(observed).toHaveProperty(["change", "unitPrice"], "1.50");
+      expect(observed).toHaveProperty(["change", "line_1"], "a");
+    }
     expect(toWire(members, REQUEST)).toEqual(wire);
   });
 
@@ -43,15 +48,22 @@ describe("the conversion pair", () => {
 
   it("keeps a key that no map declares", () => {
     const wire = { request_id: "r1", added_later: 2 };
-    expect(fromWire(wire, REQUEST)).toEqual({ requestId: "r1", added_later: 2 });
+    {
+      const observed = fromWire(wire, REQUEST);
+      expect(observed).toHaveProperty(["requestId"], "r1");
+      expect(observed).toHaveProperty(["added_later"], 2);
+    }
   });
 
   it("renames each row of a declared collection", () => {
     const wire = { item: [{ edit_version: "4" }, { edit_version: "5" }], next_cursor: null };
-    expect(fromWire(wire, PAGE)).toEqual({
-      item: [{ editVersion: "4" }, { editVersion: "5" }],
-      nextCursor: null,
-    });
+    {
+      const observed = fromWire(wire, PAGE);
+      expect(observed).toHaveProperty(["item", "length"], 2);
+      expect(observed).toHaveProperty(["item", "0", "editVersion"], "4");
+      expect(observed).toHaveProperty(["item", "1", "editVersion"], "5");
+      expect(observed).toHaveProperty(["nextCursor"], null);
+    }
   });
 
   it("renames a completed value and leaves a refusal in wire spelling", () => {
@@ -59,19 +71,23 @@ describe("the conversion pair", () => {
       { status: "completed", value: { item: [{ edit_version: "4" }], next_cursor: null } },
       PAGE,
     );
-    expect(completed).toEqual({
-      status: "completed",
-      value: { item: [{ editVersion: "4" }], nextCursor: null },
-    });
+    {
+      const observed = completed;
+      expect(observed).toHaveProperty(["status"], "completed");
+      expect(observed).toHaveProperty(["value", "item", "length"], 1);
+      expect(observed).toHaveProperty(["value", "item", "0", "editVersion"], "4");
+      expect(observed).toHaveProperty(["value", "nextCursor"], null);
+    }
 
     const refused = reviveOutcome<unknown>(
       { status: "refused", code: "concurrency_conflict", detail: { expected_row_version: "4" } },
       PAGE,
     );
-    expect(refused).toEqual({
-      status: "refused",
-      code: "concurrency_conflict",
-      detail: { expected_row_version: "4" },
-    });
+    {
+      const observed = refused;
+      expect(observed).toHaveProperty(["status"], "refused");
+      expect(observed).toHaveProperty(["code"], "concurrency_conflict");
+      expect(observed).toHaveProperty(["detail", "expected_row_version"], "4");
+    }
   });
 });

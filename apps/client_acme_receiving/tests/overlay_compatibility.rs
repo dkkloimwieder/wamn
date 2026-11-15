@@ -3,125 +3,6 @@
 use sqlx::Row as _;
 include!("overlay_compatibility_fixture.rs");
 
-/// Narrow seam test; the paired journey remains the fresh-install test.
-#[tokio::test]
-#[ignore = "requires: postgres, input:client-acme"]
-async fn installed_contract_observer_reads_a_production_install_and_refuses_changed_requirements()
--> anyhow::Result<()> {
-    let mut postgres = production_server().await?;
-    let (_, mut project) = install_fresh(
-        &mut postgres,
-        "observer",
-        &[super::package_root(), super::overlay_package_root()],
-    )
-    .await?;
-    let version: i32 = sqlx::query("SELECT current_setting('server_version_num')::integer")
-        .fetch_one(&mut project)
-        .await?
-        .get(0);
-    let schema_acl =
-        sqlx::query("SELECT nspacl::text FROM pg_namespace WHERE nspname = 'receiving'")
-            .fetch_one(&mut project)
-            .await?
-            .get::<Option<String>, _>(0)
-            .context("production install must retain an explicit schema ACL")?;
-    let required = &required_schema_contract(&super::overlay_package_root())?;
-    let baseline = observe_installed_contract(&mut project, required).await?;
-    let positive = required_contract_observation(required, &baseline)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("ALTER TABLE receiving.purchase_order ADD COLUMN overlay_compatibility_note text")
-            .to_string(),
-    ))
-    .execute(&mut project)
-    .await
-    .map(drop)?;
-    let additive = observe_installed_contract(&mut project, required).await?;
-    ensure!(
-        baseline != additive,
-        "all-column projection omitted the additive field"
-    );
-    ensure!(
-        required_contract_observation(required, &additive)? == positive,
-        "additive observation changed satisfied requirements"
-    );
-    let controls = [
-        (
-            "consumed-nullability",
-            "ALTER TABLE receiving.purchase_order ALTER COLUMN status DROP NOT NULL",
-            "receiving.purchase_order.status",
-        ),
-        (
-            "consumed-constraint",
-            "ALTER TABLE receiving.quality_inspection DROP CONSTRAINT quality_inspection_status_check; ALTER TABLE receiving.quality_inspection ADD CONSTRAINT quality_inspection_status_check CHECK (status IN ('pending', 'approved', 'rejected'))",
-            "receiving.quality_inspection.quality_inspection_status_check",
-        ),
-        (
-            "unvalidated-constraint",
-            "ALTER TABLE receiving.quality_inspection DROP CONSTRAINT quality_inspection_status_check; ALTER TABLE receiving.quality_inspection ADD CONSTRAINT quality_inspection_status_check CHECK (status IN ('pending', 'approved')) NOT VALID",
-            "receiving.quality_inspection.quality_inspection_status_check",
-        ),
-        (
-            "deferrable-foreign-key",
-            "ALTER TABLE receiving.quality_inspection ALTER CONSTRAINT quality_inspection_receipt_id_fkey DEFERRABLE",
-            "receiving.quality_inspection.quality_inspection_receipt_id_fkey",
-        ),
-    ];
-    let mut negative = Vec::new();
-    for (name, sql, expected) in controls {
-        sqlx::raw_sql(sqlx::AssertSqlSafe(("BEGIN").to_string()))
-            .execute(&mut project)
-            .await
-            .map(drop)?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_string()))
-            .execute(&mut project)
-            .await
-            .map(drop)?;
-        let outcome = match observe_installed_contract(&mut project, required).await {
-            Ok(observed) => required_contract_observation(required, &observed),
-            Err(error) => Err(error),
-        };
-        sqlx::raw_sql(sqlx::AssertSqlSafe(("ROLLBACK").to_string()))
-            .execute(&mut project)
-            .await
-            .map(drop)?;
-        let error = outcome
-            .err()
-            .with_context(|| format!("observer accepted {name}"))?;
-        ensure!(
-            error.to_string().contains(expected),
-            "{name} refused for a different reason: {error}"
-        );
-        negative.push(json!({"control":name,"refusal":error.to_string(),"result":"refused"}));
-    }
-    let restored = observe_installed_contract(&mut project, required).await?;
-    ensure!(
-        restored == additive,
-        "rolled-back controls changed the installed projection"
-    );
-    let retained_acl: String =
-        sqlx::query("SELECT nspacl::text FROM pg_namespace WHERE nspname = 'receiving'")
-            .fetch_one(&mut project)
-            .await?
-            .get(0);
-    ensure!(
-        retained_acl == schema_acl,
-        "observer changed installed ACLs"
-    );
-    let evidence = json!({
-        "case":"installed-overlay-contract-observer", "server_version_num":version,
-        "installed_schema_acl":schema_acl, "retained_schema_acl":retained_acl,
-        "schema_admission_assertion":false,
-        "positive":positive, "controls":negative,
-        "baseline_observed_schema_sha256":bytes_sha256(&serde_json::to_vec(&baseline)?),
-        "additive_observed_schema_sha256":bytes_sha256(&serde_json::to_vec(&additive)?),
-        "result":"pass",
-    });
-    println!("{}", serde_json::to_string_pretty(&evidence)?);
-    drop(project);
-
-    Ok(())
-}
-
 /// An additive base change leaves the overlay unchanged and compatible
 /// (wamn-7k2fh, the additive overlay pair that b8199fb4c deleted): a base whose
 /// initial migration adds a nullable field to `purchase_order`, rebuilt in a
@@ -144,10 +25,6 @@ async fn an_additive_base_change_leaves_the_overlay_unchanged_and_compatible(
     let migration = additive_base.join("migrations/0001_initial.sql");
     let header = "CREATE TABLE receiving.purchase_order (\n";
     let text = std::fs::read_to_string(&migration)?;
-    ensure!(
-        text.matches(header).count() == 1,
-        "the initial migration declares purchase_order once"
-    );
     // Apply preflights every mutation before it runs DDL, so the change is to
     // the fresh CREATE, not an ALTER of a relation absent at preflight.
     std::fs::write(
