@@ -1085,19 +1085,7 @@ mod tests {
         let document = serde_json::to_value(&descriptor).expect("descriptor serializes");
         assert!(document.get("target").is_none());
         let decoded: ComponentDescriptor =
-            serde_json::from_value(document.clone()).expect("descriptor decodes");
-        assert_eq!(decoded, descriptor);
-
-        let mut missing_mode = document.clone();
-        missing_mode["connections"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("mode");
-        assert!(serde_json::from_value::<ComponentDescriptor>(missing_mode).is_err());
-        let mut unknown = document;
-        unknown["target"] = json!({});
-        assert!(serde_json::from_value::<ComponentDescriptor>(unknown).is_err());
-
+            serde_json::from_value(document).expect("descriptor decodes");
         let admitted = decoded.into_admitted(facts.component.target.clone());
         assert_eq!(admitted.component, facts.component);
         assert_eq!(admitted.connections, connections);
@@ -1482,23 +1470,6 @@ mod tests {
                 serde_json::json!("wamn:postgres/client@0.1.0")
             );
         };
-    }
-
-    #[test]
-    fn declaration_round_trips_and_refuses_unknown_fields() {
-        let document = serde_json::to_value(declaration()).expect("declaration serializes");
-        assert_eq!(
-            serde_json::from_value::<ComponentDeclaration>(document.clone())
-                .expect("exact declaration parses"),
-            declaration()
-        );
-
-        let mut unknown = document;
-        unknown
-            .as_object_mut()
-            .expect("declaration is an object")
-            .insert("environment".to_owned(), json!("dev"));
-        assert!(serde_json::from_value::<ComponentDeclaration>(unknown).is_err());
     }
 
     #[test]

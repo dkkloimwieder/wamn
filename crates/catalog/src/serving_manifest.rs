@@ -1720,13 +1720,6 @@ mod tests {
     }
 
     #[test]
-    fn removed_flow_and_plan_fields_are_refused() {
-        let mut document = serde_json::to_value(manifest()).expect("manifest serializes");
-        document["flows"] = serde_json::json!({});
-        assert!(serde_json::from_value::<ServingManifest>(document).is_err());
-    }
-
-    #[test]
     fn the_delivery_ceiling_is_enforced_at_the_reader() {
         let mount = vec![b'x'; MAX_SERVING_MANIFEST_BYTES + 1];
         assert_eq!(

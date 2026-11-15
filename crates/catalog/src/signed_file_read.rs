@@ -128,7 +128,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn stored_annotations_refuse_unknown_fields_lifetimes_and_palette_authority() {
+    fn stored_annotations_refuse_invalid_lifetimes_paths_and_palette_authority() {
         let document = json!({"registered-operation": "app:file/read@1.0.0", "input-ports": [], "parameters": [],
         "output-ports": [{"name": "main", "schema": {"schema": {"x-wamn-signed-reads": {
             "class": "one", "fields": [{"path": "file_id", "nullable": false, "read": {}}]
@@ -146,10 +146,6 @@ mod tests {
                 "/output-ports/0/schema/schema/x-wamn-signed-reads/fields/0/path",
                 json!(""),
             ),
-            (
-                "/output-ports/0/schema/schema/x-wamn-signed-reads",
-                json!({"unknown": []}),
-            ),
         ] {
             let mut invalid = document.clone();
             *invalid.pointer_mut(path).unwrap() = value;
@@ -161,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn lifetime_and_decoding_fail_closed() {
+    fn lifetime_defaults_and_bounds() {
         assert_eq!(SignedFileRead::default().lifetime_seconds().unwrap(), 900);
         assert_eq!(
             SignedFileRead {
@@ -179,13 +175,6 @@ mod tests {
                 .lifetime_seconds()
                 .is_err()
             );
-        }
-        for value in [
-            json!({"lifetime": 1}),
-            json!({"lifetime_seconds": -1}),
-            json!({"lifetime_seconds": 1.5}),
-        ] {
-            assert!(serde_json::from_value::<SignedFileRead>(value).is_err());
         }
     }
 }

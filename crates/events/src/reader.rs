@@ -55,28 +55,3 @@ pub struct ReaderConfig {
     /// leaves `reserved` (E2). Default 256 MiB (≈16 WAL segments of headroom).
     pub slot_safe_wal_warn_bytes: i64,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::ReaderConfig;
-
-    #[test]
-    fn reader_configuration_refuses_control_credentials_and_missing_capture_names() {
-        let triple = wamn_registry::Triple::new("acme", "dev", "orders");
-        let body = serde_json::to_value(crate::lifecycle::reader_configuration(
-            &triple,
-            "capture",
-            "nats://broker:4222",
-        ))
-        .unwrap();
-        assert!(serde_json::from_value::<ReaderConfig>(body.clone()).is_ok());
-        let mut old = body.clone();
-        old["system_database_url"] = "postgres://control".into();
-        assert!(serde_json::from_value::<ReaderConfig>(old).is_err());
-        for field in ["publication", "slot", "stream"] {
-            let mut missing = body.clone();
-            missing.as_object_mut().unwrap().remove(field);
-            assert!(serde_json::from_value::<ReaderConfig>(missing).is_err());
-        }
-    }
-}

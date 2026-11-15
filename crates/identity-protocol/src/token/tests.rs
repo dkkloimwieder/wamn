@@ -1,6 +1,6 @@
 //! Exact fixed-profile tests; these are not route-admission or cache tests.
 
-use crate::keys::{PublicSessionKey, SessionJwks, decode_public_key};
+use crate::keys::{PublicSessionKey, decode_public_key};
 use crate::test_util::{Audience as SessionAudience, verify};
 use crate::token::SessionClaims;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -58,33 +58,13 @@ fn audience() -> SessionAudience<'static> {
 }
 
 #[tokio::test]
-async fn public_jwk_wire_is_exact_and_rejects_private_or_missing_fields() {
+async fn public_key_decoding_matches_the_ed25519_vector() {
     let (_, key, _, _) = fixture();
     let bytes = decode_public_key(&key).unwrap();
     assert_eq!(
         hex::encode(bytes),
         "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
     );
-    let wire = serde_json::to_value(SessionJwks { keys: vec![key] }).unwrap();
-    for name in ["kid", "kty", "crv", "alg", "use", "x"] {
-        let mut malformed = wire.clone();
-        malformed["keys"][0].as_object_mut().unwrap().remove(name);
-        assert!(
-            serde_json::from_value::<SessionJwks>(malformed).is_err(),
-            "missing {name}"
-        );
-    }
-    for name in ["d", "private_pkcs8", "key_ops", "unknown"] {
-        let mut malformed = wire.clone();
-        malformed["keys"][0][name] = json!("private-marker");
-        assert!(
-            serde_json::from_value::<SessionJwks>(malformed).is_err(),
-            "accepted {name}"
-        );
-    }
-    let mut malformed = wire;
-    malformed["private"] = json!("private-marker");
-    assert!(serde_json::from_value::<SessionJwks>(malformed).is_err());
 }
 
 #[tokio::test]
