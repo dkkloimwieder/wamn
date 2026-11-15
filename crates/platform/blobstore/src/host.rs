@@ -382,6 +382,7 @@ fn store_outcome(error: Option<&StoreError>) -> EffectOutcome {
         return EffectOutcome::Responded;
     };
     match error {
+        StoreError::Deadline => EffectOutcome::Timeout,
         StoreError::Confinement(_) | StoreError::Intake(_) | StoreError::Refused { .. } => {
             EffectOutcome::RefusedBeforeDispatch
         }
@@ -432,10 +433,30 @@ where
                 .ok_or_else(|| {
                     wash_runtime::wasmtime::Error::msg("invocation scope was revoked")
                 })?;
+            let remaining = execution
+                .deadline()
+                .saturating_duration_since(tokio::time::Instant::now());
             let outcome = execution
-                .run(effect.instrument(span))
-                .await
-                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("blobstore invocation ended"))?;
+                .run(async {
+                    if remaining.is_zero() {
+                        return Err(StoreError::Deadline);
+                    }
+                    tokio::time::timeout(remaining, effect.instrument(span))
+                        .await
+                        .unwrap_or(Err(StoreError::Deadline))
+                })
+                .await;
+            let outcome = match outcome {
+                Some(outcome) => outcome,
+                None if tokio::time::Instant::now() >= execution.deadline() => {
+                    Err(StoreError::Deadline)
+                }
+                None => {
+                    return Err(wash_runtime::wasmtime::Error::msg(
+                        "blobstore invocation ended",
+                    ));
+                }
+            };
             let record_duration = |project: &str| {
                 wamn_capability_authority::effect_span::record_effect_ms(
                     &wamn_capability_authority::effect_span::BLOBSTORE_DURATION_MS,

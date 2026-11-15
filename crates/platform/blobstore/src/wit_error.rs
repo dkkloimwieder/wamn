@@ -31,6 +31,7 @@ use super::store::StoreError;
 #[must_use]
 pub fn to_wit(error: &StoreError) -> WitError {
     match error {
+        StoreError::Deadline => WitError::Timeout,
         StoreError::Confinement(_) => WitError::AccessDenied,
         StoreError::NoSuchObject => WitError::NoSuchObject,
         StoreError::Intake(intake) => match intake {

@@ -161,7 +161,7 @@ impl From<FileStorageError> for FileError {
             FileStorageErrorType::NotFound => Some(FileRefusal::NotFound),
             FileStorageErrorType::Refused => Some(FileRefusal::BindingRefused),
             FileStorageErrorType::Body => Some(FileRefusal::InvalidInput),
-            FileStorageErrorType::Backend => None,
+            FileStorageErrorType::Backend | FileStorageErrorType::Deadline => None,
         };
         Self {
             refusal,
@@ -443,6 +443,7 @@ impl FileRoutes {
         binding: Option<&str>,
         pinned: Option<&str>,
         write: bool,
+        deadline: tokio::time::Instant,
     ) -> Result<(FileConnection, FileStore), FileError> {
         let app = self
             .release
@@ -467,7 +468,12 @@ impl FileRoutes {
         )?;
         let store = self
             .blobstore
-            .file_store(&self.context, &connection.name, connection.read_only)
+            .file_store(
+                &self.context,
+                &connection.name,
+                connection.read_only,
+                deadline,
+            )
             .await?;
         Ok((connection, store))
     }
@@ -518,11 +524,14 @@ impl FileRoutes {
         media_type: &str,
         body: impl AsyncRead + Unpin + Send,
     ) -> Result<Uuid, FileError> {
+        let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "put")?;
         if name.is_empty() || name.contains(['\0', '\r', '\n']) || !valid_media_type(media_type) {
             return Err(refused(FileRefusal::InvalidInput, "metadata"));
         }
-        let (connection, store) = self.store(application, Some(binding), None, true).await?;
+        let (connection, store) = self
+            .store(application, Some(binding), None, true, deadline)
+            .await?;
         let id = Uuid::new_v4();
         let staged = store.stage(id, body).await?;
         let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
@@ -545,6 +554,7 @@ impl FileRoutes {
         application: &str,
         id: Uuid,
     ) -> Result<hyper::Response<WasiBody>, FileError> {
+        let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "get")?;
         if caller.credential_type() != CredentialType::Session {
             return Err(refused(FileRefusal::PermissionDenied, "session"));
@@ -552,7 +562,13 @@ impl FileRoutes {
         let row = self.record(&principal, application, id, "get").await?;
         require_exposure(row.exposure)?;
         let (_, store) = self
-            .store(application, None, Some(row.connection_id.as_str()), false)
+            .store(
+                application,
+                None,
+                Some(row.connection_id.as_str()),
+                false,
+                deadline,
+            )
             .await?;
         let body = store
             .get(&row.blob_key)
@@ -578,6 +594,7 @@ impl FileRoutes {
         caller: &AuthenticatedCaller,
         request: DeleteRequest,
     ) -> Result<Value, FileError> {
+        let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "delete")?;
         let _lock = self.lock(request.file_id).await?;
         let row = self
@@ -589,6 +606,7 @@ impl FileRoutes {
                 Some(&request.binding),
                 Some(row.connection_id.as_str()),
                 true,
+                deadline,
             )
             .await?;
         self.postgres
@@ -634,6 +652,7 @@ impl FileRoutes {
         caller: &AuthenticatedCaller,
         request: ExposeRequest,
     ) -> Result<Value, FileError> {
+        let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "expose")?;
         let _lock = self.lock(request.file_id).await?;
         let row = self
@@ -645,6 +664,7 @@ impl FileRoutes {
                 Some(&request.binding),
                 Some(row.connection_id.as_str()),
                 true,
+                deadline,
             )
             .await?;
         if request.exposure == Exposure::Public
@@ -692,6 +712,9 @@ impl FileRoutes {
         lifetime: Duration,
     ) -> Result<String, FileError> {
         let lifetime = signed_lifetime(lifetime)?;
+        let deadline = invocations
+            .invocation_deadline(component_id)
+            .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
         let invocation = invocations
             .invocation(component_id)
             .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
@@ -741,7 +764,12 @@ impl FileRoutes {
         // Reads do not require a current application binding.
         let store = self
             .blobstore
-            .file_store(&self.context, &connection.name, connection.read_only)
+            .file_store(
+                &self.context,
+                &connection.name,
+                connection.read_only,
+                deadline,
+            )
             .await?;
         store
             .signed_url(&row.blob_key, lifetime)
@@ -1731,7 +1759,13 @@ mod tests {
         let files = files();
         for (application, binding) in [("orders", "missing"), ("other", "documents")] {
             let error = files
-                .store(application, Some(binding), None, true)
+                .store(
+                    application,
+                    Some(binding),
+                    None,
+                    true,
+                    tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
+                )
                 .await
                 .unwrap_err();
             assert_eq!(error.refusal, Some(FileRefusal::BindingRefused));

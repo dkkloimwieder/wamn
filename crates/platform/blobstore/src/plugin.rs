@@ -3,9 +3,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::gcp::GoogleCloudStorageBuilder;
+use object_store::{ClientOptions, ObjectStore, RetryConfig};
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::component::Linker;
@@ -55,12 +55,21 @@ impl WamnBlobstore {
         self.postgres.invocation(component_id)
     }
 
+    /// The absolute deadline of the admitted invocation.
+    pub fn invocation_deadline(&self, component_id: &str) -> Option<tokio::time::Instant> {
+        self.postgres
+            .scopes
+            .execution(component_id)
+            .map(|execution| execution.deadline())
+    }
+
     /// Open file storage after the native host authorizes its package binding.
     pub async fn file_store(
         &self,
         context: &wamn_postgres_capability::invocation::ReleaseContext,
         connection_name: &str,
         read_only: bool,
+        deadline: tokio::time::Instant,
     ) -> Result<super::files::FileStore, super::files::FileStorageError> {
         use super::files::{FileStorageError, FileStorageErrorType, FileStore};
         let open = async {
@@ -114,10 +123,16 @@ impl WamnBlobstore {
                 Arc::clone(&client.signer),
                 bound.cdn_host,
                 &release.target().environment,
+                deadline,
             )
             .map_err(anyhow::Error::from)
-        }
-        .await;
+        };
+        let open = tokio::time::timeout(
+            deadline.saturating_duration_since(tokio::time::Instant::now()),
+            open,
+        )
+        .await
+        .map_err(|error| FileStorageError::new(FileStorageErrorType::Deadline, "open", error))?;
         open.map_err(|error| {
             FileStorageError::new(
                 FileStorageErrorType::Refused,
@@ -231,6 +246,7 @@ impl WamnBlobstore {
     }
 }
 
+// Shared clients cap requests at the host limit; callers enforce earlier deadlines.
 pub(crate) struct StoreClient {
     store: Arc<dyn ObjectStore>,
     signer: Arc<dyn object_store::signer::Signer>,
@@ -279,8 +295,16 @@ fn build_s3_store(
         .with_access_key_id(credential.access_key)
         .with_secret_access_key(credential.secret_key)
         .with_region("us-east-1")
-        .with_allow_http(endpoint.starts_with("http://"))
         .with_virtual_hosted_style_request(false)
+        .with_client_options(
+            ClientOptions::new()
+                .with_allow_http(endpoint.starts_with("http://"))
+                .with_timeout(wamn_engine::engine::MAX_HOST_CALL_DURATION),
+        )
+        .with_retry(RetryConfig {
+            retry_timeout: wamn_engine::engine::MAX_HOST_CALL_DURATION,
+            ..Default::default()
+        })
         .build()?;
     Ok(Arc::new(store))
 }
@@ -293,6 +317,13 @@ fn build_gcs_store(container: &str) -> anyhow::Result<Arc<object_store::gcp::Goo
         .with_credentials(credentials)
         .with_signing_credentials(signing_credentials)
         .with_bucket_name(container)
+        .with_client_options(
+            ClientOptions::new().with_timeout(wamn_engine::engine::MAX_HOST_CALL_DURATION),
+        )
+        .with_retry(RetryConfig {
+            retry_timeout: wamn_engine::engine::MAX_HOST_CALL_DURATION,
+            ..Default::default()
+        })
         .build()?;
     Ok(Arc::new(store))
 }

@@ -243,9 +243,7 @@ After a successful export, the host retains the store only if its resource table
 Otherwise, it drops the store and aborts its socket work before returning.
 A queued caller starts a fresh store after it acquires the instance mutex.
 Dropping the invocation cancels its HTTP requests and connection tasks.
-It also drops blob storage effect futures.
-The upstream storage connector can continue an upload after its effect future and client drop.
-Its client settings do not expose cancellation of connection and body tasks.
+Blob storage follows the [same invocation lifetime](#object-storage).
 HTTP clients pool connections within one invocation. Requests still share host and connection capacity limits.
 The host preserves the distinction between refusal before dispatch and a lost response after dispatch.
 An idempotency key alone creates no remote same-result guarantee.
@@ -275,7 +273,11 @@ Key construction does not double a separator.
 
 A write commits only after bounded intake establishes a complete body.
 Guest writes and native file uploads accept at most 64 MiB.
-Native uploads stream through multipart storage and abort unfinished uploads on cancellation.
+Native uploads stream through multipart storage and abort unfinished uploads on cancellation or deadline expiry.
+Guest effects and native file operations share their caller's absolute deadline.
+Native HTTP file requests use the host's 30-second limit.
+Storage clients cap requests and retries at that limit. The caller timeout enforces any earlier invocation deadline.
+A completed staging write can remain without a metadata row after timeout. Staging retention removes it.
 A storage handle retains its connection generation.
 Each operation refuses a disabled connection or a changed generation before calling storage.
 The blobstore plugin shares storage clients by connection and generation in a bounded cache.
