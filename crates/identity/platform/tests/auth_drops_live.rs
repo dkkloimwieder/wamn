@@ -275,6 +275,8 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     .await
     .map(drop)
     .unwrap();
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind("770df186-ac15-579e-b46b-c297cae2011b").execute(&mut client).await.unwrap();
     let bob: PrincipalId = "0b0b0b0b-0000-4000-8000-000000000001".parse().unwrap();
     let robot: PrincipalId = "0b0b0b0b-0000-4000-8000-000000000002".parse().unwrap();
     let user = |id| ApplicationUser {

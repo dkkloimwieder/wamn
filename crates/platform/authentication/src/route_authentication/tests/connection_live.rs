@@ -84,6 +84,8 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .execute(&mut project)
         .await
         .expect("commit fixture transaction");
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind("770df186-ac15-579e-b46b-c297cae2011b").execute(&mut project).await.unwrap();
     let mut reader = url::Url::parse(database.as_str()).unwrap();
     reader.set_username(&role).unwrap();
     reader.set_password(Some("fixture-password")).unwrap();

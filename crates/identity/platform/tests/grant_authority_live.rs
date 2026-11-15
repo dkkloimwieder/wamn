@@ -13,7 +13,9 @@ use wamn_platform_identity::org::{
 use wamn_platform_identity::{assign_project_role, create_or_reuse_user, create_service};
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let client = wamn_postgres::connect(url).await?;
+    let mut client = wamn_postgres::connect(url).await?;
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind("770df186-ac15-579e-b46b-c297cae2011b").execute(&mut client).await?;
 
     Ok(client)
 }

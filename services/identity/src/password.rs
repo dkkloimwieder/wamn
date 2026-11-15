@@ -1421,6 +1421,9 @@ mod tests {
         .map(drop)
         .unwrap();
         let actor = PlatformComponent::Provisioning.principal_id().to_string();
+        sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+            .bind(&actor).execute(&mut admin.client).await.unwrap();
+
         let alice = wamn_platform_identity::create_user(
             &mut admin.client,
             "alice",

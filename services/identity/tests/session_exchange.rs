@@ -385,6 +385,8 @@ async fn setup(raw: &str) -> Fixture {
                 .map(drop)
                 .expect_redacted("production environment schema");
         }
+        sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+            .bind(FIXTURE_PRINCIPAL).execute(&mut environment.client).await.unwrap();
         // The fixture writes as its test principal, whose row stamps itself.
         // Both bindings stay for the later fixture writes of this session.
         sqlx::raw_sql(sqlx::AssertSqlSafe(

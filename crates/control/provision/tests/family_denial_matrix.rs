@@ -426,13 +426,13 @@ fn the_executor_reads_settings_without_write_authority() {
     apply(
         &fixture.db_url,
         "seed schedule configuration",
-        "INSERT INTO platform.setting(target_type,target_id,key,value) VALUES ('project','billing','timezone','\"UTC\"'::jsonb)",
+        "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture','admin:settings-fixture'); INSERT INTO platform.setting(target_type,target_id,key,value) VALUES ('project','billing','timezone','\"UTC\"'::jsonb); COMMIT;",
     );
     let executor = login_url(
         &fixture.admin,
         &generation(WorkloadRoleFamily::ExecutorPlatform),
     );
-    let value: serde_json::Value = serde_json::from_str(&query(&executor,
+    let value: serde_json::Value = serde_json::from_str(&bound_query(&executor,
         "SELECT value::text FROM platform.setting WHERE target_type='project' AND target_id='billing' AND key='timezone'")).unwrap();
     assert!(value.is_string());
     assert!(sqlstate(&executor,

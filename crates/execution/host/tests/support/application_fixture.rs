@@ -300,6 +300,8 @@ pub(super) async fn application_host_with_release(
     let (admitter, administration) = install(&mut admin, &mut database, admin_url).await?;
     let guest = app_generation(&mut admin, &mut database).await?;
     let first = claims()["sub"].as_str().unwrap().to_owned();
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(&first).execute(&mut admin).await?;
     let server = Server::start().await;
     let (verifier, token_clock, key_clock) = server.verifier();
     session_fixture::install_authority(&mut admin, PROJECT, "dev", AUDIENCE, &[&first, MEMBER])

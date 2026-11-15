@@ -165,6 +165,8 @@ async fn seed(admin: &mut Client) -> anyhow::Result<()> {
         .execute(&mut *admin)
         .await
         .expect("commit fixture transaction");
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(&first).execute(&mut *admin).await?;
     Ok(())
 }
 

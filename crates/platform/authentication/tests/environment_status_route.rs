@@ -137,6 +137,8 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     .execute(&mut admin)
     .await
     .map(drop)?;
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind("770df186-ac15-579e-b46b-c297cae2011b").execute(&mut admin).await?;
     let mut url = url::Url::parse(admin_url)?;
     url.set_username(&generation)
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;

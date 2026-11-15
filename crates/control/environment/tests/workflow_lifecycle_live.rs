@@ -11,7 +11,7 @@
 //! the system database of the lock.
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _};
+use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use wamn_catalog::{
@@ -129,6 +129,8 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
     let project_url = project_database.as_str().to_owned();
     let mut project = connect(&project_url).await;
 
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind("770df186-ac15-579e-b46b-c297cae2011b").execute(&mut project).await.unwrap();
     let manifest = release();
     let bytes = manifest.canonical_bytes();
     let digest = manifest.digest().as_str().to_owned();
@@ -195,7 +197,13 @@ impl Fixture {
         execution: WorkflowExecution<'_>,
         trigger: WorkflowTrigger<'_>,
     ) -> Result<(), AuthorWorkflowError> {
-        let mut transaction = self.project.begin().await.unwrap();
+        let mut transaction = wamn_test_postgres::transaction(
+            &mut self.project,
+            ALICE,
+            "admin:author-workflow-fixture",
+        )
+        .await
+        .unwrap();
         author_workflow(
             &mut transaction,
             &AuthorWorkflowRequest {

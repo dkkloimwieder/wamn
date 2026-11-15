@@ -906,7 +906,7 @@ mod tests {
             .execute(&mut *connection)
             .await
             .unwrap();
-        sqlx::raw_sql("DROP SCHEMA IF EXISTS app CASCADE; CREATE SCHEMA app; SET search_path=app,public; SET app.user_id='00000000-0000-4000-8000-000000000001'; SET app.operation='probe:line/update@1.0.0'").execute(&mut *connection).await.unwrap();
+        sqlx::raw_sql("DROP SCHEMA IF EXISTS app CASCADE; CREATE SCHEMA app; SET search_path=app,public; INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,'7695180f-4b9a-581f-84ef-d7e9cdbd2b77') ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id").execute(&mut *connection).await.unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(tables))
             .execute(&mut *connection)
             .await

@@ -143,7 +143,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // The fixture writes as U1, its test principal, whose row stamps itself.
     writeln!(
         script,
-        "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','admin:seed-isolation-fixture');\n\
+        "INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,'{U1}'::uuid); BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','admin:seed-isolation-fixture');\n\
          INSERT INTO platform.\"user\" (id, type, email) VALUES \
            ('{U1}','user','u1@t1'),('{U2}','service','u2@t1'),('{U3}','user','u3@t2');\n\
          INSERT INTO platform.role (name) VALUES ('admin'),('clerk');\n\
