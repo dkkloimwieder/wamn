@@ -172,9 +172,9 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: s
 }
 
 #[sqlx::test(migrations = false)]
-async fn a_known_result_needs_no_update_and_a_missing_finish_rolls_back(pool: sqlx::PgPool) {
+async fn known_results_finish_at_host_commit_and_a_missing_finish_rolls_back(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = project_env_key_database(&pool, "test--dev--writelogtx").await;
+    let (_database, postgres) = project_env_key_database(&pool, "test--dev--writelogtx").await;
     postgres
         .bind_session_identity(
             SCOPE,
@@ -197,7 +197,6 @@ async fn a_known_result_needs_no_update_and_a_missing_finish_rolls_back(pool: sq
     ));
     transaction.finish_opaque(OPERATION, "missing-other", json!({"value":1}).to_string());
     assert!(transaction.commit().await.is_err());
-    sqlx::raw_sql("ALTER TABLE platform.write_log ADD CHECK (result IS NOT NULL); CREATE FUNCTION public.refuse_log_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'unexpected update'; END $$; CREATE TRIGGER refuse_log_update BEFORE UPDATE ON platform.write_log FOR EACH ROW EXECUTE FUNCTION public.refuse_log_update()").execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
     let known = postgres
         .begin_operation_transaction(SCOPE)
         .await

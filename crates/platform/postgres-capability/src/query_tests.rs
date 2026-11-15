@@ -6,7 +6,7 @@ use std::sync::Arc;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::Store;
-use wash_runtime::wasmtime::component::{Component, Linker};
+use wash_runtime::wasmtime::component::{Component, Instance, Linker, ResourceAny};
 
 use crate::{
     ClassCredentials, PgError, SqlValue, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
@@ -46,28 +46,7 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
     postgres.set_application("application", "dynamic").unwrap();
     let user = "00000000-0000-4000-8000-000000000031";
     postgres.set_user_id("application", user).unwrap();
-    let engine = wamn_engine::build_engine(&[]).expect("application engine");
-    let component =
-        Component::new(engine.inner(), wat::parse_str(QUERY_GUEST).unwrap()).expect("query guest");
-    let mut linker = Linker::<SharedCtx>::new(engine.inner());
-    crate::add_to_linker(&mut linker).expect("Postgres imports");
-    let plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::from([(
-        WAMN_POSTGRES_ID,
-        postgres as Arc<dyn HostPlugin + Send + Sync>,
-    )]);
-    let ctx = Ctx::builder("application", "application")
-        .with_plugins(plugins)
-        .build();
-    let mut store = Store::new(
-        engine.inner(),
-        SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),
-    );
-    wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
-    store.set_epoch_deadline(u64::MAX / 2);
-    let instance = linker
-        .instantiate_async(&mut store, &component)
-        .await
-        .expect("application guest links");
+    let (mut store, instance) = guest(Arc::clone(&postgres), "application", QUERY_GUEST).await;
     let query = instance
         .get_typed_func::<(String, Vec<SqlValue>), (QueryResponse,)>(&mut store, "query")
         .expect("guest query export");
@@ -118,7 +97,246 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
         .unwrap()
         .unwrap();
     assert!(matches!(write, Err(PgError::QueryError((code, _))) if code == "25006"));
+    let destroyed = postgres
+        .destroyed
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let commit = store
+        .run_concurrent(async |accessor| {
+            let (response,) = query
+                .call_concurrent(accessor, ("COMMIT".into(), Vec::new()))
+                .await?;
+            collect(accessor, response).await
+        })
+        .await;
+    assert!(
+        commit.is_err(),
+        "ending the dynamic read transaction fails its invocation"
+    );
+    assert!(
+        postgres
+            .destroyed
+            .load(std::sync::atomic::Ordering::Relaxed)
+            > destroyed
+    );
 }
+
+async fn guest(
+    postgres: Arc<WamnPostgres>,
+    scope: &str,
+    wat: &str,
+) -> (Store<SharedCtx>, Instance) {
+    let engine = wamn_engine::build_engine(&[]).expect("application engine");
+    let component =
+        Component::new(engine.inner(), wat::parse_str(wat).unwrap()).expect("query guest");
+    let mut linker = Linker::<SharedCtx>::new(engine.inner());
+    crate::add_to_linker(&mut linker).expect("Postgres imports");
+    let plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::from([(
+        WAMN_POSTGRES_ID,
+        postgres as Arc<dyn HostPlugin + Send + Sync>,
+    )]);
+    let ctx = Ctx::builder(scope, scope).with_plugins(plugins).build();
+    let mut store = Store::new(
+        engine.inner(),
+        SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),
+    );
+    wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
+    store.set_epoch_deadline(u64::MAX / 2);
+    let instance = linker
+        .instantiate_async(&mut store, &component)
+        .await
+        .expect("application guest links");
+    (store, instance)
+}
+
+#[sqlx::test(migrations = false)]
+async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::url(&pool);
+    const SCOPE: &str = "transaction-owner";
+    const PROJECT: &str = "test--dev--transaction-owner";
+    const OPERATION: &str = "fixture:transaction/write";
+    let app_url = crate::session_identity::tests::live_guest_url(database.as_str(), PROJECT).await;
+    sqlx::raw_sql("CREATE TABLE public.transaction_owner(value integer); \
+        ALTER TABLE public.transaction_owner ENABLE ROW LEVEL SECURITY; \
+        CREATE POLICY caller ON public.transaction_owner USING ((SELECT (wamn_authority.current_identity()).xid) IS NOT NULL); \
+        GRANT SELECT, INSERT ON public.transaction_owner TO wamn_app; \
+        CREATE TABLE platform.write_log(operation text, idempotency_key text, request bytea, result text, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(operation,idempotency_key)); \
+        GRANT SELECT, INSERT, UPDATE ON platform.write_log TO wamn_app")
+        .execute(&pool).await.unwrap();
+    let postgres = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: Some(ClassCredentials::every_class(app_url)),
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 2000,
+            statement_timeout_ms: 5000,
+        })
+        .unwrap(),
+    );
+    postgres.set_project_env_key(SCOPE, PROJECT).unwrap();
+    let (mut store, instance) = guest(Arc::clone(&postgres), SCOPE, TRANSACTION_GUEST).await;
+    let open = instance
+        .get_typed_func::<(), (Result<ResourceAny, PgError>,)>(&mut store, "open")
+        .unwrap();
+    let batch = instance
+        .get_typed_func::<(ResourceAny, String), (Result<(), PgError>,)>(&mut store, "batch")
+        .unwrap();
+    for known in [false, true] {
+        let key = if known { "known" } else { "ordinary" };
+        let transaction = postgres.begin_operation_transaction(SCOPE).await.unwrap();
+        let transaction = if known {
+            transaction.with_known_result("null".into())
+        } else {
+            transaction
+        };
+        let backend = transaction
+            .with_host_connection(|mut connection| async move {
+                let result = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+                    .fetch_one(connection.connection())
+                    .await;
+                (connection, result)
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            transaction
+                .begin_opaque(OPERATION, key, vec![1])
+                .await
+                .unwrap(),
+            crate::write_log::Claim::New
+        ));
+        postgres
+            .bind_operation_transaction(SCOPE, &transaction)
+            .unwrap();
+        let (handle,) = store
+            .run_concurrent(async |accessor| open.call_concurrent(accessor, ()).await)
+            .await
+            .unwrap()
+            .unwrap();
+        let handle = handle.unwrap();
+        for sql in ["INSERT INTO public.transaction_owner VALUES(1)", "COMMIT"] {
+            let (result,) = store
+                .run_concurrent(async |accessor| {
+                    batch.call_concurrent(accessor, (handle, sql.into())).await
+                })
+                .await
+                .unwrap()
+                .unwrap();
+            result.unwrap();
+        }
+        let (result,) = store
+            .run_concurrent(async |accessor| {
+                batch
+                    .call_concurrent(
+                        accessor,
+                        (
+                            handle,
+                            "INSERT INTO public.transaction_owner VALUES(2)".into(),
+                        ),
+                    )
+                    .await
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(result, Err(PgError::PermissionDenied)));
+        transaction.finish_opaque(OPERATION, key, "null".into());
+        assert!(matches!(
+            transaction.commit().await,
+            Err(crate::PgCommitFailure::Uncertain(_))
+        ));
+        postgres.revoke_operation_transaction(SCOPE);
+        handle.resource_drop_async(&mut store).await.unwrap();
+        assert_ne!(
+            backend,
+            postgres.probe_checkout(PROJECT).await.unwrap().backend_pid
+        );
+        let result: Option<String> = sqlx::query_scalar(
+            "SELECT result FROM platform.write_log WHERE operation=$1 AND idempotency_key=$2",
+        )
+        .bind(OPERATION)
+        .bind(key)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(result.is_none());
+        sqlx::query("UPDATE platform.write_log SET created_at=now()-interval '1 minute' WHERE operation=$1 AND idempotency_key=$2")
+            .bind(OPERATION).bind(key).execute(&pool).await.unwrap();
+        let retry = postgres.begin_operation_transaction(SCOPE).await.unwrap();
+        assert!(matches!(
+            retry.begin_opaque(OPERATION, key, vec![1]).await.unwrap(),
+            crate::write_log::Claim::OutcomeUnknown
+        ));
+        retry.rollback().await.unwrap();
+    }
+    let values: Vec<i32> = sqlx::query_scalar("SELECT value FROM public.transaction_owner")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert!(values.iter().all(|value| *value == 1));
+    assert!(!values.is_empty());
+}
+
+const TRANSACTION_GUEST: &str = r#"(component
+    (import "wamn:postgres/types@0.4.0" (instance $types
+      (type $error' (variant (case "serialization-failure") (case "connection-unavailable")
+        (case "statement-timeout") (case "unique-violation" string) (case "foreign-key-violation" string)
+        (case "check-violation" string) (case "exclusion-violation" string) (case "permission-denied")
+        (case "query-error" (tuple string string))))
+      (export "pg-error" (type $error (eq $error')))))
+    (alias export $types "pg-error" (type $error))
+    (import "wamn:postgres/statements@0.4.0" (instance $sql
+      (export "transaction" (type $tx (sub resource)))
+      (export "operation-transaction" (func async (result (result (own $tx) (error $error)))))
+      (export "[method]transaction.query-batch" (func async (param "self" (borrow $tx))
+        (param "sql" string) (result (result (error $error)))))))
+    (alias export $sql "transaction" (type $tx))
+    (export "transaction" (type $tx))
+    (core module $memory
+      (memory (export "memory") 1)
+      (global $next (mut i32) (i32.const 1024))
+      (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
+        (local $ptr i32) global.get $next local.get $align i32.const 1 i32.sub i32.add
+        i32.const 0 local.get $align i32.sub i32.and local.tee $ptr
+        local.get $size i32.add global.set $next local.get $ptr))
+    (core instance $memory (instantiate $memory))
+    (core func $open (canon lower (func $sql "operation-transaction")
+      (memory $memory "memory") (realloc (func $memory "realloc"))))
+    (core func $batch (canon lower (func $sql "[method]transaction.query-batch")
+      (memory $memory "memory") (realloc (func $memory "realloc"))))
+    (core func $drop (canon resource.drop $tx))
+    (core func $return-open (canon task.return (result (result (own $tx) (error $error))) (memory $memory "memory")))
+    (core func $return-batch (canon task.return (result (result (error $error))) (memory $memory "memory")))
+    (core module $main
+      (import "memory" "memory" (memory 1))
+      (import "host" "open" (func $open (param i32)))
+      (import "host" "batch" (func $batch (param i32 i32 i32 i32)))
+      (import "host" "drop" (func $drop (param i32)))
+      (import "host" "return-open" (func $return-open (param i32 i32 i32 i32 i32 i32)))
+      (import "host" "return-batch" (func $return-batch (param i32 i32 i32 i32 i32 i32)))
+      (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
+      (func (export "open") (result i32)
+        i32.const 512 call $open
+        i32.const 512 i32.load i32.const 516 i32.load i32.const 520 i32.load
+        i32.const 524 i32.load i32.const 528 i32.load i32.const 532 i32.load call $return-open
+        i32.const 0)
+      (func (export "batch") (param $self i32) (param $sql i32) (param $len i32) (result i32)
+        local.get $self local.get $sql local.get $len i32.const 512 call $batch
+        local.get $self call $drop
+        i32.const 512 i32.load i32.const 516 i32.load i32.const 520 i32.load
+        i32.const 524 i32.load i32.const 528 i32.load i32.const 532 i32.load call $return-batch
+        i32.const 0))
+    (core instance $main (instantiate $main (with "memory" (instance $memory))
+      (with "host" (instance (export "open" (func $open)) (export "batch" (func $batch)) (export "drop" (func $drop))
+        (export "return-open" (func $return-open)) (export "return-batch" (func $return-batch))))))
+    (func (export "open") async (result (result (own $tx) (error $error)))
+      (canon lift (core func $main "open") (memory $memory "memory")
+        (realloc (func $memory "realloc")) async (callback (func $main "callback"))))
+    (func (export "batch") async (param "self" (borrow $tx)) (param "sql" string)
+      (result (result (error $error)))
+      (canon lift (core func $main "batch") (memory $memory "memory")
+        (realloc (func $memory "realloc")) async (callback (func $main "callback"))))
+)"#;
 
 type QueryResponse = Result<
     (

@@ -35,25 +35,6 @@ pub const CLAIM_SQL: &str = "INSERT INTO platform.write_log (operation, idempote
      ON CONFLICT (operation, idempotency_key) DO NOTHING \
      RETURNING idempotency_key";
 
-/// Insert a known success result with a claim in the transaction of its work.
-const CLAIM_RESULT_SQL: &str = "INSERT INTO platform.write_log (operation, idempotency_key, request, result) \
-     VALUES ($1::text, $2::text, $3::bytea, $4::text) \
-     ON CONFLICT (operation, idempotency_key) DO NOTHING \
-     RETURNING idempotency_key";
-
-/// Bind a known result only when the claim and the work share a transaction.
-fn claim_statement(
-    mut params: Vec<SqlValue>,
-    result: Option<&str>,
-) -> (&'static str, Vec<SqlValue>) {
-    if let Some(result) = result {
-        params.push(SqlValue::Text(result.to_owned()));
-        (CLAIM_RESULT_SQL, params)
-    } else {
-        (CLAIM_SQL, params)
-    }
-}
-
 /// Read the request and the result that a committed claim of one key holds.
 pub const READ_SQL: &str = "SELECT request, result, extract(epoch FROM (clock_timestamp() - created_at))::float8 FROM platform.write_log \
      WHERE operation = $1::text AND idempotency_key = $2::text";
@@ -63,10 +44,18 @@ pub const FINISH_SQL: &str = "UPDATE platform.write_log SET result = $3::text \
      WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
      RETURNING idempotency_key";
 
-/// Abort on a missing claim because COMMIT is already queued behind this statement.
+/// Refuse a missing claim or caller row before recording success and committing.
 pub(super) const COMMIT_FINISH_SQL: &str = "WITH finished AS (UPDATE platform.write_log SET result = $3::text \
      WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
-     RETURNING idempotency_key) SELECT 1 / count(*)::integer FROM finished";
+       AND (SELECT (wamn_authority.current_identity()).xid) = pg_current_xact_id() \
+     RETURNING idempotency_key) SELECT CASE \
+     WHEN (SELECT (wamn_authority.current_identity()).xid) = pg_current_xact_id() \
+     THEN 1 / count(*)::integer = 1 ELSE false END FROM finished";
+
+/// Finish a host transaction without a claim update in one existing commit call.
+/// A missing caller row fails before COMMIT, so this connection is discarded.
+pub(super) const COMMIT_SQL: &str = "SELECT 1 / COALESCE(\
+     ((SELECT (wamn_authority.current_identity()).xid) = pg_current_xact_id())::integer, 0); COMMIT";
 
 /// Free the key of a two-step claim whose request element was refused.
 const RELEASE_SQL: &str = "DELETE FROM platform.write_log \
@@ -86,7 +75,6 @@ async fn claim_with<F, Fut>(
     operation: &str,
     key: &str,
     request: Vec<u8>,
-    result: Option<&str>,
     run: F,
 ) -> Result<Option<Claim>, PgError>
 where
@@ -94,15 +82,12 @@ where
     Fut: Future<Output = Result<Vec<Row>, PgError>>,
 {
     let operation = log_operation(operation);
-    let (sql, params) = claim_statement(
-        vec![
-            SqlValue::Text(operation.to_owned()),
-            SqlValue::Text(key.to_owned()),
-            SqlValue::Bytes(request.clone()),
-        ],
-        result,
-    );
-    if !run(sql, params).await?.is_empty() {
+    let params = vec![
+        SqlValue::Text(operation.to_owned()),
+        SqlValue::Text(key.to_owned()),
+        SqlValue::Bytes(request.clone()),
+    ];
+    if !run(CLAIM_SQL, params).await?.is_empty() {
         return Ok(Some(Claim::New));
     }
     let rows = run(
@@ -179,22 +164,27 @@ impl OperationTransaction {
         key: &str,
         request: Vec<u8>,
     ) -> Result<Claim, PgError> {
-        let claim = claim_with(
-            operation,
-            key,
-            request,
-            self.known_result.as_deref(),
-            |sql, params| self.log_statement(sql, params),
-        )
+        let claim = claim_with(operation, key, request, |sql, params| {
+            self.log_statement(sql, params)
+        })
         .await?;
-        opaque_claim(claim)
+        let claim = opaque_claim(claim)?;
+        if matches!(claim, Claim::New) {
+            if let Some(result) = &self.known_result {
+                self.stage_finish(operation, key, result.to_owned());
+            }
+        }
+        Ok(claim)
     }
 
     /// Stage the application's result text for the existing commit pipeline.
     pub(super) fn finish_opaque(&self, operation: &str, key: &str, result: String) {
-        if self.known_result.is_some() {
-            return;
+        if self.known_result.is_none() {
+            self.stage_finish(operation, key, result);
         }
+    }
+
+    fn stage_finish(&self, operation: &str, key: &str, result: String) {
         *self
             .finish
             .lock()
@@ -297,7 +287,7 @@ impl WriteLogStore {
         key: &str,
         request: Vec<u8>,
     ) -> Result<Claim, PgError> {
-        let claim = claim_with(operation, key, request, None, |sql, params| {
+        let claim = claim_with(operation, key, request, |sql, params| {
             self.statement(sql, params)
         })
         .await?;

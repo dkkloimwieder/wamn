@@ -1,7 +1,7 @@
 //! The transaction that the host owns for one logged operation request element
 //! (`docs/history/host-transaction.md` 4.1).
 //!
-//! The guest borrows a query handle. Only the host commits or rolls back.
+//! The guest borrows a query handle and must leave completion to the host.
 
 use crate::invocation::Authority;
 use std::sync::{Arc, Mutex};
@@ -31,8 +31,8 @@ pub enum PgCommitFailure {
     /// The transaction rolled back: the connection was gone before `COMMIT`
     /// was sent, or the server answered `COMMIT` with an error.
     RolledBack(PgError),
-    /// `COMMIT` was sent and its answer was not read, so the transaction may
-    /// have committed.
+    /// The guest ended the host transaction, or `COMMIT` was sent and its
+    /// answer was not read. Some work may have committed.
     Uncertain(PgError),
 }
 
@@ -50,7 +50,7 @@ impl std::fmt::Display for PgCommitFailure {
 impl std::error::Error for PgCommitFailure {}
 
 impl OperationTransaction {
-    /// Store a known success result in the claim, inside this transaction.
+    /// Stage a known success result for the host commit.
     /// A refusal must still roll back the transaction and its claim.
     pub fn with_known_result(mut self, result: String) -> Self {
         self.known_result = Some(result);
@@ -111,8 +111,8 @@ impl OperationTransaction {
     ///
     /// # Errors
     ///
-    /// Returns [`PgCommitFailure::Uncertain`] only when `COMMIT` was sent and
-    /// its answer was not read. Every other failure is a certain rollback.
+    /// Returns [`PgCommitFailure::Uncertain`] when the guest ended the host
+    /// transaction or the host did not read the answer to `COMMIT`.
     pub async fn commit(&self) -> Result<(), PgCommitFailure> {
         self.start().await.map_err(PgCommitFailure::RolledBack)?;
         let state = &self.transaction.state;
@@ -129,20 +129,30 @@ impl OperationTransaction {
             .lock()
             .expect("request element finish lock poisoned")
             .take();
-        if let Some([key, status, output]) = finish {
-            let result = sqlx::query(super::write_log::COMMIT_FINISH_SQL)
+        let commit_sql = if let Some([key, status, output]) = finish {
+            let result = sqlx::query_scalar::<_, bool>(super::write_log::COMMIT_FINISH_SQL)
                 .bind(&key)
                 .bind(&status)
                 .bind(&output)
-                .execute(connection.connection())
+                .fetch_one(connection.connection())
                 .await;
-            if let Err(error) = result {
-                mark_finished();
-                return Err(PgCommitFailure::RolledBack(super::types::map_pg_error(
-                    &error,
-                )));
+            match result {
+                Ok(true) => {}
+                Ok(false) => {
+                    mark_finished();
+                    return Err(PgCommitFailure::Uncertain(PgError::ConnectionUnavailable));
+                }
+                Err(error) => {
+                    mark_finished();
+                    return Err(PgCommitFailure::RolledBack(super::types::map_pg_error(
+                        &error,
+                    )));
+                }
             }
-        }
+            "COMMIT"
+        } else {
+            super::write_log::COMMIT_SQL
+        };
         if let Some(run) = &self.causation {
             let json = serde_json::to_string(run).expect("Causation serializes to JSON");
             if let Err(error) =
@@ -157,7 +167,7 @@ impl OperationTransaction {
                 )));
             }
         }
-        let result = sqlx::query("COMMIT")
+        let result = sqlx::raw_sql(commit_sql)
             .execute(connection.connection())
             .await
             .map(drop);
@@ -169,10 +179,14 @@ impl OperationTransaction {
             }
             Err(error) => {
                 mark_finished();
+                // The identity check in COMMIT_SQL raises division by zero.
+                let ended_early = error
+                    .as_database_error()
+                    .is_some_and(|error| error.code().is_some_and(|code| code == "22012"));
                 let answered = error.as_database_error().is_some();
                 drop(connection);
                 let error = super::types::map_pg_error(&error);
-                Err(if answered {
+                Err(if answered && !ended_early {
                     PgCommitFailure::RolledBack(error)
                 } else {
                     PgCommitFailure::Uncertain(error)

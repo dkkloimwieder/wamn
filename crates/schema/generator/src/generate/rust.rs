@@ -22,6 +22,13 @@ use crate::manifest::{
 /// must make this constant agree with it.
 const CLIPPY_ARGUMENT_THRESHOLD: usize = 7;
 
+fn sql_include_path(path: &str) -> String {
+    match path.strip_prefix("generated/") {
+        Some(path) => format!("../{path}"),
+        None => format!("../../{path}"),
+    }
+}
+
 /// An accessor's parameters are the connection or transaction it runs under, plus one
 /// per statement bind.
 fn accessor_argument_count(binds: usize) -> usize {
@@ -93,13 +100,7 @@ pub(super) fn emit_static_sql_projection(
             source,
             "pub(crate) const {}_STATEMENT: &str = include_str!({:?});",
             name.to_ascii_uppercase(),
-            format!(
-                "../{}",
-                statement
-                    .path
-                    .strip_prefix("generated/")
-                    .unwrap_or(&statement.path)
-            )
+            sql_include_path(&statement.path)
         )
         .expect("writing to a String cannot fail");
     }
@@ -653,7 +654,7 @@ pub(super) fn emit_projection(
                 "{} const {}: &str = include_str!({:?});",
                 api.statement_visibility.source(),
                 statement_constant_name(action, index, paths.len()),
-                format!("../{}", path.strip_prefix("generated/").unwrap_or(path))
+                sql_include_path(path)
             )
             .expect("writing to a String cannot fail");
         }

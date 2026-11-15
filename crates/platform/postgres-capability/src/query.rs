@@ -38,7 +38,7 @@ const STREAM_BATCH_ROWS: usize = 500;
 struct OpenedStream {
     columns: Vec<String>,
     batches: mpsc::Receiver<Vec<Vec<SqlValue>>>,
-    finished: oneshot::Receiver<Result<(), PgError>>,
+    finished: oneshot::Receiver<WasmResult<Result<(), PgError>>>,
 }
 
 pub(super) async fn dynamic_query<T: 'static + Send>(
@@ -183,11 +183,9 @@ fn into_guest_stream<T: 'static + Send>(
     accessor.with(|mut access| {
         let rows = StreamReader::new(&mut access, RowBatches { batches })?;
         let finished = FutureReader::new(&mut access, async move {
-            Ok::<_, wash_runtime::wasmtime::Error>(
-                finished
-                    .await
-                    .unwrap_or(Err(PgError::ConnectionUnavailable)),
-            )
+            finished
+                .await
+                .unwrap_or(Ok(Err(PgError::ConnectionUnavailable)))
         })?;
         Ok(Ok((columns, rows, finished)))
     })
@@ -239,9 +237,14 @@ async fn open_stream(
                     restore_connection(connection, state);
                     Ok(())
                 } else {
-                    match sqlx::query("COMMIT").execute(connection.connection()).await {
+                    match sqlx::raw_sql(super::write_log::COMMIT_SQL).execute(connection.connection()).await {
                         Ok(_) => { connection.repool(); Ok(()) }
-                        Err(error) => Err(map_pg_error(&error)),
+                        Err(error) => {
+                            let _ = outcome.send(Err(wash_runtime::wasmtime::format_err!(
+                                "finish dynamic SQL host transaction: {error}"
+                            )));
+                            return;
+                        }
                     }
                 }
             }
@@ -254,7 +257,7 @@ async fn open_stream(
         };
         drop(rows);
         if let Some(opened) = opened { let _ = opened.send(result.map(|()| Vec::new())); }
-        else { let _ = outcome.send(result); }
+        else { let _ = outcome.send(Ok(result)); }
     }.instrument(tracing::Span::current()));
     let columns = started
         .await

@@ -220,8 +220,16 @@ The `client` interface exposes dynamic `query` on the SELECT-only `wamn_query` l
 Each dynamic query runs in a host read transaction.
 The `statements` interface lends the host operation transaction through `operation-transaction()`.
 Its handle exposes `query` and `query-batch` on the `wamn_app` login.
-Only the host can commit or roll back that transaction.
+The guest handle exposes no transaction completion methods.
 Every composed member borrows the same operation transaction.
+
+Developer rule: guest SQL never ends the host transaction. Do not issue `COMMIT`, `END` or `ROLLBACK` from guest SQL.
+The host does not inspect SQL text. SQLx 0.9 keeps the protocol transaction status private.
+At host commit, the finish statement requires the identity row for `pg_current_xact_id()` through `wamn_authority.current_identity()`.
+If that row is missing, the invocation fails and the host discards the connection.
+An early guest commit has already committed its partial work. Its claim stays open and becomes `outcome-unknown` under R3.
+Later statements on that connection have no identity row. History triggers and row policies refuse them.
+
 Both query interfaces return column names, a stream of rows, and a closing result.
 The caller consumes the rows, then awaits the closing result to learn whether the query succeeded.
 Dropping the stream early aborts its query and destroys its connection.
@@ -283,17 +291,15 @@ A successful update returns the current revision, so a true no-op returns outcom
 Each outer item of a write carries its `request_id`. A read carries none, and its outcomes match its items by position.
 For `per_input` commands, each item owns one transaction on one PostgreSQL connection.
 The transaction resource never crosses a wiring edge, and separate outer items have no shared atomicity.
-A composed write followed by a projection is not one transaction.
 An overlay command can call a base command within its transaction.
 The overlay operation imports the base operation, and the overlay package pins the base by digest in `base_dependencies`.
 The overlay build composes the overlay and its pinned base into one component, so the call is a component-model call with no host between.
 The host requires the original caller to hold the overlay entry only. The base operation runs under the entry's authority.
 The generated contracts carry ordinary typed values. Application code owns the transaction sequence and conditional business rules.
 
-The released operation carries its own statements only.
 The host begins the item's transaction when the admitted operation declares one: a command with `transaction = explicit_per_input`, or a generated create, update or delete.
 A command without SQL of its own can declare `transaction = explicit_per_input`, so an overlay command that only calls a base command still runs in one host transaction.
-The base reaches that transaction through `operation-transaction`. Each member binds its own statements through its own `statements` import.
+The base obtains its SQL handle through its own `operation-transaction()` import.
 
 Acme's `acme.record_receipt` calls Receiving's `record_receipt` and then records its inspection in the same host transaction, under the existing purchase-order lock.
 Acme claims the key under its own operation.
@@ -334,21 +340,19 @@ SQLx runs each statement on the same connection.
 The [execution path](execution.md#native-dispatch) describes the transaction.
 
 Counter set and generated delete know their complete success result before the work.
-Their transactional claim inserts that result and skips the finish update.
+The host stages that result and records it when the operation finishes.
+The claim stays open until host commit, including when its result is known in advance.
 The delete result is `{"value":{"outcome":"deleted"}}`.
 A refusal still rolls back the work and the claim.
 
 The component reaches that transaction with `wamn_postgres_statements::operation_transaction()` of `wamn:postgres` 0.4.0, and its data access takes the `Transaction`.
-A `begin` inside such an operation refuses.
 An operation without SQL claims in two steps on a host connection of its own: begin before the call, and finish after it.
 An external-only claim command omits `transaction: explicit_per_input`.
-The compiler refuses an operation that declares an external connection and also does SQL work or begins a host transaction. Split that work into separate operations. SQL operations and external connection operations can share a component.
-Each call resolves only the external connections declared by its executing operation. This uses the invocation authority; it does not inspect transaction state at run time.
+Keep external calls outside SQL transactions as a development practice. The host does not enforce this practice.
 A begun claim has a null `result` until it finishes.
 An unfinished claim answers `in-progress` until its age exceeds `MAX_HOST_CALL_DURATION` plus five seconds for clock skew, or 35 seconds in total.
 After that boundary it answers `outcome-unknown`. A late completion can still record its result.
-HTTP requests and integration exports end at the invocation deadline.
-Blob storage still has an [upstream transport lifetime gap](capabilities.md).
+HTTP requests, integration exports and blob storage calls end at the invocation deadline.
 A commit whose answer is lost also leaves its outcome unknown.
 
 A refused item leaves no row, so its key is free again, and a later different request under that key does its work.
@@ -454,15 +458,14 @@ Unbounded JSON materialization is not a streaming or export interface.
 Arbitrary project SQL remains subject to runtime authority and execution limits.
 Compile-time validation for arbitrary project components remains enabled on demand.
 
-1. A member's instance binds to the union of its own operations' declared statements. This is wider than today's per-entry binding (`operation.rs:661`): Receiving's record\_receipt code could name void\_receipt's statement, and a Receiving read could too. Accepted: a package trusts its own code, as a crate does; a read that writes is its author's bug, and the profile screen shows it. Composition never widens a set to another package.
-2. Mutating base-owned business state goes through the base's exports (`data-access.md:61-62`). Reading or locking base relations through a member's SQL is allowed; Acme already locks `purchase_order` for its overlay-owned fields.
-3. Exports test again their preconditions from the database. A sibling in the same store can forge any record it passes (separate memories, shared data), so typestate from a sibling is not proof.
-4. Members never share host resources. Each obtains its own from its own import instance; none crosses an export (`components.md:44`).
-5. Authorization is the ACL row for the entry, on both sides: required = {entry}, held = the role's rows. The call graph never adds to or subtracts from either. What the entry reaches is the author's responsibility and the admin's information.
+1. Mutating base-owned business state goes through the base's exports (`data-access.md:61-62`). Reading or locking base relations through a member's SQL is allowed; Acme already locks `purchase_order` for its overlay-owned fields.
+2. Exports test again their preconditions from the database. A sibling in the same store can forge any record it passes (separate memories, shared data), so typestate from a sibling is not proof.
+3. Authorization is the ACL row for the entry, on both sides: required = {entry}, held = the role's rows. The call graph never adds to or subtracts from either. What the entry reaches is the author's responsibility and the admin's information.
 
 Two ways to do it wrong: define the linker per request instead of per digest; or let members import different `wamn:postgres` versions, which would mean N ABIs. One version per release is the rule.
 
-wamn has one way to compose packages inside an application: the caller sequences the callee's exported operations, and a callee joins the invocation's host-owned transaction by asking the host for it with operation-transaction(). Existing read exports that open their own guest transaction do not join; inside a command their begin refuses, as today. Converting them is listed in [Deferred](../plan/trx-pkg-plan.md#deferred--build-when-a-consumer-exists). No transaction handle crosses a component boundary. No platform participant or pre-commit mechanism exists; base-declared WIT imports remain as ordinary dependencies.
+Composition preserves ordinary operation calls. Each callee obtains its SQL handle from its own import.
+No transaction handle crosses a component boundary. Base-declared WIT imports remain ordinary dependencies.
 
 Idempotency (ruled 2026-10-12): a key identifies one request to one operation. Acme's `record_receipt` has SQL of its own (the inspection statement), so it claims under its own operation, `acme.record_receipt`, as an ordinary `idempotent_by = claim` command with `transaction = explicit_per_input`. It no longer inherits Receiving's claim: `idempotent_by = {inherited = …}` (wamn.k:55,104) existed for the participant-era SQL-free orchestrator, and dies with it (Cleanup). Consequences, all accepted: (1) a key recorded through `receiving.record_receipt` and resubmitted through `acme.record_receipt` is a second request to a second operation — it runs, Acme's rules apply, and Receiving's row rules decide whether a second receipt exists; the base write entry in a client application is therefore not a routed target (authoring rule; ACL after C). (2) Participant-era keys stored under `receiving.record_receipt` are not replayed by Acme's entry at all; a retry through Acme runs again. Receiving and Acme are portfolio applications on wamn-dev with no production data. The request hash covers the canonical item without its request ID and caller key. `write_log` stays keyed (operation, idempotency\_key), operation versionless (app-schema.sql:630-632), so a retry across a release of the same operation answers the stored result. Cached replay across two entry points with different business rules is exactly what own-operation claims rule out.
 
