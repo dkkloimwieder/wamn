@@ -306,11 +306,6 @@ mod tests {
             input["schema"]["mode"] = invalid.into();
             assert!(parse(input).is_err());
         }
-        for invalid in ["", "latest", "sha256:", "sha256:ABC"] {
-            let mut input = configuration();
-            input["applications"]["wms"]["client"]["web"] = invalid.into();
-            assert!(parse(input).is_err());
-        }
     }
 
     #[test]

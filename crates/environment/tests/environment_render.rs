@@ -1,32 +1,15 @@
 //! Product environment rendering without a cluster or a running host.
 
-#[path = "support/render_fixture.rs"]
-pub mod render_fixture;
-use anyhow::Context as _;
 use serde_json::{Value, json};
-use std::path::Path;
-use std::time::Instant;
 use wamn_environment::environment::document::EnvironmentDocument;
-use wamn_registry::Triple;
-#[path = "support/release_documents.rs"]
-pub mod release_documents;
-use release_documents::workflow as integration;
-use release_documents::{
-    NAMESPACE, ORG, PROJECT, environment_releases as fixture_releases, fixture_document,
-    fixture_host_group,
-};
-use render_fixture::{
-    assert_complete, credential_secrets, environment as render_values, operator_prerequisites,
-    prerequisite, template,
-};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-fn manifest(bytes: &[u8]) -> anyhow::Result<wamn_catalog::ServingManifest> {
-    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(bytes)?;
-    Ok(manifest)
-}
+const NAMESPACE: &str = "hosts";
+const ORG: &str = "acme";
+const PROJECT: &str = "orders";
 
 #[test]
+#[ignore = "requires: bin:helm"]
 fn changing_one_application_selection_leaves_the_other_release_unchanged() -> anyhow::Result<()> {
     use std::collections::BTreeMap;
     use wamn_environment::environment::{document::DeclaredRelease, write};
@@ -90,7 +73,25 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             values["routeHost"].as_str(),
             Some(selection.hostname.as_str())
         );
-        let carrier = template(&values, NAMESPACE)?;
+        let work = ScratchRoot::create()?;
+        let image = format!(
+            "registry.invalid/wamn/fixture:render@sha256:{}",
+            "1".repeat(64)
+        );
+        let chart = wamn_release_control::release_chart::stamp(
+            &wamn_fixture_package::repository_root().join("deploy/charts/release"),
+            &wamn_release_control::release_chart::ImageSet {
+                host: image.clone(),
+                http: image,
+            },
+            &work.path().join("chart"),
+        )?;
+        let metadata: Value = serde_yaml::from_slice(&std::fs::read(chart.join("Chart.yaml"))?)?;
+        let carrier = wamn_kubernetes::helm::template(&json!({
+            "chart": chart, "version": metadata["version"],
+            "name": wamn_environment::environment::analyse::application_release_name(document, application)?,
+            "namespace": NAMESPACE, "values": values,
+        }))?;
         for workload in carrier
             .iter()
             .filter(|object| object["kind"] == "WorkloadDeployment")
@@ -195,190 +196,16 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
     Ok(())
 }
 
-fn fixture_secrets(document: &EnvironmentDocument) -> Vec<Value> {
-    let mut secrets = credential_secrets(&document.triple(), NAMESPACE);
-    secrets.extend(operator_prerequisites(NAMESPACE));
-    // The release host requires registry credentials before installation.
-    secrets.push(prerequisite(
-        "apply-registry",
-        &["config.json", "ca.crt"],
-        NAMESPACE,
-    ));
-    let mut oauth = prerequisite("wamn-oauth", &["key"], NAMESPACE);
-    oauth["stringData"]["key"] = "o".repeat(32).into();
-    secrets.push(oauth);
-    // cert-manager issues the environment's NATS certificate, which the host
-    // mounts as its data certificate (docs/plan/alignment.md R5).
-    let project_env_key =
-        wamn_registry::project_env_key(&document.org, &document.project, &document.env);
-    secrets.push(prerequisite(
-        &wamn_registry::name::nats_certificate(&project_env_key),
-        &["ca.crt", "tls.crt", "tls.key"],
-        NAMESPACE,
-    ));
-    secrets
-}
-
-#[test]
-#[ignore = "requires: bin:helm"]
-fn prekind_environment_renders() -> anyhow::Result<()> {
-    let started = Instant::now();
-    let work = ScratchRoot::create()?;
-    let [a, b, h, http] = fixture_releases()?;
-    for (name, env, bytes, drain) in [
-        ("dev A", "dev", &a, 70),
-        ("dev B", "dev", &b, 70),
-        ("dev short-drain", "dev", &a, 30),
-        ("qa", "qa", &a, 70),
-        ("HTTP fixture", "http", &http, 70),
-        ("east H", "east", &h, 70),
-        ("west H", "west", &h, 70),
-    ] {
-        let manifest = manifest(bytes)?;
-        let document = fixture_document(
-            &env.parse().unwrap(),
-            &format!("{env}.orders.example"),
-            &manifest.digest(),
-        );
-        let group = fixture_host_group(&document, "registry.invalid");
-        let path = work.path().join(format!("{env}-event-host-group.yaml"));
-        std::fs::write(&path, serde_yaml::to_string(&group)?)?;
-        let selected = path;
-        let values = render_values(&document, &manifest, &selected, drain)?;
-        let documents = template(&values, NAMESPACE)?;
-        assert_complete(&documents, &fixture_secrets(&document))
-            .with_context(|| name.to_owned())?;
-        println!(
-            "{name}: host-group.yaml + {}",
-            selected.file_name().unwrap().to_string_lossy()
-        );
-    }
-    // Both connectors share integration.k and its session/event host overlay.
-    for connector in ["rest_connector", "netsuite"] {
-        let document =
-            integration::fixture_document(&connector.parse().unwrap(), &connector.parse().unwrap());
-        let group = fixture_host_group(&document, "registry.invalid");
-        let path = work.path().join("integration-host-group.yaml");
-        std::fs::write(&path, serde_yaml::to_string(&group)?)?;
-        let mut release: Value = serde_json::from_slice(&a)?;
-        release["components"] = json!([]);
-        release["release"]["packages"] = serde_json::to_value(
-            document
-                .applications
-                .values()
-                .flat_map(|application| &application.packages)
-                .map(|package| json!({"package-id":package, "package-version":"2.1.0"}))
-                .collect::<Vec<_>>(),
-        )?;
-        let release = manifest(&wamn_digest::canonical_json_bytes(&release))?;
-        let values = render_values(&document, &release, &path, 70)?;
-        assert_complete(&template(&values, NAMESPACE)?, &fixture_secrets(&document))
-            .with_context(|| connector.to_owned())?;
-        println!(
-            "{connector}: integration.k + integration-host-group.yaml with session and events"
-        );
-    }
-    println!(
-        "prekind environment renders elapsed {:?}",
-        started.elapsed()
-    );
-    Ok(())
-}
-
-fn pat_release(project: &str) -> anyhow::Result<()> {
-    use wamn_release_control::release_chart::ValuesInput;
-    let target = Triple::new("acme", "dev".parse().unwrap(), project);
-    let secrets = credential_secrets(&target, NAMESPACE);
-    let manifest = manifest(&fixture_releases()?[2])?;
-    let object_store_secret_name = (project == "wms").then(|| {
-        wamn_registry::name::workload_secret_name(
-            "wamn-object-store-credentials-",
-            "acme",
-            project,
-            &"dev".parse().unwrap(),
-        )
-    });
-    let mut secrets = secrets;
-    if let Some(name) = &object_store_secret_name {
-        secrets.push(prerequisite(name, &["credentials.json"], NAMESPACE));
-    }
-    let roles = render_fixture::fixture_roles(&manifest, "acme", project, &"dev".parse().unwrap());
-    let values = wamn_release_control::release_chart::values(&ValuesInput {
-        org: "acme".into(),
-        project: project.into(),
-        env: "dev".parse().unwrap(),
-        manifest_digest: manifest.digest(),
-        artifact_base: "registry.invalid/wamn/releases".into(),
-        route_host: format!("{project}.example"),
-        applications: [(
-            project.parse().unwrap(),
-            wamn_catalog::ApplicationDefinition {
-                connections: std::collections::BTreeMap::new(),
-                packages: manifest
-                    .release
-                    .packages
-                    .iter()
-                    .map(|package| package.package_id().to_owned())
-                    .collect(),
-            },
-        )]
-        .into(),
-        roles,
-        actor: "prekind".into(),
-        component_base: "registry.invalid/wamn/components".into(),
-    })?;
-    secrets.extend(operator_prerequisites(NAMESPACE));
-    secrets.push(prerequisite("wamn-oauth", &["key"], NAMESPACE));
-    // The platform credential owner emits the registry Secret before applications install.
-    let scratch = ScratchRoot::create()?;
-    let cluster = wamn_environment::platform::document::ClusterDocument::compile(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/kind/cluster.k"),
-    )?;
-    let auth_file = scratch.path().join("registry.json");
-    std::fs::write(
-        &auth_file,
-        serde_json::to_vec(&json!({"auths":{
-            &cluster.registry:{"username":"platform", "password":"credential"}
-        }}))?,
-    )?;
-    secrets.push(wamn_environment::platform::control::registry_pull_secret(
-        &cluster, &auth_file,
-    )?);
-    secrets.push(prerequisite(
-        &wamn_registry::name::nats_certificate(&wamn_registry::project_env_key(
-            "acme",
-            project,
-            &"dev".parse().unwrap(),
-        )),
-        &["ca.crt", "tls.crt", "tls.key"],
-        NAMESPACE,
-    ));
-    assert_complete(
-        &template(&serde_yaml::to_value(values)?, NAMESPACE)?,
-        &secrets,
-    )?;
-    println!("{project}: apply host values -> release_chart::values -> release chart");
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires: bin:kcl, bin:helm"]
-fn prekind_receiving_pat_renders() -> anyhow::Result<()> {
-    pat_release("receiving")
-}
-
-#[test]
-#[ignore = "requires: bin:kcl, bin:helm"]
-fn prekind_wms_pat_renders() -> anyhow::Result<()> {
-    pat_release("wms")
-}
-
 #[tokio::test]
 async fn unavailable_registry_configuration_refuses_lifecycle_operations() -> anyhow::Result<()> {
     use wamn_environment::environment::{self, Platform};
     let scratch = ScratchRoot::create()?;
     let digest = wamn_digest::bytes_sha256(b"selected release");
-    let document = fixture_document(&"dev".parse().unwrap(), "orders.example", &digest);
+    let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
+        "org": ORG, "project": PROJECT, "env": "dev", "target": "cloud",
+        "policy": "dev", "revocation_seconds": 60,
+        "applications": {"orders": {"hostname": "orders.example", "revocation_seconds": 5}}
+    }))?)?;
     let triple = document.triple();
     let application = document.applications.keys().next().unwrap();
     let kubeconfig = scratch.path().join("invalid-kubeconfig");

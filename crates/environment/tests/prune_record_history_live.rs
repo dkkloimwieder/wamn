@@ -9,8 +9,125 @@ use serde_json::json;
 use wamn_compiler::{GenerationInput, StatementTransactionality, generate};
 use wamn_environment::prune_record_history::prune;
 
-async fn fixture(pool: &sqlx::PgPool) -> (url::Url, Client, String) {
-    let database = wamn_test_postgres::url(pool);
+#[sqlx::test(migrations = false)]
+async fn write_log_retention_expires_completed_and_uncertain_claims_after_thirty_days(
+    pool: sqlx::PgPool,
+) {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::url(&pool);
+    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
+    sqlx::raw_sql("INSERT INTO platform.write_log (operation, idempotency_key, request, result, created_at) VALUES \
+             ('set', 'old-success', 'request', '{\"value\":7}', now() - interval '31 days'), \
+             ('set', 'old-uncertain', 'request', NULL, now() - interval '60 days'), \
+             ('set', 'recent-uncertain', 'request', NULL, now() - interval '29 days'), \
+             ('set', 'recent-success', 'request', '{\"value\":8}', now() - interval '29 days');").execute(&mut client).await.map(drop)
+        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::raw_sql("SET ROLE wamn_audit_retention")
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .unwrap();
+    assert!(
+        prune(&mut client).await.unwrap().is_empty(),
+        "expiry also runs without history targets"
+    );
+    assert!(
+        sqlx::query("SELECT request FROM platform.write_log")
+            .fetch_all(&mut client)
+            .await
+            .is_err()
+    );
+    sqlx::raw_sql("RESET ROLE")
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .unwrap();
+    let keys: Vec<String> =
+        sqlx::query("SELECT idempotency_key FROM platform.write_log ORDER BY idempotency_key")
+            .fetch_all(&mut client)
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+    assert_eq!(keys, ["recent-success", "recent-uncertain"]);
+}
+
+#[sqlx::test(migrations = false)]
+async fn pruning_every_entry_expires_the_cursor(pool: sqlx::PgPool) {
+    async fn cursor(client: &mut Client) -> i64 {
+        sqlx::query("SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint")
+            .fetch_one(&mut *client)
+            .await
+            .expect("read a feed cursor")
+            .get(0)
+    }
+
+    async fn changes_expired(client: &mut Client, changes: &str, cursor: i64) -> bool {
+        sqlx::raw_sql("SET ROLE wamn_app")
+            .execute(&mut *client)
+            .await
+            .map(drop)
+            .unwrap();
+        let row = sqlx::query(sqlx::AssertSqlSafe((changes).to_string()))
+            .bind(&cursor)
+            .bind(&None::<i64>)
+            .bind(&101_i64)
+            .fetch_one(&mut *client)
+            .await
+            .expect("call generated changes as the guest");
+        sqlx::raw_sql("RESET ROLE")
+            .execute(&mut *client)
+            .await
+            .map(drop)
+            .unwrap();
+        // Generated data::changes maps this result to Error::cursor_expired().
+        row.get("expired")
+    }
+
+    async fn prune_as_retention(client: &mut Client) -> u64 {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql(),
+        ))
+        .execute(&mut *client)
+        .await
+        .map(drop)
+        .expect("grant the retention surface");
+        sqlx::raw_sql("SET ROLE wamn_audit_retention")
+            .execute(&mut *client)
+            .await
+            .map(drop)
+            .unwrap();
+        let pruned = prune(client).await.expect("prune as the retention role");
+        sqlx::raw_sql("RESET ROLE")
+            .execute(&mut *client)
+            .await
+            .map(drop)
+            .unwrap();
+        assert_eq!(pruned.len(), 1);
+        pruned[0].removed
+    }
+
+    async fn age_history(client: &mut Client) {
+        sqlx::raw_sql(
+            "UPDATE inventory.widget_history SET changed_at = now() - interval '40 days'",
+        )
+        .execute(&mut *client)
+        .await
+        .map(drop)
+        .unwrap();
+    }
+
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::url(&pool);
     wamn_platform_identity::test_database::project_platform(database.as_str()).await;
     let mut client = wamn_postgres::connect(database.as_str())
         .await
@@ -70,196 +187,44 @@ async fn fixture(pool: &sqlx::PgPool) -> (url::Url, Client, String) {
              GRANT SELECT ON inventory.widget, inventory.widget_history TO wamn_app; \
              ").execute(&mut client).await.map(drop)
         .expect("install history and seed authority");
-    (database, client, changes)
-}
-
-async fn cursor(client: &mut Client) -> i64 {
-    sqlx::query("SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint")
-        .fetch_one(&mut *client)
-        .await
-        .expect("read a feed cursor")
-        .get(0)
-}
-
-async fn changes_expired(client: &mut Client, changes: &str, cursor: i64) -> bool {
-    sqlx::raw_sql("SET ROLE wamn_app")
-        .execute(&mut *client)
-        .await
-        .map(drop)
-        .unwrap();
-    let row = sqlx::query(sqlx::AssertSqlSafe((changes).to_string()))
-        .bind(&cursor)
-        .bind(&None::<i64>)
-        .bind(&101_i64)
-        .fetch_one(&mut *client)
-        .await
-        .expect("call generated changes as the guest");
-    sqlx::raw_sql("RESET ROLE")
-        .execute(&mut *client)
-        .await
-        .map(drop)
-        .unwrap();
-    // Generated data::changes maps this result to Error::cursor_expired().
-    row.get("expired")
-}
-
-async fn prune_as_retention(client: &mut Client) -> u64 {
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql())
-            .to_string(),
-    ))
-    .execute(&mut *client)
-    .await
-    .map(drop)
-    .expect("grant the retention surface");
-    sqlx::raw_sql("SET ROLE wamn_audit_retention")
-        .execute(&mut *client)
-        .await
-        .map(drop)
-        .unwrap();
-    let pruned = prune(client).await.expect("prune as the retention role");
-    sqlx::raw_sql("RESET ROLE")
-        .execute(&mut *client)
-        .await
-        .map(drop)
-        .unwrap();
-    assert_eq!(pruned.len(), 1);
-    pruned[0].removed
-}
-
-async fn age_history(client: &mut Client) {
-    sqlx::raw_sql("UPDATE inventory.widget_history SET changed_at = now() - interval '40 days'")
-        .execute(&mut *client)
-        .await
-        .map(drop)
-        .unwrap();
-}
-
-#[sqlx::test(migrations = false)]
-async fn write_log_retention_expires_completed_and_uncertain_claims_after_thirty_days(
-    pool: sqlx::PgPool,
-) {
-    let _lock = wamn_test_postgres::lock();
-    let (_database, mut client, _) = fixture(&pool).await;
-    sqlx::raw_sql("INSERT INTO platform.write_log (operation, idempotency_key, request, result, created_at) VALUES \
-             ('set', 'old-success', 'request', '{\"value\":7}', now() - interval '31 days'), \
-             ('set', 'old-uncertain', 'request', NULL, now() - interval '60 days'), \
-             ('set', 'recent-uncertain', 'request', NULL, now() - interval '29 days'), \
-             ('set', 'recent-success', 'request', '{\"value\":8}', now() - interval '29 days'); \
-             DROP TRIGGER wamn_record_history_log ON inventory.widget;").execute(&mut client).await.map(drop)
-        .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql())
-            .to_string(),
-    ))
-    .execute(&mut client)
-    .await
-    .map(drop)
-    .unwrap();
-    sqlx::raw_sql("SET ROLE wamn_audit_retention")
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .unwrap();
-    assert!(
-        prune(&mut client).await.unwrap().is_empty(),
-        "expiry also runs without history targets"
-    );
-    assert!(
-        sqlx::query("SELECT request FROM platform.write_log")
-            .fetch_all(&mut client)
-            .await
-            .is_err()
-    );
-    sqlx::raw_sql("RESET ROLE")
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .unwrap();
-    let keys: Vec<String> =
-        sqlx::query("SELECT idempotency_key FROM platform.write_log ORDER BY idempotency_key")
-            .fetch_all(&mut client)
-            .await
-            .unwrap()
-            .iter()
-            .map(|row| row.get(0))
-            .collect();
-    assert_eq!(keys, ["recent-success", "recent-uncertain"]);
-    let index: bool = sqlx::query(
-        "SELECT EXISTS (SELECT FROM pg_index i \
-               JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) \
-               WHERE i.indrelid = 'platform.write_log'::regclass AND a.attname = 'created_at' \
-                 AND i.indisvalid AND i.indnkeyatts = 1 AND i.indpred IS NULL)",
-    )
-    .fetch_one(&mut client)
-    .await
-    .unwrap()
-    .get(0);
-    assert!(index, "the retention cutoff has an index");
-}
-
-#[sqlx::test(migrations = false)]
-async fn pruning_every_entry_expires_the_cursor(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let (_database, mut client, changes) = fixture(&pool).await;
-    let before = cursor(&mut client).await;
-    assert!(!changes_expired(&mut client, &changes, before).await);
-    sqlx::raw_sql("INSERT INTO inventory.widget (id, row_version) VALUES (1, 1)")
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .unwrap();
-    sqlx::raw_sql("DELETE FROM inventory.widget WHERE id = 1")
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .unwrap();
-    let highest: i64 = sqlx::query("SELECT max(transaction_id) FROM inventory.widget_history")
-        .fetch_one(&mut client)
-        .await
-        .unwrap()
-        .get(0);
-    age_history(&mut client).await;
-    assert_eq!(prune_as_retention(&mut client).await, 2);
-    let remaining: i64 = sqlx::query("SELECT count(*) FROM inventory.widget_history")
-        .fetch_one(&mut client)
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(remaining, 0);
-    assert!(changes_expired(&mut client, &changes, before).await);
-    assert!(changes_expired(&mut client, &changes, highest).await);
-    assert!(!changes_expired(&mut client, &changes, highest + 1).await);
-    assert_eq!(prune_as_retention(&mut client).await, 0);
-    assert!(changes_expired(&mut client, &changes, highest).await);
-}
-
-#[sqlx::test(migrations = false)]
-async fn a_cursor_newer_than_the_watermark_does_not_expire(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let (_database, mut client, changes) = fixture(&pool).await;
-    sqlx::raw_sql("INSERT INTO inventory.widget (id, row_version) VALUES (1, 1)")
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .unwrap();
-    let idle = cursor(&mut client).await;
-    age_history(&mut client).await;
-    sqlx::raw_sql("INSERT INTO inventory.widget (id, row_version) VALUES (2, 1)")
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .unwrap();
-    assert_eq!(prune_as_retention(&mut client).await, 1);
-    let first_retained: i64 =
-        sqlx::query("SELECT min(transaction_id) FROM inventory.widget_history")
+    for retain_newer in [false, true] {
+        let before = cursor(&mut client).await;
+        assert!(!changes_expired(&mut client, &changes, before).await);
+        for statement in [
+            "INSERT INTO inventory.widget (id, row_version) VALUES (1, 1)",
+            "DELETE FROM inventory.widget WHERE id=1",
+        ] {
+            sqlx::raw_sql(statement).execute(&mut client).await.unwrap();
+        }
+        let highest: i64 =
+            sqlx::query_scalar("SELECT max(transaction_id) FROM inventory.widget_history")
+                .fetch_one(&mut client)
+                .await
+                .unwrap();
+        let idle = cursor(&mut client).await;
+        age_history(&mut client).await;
+        if retain_newer {
+            sqlx::raw_sql("INSERT INTO inventory.widget (id, row_version) VALUES (2, 1)")
+                .execute(&mut client)
+                .await
+                .unwrap();
+        }
+        assert_eq!(prune_as_retention(&mut client).await, 2);
+        assert!(changes_expired(&mut client, &changes, before).await);
+        assert!(changes_expired(&mut client, &changes, highest).await);
+        assert!(!changes_expired(&mut client, &changes, highest + 1).await);
+        let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM inventory.widget_history")
             .fetch_one(&mut client)
             .await
-            .unwrap()
-            .get(0);
-    assert!(idle < first_retained);
-    assert!(!changes_expired(&mut client, &changes, idle).await);
-    age_history(&mut client).await;
-    assert_eq!(prune_as_retention(&mut client).await, 1);
-    assert!(changes_expired(&mut client, &changes, idle).await);
+            .unwrap();
+        assert_eq!(remaining, i64::from(retain_newer));
+        assert!(!changes_expired(&mut client, &changes, idle).await);
+        assert_eq!(prune_as_retention(&mut client).await, 0);
+        assert!(changes_expired(&mut client, &changes, before).await);
+        if retain_newer {
+            age_history(&mut client).await;
+            assert_eq!(prune_as_retention(&mut client).await, 1);
+            assert!(changes_expired(&mut client, &changes, idle).await);
+        }
+    }
 }

@@ -137,11 +137,16 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions(pool: 
         .unwrap();
     assert_eq!(selected[0].version, 1);
 
-    assert!(
-        bindings::analyse(&mut client, &doc, &[package("gcs")])
-            .await
-            .is_err()
-    );
+    let mut missing = package("http");
+    missing.connections.get_mut("upstream").unwrap().interface =
+        "wamn:connection/metadata@0.1.0".into();
+    for invalid in [package("gcs"), missing] {
+        assert!(
+            bindings::analyse(&mut client, &doc, &[invalid])
+                .await
+                .is_err()
+        );
+    }
     doc.applications.get_mut("app").unwrap().connections.insert(
         "other".into(),
         wamn_catalog::configuration::ConnectionReference {
@@ -492,28 +497,6 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
             .unwrap()
             .get::<i64, _>(0),
         2
-    );
-}
-
-#[sqlx::test(migrations = false)]
-async fn apply_refuses_a_connection_version_missing_one_required_interface(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
-    let mut client = connect(database.as_str()).await;
-    seed(&mut client).await;
-    sqlx::raw_sql("SET ROLE wamn_db_owner")
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .unwrap();
-    let mut package = package("http");
-    package.connections.get_mut("upstream").unwrap().interface =
-        "wamn:connection/metadata@0.1.0".into();
-    assert!(
-        bindings::analyse(&mut client, &document(), &[package])
-            .await
-            .is_err()
     );
 }
 

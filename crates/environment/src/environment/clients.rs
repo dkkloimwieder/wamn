@@ -47,93 +47,48 @@ mod tests {
     use super::*;
     use crate::environment::document::EnvironmentDocument;
 
-    fn document() -> EnvironmentDocument {
-        serde_json::from_value(serde_json::json!({
-            "org": "test", "project": "wms", "env": "dev",
-            "target": "cloud", "policy": "dev","revocation_seconds":60,
-            "applications": {"fixture": {"revocation_seconds":5,"hostname": "wms.example.com"}}}))
-        .unwrap()
-    }
-
-    #[test]
-    fn a_named_client_selects_its_package() {
-        let mut document = document();
-        document.applications.get_mut("fixture").unwrap().client =
-            Some(super::super::document::Client {
-                package: "receiving".parse().unwrap(),
-                web: wamn_digest::bytes_sha256(b"web artifact"),
-            });
-        verify_client_package(
-            &document.applications["fixture"],
-            ["wms".parse().unwrap(), "receiving".parse().unwrap()].iter(),
-        )
-        .unwrap();
-        assert!(
-            verify_client_package(
-                &document.applications["fixture"],
-                ["wms".parse().unwrap()].iter()
-            )
-            .is_err()
-        );
-    }
-
     #[test]
     fn a_web_pin_requires_its_package_but_allows_a_different_code_version() {
         let web: WebManifest =
             serde_json::from_str(include_str!("../../tests/support/web-artifact/web.json"))
                 .unwrap();
-        let mut document = document();
-        // DEP2-03 replaces the shared candidate with application publication.
-        for application in document.applications.values_mut() {
-            application.current = super::super::document::DeclaredRelease::Digest(
-                wamn_digest::bytes_sha256(b"release"),
+        let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(&serde_json::json!({
+            "org": "test", "project": "wms", "env": "dev", "target": "cloud",
+            "policy": "dev", "revocation_seconds": 60,
+            "applications": {"fixture": {"revocation_seconds": 5, "hostname": "wms.example.com",
+                "client": {"package": "web_fixture", "web": wamn_digest::bytes_sha256(b"web artifact")}}}
+        })).unwrap()).unwrap();
+        for (package, packages, member, allowed) in [
+            ("web_fixture", vec![("web_fixture", "1.0.0")], true, true),
+            (
+                "web_fixture",
+                vec![("receiving", "1.0.0"), ("web_fixture", "2.0.0")],
+                true,
+                true,
+            ),
+            ("web_fixture", vec![("receiving", "1.0.0")], false, false),
+            ("receiving", vec![("receiving", "1.0.0")], true, false),
+            ("web_fixture", vec![], false, false),
+        ] {
+            let packages: Vec<(wamn_catalog::PackageName, _)> = packages
+                .into_iter()
+                .map(|(package, version)| (package.parse().unwrap(), version))
+                .collect();
+            let selection = document.applications.get_mut("fixture").unwrap();
+            selection.client.as_mut().unwrap().package = package.parse().unwrap();
+            assert_eq!(
+                verify_client_package(selection, packages.iter().map(|(id, _)| id)).is_ok(),
+                member
+            );
+            assert_eq!(
+                verify(
+                    selection,
+                    &web,
+                    packages.iter().map(|(id, version)| (id, *version))
+                )
+                .is_ok(),
+                allowed
             );
         }
-        document.applications.get_mut("fixture").unwrap().client =
-            Some(super::super::document::Client {
-                package: "web_fixture".parse().unwrap(),
-                web: wamn_digest::bytes_sha256(b"web artifact"),
-            });
-        verify(
-            &document.applications["fixture"],
-            &web,
-            [(&"web_fixture".parse().unwrap(), "2.0.0")].into_iter(),
-        )
-        .unwrap();
-        verify(
-            &document.applications["fixture"],
-            &web,
-            [(&"web_fixture".parse().unwrap(), "1.0.0")].into_iter(),
-        )
-        .unwrap();
-        document
-            .applications
-            .get_mut("fixture")
-            .unwrap()
-            .client
-            .as_mut()
-            .unwrap()
-            .package = "receiving".parse().expect("valid name");
-        assert!(
-            verify(
-                &document.applications["fixture"],
-                &web,
-                [(&"web_fixture".parse().unwrap(), "1.0.0")].into_iter()
-            )
-            .is_err()
-        );
-        document
-            .applications
-            .get_mut("fixture")
-            .unwrap()
-            .client
-            .as_mut()
-            .unwrap()
-            .package = "web_fixture".parse().expect("valid name");
-        // DEP2-03 replaces the shared candidate with application publication.
-        for application in document.applications.values_mut() {
-            application.current = super::super::document::DeclaredRelease::None;
-        }
-        assert!(verify(&document.applications["fixture"], &web, [].into_iter()).is_err());
     }
 }
