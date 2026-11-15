@@ -32,8 +32,6 @@ use wamn_catalog::{ServingManifest, WiringDocument, parse_workflow_schedule};
 
 use std::path::Path;
 
-const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, true)";
-
 /// Params: `$1` `project_env_key`, `$2` environment, `$3` application, `$4` workflow id,
 /// `$5` version, `$6` graph, `$7` hash, `$8` trigger, `$9` execution type,
 /// `$10` execution role, `$11` authoring principal, `$12` schedule,
@@ -333,11 +331,6 @@ pub async fn author_workflow(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     request: &AuthorWorkflowRequest<'_>,
 ) -> Result<wamn_digest::Digest, AuthorWorkflowError> {
-    sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
-        .bind(request.project_env_key())
-        .fetch_one(&mut **transaction)
-        .await
-        .map_err(|error| storage("bind the authoring project identity", error))?;
     let Some(declared) = request.declared.get(request.application) else {
         return Err(AuthorWorkflowError::new(
             AuthorWorkflowErrorType::Application,

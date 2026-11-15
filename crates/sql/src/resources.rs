@@ -178,8 +178,7 @@ pub(super) fn record_query_ms(op: &'static str, project: &str, elapsed: std::tim
 }
 
 /// [9.1] A `wamn.postgres` span over one guest DB call, enriched host-side with
-/// the executing component's project/project (the same identity maps that inject
-/// `app.project_env_key`; the guest cannot spoof them). The name and the `db.*` fields are
+/// the executing component's authenticated project. The name and the `db.*` fields are
 /// this surface's own, while the `wamn.*` identity block is [`effect_span`]'s, shared with
 /// every other effect surface.
 ///

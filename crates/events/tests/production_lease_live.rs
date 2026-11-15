@@ -78,11 +78,6 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     .execute(&mut first_leaseholder)
     .await
     .map(drop)?;
-    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-        .bind(&PROJECT_ENV_KEY)
-        .execute(&mut first_leaseholder)
-        .await
-        .map(|result| result.rows_affected())?;
     let locked = sqlx::query(sqlx::AssertSqlSafe(
         (&select_production_lease_sql()).to_string(),
     ))

@@ -465,12 +465,10 @@ pub(super) struct ProjectPool {
 }
 
 /// Raw checkout state, observed before any identity injection. Condition probes use
-/// this to assert a fresh checkout is transaction-free and identity-free.
+/// this to observe the backend and any transaction that performed writes.
 #[derive(Debug)]
 pub struct CheckoutProbe {
     pub backend_pid: i32,
-    /// `current_setting('app.project_env_key', true)` — must be NULL on a clean conn.
-    pub project_env_key_identity: Option<String>,
     /// `pg_current_xact_id_if_assigned()` — non-NULL means a leaked open
     /// transaction that performed writes.
     pub xact_id: Option<String>,

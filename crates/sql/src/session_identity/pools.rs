@@ -122,12 +122,12 @@ impl WamnPostgres {
             .await
             .map_err(|_| anyhow::anyhow!("no pool for project {project:?}"))?;
         let mut conn = pp.pool.acquire().await?;
-        let row = sqlx::query("SELECT pg_backend_pid(), current_setting('app.project_env_key', true), pg_current_xact_id_if_assigned()::text")
-            .fetch_one(&mut *conn).await?;
+        let row = sqlx::query("SELECT pg_backend_pid(), pg_current_xact_id_if_assigned()::text")
+            .fetch_one(&mut *conn)
+            .await?;
         Ok(CheckoutProbe {
             backend_pid: row.try_get(0)?,
-            project_env_key_identity: row.try_get(1)?,
-            xact_id: row.try_get(2)?,
+            xact_id: row.try_get(1)?,
         })
     }
 

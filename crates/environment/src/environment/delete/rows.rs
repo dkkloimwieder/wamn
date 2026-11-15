@@ -20,16 +20,10 @@ pub async fn delete_registry_rows(
         triple.project.as_str(),
         triple.env.as_str(),
     );
-    let project_env_key = wamn_control_provision::project_env_key(org, project, env);
     let mut lines = Vec::new();
     let mut transaction = crate::provision_project_env::provisioning_transaction(system)
         .await
         .context("begin the row delete")?;
-    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-        .bind(&project_env_key)
-        .fetch_one(&mut *transaction)
-        .await
-        .context("bind the project identity")?;
     let credentials: i64 = sqlx::query(sqlx::AssertSqlSafe(
         (wamn_registry::sql::delete_environment_connections_sql()).to_string(),
     ))

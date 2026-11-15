@@ -78,10 +78,6 @@ pub async fn prune_releases(
     retained: &BTreeSet<wamn_digest::Digest>,
     drops: &mut wamn_broker::connection_changes::ConnectionDrops,
 ) -> anyhow::Result<Vec<wamn_digest::Digest>> {
-    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-        .bind(project_env_key)
-        .execute(&mut **tx)
-        .await?;
     let retained: Vec<_> = retained.iter().copied().collect();
     let removed: Vec<wamn_digest::Digest> = sqlx::query_scalar(
         "SELECT r.manifest_digest FROM catalog.releases r WHERE r.project_env_key=$1 \

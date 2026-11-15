@@ -52,13 +52,20 @@ pub(super) const COMMIT_FINISH_SQL: &str = "WITH finished AS (UPDATE platform.wr
      WHEN (SELECT (wamn_authority.current_identity()).xid) = $4::text::xid8 \
      THEN 1 / count(*)::integer = 1 ELSE false END FROM finished";
 
-/// Finish a host transaction without a claim update in one existing commit call.
-/// A missing caller row fails before COMMIT, so this connection is discarded.
-pub(super) fn commit_sql(xid: &str) -> String {
-    format!(
+/// Refuse a host transaction whose original caller row is no longer current.
+/// The caller commits only after this query succeeds.
+pub(super) async fn check_commit_identity(
+    connection: &mut sqlx::PgConnection,
+    xid: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
         "SELECT 1 / COALESCE(\
-        ((SELECT (wamn_authority.current_identity()).xid) = '{xid}'::xid8)::integer, 0); COMMIT"
+         ((SELECT (wamn_authority.current_identity()).xid) = $1::text::xid8)::integer, 0)",
     )
+    .bind(xid)
+    .execute(connection)
+    .await
+    .map(drop)
 }
 
 /// Free the key of a two-step claim whose request element was refused.

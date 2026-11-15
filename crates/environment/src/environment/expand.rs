@@ -135,10 +135,6 @@ pub(super) async fn prepare_at(
     .execute(&mut *tx)
     .await
     .map(drop)?;
-    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-        .bind(&project_env_key)
-        .fetch_one(&mut *tx)
-        .await?;
     super::document::write_revocation_configuration(&mut tx, document).await?;
     wamn_publish::connection_requirement::prepare_release(
         &mut tx,

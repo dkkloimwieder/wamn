@@ -163,12 +163,6 @@ async fn provision_project(project: &mut Client, project_url: &str) {
     })
     .await
     .expect("apply the connection-binding package fixture");
-    sqlx::query("SELECT set_config('app.project_env_key', $1, false)")
-        .bind(&PROJECT_ENV_KEY)
-        .execute(&mut *project)
-        .await
-        .map(|result| result.rows_affected())
-        .expect("target the project seed session");
     sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,'erp','wamn:connection/http@0.1.0','read')")
         .bind(PROJECT_ENV_KEY).bind(HTTP_SIDECAR).bind(PACKAGE)
         .execute(&mut *project).await.unwrap();

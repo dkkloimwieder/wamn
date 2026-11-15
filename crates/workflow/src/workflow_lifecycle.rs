@@ -34,8 +34,6 @@ use crate::author_workflow::{
 };
 use wamn_registry::lifecycle_lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
 
-const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, true)";
-
 /// Params `$1` to `$5`: the version's key.
 const SELECT_VERSION_SQL: &str = "\
 SELECT graph_json::text, wiring_hash, execution_role, trigger, source_package, entity, ops, condition FROM catalog.workflows \
@@ -202,7 +200,7 @@ pub async fn enable_workflow(
         .map(|application| application.packages.clone())
         .unwrap_or_default();
     under_lock(system_url, triple, async || {
-        let mut transaction = begin(project, &workflow.project_env_key()).await?;
+        let mut transaction = begin(project).await?;
         enable_in(
             &mut transaction,
             workflow,
@@ -233,7 +231,7 @@ pub async fn disable_workflow(
     workflow: &WorkflowVersion<'_>,
 ) -> Result<(), WorkflowLifecycleError> {
     under_lock(system_url, triple, async || {
-        let mut transaction = begin(project, &workflow.project_env_key()).await?;
+        let mut transaction = begin(project).await?;
         let changed = sqlx::query(DISABLE_SQL)
             .bind(workflow.project_env_key())
             .bind(workflow.environment)
@@ -286,20 +284,13 @@ async fn under_lock(
     }
 }
 
-async fn begin<'a>(
-    project: &'a mut Client,
-    project_env_key: &str,
-) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, WorkflowLifecycleError> {
-    let mut transaction = project
+async fn begin(
+    project: &mut Client,
+) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, WorkflowLifecycleError> {
+    project
         .begin()
         .await
-        .map_err(|error| storage("begin the workflow transaction", error))?;
-    sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
-        .bind(project_env_key)
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(|error| storage("bind the workflow project identity", error))?;
-    Ok(transaction)
+        .map_err(|error| storage("begin the workflow transaction", error))
 }
 
 async fn commit(

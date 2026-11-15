@@ -148,11 +148,6 @@ pub async fn stranded(
         .begin()
         .await
         .context("begin the stranded-run read")?;
-    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-        .bind(project_env_key)
-        .fetch_one(&mut *transaction)
-        .await
-        .context("bind the project identity")?;
     let stranded = sqlx::query(STRANDED_SQL)
         .bind(project_env_key)
         .bind(environment)

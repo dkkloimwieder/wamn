@@ -451,11 +451,6 @@ pub async fn read_project(
         Err(error) => return Err(error.context("project database state is unknown")),
     };
     let mut transaction = client.begin().await.context("begin the project read")?;
-    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-        .bind(project_env_key)
-        .fetch_one(&mut *transaction)
-        .await
-        .context("bind the project identity")?;
     let mut installed = BTreeMap::<String, Installed>::new();
     for row in sqlx::query(
         "SELECT package_id, package_version FROM catalog.packages \

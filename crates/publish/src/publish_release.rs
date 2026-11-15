@@ -52,7 +52,6 @@ pub use manifest_push::push_manifest_bytes;
 #[cfg(test)]
 use attachments::merge_package_attachment_documents;
 
-const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, false)";
 const READ_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
  WHERE project_env_key = $1 AND manifest_digest = $2";
@@ -717,11 +716,6 @@ pub async fn read_release(
     project_env_key: &str,
     manifest_digest: &wamn_digest::Digest,
 ) -> Result<Option<Vec<u8>>, PublishManifestError> {
-    sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
-        .bind(project_env_key)
-        .fetch_one(&mut **transaction)
-        .await
-        .map_err(|error| storage("bind the release project identity", error))?;
     sqlx::query(READ_RELEASE_SQL)
         .bind(project_env_key)
         .bind(manifest_digest)

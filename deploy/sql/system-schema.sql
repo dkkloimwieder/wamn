@@ -13,7 +13,7 @@
 --
 -- PLATFORM-GLOBAL, NOT PROJECT-OWNED — the sharpest difference from
 -- catalog-schema.sql: the system DB is the platform's own single-project
--- control-plane state. There is NO `app.project_env_key` identity, NO per-project RLS base grants,
+-- control-plane state. There are no per-project RLS base grants,
 -- NO NULLIF/CHECK(project_id <> '') pattern here. The top-level key is `org_id`;
 -- access is the `wamn_system` owner role (from wamn-q3n.2). The control-plane
 -- families get their grants from `stable_surface_sql` in wamn-control-provision.

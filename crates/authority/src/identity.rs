@@ -58,8 +58,8 @@ impl ReleaseIdentity {
 /// an acquisition that declares nothing must get.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionIdentity {
-    /// `app.project_env_key` — the RLS identity. Required: a session with no project_env_key is
-    /// refused by [`WamnPostgres::require_project_env_key`] rather than run without an identity.
+    /// The target project environment. A session without it is refused by
+    /// [`WamnPostgres::require_project_env_key`] before selecting a database.
     pub project_env_key: String,
     /// Which project database this session resolves against. `None` ⇒ the
     /// default project.

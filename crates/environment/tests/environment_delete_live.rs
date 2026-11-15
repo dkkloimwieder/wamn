@@ -265,12 +265,6 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
         .execute(&mut *transaction)
         .await
         .map(drop)?;
-        let project_env_key =
-            wamn_control_provision::project_env_key(&target.org, &target.project, &target.env);
-        sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-            .bind(&project_env_key)
-            .fetch_one(&mut *transaction)
-            .await?;
     }
     sqlx::raw_sql(wamn_registry::test_util::deletion_target_sql())
         .execute(&mut *transaction)

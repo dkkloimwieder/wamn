@@ -390,11 +390,6 @@ pub async fn write_release(
     .execute(&mut *transaction)
     .await
     .context("bind the release publisher and provisioning operation")?;
-    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-        .bind(project_env_key)
-        .fetch_one(&mut *transaction)
-        .await
-        .context("bind the project identity")?;
     sqlx::query(wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
         .bind(project_env_key)
         .fetch_one(&mut *transaction)

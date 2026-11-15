@@ -582,14 +582,6 @@ async fn seed_with_client(
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
     let wiring_hash = document.wiring_hash();
-    // Every catalog table FORCEs RLS on `app.project_env_key`, and a superuser is not
-    // exempt from FORCE — the identity is what makes these writes land at all.
-    sqlx::query("SELECT set_config('app.project_env_key', $1, false)")
-        .bind(PROJECT_ENV_KEY)
-        .fetch_one(&mut *client)
-        .await
-        .context("bind the seeding project identity")?;
-
     let package_manifest = serde_json::json!({
         "package": {"id": PACKAGE, "version": PACKAGE_VERSION},
         "models": {},

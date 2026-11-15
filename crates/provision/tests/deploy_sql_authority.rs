@@ -287,7 +287,6 @@ DO $$ DECLARE target record; own boolean; foreign_rows boolean; BEGIN
             target.relation,target.project_column,target.relation,target.project_column) INTO own;
         ASSERT own, 'missing isolation fixture for ' || target.relation;
         SET LOCAL ROLE "{guest}";
-        PERFORM set_config('app.project_env_key','t2',true);
         PERFORM set_config('app.user_id','{ACTOR_B}',true);
         PERFORM set_config('app.role','admin',true);
         EXECUTE format('SELECT EXISTS(SELECT FROM %s WHERE %I = ''t1''), '
