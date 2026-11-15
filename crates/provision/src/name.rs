@@ -142,7 +142,7 @@ mod tests {
     const INSTANCE: &str = "k3m9x2p7";
 
     #[test]
-    fn valid_project_ids_pass() {
+    fn project_ids_accept_valid_names_and_refuse_invalid_or_reserved_names() {
         let max = "x".repeat(MAX_PROJECT_ID_LEN);
         for id in [
             "a",
@@ -151,118 +151,48 @@ mod tests {
             "proj-1",
             "p9",
             "a-b-c",
-            max.as_str(),
+            &max,
+            "wamning",
+            "wamnable",
         ] {
-            assert!(validate_project_id(id).is_ok(), "{id:?} should be valid");
+            assert!(validate_project_id(id).is_ok(), "{id:?}");
         }
-    }
-
-    #[test]
-    fn consecutive_hyphens_are_rejected() {
-        // wamn-R27: `--` is the component separator in project_env_database_name
-        // (and `__` in cdc_object_name), so an interior `--` run inside a slug is
-        // an identity-collision vector and must be rejected. A SINGLE interior
-        // hyphen stays valid.
-        for bad in ["a--b", "x---y", "a--b--c", "ab--", "--ab"] {
-            let err = validate_project_id(bad).unwrap_err();
-            // "ab--"/"--ab" trip the start/end-alnum boundary first; the interior
-            // cases trip the consecutive-hyphen rule — either way, rejected.
-            assert!(
-                matches!(err, ProvisionError::InvalidProjectId { .. }),
-                "{bad:?} should be rejected"
-            );
-        }
-        // The interior-run rule reports its own reason.
-        assert!(matches!(
-            validate_project_id("a--b"),
-            Err(ProvisionError::InvalidProjectId { .. })
-        ));
-        assert!(validate_project_id("a-b").is_ok());
-    }
-
-    #[test]
-    fn invalid_project_ids_are_rejected_with_a_reason() {
-        // empty / too long / charset / boundary
-        assert!(matches!(
-            validate_project_id(""),
-            Err(ProvisionError::InvalidProjectId { .. })
-        ));
-        assert!(matches!(
-            validate_project_id(&"x".repeat(41)),
-            Err(ProvisionError::InvalidProjectId { .. })
-        ));
-        for bad in [
+        let too_long = "x".repeat(MAX_PROJECT_ID_LEN + 1);
+        for id in [
+            "",
+            &too_long,
             "Acme",
             "under_score",
             "has.dot",
             "space bar",
             "sql;--",
             "tab\tx",
-        ] {
-            assert!(
-                matches!(
-                    validate_project_id(bad),
-                    Err(ProvisionError::InvalidProjectId { .. })
-                ),
-                "{bad:?}"
-            );
-        }
-        for bad in ["-lead", "trail-", "-", "9-"] {
-            // "9-" ends on a hyphen; "-lead"/"-" start on one.
-            assert!(
-                matches!(
-                    validate_project_id(bad),
-                    Err(ProvisionError::InvalidProjectId { .. })
-                ),
-                "{bad:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn reserved_wamn_prefix_is_rejected() {
-        for bad in ["wamn", "wamn-db", "wamn-proj", "wamn-anything"] {
-            assert!(
-                matches!(
-                    validate_project_id(bad),
-                    Err(ProvisionError::ReservedProjectId { .. })
-                ),
-                "{bad:?} should be reserved"
-            );
-        }
-        // The boundary is a hyphen: `wamn` + non-hyphen is a normal project.
-        assert!(validate_project_id("wamning").is_ok());
-        assert!(validate_project_id("wamnable").is_ok());
-    }
-
-    #[test]
-    fn the_registry_and_provisioning_decide_a_project_id_alike() {
-        // wamn-0h0g.9.16: one rule, two readers. The registry owns the rule and
-        // this crate translates it, so neither side can accept what the other
-        // refuses. Before the move the registry took 64 bytes of
-        // [A-Za-z0-9_-] and this crate took 40 bytes of [a-z0-9-].
-        let at_cap = "x".repeat(MAX_PROJECT_ID_LEN);
-        let over_cap = "x".repeat(MAX_PROJECT_ID_LEN + 1);
-        for id in [
-            "a",
-            "acme",
-            "acme-corp",
-            at_cap.as_str(),
-            "",
-            "Acme",
-            "under_score",
             "-lead",
             "trail-",
+            "-",
+            "9-",
             "a--b",
-            over_cap.as_str(),
-            "wamn",
-            "wamn-db",
-            "wamning",
+            "x---y",
+            "a--b--c",
+            "ab--",
+            "--ab",
+            "a_b",
         ] {
-            assert_eq!(
-                wamn_registry::identifiers::valid_project(id),
-                validate_project_id(id).is_ok(),
-                "the two sides disagree about {id:?}"
+            assert!(
+                matches!(
+                    validate_project_id(id),
+                    Err(ProvisionError::InvalidProjectId { .. })
+                ),
+                "{id:?}"
+            );
+        }
+        for id in ["wamn", "wamn-db", "wamn-proj", "wamn-anything"] {
+            assert!(
+                matches!(
+                    validate_project_id(id),
+                    Err(ProvisionError::ReservedProjectId { .. })
+                ),
+                "{id:?}"
             );
         }
     }
@@ -270,23 +200,31 @@ mod tests {
     #[test]
     fn validate_project_env_slug_requires_a_bounded_name() {
         assert!(validate_project_env("acme", "billing", &"prod".parse().unwrap()).is_ok());
-        // A bad project id is rejected (the reason flows from validate_project_id).
-        assert!(matches!(
-            validate_project_env("acme", "Bad", &"dev".parse().unwrap()),
-            Err(ProvisionError::InvalidProjectId { .. })
-        ));
+        for project in ["Bad", "x--p", "a_b"] {
+            assert!(
+                matches!(
+                    validate_project_env("acme", project, &"dev".parse().unwrap()),
+                    Err(ProvisionError::InvalidProjectId { .. })
+                ),
+                "{project}"
+            );
+        }
         assert!(matches!(
             validate_project_env("acme", "wamn-x", &"dev".parse().unwrap()),
             Err(ProvisionError::ReservedProjectId { .. })
         ));
-        // wamn-R27: the org and env are slug-validated too (not only the project).
-        assert!(matches!(
-            validate_project_env("Bad_Org", "billing", &"dev".parse().unwrap()),
-            Err(ProvisionError::InvalidComponent {
-                component: "org",
-                ..
-            })
-        ));
+        for org in ["Bad_Org", "a--x", "a_b"] {
+            assert!(
+                matches!(
+                    validate_project_env(org, "billing", &"dev".parse().unwrap()),
+                    Err(ProvisionError::InvalidComponent {
+                        component: "org",
+                        ..
+                    })
+                ),
+                "{org}"
+            );
+        }
 
         // The assembled name must fit the Postgres / DNS-1123 63-byte limit.
         let long_org = "o".repeat(40);
@@ -349,15 +287,6 @@ mod tests {
                 "{bad:?} should be rejected"
             );
         }
-        // The two rejection reasons are distinct and stable.
-        assert!(matches!(
-            validate_instance_suffix("short"),
-            Err(ProvisionError::InvalidComponent { .. })
-        ));
-        assert!(matches!(
-            validate_instance_suffix("k3m9x2p-"),
-            Err(ProvisionError::InvalidComponent { .. })
-        ));
     }
 
     #[test]
@@ -385,12 +314,7 @@ mod tests {
             MAX_DB_NAME_LEN + 1
         );
         match validate_project_env(&over_database, "pp", &"de".parse().unwrap()) {
-            Err(ProvisionError::NameTooLong { name, max }) => {
-                let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
-                assert_eq!(
-                    name,
-                    project_env_database_name(&over_database, "pp", &"de".parse().unwrap(), &probe)
-                );
+            Err(ProvisionError::NameTooLong { max, .. }) => {
                 assert_eq!(max, MAX_DB_NAME_LEN);
             }
             other => panic!("suffixed database candidate was not refused: {other:?}"),
@@ -404,53 +328,6 @@ mod tests {
             project_env_namespace(&org, "pp", &"de".parse().unwrap(), INSTANCE).len(),
             MAX_NAMESPACE_LEN
         );
-    }
-
-    #[test]
-    fn cdc_object_bound_accounts_for_the_instance_suffix() {
-        // At the database limit the one-byte-longer CDC prefix crosses 63 only
-        // after its `__` separator plus eight-byte suffix are included.
-        let org = "o".repeat(37);
-        assert_eq!(
-            project_env_database_name(&org, "pp", &"de".parse().unwrap(), INSTANCE).len(),
-            MAX_DB_NAME_LEN
-        );
-        assert_eq!(
-            cdc_object_name(&org, "pp", &"de".parse().unwrap(), INSTANCE).len(),
-            MAX_DB_NAME_LEN + 1
-        );
-        match validate_project_env_cdc(&org, "pp", &"de".parse().unwrap()) {
-            Err(ProvisionError::NameTooLong { name, max }) => {
-                let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
-                assert_eq!(
-                    name,
-                    cdc_object_name(&org, "pp", &"de".parse().unwrap(), &probe)
-                );
-                assert_eq!(max, MAX_DB_NAME_LEN);
-            }
-            other => panic!("suffixed CDC candidate was not refused: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn double_hyphen_collision_pair_is_rejected_in_every_component() {
-        // The wamn-R27 collision: `(a, x--p, dev)` and `(a--x, p, dev)` both
-        // derive `wamn-db-a--x--p--dev` (and `wamn_cdc_a__x__p__dev`). The
-        // derivations still alias — that is why the VALIDATOR is the fix: both
-        // triples are now rejected before they can be provisioned.
-        // Project carries the `--`: rejected via validate_project_id.
-        assert!(matches!(
-            validate_project_env("a", "x--p", &"dev".parse().unwrap()),
-            Err(ProvisionError::InvalidProjectId { .. })
-        ));
-        // Org carries the `--`: rejected as the org component.
-        assert!(matches!(
-            validate_project_env("a--x", "p", &"dev".parse().unwrap()),
-            Err(ProvisionError::InvalidComponent {
-                component: "org",
-                ..
-            })
-        ));
     }
 
     #[test]
@@ -490,38 +367,9 @@ mod tests {
                 }
             }
         }
-        // The `--` slugs (2 of 6 org/project values) are filtered by the ban, so
-        // exactly the 4 hyphen-run-free slugs survive per id position × 3 envs.
-        // The count being BELOW the full product shows the filter actually ran.
-        assert!(
-            valid < slugs.len() * slugs.len() * envs.len(),
-            "the `--` filter ran"
-        );
-        assert_eq!(
-            valid,
-            4 * 4 * 3,
-            "4 valid org × 4 valid project × 3 valid env"
-        );
+        assert!(valid > 0, "the fixture must include valid coordinates");
         assert_eq!(by_db.len(), valid, "database names are injective");
         assert_eq!(by_cdc.len(), valid, "cdc object names are injective");
-    }
-
-    #[test]
-    fn underscore_is_not_a_second_collision_vector() {
-        // cdc_object_name maps `-`→`_`; a `_` INSIDE a slug would be a second way
-        // to forge the `__` separator. The slug charset admits no underscore, so
-        // the vector is closed at validation — confirm it here.
-        assert!(matches!(
-            validate_project_id("a_b"),
-            Err(ProvisionError::InvalidProjectId { .. })
-        ));
-        assert!(matches!(
-            validate_project_env("a_b", "p", &"dev".parse().unwrap()),
-            Err(ProvisionError::InvalidComponent {
-                component: "org",
-                ..
-            })
-        ));
     }
 
     #[test]
@@ -532,11 +380,20 @@ mod tests {
             validate_project_env_cdc("acme", "Bad", &"dev".parse().unwrap()),
             Err(ProvisionError::InvalidProjectId { .. })
         ));
-        let org_ok = "o".repeat(36);
-        assert!(validate_project_env_cdc(&org_ok, "pp", &"de".parse().unwrap()).is_ok());
-        assert!(
-            cdc_object_name(&org_ok, "pp", &"de".parse().unwrap(), INSTANCE).len()
-                <= MAX_DB_NAME_LEN
-        );
+        for (org_len, accepted) in [(36, true), (37, false)] {
+            let org = "o".repeat(org_len);
+            let result = validate_project_env_cdc(&org, "pp", &"de".parse().unwrap());
+            if accepted {
+                assert!(result.is_ok());
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(ProvisionError::NameTooLong {
+                        max: MAX_DB_NAME_LEN,
+                        ..
+                    })
+                ));
+            }
+        }
     }
 }

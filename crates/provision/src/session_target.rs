@@ -249,7 +249,10 @@ mod tests {
         let explicit = format!("postgres://{username}:password@localhost/{database}");
         for input in [native.to_json().unwrap(), explicit] {
             let target = SessionTarget::new(&triple, instance, &key, &input).unwrap();
-            assert!(SessionTarget::from_json(target.to_json().unwrap().as_bytes()).is_ok());
+            let decoded = SessionTarget::from_json(target.to_json().unwrap().as_bytes()).unwrap();
+            assert_eq!(decoded.triple(), target.triple());
+            assert_eq!(decoded.project_env_key(), target.project_env_key());
+            assert_eq!(decoded.instance_suffix(), target.instance_suffix());
         }
         assert!(
             SessionTarget::new(

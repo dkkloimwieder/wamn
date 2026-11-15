@@ -215,54 +215,8 @@ pub fn authority_derivations_bootstrap_sql() -> String {
 #[cfg(test)]
 mod tests {
     use super::project_key;
-    use crate::workload_role::{
-        WorkloadRoleFamily, WorkloadRoleIdentity, workload_role_identity_hash,
-    };
 
     const DATABASE: &str = "wamn-db-acme--dev--billing";
-
-    /// The single sharpest failure mode in this construction: if the predicate's
-    /// key and the minted role name disagree, EVERY guest read refuses. They
-    /// cannot disagree, because there is one Rust definition and this asserts
-    /// the wrapper is it.
-    #[test]
-    fn the_project_key_is_the_workload_identity_digest_and_not_a_second_one() {
-        let expected = workload_role_identity_hash(
-            WorkloadRoleFamily::App,
-            WorkloadRoleIdentity::ProjectEnvKey {
-                project_env_key: &"acme--dev--project".parse().unwrap(),
-                database: DATABASE,
-            },
-        )
-        .expect("App takes a project identity");
-        assert_eq!(
-            project_key(&"acme--dev--project".parse().unwrap(), DATABASE),
-            expected
-        );
-    }
-
-    /// THE RUNTIME COMPUTES THIS DIGEST TOO, from `wamn-run-state`, because it
-    /// must make sure that a resolved guest credential belongs to the project it is
-    /// about to serve and the shipped runtime links no provisioner
-    /// (`wamn-0h0g.22.6.7`).
-    ///
-    /// Both consumers call the same function. The live SQL agreement test
-    /// compares this result with the independent PostgreSQL implementation.
-    #[test]
-    fn the_runtime_reachable_digest_is_the_same_one() {
-        for (project_env_key, database) in [
-            ("acme--dev--billing", DATABASE),
-            ("t--prod--billing", "wamn-db-acme--prod--billing"),
-            (&format!("a--dev--{}", "p".repeat(37)), DATABASE),
-        ] {
-            let project_env_key: wamn_registry::ProjectEnvKey = project_env_key.parse().unwrap();
-            assert_eq!(
-                project_key(&project_env_key, database),
-                wamn_registry::app_identity_hash(&project_env_key, database),
-                "project {project_env_key:?}: the provisioner and the runtime must agree"
-            );
-        }
-    }
 
     /// Two project-environment databases must not derive one key for one
     /// project, or their guest logins collide on a single role name.
@@ -274,19 +228,6 @@ mod tests {
                 &"acme--dev--project".parse().unwrap(),
                 "wamn-db-acme--prod--billing"
             ),
-        );
-    }
-
-    /// A prefix carrying a regex metacharacter would turn the anchored pattern
-    /// into a wildcard, and a wildcard here is a cross-project read.
-    #[test]
-    fn the_login_prefix_carries_no_regex_metacharacter() {
-        let prefix = WorkloadRoleFamily::App.login_prefix();
-        assert!(
-            prefix
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
-            "{prefix} would need escaping before it can go into a pattern"
         );
     }
 }

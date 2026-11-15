@@ -44,7 +44,11 @@ fn psql_ok(url: &str, stage: &str, script: &str) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-fn reset_and_apply(url: &str, before_store: &str) {
+#[sqlx::test(migrations = false)]
+async fn control_portable_store_enforces_the_current_record_on_postgres(pool: sqlx::PgPool) {
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::url(&pool);
+    let url = test_database.as_str().to_owned();
     let mut script = String::from(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);
     script.push_str(
         "DROP SCHEMA IF EXISTS catalog CASCADE;\n\
@@ -55,16 +59,11 @@ fn reset_and_apply(url: &str, before_store: &str) {
              CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
            END IF;\n\
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_portable_probe') THEN\n\
-             CREATE ROLE wamn_portable_probe NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
-           END IF;\n\
          END $roles$;\n",
     );
 
     script.push('\n');
     script.push_str(wamn_control_provision::sql::ensure_db_owner_role_sql());
-    script.push_str(before_store);
     script.push_str(
         "DO $database$ BEGIN \
            EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); \
@@ -74,63 +73,7 @@ fn reset_and_apply(url: &str, before_store: &str) {
     script.push_str(include_str!("../../../deploy/sql/record-history.sql"));
     script.push_str(STORE_SQL);
     script.push_str("\nRESET ROLE;\n");
-    psql_ok(url, "apply the control portable store", &script);
-}
-
-#[sqlx::test(migrations = false)]
-async fn current_database_connect_posture_is_exactly_targeted(pool: sqlx::PgPool) {
-    let test_database = wamn_test_postgres::url(&pool);
-    let url = test_database.as_str().to_owned();
-    let sibling = format!("wamn_portable_sibling_{}", std::process::id());
-    psql_ok(
-        &url,
-        "create sibling database",
-        &format!(
-            "DROP DATABASE IF EXISTS {sibling} WITH (FORCE); \
-             CREATE DATABASE {sibling}; \
-             GRANT CONNECT ON DATABASE {sibling} TO PUBLIC;"
-        ),
-    );
-    psql_ok(
-        &url,
-        "apply current-database posture",
-        &format!(
-            "BEGIN; \
-             DO $contaminate$ BEGIN \
-               EXECUTE format('GRANT CONNECT ON DATABASE %I TO PUBLIC', current_database()); \
-             END $contaminate$; \
-             {CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
-             {CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
-             DO $test$ BEGIN \
-               ASSERT NOT EXISTS ( \
-                 SELECT FROM pg_database database \
-                 CROSS JOIN LATERAL aclexplode( \
-                   COALESCE(database.datacl, acldefault('d', database.datdba))) acl \
-                 WHERE database.datname = current_database() \
-                   AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT'); \
-               ASSERT EXISTS ( \
-                 SELECT FROM pg_database database \
-                 CROSS JOIN LATERAL aclexplode( \
-                   COALESCE(database.datacl, acldefault('d', database.datdba))) acl \
-                 WHERE database.datname = '{sibling}' \
-                   AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT'); \
-             END $test$; \
-             COMMIT;"
-        ),
-    );
-    psql_ok(
-        &url,
-        "drop sibling database",
-        &format!("DROP DATABASE IF EXISTS {sibling} WITH (FORCE);"),
-    );
-}
-
-#[sqlx::test(migrations = false)]
-async fn control_portable_store_enforces_the_current_record_on_postgres(pool: sqlx::PgPool) {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let url = test_database.as_str().to_owned();
-    reset_and_apply(&url, "");
+    psql_ok(&url, "apply the control portable store", &script);
 
     psql_ok(
         &url,

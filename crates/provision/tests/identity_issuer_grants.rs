@@ -40,7 +40,10 @@ async fn identity_issuer_refusals_and_catalog_rules() {
         writes.is_empty(),
         "issuer writes outside identity storage: {writes:?}"
     );
+    grants::execute(&mut connection, "SELECT id FROM identity.principals").await;
     for statement in [
+        "SELECT * FROM registry.orgs",
+        "DELETE FROM identity.pats",
         "DELETE FROM registry.projects",
         "UPDATE identity.pats SET token_hash=repeat('f',64)",
         "SELECT * FROM platform.login_principal",
