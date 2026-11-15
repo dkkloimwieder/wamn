@@ -1191,7 +1191,9 @@ impl Runner<'_> {
                 .arg(executable.as_str())
                 .current_dir(directory)
                 .env("CARGO_MANIFEST_DIR", directory)
-                .env("CARGO_MANIFEST_PATH", &package.manifest_path);
+                .env("CARGO_MANIFEST_PATH", &package.manifest_path)
+                // Match the WAMN engine policy before the SDK caches this input.
+                .env("WASH_ABANDONED_CALL_GRACE_SECS", "0");
             command
         };
         let listed = process::execute_before(

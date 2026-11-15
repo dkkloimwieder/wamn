@@ -3,9 +3,9 @@
 //!
 //! Each test binary builds the bundle once. It reads the `edge_device`
 //! component from the package's build output, so run
-//! `wamn build apps/edge_device` first. Cargo builds the http-route guest as
-//! the Dockerfile does, which must match its pin. `write_package`, the dev
-//! loop's bundle writer, admits the component and writes the bundle.
+//! `wamn build apps/edge_device` first. `WAMN_FLOW_HTTP_COMPONENT` supplies the
+//! prebuilt route guest, which must match its pin. `write_package` admits the
+//! component and writes the bundle.
 
 #![allow(
     dead_code,
@@ -13,7 +13,6 @@
 )]
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -117,21 +116,14 @@ pub fn bundle(test: &str, public: &PublicSessionKey) -> (PathBuf, String) {
     (directory, bytes_sha256(&bundle))
 }
 
-/// Build the route guest into `apps/target`, and write the bundle of `apps/edge_device`, with the
-/// component of its build, into a new directory of this test binary.
+/// Write the bundle from the prepared application and pinned route guest.
 fn build_bundle() -> PathBuf {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let package = repository.join("apps/edge_device");
-    let flags = run(Command::new("cargo")
-        .current_dir(&repository)
-        .args(["xtask", "guest-rustflags"]));
-    run(Command::new(env!("CARGO"))
-        .current_dir(repository.join("apps"))
-        .env_remove("CARGO_TARGET_DIR")
-        .env("RUSTFLAGS", String::from_utf8(flags).expect("flags").trim())
-        .args(["build", "--locked", "--offline", "--release"])
-        .args(["--target", "wasm32-wasip2", "-p", "http-route"]));
-    let ingress = repository.join("apps/target/wasm32-wasip2/release/http_route.wasm");
+    let ingress = PathBuf::from(
+        std::env::var_os("WAMN_FLOW_HTTP_COMPONENT")
+            .expect("set WAMN_FLOW_HTTP_COMPONENT to the pinned route guest"),
+    );
     let pin = std::fs::read_to_string(
         repository.join("apps/platform/ingress/http-route/http_route.wasm.sha256"),
     )
@@ -159,18 +151,6 @@ fn build_bundle() -> PathBuf {
     )
     .expect("write the edge_device bundle");
     out
-}
-
-/// Run `command` and return its standard output, or fail the test with its
-/// standard error.
-fn run(command: &mut Command) -> Vec<u8> {
-    let output = command.output().expect("start the build command");
-    assert!(
-        output.status.success(),
-        "{command:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output.stdout
 }
 
 /// The configuration of the edge over the bundle in `directory`, with no

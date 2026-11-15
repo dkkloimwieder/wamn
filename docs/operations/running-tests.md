@@ -33,7 +33,7 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file in a Cargo package selects that package and its dependents in every workspace that resolves it: normal and build dependents transitively, then one development dependent.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
-- Any `Cargo.toml` or `Cargo.lock` also runs `cargo xtask compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it.
+- Any `Cargo.toml` or `Cargo.lock` also runs `cargo xtask compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it. The command prints the elapsed time for each isolated package check.
 - Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies.
 - A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
 - A path that no package owns and no rule names selects every applicable workspace and suite.
@@ -76,6 +76,7 @@ The selector preserves the features of the Cargo build when it runs its test exe
 
 After preparation and compilation, independent targets run in parallel, up to the number of available CPU cores.
 Each target keeps one test thread and, when needed, its own PostgreSQL server.
+Native test processes receive `WASH_ABANDONED_CALL_GRACE_SECS=0` before startup, matching the WAMN engine policy.
 Targets with a `resource_lock`, a cluster need, Docker, or an environment input without a preparation owner run alone.
 This keeps shared brokers, fixed ports, and external fixtures serial. Command suites also run alone.
 A cluster selection stays serial and stops at its first failure. Other selections collect every failure.
@@ -111,7 +112,7 @@ Prepare generated application inputs through their owning build commands before 
 The tool builds native binaries, application packages, and guests only when selected cases need them.
 The selection file names each preparation step, its output variables, and its commands.
 The runner keeps nonempty overrides and skips their preparation commands.
-The pinned HTTP guest keeps its required release artifact. Other native and standalone guest inputs use debug mode.
+The pinned HTTP guest keeps its required release artifact. Edge tests read that prepared artifact from `WAMN_FLOW_HTTP_COMPONENT`. Other native and standalone guest inputs use debug mode.
 The `jsonata` recipe builds the platform `jsonata-expression` guest directly.
 It builds applications through a private PostgreSQL database.
 Root workspace targets compile without `apps/target/wamn`.
@@ -168,7 +169,7 @@ In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this che
 | `WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM` | `ROOT/apps/target/wamn/platform_fixture_overlay/components/fixture_overlay.wasm` |
 | `WAMN_GENERATED_WIDGET_UPDATE_SCHEMA` | `ROOT/apps/target/wamn/platform_fixture/routes/widget/update.json` |
 | `WAMN_RECEIVING_DEV_BIN` | `TARGET/debug/wamn-ctl` |
-| `WAMN_FLOW_HTTP_COMPONENT` | `TARGET/apps/wasm32-wasip2/release/http_route.wasm` |
+| `WAMN_FLOW_HTTP_COMPONENT` | `TARGET/wasm32-wasip2/release/http_route.wasm` |
 | `WAMN_BLOB_PUT_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/blob_put.wasm` |
 | `WAMN_SYNC_BENCH_DIST` | `TARGET/sync-bench/web` |
 | `WAMN_HOST_LIVE_NATS_SERVER_BIN` | Same input as `WAMN_NATIVE_C_NATS_BIN` |

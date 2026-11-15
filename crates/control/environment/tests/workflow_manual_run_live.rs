@@ -21,7 +21,7 @@
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 use std::collections::{BTreeSet, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use wamn_events::admission::{ManualRunAdmission, ManualRunAdmitted};
 
@@ -36,7 +36,9 @@ use wamn_connections::connection_credentials::ConnectionCredentials;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
-use wamn_engine::engine::build_engine;
+use wamn_engine::engine::{
+    build_engine_with_host_memory_and_compilation_cache, default_host_memory_budgets,
+};
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::native_routes::{DeliveryRequest, Source};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
@@ -56,7 +58,9 @@ use wamn_workflow::author_workflow::{
 };
 use wamn_workflow::workflow_lifecycle::{WorkflowVersion, enable_workflow};
 use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
+use wash_runtime::engine::guest_memory::GuestMemoryMode;
 use wash_runtime::plugin::wasi_logging::TracingLogger;
+use wash_runtime::sockets::policy::EgressMode;
 
 const PROJECT_ENV_KEY: &str = "manual-live--dev--default";
 const PROJECT: &str = "default";
@@ -271,8 +275,8 @@ struct Fixture {
     postgres: Arc<WamnPostgres>,
     logging: Arc<TracingLogger>,
     scratch: wamn_test_infrastructure::scratch::ScratchRoot,
-    read: wamn_catalog::AdmittedComponent,
-    jsonata: wamn_catalog::AdmittedComponent,
+    read: &'static wamn_catalog::AdmittedComponent,
+    jsonata: &'static wamn_catalog::AdmittedComponent,
     release: Arc<LoadedRelease>,
     digest: String,
     delivery: HostRouteDelivery,
@@ -280,6 +284,13 @@ struct Fixture {
 }
 
 async fn fixture(pool: &sqlx::PgPool) -> Fixture {
+    static ENGINE: OnceLock<Arc<wash_runtime::engine::Engine>> = OnceLock::new();
+    static COMPONENTS: OnceLock<(
+        wamn_catalog::AdmittedComponent,
+        wamn_catalog::AdmittedComponent,
+        Vec<u8>,
+        Vec<u8>,
+    )> = OnceLock::new();
     let database = wamn_test_postgres::url(pool);
     let url = database.as_str().to_owned();
     let mut admin = connect(&url).await;
@@ -319,7 +330,19 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
         ))).execute(&mut admin).await.map(drop)
         .expect("seed the users, roles, permissions and application rows");
 
-    let engine = Arc::new(build_engine(&[]).unwrap());
+    let engine = Arc::clone(ENGINE.get_or_init(|| {
+        Arc::new(
+            build_engine_with_host_memory_and_compilation_cache(
+                &[],
+                default_host_memory_budgets(),
+                GuestMemoryMode::Enforce,
+                EgressMode::Enforce,
+                &std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+                    .join("manual-live-compilation-cache"),
+            )
+            .unwrap(),
+        )
+    }));
     let admitted = |bytes: &[u8], declaration: Value| {
         let declaration: ComponentDeclaration = serde_json::from_value(declaration).unwrap();
         validate_component_admission(
@@ -334,12 +357,15 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
         .expect("admit the fixture component")
         .component
     };
-    let read_bytes = read_component();
-    let jsonata_bytes = jsonata_bytes();
-    let read = admitted(&read_bytes, read_declaration());
-    let jsonata = admitted(&jsonata_bytes, jsonata_declaration());
+    let (read, jsonata, read_bytes, jsonata_bytes) = COMPONENTS.get_or_init(|| {
+        let read_bytes = read_component();
+        let jsonata_bytes = jsonata_bytes();
+        let read = admitted(&read_bytes, read_declaration());
+        let jsonata = admitted(&jsonata_bytes, jsonata_declaration());
+        (read, jsonata, read_bytes, jsonata_bytes)
+    });
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
-    for (component, bytes) in [(&read, &read_bytes), (&jsonata, &jsonata_bytes)] {
+    for (component, bytes) in [(read, read_bytes), (jsonata, jsonata_bytes)] {
         std::fs::write(
             local_component_path(scratch.path(), &component.component_digest).unwrap(),
             bytes,
@@ -347,7 +373,7 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
         .unwrap();
     }
 
-    let served = manifest(Some(&read), &jsonata);
+    let served = manifest(Some(read), jsonata);
     let release = load(&served);
     let digest = release.release().manifest_digest.as_str().to_owned();
     sqlx::query(
@@ -926,7 +952,7 @@ async fn an_operation_not_in_the_release_refuses_at_author_and_at_admission(pool
     assert_eq!(refusal.error_type(), AuthorWorkflowErrorType::Condition);
 
     fixture.enabled().await;
-    let without = load(&manifest(None, &fixture.jsonata));
+    let without = load(&manifest(None, fixture.jsonata));
     let request_element = fixture
         .start_on(&host(&fixture.postgres, &without), READER, "replaced")
         .await;
@@ -998,7 +1024,7 @@ async fn a_host_of_another_release_cannot_lease_the_run(pool: sqlx::PgPool) {
     fixture.enabled().await;
     let run = fixture.start(READER, "pinned").await;
 
-    let mut other_manifest = manifest(Some(&fixture.read), &fixture.jsonata);
+    let mut other_manifest = manifest(Some(fixture.read), fixture.jsonata);
     // Host routes are release content; environment-authored workflows are not.
     // Keep the same components so the release digest alone prevents the lease.
     other_manifest.host_routes.clear();
