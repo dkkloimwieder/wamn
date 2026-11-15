@@ -340,7 +340,7 @@ async fn live_an_invalid_timezone_setting_is_refused(pool: sqlx::PgPool) {
         .unwrap_or_else(|| {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .ancestors()
-                .nth(3)
+                .nth(2)
                 .unwrap()
                 .join("target")
         });

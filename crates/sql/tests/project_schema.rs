@@ -12,14 +12,14 @@ use wamn_identity_protocol::PlatformComponent;
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 
 fn deploy_dir() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy")
 }
 
 fn app_schema_sql() -> String {
     format!(
         "\nDROP SCHEMA IF EXISTS catalog CASCADE;\n{}\n{}",
         wamn_catalog::CATALOG_SCHEMA_SQL,
-        include_str!("../../../../deploy/sql/app-schema.sql")
+        include_str!("../../../deploy/sql/app-schema.sql")
     )
 }
 

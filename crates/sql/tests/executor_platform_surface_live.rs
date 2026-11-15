@@ -74,7 +74,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
         .await?
         .get(0);
 
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let catalog_ddl = wamn_catalog::CATALOG_SCHEMA_SQL;
     let app_schema = wamn_control_provision::APP_SCHEMA_SQL;
     let run_state_ddl = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))

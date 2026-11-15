@@ -248,7 +248,7 @@ pub const EXECUTION_HOST_SRC_FILE_ROUTE_GENERATIONS: &str = "SELECT connection_i
 pub const EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN: &str = "SELECT project,env FROM registry.environment_projects WHERE org=$1 AND project=$2 \
              AND ($3::text IS NULL OR env=$3) ORDER BY env";
 
-/// crates/platform/connections/src/oauth_token.rs::lock registry statement.
+/// crates/connections/src/oauth_token.rs::lock registry statement.
 pub const PLATFORM_RUNTIME_SRC_OAUTH_TOKEN_LOCK: &str =
     "SELECT registry.lock_oauth_connection($1,$2,$3,$4)";
 

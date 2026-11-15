@@ -58,13 +58,13 @@ use transport::{ClientIdentity, ConnectionIdentity, HttpTransport};
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
         path: [
-            "../../../wit/wamn-connection",
-            "../../../wit/wamn-flow-http-routing",
-            "../../../wit/wamn-postgres-0.4",
-            "../../../wit/wamn-node",
-            "../../../wit/wamn-operation-0.1",
-            "../../../wit/wasmcloud-blobstore",
-            "../capability-authority/wit",
+            "../../wit/wamn-connection",
+            "../../wit/wamn-flow-http-routing",
+            "../../wit/wamn-postgres-0.4",
+            "../../wit/wamn-node",
+            "../../wit/wamn-operation-0.1",
+            "../../wit/wasmcloud-blobstore",
+            "../authority/wit",
         ],
         world: "wamn:host/connection-http-plugin@0.1.0",
         imports: { default: async | trappable | tracing },

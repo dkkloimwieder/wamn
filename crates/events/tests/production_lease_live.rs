@@ -13,7 +13,7 @@ use wamn_connections::production_lease::{
 };
 use wamn_run_state::queue::select_production_lease_sql;
 
-#[path = "../../platform/postgres-capability/tests/common/mod.rs"]
+#[path = "../../sql/tests/common/mod.rs"]
 mod common;
 
 use common::{

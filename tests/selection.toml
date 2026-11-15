@@ -8,7 +8,7 @@ documentation = ['^docs/', '^\.beads/', '^[^/]+\.md$']
 
 [[rules]]
 # Bindgen reads shared WIT outside Cargo dependency edges.
-inputs = ['^wit/(wamn-(connection|flow-http-routing|integration|node|operation-0\.1|postgres-0\.4)|wasmcloud-blobstore)/', '^crates/platform/capability-authority/wit/deps/']
+inputs = ['^wit/(wamn-(connection|flow-http-routing|integration|node|operation-0\.1|postgres-0\.4)|wasmcloud-blobstore)/', '^crates/authority/wit/deps/']
 workspaces = ["root", "apps"]
 
 [[rules]]
@@ -263,7 +263,7 @@ target = ["test:platform_apply_kind"]
 tests = ["connection_and_caller_kind"]
 features = []
 prerequisites = []
-inputs = ["^crates/dev/", "^crates/platform/(capability-authority|connections|postgres-capability|http-capability|integrations)/", "^crates/(blobstore|authentication|component-artifact)/", "^crates/execution-host/", "^crates/events/", "^services/host/"]
+inputs = ["^crates/dev/", "^crates/(authority|connections|sql|http|integrations)/", "^crates/(blobstore|authentication|component-artifact)/", "^crates/execution-host/", "^crates/events/", "^services/host/"]
 execution = "libtest"
 mode = "local"
 select_packages = ["wamn-authority", "wamn-connections", "wamn-sql", "wamn-http", "wamn-blobstore", "wamn-authentication", "wamn-events", "wamn-component-artifact", "wamn-integrations", "wamn-execution-host", "wamn-host", "wamn-dev"]

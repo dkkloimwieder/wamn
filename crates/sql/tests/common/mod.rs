@@ -41,8 +41,8 @@ pub fn quote_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
-const RUN_STATE_SQL: &str = include_str!("../../../../../deploy/sql/run-state.sql");
-const RUN_QUEUE_SQL: &str = include_str!("../../../../../deploy/sql/run-queue.sql");
+const RUN_STATE_SQL: &str = include_str!("../../../../deploy/sql/run-state.sql");
+const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 
 /// Apply the run plane of record on the project base grants, with the two releases
 /// the pods mount.

@@ -22,7 +22,7 @@ use wamn_platform_identity::org::{MemberGrants, invite_member};
 
 use http_body_util::BodyExt as _;
 
-#[path = "../../platform/postgres-capability/tests/support/session_fixture.rs"]
+#[path = "../../sql/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared fixture also serves verifier lifecycle tests."

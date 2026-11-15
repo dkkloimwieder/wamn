@@ -747,7 +747,7 @@ A partial creation can be retried. An API service cannot receive the reserved `a
 ### Auth memory
 
 The host answers the auth facts of a repeated caller from its memory, so they cost no Postgres round-trip.
-The [memory](../../crates/platform/capability-authority/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the one NATS.
+The [memory](../../crates/authority/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the one NATS.
 The key `<project_env_key>.<principal>` holds the grants of a principal and whether the project has its user row.
 The key `<project_env_key>.environment` holds the environment status.
 One read of `platform."user"`, `platform.user_role` and `platform.permission` answers permission and user-row requests.
@@ -834,10 +834,10 @@ Failed renewal or login expiry requires explicit login and submission. Quitting 
 ### Connection memory
 
 The host answers the connection facts of a call from its memory, so a repeated call reads Postgres and the credential store only on a miss.
-The [memory](../../crates/platform/connections/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
+The [memory](../../crates/connections/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
 It follows the revision and watch rules of the [auth memory](#auth-memory).
 Connection facts keep their own 60-second expiry.
-The [shared replica](../../crates/platform/capability-authority/src/kv_memory.rs) holds these rules for both memories.
+The [shared replica](../../crates/authority/src/kv_memory.rs) holds these rules for both memories.
 The key `<project_env_key>.connection.<connection id>` holds the active generation, effective status, credential id, and service principal id.
 It also holds exclusivity, target id, resource key, and target type.
 The effective status is active only when the integration and the connection are both active.
@@ -855,7 +855,7 @@ The active connection fact supplies the credential id and service principal.
 The host resolves the secret under that credential id.
 
 The [engine](../../crates/engine/src/integration.rs) compiles the component of a wasm or native version once per component digest and keeps it in host memory.
-The [dispatch](../../crates/platform/integrations/src/lib.rs) links an instance per (connection id, generation, credential id) from that compiled component.
+The [dispatch](../../crates/integrations/src/lib.rs) links an instance per (connection id, generation, credential id) from that compiled component.
 Typed integration imports use labels, the connection names that code declares.
 The host resolves each label by its component digest, package, and name.
 HTTP and blobstore share one authority resolver.
@@ -934,7 +934,7 @@ OAuth storage uses `identity.oauth_token` and `identity.oauth_authorization` in 
 Only the host connection role and the control role receive table grants.
 Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
 An envelope key protects that data key.
-The shared [encryption module](../../crates/platform/connections/src/oauth_encryption.rs) supports regional Cloud KMS and a local key file.
+The shared [encryption module](../../crates/connections/src/oauth_encryption.rs) supports regional Cloud KMS and a local key file.
 The host reads its provider from `WAMN_OAUTH_ENCRYPTION`.
 Use `gcp` for Cloud KMS or `local` for a key file.
 [Deployment instructions](../operations/gcp.md#49-platform-install-inputs) describe that configuration.

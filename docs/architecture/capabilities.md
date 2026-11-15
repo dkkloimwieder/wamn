@@ -250,7 +250,7 @@ An idempotency key alone creates no remote same-result guarantee.
 
 Contract failures remain `unbound`, `incompatible`, `authority-denied`, `attestation-invalid`, `credential-unavailable`, `timeout`, or `transport`.
 A lost response cannot become a successful result or an editable application refusal.
-The [transport owner](../../crates/platform/http-capability/src/transport.rs) defines aggregate capacity and intake bounds.
+The [transport owner](../../crates/http/src/transport.rs) defines aggregate capacity and intake bounds.
 
 ConnectionHttp confines requests through administrator-bound connections.
 RFC1918 and cluster service addresses are allowed because the administrator bound the target.

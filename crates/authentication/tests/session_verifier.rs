@@ -6,7 +6,7 @@ use std::time::Duration;
 use serde_json::json;
 use wamn_identity_protocol::verifier::SessionVerifier;
 
-#[path = "../../platform/postgres-capability/tests/support/session_fixture.rs"]
+#[path = "../../sql/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared fixture also provides database admission state."

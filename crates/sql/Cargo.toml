@@ -41,7 +41,7 @@ wamn-broker = { workspace = true }
 postgres-protocol = { workspace = true }
 hmac.workspace = true
 jsonwebtoken.workspace = true
-http-route = { path = "../../../guests/http-route" }
+http-route = { path = "../../guests/http-route" }
 wamn-authentication = { workspace = true, features = ["test-util"] }
 wamn-identity-protocol = { workspace = true, features = ["test-util"] }
 tokio-rustls = { workspace = true }

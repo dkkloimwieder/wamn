@@ -27,7 +27,7 @@ use super::invoke_native;
 use super::trace::TraceCapture;
 use super::{CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, ROOT};
 
-#[path = "../../../../../platform/postgres-capability/tests/support/session_fixture.rs"]
+#[path = "../../../../../sql/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared issuer fixture also serves cache-expiry tests."

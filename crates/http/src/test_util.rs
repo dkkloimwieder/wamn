@@ -565,8 +565,8 @@ impl Fixture {
                 .map(drop)
                 .unwrap();
             for sql in [
-                include_str!("../../../../deploy/sql/run-state.sql"),
-                include_str!("../../../../deploy/sql/run-queue.sql"),
+                include_str!("../../../deploy/sql/run-state.sql"),
+                include_str!("../../../deploy/sql/run-queue.sql"),
             ] {
                 sqlx::raw_sql(sql).execute(&mut admin).await.unwrap();
             }

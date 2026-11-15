@@ -40,7 +40,7 @@ wash_runtime::wasmtime::component::bindgen!({
         "../../wit/wamn-node",
         "../../wit/wamn-operation-0.1",
         "../../wit/wasmcloud-blobstore",
-        "../platform/capability-authority/wit",
+        "../authority/wit",
     ],
     world: "wamn:host/blobstore-plugin@0.1.0",
     imports: { default: async | trappable | tracing },

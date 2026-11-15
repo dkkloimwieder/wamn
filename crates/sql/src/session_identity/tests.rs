@@ -637,7 +637,7 @@ pub(crate) async fn live_guest_url(admin_url: &str, project_env_key: &str) -> St
         .execute(&mut admin)
         .await
         .unwrap();
-    sqlx::raw_sql(include_str!("../../../../../deploy/sql/record-history.sql"))
+    sqlx::raw_sql(include_str!("../../../../deploy/sql/record-history.sql"))
         .execute(&mut admin)
         .await
         .unwrap();
@@ -723,7 +723,7 @@ async fn visible_rows(pg: &WamnPostgres, component: &str, sql: &str) -> usize {
 /// RLS applies to it.
 fn rls_fixture_sql(schema: &str, probe: &str, project_env_key: &str, u1: &str, u2: &str) -> String {
     let query = query_fixture_sql(probe, probe);
-    let identity = include_str!("../../../../../deploy/sql/record-history.sql");
+    let identity = include_str!("../../../../deploy/sql/record-history.sql");
     let authority = wamn_control_provision::project_key::authority_derivations_bootstrap_sql();
     format!(
         "DROP SCHEMA IF EXISTS {schema} CASCADE; \
@@ -1198,7 +1198,7 @@ fn two_project_env_key_rls_fixture_sql(
         query_fixture_sql(role_a, "live-guest"),
         query_fixture_sql(role_b, "live-guest")
     );
-    let identity = include_str!("../../../../../deploy/sql/record-history.sql");
+    let identity = include_str!("../../../../deploy/sql/record-history.sql");
     let authority = wamn_control_provision::project_key::authority_derivations_bootstrap_sql();
     format!(
         "DROP SCHEMA IF EXISTS {schema} CASCADE; \

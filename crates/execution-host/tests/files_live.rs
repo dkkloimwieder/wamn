@@ -43,7 +43,7 @@ mod file_delete_proxy;
     reason = "The shared file fixture also supports schema and registry tests."
 )]
 mod files;
-#[path = "../../platform/postgres-capability/tests/support/session_fixture.rs"]
+#[path = "../../sql/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared session fixture also supports verifier barriers."
