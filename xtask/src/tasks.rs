@@ -149,26 +149,50 @@ pub async fn packages(root: &Path, manifest: Option<&Path>) -> anyhow::Result<()
         .manifest_path(manifest)
         .no_deps()
         .exec()?;
-    let mut failures = Vec::new();
-    for package in metadata.workspace_packages() {
-        let mut command = Command::new("cargo");
-        command
-            .current_dir(root)
-            .args(["check", "--locked", "--manifest-path"])
-            .arg(manifest)
-            .args(["-p", package.name.as_ref()]);
-        let started = std::time::Instant::now();
-        println!("start isolated package check: {}", package.name);
-        let result = process::execute(&mut command).await;
-        println!(
-            "finished isolated package check ({:.2}s): {}",
-            started.elapsed().as_secs_f64(),
-            package.name
-        );
-        if let Err(error) = result {
-            failures.push(format!("{}: {error:#}", package.name));
+    let mut packages = metadata.workspace_packages();
+    packages.sort_by(|left, right| left.name.cmp(&right.name));
+    let concurrency = std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .min(packages.len());
+    let directory = metadata.target_directory.join("isolated-checks");
+    println!("parallel isolated package checks: {concurrency}");
+    let workers = (0..concurrency).map(|worker| {
+        let packages = &packages;
+        let directory = directory.join(worker.to_string());
+        async move {
+            let mut failures = Vec::new();
+            // Stable assignments reuse each worker's dependencies on later runs.
+            for package in packages.iter().skip(worker).step_by(concurrency) {
+                let mut command = Command::new("cargo");
+                command
+                    .current_dir(root)
+                    .env("CARGO_TARGET_DIR", &directory)
+                    .args(["check", "--locked", "--jobs", "1", "--manifest-path"])
+                    .arg(manifest)
+                    .args(["-p", package.name.as_ref()]);
+                let started = std::time::Instant::now();
+                println!(
+                    "start isolated package check: {} (worker {worker})",
+                    package.name
+                );
+                let result = process::execute_labeled(&mut command, package.name.as_ref()).await;
+                println!(
+                    "finished isolated package check ({:.2}s): {} (worker {worker})",
+                    started.elapsed().as_secs_f64(),
+                    package.name
+                );
+                if let Err(error) = result {
+                    failures.push(format!("{}: {error:#}", package.name));
+                }
+            }
+            failures
         }
-    }
+    });
+    let failures: Vec<_> = futures_util::future::join_all(workers)
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
     ensure!(failures.is_empty(), "{}", failures.join("\n"));
     Ok(())
 }

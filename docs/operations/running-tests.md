@@ -33,7 +33,7 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file in a Cargo package selects that package and its dependents in every workspace that resolves it: normal and build dependents transitively, then one development dependent.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
-- Any `Cargo.toml` or `Cargo.lock` also runs `cargo xtask compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it. The command prints the elapsed time for each isolated package check.
+- Any `Cargo.toml` or `Cargo.lock` also runs `compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it. Checks run in parallel, up to the number of available CPU cores. Each worker uses one Cargo build job and its own reusable directory under `CARGO_TARGET_DIR/isolated-checks/`. Stable package assignments preserve these caches between runs. The command prints each check's worker and elapsed time.
 - Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies.
 - A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
 - A path that no package owns and no rule names selects every applicable workspace and suite.
@@ -82,7 +82,13 @@ After preparation and compilation, independent targets run in parallel, up to th
 Each target keeps one test thread and, when needed, its own PostgreSQL server.
 Native test processes receive `WASH_ABANDONED_CALL_GRACE_SECS=0` before startup, matching the WAMN engine policy.
 Targets with a `resource_lock`, a cluster need, Docker, or an environment input without a preparation owner run alone.
-This keeps shared brokers, fixed ports, and external fixtures serial. Command suites also run alone.
+This keeps shared brokers, fixed ports, and external fixtures serial.
+Local command suites without a `resource_lock`, including isolated checks and web commands, run alongside test targets.
+Commands within one suite keep their declared order.
+Local command suites with a `resource_lock` run after this independent work.
+Command suites with mode `always` run before test targets.
+The isolated-check suite starts the running xtask binary directly, without another Cargo build.
+Isolated checks report compiler activity as it arrives. They keep the complete compiler output together at completion.
 A cluster selection stays serial and stops at its first failure. Other selections collect every failure.
 
 Each native test target has a ten-minute deadline, including discovery and waiting for its resource lock.
