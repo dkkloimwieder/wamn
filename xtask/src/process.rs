@@ -279,7 +279,9 @@ async fn execute_inner(
     let bound = Duration::try_from_secs_f64(seconds)?;
     let label = label.map_or_else(|| crate::tasks::describe(command), str::to_owned);
     let original = command.as_std();
-    let mut supervisor = Command::new(std::env::current_exe()?);
+    // The selection rebuilds xtask while it runs, which replaces the file
+    // that current_exe names. /proc/self/exe still runs this program.
+    let mut supervisor = Command::new("/proc/self/exe");
     supervisor
         .arg("supervise")
         .arg("--")
