@@ -22,7 +22,7 @@ use wamn_integration::setting::write;
 
 struct Component;
 export!(Component);
-
+#[expect(dead_code, unused_imports, reason = "generated API subset")]
 mod finish_operation {
     use super::finish as contract;
     include!(concat!(

@@ -928,47 +928,42 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     Ok(())
 }
 
-/// The application rows of one principal in one project database.
-async fn application_rows(
-    target: &mut Client,
-    principal: PrincipalId,
-) -> Vec<(String, Option<String>)> {
-    sqlx::query_as(
-        "SELECT 'user', NULL::text FROM platform.\"user\" WHERE id=$1
-         UNION ALL SELECT 'role', role_name FROM platform.user_role WHERE user_id=$1 ORDER BY 1,2",
-    )
-    .bind(principal)
-    .fetch_all(target)
-    .await
-    .expect("read application rows")
+/// Whether the principal can be found in the selected application database.
+async fn application_user(target: &mut Client, principal: &PrincipalId) -> bool {
+    sqlx::query_scalar("SELECT EXISTS (SELECT FROM platform.\"user\" WHERE id=$1)")
+        .bind(principal)
+        .fetch_one(target)
+        .await
+        .expect("read application user")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires: postgres"]
 async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
-    let test_database = postgres.create_database("control_application_rows").await?;
-    let admin_url = test_database.url();
-    let mut admin = connect(admin_url).await?;
-    let control_url = install(&mut admin, admin_url).await?;
+    let database = postgres.create_database("control_application_rows").await?;
+    let mut admin = connect(database.url()).await?;
+    let control_url = install(&mut admin, database.url()).await?;
     let (logins, mut billing, mut shop) =
-        environments(&mut admin, admin_url, "application").await?;
-    let mut ids = Vec::new();
-    for (email, name, org_admin) in [
-        ("boss@example.test", "Boss", true),
-        ("ann@example.test", "Ann", false),
-    ] {
-        let user = create_or_reuse_user(&mut admin, email, name)
-            .await?
-            .principal_id;
-        let grants = MemberGrants {
-            org_admin,
-            ..MemberGrants::default()
-        };
-        invite_member(&mut admin, &user, ORG, &grants).await?;
-        ids.push(user);
+        environments(&mut admin, database.url(), "application").await?;
+    let boss = create_or_reuse_user(&mut admin, "boss@example.test", "Boss")
+        .await?
+        .principal_id;
+    let ann = create_or_reuse_user(&mut admin, "ann@example.test", "Ann")
+        .await?
+        .principal_id;
+    for (principal, org_admin) in [(&boss, true), (&ann, false)] {
+        invite_member(
+            &mut admin,
+            principal,
+            ORG,
+            &MemberGrants {
+                org_admin,
+                ..MemberGrants::default()
+            },
+        )
+        .await?;
     }
-    let [boss, ann]: [PrincipalId; 2] = ids.try_into().expect("two users");
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
@@ -981,192 +976,97 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
             changes: Publisher::default(),
         },
     );
-    let ann_payload = json!({"principal_id": ann});
-    let billing_admin = json!({"project": "billing", "principal_id": ann});
-    let billing_member = json!({"project": "billing", "env": "dev", "principal_id": ann});
-
-    // org-admin writes the user row and admin in every environment, after its
-    // system rows; its revoke removes admin first and keeps the user row.
-    {
-        let observed = &(call(&delivery, "org-admin/grant", boss, ann_payload.clone()).await)
-            .expect("route succeeds");
-        assert_eq!(observed["principal_id"], serde_json::json!(ann));
-        assert_eq!(observed["org_admin"], serde_json::json!(true));
-    };
-    assert_eq!(
-        application_rows(&mut billing, ann).await,
-        [
-            ("role".to_owned(), Some("admin".to_owned())),
-            ("user".to_owned(), None)
-        ]
-    );
-    assert_eq!(
-        application_rows(&mut shop, ann).await,
-        [
-            ("role".to_owned(), Some("admin".to_owned())),
-            ("user".to_owned(), None)
-        ]
-    );
-    {
-        let observed = &(call(
-            &delivery,
-            "project-admin/revoke",
-            boss,
-            billing_admin.clone(),
+    // Administration is derived (C19). Application databases retain the user
+    // identity, without a copied administrator role.
+    let principal = json!({"principal_id":ann});
+    call(&delivery, "org-admin/grant", boss, principal.clone())
+        .await
+        .expect("grant org administration");
+    for application in [&mut billing, &mut shop] {
+        assert!(application_user(application, &ann).await);
+        let copied_admin: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT FROM platform.user_role WHERE user_id=$1 AND role_name='admin')",
         )
-        .await)
-            .expect_err("route refuses");
-        assert_eq!(observed["code"], serde_json::json!("admin_covered"));
-        assert_eq!(
-            observed["detail"]["field"],
-            serde_json::json!("principal_id")
-        );
-    };
-    assert_eq!(
-        application_rows(&mut billing, ann).await,
-        [
-            ("role".to_owned(), Some("admin".to_owned())),
-            ("user".to_owned(), None)
-        ],
-        "a refused revoke changes no application row"
-    );
-    {
-        let observed = &(call(&delivery, "org-admin/revoke", boss, ann_payload.clone()).await)
-            .expect("route succeeds");
-        assert_eq!(observed["principal_id"], serde_json::json!(ann));
-        assert_eq!(observed["org_admin"], serde_json::json!(false));
-    };
-    assert_eq!(
-        application_rows(&mut billing, ann).await,
-        [("user".to_owned(), None)]
-    );
-    assert_eq!(
-        application_rows(&mut shop, ann).await,
-        [("user".to_owned(), None)]
-    );
+        .bind(&ann)
+        .fetch_one(application)
+        .await?;
+        assert!(!copied_admin);
+    }
+    call(&delivery, "org-admin/revoke", boss, principal)
+        .await
+        .expect("revoke org administration");
+    assert!(!application_user(&mut billing, &ann).await);
+    assert!(!application_user(&mut shop, &ann).await);
+    let project_admin = json!({"project":"billing","principal_id":ann});
+    call(
+        &delivery,
+        "project-admin/grant",
+        boss,
+        project_admin.clone(),
+    )
+    .await
+    .expect("grant project administration");
+    assert!(application_user(&mut billing, &ann).await);
+    assert!(!application_user(&mut shop, &ann).await);
+    call(&delivery, "project-admin/revoke", boss, project_admin)
+        .await
+        .expect("revoke project administration");
+    assert!(!application_user(&mut billing, &ann).await);
 
-    // project-admin covers its project's environments only.
-    {
-        let observed = &(call(
-            &delivery,
-            "project-admin/grant",
-            boss,
-            billing_admin.clone(),
-        )
-        .await)
-            .expect("route succeeds");
-        assert_eq!(observed["principal_id"], serde_json::json!(ann));
-        assert_eq!(observed["project"], serde_json::json!("billing"));
-        assert_eq!(observed["project_admin"], serde_json::json!(true));
-    };
-    assert_eq!(
-        application_rows(&mut billing, ann).await,
-        [
-            ("role".to_owned(), Some("admin".to_owned())),
-            ("user".to_owned(), None)
-        ]
-    );
-    assert_eq!(
-        application_rows(&mut shop, ann).await,
-        [("user".to_owned(), None)]
-    );
-    {
-        let observed = &(call(&delivery, "project-admin/revoke", boss, billing_admin).await)
-            .expect("route succeeds");
-        assert_eq!(observed["principal_id"], serde_json::json!(ann));
-        assert_eq!(observed["project"], serde_json::json!("billing"));
-        assert_eq!(observed["project_admin"], serde_json::json!(false));
-    };
-    assert_eq!(
-        application_rows(&mut billing, ann).await,
-        [("user".to_owned(), None)]
-    );
+    // Explicit membership writes update only the selected application database.
+    let membership = |project| json!({"project":project,"env":"dev","principal_id":ann});
+    call(&delivery, "member/grant", boss, membership("billing"))
+        .await
+        .expect("grant billing membership");
+    assert!(application_user(&mut billing, &ann).await);
+    assert!(!application_user(&mut shop, &ann).await);
+    call(&delivery, "member/grant", boss, membership("shop"))
+        .await
+        .expect("grant shop membership");
+    assert!(application_user(&mut shop, &ann).await);
+    call(&delivery, "member/revoke", boss, membership("billing"))
+        .await
+        .expect("revoke billing membership");
+    assert!(!application_user(&mut billing, &ann).await);
+    assert!(application_user(&mut shop, &ann).await);
+    call(&delivery, "member/grant", boss, membership("billing"))
+        .await
+        .expect("restore billing membership");
 
-    // A membership revoke removes the user row, and a grant writes it again.
-    {
-        let observed = &(call(&delivery, "member/revoke", boss, billing_member.clone()).await)
-            .expect("route succeeds");
-        assert_eq!(observed["principal_id"], serde_json::json!(ann));
-        assert_eq!(observed["project"], serde_json::json!("billing"));
-        assert_eq!(observed["env"], serde_json::json!("dev"));
-        assert_eq!(observed["member"], serde_json::json!(false));
-    };
-    assert!(application_rows(&mut billing, ann).await.is_empty());
-    {
-        let observed =
-            &(call(&delivery, "member/grant", boss, billing_member).await).expect("route succeeds");
-        assert_eq!(observed["principal_id"], serde_json::json!(ann));
-        assert_eq!(observed["project"], serde_json::json!("billing"));
-        assert_eq!(observed["env"], serde_json::json!("dev"));
-        assert_eq!(observed["member"], serde_json::json!(true));
-    };
-    assert_eq!(
-        application_rows(&mut billing, ann).await,
-        [("user".to_owned(), None)]
-    );
-
-    // A failed projection names completed environments after system authority commits.
+    // System state stays authoritative if a later application write fails.
     let shop_key = logins.join(wamn_control_provision::control_administration_key(
         "shop", "dev",
     ));
     let shop_login = std::fs::read_to_string(&shop_key)?;
     std::fs::write(&shop_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
-    {
-        let observed = &(call(&delivery, "user/deactivate", boss, ann_payload.clone()).await)
-            .expect_err("route refuses");
-        assert_eq!(
-            observed["code"],
-            serde_json::json!("application_write_incomplete")
-        );
-        assert_eq!(
-            observed["detail"]["environment"],
-            serde_json::json!("shop/dev")
-        );
-        assert_eq!(
-            observed["detail"]["completed"]
-                .as_array()
-                .expect("array")
-                .len(),
-            1
-        );
-        assert_eq!(
-            observed["detail"]["completed"][0],
-            serde_json::json!("billing/dev")
-        );
-    };
-    assert!(application_rows(&mut billing, ann).await.is_empty());
-    assert_eq!(
-        application_rows(&mut shop, ann).await,
-        [("user".to_owned(), None)]
-    );
-    assert_eq!(
-        grants(&mut admin, ann).await,
-        [(
-            "member".to_owned(),
-            "inactive".to_owned(),
-            Some(boss.to_string())
-        )],
-        "committed deactivation remains authoritative after a projection failure"
-    );
-
-    // With the login back, the deactivation completes.
+    let payload = json!({"principal_id":ann});
+    let error = call(&delivery, "user/deactivate", boss, payload.clone())
+        .await
+        .expect_err("unavailable shop refuses completion");
+    assert_eq!(error["code"], "application_write_incomplete");
+    assert_eq!(error["detail"]["environment"], "shop/dev");
+    let completed = error["detail"]["completed"]
+        .as_array()
+        .expect("completed environments");
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0], "billing/dev");
+    assert!(!application_user(&mut billing, &ann).await);
+    assert!(application_user(&mut shop, &ann).await);
+    let inactive: bool = sqlx::query_scalar(
+        "SELECT status='inactive' FROM identity.org_memberships WHERE principal_id=$1 AND org=$2",
+    )
+    .bind(&ann)
+    .bind(ORG)
+    .fetch_one(&mut admin)
+    .await?;
+    assert!(inactive);
     std::fs::write(&shop_key, shop_login)?;
-    {
-        let observed =
-            &(call(&delivery, "user/deactivate", boss, ann_payload).await).expect("route succeeds");
-        assert_eq!(observed["principal_id"], serde_json::json!(ann));
-        assert_eq!(observed["status"], serde_json::json!("inactive"));
-    };
-    assert!(application_rows(&mut shop, ann).await.is_empty());
-    assert_eq!(
-        grants(&mut admin, ann).await,
-        [(
-            "member".to_owned(),
-            "inactive".to_owned(),
-            Some(boss.to_string())
-        )]
-    );
-    let _ = std::fs::remove_dir_all(&logins);
+    call(&delivery, "user/deactivate", boss, payload)
+        .await
+        .expect("finish deactivation");
+    assert!(!application_user(&mut billing, &ann).await);
+    assert!(!application_user(&mut shop, &ann).await);
+    std::fs::remove_dir_all(logins)?;
     Ok(())
 }
 
@@ -1662,6 +1562,25 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
         },
     )
     .await?;
+    let members = [
+        ("count-one@example.test", "One"),
+        ("count-two@example.test", "Two"),
+    ];
+    for (email, name) in members {
+        let user = create_or_reuse_user(&mut admin, email, name)
+            .await?
+            .principal_id;
+        invite_member(
+            &mut admin,
+            &user,
+            ORG,
+            &MemberGrants {
+                memberships: [("billing".into(), "dev".into())].into(),
+                ..MemberGrants::default()
+            },
+        )
+        .await?;
+    }
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("INSERT INTO platform.role (name) VALUES ('first'), ('second');
          INSERT INTO platform.\"user\" (id, type, email) VALUES
@@ -1720,11 +1639,11 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
         )
         .fetch_one(connection)
         .await?;
-        let memberships = wamn_platform_identity::org::project_members(&mut admin, ORG, project)
-            .await?
-            .iter()
-            .filter(|member| member.environments.iter().any(|env| env == "dev"))
-            .count();
+        let memberships = if project == "billing" {
+            members.len()
+        } else {
+            0
+        };
         let answer = call(
             &delivery,
             "environment/status",
@@ -1758,11 +1677,7 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
         .execute(&mut billing)
         .await
         .map(drop)?;
-    let memberships = wamn_platform_identity::org::project_members(&mut admin, ORG, "billing")
-        .await?
-        .iter()
-        .filter(|member| member.environments.iter().any(|env| env == "dev"))
-        .count();
+    let memberships = members.len();
     for missing_credential in [false, true] {
         if missing_credential {
             std::fs::remove_file(

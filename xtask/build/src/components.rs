@@ -140,9 +140,27 @@ pub async fn build_guest(
 
 /// Build one guest in its own Cargo invocation and test its bytes.
 async fn compile_guest(repository: &Path, rustflags: &str, guest: &Guest) -> Result<Built> {
+    let repository = repository.canonicalize()?;
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(&guest.manifest)
+        .other_options(vec!["--offline".into(), "--locked".into()])
+        .exec()?;
+    let selected = metadata
+        .packages
+        .iter()
+        .find(|package| {
+            package.name.as_str() == guest.package
+                && metadata.workspace_members.contains(&package.id)
+        })
+        .context("guest package is absent from Cargo metadata")?;
+    let workspace = crate::guest_workspace::GuestWorkspace::new(&repository, &metadata)?;
+    let rustflags = format!(
+        "{rustflags} --remap-path-prefix={}=/wamn",
+        workspace.root().display()
+    );
     let mut command = Command::new("cargo");
     command
-        .current_dir(repository)
+        .current_dir(workspace.root())
         .env("RUSTFLAGS", rustflags)
         .args([
             "build",
@@ -155,10 +173,12 @@ async fn compile_guest(repository: &Path, rustflags: &str, guest: &Guest) -> Res
             "json-render-diagnostics",
             "--manifest-path",
         ])
-        .arg(&guest.manifest);
+        .arg(workspace.manifest());
     command.args(["-p", &guest.package]);
     if let Some(target) = &guest.target_directory {
-        command.env("CARGO_TARGET_DIR", target);
+        command.env("CARGO_TARGET_DIR", repository.join(target));
+    } else {
+        command.env("CARGO_TARGET_DIR", metadata.target_directory.as_std_path());
     }
     let output = command.output().await.context("run cargo build")?;
     let name = &guest.package;
@@ -167,19 +187,16 @@ async fn compile_guest(repository: &Path, rustflags: &str, guest: &Guest) -> Res
         "cargo build of guest {name} failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let metadata = cargo_metadata::MetadataCommand::new()
-        .manifest_path(&guest.manifest)
-        .no_deps()
-        .exec()?;
-    let selected = metadata
-        .packages
-        .iter()
-        .find(|package| package.name.as_str() == guest.package)
-        .context("guest package is absent from Cargo metadata")?;
+    let manifest = workspace.root().join(
+        selected
+            .manifest_path
+            .as_std_path()
+            .strip_prefix(&repository)?,
+    );
     let mut artifact = None;
     for message in cargo_metadata::Message::parse_stream(std::io::Cursor::new(output.stdout)) {
         if let cargo_metadata::Message::CompilerArtifact(message) = message?
-            && message.package_id == selected.id
+            && message.manifest_path.as_std_path() == manifest
             && message.target.is_cdylib()
             && let Some(file) = message
                 .filenames
@@ -191,7 +208,7 @@ async fn compile_guest(repository: &Path, rustflags: &str, guest: &Guest) -> Res
     }
     let file = artifact.context("cargo build gave no guest Wasm artifact")?;
     require_guest(
-        repository,
+        &repository,
         name,
         &file,
         selected.manifest_path.as_std_path(),

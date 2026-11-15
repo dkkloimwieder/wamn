@@ -113,6 +113,9 @@ The composer refuses application imports of `wamn:operation` and application exp
 `apps/Cargo.toml` owns guest membership and feature resolution.
 The build tool selects guests from Cargo metadata and application declarations.
 Each guest receives its own Cargo invocation.
+The shared builder places every compiled local package below the build workspace in a source view.
+It preserves each package's workspace inheritance.
+Cargo hashes relative package paths there, so checkout paths do not change component bytes.
 Combining unrelated guests can change dependency features and therefore compiled bytes.
 
 Standard-library guests target `wasm32-wasip2`.

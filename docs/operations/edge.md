@@ -36,6 +36,7 @@ curl --unix-socket /var/lib/wamn-edge/status.sock http://localhost/status
 ## Resolve refused samples
 
 Stop the edge first, because a running edge holds the run-state file.
+After opening the store, the command waits for its SQLite connection to close before it returns.
 
 ```bash
 wamn-edge --config <path> samples list

@@ -7,17 +7,29 @@ manifest.Package {
         integration = {
             package = "wamn_integration"
             version = "0.1.1"
-            digest = "sha256:604b655d6b35d344e7c32356183638f2089933defa8d134ba1faec323685a994"
+            digest = "sha256:57bf3975dcfeddcee3f55482bc5c40cea1cc8046085381c8982e55d78887f542"
             operations = ["setting.read", "setting.write", "log.append"]
         }
         consumer = {
             package = "rest_consumer_fixture"
             version = "0.1.1"
-            digest = "sha256:3a69753ec17c7dd4c67f98baef5ef61cee524513562042b8ef9f450c1531c8be"
+            digest = "sha256:83f0f90062b959bf1ebaa89f4a8f00f3bfff7bac8e1a35e1cfe29af25b79e0a2"
             operations = ["item.record"]
         }
     }
-    models = {}
+    # The composed base owns these relations. They select its SQL schema.
+    models = {
+        setting = manifest.Model("setting", "wamn_integration") {
+            table = "setting"
+            owner = "wamn_integration"
+            operations = {}
+        }
+        log = manifest.Model("log", "wamn_integration") {
+            table = "log"
+            owner = "wamn_integration"
+            operations = {}
+        }
+    }
     custom_operations = {
         "sync.finish" = manifest.Command("sync.finish") {
             permission = None

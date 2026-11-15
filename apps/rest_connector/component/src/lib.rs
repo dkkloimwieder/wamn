@@ -27,7 +27,7 @@ use wamn_integration::{
 
 struct Component;
 export!(Component);
-
+#[expect(dead_code, unused_imports, reason = "generated API subset")]
 mod finish_operation {
     use super::finish as contract;
     include!(concat!(
@@ -35,6 +35,7 @@ mod finish_operation {
         "/../../target/wamn/rest_connector/wit/sync_finish_operation.rs"
     ));
 }
+#[expect(dead_code, unused_imports, reason = "generated API subset")]
 mod pushed_operation {
     use super::pushed as contract;
     include!(concat!(
@@ -42,7 +43,6 @@ mod pushed_operation {
         "/../../target/wamn/rest_connector/wit/sync_pushed_operation.rs"
     ));
 }
-
 fn invalid(message: &str) -> NodeError {
     NodeError::InvalidInput(ErrorDetail {
         message: message.to_owned(),

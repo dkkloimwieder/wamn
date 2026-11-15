@@ -354,7 +354,7 @@ mod tests {
         assert_eq!(
             from_variables.target.release_target(),
             ReleaseTarget::new(
-                &wamn_registry::project_env_key("org-a", "plant", "edge"),
+                wamn_registry::project_env_key("org-a", "plant", "edge"),
                 "edge"
             )
         );

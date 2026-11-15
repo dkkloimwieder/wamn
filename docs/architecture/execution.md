@@ -154,7 +154,8 @@ Any other payload answers 400 `delivery-invalid-payload`.
 `environment.status` also answers three nullable `int32` members.
 `users_with_role` counts human users with at least one role, once per user.
 `roles` counts all roles in the environment.
-`memberships` counts its rows in `identity.project_env_memberships` on the control connection.
+`memberships` counts explicit rows in `identity.project_env_memberships` for the selected project and environment on the control connection.
+Inherited administration adds no membership row.
 
 The first two counts share one query through the existing environment administration login, within a read-only transaction.
 Each count read has a two-second timeout, and both reads run concurrently.

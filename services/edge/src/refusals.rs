@@ -34,24 +34,30 @@ pub async fn run(args: &[String], db: &Path) -> anyhow::Result<String> {
             db.display()
         )
     })?;
-    let samples = SampleStore::open(store).await?;
-    match args {
-        [command] if command == "list" => {
-            let mut output = String::new();
-            for sample in samples.refused_samples().await? {
-                writeln!(
-                    output,
-                    "{}\t{}\t{}\t{}",
-                    sample.sample_key, sample.captured_at, sample.attempts, sample.reason
-                )?;
+    let closed = store.closed();
+    let result = async {
+        let samples = SampleStore::open(store).await?;
+        match args {
+            [command] if command == "list" => {
+                let mut output = String::new();
+                for sample in samples.refused_samples().await? {
+                    writeln!(
+                        output,
+                        "{}\t{}\t{}\t{}",
+                        sample.sample_key, sample.captured_at, sample.attempts, sample.reason
+                    )?;
+                }
+                Ok(output)
             }
-            Ok(output)
+            [command, sample_key, basis] if command == "resolve" => {
+                let basis: OperatorDecision = basis.parse()?;
+                samples.resolve(sample_key, basis).await?;
+                Ok(format!("resolved sample {sample_key} by {basis}\n"))
+            }
+            _ => bail!(USAGE),
         }
-        [command, sample_key, basis] if command == "resolve" => {
-            let basis: OperatorDecision = basis.parse()?;
-            samples.resolve(sample_key, basis).await?;
-            Ok(format!("resolved sample {sample_key} by {basis}\n"))
-        }
-        _ => bail!(USAGE),
     }
+    .await;
+    closed.wait().await;
+    result
 }

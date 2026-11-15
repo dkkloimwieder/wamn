@@ -1,6 +1,7 @@
 //! Package and guest build orchestration shared by xtask and its command clients.
 mod components;
 pub mod eject;
+mod guest_workspace;
 pub mod kcl;
 pub mod palette;
 use anyhow::{Context as _, Result};

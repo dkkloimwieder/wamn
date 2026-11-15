@@ -59,9 +59,9 @@ applications = ["apps/edge_samples"]
 
 [[preparation]]
 id = "jsonata"
-outputs = {WAMN_JSONATA_COMPONENT = "{target}/wasm32-wasip2/debug/jsonata_expression.wasm"}
+outputs = {WAMN_JSONATA_COMPONENT = "{target}/wasm32-wasip2/release/jsonata_expression.wasm"}
 commands = [
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "jsonata-expression"],
+  ["cargo", "xtask", "build-component", "guests/jsonata/Cargo.toml"],
 ]
 
 [[preparation]]
@@ -84,18 +84,23 @@ id = "control-binaries"
 commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-ctl", "--bin", "wamn", "--bin", "wamn-ctl"]]
 
 [[preparation]]
+id = "http-request"
+outputs = {WAMN_HTTP_REUSE_COMPONENT_WASM = "{target}/wasm32-wasip2/release/http_request.wasm"}
+commands = [["cargo", "xtask", "build-component", "guests/http-request/Cargo.toml"]]
+
+[[preparation]]
 id = "http-route"
 outputs = {WAMN_FLOW_HTTP_COMPONENT = "{target}/wasm32-wasip2/release/http_route.wasm"}
 aliases = {WAMN_DEV_ENV_FLOW_HTTP_COMPONENT = "WAMN_FLOW_HTTP_COMPONENT"}
 commands = [
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--release", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "http-route"],
+  ["cargo", "xtask", "build-component", "guests/http-route/Cargo.toml"],
 ]
 
 [[preparation]]
 id = "blob-put"
-outputs = {WAMN_BLOB_PUT_COMPONENT = "{target}/wasm32-wasip2/debug/blob_put.wasm"}
+outputs = {WAMN_BLOB_PUT_COMPONENT = "{target}/wasm32-wasip2/release/blob_put.wasm"}
 commands = [
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "blob-put"],
+  ["cargo", "xtask", "build-component", "guests/blob-put/Cargo.toml"],
 ]
 
 [[preparation]]
