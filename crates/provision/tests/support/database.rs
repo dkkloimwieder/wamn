@@ -92,9 +92,16 @@ pub async fn package_migration_input(
     let login = crate::migration::login(&key, database)?;
     let mut admin = wamn_postgres::connect(input).await?;
     let role = postgres_protocol::escape::escape_identifier(&login);
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {role} LOGIN PASSWORD 'migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT CONNECT ON DATABASE {} TO {role}; GRANT {role} TO wamn_db_owner WITH INHERIT TRUE, SET TRUE",
-        postgres_protocol::escape::escape_literal(&login), postgres_protocol::escape::escape_identifier(database))))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {role} LOGIN PASSWORD 'migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT {role} TO wamn_db_owner WITH INHERIT TRUE, SET TRUE",
+        postgres_protocol::escape::escape_literal(&login))))
         .execute(&mut admin).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(crate::sql::grant_workload_login_sql(
+        crate::WorkloadRoleFamily::Migration,
+        database,
+        &login,
+    )))
+    .execute(&mut admin)
+    .await?;
     let install_privileges: bool = sqlx::query_scalar(
         "SELECT to_regnamespace('platform') IS NOT NULL AND NOT EXISTS(SELECT FROM pg_event_trigger WHERE evtname='wamn_migration_privileges')",
     )

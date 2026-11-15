@@ -103,14 +103,14 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
                 .unwrap();
         }
     }
-    let database_name = wamn_postgres::identity(database.as_str()).unwrap().1;
-    let login =
-        wamn_control_provision::migration::login("apply-drops--dev--fixture", &database_name)
-            .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE ROLE {login} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD 'migration-test'; GRANT {login} TO authdrops_apply WITH INHERIT TRUE, SET TRUE"))).execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
-    let mut migration_url = url::Url::parse(database.as_str()).unwrap();
-    migration_url.set_username(&login).unwrap();
-    migration_url.set_password(Some("migration-test")).unwrap();
+    let migration_input = wamn_control_provision::test_database::package_migration_input(
+        database.as_str(),
+        "apply-drops",
+        "fixture",
+        "dev",
+    )
+    .await
+    .unwrap();
     let mut owner_url = url::Url::parse(database.as_str()).unwrap();
     owner_url.set_username("authdrops_apply").unwrap();
     owner_url.set_password(Some("authdrops")).unwrap();
@@ -139,7 +139,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
     let shipped = std::env::temp_dir().join(format!("wamn-local-shipped-{}", std::process::id()));
     wamn_publish::test_support::copy_schema_fixture(&shipped);
     apply_package(ApplyPackageRequest {
-        migration_database_url: migration_url.into(),
+        migration_database_url: migration_input,
         component_source: crate::apply_package::component_source_from_env(None).unwrap(),
         package: wamn_publish::package_artifact::fixture_package_root(&shipped).unwrap(),
         database_url: owner_url.to_string(),

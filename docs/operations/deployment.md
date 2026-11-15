@@ -314,8 +314,8 @@ It clears application catalog state, runs, queued events, and authored workflows
 It then applies every selected package's migrations in dependency order.
 
 Platform-owned schemas, database credentials, CDC publications, and replication slots remain.
-The platform owns application schemas. The migration login owns the objects inside them.
-Schema publications therefore include recreated tables without rebuilding CDC.
+The migration login owns application schemas and the objects inside them.
+Reset removes those schemas and their publication bindings. CDC preparation restores capture after package apply.
 The database keeps its identity.
 After migrations succeed, WAMN resumes the existing application selections.
 If a reset fails, users remain stopped. Repair the failure and repeat the same schema apply with its release.

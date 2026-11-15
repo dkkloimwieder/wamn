@@ -292,7 +292,6 @@ async fn apply(
         .await?
             != 0;
     }
-    ensure_model_schemas(&mut tx, &plan, &login).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::migration::grants_sql(&login),
     ))
@@ -301,15 +300,11 @@ async fn apply(
     let table = wamn_control_provision::migration::history_table(project_env_key, &package_id);
     wamn_control_provision::migration::prepare_history(&mut tx, &table, &login).await?;
     tx.commit().await?;
+    ensure_model_schemas(&mut executor, &plan).await?;
     let migrations_applied =
         crate::migrations::run(&mut executor, package.migrations, table).await?;
     let mut tx = migration::begin(client, project_env_key).await?;
     entity_maps::reconcile_entity_maps(&mut tx, &plan, &package.manifest).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::grant_dynamic_sql_surface_sql(),
-    ))
-    .execute(&mut *tx)
-    .await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::sql::grant_executor_history_reads_sql(),
     ))
@@ -359,9 +354,8 @@ pub(crate) async fn bind_apply_package_principal(
 }
 
 async fn ensure_model_schemas(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    connection: &mut sqlx::PgConnection,
     plan: &wamn_catalog::package_schema::PackageMetadata,
-    login: &str,
 ) -> anyhow::Result<()> {
     let schemas = plan
         .models
@@ -373,11 +367,14 @@ async fn ensure_model_schemas(
                 .map(|relation| relation.schema.as_str()),
         )
         .collect::<BTreeSet<_>>();
-    let role = postgres_protocol::escape::escape_identifier(login);
     for schema in schemas {
         let schema = wamn_postgres::schema::BareSchemaName::new(schema)?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION wamn_db_owner; GRANT USAGE, CREATE ON SCHEMA {} TO {role}", schema.quoted(), schema.quoted())))
-            .execute(&mut **tx).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE SCHEMA IF NOT EXISTS {}",
+            schema.quoted()
+        )))
+        .execute(&mut *connection)
+        .await?;
     }
     Ok(())
 }

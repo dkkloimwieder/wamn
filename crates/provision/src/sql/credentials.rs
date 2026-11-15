@@ -30,12 +30,21 @@ pub(crate) fn ensure_acl_role_sql(role: &str) -> String {
 
 /// Grant database access after CNPG creates this login.
 pub fn grant_workload_login_sql(family: WorkloadRoleFamily, database: &str, role: &str) -> String {
-    format!(
-        "{} GRANT CONNECT ON DATABASE {} TO {};",
+    let privileges = if family == WorkloadRoleFamily::Migration {
+        "CONNECT, CREATE"
+    } else {
+        "CONNECT"
+    };
+    let mut grants = format!(
+        "{} GRANT {privileges} ON DATABASE {} TO {};",
         stable_surface_sql(family).unwrap_or_else(|| ensure_workload_acl_role_sql(family)),
         escape_identifier(database),
         escape_identifier(role)
-    )
+    );
+    if family == WorkloadRoleFamily::Migration {
+        grants.push_str(&crate::migration::default_privileges_sql(role));
+    }
+    grants
 }
 
 /// Grant the dynamic SQL role reads without inheriting any application writer.

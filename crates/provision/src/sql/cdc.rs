@@ -2,15 +2,6 @@
 
 use super::{escape_identifier, escape_literal};
 
-/// `CREATE SCHEMA IF NOT EXISTS "<schema>"` — the eager guard that makes the
-/// CDC SQL order-robust: `FOR TABLES IN SCHEMA` auto-includes tables created
-/// later, so the publication may be created BEFORE catalog-publish fills the
-/// schema and still capture everything from the start. Catalog-publish's own
-/// `CREATE SCHEMA IF NOT EXISTS` then no-ops.
-pub fn ensure_schema_sql(schema: &str) -> String {
-    format!("CREATE SCHEMA IF NOT EXISTS {}", escape_identifier(schema))
-}
-
 /// Idempotently create the CDC publication over the project-env's app **data**
 /// schema: `CREATE PUBLICATION <pub> FOR TABLES IN SCHEMA <schema> WITH
 /// (publish = 'insert, update, delete')`, guarded by a `pg_publication` probe

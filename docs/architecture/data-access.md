@@ -55,6 +55,13 @@ A separate managed platform migration login inherits its privileges.
 Initialization takes resolved platform and package migration connections.
 CNPG provisioning resolves its managed credential before initialization.
 Explicit Postgres callers supply each migration login's own credential.
+Project role provisioning sets default privileges on the package migration login.
+Its new tables grant SELECT, INSERT, UPDATE and DELETE to `wamn_app` and SELECT to `wamn_query`.
+Its new sequences grant USAGE, SELECT and UPDATE to `wamn_app`.
+The migration login creates model schemas. Their default privileges grant USAGE to both runtime roles.
+These defaults apply without a schema list.
+The separate catalog connection creates platform-owned objects, so these defaults do not cover them.
+CDC requires model schemas to exist. It prepares capture after package SQL runs.
 
 Each entity map records its relation OID, package, and entity.
 Package apply refuses rebinding an existing relation OID to another package or entity.

@@ -72,6 +72,18 @@ pub fn history_table(project_env_key: &str, package: &str) -> String {
     format!("wamn_history.migrations_{}", &digest[7..47])
 }
 
+/// Grant runtime access to objects created by the package migration login.
+pub(crate) fn default_privileges_sql(login: &str) -> String {
+    let role = postgres_protocol::escape::escape_identifier(login);
+    format!(
+        "ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO wamn_app; \
+         ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT USAGE ON SCHEMAS TO wamn_app, wamn_query; \
+         ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO wamn_app; \
+         ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT SELECT ON TABLES TO wamn_query; \
+         ALTER DEFAULT PRIVILEGES FOR ROLE {role} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;"
+    )
+}
+
 /// Trusted grants required by compiler-generated history and proper foreign keys.
 pub fn grants_sql(login: &str) -> String {
     let role = postgres_protocol::escape::escape_identifier(login);
@@ -84,8 +96,7 @@ pub fn grants_sql(login: &str) -> String {
         GRANT EXECUTE ON FUNCTION wamn_history.stamp_row(), \
           wamn_history.create_history_table(text,text,boolean), \
           wamn_history.row_image(record), wamn_history.timestamptz_image(timestamptz), \
-          wamn_history.log_row_change() TO {role}; \
-        ALTER DEFAULT PRIVILEGES FOR ROLE {role} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;",
+          wamn_history.log_row_change() TO {role};",
         login = postgres_protocol::escape::escape_literal(login),
         principal = crate::PlatformComponent::ApplyPackage.principal_id(),
     )

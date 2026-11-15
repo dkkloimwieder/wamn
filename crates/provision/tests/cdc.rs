@@ -87,14 +87,11 @@ fn cdc_substrate_applies_and_is_idempotent_on_postgres() {
         ),
     );
 
-    // Project-env DB: the CDC bundle (schema guard → publication → failover
-    // slot → classification maps → grants — the exact order `cdc_sql_bundle`
-    // emits; both maps precede the grants because the grants name them), then a
-    // table created AFTER the publication, then the live assertions.
+    // The model schema exists before CDC prepares its publication and maps.
     let db_url = swap_db(&url, &db);
+    run_ok(&db_url, "CREATE SCHEMA app;");
     let cdc_sql = format!(
-        "{schema_guard};\n{publication}\n{slot}\n{entity_map};\n{exclusion_map};\n{grants}\n",
-        schema_guard = sql::ensure_schema_sql(schema),
+        "{publication}\n{slot}\n{entity_map};\n{exclusion_map};\n{grants}\n",
         publication = sql::create_publication_sql(&cdc, schema),
         slot = sql::create_failover_slot_sql(&cdc),
         entity_map = sql::ensure_entity_map_sql(schema),
@@ -204,7 +201,7 @@ fn cdc_role_reads_only_the_classification_maps_and_still_decodes_project_env_key
     run_ok(
         &db_url,
         &format!(
-            "{schema_guard};\n\
+            "CREATE SCHEMA {schema_ident};\n\
              CREATE TABLE {schema_ident}.widgets (id int PRIMARY KEY, project_secret text);\n\
              {entity_map};\n\
              {exclusion_map};\n\
@@ -214,7 +211,6 @@ fn cdc_role_reads_only_the_classification_maps_and_still_decodes_project_env_key
                ASSERT has_table_privilege('{cdc}', '{schema}.widgets'::regclass, 'SELECT'), \
                  'the pre-narrowing blanket grant must really be in place'; \
              END $$;\n",
-            schema_guard = sql::ensure_schema_sql(schema),
             schema_ident = format!("\"{schema}\""),
             entity_map = sql::ensure_entity_map_sql(schema),
             exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema),

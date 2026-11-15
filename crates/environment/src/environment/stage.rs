@@ -212,6 +212,7 @@ pub async fn write_runtime_grants(
     packages: &[PackageManifest],
     drops: &mut wamn_broker::auth_changes::AuthDrops,
 ) -> anyhow::Result<()> {
+    let mut system = crate::provision_project_env::provisioning_transaction(system).await?;
     let dependency_manifests = packages
         .iter()
         .map(|package| (package.package.id.as_str(), package))
@@ -222,7 +223,7 @@ pub async fn write_runtime_grants(
         let subject =
             wamn_platform_identity::application_subject(project_env_key, &package.package.id)?;
         let principal = wamn_platform_identity::resolve_subject(
-            system,
+            &mut system,
             wamn_platform_identity::PrincipalType::Service,
             &subject,
         )
@@ -276,6 +277,7 @@ pub async fn write_runtime_grants(
         )
         .await?;
     }
+    system.commit().await?;
     Ok(())
 }
 
