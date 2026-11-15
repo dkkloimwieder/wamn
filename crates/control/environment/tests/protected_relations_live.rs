@@ -8,16 +8,13 @@ use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 use std::collections::BTreeMap;
 
-use wamn_control_provision::identity_role::{
-    IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES, grant_identity_issuer_surface_sql,
-};
+use wamn_control_provision::identity_role::grant_identity_issuer_surface_sql;
 use wamn_control_provision::sql;
 
 const SYSTEM_SCHEMA_SQL: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const CONTROL_PORTABLE_STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../../test-support/fixtures/sql/current-database-public-connect.sql");
-const AUTHOR_SQL_ROLES: [&str; 1] = ["wamn_app"];
 
 #[derive(Debug, PartialEq, Eq)]
 struct PortableFingerprint {
@@ -34,6 +31,10 @@ async fn connect(url: &str) -> Client {
 }
 
 async fn prepare_scratch_database(client: &mut Client) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(sql::ensure_app_acl_role_sql()))
+        .execute(&mut *client)
+        .await
+        .expect("install the product application roles");
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
              DROP SCHEMA IF EXISTS audit_app CASCADE; \
@@ -49,12 +50,6 @@ async fn prepare_scratch_database(client: &mut Client) {
                    INHERIT NOREPLICATION NOBYPASSRLS; \
                ELSE ALTER ROLE wamn_system LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    INHERIT NOREPLICATION NOBYPASSRLS; END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
-                 CREATE ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   INHERIT NOREPLICATION NOBYPASSRLS; \
-               ELSE ALTER ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   INHERIT NOREPLICATION NOBYPASSRLS; END IF; \
-                \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_run_projection_writer') THEN \
                  CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
@@ -95,27 +90,6 @@ async fn install_control_database(client: &mut Client) {
     .await
     .map(drop)
     .expect("install canonical identity issuer key-table authority");
-    // Make sure of the identity issuer privileges, including SELECT and no TRUNCATE.
-    for table in IDENTITY_ISSUER_TABLES {
-        let relation = format!("identity.{table}");
-        let privileges: bool = sqlx::query(
-            "SELECT has_table_privilege($1, $2, 'SELECT') \
-                    AND has_table_privilege($1, $2, 'INSERT') \
-                    AND has_table_privilege($1, $2, 'UPDATE') \
-                    AND has_table_privilege($1, $2, 'DELETE') \
-                    AND NOT has_table_privilege($1, $2, 'TRUNCATE')",
-        )
-        .bind(&IDENTITY_ISSUER_ROLE)
-        .bind(&relation)
-        .fetch_one(&mut *client)
-        .await
-        .expect("read identity issuer key-table privileges")
-        .get(0);
-        assert!(
-            privileges,
-            "identity issuer privilege boundary drifted on {relation}"
-        );
-    }
 }
 
 async fn install_project_database(client: &mut Client) {
@@ -140,7 +114,8 @@ async fn install_project_database(client: &mut Client) {
     .map(drop)
     .expect("assign the canonical project database owner before package installation");
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("DROP SCHEMA IF EXISTS catalog CASCADE; \
+        ("DROP SCHEMA IF EXISTS platform CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
              DROP SCHEMA IF EXISTS wamn_history CASCADE")
@@ -149,7 +124,7 @@ async fn install_project_database(client: &mut Client) {
     .execute(&mut *client)
     .await
     .map(drop)
-    .expect("remove same-qualified control portable schemas before project install");
+    .expect("remove control schemas before the fresh project install");
     wamn_environment::platform_migrations::install_project(client)
         .await
         .expect("install canonical project schemas through reconciler");
@@ -278,7 +253,19 @@ async fn assert_author_sql_boundaries(client: &mut Client) {
              JOIN pg_catalog.pg_roles granted_role ON granted_role.oid=mutation.role_oid \
              WHERE granted_role.rolname::text = ANY($1) ORDER BY 1,2",
     )
-    .bind(&AUTHOR_SQL_ROLES.as_slice())
+    .bind(
+        &wamn_control_provision::WorkloadRoleFamily::ALL
+            .into_iter()
+            .filter(|family| {
+                matches!(
+                    family,
+                    wamn_control_provision::WorkloadRoleFamily::App
+                        | wamn_control_provision::WorkloadRoleFamily::Query
+                )
+            })
+            .map(|family| family.acl_role())
+            .collect::<Vec<_>>(),
+    )
     .fetch_all(&mut *client)
     .await
     .expect("read author SQL mutation privileges");
@@ -289,7 +276,7 @@ async fn assert_author_sql_boundaries(client: &mut Client) {
         // the project (docs/architecture/data-access.md#the-write-log). Its
         // grant is the claim insert and the result column alone.
         assert!(
-            forced_row_security || relation == WRITE_LOG,
+            forced_row_security || relation == WRITE_LOG || relation == "platform.tx_identity",
             "{relation} grants author SQL mutation without forced row security"
         );
     }

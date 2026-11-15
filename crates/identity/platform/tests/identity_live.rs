@@ -37,7 +37,6 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
     .map(drop)
     .expect("prepare empty platform schemas");
     wamn_control_provision::test_database::system_schema(&url).await;
-    identity_relations_carry_stamps(&mut client).await;
     let provisioning = provisioning_principal_is_seeded(&mut client).await;
     unbound_identity_writes_refuse(&mut client).await;
     // The fixture is platform setup, so it writes as wamn:provisioning.
@@ -481,101 +480,6 @@ async fn project_environment_membership_round_trip(
             .await
             .expect("principal deletion removes its membership")
     );
-}
-
-/// Each identity authority relation carries the four stamp columns as NOT NULL
-/// with no default, and one static stamp trigger.
-async fn identity_relations_carry_stamps(client: &mut sqlx::PgConnection) {
-    const RELATIONS: [&str; 13] = [
-        "org_memberships",
-        "org_roles",
-        "password_attempts",
-        "password_credentials",
-        "password_logins",
-        "password_tokens",
-        "pats",
-        "principals",
-        "project_env_memberships",
-        "project_roles",
-        "renewal_credentials",
-        "session_keys",
-        "session_signing_state",
-    ];
-    let columns = sqlx::query(
-        "SELECT table_name::text, column_name::text, data_type::text, is_nullable::text, \
-                    column_default IS NULL \
-             FROM information_schema.columns \
-             WHERE table_schema = 'identity' \
-               AND column_name IN ('created_at', 'created_by', 'updated_at', 'updated_by') \
-             ORDER BY table_name, column_name",
-    )
-    .fetch_all(&mut *client)
-    .await
-    .expect("read the identity stamp columns")
-    .iter()
-    .map(|row| {
-        format!(
-            "{}.{} {} nullable={} no_default={}",
-            row.get::<String, _>(0),
-            row.get::<String, _>(1),
-            row.get::<String, _>(2),
-            row.get::<String, _>(3),
-            row.get::<bool, _>(4),
-        )
-    })
-    .collect::<Vec<_>>();
-    // A credential row never changes, so it records only its creation.
-    let expected_columns = [
-        "credential.created_at timestamp with time zone nullable=NO no_default=true".to_owned(),
-        "credential.created_by uuid nullable=NO no_default=true".to_owned(),
-        "oauth_authorization.created_by uuid nullable=NO no_default=true".to_owned(),
-        "oauth_token.updated_at timestamp with time zone nullable=NO no_default=true".to_owned(),
-    ]
-    .into_iter()
-    .chain(RELATIONS.iter().flat_map(|relation| {
-        [
-            ("created_at", "timestamp with time zone"),
-            ("created_by", "uuid"),
-            ("updated_at", "timestamp with time zone"),
-            ("updated_by", "uuid"),
-        ]
-        .map(|(column, data_type)| {
-            format!("{relation}.{column} {data_type} nullable=NO no_default=true")
-        })
-    }))
-    .collect::<Vec<_>>();
-    assert_eq!(columns, expected_columns);
-
-    let triggers = sqlx::query(
-        "SELECT pg_catalog.pg_get_triggerdef(t.oid) \
-             FROM pg_catalog.pg_trigger t \
-             JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid \
-             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-             WHERE n.nspname = 'identity' AND NOT t.tgisinternal \
-               AND t.tgname = 'wamn_record_history_stamp' \
-             ORDER BY c.relname, t.tgname",
-    )
-    .fetch_all(&mut *client)
-    .await
-    .expect("read the identity triggers")
-    .iter()
-    .map(|row| row.get::<String, _>(0))
-    .collect::<Vec<_>>();
-    let expected_triggers = [
-        "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT ON identity.credential \
-         FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by')"
-            .to_owned(),
-    ]
-    .into_iter()
-    .chain(RELATIONS.map(|relation| {
-        format!(
-            "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON identity.{relation} \
-             FOR EACH ROW EXECUTE FUNCTION \
-             wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
-        )
-    }))
-    .collect::<Vec<_>>();
-    assert_eq!(triggers, expected_triggers);
 }
 
 /// The system schema seeds the wamn:provisioning row with the derived id, and

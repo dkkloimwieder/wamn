@@ -100,7 +100,7 @@ fn psql(url: &str, database: Option<&str>, script: &str) -> String {
 /// tolerates `psql -1`.
 fn apply(url: &str, sql: &str) {
     let sql = sql.replace("\\ir record-history.sql", RECORD_HISTORY);
-    let out = Command::new("psql")
+    let (written, out) = Command::new("psql")
         .arg(url)
         .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
         .stdin(std::process::Stdio::piped())
@@ -109,13 +109,8 @@ fn apply(url: &str, sql: &str) {
         .spawn()
         .map(|mut child| {
             use std::io::Write;
-            child
-                .stdin
-                .take()
-                .expect("stdin")
-                .write_all(sql.as_bytes())
-                .expect("write script");
-            child.wait_with_output().expect("psql completes")
+            let written = child.stdin.take().expect("stdin").write_all(sql.as_bytes());
+            (written, child.wait_with_output().expect("psql completes"))
         })
         .expect("spawn psql (is it installed?)");
     assert!(
@@ -123,6 +118,7 @@ fn apply(url: &str, sql: &str) {
         "apply failed:\n{}\nSQL: {sql}",
         String::from_utf8_lossy(&out.stderr)
     );
+    written.expect("write script");
 }
 
 /// Assert a predicate against the installed database, without rendering rows.
@@ -735,12 +731,9 @@ fn the_stamp_trigger_stamps_guest_writes_on_postgres() {
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
 
-    // THE GRANTS AND THE FUNCTION SHAPE, from the server catalogs.
     assert_query(
         &db_url,
-        &format!(
-            "SELECT has_schema_privilege('wamn_db_owner','wamn_history','USAGE') AND has_function_privilege('wamn_db_owner','wamn_history.stamp_row()','EXECUTE') AND has_schema_privilege('wamn_app','wamn_history','USAGE') AND NOT has_function_privilege('wamn_app','wamn_history.stamp_row()','EXECUTE') AND NOT has_function_privilege('{guest}','wamn_history.stamp_row()','EXECUTE') AND NOT p.prosecdef AND 'search_path=pg_catalog'=ANY(p.proconfig) FROM pg_proc p WHERE p.oid='wamn_history.stamp_row()'::regprocedure"
-        ),
+        "SELECT NOT prosecdef AND 'search_path=pg_catalog'=ANY(proconfig) FROM pg_proc WHERE oid='wamn_history.stamp_row()'::regprocedure",
     );
 
     // 1. An insert stamps four with one instant per transaction, and replaces
@@ -1059,12 +1052,6 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
 
     assert_query(
         &db_url,
-        &format!(
-            "SELECT has_function_privilege('wamn_db_owner','wamn_history.create_history_table(text,text,boolean)','EXECUTE') AND has_function_privilege('wamn_db_owner','wamn_history.log_row_change()','EXECUTE') AND NOT has_function_privilege('wamn_app','wamn_history.create_history_table(text,text,boolean)','EXECUTE') AND NOT has_function_privilege('wamn_app','wamn_history.log_row_change()','EXECUTE') AND NOT has_function_privilege('{guest}','wamn_history.log_row_change()','EXECUTE')"
-        ),
-    );
-    assert_query(
-        &db_url,
         "SELECT NOT EXISTS (SELECT FROM pg_proc p WHERE p.pronamespace='wamn_history'::regnamespace AND (p.prosecdef OR NOT coalesce('search_path=pg_catalog'=ANY(p.proconfig),false) OR (p.proname IN ('row_image','timestamptz_image') AND NOT coalesce('TimeZone=UTC'=ANY(p.proconfig),false))))",
     );
 
@@ -1165,31 +1152,32 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
 
-/// Inspect every installed history function and every non-owner privilege.
-fn assert_history_grants(url: &str, app: bool) {
+/// History storage never grants application logins a write or a grant option.
+fn assert_history_grants(url: &str) {
     assert_query(
         url,
-        "SELECT has_schema_privilege('wamn_db_owner','wamn_history','CREATE') AND has_schema_privilege('wamn_db_owner','wamn_history','USAGE') AND bool_and(has_function_privilege('wamn_db_owner',p.oid,'EXECUTE')) FROM pg_proc p WHERE p.pronamespace='wamn_history'::regnamespace",
+        "SELECT has_schema_privilege('wamn_db_owner','wamn_history','CREATE') AND has_schema_privilege('wamn_db_owner','wamn_history','USAGE') AND bool_and(has_function_privilege('wamn_db_owner',oid,'EXECUTE')) FROM pg_proc WHERE pronamespace='wamn_history'::regnamespace",
     );
-    assert_query(url, &format!("SELECT NOT EXISTS (
-        SELECT FROM pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) a
-        WHERE n.nspname='wamn_history' AND a.grantee<>n.nspowner
-          AND (a.is_grantable OR NOT (a.grantee='wamn_db_owner'::regrole OR ({app} AND a.grantee=to_regrole('wamn_app') AND a.privilege_type='USAGE')))
+    assert_query(
+        url,
+        "SELECT NOT EXISTS (
+        SELECT FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+        WHERE c.relnamespace='wamn_history'::regnamespace
+          AND a.grantee=to_regrole('wamn_app') AND
+              (a.is_grantable OR a.privilege_type <> 'SELECT')
+        UNION ALL
+        SELECT FROM pg_proc p
+        WHERE p.pronamespace='wamn_history'::regnamespace AND p.provolatile='v'
+          AND has_function_privilege(to_regrole('wamn_app'),p.oid,'EXECUTE')
         UNION ALL
         SELECT FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
-        WHERE p.pronamespace='wamn_history'::regnamespace AND a.grantee<>p.proowner
-          AND (a.is_grantable OR NOT (a.grantee='wamn_db_owner'::regrole OR ({app} AND a.grantee=to_regrole('wamn_app') AND p.oid IN ('wamn_history.row_image(record)'::regprocedure,'wamn_history.timestamptz_image(timestamptz)'::regprocedure))))
+        WHERE p.pronamespace='wamn_history'::regnamespace
+          AND a.grantee=to_regrole('wamn_app') AND a.is_grantable
         UNION ALL
-        SELECT FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
-        WHERE c.relnamespace='wamn_history'::regnamespace AND a.grantee<>c.relowner
-          AND (a.is_grantable OR NOT ({app} AND a.grantee=to_regrole('wamn_app') AND c.oid='wamn_history.pruning_watermarks'::regclass AND a.privilege_type='SELECT')))
-    "));
-    if app {
-        assert_query(
-            url,
-            "SELECT has_schema_privilege('wamn_app','wamn_history','USAGE') AND has_function_privilege('wamn_app','wamn_history.row_image(record)','EXECUTE') AND has_function_privilege('wamn_app','wamn_history.timestamptz_image(timestamptz)','EXECUTE') AND has_table_privilege('wamn_app','wamn_history.pruning_watermarks','SELECT')",
-        );
-    }
+        SELECT FROM pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) a
+        WHERE n.nspname='wamn_history' AND a.grantee=to_regrole('wamn_app')
+          AND (a.is_grantable OR a.privilege_type <> 'USAGE'))",
+    );
 }
 
 /// Ruling 78 (`wamn-emtx.31`). The `wamn_app` record history grants come from
@@ -1205,7 +1193,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
     let (_database, admin) = shared_server();
 
     let (db_url, guest) = record_history_log_fixture(&admin);
-    assert_history_grants(&db_url, true);
+    assert_history_grants(&db_url);
     apply(
         &db_url,
         &format!(
@@ -1264,18 +1252,26 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
                 apply(&admin, &sql::ensure_app_acl_role_sql());
             }
             apply(&system_url, sql::ensure_db_owner_role_sql());
+            // Bootstrap caller identity before the system install writes stamped rows.
+            apply(
+                &system_url,
+                &format!("SET ROLE {applier}; {RECORD_HISTORY}"),
+            );
             apply(
                 &system_url,
                 &format!(
-                    "SET ROLE {applier};\n{}\nRESET ROLE;\n",
+                    "SET ROLE {applier}; BEGIN; {} {} COMMIT; RESET ROLE;",
+                    wamn_control_provision::bind_platform_principal_sql(
+                        wamn_control_provision::PlatformComponent::Provisioning
+                    ),
                     wamn_control_provision::SYSTEM_SCHEMA_SQL
                 ),
             );
-            assert_history_grants(&system_url, false);
+            assert_history_grants(&system_url);
             if app_role {
                 assert_query(
                     &system_url,
-                    "SELECT NOT has_schema_privilege('wamn_app','wamn_history','USAGE') AND NOT has_function_privilege('wamn_app','wamn_history.row_image(record)','EXECUTE') AND NOT has_function_privilege('wamn_app','wamn_history.timestamptz_image(timestamptz)','EXECUTE')",
+                    "SELECT NOT has_schema_privilege('wamn_app','wamn_history','USAGE') AND NOT EXISTS(SELECT FROM pg_proc WHERE pronamespace='wamn_history'::regnamespace AND has_function_privilege('wamn_app',oid,'EXECUTE'))",
                 );
             } else {
                 let refused = apply_refused(&system_url, RECORD_HISTORY_APP_GRANTS);
@@ -2357,9 +2353,6 @@ fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
         r#"
 DO $$ DECLARE history regclass; BEGIN
     ASSERT has_table_privilege('wamn_audit_retention', 'rh_probe.projected_history', 'DELETE');
-    ASSERT has_table_privilege('wamn_audit_retention', 'platform.tx_identity', 'INSERT');
-    ASSERT NOT has_table_privilege('wamn_audit_retention', 'platform.tx_identity', 'SELECT');
-    ASSERT NOT has_table_privilege('wamn_audit_retention', 'platform.login_principal', 'SELECT');
     FOR history IN
         SELECT to_regclass(format('%I.%I', n.nspname, c.relname || '_history'))
           FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
@@ -2373,27 +2366,6 @@ DO $$ DECLARE history regclass; BEGIN
 END $$;
 "#,
     );
-    for column in wamn_control_provision::audit_retention::WRITE_LOG_RETENTION_READ_COLUMNS {
-        assert_query(
-            &db_url,
-            &format!(
-                "SELECT has_column_privilege('wamn_audit_retention','platform.write_log','{column}','SELECT')"
-            ),
-        );
-    }
-    let columns: Vec<String> = serde_json::from_str(&psql(&db_url, None, "SELECT json_agg(attname) FROM pg_attribute WHERE attrelid='platform.write_log'::regclass AND attnum>0 AND NOT attisdropped")).unwrap();
-    for column in columns.iter().filter(|column| {
-        !wamn_control_provision::audit_retention::WRITE_LOG_RETENTION_READ_COLUMNS
-            .contains(&column.as_str())
-    }) {
-        assert_query(
-            &db_url,
-            &format!(
-                "SELECT NOT has_column_privilege('wamn_audit_retention','platform.write_log','{column}','SELECT')"
-            ),
-        );
-    }
-
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
 

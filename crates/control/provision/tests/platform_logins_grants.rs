@@ -1,0 +1,64 @@
+//! Managed platform logins retain component identity without role escalation.
+
+#[path = "support/grants.rs"]
+pub mod grants;
+use wamn_control_provision::{
+    PlatformComponent, WorkloadRoleFamily, migrations::MigrationDatabase,
+};
+
+#[sqlx::test(migrations = false)]
+async fn project_platform_logins_cannot_escalate(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let fixture = grants::prepare(&pool, WorkloadRoleFamily::Migration).await;
+    platform_rules(&pool, MigrationDatabase::Project).await;
+    drop(fixture);
+}
+
+#[sqlx::test(migrations = false)]
+async fn system_platform_logins_cannot_escalate(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let url = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(url.as_str()).await;
+    platform_rules(&pool, MigrationDatabase::System).await;
+}
+
+async fn platform_rules(pool: &sqlx::PgPool, scope: MigrationDatabase) {
+    let admin = wamn_test_postgres::url(pool);
+    let url =
+        wamn_control_provision::test_database::platform_migration_input(admin.as_str(), scope)
+            .await
+            .unwrap();
+    let mut connection = wamn_postgres::connect(&url).await.unwrap();
+    scope.require_login(&mut connection).await.unwrap();
+    let rows: Vec<(String, uuid::Uuid, bool)> = sqlx::query_as(
+        "SELECT p.login,p.principal_id,NOT (r.rolsuper OR r.rolbypassrls OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication)
+         FROM platform.login_principal p JOIN pg_roles r ON r.rolname=p.login",
+    ).fetch_all(pool).await.unwrap();
+    assert!(
+        !rows.is_empty(),
+        "the product must install its component login mapping"
+    );
+    for (login, principal, restricted) in rows {
+        assert!(
+            restricted,
+            "platform login {login} can bypass database privileges"
+        );
+        assert!(
+            PlatformComponent::ALL
+                .into_iter()
+                .any(|component| component.principal_id() == principal),
+            "{login} maps to an unknown platform principal: {principal}"
+        );
+    }
+    let login = url::Url::parse(&url).unwrap();
+    for attribute in ["SUPERUSER", "BYPASSRLS"] {
+        grants::refuses(
+            &url,
+            &format!(
+                "ALTER ROLE {} {attribute}",
+                postgres_protocol::escape::escape_identifier(login.username())
+            ),
+        )
+        .await;
+    }
+}
