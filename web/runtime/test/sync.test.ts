@@ -404,7 +404,7 @@ describe("the idempotency key", () => {
         bindings: { [operation]: { invoke: create, fields: { id: "id" } } },
         renew: async () => true,
       }),
-    ).toThrow(`${operation} takes no idempotency key, so the outbox cannot replay it`);
+    ).toThrow();
   });
 });
 

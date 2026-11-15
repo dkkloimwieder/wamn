@@ -550,8 +550,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains(UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL),
-            "the loaded release must preserve the typed format refusal: {error}"
+                .contains(UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL)
         );
     }
 

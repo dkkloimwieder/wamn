@@ -127,7 +127,7 @@ mod tests {
         ingress: &Ingress<ExpectedHostRouter>,
         host: Option<&str>,
         path: &str,
-    ) -> (u16, String) {
+    ) -> (u16, hyper::HeaderMap) {
         tokio::time::timeout(Duration::from_secs(5), async {
             let mut connection = tokio::net::TcpStream::connect(ingress.addr())
                 .await
@@ -153,7 +153,16 @@ mod tests {
                 .expect("HTTP status")
                 .parse()
                 .unwrap();
-            (status, response)
+            let (head, _) = response.split_once("\r\n\r\n").unwrap();
+            let mut headers = hyper::HeaderMap::new();
+            for line in head.split("\r\n").skip(1) {
+                let (name, value) = line.split_once(':').unwrap();
+                headers.append(
+                    name.parse::<hyper::header::HeaderName>().unwrap(),
+                    value.trim().parse().unwrap(),
+                );
+            }
+            (status, headers)
         })
         .await
         .expect("native ingress responds within the test deadline")
@@ -196,7 +205,7 @@ mod tests {
             status, 503,
             "an expected host refuses before its first bind"
         );
-        assert!(!refusal.to_ascii_lowercase().contains("retry-after:"));
+        assert!(refusal.get(hyper::header::RETRY_AFTER).is_none());
         assert_eq!(
             request(&ingress, Some("api.example.test:8080"), "/")
                 .await
@@ -217,7 +226,7 @@ mod tests {
         assert_eq!(request(&ingress, Some(HOST), "/").await.0, 204);
         let (status, response) = request(&ingress, Some(HOST), "/missing").await;
         assert_eq!(status, 404, "an application refusal retains its status");
-        assert!(response.contains("x-application-response: preserved"));
+        assert_eq!(response["x-application-response"], "preserved");
         assert_eq!(
             request(&ingress, Some("unknown.example.test"), "/").await.0,
             404

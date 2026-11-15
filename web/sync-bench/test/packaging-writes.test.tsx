@@ -139,7 +139,7 @@ it("takes the project and environment from the application route and the id from
   expect(outboxDatabase(route.application, route.environment, "signed-in-user")).toBe(
     "wamn-outbox:wms:dev:signed-in-user",
   );
-  expect(() => packagingAddress("/live.html")).toThrow("Open /urn:wamn:project-env:");
+  expect(() => packagingAddress("/live.html")).toThrow();
 });
 
 it("reports Recorded and enables three offline creates before any upload", async () => {

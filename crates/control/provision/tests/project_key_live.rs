@@ -7,8 +7,7 @@
 //! test can catch it, because one of the two implementations only exists inside
 //! PostgreSQL.
 //!
-//! Shells out to `psql` deliberately: this crate has no database client
-//! dependency and the existing live acceptance tests here (`cdc.rs`) take the same shape.
+//! Applies SQL through `psql` and reads typed catalog values through SQLx.
 
 use std::process::Command;
 
@@ -53,19 +52,6 @@ impl Target {
         target.db.push_str("-\u{f6}\u{e4}");
         target
     }
-}
-
-/// Percent-encode the non-ASCII bytes of a database name for a connection URI.
-fn encode_path(name: &str) -> String {
-    name.bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
-                (b as char).to_string()
-            } else {
-                format!("%{b:02X}")
-            }
-        })
-        .collect()
 }
 
 /// Projects spanning the charset `valid_project_env_key` admits (ASCII alphanumeric plus
@@ -140,8 +126,9 @@ fn reset(admin_url: &str, target: &Target) -> String {
         &format!("CREATE DATABASE \"{db}\" OWNER {owner}"),
     );
 
-    let base = admin_url.rsplit_once('/').expect("url names a database").0;
-    format!("{base}/{}", encode_path(db))
+    let mut url = url::Url::parse(admin_url).unwrap();
+    url.set_path(db);
+    url.into()
 }
 
 /// The DDL under test, rendered for one isolated target.
@@ -192,37 +179,15 @@ async fn the_function_carries_the_flags_the_expression_index_requires(pool: sqlx
     // Read from pg_proc, NOT from the DDL text. A function that silently lost
     // IMMUTABLE still creates fine and breaks every expression index built on
     // it, so the catalog is the only answer worth trusting.
-    let flags = |name: &str| {
-        psql(
-            &db_url,
-            None,
-            // Explicit casts: `\"char\" || \"char\"` is an ambiguous operator.
-            &format!(
-                "SELECT p.provolatile::text || p.proparallel::text \
-                 || CASE WHEN p.prosecdef THEN 'd' ELSE 'i' END \
-                   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
-                  WHERE n.nspname = 'wamn_authority' AND p.proname = '{name}'"
-            ),
-        )
-    };
-    assert_eq!(
-        flags("project_key"),
-        "isi",
-        "provolatile must be 'i' (IMMUTABLE), proparallel 's' (SAFE) and the \
-         function SECURITY INVOKER; without IMMUTABLE the expression index is \
-         not even creatable"
-    );
-    // The session side reads `current_user`, so STABLE is the strongest it can
-    // be — and is all an index scan needs on the comparison side. SECURITY
-    // INVOKER matters more here than anywhere: a DEFINER function reading
-    // `current_user` would report the DEFINER's identity, handing every session
-    // the owner's key.
-    assert_eq!(
-        flags("current_project_key"),
-        "ssi",
-        "provolatile must be 's' (STABLE), proparallel 's' (SAFE), and the \
-         function must be SECURITY INVOKER"
-    );
+    let mut connection = wamn_postgres::connect(&db_url).await.unwrap();
+    for (name, volatility) in [("project_key", "i"), ("current_project_key", "s")] {
+        let (observed, parallel, definer): (String, String, bool) = sqlx::query_as(
+            "SELECT p.provolatile::text,p.proparallel::text,p.prosecdef FROM pg_proc p WHERE p.pronamespace='wamn_authority'::regnamespace AND p.proname=$1"
+        ).bind(name).fetch_one(&mut connection).await.unwrap();
+        assert_eq!(observed, volatility);
+        assert_eq!(parallel, "s");
+        assert!(!definer);
+    }
 
     // The expression index the ruling requires must actually be creatable.
     psql_file(
@@ -231,17 +196,9 @@ async fn the_function_carries_the_flags_the_expression_index_requires(pool: sqlx
          CREATE INDEX IF NOT EXISTS probe_project_key \
            ON probe ((wamn_authority.project_key(project_env_key)))",
     );
-    let indexed = psql(
-        &db_url,
-        None,
-        "SELECT pg_get_indexdef(indexrelid) FROM pg_index i \
-           JOIN pg_class c ON c.oid = i.indexrelid \
-          WHERE c.relname = 'probe_project_key'",
-    );
-    assert!(
-        indexed.contains("project_key"),
-        "the expression index must record the derivation, got {indexed:?}"
-    );
+    let indexed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM pg_depend WHERE classid='pg_class'::regclass AND objid='probe_project_key'::regclass AND refclassid='pg_proc'::regclass AND refobjid='wamn_authority.project_key(text)'::regprocedure)")
+        .fetch_one(&mut connection).await.unwrap();
+    assert!(indexed);
 }
 
 #[sqlx::test(migrations = false)]
@@ -251,20 +208,16 @@ async fn the_guest_may_execute_the_derivation_and_may_not_replace_it(pool: sqlx:
     let target = Target::new("grants");
     let db_url = reset(&admin, &target);
     psql_file(&db_url, &ddl(&target));
+    let mut connection = wamn_postgres::connect(&db_url).await.unwrap();
 
-    let execute = psql(
-        &db_url,
-        None,
-        &format!(
-            "SELECT has_function_privilege('{app}', \
-             'wamn_authority.project_key(text)', 'EXECUTE')",
-            app = target.app
-        ),
-    );
-    assert_eq!(
-        execute, "t",
-        "the guest family must be able to CALL the derivation"
-    );
+    let execute: bool = sqlx::query_scalar(
+        "SELECT has_function_privilege($1,'wamn_authority.project_key(text)','EXECUTE')",
+    )
+    .bind(&target.app)
+    .fetch_one(&mut connection)
+    .await
+    .unwrap();
+    assert!(execute);
 
     // Ownership is what permits CREATE OR REPLACE. An attacker who can redefine
     // this function owns EVERY governed predicate at once, so the guest must not
@@ -285,37 +238,21 @@ async fn the_guest_may_execute_the_derivation_and_may_not_replace_it(pool: sqlx:
         "the guest must not be able to redefine the derivation"
     );
 
-    let public_execute = psql(
-        &db_url,
-        None,
-        "SELECT has_function_privilege('public', \
-         'wamn_authority.project_key(text)', 'EXECUTE')",
-    );
-    assert_eq!(
-        public_execute, "f",
-        "PUBLIC must hold nothing on the derivation"
-    );
+    let public_execute: bool = sqlx::query_scalar(
+        "SELECT has_function_privilege('public','wamn_authority.project_key(text)','EXECUTE')",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .unwrap();
+    assert!(!public_execute);
 
     // The session side carries the same posture. It is the half an attacker
     // would rather own: redefining it to return a chosen key unlocks every
     // project without touching a single policy.
-    let session_execute = psql(
-        &db_url,
-        None,
-        &format!(
-            // Both sides cast: `boolean || boolean` would render one as
-            // `true`/`false` and the other as `t`/`f`.
-            "SELECT has_function_privilege('{app}', \
-             'wamn_authority.current_project_key()', 'EXECUTE')::text \
-             || has_function_privilege('public', \
-             'wamn_authority.current_project_key()', 'EXECUTE')::text",
-            app = target.app
-        ),
-    );
-    assert_eq!(
-        session_execute, "truefalse",
-        "the guest family may CALL the session derivation and PUBLIC may not"
-    );
+    let (guest_execute, public_execute): (bool,bool) = sqlx::query_as("SELECT has_function_privilege($1,'wamn_authority.current_project_key()','EXECUTE'),has_function_privilege('public','wamn_authority.current_project_key()','EXECUTE')")
+        .bind(&target.app).fetch_one(&mut connection).await.unwrap();
+    assert!(guest_execute);
+    assert!(!public_execute);
     let session_owner = psql(
         &db_url,
         None,
@@ -335,15 +272,11 @@ const PROBE_PASSWORD: &str = "project-key-probe";
 
 /// Rewrite an admin URL onto another role and database.
 fn role_url(admin_url: &str, role: &str, database: &str) -> String {
-    let after_userinfo = admin_url
-        .rsplit_once('@')
-        .expect("the admin url carries userinfo")
-        .1;
-    let host = after_userinfo
-        .split('/')
-        .next()
-        .expect("the host precedes the database");
-    format!("postgres://{role}:{PROBE_PASSWORD}@{host}/{database}")
+    let mut url = url::Url::parse(admin_url).unwrap();
+    url.set_username(role).unwrap();
+    url.set_password(Some(PROBE_PASSWORD)).unwrap();
+    url.set_path(database);
+    url.into()
 }
 
 /// THE PREDICATE, END TO END, against a login the MINT actually produced.
@@ -408,19 +341,17 @@ async fn the_session_derivation_returns_the_key_of_the_connected_guest_login(poo
     );
 
     // The governed predicate itself, evaluated by the server as the guest.
-    let predicate = psql(
-        &role_url(&admin, &login, &target.db),
-        None,
-        &format!(
-            "SELECT wamn_authority.project_key('{project_env_key}') \
-             = wamn_authority.current_project_key()"
-        ),
-    );
-    assert_eq!(
-        predicate, "t",
-        "the two halves of the governed predicate must agree for the project \
-         the connected login was minted for"
-    );
+    let mut connection = wamn_postgres::connect(&role_url(&admin, &login, &target.db))
+        .await
+        .unwrap();
+    let predicate: bool = sqlx::query_scalar(
+        "SELECT wamn_authority.project_key($1)=wamn_authority.current_project_key()",
+    )
+    .bind(project_env_key)
+    .fetch_one(&mut connection)
+    .await
+    .unwrap();
+    assert!(predicate);
 
     for (role, why) in [
         (

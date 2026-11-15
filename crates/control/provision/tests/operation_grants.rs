@@ -1,207 +1,133 @@
-//! PostgreSQL 18 test of the built-in `admin` role that `apply-package` writes,
-//! and of the permission rows of authored roles
-//! (docs/architecture/execution.md#host-run-routes).
-//!
-//! The test uses a test database of the test PostgreSQL server as its superuser,
-//! and holds the process lock, because it creates cluster-wide roles.
+//! Installed role constraints and the built-in administrator write.
 
-use std::io::Write as _;
-use std::process::{Command, Stdio};
-
+use sqlx::Connection as _;
 use wamn_control_provision::operation_grants::{
     ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL, PLATFORM_BASE_GRANTS_MISSING,
     operation_base_grants_requirements_sql,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 
-const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-/// The test principal that the fixture seed writes as.
-const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
-
-fn psql(url: &str, script: &str) -> (bool, String, String) {
-    let mut child = Command::new("psql")
-        .arg(url)
-        .args([
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-v",
-            "VERBOSITY=verbose",
-            "-tAq",
-            "-f",
-            "-",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn psql");
-    child
-        .stdin
-        .take()
-        .expect("psql stdin")
-        .write_all(script.as_bytes())
-        .expect("write psql script");
-    let output = child.wait_with_output().expect("wait for psql");
-    (
-        output.status.success(),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
-    )
-}
-
-fn run(url: &str, what: &str, script: &str) -> String {
-    let (ok, stdout, stderr) = psql(url, script);
-    assert!(ok, "{what} failed:\nstdout:\n{stdout}\nstderr:\n{stderr}");
-    stdout.trim().to_owned()
-}
-
-fn query(url: &str, statement: &str) -> String {
-    run(url, "query server state", statement)
-}
-
-/// The transaction binds `wamn:apply-package`, as apply-package does, and
-/// runs the admin statement for project `t1`.
-fn transaction() -> String {
-    let base_grants_requirements = operation_base_grants_requirements_sql();
-    let actor = bind_platform_principal_sql(PlatformComponent::ApplyPackage);
-    format!(
-        "BEGIN; {actor} {OPERATION_GRANT_TRANSACTION_PRELUDE_SQL}; {base_grants_requirements} \
-         PREPARE ensure_admin AS {ENSURE_ADMIN_ROLE_SQL}; \
-         EXECUTE ensure_admin; COMMIT;"
-    )
-}
-
-/// Run `statement` as the fixture principal and return psql's error text, or
-/// `None` when it succeeded.
-fn refusal(url: &str, statement: &str) -> Option<String> {
-    let (ok, _, stderr) = psql(
-        url,
-        &format!(
-            "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
-             set_config('app.operation', 'admin:operation-grant-fixture', true); \
-             {statement}; COMMIT;"
-        ),
-    );
-    (!ok).then_some(stderr)
+async fn admin_write(connection: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
+    let mut transaction = connection.begin().await?;
+    for batch in [
+        bind_platform_principal_sql(PlatformComponent::ApplyPackage),
+        OPERATION_GRANT_TRANSACTION_PRELUDE_SQL.to_owned(),
+        operation_base_grants_requirements_sql(),
+        ENSURE_ADMIN_ROLE_SQL.to_owned(),
+    ] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(batch))
+            .execute(&mut *transaction)
+            .await?;
+    }
+    transaction.commit().await
 }
 
 #[sqlx::test(migrations = false)]
-async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(pool: sqlx::PgPool) {
+async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<()> {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let url = test_database.as_str().to_owned();
-    assert!(
-        query(&url, "SHOW server_version_num")
-            .parse::<u32>()
-            .expect("server version is numeric")
-            >= 180_000,
-        "operation-grant test requires PostgreSQL 18"
-    );
-    run(
-        &url,
-        "reset application authority minimum",
-        "DROP SCHEMA IF EXISTS catalog CASCADE; \
-         DROP SCHEMA IF EXISTS platform CASCADE; \
-         DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-         DO $role$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN \
-             CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
-            \
-         END $role$;",
-    );
+    let mut connection = pool.acquire().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_app_acl_role_sql(),
+    ))
+    .execute(&mut *connection)
+    .await?;
+    let missing = admin_write(&mut connection).await.unwrap_err();
+    let missing = missing.as_database_error().unwrap();
+    assert_eq!(missing.code().as_deref(), Some("55000"));
+    assert_eq!(missing.message(), PLATFORM_BASE_GRANTS_MISSING);
 
-    let (ok, _, missing_stderr) = psql(&url, &transaction());
-    assert!(
-        !ok,
-        "the admin write installed its own missing platform base grants"
-    );
-    assert!(
-        missing_stderr.contains("55000") && missing_stderr.contains(PLATFORM_BASE_GRANTS_MISSING),
-        "missing-minimum refusal lost its SQLSTATE or literal:\n{missing_stderr}"
-    );
-
-    run(
-        &url,
-        "install the catalog and connection projections",
+    for batch in [
         wamn_catalog::CATALOG_SCHEMA_SQL,
-    );
-    run(&url, "install application authority minimum", APP_SCHEMA);
-    run(
-        &url,
-        "seed an authored role with two permissions",
-        &format!(
-            "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
-         set_config('app.operation', 'admin:seed-operation-grant-fixture', true); \
-         INSERT INTO platform.\"user\" (id, type, email) VALUES \
-           ('{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'); \
-         INSERT INTO platform.role (name) VALUES ('clerk'); \
-         INSERT INTO platform.permission (role_name, permission) VALUES \
-           ('clerk', 'platform-fixture:widget/create'), \
-           ('clerk', 'platform-fixture:widget/get'); COMMIT;"
-        ),
-    );
-
-    run(&url, "write the admin role", &transaction());
-    run(&url, "replay the admin role", &transaction());
-    assert_eq!(
-        query(
-            &url,
-            "SELECT string_agg(name, ',' ORDER BY name) FROM platform.role "
-        ),
-        "admin,clerk",
-        "apply-package did not leave admin beside the authored role"
-    );
-    assert_eq!(
-        query(&url, "SELECT count(*) FROM platform.permission"),
-        "2",
-        "the admin write changed an authored permission row"
-    );
-
-    let admin_row = refusal(
-        &url,
-        "INSERT INTO platform.permission (role_name, permission) \
-         VALUES ('admin', 'platform-fixture:widget/get')",
+        include_str!("../../../../deploy/sql/app-schema.sql"),
+    ] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(batch))
+            .execute(&mut *connection)
+            .await?;
+    }
+    let mut transaction = connection.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
+        PlatformComponent::Provisioning,
+    )))
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::raw_sql(
+        "INSERT INTO platform.role (name) VALUES ('clerk');
+        INSERT INTO platform.permission (role_name, permission) VALUES
+        ('clerk','platform-fixture:widget/create'), ('clerk','platform-fixture:widget/get')",
     )
-    .expect("admin took a permission row");
-    assert!(admin_row.contains("permission_admin_check"), "{admin_row}");
-    let sealed = refusal(
-        &url,
-        "INSERT INTO platform.permission (role_name, permission) \
-         VALUES ('clerk', 'platform-fixture:widget/list@2.1.0')",
-    )
-    .expect("a sealed operation id was stored as a reference");
-    assert!(sealed.contains("permission_reference_check"), "{sealed}");
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    admin_write(&mut connection).await?;
+    admin_write(&mut connection).await?;
+    let roles: Vec<String> = sqlx::query_scalar("SELECT name FROM platform.role ORDER BY name")
+        .fetch_all(&mut *connection)
+        .await?;
+    assert_eq!(roles, ["admin", "clerk"]);
+    let permissions: i64 = sqlx::query_scalar("SELECT count(*) FROM platform.permission")
+        .fetch_one(&mut *connection)
+        .await?;
+    assert_eq!(permissions, 2);
+
+    for (role, permission, constraint) in [
+        (
+            "admin",
+            "platform-fixture:widget/get",
+            "permission_admin_check",
+        ),
+        (
+            "clerk",
+            "platform-fixture:widget/list@2.1.0",
+            "permission_reference_check",
+        ),
+    ] {
+        let mut transaction = connection.begin().await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
+            PlatformComponent::Provisioning,
+        )))
+        .execute(&mut *transaction)
+        .await?;
+        let refused =
+            sqlx::query("INSERT INTO platform.permission (role_name, permission) VALUES ($1,$2)")
+                .bind(role)
+                .bind(permission)
+                .execute(&mut *transaction)
+                .await
+                .unwrap_err();
+        let refused = refused.as_database_error().unwrap();
+        assert_eq!(refused.code().as_deref(), Some("23514"));
+        assert_eq!(refused.constraint(), Some(constraint));
+    }
     for name in ["Clerk", "-clerk", "clerk role", &"a".repeat(65)] {
-        let refused = refusal(
-            &url,
-            &format!("INSERT INTO platform.role (name) VALUES ('{name}')"),
-        )
-        .unwrap_or_else(|| panic!("role name {name:?} was stored"));
-        assert!(refused.contains("role_name_check"), "{refused}");
+        let mut transaction = connection.begin().await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
+            PlatformComponent::Provisioning,
+        )))
+        .execute(&mut *transaction)
+        .await?;
+        let refused = sqlx::query("INSERT INTO platform.role (name) VALUES ($1)")
+            .bind(name)
+            .execute(&mut *transaction)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            refused.as_database_error().unwrap().code().as_deref(),
+            Some("23514")
+        );
     }
-
-    if let Some(error) = refusal(
-        &url,
-        "DELETE FROM platform.permission WHERE role_name = 'clerk' \
-         AND permission = 'platform-fixture:widget/create'",
-    ) {
-        panic!("revoke widget/create: {error}");
-    }
-    assert_eq!(
-        query(
-            &url,
-            "SELECT string_agg(permission, ',') FROM platform.permission"
-        ),
-        "platform-fixture:widget/get",
-        "the revoke kept its row or removed another row"
-    );
-
-    run(
-        &url,
-        "remove application authority minimum",
-        "DROP SCHEMA catalog CASCADE; DROP SCHEMA platform CASCADE; \
-         DROP SCHEMA wamn_authority CASCADE;",
-    );
+    let mut transaction = connection.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
+        PlatformComponent::Provisioning,
+    )))
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query("DELETE FROM platform.permission WHERE role_name='clerk' AND permission='platform-fixture:widget/create'").execute(&mut *transaction).await?;
+    transaction.commit().await?;
+    let remaining: Vec<String> = sqlx::query_scalar("SELECT permission FROM platform.permission")
+        .fetch_all(&mut *connection)
+        .await?;
+    assert_eq!(remaining, ["platform-fixture:widget/get"]);
+    Ok(())
 }

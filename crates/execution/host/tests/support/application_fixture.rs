@@ -66,6 +66,7 @@ pub(super) async fn install(
     database: &str,
     admin_url: &str,
 ) -> anyhow::Result<(String, String)> {
+    wamn_control_provision::test_database::system_schema(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
               \
@@ -287,16 +288,6 @@ pub(super) async fn application_host_with_release(
     let (verifier, token_clock, key_clock) = server.verifier();
     session_fixture::install_authority(&mut admin, PROJECT, "dev", AUDIENCE, &[&first, MEMBER])
         .await?;
-    // Application routes advertise PATs and sessions. Extend the session
-    // authority fixture with the columns the real PAT reader prepares.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("ALTER TABLE identity.principals ADD COLUMN subject text, ADD COLUMN display_name text; \
-         ALTER TABLE identity.pats ADD COLUMN token_prefix text, ADD COLUMN token_hash text")
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&sql::grant_identity_reader_surface_sql()).to_string(),
     ))

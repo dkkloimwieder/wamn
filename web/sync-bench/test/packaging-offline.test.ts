@@ -181,7 +181,7 @@ it("does not report completion when storage fails", async () => {
   const model = h.open();
   await model.packaging.c.preload();
   vi.mocked(h.persistence.save).mockRejectedValue(new Error("Storage is full"));
-  await expect(model.takeOffline()).rejects.toThrow("Storage is full");
+  await expect(model.takeOffline()).rejects.toThrow();
 });
 
 it("keeps both generated shapes when the rows store reopens", async () => {

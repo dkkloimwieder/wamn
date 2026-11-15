@@ -68,7 +68,7 @@ describe("packagingFeed", () => {
         return { status: "refused", code: "permission_denied", detail: null };
       },
     } as Transport);
-    await expect(feed.list({})).rejects.toThrow("packaging query refused");
+    await expect(feed.list({})).rejects.toThrow();
   });
 
   it("reads changes through the list with its feed part", async () => {

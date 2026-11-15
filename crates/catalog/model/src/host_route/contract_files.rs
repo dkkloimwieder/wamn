@@ -187,21 +187,29 @@ mod tests {
     #[test]
     fn a_shape_is_copied_to_each_assigned_operation_file() {
         let directory = Directory::new("copied");
-        directory.write("contracts/item/get.result.json", "own\n");
-        directory.write("shapes/item.errors.json", "shared\n");
         directory.write(
-            "shapes.json",
-            r#"{"item.errors": ["item/get.errors.json", "item/list.errors.json"]}"#,
+            "contracts/item/get.result.json",
+            r#"{"type":"object","required":["id"]}"#,
         );
+        directory.write(
+            "shapes/item.errors.json",
+            r#"{"type":"array","minItems":1}"#,
+        );
+        let assignment = BTreeMap::from([(
+            "item.errors",
+            ["item/get.errors.json", "item/list.errors.json"],
+        )]);
+        directory.write("shapes.json", &serde_json::to_string(&assignment).unwrap());
         let files = resolve(&directory.0).unwrap();
-        assert_eq!(
-            files,
-            BTreeMap::from([
-                ("item/get.errors.json".to_owned(), b"shared\n".to_vec()),
-                ("item/get.result.json".to_owned(), b"own\n".to_vec()),
-                ("item/list.errors.json".to_owned(), b"shared\n".to_vec()),
-            ])
-        );
+        for target in assignment.values().flatten() {
+            let shape: serde_json::Value = serde_json::from_slice(&files[*target]).unwrap();
+            assert_eq!(shape["type"], "array");
+            assert_eq!(shape["minItems"], 1);
+        }
+        let result: serde_json::Value =
+            serde_json::from_slice(&files["item/get.result.json"]).unwrap();
+        assert_eq!(result["type"], "object");
+        assert_eq!(result["required"][0], "id");
     }
 
     #[test]
@@ -213,11 +221,7 @@ mod tests {
             "shapes.json",
             r#"{"item.errors": ["item/get.errors.json"]}"#,
         );
-        let error = resolve(&directory.0).unwrap_err().to_string();
-        assert!(
-            error.contains("item/get.errors.json has two sources"),
-            "{error}"
-        );
+        let _error = resolve(&directory.0).unwrap_err();
     }
 
     #[test]
@@ -225,19 +229,14 @@ mod tests {
         let directory = Directory::new("unassigned");
         directory.write("shapes/item.errors.json", "shared\n");
         directory.write("shapes.json", "{}");
-        let error = resolve(&directory.0).unwrap_err().to_string();
-        assert!(error.contains("assigned to no operation"), "{error}");
+        let _error = resolve(&directory.0).unwrap_err();
 
         let directory = Directory::new("missing");
         directory.write(
             "shapes.json",
             r#"{"item.errors": ["item/get.errors.json"]}"#,
         );
-        let error = resolve(&directory.0).unwrap_err().to_string();
-        assert!(
-            error.contains("has no file shapes/item.errors.json"),
-            "{error}"
-        );
+        let _error = resolve(&directory.0).unwrap_err();
     }
 
     /// Both sets resolve.
@@ -245,7 +244,18 @@ mod tests {
     fn the_host_route_sets_resolve() {
         for set in [HostRouteSet::Application, HostRouteSet::Control] {
             let files = set.contract_files().unwrap();
-            assert!(files.keys().any(|key| key.ends_with(".operation.json")));
+            for (_, attachment) in set.attachments() {
+                let path = format!(
+                    "{}.operation.json",
+                    attachment.route.operation.replace('.', "/")
+                );
+                let descriptor: serde_json::Value = serde_json::from_slice(&files[&path]).unwrap();
+                assert_eq!(descriptor["operation"], attachment.operation);
+                assert_eq!(
+                    descriptor["type"],
+                    serde_json::to_value(attachment.route.type_).unwrap()
+                );
+            }
         }
     }
 }

@@ -1,7 +1,5 @@
 //! OAuth envelope configuration for deployed and local hosts.
 
-use std::io::Write as _;
-use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
@@ -79,24 +77,6 @@ pub(super) fn new_key() -> anyhow::Result<[u8; 32]> {
         .fill(&mut key)
         .map_err(|_| anyhow::anyhow!("OAuth key entropy unavailable"))?;
     Ok(key)
-}
-
-/// Create a target's key once, without changing an existing key.
-pub fn local_key(path: &Path) -> anyhow::Result<()> {
-    let mut key = [0_u8; 32];
-    ring::rand::SystemRandom::new()
-        .fill(&mut key)
-        .map_err(|_| anyhow::anyhow!("OAuth key entropy unavailable"))?;
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-    {
-        Ok(mut file) => file.write_all(&key).context("write local OAuth key"),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(error) => Err(error).context("create local OAuth key"),
-    }
 }
 
 pub fn dev_key(artifacts: &Path) -> PathBuf {
@@ -178,7 +158,6 @@ pub(super) fn key_objects(key: &[u8; 32], namespace: &str) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt as _;
 
     #[test]
     fn secret_key_validation_never_exposes_key_material() {
@@ -193,23 +172,5 @@ mod tests {
             assert!(!format!("{error:#}").contains(&private));
             assert!(!format!("{error:?}").contains("private-short-key"));
         }
-    }
-
-    #[test]
-    fn local_key_is_private_and_survives_a_second_host() {
-        let directory =
-            std::env::temp_dir().join(format!("wamn-oauth-key-{}", sqlx::types::Uuid::new_v4()));
-        std::fs::create_dir(&directory).unwrap();
-        let path = directory.join("oauth.key");
-        local_key(&path).unwrap();
-        let original = std::fs::read(&path).unwrap();
-        local_key(&path).unwrap();
-        assert_eq!(original.len(), 32);
-        assert_eq!(std::fs::read(&path).unwrap(), original);
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        std::fs::remove_dir_all(directory).unwrap();
     }
 }

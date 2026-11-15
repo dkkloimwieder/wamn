@@ -192,7 +192,7 @@ async fn call(
     operation: &str,
     caller: &str,
     payload: Value,
-) -> Result<Value, String> {
+) -> Result<Value, Value> {
     let (id, attachment) = HostRouteSet::Control
         .attachments()
         .find(|(_, attachment)| attachment.reference == format!("wamn-control:{operation}"))
@@ -237,36 +237,26 @@ async fn call(
             }
         }
         Err(DeliveryError::PermissionDenied(denial)) => {
-            Err(format!("permission denied {}", denial.operation))
+            Err(json!({"code":"permission-denied","operation":denial.operation}))
         }
         other => panic!("an org route answers or refuses: {other:?}"),
     }
 }
 
 /// How [`call`] reads a declared refusal.
-fn refused(code: &str, detail: &Value) -> String {
-    format!("{code} {detail}")
+fn refused(code: &str, detail: &Value) -> Value {
+    json!({"code":code,"detail":detail})
 }
 
 /// The org roles, project roles and memberships of one principal.
-async fn grants(admin: &mut Client, principal: &str) -> Vec<String> {
-    sqlx::query(
-        "SELECT 'org ' || role FROM identity.org_roles WHERE principal_id = $1::text::uuid \
-             UNION ALL SELECT 'project ' || project || ' ' || role \
-               FROM identity.project_roles WHERE principal_id = $1::text::uuid \
-             UNION ALL SELECT 'env ' || project || '/' || env \
-               FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid \
-             UNION ALL SELECT 'member ' || status || ' ' || updated_by::text \
-               FROM identity.org_memberships WHERE principal_id = $1::text::uuid \
-             ORDER BY 1",
-    )
-    .bind(&principal)
-    .fetch_all(&mut *admin)
-    .await
-    .expect("read the grants")
-    .iter()
-    .map(|row| row.get(0))
-    .collect()
+async fn grants(admin: &mut Client, principal: &str) -> Vec<(String, String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT 'org', role, NULL::text FROM identity.org_roles WHERE principal_id=$1::text::uuid
+         UNION ALL SELECT 'project', project, role FROM identity.project_roles WHERE principal_id=$1::text::uuid
+         UNION ALL SELECT 'env', project, env FROM identity.project_env_memberships WHERE principal_id=$1::text::uuid
+         UNION ALL SELECT 'member', status, updated_by::text FROM identity.org_memberships WHERE principal_id=$1::text::uuid
+         ORDER BY 1,2,3"
+    ).bind(principal).fetch_all(admin).await.expect("read the grants")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -340,8 +330,10 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         "org-admin/revoke",
     ] {
         assert_eq!(
-            call(&delivery, operation, ann.to_string().as_str(), json!({})).await,
-            Err(format!("permission denied wamn-control:{operation}@0.9.0"))
+            call(&delivery, operation, ann.to_string().as_str(), json!({}))
+                .await
+                .unwrap_err()["code"],
+            "permission-denied"
         );
     }
 
@@ -377,8 +369,16 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     assert_eq!(
         grants(&mut admin, ann.to_string().as_str()).await,
         [
-            "env billing/dev".to_owned(),
-            format!("member active {boss}")
+            (
+                "env".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned())
+            ),
+            (
+                "member".to_owned(),
+                "active".to_owned(),
+                Some(boss.to_owned())
+            )
         ]
     );
     assert_eq!(
@@ -465,12 +465,28 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     assert_eq!(
         grants(&mut admin, ann.to_string().as_str()).await,
         [
-            "env billing/dev".to_owned(),
-            "env shop/dev".to_owned(),
-            format!("member active {boss}"),
-            "org org-admin".to_owned(),
-            "project billing project-admin".to_owned(),
-            "project shop project-admin".to_owned(),
+            (
+                "env".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned())
+            ),
+            ("env".to_owned(), "shop".to_owned(), Some("dev".to_owned())),
+            (
+                "member".to_owned(),
+                "active".to_owned(),
+                Some(boss.to_owned())
+            ),
+            ("org".to_owned(), "org-admin".to_owned(), None),
+            (
+                "project".to_owned(),
+                "billing".to_owned(),
+                Some("project-admin".to_owned())
+            ),
+            (
+                "project".to_owned(),
+                "shop".to_owned(),
+                Some("project-admin".to_owned())
+            ),
         ]
     );
     assert_eq!(
@@ -480,9 +496,17 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     assert_eq!(
         grants(&mut admin, ann.to_string().as_str()).await,
         [
-            "env billing/dev".to_owned(),
-            "env shop/dev".to_owned(),
-            format!("member active {boss}"),
+            (
+                "env".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned())
+            ),
+            ("env".to_owned(), "shop".to_owned(), Some("dev".to_owned())),
+            (
+                "member".to_owned(),
+                "active".to_owned(),
+                Some(boss.to_owned())
+            ),
         ]
     );
 
@@ -494,7 +518,11 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     );
     assert_eq!(
         grants(&mut admin, ann.to_string().as_str()).await,
-        [format!("member inactive {boss}")]
+        [(
+            "member".to_owned(),
+            "inactive".to_owned(),
+            Some(boss.to_owned())
+        )]
     );
     assert_eq!(
         call(&delivery, "org-admin/grant", boss, ann_payload.clone()).await,
@@ -509,7 +537,11 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     );
     assert_eq!(
         grants(&mut admin, ann.to_string().as_str()).await,
-        [format!("member active {boss}")]
+        [(
+            "member".to_owned(),
+            "active".to_owned(),
+            Some(boss.to_owned())
+        )]
     );
 
     // A revoked org-admin is refused on the next request. Boss keeps the
@@ -521,8 +553,10 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         .await
         .map(|result| result.rows_affected())?;
     assert_eq!(
-        call(&delivery, "project/list", boss, json!({})).await,
-        Err("permission denied wamn-control:project/list@0.9.0".to_owned())
+        call(&delivery, "project/list", boss, json!({}))
+            .await
+            .unwrap_err()["code"],
+        "permission-denied"
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
@@ -604,8 +638,8 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         ("project-admin/revoke", project_admin(ann)),
     ] {
         assert_eq!(
-            call(&delivery, operation, ann, payload).await,
-            Err(format!("permission denied wamn-control:{operation}@0.9.0"))
+            call(&delivery, operation, ann, payload).await.unwrap_err()["code"],
+            "permission-denied"
         );
     }
     assert_eq!(
@@ -615,8 +649,9 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             cat,
             json!({"project": "shop"})
         )
-        .await,
-        Err("permission denied wamn-control:environment/list@0.9.0".to_owned())
+        .await
+        .unwrap_err()["code"],
+        "permission-denied"
     );
     // A project admin reads the org's users, and holds no other org route.
     assert_eq!(
@@ -628,8 +663,10 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         ]}))
     );
     assert_eq!(
-        call(&delivery, "project/list", cat, json!({})).await,
-        Err("permission denied wamn-control:project/list@0.9.0".to_owned())
+        call(&delivery, "project/list", cat, json!({}))
+            .await
+            .unwrap_err()["code"],
+        "permission-denied"
     );
     assert_eq!(
         call(
@@ -665,8 +702,16 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     assert_eq!(
         grants(&mut admin, ann).await,
         [
-            "env billing/dev".to_owned(),
-            format!("member active {provisioning}")
+            (
+                "env".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned())
+            ),
+            (
+                "member".to_owned(),
+                "active".to_owned(),
+                Some(provisioning.to_owned())
+            )
         ]
     );
     assert_eq!(
@@ -761,9 +806,21 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     assert_eq!(
         grants(&mut admin, ann).await,
         [
-            "env billing/dev".to_owned(),
-            format!("member active {provisioning}"),
-            "project billing project-admin".to_owned(),
+            (
+                "env".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned())
+            ),
+            (
+                "member".to_owned(),
+                "active".to_owned(),
+                Some(provisioning.to_owned())
+            ),
+            (
+                "project".to_owned(),
+                "billing".to_owned(),
+                Some("project-admin".to_owned())
+            ),
         ]
     );
     assert_eq!(
@@ -776,7 +833,11 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     );
     assert_eq!(
         grants(&mut admin, ann).await,
-        [format!("member active {provisioning}")]
+        [(
+            "member".to_owned(),
+            "active".to_owned(),
+            Some(provisioning.to_owned())
+        )]
     );
 
     // A revoked project admin is refused on the next request.
@@ -792,28 +853,20 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             cat,
             json!({"project": "billing"})
         )
-        .await,
-        Err("permission denied wamn-control:environment/list@0.9.0".to_owned())
+        .await
+        .unwrap_err()["code"],
+        "permission-denied"
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
 }
 
 /// The application rows of one principal in one project database.
-async fn application_rows(target: &mut Client, principal: &str) -> Vec<String> {
-    sqlx::query(
-        "SELECT 'user' FROM platform.\"user\" WHERE id = $1::text::uuid \
-             UNION ALL SELECT 'role ' || role_name FROM platform.user_role \
-               WHERE user_id = $1::text::uuid \
-             ORDER BY 1",
-    )
-    .bind(&principal)
-    .fetch_all(&mut *target)
-    .await
-    .expect("read the application rows")
-    .iter()
-    .map(|row| row.get(0))
-    .collect()
+async fn application_rows(target: &mut Client, principal: &str) -> Vec<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT 'user', NULL::text FROM platform.\"user\" WHERE id=$1::text::uuid
+         UNION ALL SELECT 'role', role_name FROM platform.user_role WHERE user_id=$1::text::uuid ORDER BY 1,2"
+    ).bind(principal).fetch_all(target).await.expect("read application rows")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -873,11 +926,17 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     );
     assert_eq!(
         application_rows(&mut billing, ann).await,
-        ["role admin", "user"]
+        [
+            ("role".to_owned(), Some("admin".to_owned())),
+            ("user".to_owned(), None)
+        ]
     );
     assert_eq!(
         application_rows(&mut shop, ann).await,
-        ["role admin", "user"]
+        [
+            ("role".to_owned(), Some("admin".to_owned())),
+            ("user".to_owned(), None)
+        ]
     );
     assert_eq!(
         call(
@@ -891,15 +950,24 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     );
     assert_eq!(
         application_rows(&mut billing, ann).await,
-        ["role admin", "user"],
+        [
+            ("role".to_owned(), Some("admin".to_owned())),
+            ("user".to_owned(), None)
+        ],
         "a refused revoke changes no application row"
     );
     assert_eq!(
         call(&delivery, "org-admin/revoke", boss, ann_payload.clone()).await,
         Ok(json!({"principal_id": ann, "org_admin": false}))
     );
-    assert_eq!(application_rows(&mut billing, ann).await, ["user"]);
-    assert_eq!(application_rows(&mut shop, ann).await, ["user"]);
+    assert_eq!(
+        application_rows(&mut billing, ann).await,
+        [("user".to_owned(), None)]
+    );
+    assert_eq!(
+        application_rows(&mut shop, ann).await,
+        [("user".to_owned(), None)]
+    );
 
     // project-admin covers its project's environments only.
     assert_eq!(
@@ -914,14 +982,23 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     );
     assert_eq!(
         application_rows(&mut billing, ann).await,
-        ["role admin", "user"]
+        [
+            ("role".to_owned(), Some("admin".to_owned())),
+            ("user".to_owned(), None)
+        ]
     );
-    assert_eq!(application_rows(&mut shop, ann).await, ["user"]);
+    assert_eq!(
+        application_rows(&mut shop, ann).await,
+        [("user".to_owned(), None)]
+    );
     assert_eq!(
         call(&delivery, "project-admin/revoke", boss, billing_admin).await,
         Ok(json!({"principal_id": ann, "project": "billing", "project_admin": false}))
     );
-    assert_eq!(application_rows(&mut billing, ann).await, ["user"]);
+    assert_eq!(
+        application_rows(&mut billing, ann).await,
+        [("user".to_owned(), None)]
+    );
 
     // A membership revoke removes the user row, and a grant writes it again.
     assert_eq!(
@@ -933,7 +1010,10 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
         call(&delivery, "member/grant", boss, billing_member).await,
         Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": true}))
     );
-    assert_eq!(application_rows(&mut billing, ann).await, ["user"]);
+    assert_eq!(
+        application_rows(&mut billing, ann).await,
+        [("user".to_owned(), None)]
+    );
 
     // A failed projection names completed environments after system authority commits.
     let shop_key = logins.join("shop--dev");
@@ -947,10 +1027,17 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
         ))
     );
     assert!(application_rows(&mut billing, ann).await.is_empty());
-    assert_eq!(application_rows(&mut shop, ann).await, ["user"]);
+    assert_eq!(
+        application_rows(&mut shop, ann).await,
+        [("user".to_owned(), None)]
+    );
     assert_eq!(
         grants(&mut admin, ann).await,
-        [format!("member inactive {boss}")],
+        [(
+            "member".to_owned(),
+            "inactive".to_owned(),
+            Some(boss.to_owned())
+        )],
         "committed deactivation remains authoritative after a projection failure"
     );
 
@@ -963,7 +1050,11 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     assert!(application_rows(&mut shop, ann).await.is_empty());
     assert_eq!(
         grants(&mut admin, ann).await,
-        [format!("member inactive {boss}")]
+        [(
+            "member".to_owned(),
+            "inactive".to_owned(),
+            Some(boss.to_owned())
+        )]
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
@@ -971,25 +1062,20 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
 
 /// The system status of each environment of the org, and the status row of
 /// each project database, or `none` without one.
-async fn statuses(admin: &mut Client, billing: &mut Client, shop: &mut Client) -> Vec<String> {
-    let mut statuses: Vec<String> = sqlx::query(
-        "SELECT 'system ' || project || '/' || env || ' ' || status \
-               FROM registry.environment_projects WHERE org = $1 ORDER BY project, env",
-    )
-    .bind(&ORG)
-    .fetch_all(&mut *admin)
-    .await
-    .expect("read the system statuses")
-    .iter()
-    .map(|row| row.get(0))
-    .collect();
+async fn statuses(
+    admin: &mut Client,
+    billing: &mut Client,
+    shop: &mut Client,
+) -> Vec<(String, String, Option<String>, Option<String>)> {
+    let mut statuses = sqlx::query_as::<_, (String, String, Option<String>, Option<String>)>(
+        "SELECT 'system',project,env,status FROM registry.environment_projects WHERE org=$1 ORDER BY project,env"
+    ).bind(ORG).fetch_all(admin).await.expect("read system status");
     for (name, target) in [("billing", billing), ("shop", shop)] {
-        let row = sqlx::query("SELECT status FROM platform.environment")
-            .fetch_optional(&mut *target)
+        let status: Option<String> = sqlx::query_scalar("SELECT status FROM platform.environment")
+            .fetch_optional(target)
             .await
-            .expect("read the status row");
-        let status: String = row.map_or_else(|| "none".to_owned(), |row| row.get(0));
-        statuses.push(format!("row {name} {status}"));
+            .expect("read status row");
+        statuses.push(("row".to_owned(), name.to_owned(), None, status));
     }
     statuses
 }
@@ -1049,10 +1135,20 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
     assert_eq!(
         statuses(&mut admin, &mut billing, &mut shop).await,
         [
-            "system billing/dev active",
-            "system shop/dev active",
-            "row billing none",
-            "row shop none"
+            (
+                "system".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned()),
+                Some("active".to_owned())
+            ),
+            (
+                "system".to_owned(),
+                "shop".to_owned(),
+                Some("dev".to_owned()),
+                Some("active".to_owned())
+            ),
+            ("row".to_owned(), "billing".to_owned(), None, None),
+            ("row".to_owned(), "shop".to_owned(), None, None)
         ],
         "an environment without a status row is active"
     );
@@ -1065,8 +1161,9 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
             ann,
             billing_dev.clone()
         )
-        .await,
-        Err("permission denied wamn-control:environment/inactivate@0.9.0".to_owned())
+        .await
+        .unwrap_err()["code"],
+        "permission-denied"
     );
     assert_eq!(
         call(
@@ -1107,10 +1204,30 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
     assert_eq!(
         statuses(&mut admin, &mut billing, &mut shop).await,
         [
-            "system billing/dev inactive",
-            "system shop/dev inactive",
-            "row billing inactive",
-            "row shop inactive"
+            (
+                "system".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned()),
+                Some("inactive".to_owned())
+            ),
+            (
+                "system".to_owned(),
+                "shop".to_owned(),
+                Some("dev".to_owned()),
+                Some("inactive".to_owned())
+            ),
+            (
+                "row".to_owned(),
+                "billing".to_owned(),
+                None,
+                Some("inactive".to_owned())
+            ),
+            (
+                "row".to_owned(),
+                "shop".to_owned(),
+                None,
+                Some("inactive".to_owned())
+            )
         ]
     );
     assert_eq!(
@@ -1132,10 +1249,30 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
     assert_eq!(
         statuses(&mut admin, &mut billing, &mut shop).await,
         [
-            "system billing/dev active",
-            "system shop/dev inactive",
-            "row billing active",
-            "row shop inactive"
+            (
+                "system".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned()),
+                Some("active".to_owned())
+            ),
+            (
+                "system".to_owned(),
+                "shop".to_owned(),
+                Some("dev".to_owned()),
+                Some("inactive".to_owned())
+            ),
+            (
+                "row".to_owned(),
+                "billing".to_owned(),
+                None,
+                Some("active".to_owned())
+            ),
+            (
+                "row".to_owned(),
+                "shop".to_owned(),
+                None,
+                Some("inactive".to_owned())
+            )
         ]
     );
 
@@ -1154,10 +1291,30 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
     assert_eq!(
         statuses(&mut admin, &mut billing, &mut shop).await,
         [
-            "system billing/dev active",
-            "system shop/dev active",
-            "row billing active",
-            "row shop inactive"
+            (
+                "system".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned()),
+                Some("active".to_owned())
+            ),
+            (
+                "system".to_owned(),
+                "shop".to_owned(),
+                Some("dev".to_owned()),
+                Some("active".to_owned())
+            ),
+            (
+                "row".to_owned(),
+                "billing".to_owned(),
+                None,
+                Some("active".to_owned())
+            ),
+            (
+                "row".to_owned(),
+                "shop".to_owned(),
+                None,
+                Some("inactive".to_owned())
+            )
         ],
         "an activation commits the system row before the environment"
     );
@@ -1181,10 +1338,30 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
     assert_eq!(
         statuses(&mut admin, &mut billing, &mut shop).await,
         [
-            "system billing/dev active",
-            "system shop/dev active",
-            "row billing active",
-            "row shop active"
+            (
+                "system".to_owned(),
+                "billing".to_owned(),
+                Some("dev".to_owned()),
+                Some("active".to_owned())
+            ),
+            (
+                "system".to_owned(),
+                "shop".to_owned(),
+                Some("dev".to_owned()),
+                Some("active".to_owned())
+            ),
+            (
+                "row".to_owned(),
+                "billing".to_owned(),
+                None,
+                Some("active".to_owned())
+            ),
+            (
+                "row".to_owned(),
+                "shop".to_owned(),
+                None,
+                Some("active".to_owned())
+            )
         ],
         "an inactivation commits the system row after every environment"
     );
@@ -1292,8 +1469,9 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
             cat,
             json!({"project": "ledger"})
         )
-        .await,
-        Err("permission denied wamn-control:project/create@0.9.0".to_owned())
+        .await
+        .unwrap_err()["code"],
+        "permission-denied"
     );
     for project in ["Ledger", "wamn-ledger", "led--ger"] {
         assert_eq!(
@@ -1611,31 +1789,30 @@ async fn assert_definer_grantees(client: &mut Client) -> anyhow::Result<()> {
             &["wamn_control"],
         ),
     ];
-    let functions = sqlx::query("SELECT n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')', p.proconfig, pg_get_userbyid(p.proowner), ARRAY(SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee)::text END FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner ORDER BY 1) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.prosecdef ORDER BY 1").fetch_all(&mut *client).await?;
-    assert!(!functions.is_empty());
+    let functions = sqlx::query("SELECT p.oid, n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS name, p.proconfig, pg_get_userbyid(p.proowner) AS owner, EXISTS (SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_execute, EXISTS (SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee<>p.proowner AND a.is_grantable) AS grantable FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.prosecdef")
+        .fetch_all(&mut *client).await?;
     for function in functions {
-        let name: String = function.get(0);
+        let name: String = function.get("name");
         let allowed = ALLOWED
             .iter()
             .find(|(signature, _)| *signature == name)
-            .unwrap_or_else(|| panic!("SECURITY DEFINER function absent from allow list: {name}"));
-        assert_eq!(function.get::<String, _>(2), "wamn_system", "{name} owner");
-        let configuration: Vec<String> = function.get(1);
-        let expected_path = "search_path=pg_catalog";
-        assert_eq!(configuration, [expected_path], "{name}");
-        for grantee in function.get::<Vec<String>, _>(3) {
-            assert!(
-                allowed.1.contains(&grantee.as_str()),
-                "unexpected EXECUTE grantee {grantee} on {name}"
-            );
-        }
-        let effective = sqlx::query("SELECT r.rolname::text FROM pg_roles r WHERE NOT r.rolsuper AND has_function_privilege(r.oid,$1::text::regprocedure,'EXECUTE') AND NOT pg_has_role(r.oid,(SELECT proowner FROM pg_proc WHERE oid=$1::text::regprocedure),'USAGE') AND NOT EXISTS (SELECT FROM pg_roles a WHERE a.rolname=ANY($2::text[]) AND pg_has_role(r.oid,a.oid,'USAGE'))").bind(&name).bind(&allowed.1).fetch_all(&mut *client).await?;
+            .unwrap_or_else(|| panic!("unreviewed privileged function: {name}"));
+        let effective = sqlx::query("SELECT r.rolname::text FROM pg_roles r WHERE NOT r.rolsuper AND has_function_privilege(r.oid,$1::text::regprocedure,'EXECUTE') AND NOT pg_has_role(r.oid,(SELECT proowner FROM pg_proc WHERE oid=$1::text::regprocedure),'USAGE') AND NOT EXISTS (SELECT FROM pg_roles a WHERE a.rolname=ANY($2::text[]) AND pg_has_role(r.oid,a.oid,'USAGE'))")
+            .bind(&name).bind(&allowed.1).fetch_all(&mut *client).await?;
         assert!(
             effective.is_empty(),
-            "unexpected inherited EXECUTE privilege on {name}: {effective:?}"
+            "unexpected effective privilege on {name}: {effective:?}"
         );
-        let grantable: bool = sqlx::query("SELECT EXISTS (SELECT FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid=$1::text::regprocedure AND a.grantee<>p.proowner AND a.is_grantable)").bind(&name).fetch_one(&mut *client).await?.get(0);
-        assert!(!grantable, "non-owner grant option on {name}");
+        assert_eq!(function.get::<String, _>("owner"), "wamn_system", "{name}");
+        let configuration: Vec<String> = function.get("proconfig");
+        let search_path = configuration
+            .iter()
+            .filter_map(|setting| setting.split_once('='))
+            .find(|(key, _)| *key == "search_path")
+            .map(|(_, value)| value);
+        assert_eq!(search_path, Some("pg_catalog"), "{name}");
+        assert!(!function.get::<bool, _>("public_execute"), "{name}");
+        assert!(!function.get::<bool, _>("grantable"), "{name}");
     }
     Ok(())
 }
@@ -1710,7 +1887,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     );
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {} UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning)))).execute(&mut admin).await.map(drop)?;
     let external = json!({"project":"billing","name":"erp"});
-    assert!(
+    assert_eq!(
         call(
             &delivery,
             "external-system/write",
@@ -1718,8 +1895,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             external.clone()
         )
         .await
-        .unwrap_err()
-        .starts_with("permission denied ")
+        .unwrap_err()["code"],
+        "permission-denied"
     );
     call(
         &delivery,
@@ -1874,7 +2051,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .execute(&mut billing)
         .await
         .map(drop)?;
-    assert!(
+    assert_eq!(
         call(
             &delivery,
             "connection/delete",
@@ -1882,8 +2059,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             selection.clone()
         )
         .await
-        .unwrap_err()
-        .starts_with("referenced ")
+        .unwrap_err()["code"],
+        "referenced"
     );
     call(
         &delivery,
@@ -1895,7 +2072,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     .unwrap();
     let mut changed = connection.clone();
     changed["parameters"]["primary-authority"] = "https://changed.invalid".into();
-    assert!(
+    assert_eq!(
         call(
             &delivery,
             "connection/write",
@@ -1903,8 +2080,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             changed
         )
         .await
-        .unwrap_err()
-        .starts_with("immutable_field ")
+        .unwrap_err()["code"],
+        "immutable_field"
     );
     sqlx::raw_sql("ALTER TABLE platform.integration RENAME TO unavailable_integration")
         .execute(&mut billing)
@@ -1912,7 +2089,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .map(drop)?;
     let mut changed = connection;
     changed["parameters"]["tls-verification"] = "disabled".into();
-    assert!(
+    assert_eq!(
         call(
             &delivery,
             "connection/write",
@@ -1920,8 +2097,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             changed
         )
         .await
-        .unwrap_err()
-        .starts_with("application_write_incomplete ")
+        .unwrap_err()["code"],
+        "application_write_incomplete"
     );
     assert_eq!(sqlx::query("SELECT g.parameters->>'tls-verification' FROM registry.connection c JOIN registry.connection_generation g ON(g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.id=$1::text::uuid").bind(&identity).fetch_one(&mut admin).await?.get::<String, _>(0),"disabled");
     sqlx::raw_sql("ALTER TABLE platform.unavailable_integration RENAME TO integration")
@@ -2077,7 +2254,10 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
         }
         grant.await?.map_err(anyhow::Error::msg)?;
         let rows = application_rows(&billing, user.as_str()).await;
-        assert!(rows.iter().all(|row| !row.contains("admin")), "{rows:?}");
+        assert!(
+            rows.iter().all(|row| row.1.as_deref() != Some("admin")),
+            "{rows:?}"
+        );
         let count: i64 = sqlx::query("SELECT count(*) FROM identity.project_roles WHERE principal_id=$1::text::uuid AND role='project-admin'").bind(&user.as_str()).fetch_one(&mut admin).await?.get(0);
         assert_eq!(count, 0);
         let project_env_key = wamn_registry::project_env_key(ORG, "billing", "dev");

@@ -89,7 +89,7 @@ it("rejects a failed transaction and keeps the previous snapshot", async () => {
     return {} as IDBRequest<IDBValidKey>;
   });
   try {
-    await expect(persistence.save(collectionKey("packaging", "shape-a", "{}"), [], "new")).rejects.toThrow("aborted");
+    await expect(persistence.save(collectionKey("packaging", "shape-a", "{}"), [], "new")).rejects.toThrow();
   } finally {
     put.mockRestore();
   }

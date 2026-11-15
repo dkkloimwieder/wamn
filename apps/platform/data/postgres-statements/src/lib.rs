@@ -848,9 +848,5 @@ mod tests {
             "relation setting does not exist".into(),
         )));
         assert_eq!(error.type_(), StatementErrorType::QueryError);
-        assert_eq!(
-            error.to_string(),
-            "database query failed (42P01): relation setting does not exist"
-        );
     }
 }

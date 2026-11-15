@@ -507,23 +507,4 @@ fn valid_database_name(name: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    #[ignore = "requires: postgres"]
-    async fn separate_server_applies_its_settings() -> anyhow::Result<()> {
-        let mut server = start(&[("standard_conforming_strings", "off")])?;
-        let database = server.create_database("settings").await?;
-        let mut connection = wamn_postgres::connect(database.url()).await?;
-        let enabled: bool =
-            sqlx::query_scalar("SELECT current_setting('standard_conforming_strings')::boolean")
-                .fetch_one(&mut connection)
-                .await?;
-        assert!(!enabled);
-        Ok(())
-    }
-}
-
 pub mod run_result;

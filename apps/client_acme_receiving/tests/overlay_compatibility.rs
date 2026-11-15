@@ -2,41 +2,6 @@
 
 use sqlx::Row as _;
 include!("overlay_compatibility_fixture.rs");
-#[test]
-fn required_contract_observation_refuses_changed_consumed_fields_and_constraints() {
-    let required = json!({"tables":[{"schema":"receiving","table":"odd_probe",
-        "fields":[{"name":"probe_key","type":"uuid","nullable":false}],
-        "constraints":[{"name":"odd_probe_key","definition":{"type":"primary_key","columns":["probe_key"]}}]}]});
-    let live = json!({"tables":[{"schema":"receiving","name":"odd_probe",
-        "columns":[{"name":"probe_key","type":"uuid","nullable":false},{"name":"unused","type":"text","nullable":true}],
-        "constraints":[{"name":"odd_probe_key","type":"primary_key","columns":["probe_key"]}]}]});
-    assert_eq!(
-        required_contract_observation(&required, &live).unwrap(),
-        json!({"tables":1,"fields":1,"constraints":1,"result":"satisfied"})
-    );
-    for changed in [json!("text"), json!("int64")] {
-        let mut candidate = live.clone();
-        candidate["tables"][0]["columns"][0]["type"] = changed;
-        let error = required_contract_observation(&required, &candidate).unwrap_err();
-        assert!(error.to_string().contains("receiving.odd_probe.probe_key"));
-    }
-    let mut nullable = live.clone();
-    nullable["tables"][0]["columns"][0]["nullable"] = json!(true);
-    assert!(
-        required_contract_observation(&required, &nullable)
-            .unwrap_err()
-            .to_string()
-            .contains("receiving.odd_probe.probe_key")
-    );
-    let mut constraint = live;
-    constraint["tables"][0]["constraints"][0]["columns"] = json!(["unused"]);
-    assert!(
-        required_contract_observation(&required, &constraint)
-            .unwrap_err()
-            .to_string()
-            .contains("receiving.odd_probe.odd_probe_key")
-    );
-}
 
 /// Narrow seam test; the paired journey remains the fresh-install test.
 #[tokio::test]

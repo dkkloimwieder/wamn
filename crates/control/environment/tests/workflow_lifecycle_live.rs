@@ -397,11 +397,6 @@ async fn one_version_is_enabled_and_the_lock_refuses_while_held(pool: sqlx::PgPo
         refusal.error_type(),
         WorkflowLifecycleErrorType::ApplyInProgress
     );
-    assert!(
-        refusal.to_string().starts_with(APPLY_IN_PROGRESS),
-        "{refusal}"
-    );
-    assert!(refusal.to_string().contains("acme/orders/dev"), "{refusal}");
     held.release().await;
     assert_eq!(fixture.enabled("nightly").await, [2]);
 

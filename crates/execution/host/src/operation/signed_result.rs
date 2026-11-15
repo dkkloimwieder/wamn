@@ -373,8 +373,13 @@ mod tests {
             .into_json()
             .unwrap()
             .unwrap();
-            assert!(signed.payload.contains("https://files.test/signed"));
-            assert!(!signed.payload.contains(ID));
+            let payload: serde_json::Value = serde_json::from_str(&signed.payload).unwrap();
+            let row = if matches!(class, "bounded_list" | "page") {
+                &payload[0]["value"]["rows"][0]
+            } else {
+                &payload[0]["value"]
+            };
+            assert_eq!(row["file_id"], "https://files.test/signed");
             let value = sign_result(
                 NativeOutcome::Typed(typed(class)),
                 &reads(class),
@@ -386,8 +391,42 @@ mod tests {
             )
             .await
             .unwrap();
-            assert!(format!("{value:?}").contains("https://files.test/signed"));
-            assert!(!format!("{value:?}").contains(ID));
+            let NativeOutcome::Typed(Val::Result(Ok(Some(elements)))) = value else {
+                panic!("typed outcome list");
+            };
+            let Val::List(mut elements) = *elements else {
+                panic!("outcome elements");
+            };
+            let Val::Record(mut element) = elements.remove(0) else {
+                panic!("outcome element");
+            };
+            let Val::Result(Ok(Some(value))) = element.remove(0).1 else {
+                panic!("completed outcome");
+            };
+            let Val::Record(mut fields) = *value else {
+                panic!("result record");
+            };
+            if class == "optional_one" {
+                let Val::Option(Some(row)) = fields.remove(0).1 else {
+                    panic!("optional row");
+                };
+                let Val::Record(row) = *row else {
+                    panic!("row record");
+                };
+                fields = row;
+            } else if matches!(class, "bounded_list" | "page") {
+                let Val::List(mut rows) = fields.remove(0).1 else {
+                    panic!("result rows");
+                };
+                let Val::Record(row) = rows.remove(0) else {
+                    panic!("row record");
+                };
+                fields = row;
+            }
+            let Val::Option(Some(url)) = fields.remove(0).1 else {
+                panic!("signed file");
+            };
+            assert!(matches!(*url, Val::String(url) if url == "https://files.test/signed"));
         }
     }
 
@@ -408,10 +447,7 @@ mod tests {
         })
         .await;
         assert_eq!(count, 2);
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "sign JSON operation result: signing refused"
-        );
+        let _error = result.unwrap_err();
         assert_eq!(input[0]["value"]["file_id"], ID);
     }
 
@@ -439,10 +475,7 @@ mod tests {
         })
         .await;
         assert_eq!(calls, 2);
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "sign typed operation result: provider refused"
-        );
+        let _error = result.unwrap_err();
     }
 
     #[tokio::test]

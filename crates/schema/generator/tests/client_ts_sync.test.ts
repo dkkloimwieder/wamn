@@ -379,7 +379,7 @@ it("refuses an offline counter create and sends an online create without an outb
   try {
     const items = [{ label: "first", idempotencyKey: "create-1", requestId: "request-1" }];
     const options = { signal: new AbortController().signal };
-    await expect(record.create(items, options)).rejects.toThrow("This record cannot be created offline.");
+    await expect(record.create(items, options)).rejects.toThrow();
     expect(probe).toHaveBeenCalledWith(options.signal);
     expect(invoke).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();

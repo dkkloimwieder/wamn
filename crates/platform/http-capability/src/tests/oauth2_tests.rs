@@ -987,10 +987,13 @@ async fn fresh_and_cached_bearer_use_basic_form_authentication_without_guest_sec
             .unwrap(),
         b"private+client%3Aid%2B:private%2Fsecret%26%2B"
     );
-    assert_eq!(
-        fetch.body,
-        b"grant_type=client_credentials&scope=orders%3Aread+orders%3Awrite%2B"
-    );
+    {
+        let parameters: std::collections::HashMap<_, _> = url::form_urlencoded::parse(&fetch.body)
+            .into_owned()
+            .collect();
+        assert_eq!(parameters["grant_type"], "client_credentials");
+        assert_eq!(parameters["scope"], "orders:read orders:write+");
+    };
     for request in &observed[1..] {
         assert_eq!(request.headers["authorization"], "Bearer fixture-token-1");
         assert_eq!(request.body, b"guest-body");
@@ -1031,10 +1034,14 @@ async fn short_or_absent_expiry_never_caches_across_requests_and_empty_scopes_om
             fixture.send(&plugin, "handle").await.unwrap();
         }
         assert_eq!(fixture.counts(), (2, 2));
-        assert_eq!(
-            fixture.observed.lock().unwrap()[0].body,
-            b"grant_type=client_credentials"
-        );
+        {
+            let parameters: std::collections::HashMap<_, _> =
+                url::form_urlencoded::parse(&fixture.observed.lock().unwrap()[0].body)
+                    .into_owned()
+                    .collect();
+            assert_eq!(parameters["grant_type"], "client_credentials");
+            assert!(!parameters.contains_key("scope"));
+        };
     }
 }
 
@@ -1604,10 +1611,14 @@ async fn authorization_code_requires_a_row_and_keeps_or_replaces_the_refresh_tok
         .filter(|request| request.path.starts_with("/bound/token"))
         .collect();
     for grant in &grants[1..] {
-        assert_eq!(
-            grant.body,
-            b"grant_type=refresh_token&refresh_token=old-refresh"
-        );
+        {
+            let parameters: std::collections::HashMap<_, _> =
+                url::form_urlencoded::parse(&grant.body)
+                    .into_owned()
+                    .collect();
+            assert_eq!(parameters["grant_type"], "refresh_token");
+            assert_eq!(parameters["refresh_token"], "old-refresh");
+        };
     }
 }
 
@@ -1861,10 +1872,14 @@ async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
         .collect();
     assert_eq!(refreshes.len(), 2);
     for request in &refreshes {
-        assert_eq!(
-            request.body,
-            b"grant_type=refresh_token&refresh_token=original-refresh%2B%26"
-        );
+        {
+            let parameters: std::collections::HashMap<_, _> =
+                url::form_urlencoded::parse(&request.body)
+                    .into_owned()
+                    .collect();
+            assert_eq!(parameters["grant_type"], "refresh_token");
+            assert_eq!(parameters["refresh_token"], "original-refresh+&");
+        };
     }
     let basic = refreshes[1].headers["authorization"]
         .to_str()
@@ -2222,10 +2237,14 @@ async fn token_authority_authorization_code_exchange_and_refresh_refuse_other_or
                 query["code_challenge"]
             );
             assert_eq!(form["grant_type"], "authorization_code");
-            assert_eq!(
-                requests[1].body,
-                b"grant_type=refresh_token&refresh_token=separate-refresh"
-            );
+            {
+                let parameters: std::collections::HashMap<_, _> =
+                    url::form_urlencoded::parse(&requests[1].body)
+                        .into_owned()
+                        .collect();
+                assert_eq!(parameters["grant_type"], "refresh_token");
+                assert_eq!(parameters["refresh_token"], "separate-refresh");
+            };
         } else {
             result.expect_err("token endpoint authority refuses");
             assert!(endpoint.observed.lock().unwrap().is_empty());

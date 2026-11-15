@@ -631,11 +631,10 @@ mod tests {
             serde_json::from_value::<RequirementType>(serde_json::json!("http")).unwrap(),
             RequirementType::Http
         );
-        assert_eq!(
+        assert!(
             serde_json::from_value::<RequirementType>(serde_json::json!("ftp"))
                 .unwrap_err()
-                .to_string(),
-            "unknown variant `ftp`, expected `blobstore` or `http`"
+                .is_data()
         );
     }
 

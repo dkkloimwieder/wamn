@@ -469,7 +469,7 @@ fn direct_state_replay_and_composed_routes_remain_distinct() {
     }
 
     let package = fixture::generate_fixture();
-    let contracts = fixture::descriptions(&package);
+    let contracts = package.operations();
     let identity = command.operation.clone();
     let routes = BTreeMap::from([(
         identity,
@@ -483,7 +483,7 @@ fn direct_state_replay_and_composed_routes_remain_distinct() {
             replay: None,
         },
     )]);
-    let projected = ClientContractIr::from_operations("platform_fixture", &contracts, &routes)
+    let projected = ClientContractIr::from_operations("platform_fixture", contracts, &routes)
         .expect("composed route projects");
     let route = operation(&projected, "archive").route.as_ref().unwrap();
     assert!(!route.direct);
@@ -782,7 +782,7 @@ fn authored_text_reaches_every_field_the_client_reads() {
 #[ignore = "requires: input:fixture"]
 fn a_published_response_takes_its_text_from_the_terminal() {
     let package = fixture::generate_fixture();
-    let contracts = fixture::descriptions(&package);
+    let contracts = package.operations();
     let identity = "platform-fixture:widget/get@2.1.1";
     let served = |path: &str| wamn_compiler::client_ir::FieldIr {
         path: path.to_owned(),
@@ -816,7 +816,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
             replay: None,
         },
     )]);
-    let ir = ClientContractIr::from_operations("platform_fixture", &contracts, &routes)
+    let ir = ClientContractIr::from_operations("platform_fixture", contracts, &routes)
         .expect("the fixture projects with a published response");
     let get = ir.models[fixture::widget_index(&ir)]
         .operations

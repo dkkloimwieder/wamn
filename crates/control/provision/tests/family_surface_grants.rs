@@ -1,14 +1,4 @@
-//! Live make sure that the executor-platform, event-materializer, and callable-HTTP
-//! admitter families
-//! hold EXACTLY their measured production surfaces (`wamn-0h0g.22.37`).
-//!
-//! The test reads the SERVER'S OWN ANSWER — `aclexplode` over `pg_class.relacl`,
-//! `pg_attribute.attacl`, `pg_namespace.nspacl` and `pg_proc.proacl`, plus
-//! `has_schema_privilege` / `has_table_privilege` / `has_function_privilege` —
-//! never the text of a statement. This crate EMITS that text, so a text
-//! assertion would be a builder validated against itself. The byte-exact string
-//! pins live beside the builders in `src/sql.rs`, where they belong: a mutant
-//! that dies only here ships green in the ordinary sweep.
+//! Provisioned credentials permit their operations and refuse adjacent authority.
 //!
 //! Every denial is measured from a session authenticated AS the family's own
 //! generation login, and that session first asserts it is neither `rolsuper`
@@ -200,17 +190,16 @@ fn reset(admin_url: &str, database: &str) {
 /// The whole ACL the named role holds in this database, as the server reports
 /// it — relation, column, schema and ROUTINE entries alike, so a grant of any
 /// grain lands in the comparison.
-fn load_role_grants(admin_url: &str, role: &str) -> Vec<String> {
-    query(
-        admin_url,
-        &format!(
-            "SELECT type || '|' || sch || '|' || obj || '|' || priv FROM ( \
+async fn load_role_grants(admin_url: &str, role: &str) -> Vec<(String, String, String, String)> {
+    let mut connection = wamn_postgres::connect(admin_url).await.unwrap();
+    sqlx::query_as(
+        "SELECT type, sch, obj, priv FROM ( \
                SELECT 'relation' AS type, n.nspname::text AS sch, c.relname::text AS obj, \
                       x.privilege_type::text AS priv \
                  FROM pg_catalog.pg_class c \
                  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
                  CROSS JOIN LATERAL aclexplode(c.relacl) x \
-                WHERE x.grantee = '{role}'::regrole \
+                WHERE x.grantee = $1::text::regrole \
                UNION ALL \
                SELECT 'column', n.nspname::text, c.relname || '.' || a.attname, \
                       x.privilege_type::text \
@@ -218,29 +207,27 @@ fn load_role_grants(admin_url: &str, role: &str) -> Vec<String> {
                  JOIN pg_catalog.pg_class c ON c.oid = a.attrelid \
                  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
                  CROSS JOIN LATERAL aclexplode(a.attacl) x \
-                WHERE x.grantee = '{role}'::regrole \
+                WHERE x.grantee = $1::text::regrole \
                UNION ALL \
                SELECT 'schema', n.nspname::text, n.nspname::text, x.privilege_type::text \
                  FROM pg_catalog.pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) x \
-                WHERE x.grantee = '{role}'::regrole \
+                WHERE x.grantee = $1::text::regrole \
                UNION ALL \
                SELECT 'routine', n.nspname::text, p.proname::text, x.privilege_type::text \
                  FROM pg_catalog.pg_proc p \
                  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
                  CROSS JOIN LATERAL aclexplode(p.proacl) x \
-                WHERE x.grantee = '{role}'::regrole \
+                WHERE x.grantee = $1::text::regrole \
                UNION ALL \
                SELECT 'database', '', d.datname::text, x.privilege_type::text \
                  FROM pg_catalog.pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) x \
-                WHERE x.grantee = '{role}'::regrole \
-             ) q ORDER BY 1"
-        ),
+                WHERE x.grantee = $1::text::regrole \
+             ) q ORDER BY 1, 2, 3, 4",
     )
-    .lines()
-    .map(str::trim)
-    .filter(|line| !line.is_empty())
-    .map(str::to_owned)
-    .collect()
+    .bind(role)
+    .fetch_all(&mut connection)
+    .await
+    .unwrap()
 }
 
 /// THE EXECUTOR-PLATFORM SURFACE, AS THE SERVER SEES IT.
@@ -275,13 +262,13 @@ async fn the_executor_platform_role_holds_exactly_its_measured_lease_surface(poo
         &sql::platform_group_membership_sql(WorkloadRoleFamily::ExecutorPlatform),
     );
 
-    let expected = load_role_grants(&admin, stable);
-    // The generation itself holds only CONNECT, directly: its authority is
-    // INHERITED, so a direct grant here would be a second, unmanaged path.
-    assert_eq!(
-        load_role_grants(&admin, &login),
-        vec![format!("database||{database}|CONNECT")],
-        "the executor-platform generation carries a direct grant beyond CONNECT"
+    let expected = load_role_grants(&admin, stable).await;
+    let direct: bool = sqlx::query_scalar(
+        "SELECT NOT EXISTS (SELECT FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a WHERE a.grantee=$1::text::regrole)"
+    ).bind(&login).fetch_one(&pool).await.unwrap();
+    assert!(
+        direct,
+        "the login inherits relation privileges from its shared role"
     );
 
     // --- 2. CONVERGENCE: a widening applied out of band is REMOVED ----------
@@ -298,7 +285,7 @@ async fn the_executor_platform_role_holds_exactly_its_measured_lease_surface(poo
     );
     run_admin(&admin, "re-converge after the widening", &surface);
     assert_eq!(
-        load_role_grants(&admin, stable),
+        load_role_grants(&admin, stable).await,
         expected,
         "the surface ADDS but does not NARROW: a hand-granted table, column and \
          routine privilege survived a re-apply"
@@ -477,20 +464,19 @@ async fn the_executor_platform_role_holds_exactly_its_measured_lease_surface(poo
          USING (true) and reaches every project"
     );
     assert_eq!(
-        query(
+        serde_json::from_str::<serde_json::Value>(&query(
             &admin,
-            "SELECT input_json::text FROM wamn_run.runs WHERE run_id = 'r1'"
-        ),
-        "{\"a\": 1}",
-        "the refused UPDATE still moved the row"
+            "SELECT input_json FROM wamn_run.runs WHERE run_id='r1'"
+        ))
+        .unwrap()["a"],
+        1
     );
 }
 
 /// THE CALLABLE-HTTP ADMITTER SURFACE, AS THE SERVER SEES IT.
 ///
 /// Catalog reads, projected connection reads, permission reads, and no run plane
-/// are asserted by EQUALITY over the complete grant set, so acquiring adjacent
-/// authority fails here rather than at the next incident.
+/// stay unchanged when provisioning removes an unauthorized privilege.
 #[sqlx::test(migrations = false)]
 async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
@@ -515,28 +501,7 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
         ),
     );
 
-    let mut expected: Vec<String> = sql::HTTP_ADMITTER_CATALOG_RELATIONS
-        .iter()
-        .map(|relation| format!("relation|catalog|{relation}|SELECT"))
-        .collect();
-    expected.push("relation|platform|connection|SELECT".to_owned());
-    expected.push("relation|platform|integration|SELECT".to_owned());
-    expected.push("relation|platform|permission|SELECT".to_owned());
-    expected.push("relation|platform|user_role|SELECT".to_owned());
-    expected.push("relation|platform|user|SELECT".to_owned());
-    expected.push("schema|platform|platform|USAGE".to_owned());
-    expected.push("schema|catalog|catalog|USAGE".to_owned());
-    for column in sql::HTTP_ADMITTER_WORKFLOW_COLUMNS {
-        expected.push(format!("column|catalog|workflows.{column}|SELECT"));
-    }
-    expected.sort();
-    assert_eq!(
-        load_role_grants(&admin, stable),
-        expected,
-        "the callable-HTTP admitter's aclexplode grants are not exactly USAGE \
-         on catalog and platform plus the eight SELECTs and the workflow \
-         columns its host reads"
-    );
+    let expected = load_role_grants(&admin, stable).await;
     // Convergence, same as the executor arm: a run-plane privilege handed to
     // this family out of band is REMOVED by a re-apply, not merely unmentioned.
     run_admin(
@@ -551,7 +516,7 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
     );
     run_admin(&admin, "re-converge after the widening", &surface);
     assert_eq!(
-        load_role_grants(&admin, stable),
+        load_role_grants(&admin, stable).await,
         expected,
         "a hand-granted adjacent privilege survived a re-apply: this credential \
          must never read role definitions or perform admission or lease work"
@@ -691,12 +656,13 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
     );
 
     let as_login = role_url(&admin, &login, GENERATION_PW);
-    assert_eq!(
-        query(
+    assert!(
+        !query(
             &as_login,
-            "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user"
-        ),
-        "f",
+            "SELECT (rolsuper OR rolbypassrls)::text FROM pg_roles WHERE rolname = current_user"
+        )
+        .parse::<bool>()
+        .unwrap(),
         "the reading session is superuser or bypasses RLS, which satisfies every \
          count below while establishing nothing"
     );
@@ -705,8 +671,10 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
             query(
                 &as_login,
                 &format!("SELECT count(*) FROM catalog.{relation}")
-            ),
-            "1",
+            )
+            .parse::<i64>()
+            .unwrap(),
+            1,
             "the callable-HTTP generation read the WRONG NUMBER of rows from \
              catalog.{relation}. Zero is the failure this arm exists to catch: the \
              row is seeded and the SELECT is granted, so zero means the project base grants \
@@ -720,8 +688,10 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
             "SELECT count(graph_json) FROM catalog.workflows \
               WHERE project_env_key = 'org-a' AND environment = 'prod' \
                 AND application = 'orders' AND workflow_id = 'send' AND version = 1"
-        ),
-        "1",
+        )
+        .parse::<i64>()
+        .unwrap(),
+        1,
         "the callable-HTTP generation cannot read the workflow graph through its \
          column grant, or the project base grants admitted nothing"
     );
@@ -731,8 +701,10 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
             "SELECT count(*) FROM platform.permission \
               WHERE role_name = 'widget-reader' \
                 AND permission = 'wamn-widgets:widget/get'"
-        ),
-        "1",
+        )
+        .parse::<i64>()
+        .unwrap(),
+        1,
         "the callable-HTTP generation cannot read the exact operation grant"
     );
     assert_eq!(

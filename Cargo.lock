@@ -5797,6 +5797,7 @@ dependencies = [
  "wamn-record-history",
  "wamn-registry",
  "wamn-run-state",
+ "wamn-scalar",
  "wamn-test-postgres",
 ]
 

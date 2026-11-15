@@ -136,6 +136,10 @@ fn with_clients(
 
 fn write_client(root: &Path, release: &ClientContractIr) -> Result<()> {
     std::fs::create_dir(root)?;
+    std::fs::write(
+        root.join("input.json"),
+        serde_json::to_vec(&serde_json::json!({ "models": &release.models }))?,
+    )?;
     for file in emit_ts_client(release)? {
         let name = Path::new(file.path())
             .file_name()

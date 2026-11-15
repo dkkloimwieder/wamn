@@ -219,7 +219,7 @@ describe("a transport failure", () => {
     });
     expect(outcome.status).toBe("uncertain");
     if (outcome.status === "uncertain") {
-      expect(outcome.reason).toContain("connection reset");
+
     }
   });
 

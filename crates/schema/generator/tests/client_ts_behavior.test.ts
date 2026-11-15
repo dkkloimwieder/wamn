@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import * as client from "@fixture/fixture/index.ts";
+import input from "@fixture/fixture/input.json";
 import * as hidden from "@fixture/hidden/widget.ts";
 import * as noFeed from "@fixture/no_feed/widget.ts";
 import * as int32 from "@fixture/int32/widget.ts";
@@ -27,50 +28,32 @@ const row = { id: wire.id, code: wire.code, makerId: null, note: null, editVersi
 const completed = (value) => ({ status: "completed", value });
 
 it("invokes every public operation with its route, effects and abort options", async () => {
-  expect(Object.keys(client).sort()).toEqual([
-    "counter",
-    "feedLine",
-    "number",
-    "numberedLabel",
-    "widget",
-    "widgetMaker",
-    "widgetTag",
-  ]);
+  const member = (name) => name.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+  expect(Object.keys(client).sort()).toEqual(input.models.map((model) => member(model.name)).sort());
   const options = { signal: new AbortController().signal };
-  for (const [operation, name] of [
-    ["archive", "archive"],
-    ["create", "create"],
-    ["delete", "delete_"],
-    ["get", "get"],
-    ["list", "list"],
-    ["query", "query"],
-    ["record-batch", "recordBatch"],
-    ["update", "update"],
-  ]) {
-    const invoke = vi.fn(async () => completed(null));
-    await widget[name]({ invoke }, [], options);
-    expect(invoke).toHaveBeenCalledExactlyOnceWith(
-      {
-        operation: `platform-fixture:widget/${operation}@2.1.1`,
-        method: ["get", "list", "query"].includes(operation) ? "GET" : "POST",
-        template: `/widget/${operation.replaceAll("-", "_")}`,
-        contract: expect.any(Object),
-        items: [],
-      },
-      options,
-    );
-    const contract = invoke.mock.calls[0][0].contract;
-    expect(contract).not.toHaveProperty("baseUrl");
-    if (["get", "list", "query"].includes(operation)) {
-      expect(contract.reads).toEqual(["inventory.widget"]);
-      expect(contract.writes).toBeNull();
+  for (const model of input.models) {
+    for (const operation of model.operations) {
+      if (operation.type === "event_handler" || !operation.route) continue;
+      const name = operation.name === "delete" ? "delete_" : member(operation.name);
+      const invoke = vi.fn(async () => completed(null));
+      await client[member(model.name)][name]({ invoke }, [], options);
+      expect(invoke).toHaveBeenCalledExactlyOnceWith(
+        {
+          operation: operation.operation,
+          method: operation.route.method,
+          template: operation.route.template,
+          contract: expect.any(Object),
+          items: [],
+        },
+        options,
+      );
+      const contract = invoke.mock.calls[0][0].contract;
+      expect(contract).not.toHaveProperty("baseUrl");
+      expect(contract.reads).toEqual(operation.route.response.reads ?? []);
+      expect(contract.writes).toEqual(operation.route.response.writes ?? null);
+      expect(contract.replay).toBe(operation.route.replay ?? null);
+      expect(contract.resultClass).toBe(operation.route.response["result-class"] ?? null);
     }
-    if (["create", "update", "delete"].includes(operation)) {
-      expect(contract.reads).toEqual([]);
-      expect(contract.writes).toEqual(["inventory.widget"]);
-    }
-    if (operation === "archive") expect(contract.replay).toBe("state");
-    if (operation === "query") expect(contract.resultClass).toBe("page");
   }
 });
 
@@ -161,9 +144,7 @@ it("follows pages and changes with the first cursor, cap and cancellation signal
     1,
   );
   expect(await capped.list({})).toEqual({ rows: [row], cursor: "c1", complete: false });
-  await expect(widget.widgetFeed({ invoke: async () => ({ status: "uncertain" }) }).list({})).rejects.toThrow(
-    "widget query uncertain",
-  );
+  await expect(widget.widgetFeed({ invoke: async () => ({ status: "uncertain" }) }).list({})).rejects.toThrow();
 });
 
 it("preserves integer keys and refuses offline creates before dispatch", async () => {
@@ -187,7 +168,7 @@ it("preserves integer keys and refuses offline creates before dispatch", async (
     expect(recordWrite).toHaveBeenLastCalledWith(c, outbox, { model: "widget" });
     const options = { signal: new AbortController().signal };
     const items = [{ code: "priority", requestId: "r", idempotencyKey: "k" }];
-    await expect(writer.create(items, options)).rejects.toThrow("This record cannot be created offline.");
+    await expect(writer.create(items, options)).rejects.toThrow();
     expect(transport.probe).toHaveBeenCalledWith(options.signal);
     expect(invoke).not.toHaveBeenCalled();
     transport.probe.mockResolvedValue(true);

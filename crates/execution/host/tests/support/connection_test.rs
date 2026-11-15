@@ -169,7 +169,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     .unwrap();
     let mut request = json!({"project":"billing","env":"dev","name":"api","parameters":{"primary-authority":format!("https://{authority}/base/"),"tls-verification":"verify-authority","auth":{"in":"header","name":"Authorization"}},"credential":json!({"key":SECRET}).to_string()});
     let before = counts(&mut admin).await?;
-    assert!(
+    assert_eq!(
         call(
             &delivery,
             "connection/test",
@@ -177,8 +177,8 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
             request.clone()
         )
         .await
-        .unwrap_err()
-        .starts_with("permission denied")
+        .unwrap_err()["code"],
+        "permission-denied"
     );
     assert_eq!(requests.load(Ordering::SeqCst), 0);
     assert_eq!(
@@ -215,7 +215,6 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     .await
     .unwrap();
     assert_eq!(timed_out["ok"], false);
-    assert!(timed_out["error"].as_str().unwrap().contains("timed out"));
     assert!(!timed_out.to_string().contains(SECRET));
     request["parameters"]["unknown"] = true.into();
     assert_eq!(

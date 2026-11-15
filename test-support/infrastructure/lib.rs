@@ -24,18 +24,3 @@ pub fn connection_refused(error: &anyhow::Error) -> bool {
             .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused)
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::connection_refused;
-
-    #[test]
-    fn only_refused_connections_are_retryable() {
-        let refused =
-            anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::ConnectionRefused))
-                .context("connect to the allocated NodePort");
-        assert!(connection_refused(&refused));
-        let denied = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
-        assert!(!connection_refused(&denied));
-    }
-}

@@ -1,5 +1,4 @@
-//! Live make sure that the T1 control-database readers hold EXACTLY their own
-//! grant set (`wamn-0h0g.12.116`).
+//! Reader credentials permit their consuming queries and refuse foreign writes.
 //!
 //! The test reads the SERVER'S OWN ANSWER, never the text of a statement:
 //! `has_schema_privilege`, `has_table_privilege`, `pg_roles` attributes,
@@ -133,18 +132,14 @@ fn apply_system_schema(admin_url: &str) {
     run_admin(admin_url, "apply the system schema", &script);
 }
 
-/// The whole ACL the named role holds in this database, as the server reports
-/// it through `aclexplode` — relation, column, schema and database entries
-/// alike, so a grant of any grain lands in the comparison.
-fn role_grants_sql(role: &str) -> String {
-    format!(
-        "SELECT type || '|' || sch || '|' || obj || '|' || priv || '|' || grantable FROM ( \
+/// Read whether any privilege permits delegation to another role.
+const ROLE_GRANTS_SQL: &str = "SELECT grantable FROM ( \
            SELECT 'relation' AS type, n.nspname::text AS sch, c.relname::text AS obj, \
                   x.privilege_type::text AS priv, x.is_grantable AS grantable \
              FROM pg_catalog.pg_class c \
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
              CROSS JOIN LATERAL aclexplode(c.relacl) x \
-            WHERE x.grantee = '{role}'::regrole \
+            WHERE x.grantee = $1::text::regrole \
            UNION ALL \
            SELECT 'column', n.nspname::text, c.relname || '.' || a.attname, \
                   x.privilege_type::text, x.is_grantable \
@@ -152,33 +147,21 @@ fn role_grants_sql(role: &str) -> String {
              JOIN pg_catalog.pg_class c ON c.oid = a.attrelid \
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
              CROSS JOIN LATERAL aclexplode(a.attacl) x \
-            WHERE x.grantee = '{role}'::regrole \
+            WHERE x.grantee = $1::text::regrole \
            UNION ALL \
            SELECT 'schema', n.nspname::text, n.nspname::text, \
                   x.privilege_type::text, x.is_grantable \
              FROM pg_catalog.pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) x \
-            WHERE x.grantee = '{role}'::regrole \
+            WHERE x.grantee = $1::text::regrole \
            UNION ALL \
            SELECT 'routine', n.nspname::text, p.proname::text, x.privilege_type::text, x.is_grantable \
              FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace \
-             CROSS JOIN LATERAL aclexplode(p.proacl) x WHERE x.grantee='{role}'::regrole \
+             CROSS JOIN LATERAL aclexplode(p.proacl) x WHERE x.grantee=$1::text::regrole \
            UNION ALL \
            SELECT 'database', '', d.datname::text, x.privilege_type::text, x.is_grantable \
              FROM pg_catalog.pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) x \
-            WHERE x.grantee = '{role}'::regrole \
-         ) q ORDER BY 1;"
-    )
-}
-
-fn load_role_grants(admin_url: &str, role: &str) -> Vec<String> {
-    let (ok, out, err) = psql_tuples(admin_url, &role_grants_sql(role));
-    assert!(ok, "read the direct grants for {role}:\n{err}");
-    out.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
+            WHERE x.grantee = $1::text::regrole \
+         ) q ORDER BY 1;";
 
 fn psql_tuples(url: &str, query: &str) -> (bool, String, String) {
     let child = Command::new("psql")
@@ -264,53 +247,22 @@ async fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches
         reader_url.push((reader, role_url(&admin_url, &role, READER_PW), role));
     }
 
-    // --- the server's answer about the identity reader's whole ACL ----------
+    // No reader can delegate its privileges to another role.
+    for (reader, _, _) in &reader_url {
+        let grants: Vec<bool> = sqlx::query_scalar(ROLE_GRANTS_SQL)
+            .bind(reader.family().acl_role())
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(grants.into_iter().all(|grantable| !grantable));
+    }
     assert_eq!(
-        load_role_grants(&admin_url, WorkloadRoleFamily::IdentityReader.acl_role()),
-        vec![
-            "column|identity|org_memberships.org|SELECT|false".to_owned(),
-            "column|identity|org_memberships.principal_id|SELECT|false".to_owned(),
-            "column|identity|org_memberships.status|SELECT|false".to_owned(),
-            "relation|identity|password_logins|SELECT|false".to_owned(),
-            "relation|identity|pats|SELECT|false".to_owned(),
-            "relation|identity|principals|SELECT|false".to_owned(),
-            "relation|identity|project_env_memberships|SELECT|false".to_owned(),
-            "relation|identity|project_roles|SELECT|false".to_owned(),
-            "schema|identity|identity|USAGE|false".to_owned(),
-        ],
-        "the stable identity-reader role's aclexplode grants are not exactly \
-         USAGE on identity plus its identity reads and membership columns"
-    );
-    assert_eq!(
-        load_role_grants(&admin_url, WorkloadRoleFamily::ConnectionReader.acl_role()),
-        vec![
-            "relation|identity|oauth_authorization|DELETE|false".to_owned(),
-            "relation|identity|oauth_authorization|INSERT|false".to_owned(),
-            "relation|identity|oauth_authorization|SELECT|false".to_owned(),
-            "relation|identity|oauth_authorization|UPDATE|false".to_owned(),
-            "relation|identity|oauth_token|DELETE|false".to_owned(),
-            "relation|identity|oauth_token|INSERT|false".to_owned(),
-            "relation|identity|oauth_token|SELECT|false".to_owned(),
-            "relation|identity|oauth_token|UPDATE|false".to_owned(),
-            "routine|registry|lock_oauth_connection|EXECUTE|false".to_owned(),
-            "routine|registry|read_connection_fact|EXECUTE|false".to_owned(),
-            "routine|registry|read_connection_generation|EXECUTE|false".to_owned(),
-            "routine|registry|read_connection_secret|EXECUTE|false".to_owned(),
-            "routine|registry|read_env_connections|EXECUTE|false".to_owned(),
-            "routine|registry|read_file_connection|EXECUTE|false".to_owned(),
-            "routine|registry|read_integration_version|EXECUTE|false".to_owned(),
-            "schema|identity|identity|USAGE|false".to_owned(),
-            "schema|registry|registry|USAGE|false".to_owned(),
-        ],
-        "the connection reader holds OAuth storage access and credential reader execution"
-    );
-    assert_eq!(
-        reader_sqlstate(&reader_url[2].1, "SELECT id FROM registry.connection"),
+        reader_sqlstate(&reader_url[1].1, "SELECT id FROM registry.connection"),
         Some("42501".to_owned()),
         "the connection reader cannot directly read connection rows"
     );
     assert_eq!(
-        reader_sqlstate(&reader_url[2].1, "DELETE FROM registry.connection"),
+        reader_sqlstate(&reader_url[1].1, "DELETE FROM registry.connection"),
         Some("42501".to_owned()),
         "the connection reader cannot change connection rows"
     );

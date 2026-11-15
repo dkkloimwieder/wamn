@@ -247,7 +247,9 @@ Changed pins require a commit subject that names the submodule path or its last 
 A test stays only if a realistic defect fails it, and nothing else rejects that defect more strongly.
 The expected value of the test must not come from the code under test.
 
-- No test compares source text, DDL text, or a generated file to a string.
+- Tests check returned values, error types, parsed contract fields, and database changes.
+- No test compares diagnostics, source text, DDL text, or file contents to a string.
+- Tests do not check test helpers with fabricated failures.
 - A byte or digest test stays only when the bytes are a persisted or wire contract and the expected value is independent.
 - A source or repository policy test is a lint in `cargo xtask repo-lint`, not a test.
 - A schema rule is tested against the installed database: a refused write, a cascade, or a `pg_catalog` fact.

@@ -233,8 +233,11 @@ async fn identity_https_has_only_public_jwks_and_health() {
     assert_eq!(value["keys"].as_array().expect("JWKS keys").len(), 1);
     assert_eq!(public_key(&value["keys"][0]), public);
     assert!(
-        !String::from_utf8_lossy(&bytes).contains(&other.kid),
-        "another issuer is not projected"
+        value["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|key| key["kid"] != other.kid)
     );
     assert!(!String::from_utf8_lossy(&bytes).contains(PASSWORD));
     for path in [

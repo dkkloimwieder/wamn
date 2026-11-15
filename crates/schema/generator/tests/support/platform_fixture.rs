@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use wamn_scalar::SqlValueType;
 
 use serde_json::{Value, json};
@@ -44,17 +43,28 @@ pub(crate) fn try_generate_with_sql(
     authored: &[(String, Vec<u8>)],
 ) -> Result<GeneratedPackage, wamn_compiler::ManifestError> {
     let manifest = serde_json::to_vec(value).expect("serialize platform fixture manifest");
+    let parsed = wamn_compiler::manifest::PackageManifest::from_slice(&manifest)?;
+    let paths: std::collections::BTreeSet<_> = parsed
+        .models
+        .values()
+        .flat_map(|model| model.operations.values())
+        .filter_map(|operation| operation.authored_sql.as_ref())
+        .flat_map(|query| {
+            std::iter::once(query.default.as_str())
+                .chain(query.variants.iter().map(|variant| variant.path.as_str()))
+        })
+        .chain(
+            parsed
+                .custom_operations
+                .values()
+                .flat_map(|operation| operation.statements.values())
+                .map(|statement| statement.path.as_str()),
+        )
+        .collect();
     let sources = authored
         .iter()
         .map(|(path, bytes)| AuthoredSql::new(path, bytes))
-        .filter(|source| {
-            value["models"]["widget"]["operations"]["query"]["authored_sql"]
-                .to_string()
-                .contains(source.path())
-                || value["custom_operations"]
-                    .to_string()
-                    .contains(source.path())
-        })
+        .filter(|source| paths.contains(source.path()))
         .collect::<Vec<_>>();
     generate(&GenerationInput::new(
         catalog,
@@ -62,12 +72,6 @@ pub(crate) fn try_generate_with_sql(
         &sources,
         &StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
     ))
-}
-
-pub(crate) fn descriptions(
-    package: &GeneratedPackage,
-) -> BTreeMap<String, wamn_compiler::OperationDescription> {
-    package.operations().clone()
 }
 
 pub(crate) fn client_release() -> ClientContractIr {

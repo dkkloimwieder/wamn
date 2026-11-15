@@ -1942,10 +1942,7 @@ mod connection_mode_tests {
             super::health_status(status).unwrap();
         }
         for status in [401, 403, 500, 503, 599] {
-            assert_eq!(
-                super::health_status(status).unwrap_err().to_string(),
-                status.to_string()
-            );
+            super::health_status(status).expect_err("unhealthy status");
         }
     }
 

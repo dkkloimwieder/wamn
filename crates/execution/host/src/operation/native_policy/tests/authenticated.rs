@@ -75,6 +75,7 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
         !occupied,
         "refuse populated PostgreSQL: arm only this test's fresh disposable server"
     );
+    wamn_control_provision::test_database::system_schema(admin_url).await;
     let mut database: String = sqlx::query("SELECT current_database()::text")
         .fetch_one(&mut admin)
         .await?

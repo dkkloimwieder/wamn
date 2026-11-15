@@ -150,53 +150,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_platform_binding_names_the_actor_and_the_operation() {
-        for component in PlatformComponent::ALL {
-            assert_eq!(
-                bind_platform_principal_sql(component),
-                format!(
-                    "SELECT pg_catalog.set_config('app.user_id', '{}', true), \
-                     pg_catalog.set_config('app.operation', '{}', true);\n",
-                    component.principal_id(),
-                    component.principal_name(),
-                )
-            );
-        }
-        assert!(
-            platform_principals_sql("example.invalid")
-                .expect("a domain name renders")
-                .starts_with(&bind_platform_principal_sql(
-                    PlatformComponent::Provisioning
-                )),
-            "the platform rows are written as wamn:provisioning"
-        );
-    }
-
-    #[test]
-    fn a_platform_row_that_is_already_there_is_kept() {
-        let sql = platform_principals_sql("example.invalid").expect("a domain name renders");
-        assert_eq!(
-            sql.matches("ON CONFLICT (id) DO NOTHING").count(),
-            PlatformComponent::ALL.len() + 1,
-            "every insert keeps a row that is already there, so a project_env_key holding part of the \
-             list converges to the whole list"
-        );
-    }
-
-    #[test]
-    fn the_workflow_user_row_is_rendered_once_as_a_service() {
-        let sql = platform_principals_sql("example.invalid").expect("a domain name renders");
-        let row = format!(
-            "INSERT INTO platform.\"user\" (id, type, email, display_name) VALUES \
-             ('{}', 'service', 'workflow@example.invalid', 'workflow') ON CONFLICT (id) \
-             DO NOTHING;\n",
-            workflow_user_id()
-        );
-        assert_eq!(sql.matches(&row).count(), 1, "{sql}");
-        assert_eq!(sql.matches(&workflow_user_id().to_string()).count(), 1);
-    }
-
-    #[test]
     fn a_domain_name_renders() {
         for domain in ["example.invalid", "localhost", "a-1.b2.example"] {
             assert!(

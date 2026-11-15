@@ -198,7 +198,7 @@ describe("Records server pages", () => {
     page.reset();
     const failed = page.refresh();
     waiting.shift()!.reject(new Error("view refused"));
-    await expect(failed).rejects.toThrow("view refused");
+    await expect(failed).rejects.toThrow();
     flush();
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.queryByRole("cell", { name: "old view" })).toBeNull();

@@ -191,13 +191,9 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
     let constraint_name_error = Constraint::primary_key("", ["id"]).unwrap_err();
     assert_eq!(constraint_name_error.error_type(), IrErrorType::EmptyName);
     assert_eq!(constraint_name_error.input(), "constraint");
-    assert_eq!(
-        constraint_name_error.to_string(),
-        "constraint name must not be empty"
-    );
+
     let index_name_error = Index::new("", Vec::new()).unwrap_err();
     assert_eq!(index_name_error.error_type(), IrErrorType::EmptyName);
-    assert_eq!(index_name_error.to_string(), "index name must not be empty");
 
     assert_eq!(postgres_type("boolean").unwrap(), SqlValueType::Boolean);
     assert_eq!(postgres_type("integer").unwrap(), SqlValueType::Int32);
@@ -219,10 +215,6 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
     let type_error = postgres_type("character varying").unwrap_err();
     assert_eq!(type_error.error_type(), IrErrorType::UnsupportedType);
     assert_eq!(type_error.input(), "character varying");
-    assert_eq!(
-        type_error.to_string(),
-        "unsupported PostgreSQL type `character varying`"
-    );
 
     assert_eq!(
         postgres_default(SqlValueType::Uuid, "gen_random_uuid()").unwrap(),
@@ -326,12 +318,6 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
         );
         assert_eq!(error.column_type(), Some(column_type), "{expression}");
     }
-
-    let default_error = postgres_default(SqlValueType::Text, "upper('open')").unwrap_err();
-    assert_eq!(
-        default_error.to_string(),
-        "unsupported PostgreSQL default `upper('open')` for wamn:postgres type `text`"
-    );
 }
 
 fn exclusion_ir(reverse_collections: bool) -> CatalogIr {
@@ -411,14 +397,17 @@ fn canonical_bytes_freeze_an_exclusion_constraint() {
     let name_error =
         Exclusion::new("", ExclusionAccessMethod::Gist, Vec::new(), [""; 0]).unwrap_err();
     assert_eq!(name_error.error_type(), IrErrorType::EmptyName);
-    assert_eq!(
-        name_error.to_string(),
-        "exclusion constraint name must not be empty"
-    );
 }
 
 #[test]
 fn a_table_without_an_exclusion_constraint_keeps_its_canonical_bytes() {
-    let json = String::from_utf8(complete_ir(false).canonical_json_bytes()).unwrap();
-    assert!(!json.contains("exclusions"), "{json}");
+    let document: serde_json::Value =
+        serde_json::from_slice(&complete_ir(false).canonical_json_bytes()).unwrap();
+    assert!(
+        document["tables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|table| table.get("exclusions").is_none())
+    );
 }

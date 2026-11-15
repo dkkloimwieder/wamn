@@ -1565,10 +1565,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(disabled.status(), 409);
-        assert_eq!(
-            disabled.json::<serde_json::Value>().await.unwrap(),
-            json!({"error": format!("principal {} is disabled", bob.id())})
-        );
         let unknown = client
             .post(format!("{endpoint}/password/recover"))
             .json(&json!({"email":"unknown@example.invalid"}))

@@ -21,7 +21,6 @@ fn the_bundle_pins_the_separate_route_component() {
         std::env::var_os("WAMN_EDGE_DEVICE_COMPONENT")
             .expect("set WAMN_EDGE_DEVICE_COMPONENT to the built edge_device component"),
     );
-    assert!(component.is_file(), "run wamn build apps/edge_device first");
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("edge-bundle-entry-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out);

@@ -52,7 +52,12 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-async fn install(admin: &mut Client, database: &str, generation: &str) -> anyhow::Result<()> {
+async fn install(
+    admin: &mut Client,
+    database: &str,
+    generation: &str,
+    admin_url: &str,
+) -> anyhow::Result<()> {
     let version: i32 = sqlx::query("SHOW server_version_num")
         .fetch_one(&mut *admin)
         .await?
@@ -68,6 +73,7 @@ async fn install(admin: &mut Client, database: &str, generation: &str) -> anyhow
         !occupied,
         "refuse a populated server: arm only this test's fresh disposable PostgreSQL server"
     );
+    wamn_control_provision::test_database::system_schema(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("CREATE EXTENSION pg_stat_statements; \
          CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
@@ -311,7 +317,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
             database: &database,
         },
     )?;
-    install(&mut admin, &database, &generation).await?;
+    install(&mut admin, &database, &generation, admin_url).await?;
     seed(&mut admin).await?;
     let other_database = postgres.create_database("session_route_other").await?;
     let mut other_admin = connect(other_database.url()).await?;
@@ -581,20 +587,20 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
             "UPDATE identity.password_logins SET revoked_at=NULL",
         ),
         (
-            "UPDATE identity.principals SET status='disabled'",
-            "UPDATE identity.principals SET status='active'",
+            "UPDATE identity.principals SET status='disabled',disabled_at=now()",
+            "UPDATE identity.principals SET status='active',disabled_at=NULL; UPDATE identity.password_logins SET revoked_at=NULL",
         ),
         (
-            "UPDATE identity.project_env_memberships SET env='removed'",
-            "UPDATE identity.project_env_memberships SET env='dev'",
+            "DELETE FROM identity.project_env_memberships",
+            "INSERT INTO identity.project_env_memberships (principal_id,org,project,env) SELECT id,'org-a','project','dev' FROM identity.principals WHERE type='user'",
         ),
         (
             "UPDATE identity.password_logins SET audience='wrong'",
             "UPDATE identity.password_logins SET audience='urn:wamn:project-env:org-a:project:dev:instance-one'",
         ),
         (
-            "UPDATE identity.password_logins SET expires_at=clock_timestamp()-interval '1 second'",
-            "UPDATE identity.password_logins SET expires_at=clock_timestamp()+interval '8 hours'",
+            "UPDATE identity.password_logins SET authenticated_at=now()-interval '9 hours',expires_at=now()-interval '1 hour',renewal_expires_at=now()-interval '8 hours'",
+            "UPDATE identity.password_logins SET authenticated_at=now(),expires_at=now()+interval '8 hours',renewal_expires_at=now()+interval '30 minutes'",
         ),
     ] {
         sqlx::raw_sql(sqlx::AssertSqlSafe((revoke).to_string()))

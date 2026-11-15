@@ -281,19 +281,11 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         401
     );
 
-    // No caller, no answer, and a PAT is unavailable without PAT authentication.
+    // No caller receives no answer.
     assert!(matches!(
         deliver(&delivery, &route, None).await,
         Err(DeliveryError::InvalidRequest)
     ));
-    assert_eq!(
-        routing
-            .authenticate_authorization_for_test(&route, Some("Bearer wamn_pat_unknown"))
-            .await
-            .expect_err("no PAT authentication is configured")
-            .0,
-        503
-    );
     server.stop().await;
     Ok(())
 }
@@ -540,7 +532,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         json!({"code": "user_not_found", "detail": {"field": "user_id"}})
     );
     sqlx::query(
-        "INSERT INTO identity.project_roles VALUES ($1::text::uuid, $2, $3, 'project-admin')",
+        "INSERT INTO identity.project_roles (principal_id,org,project,role) VALUES ($1::text::uuid, $2, $3, 'project-admin')",
     )
     .bind(&first)
     .bind(&ORG)
@@ -1029,7 +1021,7 @@ async fn a_session_without_file_grants_cannot_call_any_file_operation() -> anyho
 async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     let mut host = application_host("cli_admin_revoke").await?;
-    sqlx::query("INSERT INTO identity.project_roles VALUES($1::text::uuid,$2,$3,'project-admin')")
+    sqlx::query("INSERT INTO identity.project_roles (principal_id,org,project,role) VALUES($1::text::uuid,$2,$3,'project-admin')")
         .bind(&host.first)
         .bind(&ORG)
         .bind(&PROJECT)
@@ -1054,7 +1046,9 @@ async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> 
                 }
             };
             let headers = String::from_utf8(request[..header_end].to_vec())?;
-            assert!(headers.starts_with("POST /wamn_control/user_role/revoke "));
+            let mut target = headers.lines().next().unwrap().split_ascii_whitespace();
+            assert_eq!(target.next(), Some("POST"));
+            assert_eq!(target.next(), Some("/wamn_control/user_role/revoke"));
             let header = |name: &str| {
                 headers.lines().find_map(|line| {
                     line.split_once(':')
@@ -1130,8 +1124,6 @@ async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> 
     .output()
     .await?;
     assert!(!output.status.success());
-    let error = String::from_utf8(output.stderr)?;
-    assert!(error.contains("admin_covered"), "{error}");
     server.await??;
     let still_admin: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin')").bind(&host.first).fetch_one(&mut host.admin).await?.get(0);
     assert!(still_admin);

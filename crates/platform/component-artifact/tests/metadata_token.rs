@@ -397,12 +397,7 @@ async fn the_helper_answers_with_the_same_token_function(script: &Script) {
 
     script.answer(vec![(500, "{}")]);
     match lookup().await.expect("the lookup finishes") {
-        Err(CredentialRetrievalError::HelperFailure { stderr, .. }) => {
-            assert!(
-                stderr.contains("registry-token-metadata-unavailable"),
-                "the helper names the refusal: {stderr}"
-            );
-        }
+        Err(CredentialRetrievalError::HelperFailure { .. }) => {}
         other => panic!("a failed token request fails the helper: {other:?}"),
     }
 }
