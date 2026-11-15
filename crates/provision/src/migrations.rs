@@ -36,7 +36,7 @@ impl MigrationDatabase {
             self.owner_role(),
             database
         ]));
-        wamn_registry::name::credential_login("wamn_platform_sql", &digest[7..47])
+        wamn_registry::name::credential_login("wamn_platform_sql", &digest.hex()[..40])
     }
 
     /// One native basic-auth Secret for the managed login.

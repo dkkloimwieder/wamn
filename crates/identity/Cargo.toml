@@ -16,7 +16,7 @@ wamn-registry = { workspace = true }
 wamn-broker = { workspace = true }
 wamn-kubernetes = { workspace = true }
 jsonwebtoken = { workspace = true }
-wamn-digest.workspace = true
+wamn-digest = { workspace = true, features = ["sqlx"] }
 uuid = { workspace = true }
 anyhow = { workspace = true }
 argon2 = { workspace = true }
@@ -35,7 +35,6 @@ wamn-catalog = { workspace = true }
 wamn-registry = { workspace = true, features = ["test-util"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 url = { workspace = true }
-sha2 = { workspace = true }
 jsonwebtoken = { workspace = true }
 chrono = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["test-util"] }

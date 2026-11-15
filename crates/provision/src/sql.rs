@@ -747,6 +747,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
 
 /// Non-secret connection functions available to the control host.
 pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
+    "lock_oauth_authorization(text)",
     "retired_connection_credential(text)",
     "connection_projection(text,text,text)",
     "publish_integration(text,integer,text,jsonb,text,text[],text[])",
@@ -902,9 +903,8 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
 /// Record the owner-maintained login-identity-to-project mapping for one target.
 ///
 /// `$1` login identity, `$2` `project_env_key`, `$3` org, `$4` project, `$5` environment.
-/// Project authority is database-authoritative: this row, not a caller-set
-/// `app.project_env_key`, is what every author-accessed relation's restrictive policy
-/// resolves through, so the statement is deliberately an owner statement with no
+/// Each author-accessed relation resolves project authority through this row.
+/// The statement belongs to the database owner and carries no
 /// grant to the author. `DO UPDATE` is restricted to a row whose project already
 /// matches, so a replay converges while a re-point to a different project returns
 /// **zero rows** instead of widening one login's reach — the caller must read an

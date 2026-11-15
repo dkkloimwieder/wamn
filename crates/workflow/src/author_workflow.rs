@@ -28,11 +28,9 @@ pub(super) mod plan;
 
 use anyhow::Context as _;
 
-use wamn_catalog::{DefinitionHash, ServingManifest, WiringDocument, parse_workflow_schedule};
+use wamn_catalog::{ServingManifest, WiringDocument, parse_workflow_schedule};
 
 use std::path::Path;
-
-const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, true)";
 
 /// Params: `$1` `project_env_key`, `$2` environment, `$3` application, `$4` workflow id,
 /// `$5` version, `$6` graph, `$7` hash, `$8` trigger, `$9` execution type,
@@ -208,7 +206,7 @@ pub struct AuthorWorkflowRequest<'a> {
     /// The authoring principal, as the text of its `platform."user"` id.
     pub created_by: &'a str,
     /// The manifest digest of the release the environment serves.
-    pub manifest_digest: &'a str,
+    pub manifest_digest: &'a wamn_digest::Digest,
 }
 
 impl AuthorWorkflowRequest<'_> {
@@ -223,9 +221,9 @@ pub(crate) async fn condition_against_release(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     application_packages: &std::collections::BTreeSet<String>,
-    manifest_digest: &str,
+    manifest_digest: &wamn_digest::Digest,
     document: &WiringDocument,
-) -> Result<DefinitionHash, AuthorWorkflowError> {
+) -> Result<wamn_digest::Digest, AuthorWorkflowError> {
     let bytes: Vec<u8> = sqlx::query(SELECT_RELEASE_SQL)
         .bind(project_env_key)
         .bind(manifest_digest)
@@ -332,12 +330,7 @@ pub(crate) async fn validate_event_trigger(
 pub async fn author_workflow(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     request: &AuthorWorkflowRequest<'_>,
-) -> Result<DefinitionHash, AuthorWorkflowError> {
-    sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
-        .bind(request.project_env_key())
-        .fetch_one(&mut **transaction)
-        .await
-        .map_err(|error| storage("bind the authoring project identity", error))?;
+) -> Result<wamn_digest::Digest, AuthorWorkflowError> {
     let Some(declared) = request.declared.get(request.application) else {
         return Err(AuthorWorkflowError::new(
             AuthorWorkflowErrorType::Application,
@@ -378,7 +371,7 @@ pub async fn author_workflow(
         )
     })?;
     let graph_json = serde_json::to_string(document).expect("a wiring document serializes");
-    let stored_hash = hash.as_str();
+    let stored_hash = &hash;
     let execution_type = request.execution.type_str();
     let execution_role = request.execution.role();
     let trigger = request.trigger.as_str();
@@ -455,7 +448,7 @@ pub async fn author_workflow(
 pub async fn author_workflow_in_databases(
     database_url: &str,
     request: &AuthorWorkflowRequest<'_>,
-) -> anyhow::Result<DefinitionHash> {
+) -> anyhow::Result<wamn_digest::Digest> {
     let mut client = wamn_postgres::connect(database_url)
         .await
         .context("connect to the project database")?;

@@ -12,7 +12,6 @@ use std::sync::Arc;
 use wamn_broker::Publisher;
 
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
 use wamn_catalog::HostRouteSet;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
@@ -281,7 +280,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
     // A read route by cookie needs the CSRF JWT claim and no header.
     let csrf = "fixture-csrf-token";
     let mut carried = member.clone();
-    carried["csrf"] = json!(hex::encode(Sha256::digest(csrf.as_bytes())));
+    carried["csrf"] = json!(wamn_digest::bytes_sha256(csrf.as_bytes()));
     let cookie = format!("__Host-wamn-session={}", signed(&header(), &carried));
     assert!(
         routing
@@ -932,7 +931,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session(
 
     // A cookie read needs the CSRF JWT claim. A PAT is never a control credential.
     let mut carried = session.clone();
-    carried["csrf"] = json!(hex::encode(Sha256::digest(b"control-csrf")));
+    carried["csrf"] = json!(wamn_digest::bytes_sha256(b"control-csrf"));
     let cookie = format!("__Host-wamn-session={}", signed(&header(), &carried));
     assert!(
         routing

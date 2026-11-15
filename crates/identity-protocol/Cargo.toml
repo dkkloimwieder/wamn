@@ -10,6 +10,7 @@ license.workspace = true
 test-util = []
 
 [dependencies]
+wamn-digest.workspace = true
 async-trait = { workspace = true }
 base64 = { workspace = true }
 jsonwebtoken = { workspace = true }

@@ -2286,22 +2286,6 @@ fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), Manifest
                 format!("base dependency {alias} version must be exact, not a range"),
             ));
         }
-        let Some(digest) = requirement.digest.strip_prefix("sha256:") else {
-            return Err(ManifestError::new(
-                ManifestErrorType::InvalidIdentity,
-                format!("base dependency {alias} digest must be lowercase sha256"),
-            ));
-        };
-        if digest.len() != 64
-            || !digest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(ManifestError::new(
-                ManifestErrorType::InvalidIdentity,
-                format!("base dependency {alias} digest must be lowercase sha256"),
-            ));
-        }
         if requirement.operations.is_empty() {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidOperation,
@@ -2530,7 +2514,7 @@ impl PackageManifest {
 pub struct BaseDependencyRequirement {
     pub package: String,
     pub version: String,
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
     pub operations: Vec<String>,
 }
 

@@ -22,7 +22,7 @@ use wamn_package_artifact::integration::{CONFIG_TYPE, WASM_TYPE};
 pub struct BuiltIntegration {
     pub code: String,
     pub runtime_type: RuntimeType,
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
     pub directory: PathBuf,
     component: Vec<u8>,
     config: Vec<u8>,
@@ -32,7 +32,7 @@ pub struct BuiltIntegration {
 fn source_files(
     root: &Path,
     directory: &Path,
-    files: &mut BTreeMap<String, String>,
+    files: &mut BTreeMap<String, wamn_digest::Digest>,
 ) -> anyhow::Result<()> {
     for entry in std::fs::read_dir(directory)? {
         let entry = entry?;
@@ -58,7 +58,7 @@ fn source_files(
     Ok(())
 }
 
-fn source_digest(root: &Path) -> anyhow::Result<String> {
+fn source_digest(root: &Path) -> anyhow::Result<wamn_digest::Digest> {
     let mut files = BTreeMap::new();
     source_files(root, root, &mut files)?;
     let output = std::process::Command::new("cargo")
@@ -136,7 +136,7 @@ pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegra
     let directory = repository
         .join("integrations/target/wamn")
         .join(code)
-        .join(&digest[7..]);
+        .join(digest.hex());
     std::fs::create_dir_all(&directory)?;
     for (name, bytes) in [
         ("integration.wasm", &component),
@@ -201,7 +201,11 @@ pub async fn push(
     for bytes in [&built.component, &built.config] {
         repository
             .client
-            .push_blob(&repository.reference, bytes.clone(), &bytes_sha256(bytes))
+            .push_blob(
+                &repository.reference,
+                bytes.clone(),
+                &bytes_sha256(bytes).to_string(),
+            )
             .await?;
     }
     repository
@@ -234,7 +238,7 @@ pub async fn record(
     registry: &PackageRegistry,
     database_url: &str,
     code: &str,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     publication: &Publication,
 ) -> anyhow::Result<()> {
     require_code(code)?;

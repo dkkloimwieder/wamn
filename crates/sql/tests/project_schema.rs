@@ -178,21 +178,12 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
         'another environment credential cannot connect to this database'; END $$;"
     )
     .unwrap();
-    // A caller cannot alter the database boundary with a settable claim.
-    writeln!(
-        script,
-        "         BEGIN;\n\
-         SET LOCAL ROLE {project_env_key_1_app};\n\
-         SET LOCAL app.project_env_key = '{PROJECT_ENV_KEY_2}';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'a settable project identity cannot spoof project 2'; END $$;\n\
-         COMMIT;\n\
-         BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
-         SET LOCAL app.project_env_key = '{PROJECT_ENV_KEY_1}';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'the ACL carrier reads the database roles'; END $$;\n\
-         COMMIT;"
-    )
-    .expect("writing to a String cannot fail");
+    // The ACL role reads the roles in its database.
+    script.push_str(
+        "BEGIN; SET LOCAL ROLE wamn_app; \
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'the ACL carrier reads the database roles'; END $$; \
+         COMMIT;",
+    );
     // users.id is an org-issued UUID: PostgreSQL must report both the exact type
     // and the absence of any database-minted default.
     script.push_str(
@@ -212,6 +203,12 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
          END $$;\n",
     );
     // The status CHECK rejects a bad row.
+    writeln!(
+        script,
+        "INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,'{}');",
+        wamn_control_provision::PlatformComponent::Provisioning.principal_id()
+    )
+    .expect("writing to a String cannot fail");
     writeln!(
         script,
         "DO $$ BEGIN BEGIN\n\

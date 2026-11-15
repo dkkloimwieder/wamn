@@ -182,14 +182,14 @@ impl WamnPostgres {
                         invocation: wamn_authority::connection::ConnectionInvocation {
                             origin: wamn_authority::connection::ConnectionOrigin {
                                 package_id: component.package_id.clone(),
-                                component_digest: component.descriptor.component_digest.clone(),
+                                component_digest: component.descriptor.component_digest,
                                 component: component.descriptor.component.clone(),
                                 interface_version: component.descriptor.interface_version.clone(),
                                 operation: id.clone(),
                             },
                             entry: wamn_authority::connection::InvocationEntry::Route,
                             package_id: component.package_id.clone(),
-                            component_digest: component.descriptor.component_digest.clone(),
+                            component_digest: component.descriptor.component_digest,
                             component: component.descriptor.component.clone(),
                             operation: id.clone(),
                             closure:
@@ -1045,7 +1045,7 @@ impl WamnPostgres {
                 &open,
                 transacted,
                 route.type_ == wamn_catalog::OperationType::Delete,
-                hash.into_bytes(),
+                hash.to_string().into_bytes(),
             )
             .await
             .map_err(|error| anyhow::anyhow!("operation claim refused: {error:?}"))?;

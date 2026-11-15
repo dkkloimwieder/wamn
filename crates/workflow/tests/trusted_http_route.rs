@@ -113,9 +113,9 @@ pub struct TrustedHttpRoute {
     /// Read by the callers that share the exact loaded release.
     pub release: Arc<LoadedRelease>,
     /// The digest OCI serves the guest under and every seeded row keys on.
-    pub component_digest: String,
+    pub component_digest: wamn_digest::Digest,
     /// The immutable graph hash stored on the workflow row and frozen on each run.
-    pub wiring_hash: String,
+    pub wiring_hash: wamn_digest::Digest,
     credential_database: url::Url,
 }
 
@@ -131,8 +131,8 @@ impl TrustedHttpRoute {
                 wiring_version: WIRING_VERSION,
                 delivery_id: format!("reuse-{id}"),
                 payload: serde_json::json!({"id": id}),
-                wiring_hash: self.wiring_hash.clone(),
-                node_digests: BTreeMap::from([(NODE_ID.to_owned(), self.component_digest.clone())]),
+                wiring_hash: self.wiring_hash,
+                node_digests: BTreeMap::from([(NODE_ID.to_owned(), self.component_digest)]),
                 identity: wamn_workflow::WorkflowIdentity {
                     principal_id: wamn_identity_protocol::workflow_user_id().to_string(),
                     role: "admin".to_owned(),
@@ -287,7 +287,7 @@ async fn build_with_credentials(
         .context("publish the guest to the throwaway registry")?;
 
     let document = wiring_document(&options.path_and_query);
-    let wiring_hash = document.wiring_hash().as_str().to_owned();
+    let wiring_hash = document.wiring_hash();
     let release = Arc::new(
         LoadedRelease::load_canonical_bytes(
             &wamn_digest::canonical_json_bytes(&release_manifest(&admitted, &document)),
@@ -369,7 +369,7 @@ async fn build_with_credentials(
     Ok(TrustedHttpRoute {
         driver,
         release,
-        component_digest: admitted.component_digest.clone(),
+        component_digest: admitted.component_digest,
         wiring_hash,
         credential_database,
     })
@@ -581,15 +581,7 @@ async fn seed_with_client(
     sqlx::query("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING").bind(wamn_identity_protocol::workflow_user_id().to_string()).execute(&mut *client).await.map(|result| result.rows_affected())?;
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
-    let wiring_hash = document.wiring_hash().as_str().to_owned();
-    // Every catalog table FORCEs RLS on `app.project_env_key`, and a superuser is not
-    // exempt from FORCE — the identity is what makes these writes land at all.
-    sqlx::query("SELECT set_config('app.project_env_key', $1, false)")
-        .bind(PROJECT_ENV_KEY)
-        .fetch_one(&mut *client)
-        .await
-        .context("bind the seeding project identity")?;
-
+    let wiring_hash = document.wiring_hash();
     let package_manifest = serde_json::json!({
         "package": {"id": PACKAGE, "version": PACKAGE_VERSION},
         "models": {},
@@ -615,7 +607,7 @@ async fn seed_with_client(
     // The release is its manifest bytes under their digest; package and
     // component membership are read from them.
     let canonical_release = release.manifest().canonical_bytes();
-    let manifest_digest = release.release().manifest_digest.as_str();
+    let manifest_digest = &release.release().manifest_digest;
     sqlx::query(
         "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
@@ -750,7 +742,7 @@ async fn seed_additional_wirings(
     }
     for document in documents {
         let version = i32::try_from(document.version)?;
-        let wiring_hash = document.wiring_hash().as_str().to_owned();
+        let wiring_hash = document.wiring_hash();
         sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, \
              version, graph_json, wiring_hash, trigger, execution_type, created_by) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, 'manual', 'invoker', $8::text::uuid)").bind(PROJECT_ENV_KEY).bind(ENVIRONMENT).bind(PACKAGE).bind(&document.wiring_id).bind(version).bind(&serde_json::to_string(document)?).bind(&wiring_hash).bind(wamn_identity_protocol::workflow_user_id().to_string()).execute(&mut *client).await.map(|result| result.rows_affected())
             .context("seed the additional immutable wiring")?;

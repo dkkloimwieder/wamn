@@ -5,7 +5,7 @@ pub(super) async fn record_package_schema(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     coordinate: &wamn_catalog::PackageCoordinate,
-    artifact_digest: Option<&str>,
+    artifact_digest: Option<&wamn_digest::Digest>,
 ) -> anyhow::Result<bool> {
     Ok(sqlx::query("INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest) \
         VALUES ($1,$2,$3,$4) ON CONFLICT (project_env_key,package_id) DO UPDATE \

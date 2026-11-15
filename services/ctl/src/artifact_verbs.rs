@@ -22,7 +22,7 @@ use crate::package_verbs::RegistryArgs;
 pub struct InspectArgs {
     /// Full digest `sha256:<hex>`, or tag `<package_id>-<version>`, of a
     /// package artifact that `push-package` pushed.
-    pub digest: String,
+    pub reference: String,
     /// The registry flags of `push-package`.
     #[command(flatten)]
     pub registry: RegistryArgs,
@@ -46,7 +46,7 @@ pub struct DiffArgs {
 ///
 /// When the artifact does not exist or cannot be pulled.
 pub async fn inspect(args: InspectArgs) -> anyhow::Result<()> {
-    let manifest = layer_zero(&args.registry.registry(), &args.digest).await?;
+    let manifest = layer_zero(&args.registry.registry(), &args.reference).await?;
     println!(
         "{}",
         String::from_utf8(manifest).context("layer 0 is not UTF-8")?
@@ -76,10 +76,13 @@ pub async fn diff(args: DiffArgs) -> anyhow::Result<()> {
 
 /// Layer 0 of the package artifact whose full digest or tag is `package`.
 async fn layer_zero(registry: &PackageRegistry, package: &str) -> anyhow::Result<Vec<u8>> {
-    let artifact = Repository::open(registry, package)?
-        .pull()
-        .await?
-        .with_context(|| format!("package artifact {package} does not exist in the registry"))?;
+    let artifact = Repository::open(
+        registry,
+        wamn_package_artifact::ArtifactReference::parse(package)?,
+    )?
+    .pull()
+    .await?
+    .with_context(|| format!("package artifact {package} does not exist in the registry"))?;
 
     let first = artifact
         .layers

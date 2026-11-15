@@ -78,11 +78,6 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     .execute(&mut first_leaseholder)
     .await
     .map(drop)?;
-    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-        .bind(&PROJECT_ENV_KEY)
-        .execute(&mut first_leaseholder)
-        .await
-        .map(|result| result.rows_affected())?;
     let locked = sqlx::query(sqlx::AssertSqlSafe(
         (&select_production_lease_sql()).to_string(),
     ))
@@ -319,11 +314,11 @@ async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> any
                 PROJECT_ENV_KEY,
                 &wamn_events::admission::ManualRunAdmission {
                     package_id: PACKAGE_ID,
-                    manifest_digest: POD_MANIFEST_DIGEST,
+                    manifest_digest: &POD_MANIFEST_DIGEST.parse().unwrap(),
                     environment: ENVIRONMENT,
                     workflow_id: WIRING_ID,
                     workflow_version: WIRING_VERSION,
-                    wiring_hash: EMPTY_HASH,
+                    wiring_hash: &EMPTY_HASH.parse().unwrap(),
                     execution_principal_id: &actor,
                     execution_role: "workflow",
                     invoked_by_user_id: &actor,

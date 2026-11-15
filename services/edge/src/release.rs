@@ -39,7 +39,7 @@ use crate::grants::Grants;
 /// A release, its component facts, its grants and its composed entry, each
 /// validated against the pinned bundle digest.
 pub struct EdgeRelease {
-    bundle_digest: String,
+    bundle_digest: wamn_digest::Digest,
     release: Arc<LoadedRelease>,
     components: Arc<[AdmittedComponent]>,
     /// The verified bytes of each component, in the order of `components`.
@@ -72,7 +72,7 @@ impl EdgeRelease {
     /// project_env_key and environment of the box, from its configuration.
     pub async fn load(
         directory: &Path,
-        bundle_digest: &str,
+        bundle_digest: &wamn_digest::Digest,
         target: ReleaseTarget,
     ) -> Result<Self, EdgeReleaseError> {
         let bundle_bytes = read_pinned(directory, BUNDLE_FILE_NAME, bundle_digest)?;
@@ -124,7 +124,7 @@ impl EdgeRelease {
     }
 
     /// The pinned digest of `edge-release.json`.
-    pub fn bundle_digest(&self) -> &str {
+    pub fn bundle_digest(&self) -> &wamn_digest::Digest {
         &self.bundle_digest
     }
 
@@ -202,7 +202,11 @@ fn require_one_fact_per_component(
 }
 
 /// Read `name` under `directory` and refuse bytes whose SHA-256 is not `pinned`.
-fn read_pinned(directory: &Path, name: &str, pinned: &str) -> Result<Vec<u8>, EdgeReleaseError> {
+fn read_pinned(
+    directory: &Path,
+    name: &str,
+    pinned: &wamn_digest::Digest,
+) -> Result<Vec<u8>, EdgeReleaseError> {
     let path = directory.join(name);
     let bytes = std::fs::read(&path).map_err(|error| {
         EdgeReleaseError::new(
@@ -211,7 +215,7 @@ fn read_pinned(directory: &Path, name: &str, pinned: &str) -> Result<Vec<u8>, Ed
         )
     })?;
     let digest = bytes_sha256(&bytes);
-    if digest != pinned {
+    if digest != *pinned {
         return Err(EdgeReleaseError::new(
             EdgeReleaseErrorType::Mismatch,
             format!("{name} has digest {digest}, and the release pins {pinned}"),
@@ -305,7 +309,7 @@ pub(crate) mod test_util {
                 },
             )]),
             imports: Vec::new(),
-            imports_fingerprint: String::new(),
+            imports_fingerprint: wamn_digest::canonical_json_sha256(&serde_json::json!([])),
             effects: Vec::new(),
         };
         let manifest = ServingManifest::new(
@@ -317,7 +321,7 @@ pub(crate) mod test_util {
                 package_id: "scale".into(),
                 descriptor: {
                     let mut descriptor =
-                        ComponentDescriptor::named("device", "0.1", &fact.component_digest);
+                        ComponentDescriptor::named("device", "0.1", fact.component_digest);
                     descriptor.operations = BTreeMap::from([(OPERATION.into(), operation)]);
                     descriptor
                 },
@@ -341,7 +345,7 @@ pub(crate) mod test_util {
         ] {
             std::fs::write(directory.join(name), bytes).unwrap();
         }
-        let tag = fact.component_digest.strip_prefix("sha256:").unwrap();
+        let tag = fact.component_digest.hex();
         std::fs::write(directory.join(format!("{tag}.wasm")), b"device").unwrap();
         let bundle = serde_json::to_vec(&serde_json::json!({
             "format": BUNDLE_FORMAT,

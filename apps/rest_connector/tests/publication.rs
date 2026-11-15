@@ -24,10 +24,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state(
     let component = support::admit(
         &connector,
         "rest_connector",
-        BTreeSet::from([
-            base.component_digest().into(),
-            destination.component_digest().into(),
-        ]),
+        BTreeSet::from([*base.component_digest(), *destination.component_digest()]),
     );
     let admissions = vec![base, destination, component];
     let target = ComponentPackageCoordinate {

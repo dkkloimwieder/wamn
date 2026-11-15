@@ -137,7 +137,6 @@ async fn control_portable_store_enforces_the_current_record_on_postgres(pool: sq
         "test the installed release record",
         r"
 SET ROLE wamn_system;
-SET app.project_env_key = 'org-a';
 DO $shape$
 DECLARE
   rls_gap text;

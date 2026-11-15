@@ -34,8 +34,6 @@ use crate::author_workflow::{
 };
 use wamn_registry::lifecycle_lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
 
-const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, true)";
-
 /// Params `$1` to `$5`: the version's key.
 const SELECT_VERSION_SQL: &str = "\
 SELECT graph_json::text, wiring_hash, execution_role, trigger, source_package, entity, ops, condition FROM catalog.workflows \
@@ -191,7 +189,7 @@ pub async fn enable_workflow(
     project: &mut Client,
     workflow: &WorkflowVersion<'_>,
     enabler: &str,
-    manifest_digest: &str,
+    manifest_digest: &wamn_digest::Digest,
     declared: &wamn_catalog::EnvironmentApplications,
     events: Option<&wamn_broker::EventBroker>,
 ) -> Result<(), WorkflowLifecycleError> {
@@ -202,7 +200,7 @@ pub async fn enable_workflow(
         .map(|application| application.packages.clone())
         .unwrap_or_default();
     under_lock(system_url, triple, async || {
-        let mut transaction = begin(project, &workflow.project_env_key()).await?;
+        let mut transaction = begin(project).await?;
         enable_in(
             &mut transaction,
             workflow,
@@ -233,7 +231,7 @@ pub async fn disable_workflow(
     workflow: &WorkflowVersion<'_>,
 ) -> Result<(), WorkflowLifecycleError> {
     under_lock(system_url, triple, async || {
-        let mut transaction = begin(project, &workflow.project_env_key()).await?;
+        let mut transaction = begin(project).await?;
         let changed = sqlx::query(DISABLE_SQL)
             .bind(workflow.project_env_key())
             .bind(workflow.environment)
@@ -286,20 +284,13 @@ async fn under_lock(
     }
 }
 
-async fn begin<'a>(
-    project: &'a mut Client,
-    project_env_key: &str,
-) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, WorkflowLifecycleError> {
-    let mut transaction = project
+async fn begin(
+    project: &mut Client,
+) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, WorkflowLifecycleError> {
+    project
         .begin()
         .await
-        .map_err(|error| storage("begin the workflow transaction", error))?;
-    sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
-        .bind(project_env_key)
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(|error| storage("bind the workflow project identity", error))?;
-    Ok(transaction)
+        .map_err(|error| storage("begin the workflow transaction", error))
 }
 
 async fn commit(
@@ -319,7 +310,7 @@ async fn enable_in(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     workflow: &WorkflowVersion<'_>,
     enabler: &str,
-    manifest_digest: &str,
+    manifest_digest: &wamn_digest::Digest,
     packages: &std::collections::BTreeSet<String>,
     declared: &wamn_catalog::EnvironmentApplications,
     triple: &Triple,
@@ -338,7 +329,7 @@ async fn enable_in(
         .map_err(|error| storage("read the workflow version", error))?
         .ok_or_else(|| workflow.not_found())?;
     let graph_json: String = row.get(0);
-    let stored_hash: String = row.get(1);
+    let stored_hash: wamn_digest::Digest = row.get(1);
     let execution_role: Option<String> = row.get(2);
     let trigger: String = row.get(3);
 
@@ -354,14 +345,12 @@ async fn enable_in(
     )
     .await
     .map_err(WorkflowLifecycleError::condition)?;
-    if hash.as_str() != stored_hash {
+    if hash != stored_hash {
         return Err(WorkflowLifecycleError::new(
             WorkflowLifecycleErrorType::Condition,
             format!(
                 "workflow {:?} version {} stores hash {stored_hash}, and its graph hashes to {}",
-                workflow.workflow_id,
-                workflow.version,
-                hash.as_str()
+                workflow.workflow_id, workflow.version, hash
             ),
         ));
     }

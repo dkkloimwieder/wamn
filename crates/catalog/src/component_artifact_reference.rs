@@ -5,8 +5,6 @@
 
 use std::fmt;
 
-use crate::{HASH_HEX_LEN, HASH_PREFIX};
-
 /// Stable classification for an invalid component artifact reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentArtifactReferenceErrorType {
@@ -68,16 +66,13 @@ impl ComponentArtifactBase {
         &self.repository
     }
 
-    pub fn reference(
-        &self,
-        component_digest: &str,
-    ) -> Result<ComponentArtifactReference, ComponentArtifactReferenceError> {
-        let tag = component_digest_tag(component_digest)?;
-        Ok(ComponentArtifactReference {
+    pub fn reference(&self, component_digest: &wamn_digest::Digest) -> ComponentArtifactReference {
+        let tag = component_digest.hex();
+        ComponentArtifactReference {
             registry: self.registry.clone(),
             repository: self.repository.clone(),
             tag: tag.into(),
-        })
+        }
     }
 }
 
@@ -116,9 +111,9 @@ impl fmt::Display for ComponentArtifactReference {
 /// contain a colon; it is not an OCI manifest digest.
 pub fn component_artifact_reference(
     artifact_base: &str,
-    component_digest: &str,
+    component_digest: &wamn_digest::Digest,
 ) -> Result<ComponentArtifactReference, ComponentArtifactReferenceError> {
-    parse_component_artifact_base(artifact_base)?.reference(component_digest)
+    Ok(parse_component_artifact_base(artifact_base)?.reference(component_digest))
 }
 
 pub fn parse_component_artifact_base(
@@ -170,25 +165,6 @@ pub fn parse_component_artifact_base(
     })
 }
 
-pub fn component_digest_tag(
-    component_digest: &str,
-) -> Result<&str, ComponentArtifactReferenceError> {
-    component_digest
-        .strip_prefix(HASH_PREFIX)
-        .filter(|hex| {
-            hex.len() == HASH_HEX_LEN
-                && hex
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        })
-        .ok_or_else(|| {
-            ComponentArtifactReferenceError::new(
-                ComponentArtifactReferenceErrorType::InvalidDigest,
-                "expected sha256:<64 lowercase hex digits>",
-            )
-        })
-}
-
 /// Require the exact OCI manifest reference selected for a workload start.
 ///
 /// # Errors
@@ -204,7 +180,12 @@ pub fn validate_component_start_reference(
         )
     })?;
     parse_component_artifact_base(base)?;
-    component_digest_tag(digest)?;
+    digest.parse::<wamn_digest::Digest>().map_err(|_| {
+        ComponentArtifactReferenceError::new(
+            ComponentArtifactReferenceErrorType::InvalidDigest,
+            "invalid SHA-256 identity",
+        )
+    })?;
     Ok(())
 }
 
@@ -217,7 +198,9 @@ pub const COMPOSED_ENTRY_REPOSITORY: &str = "entries";
 /// # Errors
 ///
 /// Refuses an absolute reference, a tag, another repository, or an invalid digest.
-pub fn validate_composed_entry_path(path: &str) -> Result<(), ComponentArtifactReferenceError> {
+pub fn validate_composed_entry_path(
+    path: &str,
+) -> Result<wamn_digest::Digest, ComponentArtifactReferenceError> {
     let digest = path
         .strip_prefix(COMPOSED_ENTRY_REPOSITORY)
         .and_then(|rest| rest.strip_prefix('@'))
@@ -227,8 +210,12 @@ pub fn validate_composed_entry_path(path: &str) -> Result<(), ComponentArtifactR
                 "expected entries@sha256:<manifest-digest>",
             )
         })?;
-    component_digest_tag(digest)?;
-    Ok(())
+    digest.parse::<wamn_digest::Digest>().map_err(|_| {
+        ComponentArtifactReferenceError::new(
+            ComponentArtifactReferenceErrorType::InvalidDigest,
+            "invalid SHA-256 identity",
+        )
+    })
 }
 
 /// The reference a host starts for the recorded composed entry.
@@ -277,7 +264,9 @@ mod tests {
 
     #[test]
     fn artifact_reference_is_derived_only_from_an_explicit_base_and_digest() {
-        let digest = format!("sha256:{}", "a".repeat(64));
+        let digest = (format!("sha256:{}", "a".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap();
         let reference = component_artifact_reference(
             "registry.wamn-system.svc.cluster.local:5000/wamn/components",
             &digest,
@@ -301,7 +290,9 @@ mod tests {
 
     #[test]
     fn ambient_or_mutable_references_refuse() {
-        let digest = format!("sha256:{}", "a".repeat(64));
+        let digest = (format!("sha256:{}", "a".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap();
         for base in [
             "wamn/components",
             "registry/components",
@@ -348,7 +339,6 @@ mod start_reference_tests {
             "file:/tmp/entry.wasm",
             "sha256:abc",
             "entry@sha256:abc",
-            "registry.example/entry@sha256:ABC",
         ] {
             assert!(
                 validate_component_start_reference(reference).is_err(),
@@ -384,7 +374,6 @@ mod composed_entry_tests {
             ),
             format!("entries:{}", "a".repeat(64)),
             format!("other@sha256:{}", "a".repeat(64)),
-            "entries@sha256:abc".to_owned(),
         ] {
             assert!(validate_composed_entry_path(&refused).is_err(), "{refused}");
         }

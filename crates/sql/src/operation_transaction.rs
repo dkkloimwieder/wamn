@@ -141,7 +141,8 @@ impl OperationTransaction {
             .lock()
             .expect("request element finish lock poisoned")
             .take();
-        let commit_sql = if let Some([key, status, output]) = finish {
+        let check_identity = finish.is_none();
+        if let Some([key, status, output]) = finish {
             let result = sqlx::query_scalar::<_, bool>(super::write_log::COMMIT_FINISH_SQL)
                 .bind(&key)
                 .bind(&status)
@@ -162,10 +163,7 @@ impl OperationTransaction {
                     )));
                 }
             }
-            "COMMIT".to_owned()
-        } else {
-            super::write_log::commit_sql(&xid)
-        };
+        }
         if let Some(run) = &self.causation {
             let json = serde_json::to_string(run).expect("Causation serializes to JSON");
             if let Err(error) =
@@ -180,10 +178,16 @@ impl OperationTransaction {
                 )));
             }
         }
-        let result = sqlx::raw_sql(sqlx::AssertSqlSafe(commit_sql))
-            .execute(connection.connection())
-            .await
-            .map(drop);
+        let result = async {
+            if check_identity {
+                super::write_log::check_commit_identity(connection.connection(), &xid).await?;
+            }
+            sqlx::query("COMMIT")
+                .execute(connection.connection())
+                .await
+                .map(drop)
+        }
+        .await;
         match result {
             Ok(()) => {
                 mark_finished();
@@ -192,7 +196,7 @@ impl OperationTransaction {
             }
             Err(error) => {
                 mark_finished();
-                // The identity check in commit_sql raises division by zero.
+                // A mismatched identity raises division by zero before COMMIT.
                 let ended_early = error
                     .as_database_error()
                     .is_some_and(|error| error.code().is_some_and(|code| code == "22012"));

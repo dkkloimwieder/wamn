@@ -121,7 +121,7 @@ pub struct PackedPackage {
     /// The image manifest bytes.
     pub manifest: Vec<u8>,
     /// `sha256:<hex>` of the image manifest bytes: the artifact digest.
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
 }
 
 impl PackedPackage {
@@ -136,7 +136,7 @@ impl PackedPackage {
 #[derive(Debug, Clone)]
 struct DescriptorFile {
     name: String,
-    digest: String,
+    digest: wamn_digest::Digest,
     bytes: Vec<u8>,
 }
 
@@ -199,7 +199,7 @@ pub(crate) async fn connection_components(
     source: Option<
         &wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
     >,
-) -> anyhow::Result<Vec<(String, Vec<String>, Vec<u8>)>> {
+) -> anyhow::Result<Vec<(wamn_digest::Digest, Vec<String>, Vec<u8>)>> {
     let descriptors = read_descriptors(root)?;
     if !descriptors.is_empty() {
         use wamn_component_artifact::component_artifact_source::ComponentArtifactSource;
@@ -297,7 +297,7 @@ pub fn fixture_package_root(root: &Path) -> anyhow::Result<crate::package_source
 /// The package artifact digest of the package at `root`, the key of its stage
 /// evidence and stage progress (docs/operations/building.md#reading-a-pushed-package): the
 /// offline manifest digest of the tree as it is ([`pack_package`]).
-pub fn package_artifact_digest(root: &Path) -> anyhow::Result<String> {
+pub fn package_artifact_digest(root: &Path) -> anyhow::Result<wamn_digest::Digest> {
     Ok(pack_package(root)?.digest)
 }
 
@@ -344,7 +344,7 @@ fn pack_layers(root: &Path, mut descriptors: Vec<DescriptorFile>) -> anyhow::Res
             annotations
                 .insert(
                     format!("wamn.component.{}", descriptor.name),
-                    descriptor.digest.clone()
+                    descriptor.digest.to_string()
                 )
                 .is_none(),
             "two descriptors name component {}",
@@ -354,7 +354,10 @@ fn pack_layers(root: &Path, mut descriptors: Vec<DescriptorFile>) -> anyhow::Res
             media_type: COMPONENT_DESCRIPTOR_MEDIA_TYPE.to_owned(),
             annotations: BTreeMap::from([
                 (COMPONENT_NAME_ANNOTATION.to_owned(), descriptor.name),
-                (COMPONENT_DIGEST_ANNOTATION.to_owned(), descriptor.digest),
+                (
+                    COMPONENT_DIGEST_ANNOTATION.to_owned(),
+                    descriptor.digest.to_string(),
+                ),
             ]),
             bytes: descriptor.bytes,
         });
@@ -407,7 +410,7 @@ fn collect_files(
 struct SourceComponent {
     name: String,
     file: PathBuf,
-    sha256: String,
+    sha256: wamn_digest::Digest,
 }
 fn source_components(
     root: &Path,
@@ -428,7 +431,7 @@ fn source_components(
             Ok(SourceComponent {
                 name: name.clone(),
                 file: output.join(&entry.path),
-                sha256: entry.sha256.clone(),
+                sha256: entry.sha256,
             })
         })
         .collect()
@@ -526,7 +529,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
             component_bytes: source.file.clone(),
             declaration: declaration.0.clone(),
             admitted_platform_packages: platform_packages,
-            base_digests: base_digests.values().map(ToString::to_string).collect(),
+            base_digests: base_digests.values().copied().collect(),
         })
         .with_context(|| format!("admit component {}", source.name))?;
         let facts = admission.facts().clone();
@@ -564,7 +567,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         let descriptor = admission.descriptor();
         descriptors.push(DescriptorFile {
             name: source.name.clone(),
-            digest: digest.clone(),
+            digest,
             bytes: wamn_digest::canonical_json_bytes(
                 &serde_json::to_value(&descriptor).context("encode a component descriptor")?,
             ),
@@ -587,7 +590,11 @@ async fn push_artifact(repository: &Repository, packed: &PackedPackage) -> anyho
     {
         repository
             .client
-            .push_blob(&repository.reference, bytes.to_vec(), &bytes_sha256(bytes))
+            .push_blob(
+                &repository.reference,
+                bytes.to_vec(),
+                &bytes_sha256(bytes).to_string(),
+            )
             .await
             .with_context(|| format!("push a blob of package artifact {}", repository.reference))?;
     }
@@ -630,7 +637,7 @@ pub struct PushedPackage {
     /// The artifact tag.
     pub tag: String,
     /// `sha256:<hex>` of the image manifest.
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
     /// Whether the run pushed.
     pub disposition: PackagePushDisposition,
 }
@@ -707,12 +714,12 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
             push_artifact(&repository, packed).await?;
             let pulled = repository.manifest().await?;
             ensure!(
-                pulled.as_ref().map(|(_, digest)| digest.as_str()) == Some(packed.digest.as_str()),
+                pulled.as_ref().map(|(_, digest)| *digest) == Some(packed.digest),
                 "pushed package artifact {} reads back as {}, not {}",
                 repository.reference,
                 pulled
                     .as_ref()
-                    .map_or("nothing", |(_, digest)| digest.as_str()),
+                    .map_or_else(|| "nothing".to_owned(), |(_, digest)| digest.to_string()),
                 packed.digest
             );
             PackagePushDisposition::Pushed
@@ -720,7 +727,7 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
     };
     Ok(PushedPackage {
         tag,
-        digest: packed.digest.clone(),
+        digest: packed.digest,
         disposition,
     })
 }
@@ -775,7 +782,7 @@ pub enum PackageSource {
 #[derive(Debug)]
 pub struct OpenedPackage {
     root: PathBuf,
-    digest: Option<String>,
+    digest: Option<wamn_digest::Digest>,
     temporary: bool,
 }
 
@@ -802,7 +809,7 @@ impl OpenedPackage {
     pub fn package_root(&self) -> crate::package_source::PackageRoot {
         crate::package_source::PackageRoot {
             path: self.root.clone(),
-            artifact_digest: self.digest.clone(),
+            artifact_digest: self.digest,
         }
     }
 }
@@ -1037,9 +1044,12 @@ mod tests {
         };
         let opened = open_package(&registry, "orders", version).await?;
         assert_eq!(
-            wamn_catalog::ArtifactHash::parse(pack_package(opened.root())?.digest.to_string())
+            (pack_package(opened.root())?.digest.to_string())
+                .parse::<wamn_digest::Digest>()
                 .unwrap(),
-            wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap()
+            (packed.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap()
         );
         Ok(())
     }
@@ -1154,7 +1164,7 @@ mod tests {
             "component-digest": digest,
             "operations": {},
             "imports": [],
-            "imports-fingerprint": format!("sha256:{}", "b".repeat(64)),
+            "imports-fingerprint": (format!("sha256:{}", "b".repeat(64))).parse::<wamn_digest::Digest>().unwrap(),
             "effects": [],
             "connections": [],
         }))
@@ -1174,12 +1184,20 @@ mod tests {
         std::fs::write(root.join("migrations/0001_initial.sql"), b"SELECT 1;\n").unwrap();
         let second = pack_package(&root).unwrap();
         assert_eq!(
-            wamn_catalog::ArtifactHash::parse(first.digest.to_string()).unwrap(),
-            wamn_catalog::ArtifactHash::parse(second.digest.to_string()).unwrap()
+            (first.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            (second.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap()
         );
         assert_eq!(
-            wamn_catalog::ArtifactHash::parse(first.digest.to_string()).unwrap(),
-            wamn_catalog::ArtifactHash::parse(bytes_sha256(&first.manifest).to_string()).unwrap()
+            (first.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            (bytes_sha256(&first.manifest).to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap()
         );
         remove(&root);
     }
@@ -1191,8 +1209,11 @@ mod tests {
         let first = pack_package(&root).unwrap();
         std::fs::write(root.join("generated/sql/receipt.sql"), b"SELECT 2;\n").unwrap();
         assert_ne!(
-            wamn_catalog::ArtifactHash::parse(first.digest.to_string()).unwrap(),
-            wamn_catalog::ArtifactHash::parse(pack_package(&root).unwrap().digest.to_string())
+            (first.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            (pack_package(&root).unwrap().digest.to_string())
+                .parse::<wamn_digest::Digest>()
                 .unwrap()
         );
         remove(&root);
@@ -1220,8 +1241,11 @@ mod tests {
         // Record the changed compiled output.
         write_build_record(&root);
         assert_eq!(
-            wamn_catalog::ArtifactHash::parse(first.digest.to_string()).unwrap(),
-            wamn_catalog::ArtifactHash::parse(pack_package(&root).unwrap().digest.to_string())
+            (first.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            (pack_package(&root).unwrap().digest.to_string())
+                .parse::<wamn_digest::Digest>()
                 .unwrap()
         );
     }
@@ -1266,17 +1290,24 @@ mod tests {
         let packed = pack_layers(&root, vec![descriptor.clone()]).unwrap();
         // A source tree has no descriptor layers, so its digest differs.
         assert_ne!(
-            wamn_catalog::ArtifactHash::parse(pack_package(&root).unwrap().digest.to_string())
+            (pack_package(&root).unwrap().digest.to_string())
+                .parse::<wamn_digest::Digest>()
                 .unwrap(),
-            wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap()
+            (packed.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap()
         );
 
         let unpacked = root.parent().unwrap().join("unpacked");
         unpack_layers(&unpacked, &packed.layers).unwrap();
         let repacked = pack_package(&unpacked).unwrap();
         assert_eq!(
-            wamn_catalog::ArtifactHash::parse(repacked.digest.to_string()).unwrap(),
-            wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap()
+            (repacked.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            (packed.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap()
         );
         remove(&root);
     }

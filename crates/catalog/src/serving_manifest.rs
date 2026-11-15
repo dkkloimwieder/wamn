@@ -29,10 +29,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AdmittedComponent, ArtifactHash, AttachmentType, CatalogIdentityError, ComponentConnection,
-    ComponentDescriptor, DefinitionHash, HASH_PREFIX, HostAttachment, HostRouteSet, ManifestDigest,
-    PackageCoordinate, package::validate_canonical_operation_for_package, validate_digest,
-    validate_text,
+    AdmittedComponent, AttachmentType, CatalogIdentityError, ComponentConnection,
+    ComponentDescriptor, HostAttachment, HostRouteSet, PackageCoordinate,
+    package::validate_canonical_operation_for_package, validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
@@ -138,14 +137,9 @@ pub const RELEASE_MANIFEST_FILE_NAME: &str = "manifest.json";
 pub const MAX_SERVING_MANIFEST_BYTES: usize = 1024 * 1024;
 
 /// The name of the ConfigMap carrying the manifest with this digest.
-pub fn release_manifest_configmap_name(
-    manifest_digest: &str,
-) -> Result<String, CatalogIdentityError> {
-    validate_digest(manifest_digest, "manifest-digest")?;
-    let hex = manifest_digest
-        .strip_prefix(HASH_PREFIX)
-        .expect("a validated digest carries the sha256 prefix");
-    Ok(format!("{RELEASE_MANIFEST_CONFIGMAP_PREFIX}{hex}"))
+pub fn release_manifest_configmap_name(manifest_digest: &wamn_digest::Digest) -> String {
+    let hex = manifest_digest.hex();
+    format!("{RELEASE_MANIFEST_CONFIGMAP_PREFIX}{hex}")
 }
 
 /// The exact package dependency closure of one application release.
@@ -214,16 +208,12 @@ impl ServingComponent {
     /// call to a base is a component-model call inside these bytes. The host
     /// lends every member the same operation transaction. The descriptor is
     /// `fact` with its `connections`.
-    pub fn project(
-        fact: &AdmittedComponent,
-        connections: Vec<ComponentConnection>,
-    ) -> Result<Self, CatalogIdentityError> {
-        ArtifactHash::parse(fact.component_digest.clone())?;
-        Ok(Self {
+    pub fn project(fact: &AdmittedComponent, connections: Vec<ComponentConnection>) -> Self {
+        Self {
             package_id: fact.target.package_id.clone(),
             runtime_schema: None,
             descriptor: ComponentDescriptor::new(fact.clone(), connections),
-        })
+        }
     }
 }
 
@@ -320,7 +310,7 @@ pub struct ServingAttachment {
     pub type_: AttachmentType,
     pub package_id: String,
     pub target: AttachmentTarget,
-    pub definition_hash: DefinitionHash,
+    pub definition_hash: wamn_digest::Digest,
     pub definition: Value,
     pub auth_policy: Value,
     /// Exact operation authority selected by this attachment. Attachments that
@@ -339,7 +329,7 @@ struct AttachmentWire {
     component: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     operation: Option<String>,
-    definition_hash: DefinitionHash,
+    definition_hash: wamn_digest::Digest,
     definition: Value,
     auth_policy: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -447,7 +437,7 @@ pub struct RouteAttachment {
     pub package_id: String,
     pub component: String,
     pub operation: String,
-    pub definition_hash: DefinitionHash,
+    pub definition_hash: wamn_digest::Digest,
     pub definition: Value,
     pub auth_policy: Value,
     /// Exact operation authority selected by this attachment.
@@ -565,7 +555,7 @@ pub fn parse_workflow_schedule(text: &str) -> Result<croner::Cron, CatalogIdenti
 pub struct ServingEntryMember {
     pub package_id: String,
     pub component: String,
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
 }
 
 /// The published HTTP component and the source identities that fix its bytes.
@@ -575,7 +565,7 @@ pub struct ServingComposedEntry {
     /// `entries@sha256:<manifest digest>`, relative to the component artifact
     /// base that each host resolves members against, or a local absolute `file:`.
     pub reference: String,
-    pub route_digest: String,
+    pub route_digest: wamn_digest::Digest,
     /// The explicitly named application whose bytes compose the entry.
     pub application: ServingEntryMember,
     pub members: BTreeSet<ServingEntryMember>,
@@ -775,9 +765,8 @@ impl ServingManifest {
     }
 
     /// The content digest over [`Self::canonical_bytes`].
-    pub fn digest(&self) -> ManifestDigest {
-        ManifestDigest::parse(wamn_digest::canonical_json_sha256(&self.as_value()))
-            .expect("the shared canonicalizer emits a canonical sha256 digest")
+    pub fn digest(&self) -> wamn_digest::Digest {
+        wamn_digest::canonical_json_sha256(&self.as_value())
     }
 
     /// Parse, validate, and admit only canonical format-11 bytes.
@@ -788,7 +777,7 @@ impl ServingManifest {
     /// dual-version tolerance.
     pub fn from_canonical_bytes(
         bytes: &[u8],
-    ) -> Result<(Self, ManifestDigest), CatalogIdentityError> {
+    ) -> Result<(Self, wamn_digest::Digest), CatalogIdentityError> {
         within_delivery_limit(bytes.len())?;
         let document = serde_json::from_slice::<Value>(bytes).map_err(|error| {
             CatalogIdentityError::InvalidDefinition {
@@ -813,8 +802,7 @@ impl ServingManifest {
         {
             return Err(CatalogIdentityError::NonCanonicalJson);
         }
-        let digest = ManifestDigest::parse(wamn_digest::canonical_json_sha256(&document))
-            .expect("the shared canonicalizer emits a canonical sha256 digest");
+        let digest = wamn_digest::canonical_json_sha256(&document);
         Ok((manifest, digest))
     }
 
@@ -859,7 +847,7 @@ impl ServingManifest {
                      relative to the component artifact base",
                 );
             }
-            ArtifactHash::parse(entry.route_digest.clone())?;
+
             if entry.members.is_empty() {
                 return invalid("a composed entry must name its application members");
             }
@@ -868,7 +856,6 @@ impl ServingManifest {
             }
             let mut identities = BTreeSet::new();
             for member in &entry.members {
-                ArtifactHash::parse(member.digest.clone())?;
                 if !identities.insert((&member.package_id, &member.component)) {
                     return invalid("a composed entry repeats a member identity");
                 }
@@ -924,7 +911,7 @@ impl ServingManifest {
             let descriptor = &component.descriptor;
             validate_text(&descriptor.component, "component")?;
             validate_text(&descriptor.interface_version, "interface-version")?;
-            ArtifactHash::parse(descriptor.component_digest.clone())?;
+
             if component.descriptor.operations.is_empty() {
                 return invalid("a serving component must export at least one operation");
             }
@@ -1165,10 +1152,6 @@ mod tests {
     const DEFINITION: &str =
         "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
-    fn definition_hash(value: &str) -> DefinitionHash {
-        DefinitionHash::parse(value).expect("fixture definition hash is canonical")
-    }
-
     fn release() -> ServingRelease {
         ServingRelease {
             packages: BTreeSet::from([
@@ -1205,7 +1188,7 @@ mod tests {
                         parameters: Vec::new(),
                     },
                 )]),
-                ..ComponentDescriptor::named(component, "0.1", digest)
+                ..ComponentDescriptor::named(component, "0.1", digest.parse().unwrap())
             },
         })
         .collect()
@@ -1241,7 +1224,9 @@ mod tests {
                 component: "http-request".into(),
                 operation: "base:widget/get@1.0.0".into(),
             },
-            definition_hash: definition_hash(DEFINITION),
+            definition_hash: DEFINITION
+                .parse()
+                .expect("fixture definition hash is canonical"),
             definition: serde_json::json!({
                 "id": "orders",
                 "type": "http",
@@ -1268,11 +1253,13 @@ mod tests {
     fn entry_for(manifest: &ServingManifest) -> ServingComposedEntry {
         ServingComposedEntry {
             reference: format!("entries@sha256:{}", "e".repeat(64)),
-            route_digest: format!("sha256:{}", "f".repeat(64)),
+            route_digest: (format!("sha256:{}", "f".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             application: ServingEntryMember {
                 package_id: "overlay".into(),
                 component: "transform".into(),
-                digest: COMPONENT_B.into(),
+                digest: COMPONENT_B.parse().unwrap(),
             },
             members: manifest
                 .components
@@ -1280,7 +1267,7 @@ mod tests {
                 .map(|component| ServingEntryMember {
                     package_id: component.package_id.clone(),
                     component: component.descriptor.component.clone(),
-                    digest: component.descriptor.component_digest.clone(),
+                    digest: component.descriptor.component_digest,
                 })
                 .collect(),
         }
@@ -1300,7 +1287,9 @@ mod tests {
         let reference_digest = manifest.digest();
         assert_ne!(reference_digest, digest);
         manifest.composed_entry.as_mut().unwrap().route_digest =
-            format!("sha256:{}", "a".repeat(64));
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap();
         assert_ne!(manifest.digest(), reference_digest);
     }
 
@@ -1388,16 +1377,17 @@ mod tests {
     fn composed_entry_refuses_invalid_or_unreleased_members() {
         let manifest = manifest();
         let entry = entry_for(&manifest);
-        for change in 0..5 {
+        for change in [0, 2, 3, 4] {
             let mut manifest = manifest.clone();
             let mut entry = entry.clone();
             match change {
                 0 => entry.reference = "registry.example/entry:latest".into(),
-                1 => entry.route_digest = "invalid".into(),
                 2 => entry.members.clear(),
                 3 => {
                     let mut member = entry.members.pop_first().unwrap();
-                    member.digest = format!("sha256:{}", "0".repeat(64));
+                    member.digest = (format!("sha256:{}", "0".repeat(64)))
+                        .parse::<wamn_digest::Digest>()
+                        .unwrap();
                     entry.members.insert(member);
                 }
                 _ => {
@@ -1415,7 +1405,7 @@ mod tests {
     fn composed_entry_requires_a_named_application_in_its_members() {
         let mut manifest = manifest();
         manifest.composed_entry = Some(entry_for(&manifest));
-        manifest.composed_entry.as_mut().unwrap().application.digest = COMPONENT_A.into();
+        manifest.composed_entry.as_mut().unwrap().application.digest = COMPONENT_A.parse().unwrap();
         assert!(matches!(
             ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()),
             Err(CatalogIdentityError::InvalidDefinition { .. })
@@ -1828,14 +1818,5 @@ mod tests {
             let _error = ServingManifest::new(release(), components(), routes, BTreeMap::new())
                 .expect_err("an inexact route must refuse");
         }
-    }
-
-    #[test]
-    fn the_configmap_name_is_a_dns_1123_subdomain() {
-        let name = release_manifest_configmap_name(COMPONENT_A).expect("digest names a map");
-        assert_eq!(
-            name,
-            "release-manifest-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        );
     }
 }

@@ -243,7 +243,11 @@ async fn open_stream(
                     Ok(())
                 } else {
                     let QueryTransaction::Dynamic(xid) = &transaction else { unreachable!() };
-                    match sqlx::raw_sql(sqlx::AssertSqlSafe(super::write_log::commit_sql(xid))).execute(connection.connection()).await {
+                    let committed = async {
+                        super::write_log::check_commit_identity(connection.connection(), xid).await?;
+                        sqlx::query("COMMIT").execute(connection.connection()).await
+                    }.await;
+                    match committed {
                         Ok(_) => { connection.repool(); Ok(()) }
                         Err(error) => {
                             let _ = outcome.send(Err(wash_runtime::wasmtime::format_err!(

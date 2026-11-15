@@ -311,7 +311,7 @@ fn overlay(mut manifest: Value) -> Value {
     manifest["base_dependencies"] = json!({"base_inventory": {
         "package": "platform_gadget",
         "version": "1.0.0",
-        "digest": format!("sha256:{}", "a".repeat(64)),
+        "digest": (format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(),
         "operations": ["gadget.get"]
     }});
     manifest["models"]["gadget"]

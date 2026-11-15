@@ -76,7 +76,7 @@ fn input(env: &str) -> ValuesInput {
         org: "acme".into(),
         project: "wms".into(),
         env: env.into(),
-        manifest_digest: DIGEST.into(),
+        manifest_digest: DIGEST.parse().unwrap(),
         artifact_base: "registry.example/releases".into(),
         route_host: "wms.acme.example".into(),
         applications: [(
@@ -218,7 +218,7 @@ fn applications_in_one_environment_have_independent_release_resources() {
                         serde_json::from_str(object["data"]["release.json"].as_str().unwrap())
                             .unwrap();
                     assert_eq!(carrier["host"], input.route_host);
-                    assert_eq!(carrier["digest"], input.manifest_digest);
+                    assert_eq!(carrier["digest"], serde_json::json!(input.manifest_digest));
                 }
                 _ => {}
             }

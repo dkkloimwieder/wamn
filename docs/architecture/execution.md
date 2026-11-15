@@ -801,7 +801,7 @@ Identity offers and mints no audience of an environment whose `registry.environm
 Session tokens use Ed25519 keys with `alg=EdDSA` and `typ=wamn-session+jwt`.
 They require `iss`, `sub`, `org`, `aud`, `roles`, `exp`, `iat`, `jti`, and `authority`.
 `authority` is the object `{"login":"<login UUID>"}`.
-The optional `csrf` JWT claim is the lowercase SHA-256 hex of a CSRF token. Only the cookie carrier sets it.
+The optional `csrf` JWT claim is the SHA-256 digest of a CSRF token, as `sha256:` and 64 lowercase hex digits. Only the cookie carrier sets it.
 The password issuer binds the existing login record.
 The `kid` selects a key only within the configured issuer.
 Wrong issuer, organization, audience, algorithm, signature, or time bounds returns 401.
@@ -812,7 +812,7 @@ The host reads that cookie only when the request has no `Authorization` header a
 A request that carries both refuses with 401, and so does a repeated session cookie.
 The host verifies a cookie token as it verifies a bearer token, and then applies the CSRF test.
 A cookie token without the `csrf` JWT claim refuses with 401.
-The CSRF test needs one `x-wamn-csrf` header whose SHA-256 hex equals the JWT claim.
+The CSRF test needs one `x-wamn-csrf` header whose SHA-256 digest equals the JWT claim.
 A read route (type `get`, `query` or `projection`) needs no header, because a read changes nothing.
 Every other route and every attachment to a wiring requires the header. The cookie carries the `csrf` JWT claim on every route.
 
@@ -931,6 +931,9 @@ This applies to token fetches, refreshes, candidate health, and authorization co
 The browser's `authorize_url` stays outside this token boundary.
 
 OAuth storage uses `identity.oauth_token` and `identity.oauth_authorization` in the system database.
+A public authorization callback locks its pending state through `registry.lock_oauth_authorization`.
+The function restricts the state to the control login’s org.
+The host binds the principal that created the state before it reads or writes other protected rows.
 Only the host connection role and the control role receive table grants.
 Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
 An envelope key protects that data key.
@@ -1073,7 +1076,7 @@ Each login binds one user, issuer, and exact environment audience.
 Its authentication time and eight-hour absolute deadline remain fixed.
 Successful renewal extends the inactivity deadline by 30 minutes, capped at the absolute deadline.
 
-The database stores only hashes of random, single-use renewal credentials.
+The database stores only canonical digest text for random, single-use renewal credentials.
 Reusing a consumed credential revokes its login family, the sequence of replacement credentials for one login.
 The caller commits that refusal so revocation persists.
 Every login and renewal repeats the current membership, environment instance, project-user status, and assigned-role tests.
@@ -1098,7 +1101,7 @@ A restricted database function locks a principal without granting permission to 
 
 Invitation secrets contain 32 random bytes and expire after 24 hours.
 Reset secrets use the same implementation with a separate prefix, reset purpose, and 15-minute expiry.
-The database stores their SHA-256 digests and explicit purpose, never the bearer secret.
+The database stores their SHA-256 digests as `sha256:` and 64 lowercase hex digits, with an explicit purpose. It never stores the bearer secret.
 Password hashes use Argon2id version 19 with 19 MiB, two iterations, one lane, and independent 16-byte salts.
 These parameters meet the [OWASP minimum profile](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#argon2id).
 One shared worker budget permits two jobs, with no waiting queue, for 38 MiB of Argon2 working memory.

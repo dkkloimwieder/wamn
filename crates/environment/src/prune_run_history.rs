@@ -14,16 +14,9 @@
 //! through its `ON DELETE CASCADE`, which needs no privilege of its own.
 //! Repeated calls are safe.
 //!
-//! The verb tests the project identity. `--tenant` used to be a free argument
-//! that reached the statement as an `app.project_env_key` GUC, which fails in two
-//! directions at once: an unset identity makes the predicate NULL, so the delete
-//! removes nothing and the verb still prints a success line; and an identity naming
-//! somebody else's project is honoured, because `wamn_run.runs`' one permissive
-//! base policy arm is `TO wamn_platform USING (true)` and every platform-grain family
-//! matches it without a project predicate. [`verify_retention_identity`] closes
-//! both by DERIVING the only project this credential may prune from the connected
-//! role name and refusing anything else before a statement runs. The project then
-//! reaches the delete as a bound parameter.
+//! [`verify_retention_identity`] derives the project from the connected login
+//! and refuses another project before running the delete. The project reaches
+//! the delete as a bound parameter.
 //!
 //! **v0 is age-based only:** every terminal run is independently eligible once
 //! it ages beyond the configured window.

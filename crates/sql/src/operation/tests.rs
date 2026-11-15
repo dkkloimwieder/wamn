@@ -8,8 +8,8 @@ use serde_json::json;
 use tokio::sync::oneshot;
 use wamn_catalog::{
     AdmittedComponentOperation, AttachmentTarget, AttachmentType, ComponentDescriptor,
-    DefinitionHash, OperationType, PackageCoordinate, ServingAttachment, ServingComponent,
-    ServingManifest, ServingRelease, ServingRoute,
+    OperationType, PackageCoordinate, ServingAttachment, ServingComponent, ServingManifest,
+    ServingRelease, ServingRoute,
 };
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{
@@ -39,7 +39,11 @@ const READ_OPERATION: &str = "base:widget/get@1.0.0";
 const RESULT: &str = "{ \"value\" : 7 }";
 
 fn release() -> Arc<LoadedRelease> {
-    let digest = |c: char| format!("sha256:{}", c.to_string().repeat(64));
+    let digest = |c: char| {
+        format!("sha256:{}", c.to_string().repeat(64))
+            .parse::<wamn_digest::Digest>()
+            .unwrap()
+    };
     let mut manifest = ServingManifest::new(
 ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base", "1.0.0").unwrap()]) },
 BTreeSet::from([ServingComponent {
@@ -66,7 +70,7 @@ BTreeSet::from([ServingRoute {
 BTreeMap::from([("entry".into(), ServingAttachment {
             type_: AttachmentType::Http, package_id: "base".into(),
             target: AttachmentTarget::Route { component: "entry".into(), operation: READ_OPERATION.into() },
-            definition_hash: DefinitionHash::parse(digest('c')).unwrap(),
+            definition_hash: digest('c'),
             definition: json!({"route": {"host": "entry.localhost", "path": "/entry", "method": "POST"}}),
                 auth_policy: json!({"modes": ["pat"]}),
             registered_operation: None,
@@ -676,7 +680,10 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
             .bind_operation_workload(
                 WORKLOAD,
                 test_context(&postgres, Arc::clone(&release)),
-                "registry.example/other@sha256:bad",
+                &format!(
+                    "registry.example/other@{}",
+                    wamn_digest::bytes_sha256(b"other")
+                ),
                 "entry",
                 identity.clone()
             )

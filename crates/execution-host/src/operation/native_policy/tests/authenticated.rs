@@ -278,7 +278,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
         "format-version": super::SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": "root", "package-version": "1.0.0"}]},
         "components": [{"package-id": "root",
-            "descriptor": {"component": "node", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "imports": [], "imports-fingerprint": "", "effects": [], "connections": [],
+            "descriptor": {"component": "node", "interface-version": "0.1.0", "component-digest": (format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(), "imports": [], "imports-fingerprint": wamn_digest::canonical_json_sha256(&serde_json::json!([])), "effects": [], "connections": [],
             "operations": {
                 ROOT: {"registered-operation": ROOT, "input-ports": [], "output-ports": [], "parameters": []}
             }}}],
@@ -526,7 +526,7 @@ async fn native_authenticated_call_graph_grant(pool: sqlx::PgPool) {
 
 /// The admission request of the composed member fixture: the root's one
 /// operation calls the child embedded in it, a base the package pins.
-fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
+fn member_admission_request(child_digest: &wamn_digest::Digest) -> ComponentAdmissionRequest {
     ComponentAdmissionRequest {
         declaration: ComponentDeclaration {
             connections: Vec::new(),

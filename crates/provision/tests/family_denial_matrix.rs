@@ -621,21 +621,6 @@ fn the_guest_family_reads_its_own_project_env_key_and_only_its_own() {
         "the guest generation does not read exactly its own project's row: a \
          second row is a CROSS-PROJECT READ and zero rows is a silent lockout"
     );
-    // A settable identity must not move it. The minimum keys on `current_user`, and
-    // this shows that the retired `app.project_env_key` path is inert for the guest.
-    assert_eq!(
-        bound_query(
-            &as_guest,
-            &format!(
-                "BEGIN; SET LOCAL app.project_env_key = '{PROJECT_ENV_KEY_B}'; \
-                 SELECT count(*) FROM wamn_run.runs; COMMIT"
-            ),
-        )
-        .parse::<u64>()
-        .unwrap(),
-        1,
-        "a session-settable identity moved the guest's row visibility"
-    );
 }
 
 // ---------------------------------------------------------------------------

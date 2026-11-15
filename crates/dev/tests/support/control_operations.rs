@@ -129,7 +129,7 @@ impl Control<'_> {
 
 pub(super) async fn exercise(
     journey: &Journey<'_>,
-    artifacts: &BTreeMap<&str, String>,
+    artifacts: &BTreeMap<&str, wamn_digest::Digest>,
     identity: &HttpClient,
     identity_url: &str,
     control_url: &str,
@@ -155,7 +155,7 @@ pub(super) async fn exercise(
                         "apply",
                         application,
                         "--release",
-                        &artifacts[key],
+                        &artifacts[key].to_string(),
                         "--env",
                     ])
                     .arg(&journey.file),
@@ -230,7 +230,7 @@ pub(super) async fn exercise(
         "deploying beta changed alpha's selection or release ConfigMap"
     );
     ensure!(
-        after["applications"]["beta"]["current"] == artifacts["b1"],
+        after["applications"]["beta"]["current"] == serde_json::json!(artifacts["b1"]),
         "beta selection did not advance"
     );
     worker(journey, &deployed).await?;
@@ -239,7 +239,7 @@ pub(super) async fn exercise(
         .await?;
     let rolled_back = journey.status().await?;
     ensure!(
-        rolled_back["applications"]["beta"]["current"] == artifacts["b0"]
+        rolled_back["applications"]["beta"]["current"] == serde_json::json!(artifacts["b0"])
             && rolled_back["applications"]["alpha"]["current"]
                 == before["applications"]["alpha"]["current"],
         "route rollback did not restore only beta"
@@ -292,7 +292,11 @@ async fn jobs(control: &Control<'_>) -> anyhow::Result<BTreeSet<String>> {
         .collect()
 }
 
-async fn denial(control: &Control<'_>, identity_url: &str, release: &str) -> anyhow::Result<()> {
+async fn denial(
+    control: &Control<'_>,
+    identity_url: &str,
+    release: &wamn_digest::Digest,
+) -> anyhow::Result<()> {
     let other = format!("other-{}", uuid::Uuid::new_v4().simple());
     control
         .call("project.create", json!({"project":other}))

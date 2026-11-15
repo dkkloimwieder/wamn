@@ -192,7 +192,9 @@ async fn execute(
         let mut hashed = request_element.clone();
         remove(&mut hashed, &["request_id"]);
         remove(&mut hashed, &key_field.split('.').collect::<Vec<_>>());
-        let hash = wamn_digest::canonical_json_sha256(&hashed).into_bytes();
+        let hash = wamn_digest::canonical_json_sha256(&hashed)
+            .to_string()
+            .into_bytes();
         let begun =
             operation::begin_operation(caller, operation_id.clone(), key.to_owned(), hash).await;
         let intent = format!(
@@ -435,7 +437,7 @@ fn response(status: u16, body: String) -> HttpResponse {
 }
 
 fn tag_digest(value: &Value) -> String {
-    wamn_digest::canonical_json_sha256(value)[7..39].to_owned()
+    wamn_digest::canonical_json_sha256(value).hex()[..32].to_owned()
 }
 
 fn matches_tag(request: &OperationRequest<AuthenticatedCaller>, tag: Option<&str>) -> bool {

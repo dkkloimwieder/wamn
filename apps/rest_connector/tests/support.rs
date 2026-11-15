@@ -20,7 +20,11 @@ pub fn manifest(package: &Path) -> Value {
     .unwrap()
 }
 
-pub fn admit(package: &Path, name: &str, bases: BTreeSet<String>) -> ComponentAdmission {
+pub fn admit(
+    package: &Path,
+    name: &str,
+    bases: BTreeSet<wamn_digest::Digest>,
+) -> ComponentAdmission {
     let target = ComponentPackageCoordinate {
         project_env_key: "rest--test--publication".into(),
         package_id: manifest(package)["package"]["id"].as_str().unwrap().into(),

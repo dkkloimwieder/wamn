@@ -28,8 +28,8 @@ pub mod test_database;
 pub use component_artifact_reference::{
     COMPOSED_ENTRY_REPOSITORY, ComponentArtifactBase, ComponentArtifactReference,
     ComponentArtifactReferenceError, ComponentArtifactReferenceErrorType,
-    component_artifact_reference, component_digest_tag, composed_entry_start_reference,
-    composed_entry_starts_as, parse_component_artifact_base, validate_component_start_reference,
+    component_artifact_reference, composed_entry_start_reference, composed_entry_starts_as,
+    parse_component_artifact_base, validate_component_start_reference,
     validate_composed_entry_path,
 };
 pub use component_facts::{
@@ -103,9 +103,6 @@ pub const CATALOG_SCHEMA_SQL: &str = concat!(
     include_str!("../../../deploy/sql/catalog-schema.sql"),
 );
 
-const HASH_PREFIX: &str = "sha256:";
-const HASH_HEX_LEN: usize = 64;
-
 /// A catalog identity construction error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CatalogIdentityError {
@@ -120,9 +117,6 @@ pub enum CatalogIdentityError {
         field: &'static str,
     },
     ZeroVersion {
-        field: &'static str,
-    },
-    InvalidDigest {
         field: &'static str,
     },
     InvalidDefinition {
@@ -171,12 +165,6 @@ impl fmt::Display for CatalogIdentityError {
                 write!(formatter, "{field} is not in canonical form")
             }
             Self::ZeroVersion { field } => write!(formatter, "{field} must be greater than zero"),
-            Self::InvalidDigest { field } => {
-                write!(
-                    formatter,
-                    "{field} must be sha256:<64 lowercase hex digits>"
-                )
-            }
             Self::InvalidDefinition { message } => write!(formatter, "{message}"),
             Self::NonCanonicalJson => write!(formatter, "JSON input is not RFC 8785 canonical"),
             Self::UnsupportedServingManifestVersion { requested } => {
@@ -252,128 +240,6 @@ fn validate_text(value: &str, field: &'static str) -> Result<(), CatalogIdentity
     Ok(())
 }
 
-/// A canonical SHA-256 digest.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(transparent)]
-pub struct DefinitionHash(String);
-
-impl DefinitionHash {
-    /// Parse a canonical SHA-256 definition hash.
-    pub fn parse(value: impl Into<String>) -> Result<Self, CatalogIdentityError> {
-        let value = value.into();
-        validate_digest(&value, "definition-hash")?;
-        Ok(Self(value))
-    }
-
-    /// The `sha256:<hex>` representation.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for DefinitionHash {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        Self::parse(value).map_err(serde::de::Error::custom)
-    }
-}
-
-impl fmt::Display for DefinitionHash {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-/// A canonical artifact-content digest.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(transparent)]
-pub struct ArtifactHash(String);
-
-impl ArtifactHash {
-    /// Parse a canonical SHA-256 artifact-content digest.
-    pub fn parse(value: impl Into<String>) -> Result<Self, CatalogIdentityError> {
-        let value = value.into();
-        validate_digest(&value, "artifact-hash")?;
-        Ok(Self(value))
-    }
-
-    /// The `sha256:<hex>` representation.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for ArtifactHash {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        Self::parse(value).map_err(serde::de::Error::custom)
-    }
-}
-
-impl fmt::Display for ArtifactHash {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-/// The digest of a serving manifest's RFC 8785 canonical bytes.
-///
-/// This is the one *derived* identity in the family: it is never asserted by a
-/// carrier and never read from an object name, only computed from verified
-/// content by [`ServingManifest::from_canonical_bytes`]. From there it travels
-/// further than any other hash in the system — through the lease-time run
-/// recording, effect-authority equality, and the deployment attestation, across
-/// two host processes and four manifest readers. Its distinct type keeps it
-/// apart from the manifest's [`ArtifactHash`] and [`DefinitionHash`] members.
-///
-/// Unlike the manifest-carried [`DefinitionHash`] and [`ArtifactHash`], it has
-/// no `Deserialize`: a carrier must not assert this derived identity. The only
-/// admitting boundary computes it from verified canonical bytes through
-/// [`ServingManifest::from_canonical_bytes`].
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(transparent)]
-pub struct ManifestDigest(String);
-
-impl ManifestDigest {
-    /// Parse a canonical SHA-256 serving-manifest digest.
-    pub fn parse(value: impl Into<String>) -> Result<Self, CatalogIdentityError> {
-        let value = value.into();
-        validate_digest(&value, "manifest-digest")?;
-        Ok(Self(value))
-    }
-
-    /// The `sha256:<hex>` representation.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for ManifestDigest {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-fn validate_digest(value: &str, field: &'static str) -> Result<(), CatalogIdentityError> {
-    let valid = value.strip_prefix(HASH_PREFIX).is_some_and(|hex| {
-        hex.len() == HASH_HEX_LEN
-            && hex
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    });
-    if valid {
-        Ok(())
-    } else {
-        Err(CatalogIdentityError::InvalidDigest { field })
-    }
-}
-
 /// An attachment exposure type.
 ///
 /// `Deserialize` is derived so the frozen [`ServingAttachment`] wire shape can
@@ -392,36 +258,6 @@ pub const MAIN_PORT: &str = "main";
 
 /// Node output port for failures.
 pub const ERROR_PORT: &str = "error";
-
-#[cfg(test)]
-mod tests {
-    use super::ManifestDigest;
-
-    /// The invariant that retired `valid_manifest_digest` in the lease path: the
-    /// newtype admits exactly the `sha256:<64 lowercase hex>` shape the run
-    /// plane's `runs_release_record_check` admits, so a parsed value can never
-    /// die on that CHECK inside a lease grant.
-    #[test]
-    fn a_manifest_digest_admits_exactly_the_run_plane_shape() {
-        assert!(ManifestDigest::parse(format!("sha256:{}", "0".repeat(64))).is_ok());
-        assert!(ManifestDigest::parse(format!("sha256:{}b", "af9".repeat(21))).is_ok());
-        for rejected in [
-            String::new(),
-            "sha256:".to_string(),
-            "deadbeef".to_string(),
-            format!("sha256:{}", "a".repeat(63)),
-            format!("sha256:{}", "a".repeat(65)),
-            format!("sha256:{}", "A".repeat(64)),
-            format!("sha256:{}", "g".repeat(64)),
-            format!("SHA256:{}", "a".repeat(64)),
-        ] {
-            assert!(
-                ManifestDigest::parse(rejected.clone()).is_err(),
-                "accepted {rejected:?}"
-            );
-        }
-    }
-}
 
 pub mod exposure;
 pub mod package_schema;

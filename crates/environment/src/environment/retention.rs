@@ -16,15 +16,18 @@ use super::{Platform, document::EnvironmentDocument};
 ///
 /// # Errors
 /// Refuses unreadable host state, corrupt artifacts, uncertain role ownership, or lock loss.
-pub async fn prune(platform: &Platform, triple: &Triple) -> anyhow::Result<Vec<String>> {
+pub async fn prune(
+    platform: &Platform,
+    triple: &Triple,
+) -> anyhow::Result<Vec<wamn_digest::Digest>> {
     LifecycleLock::hold(wamn_postgres::connect(&platform.system_database_url).await?, triple, async |_| {
         let document = EnvironmentDocument::read_serving(platform, triple).await?;
         let residency = super::drain::observe(platform,triple).await?;
         let live = super::drain::loaded(&residency);
-        let mut retained: BTreeSet<String> = live.into_keys().map(|(_, digest)| digest).collect();
+        let mut retained: BTreeSet<wamn_digest::Digest> = live.into_keys().map(|(_, digest)| digest).collect();
         for (application, selection) in &document.applications {
             if let super::document::DeclaredRelease::Digest(digest) = &selection.current {
-                retained.insert(digest.clone());
+                retained.insert(*digest);
             }
             // A failed write can leave Helm serving the previous desired release.
             let name = super::analyse::application_release_name(&document, application)?;
@@ -38,9 +41,9 @@ pub async fn prune(platform: &Platform, triple: &Triple) -> anyhow::Result<Vec<S
         let mut releases = BTreeMap::new();
         for row in sqlx::query("SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE project_env_key=$1")
             .bind(&project_env_key).fetch_all(&mut project).await? {
-            let digest: String = row.get(0);
+            let digest: wamn_digest::Digest = row.get(0);
             let (manifest, actual) = wamn_catalog::ServingManifest::from_canonical_bytes(row.get(1))?;
-            ensure!(actual.as_str() == digest, "release cache digest mismatch");
+            ensure!(actual == digest, "release cache digest mismatch");
             let packages = super::analyse::read_release_packages(platform, &manifest).await?;
             releases.insert(digest, (manifest, packages));
         }
@@ -72,19 +75,11 @@ pub async fn prune(platform: &Platform, triple: &Triple) -> anyhow::Result<Vec<S
 pub async fn prune_releases(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
-    retained: &BTreeSet<String>,
+    retained: &BTreeSet<wamn_digest::Digest>,
     drops: &mut wamn_broker::connection_changes::ConnectionDrops,
-) -> anyhow::Result<Vec<String>> {
-    ensure!(
-        !retained.contains("unlabelled"),
-        "cannot retain releases with unknown live hosts"
-    );
-    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-        .bind(project_env_key)
-        .execute(&mut **tx)
-        .await?;
-    let retained: Vec<&str> = retained.iter().map(String::as_str).collect();
-    let removed: Vec<String> = sqlx::query_scalar(
+) -> anyhow::Result<Vec<wamn_digest::Digest>> {
+    let retained: Vec<_> = retained.iter().copied().collect();
+    let removed: Vec<wamn_digest::Digest> = sqlx::query_scalar(
         "SELECT r.manifest_digest FROM catalog.releases r WHERE r.project_env_key=$1 \
          AND NOT (r.manifest_digest=ANY($2)) AND NOT EXISTS (SELECT FROM wamn_run.runs u \
          WHERE u.project_env_key=r.project_env_key AND u.manifest_digest=r.manifest_digest \
@@ -134,8 +129,8 @@ pub async fn retire_runtime_grants(
     system: &mut sqlx::PgConnection,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
-    releases: &BTreeMap<String, (wamn_catalog::ServingManifest, Vec<PackageManifest>)>,
-    retired: &[String],
+    releases: &BTreeMap<wamn_digest::Digest, (wamn_catalog::ServingManifest, Vec<PackageManifest>)>,
+    retired: &[wamn_digest::Digest],
     drops: &mut wamn_broker::auth_changes::AuthDrops,
 ) -> anyhow::Result<()> {
     let mut removed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();

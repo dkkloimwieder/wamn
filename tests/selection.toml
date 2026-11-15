@@ -194,7 +194,7 @@ prerequisites = []
 inputs = ["(^|/)Cargo\\.(toml|lock)$"]
 execution = "commands"
 mode = "local"
-commands = [["packages alone", "cargo", "xtask", "compile-packages-alone"]]
+commands = [["packages alone", "/proc/self/exe", "compile-packages-alone"]]
 resource_lock = ""
 
 [[suites]]

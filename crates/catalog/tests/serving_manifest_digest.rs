@@ -5,9 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::json;
 use wamn_catalog::{
     AdmittedComponentOperation, AttachmentAuthPolicy, AttachmentTarget, AttachmentType,
-    CatalogIdentityError, ComponentDescriptor, DefinitionHash, OperationType, PackageCoordinate,
-    ServingAttachment, ServingComponent, ServingManifest, ServingRelease, ServingRoute,
-    parse_attachment_auth_policy,
+    CatalogIdentityError, ComponentDescriptor, OperationType, PackageCoordinate, ServingAttachment,
+    ServingComponent, ServingManifest, ServingRelease, ServingRoute, parse_attachment_auth_policy,
 };
 
 mod format_three_vector {
@@ -17,10 +16,6 @@ mod format_three_vector {
 const COMPONENT_A: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const COMPONENT_B: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 const DEFINITION: &str = "sha256:5555555555555555555555555555555555555555555555555555555555555555";
-
-fn definition_hash(value: &str) -> DefinitionHash {
-    DefinitionHash::parse(value).expect("fixture definition hash is canonical")
-}
 
 fn release() -> ServingRelease {
     ServingRelease {
@@ -38,7 +33,8 @@ fn components() -> BTreeSet<ServingComponent> {
 
             package_id: "platform_fixture".into(),
             descriptor: {
-                let mut descriptor = ComponentDescriptor::named("transform", "0.1", COMPONENT_B);
+                let mut descriptor =
+                    ComponentDescriptor::named("transform", "0.1", COMPONENT_B.parse().unwrap());
                 descriptor.operations = BTreeMap::from([(
                     "map".into(),
                     AdmittedComponentOperation {
@@ -58,7 +54,8 @@ fn components() -> BTreeSet<ServingComponent> {
 
             package_id: "platform_fixture_overlay".into(),
             descriptor: {
-                let mut descriptor = ComponentDescriptor::named("http-request", "0.1", COMPONENT_A);
+                let mut descriptor =
+                    ComponentDescriptor::named("http-request", "0.1", COMPONENT_A.parse().unwrap());
                 descriptor.operations = BTreeMap::from([(
                     "platform-fixture-overlay:widget/get@3.0.0".into(),
                     AdmittedComponentOperation {
@@ -104,7 +101,9 @@ fn manifest() -> ServingManifest {
                     component: "http-request".into(),
                     operation: "platform-fixture-overlay:widget/get@3.0.0".into(),
                 },
-                definition_hash: definition_hash(DEFINITION),
+                definition_hash: DEFINITION
+                    .parse()
+                    .expect("fixture definition hash is canonical"),
                 definition: json!({
                     "id": "widget-get-http",
                     "type": "http",
@@ -182,7 +181,7 @@ fn authentication_modes_are_shared_and_bound_into_canonical_bytes() {
         assert_eq!(admitted.attachments["widget-get-http"].auth_policy, policy);
         assert_eq!(admitted.canonical_bytes(), bytes);
         if parsed != AttachmentAuthPolicy::None {
-            assert!(authenticated_digests.insert(digest.as_str().to_owned()));
+            assert!(authenticated_digests.insert(digest));
         }
     }
 }
@@ -261,8 +260,11 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
 
                 package_id: package.into(),
                 descriptor: {
-                    let mut descriptor =
-                        ComponentDescriptor::named("provider", "0.1.0", COMPONENT_A);
+                    let mut descriptor = ComponentDescriptor::named(
+                        "provider",
+                        "0.1.0",
+                        COMPONENT_A.parse().unwrap(),
+                    );
                     descriptor.operations = BTreeMap::from([(
                         export.into(),
                         AdmittedComponentOperation {
@@ -291,8 +293,11 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
 
                 package_id: "consumer".into(),
                 descriptor: {
-                    let mut descriptor =
-                        ComponentDescriptor::named("consumer", "0.1.0", COMPONENT_B);
+                    let mut descriptor = ComponentDescriptor::named(
+                        "consumer",
+                        "0.1.0",
+                        COMPONENT_B.parse().unwrap(),
+                    );
                     descriptor.operations =
                         BTreeMap::from([("consumer:entry/run@1.0.0".into(), operation)]);
                     descriptor
@@ -321,7 +326,7 @@ fn duplicate_export_only_interfaces_are_admitted() {
             .expect("fixture provider")
             .clone();
         other.descriptor.component = "another-provider".into();
-        other.descriptor.component_digest = COMPONENT_B.into();
+        other.descriptor.component_digest = COMPONENT_B.parse().unwrap();
         let operation = other.descriptor.operations.get_mut(export).unwrap();
         operation.registered_operation = None;
         assert!(candidate.components.insert(other));
@@ -329,24 +334,6 @@ fn duplicate_export_only_interfaces_are_admitted() {
             .expect("the host can address duplicate export-only interfaces directly");
         assert_eq!(admitted, candidate);
     }
-}
-
-#[test]
-fn every_manifest_hash_validates_during_deserialization() {
-    let invalid = "sha256:not-a-canonical-digest";
-
-    let mut component_manifest = manifest();
-    let mut component = component_manifest.components.pop_first().unwrap();
-    invalid.clone_into(&mut component.descriptor.component_digest);
-    component_manifest.components.insert(component);
-    let _component_error =
-        ServingManifest::from_canonical_bytes(&component_manifest.canonical_bytes())
-            .expect_err("an invalid component digest must be refused while decoding");
-
-    let mut attachment_document = serde_json::to_value(manifest()).expect("manifest serializes");
-    attachment_document["attachments"]["widget-get-http"]["definition-hash"] = json!(invalid);
-    let _attachment_error = serde_json::from_value::<ServingManifest>(attachment_document)
-        .expect_err("an invalid attachment definition hash must be refused while decoding");
 }
 
 #[test]

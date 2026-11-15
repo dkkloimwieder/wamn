@@ -155,7 +155,6 @@ mod tests {
              GRANT wamn_control TO {login}; SET SESSION AUTHORIZATION {login}; \
              SET ROLE wamn_control; \
              INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture'); \
-             SELECT set_config('app.project_env_key','other--dev--orders',false); \
              DO $isolation$ BEGIN \
                  ASSERT EXISTS (SELECT FROM registry.projects WHERE org='acme'); \
                  ASSERT NOT EXISTS (SELECT FROM registry.projects WHERE org<>'acme'); \

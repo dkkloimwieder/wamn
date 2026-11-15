@@ -31,7 +31,7 @@ pub struct EnvironmentConfiguration {
 pub struct ApplicationConfiguration {
     /// Desired release. Deployment documents cannot supply this field.
     #[serde(skip)]
-    pub release: Option<String>,
+    pub release: Option<wamn_digest::Digest>,
     pub hostname: String,
     pub revocation_seconds: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,7 +118,7 @@ pub enum SchemaMode {
 #[serde(deny_unknown_fields)]
 pub struct Client {
     pub package: String,
-    pub web: String,
+    pub web: wamn_digest::Digest,
 }
 
 /// A published project integration version.
@@ -360,7 +360,7 @@ pub async fn write_selection(
     connection: &mut sqlx::PgConnection,
     triple: &Triple,
     application: &str,
-    release: Option<&str>,
+    release: Option<&wamn_digest::Digest>,
     client: Option<&Client>,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query(

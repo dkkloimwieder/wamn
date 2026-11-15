@@ -115,13 +115,13 @@ impl Journey<'_> {
         Ok(())
     }
 
-    fn deploy(&self, application: &str, digest: &str) -> Command {
+    fn deploy(&self, application: &str, digest: &wamn_digest::Digest) -> Command {
         let mut command = self.command(&[
             "deploy",
             "--application",
             application,
             "--release",
-            digest,
+            &digest.to_string(),
             "--env",
         ]);
         command.arg(&self.file);
@@ -133,7 +133,7 @@ impl Journey<'_> {
         let release = status["applications"]["alpha"]["current"]
             .as_str()
             .context("canonical alpha selection")?;
-        Ok(self.deploy("alpha", release))
+        Ok(self.deploy("alpha", &release.parse()?))
     }
 
     async fn status(&self) -> anyhow::Result<Value> {
@@ -178,7 +178,12 @@ impl Journey<'_> {
         Ok(response[0]["value"].take())
     }
 
-    async fn publish(&self, app: &str, version: &str, root: &Path) -> anyhow::Result<String> {
+    async fn publish(
+        &self,
+        app: &str,
+        version: &str,
+        root: &Path,
+    ) -> anyhow::Result<wamn_digest::Digest> {
         let mut document = EnvironmentDocument::compile(&self.file)?;
         document.applications.retain(|name, _| name == app);
         let file = self.run.directory.join(format!("publish-{app}.k"));
@@ -201,8 +206,8 @@ impl Journey<'_> {
         let digest = published["release"]
             .as_str()
             .context("published release digest")?
-            .to_owned();
-        wamn_package_artifact::ensure_digest(&digest)?;
+            .parse::<wamn_digest::Digest>()?;
+
         eprintln!("published {app}@{version}: {digest}");
         Ok(digest)
     }
@@ -534,7 +539,7 @@ async fn prepare_artifacts(
     journey: &Journey<'_>,
     sources: &BTreeMap<&str, PathBuf>,
     cases: &[Case],
-) -> anyhow::Result<BTreeMap<&'static str, String>> {
+) -> anyhow::Result<BTreeMap<&'static str, wamn_digest::Digest>> {
     let document = EnvironmentDocument::compile(&journey.file)?;
     let mut artifacts = BTreeMap::new();
     artifacts.insert(
@@ -666,7 +671,10 @@ async fn data(journey: &Journey<'_>) -> anyhow::Result<BTreeMap<String, (Value, 
     Ok(rows)
 }
 
-async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> anyhow::Result<()> {
+async fn reset(
+    journey: &Journey<'_>,
+    artifacts: &BTreeMap<&str, wamn_digest::Digest>,
+) -> anyhow::Result<()> {
     journey
         .apply(
             "provision-reset-environment",
@@ -695,7 +703,7 @@ async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> any
                         "apply",
                         application,
                         "--release",
-                        &artifacts[key],
+                        &artifacts[key].to_string(),
                         "--env",
                     ])
                     .arg(&journey.file),
@@ -807,7 +815,7 @@ async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> any
 
 async fn application_recovery(
     journey: &Journey<'_>,
-    artifacts: &BTreeMap<&str, String>,
+    artifacts: &BTreeMap<&str, wamn_digest::Digest>,
 ) -> anyhow::Result<()> {
     first_install(journey, &artifacts["b0"]).await?;
     journey
@@ -828,7 +836,7 @@ async fn application_recovery(
     recovery(
         journey,
         &artifacts["a1"],
-        &artifacts["a0"],
+        &artifacts["a0"].to_string(),
         &mut database,
         &baseline,
     )
@@ -849,18 +857,22 @@ async fn application_recovery(
     Ok(())
 }
 
-fn schema_command(journey: &Journey<'_>, verb: &str, release: Option<&str>) -> Command {
+fn schema_command(
+    journey: &Journey<'_>,
+    verb: &str,
+    release: Option<&wamn_digest::Digest>,
+) -> Command {
     let mut command = journey.command(&["schema", verb, "alpha", "--env"]);
     command.arg(&journey.file);
     if let Some(release) = release {
-        command.args(["--release", release]);
+        command.args(["--release", &release.to_string()]);
     }
     command
 }
 
 async fn first_install(
     journey: &Journey<'_>,
-    digest: &str,
+    digest: &wamn_digest::Digest,
 ) -> anyhow::Result<std::process::Output> {
     let mut system = wamn_postgres::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"]).await?;
     sqlx::raw_sql("SET default_transaction_read_only = on")
@@ -907,7 +919,14 @@ async fn first_install(
                 .apply(
                     "initialize-beta",
                     journey
-                        .command(&["schema", "apply", "beta", "--release", digest, "--env"])
+                        .command(&[
+                            "schema",
+                            "apply",
+                            "beta",
+                            "--release",
+                            &digest.to_string(),
+                            "--env",
+                        ])
                         .arg(&journey.file),
                 )
                 .await?;
@@ -1050,9 +1069,9 @@ async fn first_install(
         .as_object()
         .context("beta live releases")?;
     ensure!(
-        beta["current"] == digest
+        beta["current"] == serde_json::json!(digest)
             && live.len() == 1
-            && live.contains_key(digest)
+            && live.contains_key(&digest.to_string())
             && helm_history(journey.run, &name).await?["status"] == "deployed",
         "first-install retry did not serve B0"
     );
@@ -1320,7 +1339,7 @@ async fn runtime(journey: &Journey<'_>, app: &str) -> anyhow::Result<Value> {
 
 async fn recovery(
     journey: &Journey<'_>,
-    candidate: &str,
+    candidate: &wamn_digest::Digest,
     running: &str,
     database: &mut sqlx::PgConnection,
     baseline: &Value,
@@ -1469,14 +1488,14 @@ async fn recovery(
     let status = journey.status().await?;
     let selected = &status["applications"]["alpha"];
     ensure!(
-        selected["current"] == candidate,
+        selected["current"] == serde_json::json!(candidate),
         "recovery did not apply the requested release"
     );
     let live = selected["observed"]["live"]
         .as_object()
         .context("recovered live releases")?;
     ensure!(
-        live.len() == 1 && live.contains_key(candidate),
+        live.len() == 1 && live.contains_key(&candidate.to_string()),
         "recovery did not serve the pending release"
     );
     let name = status["applications"]["alpha"]["observed"]["release_name"]

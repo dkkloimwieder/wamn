@@ -2,7 +2,7 @@
 use base64::Engine as _;
 use hmac::{Hmac, KeyInit as _, Mac as _};
 use serde_json::json;
-use sha2::{Digest as _, Sha256};
+use sha2::Sha256;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{Read as _, Write as _};
@@ -29,8 +29,8 @@ fn basic_header() -> String {
 fn verify_basic(headers: &HashMap<String, &str>) -> bool {
     headers.get("authorization").copied() == Some(basic_header().as_str())
 }
-fn digest(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
+fn digest(bytes: &[u8]) -> wamn_digest::Digest {
+    wamn_digest::bytes_sha256(bytes)
 }
 fn mac(key: &[u8], data: &[u8]) -> Vec<u8> {
     let mut mac = Hmac::<Sha256>::new_from_slice(key).unwrap();
@@ -74,7 +74,7 @@ fn verify_aws(method: &str, url: &url::Url, headers: &HashMap<String, &str>, bod
     {
         return false;
     }
-    if headers.get("x-amz-content-sha256").copied() != Some(digest(body).as_str()) {
+    if headers.get("x-amz-content-sha256").copied() != Some(digest(body).hex().as_str()) {
         return false;
     }
     let mut canonical = String::new();
@@ -102,12 +102,12 @@ fn verify_aws(method: &str, url: &url::Url, headers: &HashMap<String, &str>, bod
     let canonical = format!(
         "{method}\n{}\n{query}\n{canonical}\n{signed}\n{}",
         url.path(),
-        digest(body)
+        digest(body).hex()
     );
     let scope = scope[1..].join("/");
     let to_sign = format!(
         "AWS4-HMAC-SHA256\n{date}\n{scope}\n{}",
-        digest(canonical.as_bytes())
+        digest(canonical.as_bytes()).hex()
     );
     let key = mac(b"AWS4fixture-private", &date.as_bytes()[..8]);
     let key = mac(&key, b"us-east-1");

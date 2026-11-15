@@ -98,7 +98,7 @@ impl ControlHost {
 pub(crate) async fn publish(
     document: &EnvironmentDocument,
     package: &Path,
-) -> anyhow::Result<(String, wamn_catalog::ManifestDigest)> {
+) -> anyhow::Result<(String, wamn_digest::Digest)> {
     let database_url =
         std::env::var("DATABASE_URL").context("set DATABASE_URL for disposable build databases")?;
     wamn_dev::source_deploy::publish_from_env(document, package, &database_url).await

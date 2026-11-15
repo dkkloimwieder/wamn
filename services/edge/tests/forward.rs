@@ -242,7 +242,7 @@ fn free_port() -> u16 {
 /// Write the configuration file of the child.
 fn configuration(
     directory: &Path,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     device: &Path,
     url: &str,
     ca_file: &Path,

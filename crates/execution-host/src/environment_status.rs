@@ -55,10 +55,10 @@ impl StatusSource for KubernetesSource {
                 .into_iter()
                 .flat_map(|state| &state.releases)
                 .filter(|release| release.loaded)
-                .map(|release| release.manifest_digest.as_str())
+                .map(|release| release.manifest_digest)
                 .collect();
             for digest in digests {
-                *summary.live.entry(digest.to_owned()).or_default() += 1;
+                *summary.live.entry(digest).or_default() += 1;
             }
         }
         let residency = wamn_kubernetes::environment_state::project_residency(reports, project)?;
@@ -77,7 +77,7 @@ fn status_value(state: &EnvironmentState) -> Value {
         deployment.map_or(0, read)
     };
     json!({
-        "digest": deployment.and_then(|deployment| deployment.manifest_digest.clone()),
+        "digest": deployment.and_then(|deployment| deployment.manifest_digest),
         "rollout": {
             "replicas": count(|deployment| deployment.replicas),
             "updated_replicas": count(|deployment| deployment.updated_replicas),

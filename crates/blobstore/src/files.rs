@@ -18,7 +18,6 @@ use object_store::{
     Attribute, Attributes, ObjectStoreExt as _, PutMultipartOptions, PutOptions, WriteMultipart,
     signer::{Method, Signer},
 };
-use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use uuid::Uuid;
 
@@ -156,7 +155,7 @@ pub struct StagedFile {
     pub id: Uuid,
     pub blob_key: String,
     pub size: u64,
-    pub sha256: String,
+    pub sha256: wamn_digest::Digest,
 }
 
 /// A store built from the connection's active generation.
@@ -451,7 +450,7 @@ impl FileStore {
                 writer: Some(WriteMultipart::new(upload)),
                 deadline: self.deadline,
             };
-            let mut hash = Sha256::new();
+            let mut hash = wamn_digest::Hasher::new();
             let mut size = 0u64;
             let mut buffer = vec![0; 64 * 1024];
             loop {
@@ -515,7 +514,7 @@ impl FileStore {
                 id,
                 blob_key: live_key(&self.environment, id),
                 size,
-                sha256: hex::encode(hash.finalize()),
+                sha256: wamn_digest::Digest::from(hash.finalize()),
             })
         })
         .await
@@ -917,7 +916,7 @@ mod tests {
             let id = Uuid::new_v4();
             let metadata = files.stage(id, data.as_slice()).await.unwrap();
             assert_eq!(metadata.size, data.len() as u64);
-            assert_eq!(metadata.sha256, hex::encode(Sha256::digest(&data)));
+            assert_eq!(metadata.sha256, wamn_digest::bytes_sha256(&data));
             files.finish(id).await.unwrap();
             assert_eq!(
                 files

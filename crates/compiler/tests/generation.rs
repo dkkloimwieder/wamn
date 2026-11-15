@@ -111,7 +111,7 @@ fn a_component_with_no_operation_refuses_over_base_sql() {
     adapter["models"] = json!({});
     adapter["base_dependencies"] = json!({"integration": {
         "package": "wamn_integration", "version": "0.1.0",
-        "digest": format!("sha256:{}", "a".repeat(64)),
+        "digest": (format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(),
         "operations": ["setting.read", "setting.write"]
     }});
     assert_eq!(
@@ -129,7 +129,7 @@ fn a_component_with_no_operation_refuses_over_base_sql() {
     );
     adapter["base_dependencies"] = json!({"integration": {
         "package": "wamn_integration", "version": "0.1.0",
-        "digest": format!("sha256:{}", "a".repeat(64)), "operations": ["setting.read"]
+        "digest": (format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(), "operations": ["setting.read"]
     }});
     adapter["connections"] =
         json!({"reporting": {"interface":"wamn:connection/http@0.1.0", "mode": "read"}});
@@ -1125,7 +1125,7 @@ fn overlay_manifest() -> Value {
     manifest["base_dependencies"] = json!({"base_inventory": {
         "package": "platform_gadget",
         "version": "1.0.0",
-        "digest": format!("sha256:{}", "a".repeat(64)),
+        "digest": (format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(),
         "operations": ["gadget.get"]
     }});
     manifest["models"]["gadget"]

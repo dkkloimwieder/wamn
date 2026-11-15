@@ -16,7 +16,7 @@ pub async fn serving_application(
     platform: &Platform,
     triple: &Triple,
     application: &str,
-) -> anyhow::Result<(String, wamn_catalog::EnvironmentApplications)> {
+) -> anyhow::Result<(wamn_digest::Digest, wamn_catalog::EnvironmentApplications)> {
     let name = wamn_control_provision::environment_names::application_release_name(
         &triple.org,
         &triple.project,

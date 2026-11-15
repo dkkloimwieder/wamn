@@ -107,7 +107,7 @@ pub(super) fn signed_read_fixture(project_env_key: &str) -> anyhow::Result<Signe
     })?;
     let component = admitted.facts().clone();
     std::fs::write(
-        local_component_path(scratch.path(), &component.component_digest)?,
+        local_component_path(scratch.path(), &component.component_digest),
         bytes,
     )?;
     let route = wamn_publish::publish_release::package_route(
@@ -121,7 +121,7 @@ pub(super) fn signed_read_fixture(project_env_key: &str) -> anyhow::Result<Signe
     let manifest: ServingManifest = serde_json::from_value(json!({
         "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": "file_fixture", "package-version": "0.1.0"}]},
-        "components": [ServingComponent::project(&component, admitted.descriptor().connections)?],
+        "components": [ServingComponent::project(&component, admitted.descriptor().connections)],
         "routes": [route],
         "attachments": {ATTACHMENT: {
             "type": "http", "package-id": "file_fixture", "component": "signed_read", "operation": OPERATION,

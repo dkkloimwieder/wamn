@@ -224,6 +224,11 @@ pub async fn execute(command: &mut Command) -> anyhow::Result<String> {
     execute_checked(command, None, None).await
 }
 
+/// Report compiler activity while retaining the command's complete labeled output.
+pub async fn execute_labeled(command: &mut Command, label: &str) -> anyhow::Result<String> {
+    execute_checked(command, None, Some(label)).await
+}
+
 pub async fn execute_before(command: &mut Command, deadline: Instant) -> anyhow::Result<String> {
     execute_checked(command, Some(deadline), None).await
 }
@@ -277,6 +282,7 @@ async fn execute_inner(
         "WAMN_TEST_SILENCE_SECONDS must be finite and positive"
     );
     let bound = Duration::try_from_secs_f64(seconds)?;
+    let report_activity = deadline.is_none() && label.is_some();
     let label = label.map_or_else(|| crate::tasks::describe(command), str::to_owned);
     let original = command.as_std();
     // The selection rebuilds xtask while it runs, which replaces the file
@@ -307,6 +313,9 @@ async fn execute_inner(
     let mut captured = Vec::new();
     let mut diagnostics = Vec::new();
     let mut record = |error: bool, bytes: Vec<u8>| {
+        if report_activity {
+            println!("compiler output received: {label}");
+        }
         // Cargo artifacts are stdout only; diagnostics stay separate from its JSON.
         if combined || !error {
             captured.extend(bytes);

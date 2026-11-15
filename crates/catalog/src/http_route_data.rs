@@ -26,7 +26,7 @@ pub enum EtagType {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EtagInputs {
-    pub release: String,
+    pub release: wamn_digest::Digest,
     pub type_: EtagType,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

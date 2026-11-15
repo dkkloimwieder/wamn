@@ -107,7 +107,7 @@ pub(in crate::environment) async fn recorded_cluster(
 pub async fn reset_deployed(
     platform: &Platform,
     triple: &wamn_registry::Triple,
-    candidate: Option<(&str, &str)>,
+    candidate: Option<(&str, &wamn_digest::Digest)>,
     credentials: &Credentials,
 ) -> anyhow::Result<Value> {
     let document = EnvironmentDocument::read_serving(platform, triple).await?;
@@ -139,7 +139,7 @@ pub async fn reset_deployed(
                         id.clone(),
                         SchemaSource {
                             version: p.coordinate.package_version().to_owned(),
-                            artifact: p.artifact_digest.clone(),
+                            artifact: p.artifact_digest,
                         },
                     )
                 })
@@ -155,7 +155,7 @@ pub async fn reset_deployed(
                         metadata.coordinate.package_id().to_owned(),
                         SchemaSource {
                             version: metadata.coordinate.package_version().to_owned(),
-                            artifact: c.root.artifact_digest.clone(),
+                            artifact: c.root.artifact_digest,
                         },
                     );
                 }
@@ -181,7 +181,7 @@ pub async fn reset_deployed(
                             id.to_owned(),
                             SchemaSource {
                                 version: metadata.coordinate.package_version().to_owned(),
-                                artifact: c.root.artifact_digest.clone(),
+                                artifact: c.root.artifact_digest,
                             },
                         );
                         candidates.push(c);
@@ -197,7 +197,7 @@ pub async fn reset_deployed(
                 }
                 let digest = source
                     .artifact
-                    .as_deref()
+                    .as_ref()
                     .with_context(|| format!("retained package {id} has no published source"))?;
                 candidates.push(schema::open(&platform, id, &source.version, Some(digest)).await?);
             }

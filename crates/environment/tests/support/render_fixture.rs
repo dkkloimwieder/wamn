@@ -386,7 +386,7 @@ pub fn environment(
         org: document.org.clone(),
         project: document.project.clone(),
         env: document.env.clone(),
-        manifest_digest: manifest.digest().as_str().to_owned(),
+        manifest_digest: manifest.digest(),
         artifact_base: "registry.invalid/wamn/releases".into(),
         route_host: selection.hostname.clone(),
         applications,

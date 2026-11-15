@@ -11,7 +11,7 @@ pub(crate) async fn delete_manifest(
     insecure: bool,
     reference: &oci_client::Reference,
     auth: &oci_client::secrets::RegistryAuth,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     timeout: std::time::Duration,
 ) -> anyhow::Result<()> {
     use anyhow::{Context as _, ensure};
@@ -275,8 +275,8 @@ mod tests {
     #[test]
     fn transport_integrity_errors_are_not_classified_as_unavailable() {
         let digest_error = OciDistributionError::DigestError(DigestError::VerificationError {
-            expected: bytes_sha256(b"expected"),
-            actual: bytes_sha256(b"actual"),
+            expected: bytes_sha256(b"expected").to_string(),
+            actual: bytes_sha256(b"actual").to_string(),
         });
         assert!(transport_is_mismatched(&digest_error));
         assert!(!transport_is_mismatched(

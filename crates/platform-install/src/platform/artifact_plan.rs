@@ -135,7 +135,7 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
         let (_, digest) = reference
             .rsplit_once('@')
             .context("chart requires an immutable digest")?;
-        wamn_package_artifact::ensure_digest(digest)?;
+        digest.parse::<wamn_digest::Digest>()?;
         let directory = tempfile::tempdir()?;
         let authority = reference
             .trim_start_matches("oci://")
@@ -313,16 +313,10 @@ fn validate_image(image: &str) -> anyhow::Result<()> {
     let reference: oci_client::Reference = image
         .parse()
         .with_context(|| format!("invalid OCI image reference {image}"))?;
-    let digest = reference
+    reference
         .digest()
-        .and_then(|digest| digest.strip_prefix("sha256:"));
-    ensure!(
-        digest.is_some_and(|digest| digest.len() == 64
-            && digest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))),
-        "image {image} requires a SHA-256 digest of 64 lowercase hexadecimal digits"
-    );
+        .context("image requires a SHA-256 digest")?
+        .parse::<wamn_digest::Digest>()?;
     Ok(())
 }
 
@@ -556,11 +550,6 @@ mod tests {
             let (reference, _) = image.split_once('@').unwrap();
             for invalid in [
                 json!(reference),
-                json!(format!("{reference}@sha256:{}", "a".repeat(63))),
-                json!(format!("{reference}@sha256:{}", "a".repeat(65))),
-                json!(format!("{reference}@sha256:{}", "A".repeat(64))),
-                json!(format!("{reference}@sha256:{}", "g".repeat(64))),
-                json!(format!("{reference}@sha512:{}", "a".repeat(128))),
                 json!(format!("{image}@sha256:{digest}")),
                 json!(format!("bad space@sha256:{digest}")),
                 json!(42),

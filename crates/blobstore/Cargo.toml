@@ -9,15 +9,14 @@ license.workspace = true
 test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", "wamn-connections/test-util", "wamn-sql/test-util"]
 
 [dependencies]
+wamn-digest = { workspace = true, features = ["sqlx"] }
 moka = { workspace = true, features = ["sync"] }
 anyhow = { workspace = true }
 bytes = { workspace = true }
 futures-util = { workspace = true }
-hex = { workspace = true }
 object_store = { workspace = true, features = ["gcp"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
 tracing = { workspace = true }
 url = { workspace = true }

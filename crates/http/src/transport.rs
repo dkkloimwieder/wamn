@@ -65,10 +65,10 @@ pub(crate) struct ConnectionIdentity {
 pub(crate) struct ClientIdentity {
     pub(crate) connection: ConnectionIdentity,
     pub(crate) package: Box<str>,
-    pub(crate) component_digest: Box<str>,
+    pub(crate) component_digest: wamn_digest::Digest,
     pub(crate) requirement: Box<str>,
-    pub(crate) binding_hash: Box<str>,
-    pub(crate) definition_hash: Box<str>,
+    pub(crate) binding_hash: wamn_digest::Digest,
+    pub(crate) definition_hash: wamn_digest::Digest,
     pub(crate) generation: i64,
 }
 

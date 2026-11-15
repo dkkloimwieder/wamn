@@ -172,7 +172,7 @@ impl wamn_execution_host::ControlExecution for Execution {
                 #[serde(deny_unknown_fields)]
                 struct Request {
                     code: String,
-                    digest: String,
+                    digest: wamn_digest::Digest,
                     version: i32,
                     parameter_schema: Value,
                     operations: String,

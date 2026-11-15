@@ -40,6 +40,11 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
     let provisioning = provisioning_principal_is_seeded(&mut client).await;
     unbound_identity_writes_refuse(&mut client).await;
     // The fixture is platform setup, so it writes as wamn:provisioning.
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
+        .bind(PlatformComponent::Provisioning.principal_id())
+        .execute(&mut client)
+        .await
+        .expect("map the native fixture login");
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
@@ -539,7 +544,7 @@ async fn unbound_identity_writes_refuse(client: &mut sqlx::PgConnection) {
                (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
              VALUES ('{PRINCIPAL}', 'service', '{}', '{}', 'unbound', now() + interval '1 hour')",
             "0".repeat(16),
-            "0".repeat(64),
+            wamn_digest::Digest::from([0; 32]),
         ),
         "UPDATE identity.principals SET display_name = 'Unbound'".to_owned(),
     ] {

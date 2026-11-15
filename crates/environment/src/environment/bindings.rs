@@ -51,7 +51,7 @@ pub struct Binding {
     pub version: i32,
     pub generation: i64,
     pub mode: ConnectionMode,
-    pub digest: Option<String>,
+    pub digest: Option<wamn_digest::Digest>,
     pub exports: Vec<String>,
     pub write_interfaces: Vec<String>,
     pub resolved: Option<crate::org_connection::ResolvedConnection>,
@@ -97,7 +97,7 @@ pub async fn analyse(
         let runtime: String = row.get(2);
         let schema: Option<serde_json::Value> = row.get(4);
         let schema = schema.ok_or_else(|| refuse("integration_version_unpublished", name))?;
-        let digest: Option<String> = row.get(5);
+        let digest: Option<wamn_digest::Digest> = row.get(5);
         if (runtime == "host" && version.version != 1)
             || (runtime == "wasm" && digest.is_none())
             || runtime == "native"
@@ -205,7 +205,7 @@ pub async fn analyse(
 pub async fn write(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     document: &EnvironmentDocument,
     bindings: &[Binding],
     drops: &mut wamn_broker::connection_changes::ConnectionDrops,

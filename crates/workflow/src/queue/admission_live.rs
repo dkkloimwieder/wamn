@@ -182,10 +182,10 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
     .execute(&mut admin)
     .await
     .map(|result| result.rows_affected())?;
-    sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo', 1, $2::text::jsonb, $3, 'event', 'automation', 'movement', ARRAY['insert'], 0, 'role', 'automation', true, $4::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&serde_json::to_string(&document)?).bind(&graph_hash.as_str()).bind(&workflow_user).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo', 1, $2::text::jsonb, $3, 'event', 'automation', 'movement', ARRAY['insert'], 0, 'role', 'automation', true, $4::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&serde_json::to_string(&document)?).bind(&graph_hash).bind(&workflow_user).execute(&mut admin).await.map(|result| result.rows_affected())?;
     let mut manual = document;
     manual.wiring_id = "echo-manual".into();
-    sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo-manual', 1, $2::text::jsonb, $3, 'manual', 'invoker', true, $4::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&serde_json::to_string(&manual)?).bind(&manual.wiring_hash().as_str()).bind(&SERVICE).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo-manual', 1, $2::text::jsonb, $3, 'manual', 'invoker', true, $4::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&serde_json::to_string(&manual)?).bind(&&manual.wiring_hash()).bind(&SERVICE).execute(&mut admin).await.map(|result| result.rows_affected())?;
     let canonical = manifest.canonical_bytes();
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
@@ -202,7 +202,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
                 .into(),
             ),
     )?);
-    sqlx::query("INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&canonical).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest).bind(&canonical).execute(&mut admin).await.map(|result| result.rows_affected())?;
     let mut credentials = ClassCredentials::default();
     let db_name: String = sqlx::query("SELECT current_database()")
         .fetch_one(&mut admin)
@@ -278,9 +278,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
                 runner: Some("automation-live".to_owned()),
                 user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
                 operation: Some(PlatformComponent::Executor.principal_name()),
-                release: Some(ReleaseIdentity::for_test(
-                    release.release().manifest_digest.clone(),
-                )),
+                release: Some(ReleaseIdentity::for_test(release.release().manifest_digest)),
                 ..SessionIdentity::default()
             },
         )
@@ -296,7 +294,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
                 .expect("one admitted component")
                 .descriptor
                 .component_digest,
-        )?,
+        ),
         &bytes,
     )?;
     let logging = Arc::new(TracingLogger::default());

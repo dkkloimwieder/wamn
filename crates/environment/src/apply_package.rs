@@ -253,7 +253,7 @@ async fn apply(
         package
             .directory
             .artifact_digest
-            .as_deref()
+            .as_ref()
             .ok_or_else(|| ApplyPackageError::artifact_required(&coordinate))?,
     );
     let applied = load_applied_package(&mut tx, project_env_key, &package_id).await?;

@@ -43,7 +43,7 @@ pub async fn prepare(
     platform: &Platform,
     document: &EnvironmentDocument,
     application: &str,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[wamn_compiler::manifest::PackageManifest],
     actor: &str,
@@ -86,7 +86,7 @@ pub(super) async fn prepare_at(
     platform: &Platform,
     document: &EnvironmentDocument,
     application: &str,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[wamn_compiler::manifest::PackageManifest],
     project_url: &str,
@@ -135,10 +135,6 @@ pub(super) async fn prepare_at(
     .execute(&mut *tx)
     .await
     .map(drop)?;
-    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-        .bind(&project_env_key)
-        .fetch_one(&mut *tx)
-        .await?;
     super::document::write_revocation_configuration(&mut tx, document).await?;
     wamn_publish::connection_requirement::prepare_release(
         &mut tx,

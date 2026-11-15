@@ -16,7 +16,7 @@ use anyhow::Context as _;
 /// # Errors
 ///
 /// When the tree cannot be read.
-pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
+pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<wamn_digest::Digest> {
     let mut context = wamn_digest::Hasher::new();
     let mut frame = |bytes: &[u8]| {
         context.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());

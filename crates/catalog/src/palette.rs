@@ -42,8 +42,8 @@ pub fn read_palette(bytes: &[u8]) -> anyhow::Result<Palette> {
                 .artifact
                 .rsplit_once('@')
                 .ok_or_else(|| anyhow::anyhow!("palette artifact is not pinned"))?;
-            crate::ArtifactHash::parse(digest.to_owned())?;
-            crate::ArtifactHash::parse(pin.descriptor.component_digest.clone())?;
+            digest.parse::<wamn_digest::Digest>()?;
+
             anyhow::ensure!(
                 pin.descriptor
                     .operations
@@ -105,7 +105,9 @@ mod tests {
                     },
                 )]),
             },
-            format!("sha256:{}", "a".repeat(64)),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             Vec::<String>::new(),
             vec![],
         )

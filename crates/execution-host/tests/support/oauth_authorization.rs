@@ -3,7 +3,6 @@
 use super::*;
 use base64::Engine as _;
 use http_body_util::{BodyExt as _, Full};
-use sha2::{Digest as _, Sha256};
 use wamn_package_artifact::http_client::HttpClient;
 use wash_runtime::host::http::{
     HostHandler as _, Ingress, IngressRoute, NormalizedPathPrefix, RouteScope, ServiceHttpJob,
@@ -28,7 +27,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600))?;
     }
     let store = Arc::new(wamn_test_infrastructure::credentials::MemoryStore::default());
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let listener = TcpListener::bind((super::connection_test::private_ip()?, 0)).await?;
     let provider_base = format!("http://{}/", listener.local_addr()?);
     let token_url = format!("{provider_base}token");
     let challenge = Arc::new(std::sync::Mutex::new(None::<String>));
@@ -52,7 +51,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
                     assert_eq!(form["code"],"accepted-code");
                     assert_eq!(form["client_id"],"admin-client");
                     assert_eq!(form["client_secret"],"private-secret");
-                    let actual = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(form["code_verifier"].as_bytes()));
+                    let actual = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(wamn_digest::sha256(form["code_verifier"].as_bytes()));
                     assert_eq!(expected.lock().unwrap().as_deref(),Some(actual.as_str()));
                     if let Some((arrived, resumed)) = pause.lock().await.take() {
                         arrived.send(()).unwrap();

@@ -60,7 +60,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     )
     .await?;
     for package in ["consumer", "integration"] {
-        sqlx::query("INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( $1,$2,'1.0.0',$3)").bind(&PROJECT_ENV_KEY).bind(&package).bind(&format!("sha256:{}", "a".repeat(64))).execute(&mut *setup).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( $1,$2,'1.0.0',$3)").bind(&PROJECT_ENV_KEY).bind(&package).bind(format!("sha256:{}", "a".repeat(64)).parse::<wamn_digest::Digest>()?).execute(&mut *setup).await.map(|result| result.rows_affected())?;
     }
     setup.commit().await?;
     let mut manifest: ServingManifest = serde_json::from_value(json!({
@@ -74,7 +74,9 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     let mut descriptor = wamn_catalog::ComponentDescriptor::named(
         "consumer",
         "1.0.0",
-        format!("sha256:{}", "a".repeat(64)),
+        (format!("sha256:{}", "a".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap(),
     );
     descriptor.operations.insert(OPERATION.into(), serde_json::from_value(json!({
         "registered-operation": OPERATION, "input-ports": [], "output-ports": [], "parameters": []
@@ -104,8 +106,8 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     package.package.id = "integration".into();
     package.package.version = "1.0.0".into();
     package.base_dependencies = serde_json::from_value(json!({
-        "state": {"package":"wamn_integration", "version":"1.0.0", "digest":format!("sha256:{}", "b".repeat(64)), "operations":[]},
-        "consumer": {"package":"consumer", "version":"1.0.0", "digest":format!("sha256:{}", "a".repeat(64)), "operations":["item.import"]}
+        "state": {"package":"wamn_integration", "version":"1.0.0", "digest":(format!("sha256:{}", "b".repeat(64))).parse::<wamn_digest::Digest>().unwrap(), "operations":[]},
+        "consumer": {"package":"consumer", "version":"1.0.0", "digest":(format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(), "operations":["item.import"]}
     }))?;
     let mut application = manifest.components.iter().next().unwrap().clone();
     application.package_id = "integration".into();
@@ -146,7 +148,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         write_release(
             project.as_str(),
             PROJECT_ENV_KEY,
-            digest.as_str(),
+            &digest,
             &manifest,
             &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()

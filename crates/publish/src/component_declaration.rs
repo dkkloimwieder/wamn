@@ -115,7 +115,7 @@ impl Error for ComponentDeclarationError {
 /// admission. A package that declares no base dependency yields an empty map.
 pub fn authored_base_digests(
     package_root: &Path,
-) -> Result<BTreeMap<Box<str>, Box<str>>, ComponentDeclarationError> {
+) -> Result<BTreeMap<Box<str>, wamn_digest::Digest>, ComponentDeclarationError> {
     let manifest = wamn_compiler::package_manifest_path(package_root);
     let bytes =
         fs::read(&manifest).map_err(|source| ComponentDeclarationError::read(&manifest, source))?;
@@ -140,7 +140,14 @@ pub fn authored_base_digests(
                 format!("base dependency {alias} must carry a package, version and digest"),
             ));
         };
-        digests.insert(coordinate.into_boxed_str(), Box::<str>::from(digest));
+        let digest = digest.parse().map_err(|source| {
+            ComponentDeclarationError::invalid(
+                ComponentDeclarationErrorType::ManifestInvalid,
+                &manifest,
+                format!("base dependency {alias}: {source}"),
+            )
+        })?;
+        digests.insert(coordinate.into_boxed_str(), digest);
     }
     Ok(digests)
 }

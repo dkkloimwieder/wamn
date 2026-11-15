@@ -167,7 +167,7 @@ pub struct Fixture {
     pub scratch: wamn_test_infrastructure::scratch::ScratchRoot,
     pub read: wamn_catalog::AdmittedComponent,
     pub release: Arc<LoadedRelease>,
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
     _database: url::Url,
 }
 
@@ -233,7 +233,7 @@ pub async fn fixture(pool: &sqlx::PgPool) -> Fixture {
     .component;
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     std::fs::write(
-        local_component_path(scratch.path(), &read.component_digest).unwrap(),
+        local_component_path(scratch.path(), &read.component_digest),
         &read_bytes,
     )
     .unwrap();
@@ -254,7 +254,7 @@ pub async fn fixture(pool: &sqlx::PgPool) -> Fixture {
         )
         .expect("the fixture release loads"),
     );
-    let digest = release.release().manifest_digest.as_str().to_owned();
+    let digest = release.release().manifest_digest;
     sqlx::query(
         "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
@@ -587,7 +587,7 @@ pub use wamn_workflow::admission::ScheduleRunAdmitted;
 pub async fn event(fixture: &mut Fixture, id: &str, sequence: i64, role: Option<&str>) {
     let graph = workflow(id);
     let execution = if role.is_some() { "role" } else { "invoker" };
-    sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'event', $7, 'order', ARRAY['insert', 'update', 'delete'], $8, $9, $10, true, $11::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&ENVIRONMENT).bind(&APP).bind(&id).bind(&serde_json::to_string(&graph).unwrap()).bind(&graph.wiring_hash().as_str()).bind(&APPLICATION).bind(&sequence).bind(&execution).bind(&role).bind(&ADMIN).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'event', $7, 'order', ARRAY['insert', 'update', 'delete'], $8, $9, $10, true, $11::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&ENVIRONMENT).bind(&APP).bind(&id).bind(&serde_json::to_string(&graph).unwrap()).bind(&&graph.wiring_hash()).bind(&APPLICATION).bind(&sequence).bind(&execution).bind(&role).bind(&ADMIN).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
 }
 
 pub fn envelope(op: &str, txid: i64, lsn: u64) -> String {
@@ -721,6 +721,6 @@ pub async fn release_variant(
             .with_applications([(application.to_owned(), declared().remove(APP).unwrap())].into()),
     )
     .unwrap();
-    sqlx::query("INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&manifest.canonical_bytes()).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest).bind(&manifest.canonical_bytes()).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
     release
 }

@@ -26,7 +26,7 @@ pub struct ComponentAdmissionRequest {
     pub admitted_platform_packages: BTreeSet<String>,
     /// The component digest of each base the package manifest pins in
     /// `base_dependencies`. A composed component embeds only these bases.
-    pub base_digests: BTreeSet<String>,
+    pub base_digests: BTreeSet<wamn_digest::Digest>,
 }
 
 /// Stable classification for a refused component admission.
@@ -44,12 +44,12 @@ pub enum ComponentAdmissionErrorType {
 /// Exact bytes admitted for an isolated integration store.
 #[derive(Debug)]
 pub struct AdmittedIntegration {
-    digest: String,
+    digest: wamn_digest::Digest,
 }
 
 impl AdmittedIntegration {
     /// The digest of the admitted bytes.
-    pub fn digest(&self) -> &str {
+    pub fn digest(&self) -> &wamn_digest::Digest {
         &self.digest
     }
 }
@@ -348,7 +348,7 @@ pub fn validate_component_admission(
                         && !declared_exports.contains(export)
                 })
         })
-        .map(|(digest, _)| digest.clone())
+        .map(|(digest, _)| *digest)
         .collect::<BTreeSet<_>>();
     if !unpinned_bases.is_empty() {
         return Err(ComponentAdmissionError::new(
@@ -521,7 +521,7 @@ struct EmbeddedComponents {
     /// The names that any nested component exports.
     exports: BTreeSet<String>,
     /// The digest and export names of each direct member.
-    members: Vec<(String, Vec<String>)>,
+    members: Vec<(wamn_digest::Digest, Vec<String>)>,
 }
 
 fn embedded_components(component_bytes: &[u8]) -> anyhow::Result<EmbeddedComponents> {
@@ -1206,7 +1206,9 @@ mod tests {
         );
 
         let mut other = request();
-        other.base_digests = BTreeSet::from([format!("sha256:{}", "c".repeat(64))]);
+        other.base_digests = BTreeSet::from([(format!("sha256:{}", "c".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap()]);
         let other =
             validate_component_admission(&engine, &composed(&component_bytes(""), &base), other)
                 .expect_err("a base embedded under another digest than the pin refuses");

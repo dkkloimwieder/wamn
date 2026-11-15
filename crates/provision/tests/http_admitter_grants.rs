@@ -96,7 +96,9 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
     // `normalize_workload_generation_membership_sql`, so re-applying it here
     // would MASK the day that stops being true — which is precisely the
     // regression the counts below exist to catch.
-    let digest = format!("sha256:{}", "a".repeat(64));
+    let digest = (format!("sha256:{}", "a".repeat(64)))
+        .parse::<wamn_digest::Digest>()
+        .unwrap();
     run_admin(
         &admin,
         "seed one readable fact in each catalog and fresh permission relation",

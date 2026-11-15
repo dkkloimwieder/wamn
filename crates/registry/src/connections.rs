@@ -34,7 +34,7 @@ pub struct ConnectionGeneration {
 #[derive(Clone, Debug)]
 pub struct IntegrationVersion {
     pub version: i32,
-    pub digest: Option<String>,
+    pub digest: Option<wamn_digest::Digest>,
 }
 
 /// A reference to credential material in the configured secret store.
@@ -145,7 +145,7 @@ pub async fn integration_version(
     integration_type: &str,
     version: Option<i32>,
 ) -> Result<Option<IntegrationVersion>, sqlx::Error> {
-    Ok(sqlx::query_as::<_, (i32, Option<String>)>(
+    Ok(sqlx::query_as::<_, (i32, Option<wamn_digest::Digest>)>(
         "SELECT version, digest FROM registry.read_integration_version($1,$2)",
     )
     .bind(integration_type)

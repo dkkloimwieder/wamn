@@ -1,6 +1,4 @@
-use super::{
-    BuildRecord, Path, WEB_MANIFEST_FILE, WebManifest, bail, bytes_sha256, ensure, ensure_digest,
-};
+use super::{BuildRecord, Path, WEB_MANIFEST_FILE, WebManifest, bail, bytes_sha256, ensure};
 use anyhow::Context as _;
 
 pub(super) fn web_manifest(
@@ -34,7 +32,7 @@ pub(super) fn web_manifest(
         client_package: client.name,
         version,
         package: format!("{}@{}", record.package.id, record.package.version),
-        contract_digest: record.outputs.manifest.clone(),
+        contract_digest: record.outputs.manifest,
     })
 }
 
@@ -57,7 +55,7 @@ pub(super) fn read_web_manifest(tar: &[u8]) -> anyhow::Result<WebManifest> {
         entry.read_to_end(&mut bytes)?;
         let web: WebManifest = serde_json::from_slice(&bytes)?;
         ensure!(bytes == web.to_bytes(), "web.json is not canonical JSON");
-        ensure_digest(&web.contract_digest)?;
+
         ensure!(
             !web.client_package.is_empty(),
             "web.json has no client_package"

@@ -121,12 +121,12 @@ impl Fixture {
         let release = loaded_release(&document, "reader")?;
         document.applications.get_mut("reader").unwrap().current =
             wamn_environment::environment::document::DeclaredRelease::Digest(
-                release.release().manifest_digest.to_string(),
+                release.release().manifest_digest,
             );
         let writer = loaded_release(&document, "writer")?;
         document.applications.get_mut("writer").unwrap().current =
             wamn_environment::environment::document::DeclaredRelease::Digest(
-                writer.release().manifest_digest.to_string(),
+                writer.release().manifest_digest,
             );
         let package = wamn_compiler::manifest::PackageManifest::from_slice(&serde_json::to_vec(
             &json!({
@@ -251,7 +251,7 @@ impl Fixture {
             .get_mut("reader")
             .unwrap()
             .current = wamn_environment::environment::document::DeclaredRelease::Digest(
-            self.release.release().manifest_digest.to_string(),
+            self.release.release().manifest_digest,
         );
         apply(
             &mut self.admin,
@@ -262,10 +262,7 @@ impl Fixture {
         )
         .await?;
         let mut drops = ConnectionDrops::default();
-        drops.release(
-            "acme--dev--one",
-            self.release.release().manifest_digest.as_str(),
-        );
+        drops.release("acme--dev--one", &self.release.release().manifest_digest);
         changes.publish(drops).await;
         Ok(())
     }
@@ -314,9 +311,18 @@ impl Fixture {
         Ok(Host {
             leases,
             memory,
-            imports: integrations
-                .imports(&format!("sha256:{}", "a".repeat(64)), "modbus_reader")?,
-            writer: writer.imports(&format!("sha256:{}", "b".repeat(64)), "observer_fixture")?,
+            imports: integrations.imports(
+                &(format!("sha256:{}", "a".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
+                "modbus_reader",
+            )?,
+            writer: writer.imports(
+                &(format!("sha256:{}", "b".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
+                "observer_fixture",
+            )?,
         })
     }
 }

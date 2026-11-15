@@ -368,15 +368,15 @@ pub(super) async fn open(
 pub async fn write_release(
     project_url: &str,
     project_env_key: &str,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     manifest: &wamn_catalog::ServingManifest,
     actor: &str,
 ) -> anyhow::Result<()> {
     let bytes = manifest.canonical_bytes();
     ensure!(
-        manifest.digest().as_str() == digest,
+        manifest.digest() == *digest,
         "release manifest {digest} hashes to {}",
-        manifest.digest().as_str()
+        manifest.digest()
     );
     let mut client = super::analyse::connect_project(project_url).await?;
     let mut transaction = client
@@ -390,11 +390,6 @@ pub async fn write_release(
     .execute(&mut *transaction)
     .await
     .context("bind the release publisher and provisioning operation")?;
-    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-        .bind(project_env_key)
-        .fetch_one(&mut *transaction)
-        .await
-        .context("bind the project identity")?;
     sqlx::query(wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
         .bind(project_env_key)
         .fetch_one(&mut *transaction)
@@ -448,7 +443,9 @@ mod tests {
             },
             components: BTreeSet::from([component(
                 "blob-put",
-                &format!("sha256:{}", "a".repeat(64)),
+                &(format!("sha256:{}", "a".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 &["store"],
             )]),
             routes: BTreeSet::new(),
@@ -460,7 +457,7 @@ mod tests {
         super::write_release(
             database.as_str(),
             "history",
-            digest.as_str(),
+            &digest,
             &manifest,
             &publisher.to_string(),
         )
@@ -475,7 +472,7 @@ mod tests {
                  FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
             )
             .bind(&"history")
-            .bind(&digest.as_str())
+            .bind(&&digest)
             .fetch_one(&mut client)
             .await
             .unwrap();
@@ -492,7 +489,7 @@ mod tests {
         super::write_release(
             database.as_str(),
             "history",
-            digest.as_str(),
+            &digest,
             &manifest,
             &uuid::Uuid::new_v4().to_string(),
         )
@@ -570,8 +567,8 @@ mod tests {
         assert!(apply_order(&[("a", vec!["b"]), ("b", vec!["a"])]).is_err());
     }
 
-    fn component(name: &str, digest: &str, aliases: &[&str]) -> ServingComponent {
-        let mut descriptor = ComponentDescriptor::named(name, "0.1", digest);
+    fn component(name: &str, digest: &wamn_digest::Digest, aliases: &[&str]) -> ServingComponent {
+        let mut descriptor = ComponentDescriptor::named(name, "0.1", *digest);
         descriptor.connections = aliases
             .iter()
             .map(|alias| ComponentConnection {

@@ -5,8 +5,8 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use wamn_catalog::{
-    AdmittedComponentOperation, AttachmentTarget, AttachmentType, DefinitionHash,
-    PackageCoordinate, ServingAttachment, ServingComponent, ServingManifest, ServingRelease,
+    AdmittedComponentOperation, AttachmentTarget, AttachmentType, PackageCoordinate,
+    ServingAttachment, ServingComponent, ServingManifest, ServingRelease,
 };
 use wamn_engine::{flow_http_routing::FlowHttpRouting, release_manifest::LoadedRelease};
 
@@ -16,7 +16,11 @@ pub fn routing(modes: &Value) -> FlowHttpRouting {
 }
 
 pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
-    let digest = |hex: char| format!("sha256:{}", hex.to_string().repeat(64));
+    let digest = |hex: char| {
+        format!("sha256:{}", hex.to_string().repeat(64))
+            .parse::<wamn_digest::Digest>()
+            .unwrap()
+    };
     let manifest = ServingManifest::new(
         ServingRelease {
             packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
@@ -59,7 +63,7 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
                     component: "http-request".into(),
                     operation: "request".into(),
                 },
-                definition_hash: DefinitionHash::parse(digest('c')).unwrap(),
+                definition_hash: digest('c'),
                 definition: json!({
                     "route": {"host": "api.example.test", "path": "/orders", "method": "POST"}
                 }),

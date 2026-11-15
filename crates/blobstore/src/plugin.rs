@@ -96,7 +96,7 @@ impl WamnBlobstore {
                 "not a file connection"
             );
             let version = facts
-                .release(release.release().manifest_digest.as_str())
+                .release(&release.release().manifest_digest)
                 .await?
                 .version(&id);
             facts

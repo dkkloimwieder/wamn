@@ -264,7 +264,7 @@ impl FileConnections for RegistryFileConnections {
             Some(name) => {
                 let release = self
                     .facts
-                    .release(self.release.release().manifest_digest.as_str())
+                    .release(&self.release.release().manifest_digest)
                     .await
                     .map_err(|error| failed("binding", error))?;
                 let binding = release
@@ -537,7 +537,7 @@ impl FileRoutes {
         let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
         self.postgres.administration_transaction(&self.project, &self.release.target().project_env_key, &principal,
             &format!("wamn-control:file/put@{}", wamn_catalog::host_route_version()), async |client| {
-                sqlx::query("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')").bind(id.to_string()).bind(application).bind(&connection.id).bind(name).bind(media_type).bind(size).bind(&staged.sha256).bind(&staged.blob_key).execute(&mut *client).await.map(|result| result.rows_affected())?;
+                sqlx::query("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')").bind(id.to_string()).bind(application).bind(&connection.id).bind(name).bind(media_type).bind(size).bind(staged.sha256).bind(&staged.blob_key).execute(&mut *client).await.map(|result| result.rows_affected())?;
                 Ok::<_, FileError>(())
             }).await.map_err(|error| failed("catalog", error))??;
         // A committed row remains readable through staging if promotion fails.
@@ -738,7 +738,7 @@ impl FileRoutes {
             .iter()
             .find(|component| {
                 component.package_id == invocation.package_id
-                    && component.descriptor.component_digest.as_str() == invocation.component_digest
+                    && component.descriptor.component_digest == invocation.component_digest
             })
             .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
         let operation = served
@@ -1198,8 +1198,13 @@ mod tests {
     use wamn_sql::WamnPostgresConfig;
 
     fn release() -> Arc<LoadedRelease> {
-        let mut descriptor =
-            ComponentDescriptor::named("files", "0.1", format!("sha256:{}", "a".repeat(64)));
+        let mut descriptor = ComponentDescriptor::named(
+            "files",
+            "0.1",
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+        );
         descriptor.connections = vec![ComponentConnection {
             store_alias: "documents".into(),
             requirement_type: ComponentConnectionType::Blobstore,
@@ -1485,7 +1490,9 @@ mod tests {
                     wamn_kubernetes::environment_state::ProjectResidency {
                         releases: vec![wamn_kubernetes::environment_state::ReleaseResidency {
                             application: "orders".into(),
-                            manifest_digest: format!("sha256:{}", "a".repeat(64)),
+                            manifest_digest: (format!("sha256:{}", "a".repeat(64)))
+                                .parse::<wamn_digest::Digest>()
+                                .unwrap(),
                             loaded: true,
                             runs: vec!["unfinished".into()],
                         }],
@@ -1746,7 +1753,14 @@ mod tests {
                     ..
                 }
             ));
-            assert!(require_csrf(true, Some("signed-value"), &headers).is_err());
+            assert!(
+                require_csrf(
+                    true,
+                    Some(&wamn_digest::bytes_sha256(b"signed-value")),
+                    &headers
+                )
+                .is_err()
+            );
         }
     }
 
@@ -1773,7 +1787,9 @@ mod tests {
             ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
         };
         let files = files();
-        let digest = format!("sha256:{}", "a".repeat(64));
+        let digest = (format!("sha256:{}", "a".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap();
         files
             .postgres
             .bind_invocation(

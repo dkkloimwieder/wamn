@@ -224,9 +224,9 @@ impl wamn_connections::production_lease::ExecutorDatabase for WamnPostgres {
     fn runner(&self, component: &str) -> Option<String> {
         self.runner_for(component)
     }
-    fn manifest_digest(&self, component: &str) -> Option<String> {
+    fn manifest_digest(&self, component: &str) -> Option<wamn_digest::Digest> {
         self.release_identity_for(component)
-            .map(|release| release.manifest_digest().as_str().to_owned())
+            .map(|release| *release.manifest_digest())
     }
 }
 

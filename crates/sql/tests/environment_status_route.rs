@@ -52,8 +52,8 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
         "release": {"packages": [{"package-id": "status_test", "package-version": "1.0.0"}]},
         "components": [{"package-id": "status_test",
             "descriptor": {"component": "purchase", "interface-version": "0.1.0",
-                "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {READ: {"registered-operation": READ, "input-ports": [], "output-ports": [], "parameters": []}},
-                "imports": [], "imports-fingerprint": "", "effects": [], "connections": []}}],
+                "component-digest": (format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(), "operations": {READ: {"registered-operation": READ, "input-ports": [], "output-ports": [], "parameters": []}},
+                "imports": [], "imports-fingerprint": wamn_digest::canonical_json_sha256(&serde_json::json!([])), "effects": [], "connections": []}}],
         "routes": [{"package-id": "status_test", "component": "purchase", "operation": READ,
             "type": "get"}],
         "attachments": {ROUTE: attachment, "purchase-http": {"type":"http","package-id":"status_test",
@@ -123,6 +123,10 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         .execute(&mut admin)
         .await
         .map(drop)?;
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
+        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut admin)
+        .await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::App,

@@ -269,14 +269,10 @@ impl ReleaseManifestSource {
     /// Pull the exact canonical bytes this manifest digest addresses.
     pub async fn pull_verified(
         &self,
-        manifest_digest: &str,
+        manifest_digest: &wamn_digest::Digest,
     ) -> Result<Vec<u8>, ReleaseManifestFetchError> {
         let deadline = tokio::time::Instant::now() + self.source.timeout();
-        let artifact = self
-            .source
-            .base()
-            .reference(manifest_digest)
-            .map_err(|_| ReleaseManifestFetchError::invalid_reference())?;
+        let artifact = self.source.base().reference(manifest_digest);
         let reference = Reference::with_tag(
             artifact.registry().to_owned(),
             artifact.repository().to_owned(),
@@ -381,7 +377,7 @@ fn manifest_byte_ceiling() -> i64 {
 fn verify_transferred_body(
     canonical_bytes: &[u8],
     descriptor_size: i64,
-    expected_digest: &str,
+    expected_digest: &wamn_digest::Digest,
     reference: &str,
 ) -> Result<(), ReleaseManifestFetchError> {
     if i64::try_from(canonical_bytes.len()).unwrap_or(i64::MAX) != descriptor_size {
@@ -394,7 +390,7 @@ fn verify_transferred_body(
     // manifest's identity is that same function over its canonical encoding, so
     // this tests the transferred body against the pod template's name rather
     // than against the registry's own bookkeeping.
-    if bytes_sha256(canonical_bytes) != expected_digest {
+    if bytes_sha256(canonical_bytes) != *expected_digest {
         return Err(ReleaseManifestFetchError::mismatched(
             reference,
             "release-manifest-artifact-body-digest-mismatch",

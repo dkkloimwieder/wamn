@@ -148,7 +148,7 @@ pub struct ReleaseConfig {
     /// The release bundle directory.
     pub dir: PathBuf,
     /// The pinned digest of `edge-release.json`.
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
 }
 
 /// The sessions that local routes accept.
@@ -332,13 +332,14 @@ mod tests {
         assert_eq!(config.store.db.to_str(), Some("/tmp/other.db"));
         assert_eq!(config.device.expect("a device").serial.max_frame, 64);
 
+        let digest = wamn_digest::bytes_sha256(b"bundle").to_string();
         let from_variables = parse(
             "[target]\nenvironment = \"edge\"",
             &[
                 ("WAMN_ORG", "org-a"),
                 ("WAMN_PROJECT", "plant"),
                 ("WAMN_EDGE_BUNDLE_DIR", "/bundle"),
-                ("WAMN_EDGE_BUNDLE_DIGEST", "sha256:00"),
+                ("WAMN_EDGE_BUNDLE_DIGEST", digest.as_str()),
                 ("WAMN_EDGE_SESSION_KEYS", "/keys.json"),
                 ("WAMN_EDGE_SESSION_ISSUER", "https://issuer"),
                 ("WAMN_EDGE_SESSION_ORG", "org-a"),

@@ -2,8 +2,7 @@ use super::{
     AdmittedComponent, AttachmentTarget, BTreeMap, BTreeSet, ComposedApplication,
     DependencyDigestRule, PackageCoordinate, PublishManifestError, PublishManifestErrorType,
     PublishReleaseManifest, PublishedRelease, ReleaseComponents, RouteContracts, ServingComponent,
-    ServingRoute, ensure, project_serving_component, resolve_component_dependency_closure,
-    resolve_route_component,
+    ServingRoute, ensure, resolve_component_dependency_closure, resolve_route_component,
 };
 use anyhow::Context as _;
 
@@ -19,8 +18,8 @@ pub fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
 pub(super) fn application_digests(
     application: &AdmittedComponent,
     application_bytes: &[u8],
-) -> anyhow::Result<BTreeSet<String>> {
-    let mut digests = BTreeSet::from([application.component_digest.as_str().to_owned()]);
+) -> anyhow::Result<BTreeSet<wamn_digest::Digest>> {
+    let mut digests = BTreeSet::from([application.component_digest]);
     for payload in wasmparser::Parser::new(0).parse_all(application_bytes) {
         if let wasmparser::Payload::ComponentSection {
             unchecked_range, ..
@@ -47,7 +46,7 @@ pub(super) fn covers_routes(
         published.manifest.components.iter().any(|component| {
             component.package_id == route.package_id
                 && component.descriptor.component == route.component
-                && digests.contains(component.descriptor.component_digest.as_str())
+                && digests.contains(&component.descriptor.component_digest)
         })
     }))
 }
@@ -73,7 +72,7 @@ pub fn record_composed_entry(
         .map(|component| wamn_catalog::ServingEntryMember {
             package_id: component.package_id.clone(),
             component: component.descriptor.component.clone(),
-            digest: component.descriptor.component_digest.clone(),
+            digest: component.descriptor.component_digest,
         })
         .collect();
     ensure!(
@@ -83,7 +82,7 @@ pub fn record_composed_entry(
     let mut manifest = published.manifest.clone();
     manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
         reference: reference.to_owned(),
-        route_digest: entry.digest.clone(),
+        route_digest: entry.digest,
         application: entry.application.clone(),
         members,
     });
@@ -287,7 +286,12 @@ pub(super) fn project_components(
         .facts
         .values()
         .flatten()
-        .map(|fact| project_serving_component(fact, components.connections(fact)?))
+        .map(|fact| {
+            Ok(ServingComponent::project(
+                fact,
+                components.connections(fact)?,
+            ))
+        })
         .collect()
 }
 
@@ -348,10 +352,10 @@ pub(super) fn project_routes(
             package_manifests,
             rule,
         )?;
-        components.insert(project_serving_component(
+        components.insert(ServingComponent::project(
             fact,
             component_facts.connections(fact)?,
-        )?);
+        ));
         routes.insert(ServingRoute {
             package_id: attachment.package_id.clone(),
             component: component.clone(),

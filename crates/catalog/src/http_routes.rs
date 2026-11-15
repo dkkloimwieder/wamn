@@ -8,7 +8,10 @@ const ADAPTER_GOVERNED_BYTES: u64 = u32::MAX as u64;
 /// The only route configuration key read by the HTTP component.
 pub const HTTP_ROUTES_CONFIG: &str = "wamn.http.routes";
 /// Prepare the route table from the release selected for this workload.
-pub fn route_data(manifest: &ServingManifest, release_digest: &str) -> Vec<RouteDefinition> {
+pub fn route_data(
+    manifest: &ServingManifest,
+    release_digest: &wamn_digest::Digest,
+) -> Vec<RouteDefinition> {
     manifest
         .every_served_attachment()
         .filter_map(|(id, attachment)| {
@@ -33,7 +36,7 @@ fn route_definition(
     manifest: &ServingManifest,
     attachment_id: &str,
     attachment: ServedAttachment<'_>,
-    release_digest: &str,
+    release_digest: &wamn_digest::Digest,
 ) -> Option<RouteDefinition> {
     let route = attachment.definition().get("route")?;
     let body_limit = match attachment.definition().get("raw-body-bytes") {

@@ -47,7 +47,7 @@ pub(super) fn built_component(
         package_version: package.manifest.package.version.clone().into_boxed_str(),
         component: component.into(),
         path,
-        digest: digest.into_boxed_str(),
+        digest,
     })
 }
 

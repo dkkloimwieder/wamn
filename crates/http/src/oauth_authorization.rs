@@ -174,12 +174,17 @@ impl Authorization {
                 .filter(|code| !code.is_empty())
                 .ok_or_else(|| refused("missing authorization code"))?,
         );
-        let row = sqlx::query("SELECT connection_id,generation,code_verifier,wrapped_key,nonce,key_id,expires_at>clock_timestamp() AS unexpired \
-            FROM identity.oauth_authorization WHERE state=$1 FOR UPDATE").bind(&state).fetch_optional(&mut **tx).await
+        let row = sqlx::query("SELECT connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at>clock_timestamp() AS unexpired \
+            FROM registry.lock_oauth_authorization($1)").bind(&state).fetch_optional(&mut **tx).await
             .map_err(|error| failed("authorization state read failed", error))?.ok_or_else(|| refused("unknown or replayed state"))?;
         if !row.get::<bool, _>("unexpired") {
             return Err(refused("expired state"));
         }
+        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','','connection.oauth_callback')")
+            .bind(row.get::<uuid::Uuid, _>("created_by"))
+            .execute(&mut **tx)
+            .await
+            .map_err(|error| failed("callback identity failed", error))?;
         let connection: uuid::Uuid = row.get("connection_id");
         let context = wamn_platform_identity::connections::administration::configure(
             tx,

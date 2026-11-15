@@ -48,9 +48,9 @@ pub struct SessionClaims {
     pub jti: String,
     /// Current server-side authority, validated for every new admission.
     pub authority: SessionAuthority,
-    /// SHA-256 hex of the CSRF token, on a token that a cookie carries.
+    /// SHA-256 identity of the CSRF token, on a token that a cookie carries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub csrf: Option<String>,
+    pub csrf: Option<wamn_digest::Digest>,
 }
 
 /// Host-configured audience; no field is inferred from the token or its key ID.
@@ -158,12 +158,6 @@ pub(crate) fn validate_claim_shape(claims: &SessionClaims) -> Result<(), Session
         || claims.org.is_empty()
         || claims.aud.is_empty()
         || claims.jti.is_empty()
-        || claims.csrf.as_deref().is_some_and(|csrf| {
-            csrf.len() != 64
-                || !csrf
-                    .bytes()
-                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-        })
     {
         return Err(refused());
     }

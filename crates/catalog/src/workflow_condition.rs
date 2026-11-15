@@ -19,7 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    AdmittedComponent, ComponentPackageCoordinate, DefinitionHash, ServingManifest, WiringDocument,
+    AdmittedComponent, ComponentPackageCoordinate, ServingManifest, WiringDocument,
     validate_resolved_wiring_compatibility,
 };
 
@@ -148,7 +148,7 @@ pub fn condition_workflow_document(
     application_packages: &BTreeSet<String>,
     manifest: &ServingManifest,
     document: &WiringDocument,
-) -> Result<DefinitionHash, WorkflowConditionError> {
+) -> Result<wamn_digest::Digest, WorkflowConditionError> {
     let components =
         resolve_workflow_components(project_env_key, application_packages, manifest, document)?;
     validate_resolved_wiring_compatibility(document, &components).map_err(|error| {
@@ -211,12 +211,16 @@ mod tests {
             component: name.to_owned(),
             interface_version: "0.1".to_owned(),
             operations: BTreeMap::from([(op.to_owned(), operation(op, registered))]),
-            component_digest: format!("sha256:{}", digest.to_string().repeat(64)),
+            component_digest: format!("sha256:{}", digest.to_string().repeat(64))
+                .parse()
+                .unwrap(),
             imports: Vec::new(),
-            imports_fingerprint: format!("sha256:{}", "6".repeat(64)),
+            imports_fingerprint: (format!("sha256:{}", "6".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             effects: Vec::new(),
         };
-        ServingComponent::project(&fact, Vec::new()).expect("the fixture component projects")
+        ServingComponent::project(&fact, Vec::new())
     }
 
     fn manifest(components: Vec<ServingComponent>) -> ServingManifest {

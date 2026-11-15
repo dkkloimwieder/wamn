@@ -211,14 +211,16 @@ impl ApplicationRoutes<'_> {
         let hash =
             condition_workflow_document(project_env_key, packages, manifest, &workflow.graph)
                 .map_err(not_served)?;
-        if hash.as_str() != workflow.wiring_hash {
+        if hash != workflow.wiring_hash {
             return Err(start_refusal("workflow_not_served", "workflow_id"));
         }
         let node_digests: serde_json::Map<String, Value> =
             resolve_workflow_components(project_env_key, packages, manifest, &workflow.graph)
                 .map_err(not_served)?
                 .into_iter()
-                .map(|(node, component)| (node, Value::String(component.component_digest)))
+                .map(|(node, component)| {
+                    (node, Value::String(component.component_digest.to_string()))
+                })
                 .collect();
         let user = caller.principal_id();
         let (principal, role) = match (
@@ -254,7 +256,7 @@ impl ApplicationRoutes<'_> {
                     project_env_key,
                     &ManualRunAdmission {
                         package_id: application,
-                        manifest_digest: self.release.release().manifest_digest.as_str(),
+                        manifest_digest: &self.release.release().manifest_digest,
                         environment: &target.environment,
                         workflow_id: &request.workflow_id,
                         workflow_version: workflow.version,
@@ -643,7 +645,11 @@ mod tests {
             ("role", json!("clerk")),
             (
                 "manifest_digest",
-                json!(format!("sha256:{}", "1".repeat(64))),
+                json!(
+                    (format!("sha256:{}", "1".repeat(64)))
+                        .parse::<wamn_digest::Digest>()
+                        .unwrap()
+                ),
             ),
         ] {
             let mut named = start.clone();

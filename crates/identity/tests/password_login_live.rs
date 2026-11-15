@@ -1,6 +1,5 @@
 //! Renewal storage, revocation races and the targeted issuer on real PostgreSQL.
 
-use sha2::{Digest as _, Sha256};
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 use wamn_broker::auth_changes::AuthDrops;
@@ -89,12 +88,13 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
             .unwrap()
             .get(0);
     assert!(!stored.contains(first.secret()));
-    let hash: Vec<u8> = sqlx::query("SELECT token_hash FROM identity.renewal_credentials")
-        .fetch_one(&mut owner)
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(hash, Sha256::digest(first.secret()).to_vec());
+    let hash: wamn_digest::Digest =
+        sqlx::query("SELECT token_hash FROM identity.renewal_credentials")
+            .fetch_one(&mut owner)
+            .await
+            .unwrap()
+            .get(0);
+    assert_eq!(hash, wamn_digest::bytes_sha256(first.secret().as_bytes()));
     let mut tx = wamn_test_postgres::transaction(
         &mut issuer,
         &wamn_control_provision::PlatformComponent::Provisioning

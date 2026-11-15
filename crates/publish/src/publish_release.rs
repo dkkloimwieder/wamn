@@ -30,9 +30,8 @@ use wamn_catalog::exposure::{
 };
 use wamn_catalog::{
     AdmittedComponent, AttachmentTarget, ComponentConnection, ComponentPackageCoordinate,
-    ManifestDigest, OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
-    ServingAttachment, ServingComponent, ServingManifest, ServingRelation, ServingRelease,
-    ServingRoute,
+    OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
+    ServingComponent, ServingManifest, ServingRelation, ServingRelease, ServingRoute,
 };
 
 use crate::package_artifact::{OpenedPackage, PackageRegistry};
@@ -43,9 +42,7 @@ mod entry_publication;
 mod package_sources;
 
 use attachments::{read_package_attachments, resolve_route_methods};
-use components::{
-    project_serving_component, resolve_component_dependency_closure, resolve_route_component,
-};
+use components::{resolve_component_dependency_closure, resolve_route_component};
 pub use entry_publication::EntryPublicationInputs;
 pub use package_sources::package_route;
 use package_sources::read_package_manifests;
@@ -55,7 +52,6 @@ pub use manifest_push::push_manifest_bytes;
 #[cfg(test)]
 use attachments::merge_package_attachment_documents;
 
-const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, false)";
 const READ_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
  WHERE project_env_key = $1 AND manifest_digest = $2";
@@ -116,7 +112,7 @@ impl DependencyDigestRule {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PublishedRelease {
     pub manifest: ServingManifest,
-    pub digest: ManifestDigest,
+    pub digest: wamn_digest::Digest,
     pub canonical_bytes: Vec<u8>,
 }
 
@@ -273,7 +269,7 @@ pub async fn publish_release(
     registry: &PackageRegistry,
     release_artifact_base: &str,
     entry: Option<&EntryPublicationInputs<'_>>,
-) -> anyhow::Result<ManifestDigest> {
+) -> anyhow::Result<wamn_digest::Digest> {
     Ok(
         publish_candidate(&request, registry, release_artifact_base, entry)
             .await?
@@ -285,9 +281,9 @@ pub async fn publish_release(
 #[derive(Debug)]
 pub struct ComposedApplication {
     bytes: Box<[u8]>,
-    digest: String,
+    digest: wamn_digest::Digest,
     application: wamn_catalog::ServingEntryMember,
-    application_digests: BTreeSet<String>,
+    application_digests: BTreeSet<wamn_digest::Digest>,
 }
 
 impl ComposedApplication {
@@ -295,7 +291,7 @@ impl ComposedApplication {
         &self.bytes
     }
 
-    pub fn digest(&self) -> &str {
+    pub fn digest(&self) -> &wamn_digest::Digest {
         &self.digest
     }
 }
@@ -313,6 +309,7 @@ pub fn compose_application(
             .next()
             .expect("route pin exists")
     );
+    let digest = digest.parse::<wamn_digest::Digest>()?;
     ensure!(
         wamn_digest::bytes_sha256(route_bytes) == digest,
         "route layer bytes differ from pinned digest {digest}"
@@ -325,7 +322,7 @@ pub fn compose_application(
         application: wamn_catalog::ServingEntryMember {
             package_id: application.target.package_id.as_str().to_owned(),
             component: application.component.as_str().to_owned(),
-            digest: application.component_digest.as_str().to_owned(),
+            digest: application.component_digest,
         },
         application_digests,
     })
@@ -461,7 +458,7 @@ pub fn assemble_release(
             .insert(ServingComponent::project(
                 &component.facts.component,
                 components::palette_connections(&component.facts.connections, &package_manifests),
-            )?);
+            ));
     }
     if !palette.is_empty() {
         published = seal_release(&published.manifest)?;
@@ -470,9 +467,11 @@ pub fn assemble_release(
         .iter()
         .map(crate::component_admission::ComponentAdmission::facts)
         .filter(|fact| {
-            published.manifest.components.iter().any(|component| {
-                component.descriptor.component_digest.as_str() == fact.component_digest
-            })
+            published
+                .manifest
+                .components
+                .iter()
+                .any(|component| component.descriptor.component_digest == fact.component_digest)
         })
         .cloned()
         .collect();
@@ -537,7 +536,7 @@ async fn publish_candidate(
             let reference: oci_client::Reference = format!(
                 "{}:{}",
                 inputs.component_artifact_base,
-                wamn_catalog::component_digest_tag(&fact.component_digest)?
+                fact.component_digest.hex()
             )
             .parse()?;
             crate::component_admission::publish_and_verify(
@@ -560,7 +559,7 @@ async fn publish_candidate(
                         &component.facts.connections,
                         &package_manifests,
                     ),
-                )?);
+                ));
         }
         published = seal_release(&published.manifest)?;
     }
@@ -715,13 +714,8 @@ fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
 pub async fn read_release(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
-    manifest_digest: &str,
+    manifest_digest: &wamn_digest::Digest,
 ) -> Result<Option<Vec<u8>>, PublishManifestError> {
-    sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
-        .bind(project_env_key)
-        .fetch_one(&mut **transaction)
-        .await
-        .map_err(|error| storage("bind the release project identity", error))?;
     sqlx::query(READ_RELEASE_SQL)
         .bind(project_env_key)
         .bind(manifest_digest)
@@ -856,10 +850,7 @@ mod tests {
     }
 
     fn refresh_definition_hash(attachment: &mut ServingAttachment) {
-        attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
-            wamn_digest::canonical_json_sha256(&attachment.definition),
-        )
-        .expect("the canonicalizer emits a valid definition hash");
+        attachment.definition_hash = wamn_digest::canonical_json_sha256(&attachment.definition);
     }
 
     fn fixture_route_contracts(
@@ -897,8 +888,7 @@ mod tests {
                 component: component.to_owned(),
                 operation: operation.to_owned(),
             },
-            definition_hash: wamn_catalog::DefinitionHash::parse(definition_hash)
-                .expect("the canonicalizer emits a valid definition hash"),
+            definition_hash: definition_hash,
             definition,
             auth_policy: serde_json::json!({"modes": ["pat"]}),
             registered_operation: Some(operation.to_owned()),
@@ -1051,8 +1041,7 @@ mod tests {
                 component: "widget".to_owned(),
                 operation: "source-fixture:widget/get@1.0.0".to_owned(),
             },
-            definition_hash: wamn_catalog::DefinitionHash::parse(authored_hash.clone())
-                .expect("the canonicalizer emits a valid definition hash"),
+            definition_hash: authored_hash,
             definition,
             auth_policy: serde_json::json!({"modes": ["pat"]}),
             registered_operation: Some("source-fixture:widget/get@1.0.0".to_owned()),
@@ -1067,12 +1056,9 @@ mod tests {
                 .is_none(),
             "a release names no route host"
         );
-        assert_ne!(
-            resolved["fixture-http"].definition_hash.as_str(),
-            authored_hash
-        );
+        assert_ne!(resolved["fixture-http"].definition_hash, authored_hash);
         assert_eq!(
-            resolved["fixture-http"].definition_hash.as_str(),
+            resolved["fixture-http"].definition_hash,
             wamn_digest::canonical_json_sha256(&resolved["fixture-http"].definition)
         );
 
@@ -1270,7 +1256,7 @@ mod tests {
             },
             facts
                 .iter()
-                .map(|fact| ServingComponent::project(fact, Vec::new()).unwrap())
+                .map(|fact| ServingComponent::project(fact, Vec::new()))
                 .collect(),
             facts[..2]
                 .iter()
@@ -1402,7 +1388,7 @@ mod tests {
                 descriptor_components(project_env_key, &packages, std::slice::from_ref(&opened))
                     .unwrap();
             let fact = &components.facts[&("base".to_owned(), "1.0.0".to_owned())][0];
-            project_serving_component(fact, components.connections(fact).unwrap()).unwrap()
+            ServingComponent::project(fact, components.connections(fact).unwrap())
         };
         let first = project("acme--dev--plant");
         let second = project("acme--prod--plant");
@@ -1429,7 +1415,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    fn dependency_manifest(digest: &str) -> wamn_compiler::manifest::PackageManifest {
+    fn dependency_manifest(
+        digest: &wamn_digest::Digest,
+    ) -> wamn_compiler::manifest::PackageManifest {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(
             "../tests/fixtures/component_package/generated/wamn.json"
         ))
@@ -1488,7 +1476,7 @@ mod tests {
         id: &str,
         version: &str,
         base: (&str, &str),
-        digest: &str,
+        digest: &wamn_digest::Digest,
     ) -> wamn_compiler::manifest::PackageManifest {
         let mut document = serde_json::to_value(dependency_manifest(digest))
             .expect("the dependency fixture manifest serializes");
@@ -1507,7 +1495,9 @@ mod tests {
         let mut overlay = closure_component("overlay-component", Some(overlay_operation));
         overlay.target.package_id = "overlay".to_owned();
         overlay.target.package_version = "3.0.0".to_owned();
-        overlay.component_digest = format!("sha256:{}", "b".repeat(64));
+        overlay.component_digest = (format!("sha256:{}", "b".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap();
         let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
         let facts = BTreeMap::from([
             (("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()]),
@@ -1536,8 +1526,7 @@ mod tests {
         assert_eq!(closure.len(), 2);
         assert!(closure.contains(&base));
         assert!(closure.contains(&overlay));
-        let projected =
-            project_serving_component(&overlay, Vec::new()).expect("the composed overlay projects");
+        let projected = ServingComponent::project(&overlay, Vec::new());
         assert_eq!(
             projected.descriptor.operations[overlay_operation]
                 .registered_operation
@@ -1582,8 +1571,12 @@ mod tests {
         let mut overlay = closure_component("overlay-component", Some(overlay_operation));
         overlay.target.package_id = "overlay".to_owned();
         overlay.target.package_version = "3.0.0".to_owned();
-        overlay.component_digest = format!("sha256:{}", "b".repeat(64));
-        let stale_pin = format!("sha256:{}", "d".repeat(64));
+        overlay.component_digest = (format!("sha256:{}", "b".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap();
+        let stale_pin = (format!("sha256:{}", "d".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap();
         assert_ne!(stale_pin, base.component_digest);
         let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
         let facts = BTreeMap::from([
@@ -1640,7 +1633,7 @@ mod manifest_push {
     use oci_client::manifest::OciImageManifest;
     use oci_client::secrets::RegistryAuth;
     use oci_client::{Client as OciClient, Reference};
-    use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
+    use wamn_catalog::{ServingManifest, ServingRelease};
     use wamn_package_artifact::read_ca_bundles;
     use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
     use wamn_package_artifact::release_manifest_artifact::{
@@ -1756,7 +1749,7 @@ mod manifest_push {
     /// Verified result of pushing one canonical serving manifest.
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct PushedReleaseManifest {
-        pub digest: ManifestDigest,
+        pub digest: wamn_digest::Digest,
         pub disposition: ReleaseManifestPushDisposition,
         /// Effective-release coordinate carried by the pushed bytes.
         pub release: ServingRelease,
@@ -1780,8 +1773,8 @@ mod manifest_push {
                 )
             })?;
         let release = admitted.release;
-        let artifact = release_manifest_artifact_reference(artifact_base, digest.as_str())
-            .map_err(|source| {
+        let artifact =
+            release_manifest_artifact_reference(artifact_base, &digest).map_err(|source| {
                 ReleaseManifestPushError::with_source(
                     ReleaseManifestPushErrorType::Reference,
                     "release-manifest-artifact-reference-refused",
@@ -1883,7 +1876,7 @@ mod manifest_push {
         reference: &Reference,
         auth: &RegistryAuth,
         expected_bytes: &[u8],
-        expected_digest: &ManifestDigest,
+        expected_digest: &wamn_digest::Digest,
     ) -> Result<bool, ReleaseManifestPushError> {
         let deadline = tokio::time::Instant::now() + REGISTRY_IO_TIMEOUT;
         let (manifest, _) = match wamn_package_artifact::registry_pull::retry(
@@ -1905,12 +1898,8 @@ mod manifest_push {
                 ));
             }
         };
-        let verified = verify_manifest_layout(
-            &manifest,
-            expected_digest.as_str(),
-            expected_bytes.len(),
-            reference,
-        )?;
+        let verified =
+            verify_manifest_layout(&manifest, expected_digest, expected_bytes.len(), reference)?;
 
         let body =
             wamn_package_artifact::registry_pull::blob(client, reference, verified.layer, deadline)
@@ -1957,7 +1946,7 @@ mod manifest_push {
     /// Translate the shared layout contract's refusal into this boundary's error.
     fn verify_manifest_layout<'a>(
         manifest: &'a OciImageManifest,
-        expected_digest: &str,
+        expected_digest: &wamn_digest::Digest,
         expected_size: usize,
         reference: &Reference,
     ) -> Result<ReleaseManifestArtifactBlobs<'a>, ReleaseManifestPushError> {
@@ -1980,7 +1969,7 @@ mod manifest_push {
 
         use super::*;
 
-        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"orders"}],"format-version":11,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[]}"#;
+        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"orders"}],"format-version":11,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[]}"#;
 
         fn fixture_reference() -> Reference {
             Reference::with_tag(
@@ -2011,7 +2000,7 @@ mod manifest_push {
             manifest.layers[0].media_type = "application/octet-stream".to_owned();
             let error = verify_manifest_layout(
                 &manifest,
-                digest.as_str(),
+                &digest,
                 CANONICAL_MANIFEST.len(),
                 &fixture_reference(),
             )
@@ -2023,7 +2012,7 @@ mod manifest_push {
             manifest.layers.push(duplicate);
             let error = verify_manifest_layout(
                 &manifest,
-                digest.as_str(),
+                &digest,
                 CANONICAL_MANIFEST.len(),
                 &fixture_reference(),
             )

@@ -298,7 +298,7 @@ impl fmt::Debug for Invitation {
         f.write_str("Invitation(<redacted>)")
     }
 }
-fn token_hash(secret: &str, purpose: &str) -> Option<Vec<u8>> {
+fn token_hash(secret: &str, purpose: &str) -> Option<wamn_digest::Digest> {
     SecretToken::parse(secret_type(purpose), secret)
         .ok()
         .map(|token| token.digest())
@@ -412,7 +412,7 @@ async fn issue_token(
             ));
         }
     }
-    let expires_at: String = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')").bind(&hash).bind(principal.to_string().as_str()).bind(purpose).bind(lifetime).fetch_one(&mut *tx).await.map_err(|source| database(&source))?.get(0);
+    let expires_at: String = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')").bind(hash).bind(principal.to_string().as_str()).bind(purpose).bind(lifetime).fetch_one(&mut *tx).await.map_err(|source| database(&source))?.get(0);
     tx.commit().await.map_err(|source| database(&source))?;
     Ok(Invitation { secret, expires_at })
 }
@@ -420,7 +420,7 @@ async fn issue_token(
 async fn usable_token(
     client: &mut sqlx::PgConnection,
     principal: &PrincipalId,
-    hash: &[u8],
+    hash: &wamn_digest::Digest,
     purpose: &str,
 ) -> Result<Option<RefusalCause>, PasswordError> {
     let row = sqlx::query("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'user' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3").bind(hash).bind(principal.to_string().as_str()).bind(purpose).fetch_optional(&mut *client).await.map_err(|source| database(&source))?;
@@ -518,7 +518,7 @@ async fn establish_password(
 async fn store_password(
     client: &mut Client,
     principal: &PrincipalId,
-    token_digest: &[u8],
+    token_digest: &wamn_digest::Digest,
     hash: &str,
     purpose: &str,
 ) -> Result<(), PasswordError> {
