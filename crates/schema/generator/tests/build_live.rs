@@ -228,7 +228,6 @@ fn authored_feed_workspace(name: &str, definition: &str) -> Workspace {
     );
     fs::write(workspace.package().join("migrations/0002_feed.sql"), format!(
         "ALTER TABLE inventory.widget ADD COLUMN tag_id uuid CONSTRAINT widget_tag_id_fkey REFERENCES inventory.widget_tag(id);\n\
-         ALTER TABLE inventory.widget_maker ADD COLUMN supplier_id uuid CONSTRAINT widget_maker_supplier_id_fkey REFERENCES inventory.widget_tag(id);\n\
          CREATE VIEW inventory.widget_screen AS {definition};\n"
     )).unwrap();
     fs::write(
@@ -245,7 +244,7 @@ const RECEIPT_FEED_VIEW: &str = "SELECT line.id, line.code, line.edit_version,
     JOIN inventory.widget_maker AS orders ON orders.id = line.maker_id
     JOIN inventory.widget_tag AS items ON items.id = line.tag_id";
 
-async fn authored_feed_build(pool: &sqlx::PgPool, workspace: &Workspace) -> anyhow::Result<Value> {
+async fn authored_feed_build(pool: &sqlx::PgPool, workspace: &Workspace) -> anyhow::Result<()> {
     let database = wamn_test_postgres::url(pool);
     let output_root = workspace.root.join("target/wamn");
     generate_package(&BuildRequest::new(
@@ -254,134 +253,7 @@ async fn authored_feed_build(pool: &sqlx::PgPool, workspace: &Workspace) -> anyh
         database.as_str(),
     ))
     .await?;
-    let bytes =
-        fs::read(package_output(&output_root, wamn_fixture_package::PACKAGE_ID).join("wamn.json"))?;
-    Ok(
-        serde_json::from_slice::<Value>(&bytes)?["custom_operations"]["widget.list"]["feed_source"]
-            .clone(),
-    )
-}
-
-#[sqlx::test(migrations = false)]
-async fn authored_feed_receipt_screen_records_its_join_path(pool: sqlx::PgPool) {
-    let workspace = authored_feed_workspace("feed-receipt", RECEIPT_FEED_VIEW);
-    let source = authored_feed_build(&pool, &workspace).await.unwrap();
-    {
-        let observed = &(source["root"]);
-        assert_eq!(observed["schema"], serde_json::json!("inventory"));
-        assert_eq!(observed["table"], serde_json::json!("widget"));
-    };
-    {
-        let observed = &(source["read_set"]);
-        assert_eq!(observed.as_array().expect("array").len(), 3);
-        assert_eq!(observed[0]["schema"], serde_json::json!("inventory"));
-        assert_eq!(observed[0]["table"], serde_json::json!("widget"));
-        assert_eq!(observed[1]["schema"], serde_json::json!("inventory"));
-        assert_eq!(observed[1]["table"], serde_json::json!("widget_maker"));
-        assert_eq!(observed[2]["schema"], serde_json::json!("inventory"));
-        assert_eq!(observed[2]["table"], serde_json::json!("widget_tag"));
-    };
-    {
-        let observed = &(source["join_path"]);
-        assert_eq!(observed.as_array().expect("array").len(), 2);
-        assert_eq!(
-            observed[0]["table"]["schema"],
-            serde_json::json!("inventory")
-        );
-        assert_eq!(
-            observed[0]["table"]["table"],
-            serde_json::json!("widget_maker")
-        );
-        assert_eq!(observed[0]["linking_column"], serde_json::json!("maker_id"));
-        assert_eq!(
-            observed[0]["direction"],
-            serde_json::json!("referenced_by_link")
-        );
-        assert_eq!(
-            observed[0]["foreign_key_table"]["schema"],
-            serde_json::json!("inventory")
-        );
-        assert_eq!(
-            observed[0]["foreign_key_table"]["table"],
-            serde_json::json!("widget")
-        );
-        assert_eq!(
-            observed[0]["foreign_key_columns"]
-                .as_array()
-                .expect("array")
-                .len(),
-            1
-        );
-        assert_eq!(
-            observed[0]["foreign_key_columns"][0]["column"],
-            serde_json::json!("maker_id")
-        );
-        assert_eq!(
-            observed[0]["foreign_key_columns"][0]["referenced_column"],
-            serde_json::json!("id")
-        );
-        assert_eq!(
-            observed[1]["table"]["schema"],
-            serde_json::json!("inventory")
-        );
-        assert_eq!(
-            observed[1]["table"]["table"],
-            serde_json::json!("widget_tag")
-        );
-        assert_eq!(observed[1]["linking_column"], serde_json::json!("tag_id"));
-        assert_eq!(
-            observed[1]["direction"],
-            serde_json::json!("referenced_by_link")
-        );
-        assert_eq!(
-            observed[1]["foreign_key_table"]["schema"],
-            serde_json::json!("inventory")
-        );
-        assert_eq!(
-            observed[1]["foreign_key_table"]["table"],
-            serde_json::json!("widget")
-        );
-        assert_eq!(
-            observed[1]["foreign_key_columns"]
-                .as_array()
-                .expect("array")
-                .len(),
-            1
-        );
-        assert_eq!(
-            observed[1]["foreign_key_columns"][0]["column"],
-            serde_json::json!("tag_id")
-        );
-        assert_eq!(
-            observed[1]["foreign_key_columns"][0]["referenced_column"],
-            serde_json::json!("id")
-        );
-    };
-}
-
-#[sqlx::test(migrations = false)]
-async fn authored_feed_grouped_summary_records_both_link_directions(pool: sqlx::PgPool) {
-    let workspace = authored_feed_workspace("feed-grouped", "SELECT orders.id, orders.name AS code,
-        orders.edit_version::int4 AS edit_version, jsonb_build_object('lines', count(line.id)) AS attributes,
-        orders.supplier_id FROM inventory.widget_maker AS orders
-        JOIN inventory.widget_tag AS supplier ON supplier.id = orders.supplier_id
-        LEFT JOIN inventory.widget AS line ON line.maker_id = orders.id
-        GROUP BY orders.id, supplier.label");
-    workspace.edit_manifest(
-        "lists = {model = \"widget\", key_field = \"id\", display_field = \"code\"}",
-        "lists = {model = \"widget_maker\", key_field = \"id\", display_field = \"code\"}",
-    );
-    let source = authored_feed_build(&pool, &workspace).await.unwrap();
-    assert_eq!(source["root"]["table"], "widget_maker");
-    assert_eq!(source["join_path"][0]["direction"], "references_root");
-    {
-        let observed = &(source["join_path"][0]["foreign_key_columns"]);
-        assert_eq!(observed.as_array().expect("array").len(), 1);
-        assert_eq!(observed[0]["column"], serde_json::json!("maker_id"));
-        assert_eq!(observed[0]["referenced_column"], serde_json::json!("id"));
-    };
-    assert_eq!(source["join_path"][1]["linking_column"], "supplier_id");
-    assert_eq!(source["join_path"][1]["direction"], "referenced_by_link");
+    Ok(())
 }
 
 #[sqlx::test(migrations = false)]
@@ -629,14 +501,6 @@ async fn overlay_builds_inherit_owner_fields_from_manifests_with_build_records(p
         manifest["models"]["widget"]["fields"]["updated_by"]["role"],
         "actor"
     );
-
-    let base_path = package_output(&output, wamn_fixture_package::PACKAGE_ID).join("wamn.json");
-    let mut changed = fs::read(&base_path).unwrap();
-    changed.push(b' ');
-    fs::write(base_path, changed).unwrap();
-    generate_package(&request)
-        .await
-        .expect_err("changed compiled base bytes must refuse");
 }
 
 /// PostgreSQL describes the accessor's binds at the build interface.

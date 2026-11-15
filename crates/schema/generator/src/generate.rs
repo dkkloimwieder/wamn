@@ -290,6 +290,7 @@ pub(crate) fn derive_model(
     bases: &[PackageManifest],
 ) -> Result<(), GenerateError> {
     manifest.refuse_authored_stamps()?;
+    crate::manifest::validate_operation_vocabulary(manifest)?;
     crate::inheritance::inherit_model_fields(manifest, bases)?;
     validation::validate_authored_sources(manifest, authored_sql)?;
     let mut relations = BTreeMap::new();

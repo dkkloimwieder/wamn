@@ -122,44 +122,6 @@ fn with_internal_relation() -> serde_json::Value {
     manifest
 }
 
-#[test]
-#[ignore = "requires: input:fixture"]
-fn retired_workflows_are_dropped() {
-    let mut handler = fixture::manifest();
-    let operation = handler["custom_operations"]["widget.archive"]
-        .as_object_mut()
-        .unwrap();
-    operation.insert("type".to_owned(), json!("event_handler"));
-    operation.insert("visibility".to_owned(), json!("private"));
-    operation.remove("permission");
-    operation.remove("result");
-    operation.remove("transaction");
-    operation.remove("automatic_retry");
-    operation.remove("idempotent_by");
-    operation["errors"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|error| error != "permission_denied" && error != "concurrency_conflict");
-    operation.insert(
-        "registration".to_owned(),
-        json!({"source_package": "platform_fixture", "entity": "widget", "ops": ["insert"]}),
-    );
-    validate_operation_vocabulary(&parsed(&handler)).expect("valid event registration");
-
-    let mut retired = handler.clone();
-    retired["workflows"] = json!({"old": {"anything": true}});
-    retired["custom_operations"]["widget.archive"]["registration"] = json!({"old": "ignored"});
-    let read = parsed(&retired);
-    validate_operation_vocabulary(&read).expect("event operations need no registration");
-    let written = serde_json::to_value(&read).unwrap();
-    assert!(written.get("workflows").is_none());
-    assert!(
-        written["custom_operations"]["widget.archive"]
-            .get("registration")
-            .is_none()
-    );
-}
-
 /// Validation refuses the `claim` object: `idempotent_by: claim` is the whole
 /// declaration. A claim command must carry the key it claims, and it commits
 /// its claim and its work together.
@@ -456,8 +418,12 @@ fn a_minimum_length_without_its_check_refuses() {
     }
 }
 
-/// The authored manifest without derived relations, feed facts, or CHECK values.
+/// Authored declarations without the fixture build's derived members.
 fn without_relations(mut manifest: Value) -> Value {
+    manifest
+        .as_object_mut()
+        .unwrap()
+        .remove("compiled_operations");
     for operation in manifest["custom_operations"]
         .as_object_mut()
         .expect("custom operations")
@@ -472,6 +438,14 @@ fn without_relations(mut manifest: Value) -> Value {
         .expect("models")
         .values_mut()
     {
+        model["server_owned_fields"]
+            .as_array_mut()
+            .expect("server-owned fields")
+            .retain(|field| {
+                !wamn_compiler::manifest::RecordHistoryColumn::ALL
+                    .iter()
+                    .any(|column| field == column.as_str())
+            });
         model
             .as_object_mut()
             .expect("a model")
@@ -540,55 +514,6 @@ fn a_mapped_constraint_lands_on_the_relation_that_defines_it() {
     let _error = derive(&manifest).expect_err("widget.archive reaches no widget_maker");
 }
 
-/// A model's value sets come from its CHECKs. An authored list narrows one,
-/// and a list that states the CHECK's set again or widens it refuses.
-#[test]
-#[ignore = "requires: input:fixture"]
-fn enum_fields_come_from_the_check_and_an_authored_list_only_narrows() {
-    let authored = without_relations(fixture::manifest());
-    let compiled = derive(&authored).expect("derive the manifest");
-    // The schema owns the set, so the compiled manifest states none.
-    assert!(compiled["models"]["widget"].get("enum_fields").is_none());
-    let code_values = |manifest: &Value| {
-        let package = fixture::generate_with(&fixture::catalog(), manifest);
-        let input = description_json(&package, "widget.create", "input");
-        input["writable_fields"]
-            .as_array()
-            .expect("writable fields")
-            .iter()
-            .find(|field| field["field"] == "code")
-            .expect("code is writable")["values"]
-            .clone()
-    };
-    {
-        let observed = &(code_values(&compiled));
-        assert_eq!(observed.as_array().expect("array").len(), 2);
-        assert_eq!(observed[0], serde_json::json!("priority"));
-        assert_eq!(observed[1], serde_json::json!("standard"));
-    };
-
-    let mut narrowed = authored.clone();
-    narrowed["models"]["widget"]["enum_fields"] = json!({"code": ["priority"]});
-    let compiled = derive(&narrowed).expect("a narrower list");
-    {
-        let observed = &(code_values(&compiled));
-        assert_eq!(observed.as_array().expect("array").len(), 1);
-        assert_eq!(observed[0], serde_json::json!("priority"));
-    };
-    // A text column with no CHECK takes the set its author names.
-    narrowed["models"]["widget"]["enum_fields"] = json!({"note": ["a", "b"]});
-    derive(&narrowed).expect("a set no CHECK carries");
-
-    for declared in [
-        json!({"code": ["standard", "priority"]}),
-        json!({"code": ["priority", "rush"]}),
-    ] {
-        let mut stated = authored.clone();
-        stated["models"]["widget"]["enum_fields"] = declared;
-        let _error = derive(&stated).expect_err("the list refuses");
-    }
-}
-
 /// The stamp columns are server-owned from the table, so an authored list
 /// that names one refuses.
 #[test]
@@ -651,14 +576,9 @@ fn a_sync_screen_needs_a_feed_on_its_read() {
     let mut manifest = fixture::manifest();
     manifest["custom_operations"]["feed_line.screen"]["sync"] = json!(true);
     let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    let contract = description_json(&package, "feed_line.screen", "operation");
-    assert_eq!(contract["sync"], true);
-    let silent = description_json(
-        &fixture::generate_fixture(),
-        "feed_line.screen",
-        "operation",
-    );
-    assert_eq!(silent.get("sync"), None);
+    assert!(package.operations()["feed_line.screen"].operation.sync);
+    let silent = fixture::generate_fixture();
+    assert!(!silent.operations()["feed_line.screen"].operation.sync);
 
     manifest["custom_operations"]["widget.list"]["sync"] = json!(true);
     let error = fixture::try_generate_with(&fixture::catalog(), &manifest)

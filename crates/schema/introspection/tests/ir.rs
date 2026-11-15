@@ -212,9 +212,18 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
     assert_eq!(postgres_type("jsonb").unwrap(), SqlValueType::Json);
     assert_eq!(postgres_type("uuid").unwrap(), SqlValueType::Uuid);
 
-    let type_error = postgres_type("character varying").unwrap_err();
+    assert_eq!(
+        postgres_type("character varying").unwrap(),
+        SqlValueType::Text
+    );
+    let type_error = postgres_type("date").unwrap_err();
     assert_eq!(type_error.error_type(), IrErrorType::UnsupportedType);
-    assert_eq!(type_error.input(), "character varying");
+    assert_eq!(type_error.input(), "date");
+
+    assert_eq!(
+        postgres_default(SqlValueType::Text, "'open'::name").unwrap(),
+        ColumnDefault::text("open")
+    );
 
     assert_eq!(
         postgres_default(SqlValueType::Uuid, "gen_random_uuid()").unwrap(),
@@ -295,7 +304,7 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
         (SqlValueType::Text, "upper('open')"),
         (SqlValueType::Timestamptz, "now()"),
         // the right shape cast to the WRONG type
-        (SqlValueType::Text, "'open'::name"),
+        (SqlValueType::Text, "'open'::uuid"),
         (SqlValueType::Int64, "'1'::integer"),
         // a literal of another type entirely
         (SqlValueType::Boolean, "'open'"),

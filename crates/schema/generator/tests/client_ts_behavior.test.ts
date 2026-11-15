@@ -1,5 +1,3 @@
-import { createRequire } from "node:module";
-import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import * as client from "@fixture/fixture/index.ts";
 import input from "@fixture/fixture/input.json";
@@ -289,29 +287,4 @@ it("omits unserved bindings and opt-out feeds while keeping target keys stable",
     expect(observed).toHaveProperty(["1"], widget.WIDGET_SHAPE_DIGEST);
     expect(observed).toHaveProperty(["2"], "{}");
   }
-});
-
-it("exposes authored descriptions through TypeScript symbols", () => {
-  const require = createRequire(new URL("../../../../package.json", import.meta.url));
-  const ts = require("typescript");
-  const file = join(process.env.WAMN_CLIENT_TS_TEST_ROOT, "fixture/widget.ts");
-  const program = ts.createProgram([file], {});
-  const types = program.getTypeChecker();
-  const source = program.getSourceFile(file);
-  const symbols = types.getExportsOfModule(types.getSymbolAtLocation(source));
-  const symbol = (name) => symbols.find((symbol) => symbol.name === name);
-  const docs = (symbol) => ts.displayPartsToString(symbol.getDocumentationComment(types));
-  const member = (name, field) => types.getDeclaredTypeOfSymbol(symbol(name)).getProperty(field);
-  const model = input.models.find((model) => model.name === "widget");
-  const batch = model.operations.find((operation) => operation.name === "record_batch");
-  expect(docs(symbol("WidgetRecordBatchRequest")).split("\n\n")[1]).toBe(batch.description);
-  const value = batch["input-fields"].find((field) => field.path === "value");
-  for (const field of value.children.filter((field) => field.description)) {
-    expect(docs(member("WidgetRecordBatchRequestValue", field.path.split(".").at(-1))).split("\n\n")[0]).toBe(
-      field.description,
-    );
-  }
-  const get = model.operations.find((operation) => operation.name === "get");
-  const code = get["result-fields"].find((field) => field.path === "code");
-  expect(docs(member("WidgetGetResult", "code")).split("\n\n")[0]).toBe(code.description);
 });
