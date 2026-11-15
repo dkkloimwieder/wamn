@@ -80,7 +80,6 @@ impl<P: InvocationPolicy> fmt::Debug for NativeInvocation<P> {
 }
 
 struct NativeCall<P: InvocationPolicy> {
-    admission_error: Option<anyhow::Error>,
     request: NativeInvocation<P>,
     finish_result: bool,
     reply: oneshot::Sender<NativeOutcome>,
@@ -144,7 +143,6 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
         let trace = self.trace.clone();
         Box::pin(trace.run(async move {
             let Self {
-                admission_error,
                 request,
                 finish_result,
                 reply,
@@ -155,10 +153,6 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                 ..
             } = *self;
             drop(instantiate);
-            if let Some(error) = admission_error {
-                *failure.lock().expect("native call failure lock poisoned") = Some(error);
-                anyhow::bail!("native invocation admission failed");
-            }
             // The guest's host calls parent to this span, because the policy
             // binds the current span when it activates the scope.
             async move {
@@ -328,6 +322,68 @@ impl GuestCall for ReadinessCall {
     }
 }
 
+/// Retire the native instance selected for a refused invocation.
+struct RefusedCall {
+    operation: String,
+    deadline: Instant,
+}
+
+impl GuestCall for RefusedCall {
+    fn describe(&self) -> &str {
+        &self.operation
+    }
+
+    fn deadline(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
+
+    fn call(
+        self: Box<Self>,
+        _accessor: &Accessor<SharedCtx>,
+        _instance: Instance,
+    ) -> GuestCallFuture<'_> {
+        Box::pin(async { anyhow::bail!("native invocation admission refused") })
+    }
+}
+
+pub(super) async fn prepare_invocation<P: InvocationPolicy>(
+    application: &NativeApplication<P>,
+    target: &DispatchTarget,
+    operation: &str,
+    facts: &P::Facts,
+    deadline: Instant,
+) -> anyhow::Result<P::Facts> {
+    let component_id = application
+        .workload
+        .target_component(target)
+        .context("dispatch target is outside the application")?;
+    let prepared = timeout_at(
+        deadline,
+        application.policy.prepare(component_id, operation, facts),
+    )
+    .await
+    .context("native admission deadline elapsed")?;
+    if prepared.is_err()
+        && target
+            .workload()
+            .warm_instance_policy(component_id)
+            .await
+            .keeps_instances_warm()
+    {
+        // Admission precedes dispatch. Let native retire the selected instance
+        // without running its handler, and preserve the original host error.
+        let _ = timeout_at(
+            deadline,
+            target.dispatch(RefusedCall {
+                operation: operation.to_owned(),
+                deadline,
+            }),
+        )
+        .await;
+    }
+    prepared
+}
+
 /// Instantiate through native dispatch under a bound, without invocation authority.
 pub async fn prepare_native(target: &DispatchTarget, deadline: Instant) -> anyhow::Result<()> {
     anyhow::ensure!(
@@ -369,29 +425,14 @@ async fn invoke<P: InvocationPolicy>(
     let (reply, response) = oneshot::channel();
     let failure = NativeCallFailure::default();
     let retired_after_reply = Arc::new(AtomicBool::new(false));
-    let admission = timeout_at(
+    request.facts = prepare_invocation(
+        &request.application,
+        target,
+        &request.operation,
+        &request.facts,
         deadline,
-        request.application.policy.prepare(
-            request
-                .application
-                .workload
-                .target_component(target)
-                .context("dispatch target is outside the application")?,
-            &request.operation,
-            &request.facts,
-        ),
     )
-    .await
-    .context("native admission deadline elapsed")?;
-    // Dispatch admission failures too: native dispatch retires the instance
-    // without invoking its handler, so stale authority cannot survive reuse.
-    let admission_error = match admission {
-        Ok(facts) => {
-            request.facts = facts;
-            None
-        }
-        Err(error) => Some(error),
-    };
+    .await?;
     let retained = request
         .application
         .policy
@@ -411,7 +452,6 @@ async fn invoke<P: InvocationPolicy>(
         // must not be replaced by the resulting closed response channel.
         if let Err(native_error) = target
             .dispatch(NativeCall {
-                admission_error,
                 request,
                 finish_result,
                 reply,

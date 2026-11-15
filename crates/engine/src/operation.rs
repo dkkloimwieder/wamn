@@ -103,12 +103,14 @@ pub async fn invoke_operation<H: ApplicationHost>(
         .await
         .context("native application deadline elapsed")??;
     let id = component_id_of(&application, component)?;
-    call.facts = tokio::time::timeout_at(
+    call.facts = native_call::prepare_invocation(
+        &application,
+        application.dispatch_target(id)?,
+        operation,
+        &call.facts,
         deadline,
-        application.policy.prepare(id, operation, &call.facts),
     )
-    .await
-    .context("native admission deadline elapsed")??;
+    .await?;
     let facts = call.facts.clone();
     let outcome = tokio::time::timeout_at(deadline, run_export(host, call))
         .await

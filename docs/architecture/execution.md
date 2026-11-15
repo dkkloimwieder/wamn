@@ -394,6 +394,8 @@ An absent header or null column means that no change was reported.
 Nested calls still inherit the enclosing deadline. Their remaining time is not a separate node deadline adjustment.
 
 Native dispatch retires warm instances after traps, deadlines, or cancellation.
+An admission refusal also retires the instance selected for that call before the host returns the original error.
+This includes an unavailable credential or a refused database login. The guest handler does not run, and recovery creates a fresh instance.
 Caller authority ends immediately. Physical teardown follows native cancellation rules. The engine sets wash-runtime's abandoned-call grace to zero, so a cancelled call's store traps at its next epoch yield and returns its memory.
 Successful calls can reuse an eligible instance only when no host resource handles remain.
 A full pool serves overflow from fresh stores.
