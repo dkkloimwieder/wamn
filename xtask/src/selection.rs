@@ -6,10 +6,14 @@ use crate::{
 };
 use anyhow::{Context as _, ensure};
 use clap::Args as ClapArgs;
+use futures_util::{StreamExt as _, stream};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use tokio::process::Command;
+use tokio::time::Instant;
 
 const WORKSPACES: [(&str, &str); 2] = [("root", "Cargo.toml"), ("apps", "apps/Cargo.toml")];
 
@@ -273,6 +277,8 @@ fn target_name(target: &cargo_metadata::Target) -> String {
 }
 
 pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
+    let started = Instant::now();
+    let deadline = started + process::TEST_RUN_TIMEOUT;
     let mut tiers: Vec<_> = if args.tier.is_empty() {
         vec!["unit", "contract", "live-postgres", "live-nats"]
     } else {
@@ -286,30 +292,33 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
     );
     let base = match &args.base {
         Some(base) => base.clone(),
-        None => process::output(root, "git", &["merge-base", "HEAD", "main"])
+        None => process::output_before(root, "git", &["merge-base", "HEAD", "main"], deadline)
             .await?
             .trim()
             .to_owned(),
     };
-    let base = process::output(
+    let base = process::output_before(
         root,
         "git",
         &["rev-parse", "--verify", &format!("{base}^{{commit}}")],
+        deadline,
     )
     .await?
     .trim()
     .to_owned();
-    let mut changed = process::output(
+    let mut changed = process::output_before(
         root,
         "git",
         &["diff", "--name-only", "--no-renames", "-z", &base, "--"],
+        deadline,
     )
     .await?;
     changed.push_str(
-        &process::output(
+        &process::output_before(
             root,
             "git",
             &["ls-files", "--others", "--exclude-standard", "-z"],
+            deadline,
         )
         .await?,
     );
@@ -362,13 +371,21 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
     }
     let mut metadata = Vec::new();
     for (_, manifest) in WORKSPACES {
-        metadata.push(
-            cargo_metadata::MetadataCommand::new()
-                .current_dir(root)
-                .manifest_path(root.join(manifest))
-                .other_options(vec!["--locked".into(), "--offline".into()])
-                .exec()?,
-        );
+        let text = process::output_before(
+            root,
+            "cargo",
+            &[
+                "metadata",
+                "--format-version=1",
+                "--manifest-path",
+                manifest,
+                "--locked",
+                "--offline",
+            ],
+            deadline,
+        )
+        .await?;
+        metadata.push(serde_json::from_str::<cargo_metadata::Metadata>(&text)?);
     }
     // A path belongs to the deepest member, including members of nested workspaces.
     let mut seeds = BTreeSet::new();
@@ -622,7 +639,9 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
         root,
         mode: args.mode,
         env: BTreeMap::new(),
-        skipped_missing: false,
+        skipped_missing: AtomicBool::new(false),
+        artifacts: BTreeMap::new(),
+        deadline,
     };
     let target =
         std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
@@ -653,106 +672,165 @@ pub async fn run(root: &Path, args: &Args) -> anyhow::Result<()> {
         },
     )
     .await?;
-    let mut failed = Vec::new();
+    let had_targets = !selected.is_empty();
+    let mut jobs: Vec<_> = selected
+        .into_iter()
+        .map(|target| Job {
+            target,
+            suite: None,
+        })
+        .collect();
+    for suite in suites.iter().filter(|suite| suite.execution == "libtest") {
+        let workspace = WORKSPACES
+            .iter()
+            .position(|(name, _)| *name == suite.workspace)
+            .context("suite workspace")?;
+        let package = metadata[workspace]
+            .workspace_packages()
+            .into_iter()
+            .find(|package| package.name.as_str() == suite.package)
+            .context("suite package")?;
+        for target in package.targets.iter().filter(|target| {
+            target.test
+                && !target.is_custom_build()
+                && (suite.target.is_empty() || suite.target.contains(&target_name(target)))
+        }) {
+            jobs.push(Job {
+                target: Selected {
+                    workspace,
+                    package: suite.package.clone(),
+                    target: target_name(target),
+                    features: suite
+                        .features
+                        .iter()
+                        .chain(&target.required_features)
+                        .map(|feature| {
+                            if feature.contains('/') {
+                                feature.clone()
+                            } else {
+                                format!("{}/{feature}", suite.package)
+                            }
+                        })
+                        .collect(),
+                    cases: cases(target.src_path.as_std_path(), target.is_test())?,
+                },
+                suite: Some(suite),
+            });
+        }
+    }
+    let selection = CaseSelection {
+        suites: &suites,
+        tiers: &tiers,
+        name: args.name.as_deref(),
+        only: None,
+        explicit: !args.suite.is_empty(),
+    };
+    jobs.retain(|job| {
+        let selection = job.selection(&selection);
+        selection.only.is_some_and(|suite| !suite.tests.is_empty())
+            || job.target.cases.is_empty()
+            || job
+                .target
+                .cases
+                .iter()
+                .any(|(name, case)| selection.includes(&job.target, name, case))
+    });
+    let mut failed = runner.compile(&jobs, &metadata).await?;
+    if cluster && !failed.is_empty() {
+        anyhow::bail!("{}", failed.join("\n"));
+    }
     let mut executed = false;
-    for suite in suites.iter().filter(|suite| suite.mode == "always") {
-        match runner
-            .suite(
-                suite,
-                args.name.as_deref(),
-                &metadata,
-                &tiers,
-                !args.suite.is_empty(),
-            )
-            .await
-        {
-            Ok(ran) => executed |= ran,
-            Err(error) => {
-                failed.push(format!("{}: {error:#}", suite.id));
-                if suite.tier == "kind" {
-                    anyhow::bail!("{}", failed.join("\n"));
-                }
+    for suite in suites
+        .iter()
+        .filter(|suite| suite.execution == "commands" && suite.mode == "always")
+    {
+        if let Err(error) = runner.suite_commands(suite).await {
+            failed.push(format!("{}: {error:#}", suite.id));
+            if cluster {
+                anyhow::bail!("{}", failed.join("\n"));
             }
         }
     }
-    for target in &selected {
-        let mut command = runner.command("cargo");
-        command.args([
-            "test",
-            "--locked",
-            "--offline",
-            "--manifest-path",
-            WORKSPACES[target.workspace].1,
-            "-p",
-            &target.package,
-        ]);
-        add_target(&mut command, &target.target);
-        if !target.features.is_empty() {
-            command.args([
-                "--features",
-                &target
-                    .features
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .join(","),
-            ]);
-        }
-        match runner
-            .native_test(
-                &mut command,
-                target,
-                &metadata[target.workspace],
-                &CaseSelection {
-                    suites: &suites,
-                    tiers: &tiers,
-                    name: args.name.as_deref(),
-                    only: None,
-                    explicit: false,
-                },
-            )
-            .await
-        {
-            Ok(ran) => executed |= ran,
+    let mut executed_suites = BTreeSet::new();
+    let (serial, independent): (Vec<_>, Vec<_>) = jobs.iter().partition(|job| {
+        cluster
+            || job
+                .suite
+                .is_some_and(|suite| !suite.resource_lock.is_empty())
+            || job.target.cases.iter().any(|(name, case)| {
+                job.selection(&selection).includes(&job.target, name, case)
+                    && case
+                        .needs
+                        .iter()
+                        .all(|(type_, name)| supplied(&runner, type_, name))
+                    && case.needs.iter().any(|(type_, name)| {
+                        // Inputs without a preparation owner may name a shared broker,
+                        // fixed port, or external fixture. Run these targets alone.
+                        type_ == "env"
+                            && !policy.preparation.iter().any(|prep| {
+                                prep.outputs.contains_key(name) || prep.aliases.contains_key(name)
+                            })
+                            || type_ == "service" && name == "cluster"
+                            || type_ == "bin" && name == "docker"
+                    })
+            })
+    });
+    let concurrency = std::thread::available_parallelism().map_or(1, usize::from);
+    println!("parallel test targets: {concurrency}");
+    let parallel = stream::iter(independent)
+        .map(|job| runner.job(job, &metadata, &selection))
+        .buffer_unordered(concurrency);
+    let serial = stream::iter(serial).then(|job| runner.job(job, &metadata, &selection));
+    let mut results = std::pin::pin!(parallel.chain(serial));
+    while let Some((suite, result)) = results.next().await {
+        match result {
+            Ok(ran) => {
+                executed |= ran;
+                if ran && let Some(suite) = suite {
+                    executed_suites.insert(suite);
+                }
+            }
             Err(error) => {
-                failed.push(format!("{} {}: {error:#}", target.package, target.target));
+                failed.push(format!("{error:#}"));
                 if cluster {
                     anyhow::bail!("{}", failed.join("\n"));
                 }
             }
         }
     }
-    for suite in suites.iter().filter(|suite| suite.mode == "local") {
-        match runner
-            .suite(
-                suite,
-                args.name.as_deref(),
-                &metadata,
-                &tiers,
-                !args.suite.is_empty(),
-            )
-            .await
-        {
-            Ok(ran) => executed |= ran,
-            Err(error) => {
-                failed.push(format!("{}: {error:#}", suite.id));
-                if suite.tier == "kind" {
-                    break;
-                }
+    if matches!(args.mode, Mode::Run) && !args.suite.is_empty() {
+        for suite in suites.iter().filter(|suite| suite.execution == "libtest") {
+            if !executed_suites.contains(suite.id.as_str()) {
+                failed.push(format!("suite {}: no selected passing cases", suite.id));
+            }
+        }
+    }
+    for suite in suites
+        .iter()
+        .filter(|suite| suite.execution == "commands" && suite.mode == "local")
+    {
+        if let Err(error) = runner.suite_commands(suite).await {
+            failed.push(format!("{}: {error:#}", suite.id));
+            if cluster {
+                break;
             }
         }
     }
     if matches!(args.mode, Mode::Run) && !executed && failed.is_empty() {
         if let Some(name) = &args.name {
-            failed.push(if runner.skipped_missing {
+            failed.push(if runner.skipped_missing.load(Ordering::Relaxed) {
                 format!("tests matching name filter {name:?} were skipped for missing inputs")
             } else {
                 format!("no tests match name filter {name:?}")
             });
-        } else if !selected.is_empty() {
+        } else if had_targets {
             failed.push("no executed test cases for selection".into());
         }
     }
+    println!(
+        "finished selection ({:.2}s)",
+        started.elapsed().as_secs_f64()
+    );
     ensure!(failed.is_empty(), "{}", failed.join("\n"));
     Ok(())
 }
@@ -769,11 +847,30 @@ fn add_target(command: &mut Command, target: &str) {
     }
 }
 
+struct Job<'a> {
+    target: Selected,
+    suite: Option<&'a Suite>,
+}
+
+impl Job<'_> {
+    fn selection<'a>(&'a self, selection: &'a CaseSelection<'a>) -> CaseSelection<'a> {
+        CaseSelection {
+            suites: selection.suites,
+            tiers: selection.tiers,
+            name: selection.name,
+            only: self.suite,
+            explicit: self.suite.is_some() && selection.explicit,
+        }
+    }
+}
+
 struct Runner<'a> {
     root: &'a Path,
     mode: Mode,
     env: BTreeMap<String, String>,
-    skipped_missing: bool,
+    skipped_missing: AtomicBool,
+    artifacts: BTreeMap<(usize, String, String), cargo_metadata::Artifact>,
+    deadline: Instant,
 }
 impl Runner<'_> {
     fn command(&self, program: &str) -> Command {
@@ -808,126 +905,220 @@ impl Runner<'_> {
             }
             let mut command = self.command(expanded.first().context("empty input command")?);
             command.args(&expanded[1..]);
-            tasks::step(&mut command, self.mode).await?;
+            self.step(&mut command).await?;
         }
         Ok(())
     }
-    fn cargo_suite(&self, suite: &Suite) -> Command {
-        let mut command = self.command("cargo");
-        let manifest = WORKSPACES
-            .iter()
-            .find(|(name, _)| *name == suite.workspace)
-            .expect("suite workspace")
-            .1;
-        command.args([
-            "test",
-            "--locked",
-            "--offline",
-            "--no-fail-fast",
-            "--manifest-path",
-            manifest,
-            "-p",
-            &suite.package,
-        ]);
-        for target in &suite.target {
-            add_target(&mut command, target);
+    async fn step(&self, command: &mut Command) -> anyhow::Result<()> {
+        let label = tasks::describe(command);
+        if matches!(self.mode, Mode::DryRun) {
+            println!("{label}");
+            return Ok(());
         }
-        if !suite.features.is_empty() {
-            command.args(["--features", &suite.features.join(",")]);
-        }
-        command
+        let started = Instant::now();
+        println!("start preparation: {label}");
+        let result = process::execute_before(command, self.deadline).await;
+        println!(
+            "finished preparation ({:.2}s): {label}",
+            started.elapsed().as_secs_f64()
+        );
+        result.map(drop).with_context(|| label)
     }
-    async fn suite(
+
+    async fn compile(
         &mut self,
-        suite: &Suite,
-        name: Option<&str>,
+        jobs: &[Job<'_>],
         metadata: &[cargo_metadata::Metadata],
-        tiers: &[&str],
-        explicit: bool,
-    ) -> anyhow::Result<bool> {
-        let mut executed = false;
-        let lock = if suite.resource_lock.is_empty() || matches!(self.mode, Mode::DryRun) {
-            None
-        } else {
-            let directory = Path::new(&self.env["CARGO_TARGET_DIR"]).join("test-locks");
-            std::fs::create_dir_all(&directory)?;
-            let file = std::fs::File::create(directory.join(&suite.resource_lock))?;
-            file.lock()?;
-            Some(file)
-        };
-        let mut errors = Vec::new();
-        if suite.execution == "commands" {
-            for args in &suite.commands {
-                if let Err(error) = self.commands(&[args[1..].to_vec()]).await {
-                    errors.push(format!("{error:#}"));
-                }
-            }
-        } else {
-            let workspace = WORKSPACES
+    ) -> anyhow::Result<Vec<String>> {
+        let mut failures = Vec::new();
+        for (workspace, (_, manifest)) in WORKSPACES.iter().enumerate() {
+            let targets: Vec<_> = jobs
                 .iter()
-                .position(|(name, _)| *name == suite.workspace)
-                .context("suite workspace")?;
-            let md = &metadata[workspace];
-            let package = md
-                .workspace_packages()
-                .into_iter()
-                .find(|package| package.name.as_str() == suite.package)
-                .context("suite package")?;
-            for target in package.targets.iter().filter(|target| {
-                target.test
-                    && !target.is_custom_build()
-                    && (suite.target.is_empty() || suite.target.contains(&target_name(target)))
-            }) {
-                let selected = Selected {
-                    workspace,
-                    package: suite.package.clone(),
-                    target: target_name(target),
-                    features: BTreeSet::new(),
-                    cases: cases(target.src_path.as_std_path(), target.is_test())?,
-                };
-                let mut command = self.cargo_suite(suite);
-                if !target.required_features.is_empty() {
-                    command.args(["--features", &target.required_features.join(",")]);
-                }
-                // Each executable is discovered and run separately.
-                if suite.target.is_empty() {
-                    add_target(&mut command, &selected.target);
-                }
-                let selection = CaseSelection {
-                    suites: &[],
-                    tiers,
-                    name,
-                    only: Some(suite),
-                    explicit,
-                };
-                match self
-                    .native_test(&mut command, &selected, md, &selection)
-                    .await
-                {
-                    Ok(ran) => executed |= ran,
-                    Err(error) => {
-                        errors.push(format!("{error:#}"));
-                        if suite.tier == "kind" {
-                            break;
-                        }
+                .filter(|job| job.target.workspace == workspace)
+                .map(|job| &job.target)
+                .collect();
+            if targets.is_empty() {
+                continue;
+            }
+            let mut command = self.command("cargo");
+            command.args([
+                "test",
+                "--locked",
+                "--offline",
+                "--no-run",
+                "--keep-going",
+                "--message-format=json-render-diagnostics",
+                "--manifest-path",
+                manifest,
+            ]);
+            let packages: BTreeSet<_> = targets.iter().map(|target| &target.package).collect();
+            for package in packages {
+                command.args(["-p", package]);
+            }
+            let selectors: BTreeSet<_> = targets
+                .iter()
+                .map(|target| {
+                    let category = target
+                        .target
+                        .split_once(':')
+                        .expect("Cargo target selector")
+                        .0;
+                    if matches!(category, "lib" | "cdylib" | "staticlib" | "rlib" | "dylib") {
+                        "lib:"
+                    } else {
+                        target.target.as_str()
                     }
+                })
+                .collect();
+            for target in selectors {
+                add_target(&mut command, target);
+            }
+            let features: BTreeSet<_> =
+                targets.iter().flat_map(|target| &target.features).collect();
+            if !features.is_empty() {
+                command.args([
+                    "--features",
+                    &features
+                        .into_iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ]);
+            }
+            if matches!(self.mode, Mode::DryRun) {
+                println!("{}", tasks::describe(&command));
+                continue;
+            }
+            let started = Instant::now();
+            println!("start test build: {}", WORKSPACES[workspace].0);
+            let output = process::capture_before(&mut command, self.deadline).await;
+            println!(
+                "finished test build ({:.2}s): {}",
+                started.elapsed().as_secs_f64(),
+                WORKSPACES[workspace].0
+            );
+            let output =
+                output.with_context(|| format!("{} test build", WORKSPACES[workspace].0))?;
+            for message in cargo_metadata::Message::parse_stream(output.text.as_bytes()) {
+                let Ok(cargo_metadata::Message::CompilerArtifact(artifact)) = message else {
+                    continue;
+                };
+                if !artifact.profile.test || artifact.executable.is_none() {
+                    continue;
+                }
+                if let Some(package) = metadata[workspace]
+                    .workspace_packages()
+                    .into_iter()
+                    .find(|package| package.manifest_path == artifact.manifest_path)
+                {
+                    self.artifacts.insert(
+                        (
+                            workspace,
+                            package.name.to_string(),
+                            target_name(&artifact.target),
+                        ),
+                        artifact,
+                    );
                 }
             }
-            if explicit && !executed && matches!(self.mode, Mode::Run) && errors.is_empty() {
-                errors.push(format!("suite {}: no selected passing cases", suite.id));
+            if !output.status.success() {
+                failures.push(format!(
+                    "{} test build: {}",
+                    WORKSPACES[workspace].0, output.status
+                ));
             }
         }
-        drop(lock);
+        Ok(failures)
+    }
+
+    async fn suite_commands(&self, suite: &Suite) -> anyhow::Result<()> {
+        let mut errors = Vec::new();
+        let _lock = self
+            .resource_lock(&suite.resource_lock, self.deadline)
+            .await?;
+        for args in &suite.commands {
+            if let Err(error) = self.commands(&[args[1..].to_vec()]).await {
+                errors.push(format!("{error:#}"));
+                if suite.tier == "kind" {
+                    break;
+                }
+            }
+        }
         ensure!(errors.is_empty(), "{}", errors.join("\n"));
-        Ok(executed)
+        Ok(())
+    }
+
+    async fn resource_lock(
+        &self,
+        resource: &str,
+        deadline: Instant,
+    ) -> anyhow::Result<Option<std::fs::File>> {
+        if resource.is_empty() || matches!(self.mode, Mode::DryRun) {
+            return Ok(None);
+        }
+        let directory = Path::new(&self.env["CARGO_TARGET_DIR"]).join("test-locks");
+        std::fs::create_dir_all(&directory)?;
+        let file = std::fs::File::create(directory.join(resource))?;
+        loop {
+            ensure!(
+                Instant::now() < deadline,
+                "resource {resource}: run deadline exceeded"
+            );
+            match file.try_lock() {
+                Ok(()) => return Ok(Some(file)),
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+            }
+        }
+    }
+
+    async fn job<'a>(
+        &self,
+        job: &'a Job<'_>,
+        metadata: &[cargo_metadata::Metadata],
+        selection: &CaseSelection<'_>,
+    ) -> (Option<&'a str>, anyhow::Result<bool>) {
+        let started = Instant::now();
+        let label = format!(
+            "{} {}{}",
+            job.target.package,
+            job.target.target,
+            job.suite
+                .map_or(String::new(), |suite| format!(" (suite {})", suite.id))
+        );
+        println!("start target: {label}");
+        let deadline = self.deadline.min(started + Duration::from_mins(10));
+        let result = async {
+            let _lock = self
+                .resource_lock(job.suite.map_or("", |suite| &suite.resource_lock), deadline)
+                .await?;
+            self.native_test(
+                &job.target,
+                &metadata[job.target.workspace],
+                &job.selection(selection),
+                deadline,
+            )
+            .await
+        }
+        .await;
+        println!(
+            "finished target ({:.2}s): {label}",
+            started.elapsed().as_secs_f64()
+        );
+        (
+            job.suite.map(|suite| suite.id.as_str()),
+            result.with_context(|| label),
+        )
     }
 
     async fn native_test(
-        &mut self,
-        command: &mut Command,
+        &self,
         target: &Selected,
         md: &cargo_metadata::Metadata,
         selection: &CaseSelection<'_>,
+        deadline: Instant,
     ) -> anyhow::Result<bool> {
         if selection.only.is_none_or(|suite| suite.tests.is_empty())
             && !target.cases.is_empty()
@@ -938,13 +1129,11 @@ impl Runner<'_> {
         {
             return Ok(false);
         }
-        command.args(["--no-run", "--message-format=json-render-diagnostics"]);
         if matches!(self.mode, Mode::DryRun) {
-            println!("{}", tasks::describe(command));
             for (name, case) in &target.cases {
                 if selection.includes(target, name, case) {
                     if !self.available(target, name, case, selection)? {
-                        self.skipped_missing = true;
+                        self.skipped_missing.store(true, Ordering::Relaxed);
                         continue;
                     }
                     println!(
@@ -960,131 +1149,131 @@ impl Runner<'_> {
             }
             return Ok(false);
         }
-        let text = process::execute(command).await?;
-        let mut executed = false;
         let mut skipped_missing = false;
-        let mut failures = Vec::new();
-        for message in cargo_metadata::Message::parse_stream(text.as_bytes()) {
-            let Ok(cargo_metadata::Message::CompilerArtifact(artifact)) = message else {
-                continue;
-            };
-            if !artifact.profile.test || target_name(&artifact.target) != target.target {
-                continue;
-            }
-            let Some(executable) = artifact.executable.as_deref() else {
-                continue;
-            };
-            let Some(package) = md.packages.iter().find(|package| {
-                package.manifest_path == artifact.manifest_path
-                    && package.name.as_str() == target.package
-            }) else {
-                continue;
-            };
-            let directory = package
-                .manifest_path
-                .parent()
-                .context("package directory")?;
-            let binary = |database| {
-                let mut command = if database {
-                    let mut command = self.command(&format!(
-                        "{}/debug/wamn-test-postgres",
-                        self.env["CARGO_TARGET_DIR"]
-                    ));
-                    command.args(["--database", "selection", "--url-env", "DATABASE_URL", "--"]);
-                    command
-                } else {
-                    self.command("env")
-                };
-                if let Ok(runner) = std::env::var("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER") {
-                    command.args(runner.split_whitespace());
-                }
+        let artifact = self
+            .artifacts
+            .iter()
+            .find(|((workspace, package, name), _)| {
+                *workspace == target.workspace
+                    && *package == target.package
+                    && *name == target.target
+            })
+            .map(|(_, artifact)| artifact)
+            .context("no compiled test executable; see build diagnostics")?;
+        let Some(executable) = artifact.executable.as_deref() else {
+            anyhow::bail!("test artifact has no executable");
+        };
+        let Some(package) = md.packages.iter().find(|package| {
+            package.manifest_path == artifact.manifest_path
+                && package.name.as_str() == target.package
+        }) else {
+            anyhow::bail!("test executable has no owning package");
+        };
+        let directory = package
+            .manifest_path
+            .parent()
+            .context("package directory")?;
+        let binary = |database| {
+            let mut command = if database {
+                let mut command = self.command(&format!(
+                    "{}/debug/wamn-test-postgres",
+                    self.env["CARGO_TARGET_DIR"]
+                ));
+                command.args(["--database", "selection", "--url-env", "DATABASE_URL", "--"]);
                 command
-                    .arg(executable.as_str())
-                    .current_dir(directory)
-                    .env("CARGO_MANIFEST_DIR", directory)
-                    .env("CARGO_MANIFEST_PATH", &package.manifest_path);
-                command
+            } else {
+                self.command("env")
             };
-            let listed =
-                process::execute(binary(false).args(["--list", "--format", "terse"])).await?;
-            let ignored =
-                process::execute(binary(false).args(["--list", "--ignored", "--format", "terse"]))
-                    .await?;
-            let ignored: BTreeSet<_> = ignored
-                .lines()
-                .filter_map(|line| line.strip_suffix(": test"))
-                .collect();
-            let names: Vec<_> = listed
-                .lines()
-                .filter_map(|line| line.strip_suffix(": test"))
-                .collect();
-            if let Some(suite) = selection.only {
-                for name in &suite.tests {
-                    ensure!(
-                        names.contains(&name.as_str()),
-                        "suite {}: missing exact test {name}",
-                        suite.id
-                    );
-                }
+            if let Ok(runner) = std::env::var("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER") {
+                command.args(runner.split_whitespace());
             }
-            let default = Case {
-                integration: artifact.target.is_test(),
-                ..Case::default()
-            };
-            let mut skip = Vec::new();
-            let mut database = false;
-            let mut run = Vec::new();
-            for name in names {
+            command
+                .arg(executable.as_str())
+                .current_dir(directory)
+                .env("CARGO_MANIFEST_DIR", directory)
+                .env("CARGO_MANIFEST_PATH", &package.manifest_path);
+            command
+        };
+        let listed = process::execute_before(
+            binary(false).args(["--list", "--format", "terse"]),
+            deadline,
+        )
+        .await?;
+        let ignored = process::execute_before(
+            binary(false).args(["--list", "--ignored", "--format", "terse"]),
+            deadline,
+        )
+        .await?;
+        let ignored: BTreeSet<_> = ignored
+            .lines()
+            .filter_map(|line| line.strip_suffix(": test"))
+            .collect();
+        let names: Vec<_> = listed
+            .lines()
+            .filter_map(|line| line.strip_suffix(": test"))
+            .collect();
+        if let Some(suite) = selection.only {
+            for name in &suite.tests {
                 ensure!(
-                    !ignored.contains(name) || target.cases.contains_key(name),
-                    "{name}: ignored test has no readable needs declaration"
+                    names.contains(&name.as_str()),
+                    "suite {}: missing exact test {name}",
+                    suite.id
                 );
-                let case = target.cases.get(name).unwrap_or(&default);
-                if !selection.includes(target, name, case) {
-                    skip.push(name);
-                } else if !self.available(target, name, case, selection)? {
-                    skipped_missing = true;
-                    skip.push(name);
-                } else {
-                    database |= case.database;
-                    run.push(name);
-                }
             }
-            if run.is_empty() {
-                continue;
+        }
+        let default = Case {
+            integration: artifact.target.is_test(),
+            ..Case::default()
+        };
+        let mut skip = Vec::new();
+        let mut database = false;
+        let mut run = Vec::new();
+        for name in names {
+            ensure!(
+                !ignored.contains(name) || target.cases.contains_key(name),
+                "{name}: ignored test has no readable needs declaration"
+            );
+            let case = target.cases.get(name).unwrap_or(&default);
+            if !selection.includes(target, name, case) {
+                skip.push(name);
+            } else if !self.available(target, name, case, selection)? {
+                skipped_missing = true;
+                skip.push(name);
+            } else {
+                database |= case.database;
+                run.push(name);
             }
-            if selection.tiers.contains(&"kind") {
-                for name in run {
-                    let database = target.cases.get(name).is_some_and(|case| case.database);
-                    let output = process::execute(binary(database).args([
+        }
+        self.skipped_missing
+            .fetch_or(skipped_missing, Ordering::Relaxed);
+        if run.is_empty() {
+            return Ok(false);
+        }
+        if selection.tiers.contains(&"kind") {
+            for name in run {
+                let database = target.cases.get(name).is_some_and(|case| case.database);
+                let output = process::execute_before(
+                    binary(database).args([
                         name,
                         "--include-ignored",
                         "--exact",
                         "--test-threads=1",
-                    ]))
-                    .await?;
-                    process::validate(&output, Some(name), false)?;
-                    executed = true;
-                }
-                continue;
+                    ]),
+                    deadline,
+                )
+                .await?;
+                process::validate(&output, Some(name), false)?;
             }
-            let mut command = binary(database);
-            command.args(["--include-ignored", "--exact", "--test-threads=1"]);
-            for name in skip {
-                command.args(["--skip", name]);
-            }
-            let result = match process::execute(&mut command).await {
-                Ok(output) => process::validate(&output, None, false),
-                Err(error) => Err(error),
-            };
-            match result {
-                Ok(()) => executed = true,
-                Err(error) => failures.push(format!("{error:#}")),
-            }
+            return Ok(true);
         }
-        self.skipped_missing |= skipped_missing;
-        ensure!(failures.is_empty(), "{}", failures.join("\n"));
-        Ok(executed)
+        let mut command = binary(database);
+        command.args(["--include-ignored", "--exact", "--test-threads=1"]);
+        for name in skip {
+            command.args(["--skip", name]);
+        }
+        let output = process::execute_before(&mut command, deadline).await?;
+        process::validate(&output, None, false)?;
+        Ok(true)
     }
 
     fn available(
@@ -1362,16 +1551,16 @@ async fn prepare(
             .arg(bin.join("wamn"))
             .arg("build")
             .args(&applications);
-        tasks::step(&mut command, runner.mode).await?;
+        runner.step(&mut command).await?;
         for app in &applications {
             if runner.root.join(app).join("web/package.json").is_file() {
-                tasks::step(
-                    runner
-                        .command(bin.join("wamn").to_str().context("wamn path")?)
-                        .args(["web", "build", "--package", app]),
-                    runner.mode,
-                )
-                .await?;
+                runner
+                    .step(
+                        runner
+                            .command(bin.join("wamn").to_str().context("wamn path")?)
+                            .args(["web", "build", "--package", app]),
+                    )
+                    .await?;
             }
         }
     }

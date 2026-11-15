@@ -68,7 +68,23 @@ A `bin:PROGRAM` need requires an executable on `PATH` or at the given absolute p
 The selector runs ignored cases only when it can supply their declared inputs.
 An explicit suite fails when a selected case lacks an input.
 Selected suites own their named cases or filters, so dependency selection runs each case once.
+
+The selector builds all selected test executables together, once per Cargo workspace.
+It combines their package features and target selectors in that build.
+Cargo keeps compiling independent packages after a build failure. The runner still runs the executables that built.
 The selector preserves the features of the Cargo build when it runs its test executable.
+
+After preparation and compilation, independent targets run in parallel, up to the number of available CPU cores.
+Each target keeps one test thread and, when needed, its own PostgreSQL server.
+Targets with a `resource_lock`, a cluster need, Docker, or an environment input without a preparation owner run alone.
+This keeps shared brokers, fixed ports, and external fixtures serial. Command suites also run alone.
+A cluster selection stays serial and stops at its first failure. Other selections collect every failure.
+
+Each native test target has a ten-minute deadline, including discovery and waiting for its resource lock.
+The whole selection has a thirty-minute deadline, including preparation and compilation.
+Preparation commands, workspace builds, and targets print their elapsed time.
+Build diagnostics remain visible, while Cargo artifact JSON stays out of the run log.
+
 The tool builds the guests that selected suites need.
 `cargo xtask repo-lint` also compiles guest targets that disable Cargo tests.
 A passing workspace test result does not establish compilation of those guest targets.
@@ -409,8 +425,8 @@ A library can contain cases from several tiers.
 Unit and contract run per issue, live tiers run per merge, and kind runs per epic.
 `platform_apply_kind` runs once at each epic close and once on `main` before a GCP build.
 It never runs for a single fix.
-Both runners use the shared process boundary in `cargo xtask require-test-result`. `WAMN_TEST_SILENCE_SECONDS` sets its silence limit, with a default of 1800 seconds. Output on either stream resets the limit. Silence past the limit stops the child process group, names the stage, and fails the run.
-It gives no expected duration.
+Both runners use the shared process boundary in `cargo xtask require-test-result`. `WAMN_TEST_SILENCE_SECONDS` sets its silence limit, with a default of 120 seconds. Output on either stream resets the limit. Silence past the limit stops the child process group, names the stage, and fails the run.
+The silence limit and the absolute deadline apply independently. Output cannot extend a deadline.
 The epoch interruption case lives in `wamn-engine --test deadline`.
 Pure calendar scheduling decisions live in `wamn-workflow --test schedule_decisions`.
 Admission authority stays in `wamn-run-state --test admission_live`.

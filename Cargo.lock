@@ -8312,6 +8312,7 @@ dependencies = [
  "clap",
  "csv",
  "docker_credential",
+ "futures-util",
  "hyper",
  "oci-client",
  "regex",

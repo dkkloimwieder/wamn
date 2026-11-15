@@ -353,6 +353,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
         }
     })
     .await??;
+    task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     held.rollback().await?;
     // Wait for cancellation to close the database connection and roll back.
