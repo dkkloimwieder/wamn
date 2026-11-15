@@ -18,7 +18,7 @@ use wamn_identity_protocol::verifier::{SessionTestClock, SessionVerifier};
 
 pub(super) const ISSUER: &str = "https://identity.example.test/issuer";
 pub(super) const ORG: &str = "org-a";
-pub(super) const AUDIENCE: &str = "urn:wamn:project-env:org-a:project:dev:instance-one";
+pub(super) const AUDIENCE: &str = "urn:wamn:project-env:org-a:dev:project:instance-one";
 
 fn pair() -> Ed25519KeyPair {
     // Fixed test-only seed. Production signing keys never enter this crate.
@@ -211,7 +211,7 @@ impl Drop for Server {
 pub(super) async fn install_authority(
     client: &mut sqlx::PgConnection,
     project: &str,
-    environment: &str,
+    environment: &wamn_registry::EnvName,
     audience: &str,
     principals: &[&str],
 ) -> anyhow::Result<()> {

@@ -51,7 +51,7 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
         &PublishReleaseManifest {
             org: "org-a",
             project: "fixture",
-            environment: "dev",
+            environment: &"dev".parse().unwrap(),
             packages: &packages,
             attachments: &BTreeMap::new(),
             environment_is_disposable: false,
@@ -75,7 +75,7 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
         artifact_bindings: BTreeSet::new(),
         connections: BTreeMap::new(),
         policy: Policy {
-            name: "dev".to_owned(),
+            name: "dev".parse().unwrap(),
             readiness_budget_seconds: 600,
             drain_bound_seconds: 300,
         },

@@ -44,19 +44,19 @@ pub async fn prepare(pool: &sqlx::PgPool, family: WorkloadRoleFamily) -> Fixture
     }
     let target = match family.identity_type() {
         WorkloadRoleIdentityType::ProjectEnvKey => WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: "t1",
+            project_env_key: &"t1--dev--project".parse().unwrap(),
             database,
         },
         WorkloadRoleIdentityType::ProjectEnvironment => WorkloadRoleIdentity::ProjectEnvironment {
             org: "acme",
             project: "billing",
-            environment: "dev",
+            environment: &"dev".parse().unwrap(),
             database,
         },
         WorkloadRoleIdentityType::Control => WorkloadRoleIdentity::Control {
             org: "acme",
             project: "billing",
-            environment: "dev",
+            environment: &"dev".parse().unwrap(),
             database,
         },
         WorkloadRoleIdentityType::Org => WorkloadRoleIdentity::Org {
@@ -238,11 +238,11 @@ pub async fn family(pool: sqlx::PgPool, family: WorkloadRoleFamily) {
             .bind(PlatformComponent::Executor.principal_id()).execute(&mut *transaction).await.unwrap();
         transaction.rollback().await.unwrap();
         // Seed both projects through the installed product schemas.
-        execute(&mut fixture.admin, &format!("BEGIN; {} INSERT INTO catalog.packages(project_env_key,package_id,package_version) VALUES('t1','fixture','1.0.0'),('t2','fixture','1.0.0'); COMMIT", wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning))).await;
+        execute(&mut fixture.admin, &format!("BEGIN; {} INSERT INTO catalog.packages(project_env_key,package_id,package_version) VALUES('t1--dev--project','fixture','1.0.0'),('t2--dev--project','fixture','1.0.0'); COMMIT", wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning))).await;
         let mut transaction = connection.begin().await.unwrap();
         sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'viewer','fixture')")
             .bind(PlatformComponent::Executor.principal_id()).execute(&mut *transaction).await.unwrap();
-        let (own, foreign): (bool,bool) = sqlx::query_as("SELECT EXISTS(SELECT FROM catalog.packages WHERE project_env_key='t1'), EXISTS(SELECT FROM catalog.packages WHERE project_env_key<>'t1')")
+        let (own, foreign): (bool,bool) = sqlx::query_as("SELECT EXISTS(SELECT FROM catalog.packages WHERE project_env_key='t1--dev--project'), EXISTS(SELECT FROM catalog.packages WHERE project_env_key<>'t1--dev--project')")
             .fetch_one(&mut *transaction).await.unwrap();
         assert!(
             own && !foreign,
@@ -253,7 +253,7 @@ pub async fn family(pool: sqlx::PgPool, family: WorkloadRoleFamily) {
     }
     let statement = match family {
         WorkloadRoleFamily::Query => {
-            "INSERT INTO catalog.packages(project_env_key,package_id,package_version) VALUES('t1','forged','1.0.0')"
+            "INSERT INTO catalog.packages(project_env_key,package_id,package_version) VALUES('t1--dev--project','forged','1.0.0')"
         }
         WorkloadRoleFamily::IdentityReader => "UPDATE identity.principals SET status='active'",
         WorkloadRoleFamily::ConnectionReader => "SELECT * FROM registry.connection",

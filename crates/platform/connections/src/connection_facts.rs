@@ -65,9 +65,9 @@ pub struct ConnectionFacts {
     changes: Publisher,
     reader: Arc<ConnectionCredentials>,
     postgres: std::sync::Weak<dyn ProjectDatabase>,
-    project_env_key: String,
+    project_env_key: wamn_registry::ProjectEnvKey,
     project: String,
-    environment: String,
+    environment: wamn_registry::EnvName,
     generations: Cache<(uuid::Uuid, i64), Arc<ConnectionGeneration>>,
     versions: Cache<(String, i32), Arc<IntegrationVersion>>,
     secrets: Cache<uuid::Uuid, Arc<Secret>>,
@@ -92,9 +92,9 @@ impl ConnectionFacts {
         changes: Publisher,
         reader: Arc<ConnectionCredentials>,
         postgres: &Arc<impl ProjectDatabase + 'static>,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         project: &str,
-        environment: &str,
+        environment: &wamn_registry::EnvName,
     ) -> Self {
         let database = Arc::downgrade(postgres);
         Self {
@@ -134,7 +134,7 @@ impl ConnectionFacts {
         self.memory.connection_ticket(&self.project_env_key, id)
     }
 
-    pub fn environment(&self) -> &str {
+    pub fn environment(&self) -> &wamn_registry::EnvName {
         &self.environment
     }
 
@@ -142,7 +142,7 @@ impl ConnectionFacts {
         &self.project
     }
 
-    pub fn project_env_key(&self) -> &str {
+    pub fn project_env_key(&self) -> &wamn_registry::ProjectEnvKey {
         &self.project_env_key
     }
 
@@ -270,9 +270,7 @@ impl ConnectionFacts {
                     .postgres
                     .upgrade()
                     .context("project database authority was unloaded")?;
-                let mut connection = database
-                    .read_connection(&self.project, &self.project_env_key)
-                    .await?;
+                let mut connection = database.read_connection(&self.project).await?;
                 let rows = sqlx::query("SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version FROM catalog.connection_binding b JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) WHERE b.project_env_key=$1 AND b.manifest_digest=$2 ORDER BY 1,2,3").bind(&self.project_env_key).bind(manifest_digest).fetch_all(connection.connection()).await.context("read the release connection map")?;
                 let versions = sqlx::query("SELECT connection_id,version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2").bind(&self.project_env_key).bind(manifest_digest).fetch_all(connection.connection()).await.context("read the release connection versions")?;
                 let fact = crate::connection_memory::ReleaseFact {
@@ -416,9 +414,7 @@ impl ConnectionFacts {
             .postgres
             .upgrade()
             .context("project database authority was unloaded")?;
-        let mut connection = database
-            .read_connection(&self.project, &self.project_env_key)
-            .await?;
+        let mut connection = database.read_connection(&self.project).await?;
         let ready = sqlx::query(RELEASE_COMPONENT_BINDINGS_READY_SQL)
             .bind(&self.project_env_key)
             .bind(manifest_digest)

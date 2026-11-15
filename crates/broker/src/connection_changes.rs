@@ -17,21 +17,24 @@ pub const BUCKET: &str = "wamn-connection";
 
 /// The key of the fact of connection `id` in `project_env_key`: its active
 /// generation, effective status and credential id.
-pub fn connection_key(project_env_key: &str, id: &uuid::Uuid) -> String {
+pub fn connection_key(project_env_key: &wamn_registry::ProjectEnvKey, id: &uuid::Uuid) -> String {
     wamn_registry::name::connection_key(project_env_key, id)
 }
 
 /// The key of the connection map of the release `manifest_digest` in
 /// `project_env_key`. The key carries the hex part of the digest only, because a key
 /// token holds no `:`.
-pub fn release_key(project_env_key: &str, manifest_digest: &wamn_digest::Digest) -> String {
+pub fn release_key(
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    manifest_digest: &wamn_digest::Digest,
+) -> String {
     let hex = manifest_digest.hex();
-    wamn_registry::name::nats_subject(&[project_env_key, "release", &hex])
+    wamn_registry::name::nats_subject(&[project_env_key.as_str(), "release", &hex])
 }
 
 /// The key of the map from integration name to connection id of `project_env_key`.
-pub fn connections_key(project_env_key: &str) -> String {
-    wamn_registry::name::nats_subject(&[project_env_key, "connections"])
+pub fn connections_key(project_env_key: &wamn_registry::ProjectEnvKey) -> String {
+    wamn_registry::name::nats_subject(&[project_env_key.as_str(), "connections"])
 }
 
 /// One connection fact that a committed write changed.
@@ -39,18 +42,18 @@ pub fn connections_key(project_env_key: &str) -> String {
 pub enum ConnectionChange {
     /// The fact of one connection.
     Connection {
-        project_env_key: String,
+        project_env_key: wamn_registry::ProjectEnvKey,
         id: uuid::Uuid,
     },
     /// The connection map of one release.
     Release {
-        project_env_key: String,
+        project_env_key: wamn_registry::ProjectEnvKey,
         manifest_digest: wamn_digest::Digest,
     },
     /// The map from integration name to connection id of an environment.
-    Connections(String),
+    Connections(wamn_registry::ProjectEnvKey),
     /// Every fact of an environment.
-    ProjectEnvKey(String),
+    ProjectEnvKey(wamn_registry::ProjectEnvKey),
 }
 
 /// The changes of one transaction, deleted after its commit.
@@ -59,26 +62,30 @@ pub enum ConnectionChange {
 pub struct ConnectionDrops(BTreeSet<ConnectionChange>);
 
 impl ConnectionDrops {
-    pub fn connection(&mut self, project_env_key: &str, id: uuid::Uuid) {
+    pub fn connection(&mut self, project_env_key: &wamn_registry::ProjectEnvKey, id: uuid::Uuid) {
         self.0.insert(ConnectionChange::Connection {
             project_env_key: project_env_key.to_owned(),
             id,
         });
     }
 
-    pub fn release(&mut self, project_env_key: &str, manifest_digest: &wamn_digest::Digest) {
+    pub fn release(
+        &mut self,
+        project_env_key: &wamn_registry::ProjectEnvKey,
+        manifest_digest: &wamn_digest::Digest,
+    ) {
         self.0.insert(ConnectionChange::Release {
             project_env_key: project_env_key.to_owned(),
             manifest_digest: manifest_digest.to_owned(),
         });
     }
 
-    pub fn connections(&mut self, project_env_key: &str) {
+    pub fn connections(&mut self, project_env_key: &wamn_registry::ProjectEnvKey) {
         self.0
             .insert(ConnectionChange::Connections(project_env_key.to_owned()));
     }
 
-    pub fn project_env_key(&mut self, project_env_key: &str) {
+    pub fn project_env_key(&mut self, project_env_key: &wamn_registry::ProjectEnvKey) {
         self.0
             .insert(ConnectionChange::ProjectEnvKey(project_env_key.to_owned()));
     }
@@ -117,7 +124,7 @@ impl crate::Changes for ConnectionDrops {
                         Deletion::Key(connections_key(&project_env_key))
                     }
                     ConnectionChange::ProjectEnvKey(project_env_key) => {
-                        Deletion::Under(project_env_key)
+                        Deletion::Under(project_env_key.to_string())
                     }
                 })
                 .collect(),

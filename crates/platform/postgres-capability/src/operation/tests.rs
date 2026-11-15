@@ -94,9 +94,10 @@ BTreeMap::from([("entry".into(), ServingAttachment {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "entry fixture",
-            ReleaseTarget::new(PROJECT_ENV_KEY, "test").with_applications(
-                serde_json::from_value(json!({"receiving": {"packages": ["base"]}})).unwrap(),
-            ),
+            ReleaseTarget::new(PROJECT_ENV_KEY.parse().unwrap(), "test".parse().unwrap())
+                .with_applications(
+                    serde_json::from_value(json!({"receiving": {"packages": ["base"]}})).unwrap(),
+                ),
         )
         .unwrap(),
     )
@@ -203,7 +204,7 @@ impl GuestCall for Run {
 
 async fn fixture(pool: &sqlx::PgPool) -> (url::Url, Arc<WamnPostgres>, Arc<LoadedRelease>) {
     let database = wamn_test_postgres::url(pool);
-    let url = live_guest_url(database.as_str(), PROJECT_ENV_KEY).await;
+    let url = live_guest_url(database.as_str(), &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(database.as_str(), &[LIVE_PRINCIPAL]).await;
     {
         let batches: &[&str] = &[
@@ -242,7 +243,7 @@ async fn fixture(pool: &sqlx::PgPool) -> (url::Url, Arc<WamnPostgres>, Arc<Loade
             &entry_start(&release),
             "entry",
             SessionIdentity {
-                project_env_key: PROJECT_ENV_KEY.into(),
+                project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
                 project: Some(super::super::DEFAULT_PROJECT.into()),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
                 ..SessionIdentity::default()
@@ -352,7 +353,7 @@ fn offline_fixture() -> (Arc<WamnPostgres>, Arc<LoadedRelease>) {
             &entry_start(&release),
             "entry",
             SessionIdentity {
-                project_env_key: PROJECT_ENV_KEY.into(),
+                project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
                 project: Some(super::super::DEFAULT_PROJECT.into()),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
                 ..SessionIdentity::default()
@@ -369,7 +370,7 @@ async fn unavailable_principal_database_returns_connection_unavailable(pool: sql
         .bind_session_identity(
             "unavailable-principal",
             &SessionIdentity {
-                project_env_key: PROJECT_ENV_KEY.into(),
+                project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 ..SessionIdentity::default()
             },
@@ -670,7 +671,7 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
     .unwrap();
     let postgres = Arc::new(postgres);
     let identity = SessionIdentity {
-        project_env_key: PROJECT_ENV_KEY.into(),
+        project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
         project: Some(super::super::DEFAULT_PROJECT.into()),
         release: Some(ReleaseIdentity::from_loaded(&release)),
         ..SessionIdentity::default()

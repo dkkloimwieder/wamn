@@ -60,7 +60,7 @@ impl ReleaseIdentity {
 pub struct SessionIdentity {
     /// `app.project_env_key` — the RLS identity. Required: a session with no project_env_key is
     /// refused by [`WamnPostgres::require_project_env_key`] rather than run without an identity.
-    pub project_env_key: String,
+    pub project_env_key: Option<wamn_registry::ProjectEnvKey>,
     /// Which project database this session resolves against. `None` ⇒ the
     /// default project.
     pub project: Option<String>,
@@ -114,7 +114,7 @@ pub struct ConnectionEffectLookup<'a> {
     pub operation: &'a str,
     /// The release the effect runs under, as its manifest digest.
     pub manifest_digest: &'a wamn_digest::Digest,
-    pub environment: &'a str,
+    pub environment: &'a wamn_registry::EnvName,
     pub component_digest: &'a wamn_digest::Digest,
     pub store_alias: &'a str,
     pub candidate_binding: Option<&'a CandidateConnectionBinding>,

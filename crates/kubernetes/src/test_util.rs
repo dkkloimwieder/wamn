@@ -12,7 +12,7 @@ impl Store for MemoryStore {
         id: uuid::Uuid,
         value: &[u8],
     ) -> Result<StoreVersion, Error> {
-        let reference = credential_secret_name(&target.org, &target.project, target.env.as_str());
+        let reference = credential_secret_name(&target.org, &target.project, &target.env);
         let version = id.to_string();
         self.0
             .lock()

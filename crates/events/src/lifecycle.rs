@@ -64,7 +64,7 @@ pub async fn record_event_reader(
         .into_iter()
         .cloned()
         .collect::<Vec<_>>();
-    let env = triple.env.as_str();
+    let env = &triple.env;
     let stream = wamn_event_wire::stream_name(&triple.org, &triple.project, env);
     let secret_name = project_env_cdc_secret_name(&triple.org, &triple.project, env);
     let mut client = wamn_postgres::connect(system_url)
@@ -146,7 +146,7 @@ pub fn reader_configuration(
     crate::reader::ReaderConfig {
         org: triple.org.clone(),
         project: triple.project.clone(),
-        env: triple.env.to_string(),
+        env: triple.env.clone(),
         publication: cdc_name.into(),
         slot: cdc_name.into(),
         stream: wamn_event_wire::stream_name(&triple.org, &triple.project, &triple.env),

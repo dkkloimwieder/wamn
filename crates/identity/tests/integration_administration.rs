@@ -95,7 +95,11 @@ async fn write_and_copy_keep_environment_generations_and_credentials_separate(po
     .unwrap();
     for env in ["dev", "prod"] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", env))
+            (&wamn_control_provision::test_database::seed_org_project_env_sql(
+                "acme",
+                "app",
+                &env.parse().unwrap(),
+            ))
                 .to_string(),
         ))
         .execute(&mut client)
@@ -202,7 +206,11 @@ async fn oauth_writers_invalidate_rows_in_the_generation_transaction(pool: sqlx:
     .map(drop)
     .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", "dev"))
+        (&wamn_control_provision::test_database::seed_org_project_env_sql(
+            "acme",
+            "app",
+            &"dev".parse().unwrap(),
+        ))
             .to_string(),
     ))
     .execute(&mut client)
@@ -277,7 +285,11 @@ async fn jwt_connection_write_enforces_credential_and_auth_schemas(pool: sqlx::P
     .map(drop)
     .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", "dev"))
+        (&wamn_control_provision::test_database::seed_org_project_env_sql(
+            "acme",
+            "app",
+            &"dev".parse().unwrap(),
+        ))
             .to_string(),
     ))
     .execute(&mut client)

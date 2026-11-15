@@ -353,7 +353,11 @@ impl Fixture {
             LoadedRelease::load_canonical_bytes(
                 &bytes,
                 "oauth2-test",
-                ReleaseTarget::new("acme--dev--project-a", "dev").with_applications(
+                ReleaseTarget::new(
+                    "acme--dev--project-a".parse().unwrap(),
+                    "dev".parse().unwrap(),
+                )
+                .with_applications(
                     serde_json::from_value(serde_json::json!({"app":{"packages":["package_a"]}}))
                         .unwrap(),
                 ),
@@ -379,7 +383,8 @@ impl Fixture {
             let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();
 
             sqlx::raw_sql("BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:seed-oauth2')").execute(&mut admin).await.map(drop).unwrap();
-            let project_env_key = wamn_registry::project_env_key("acme", project, "dev");
+            let project_env_key =
+                wamn_registry::project_env_key("acme", project, &"dev".parse().unwrap());
             sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&project_env_key).bind(&manifest_digest).bind(&bytes).execute(&mut admin).await.map(|result| result.rows_affected()).unwrap();
             let rows = sqlx::query("SELECT c.id,i.id,i.name FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project=$1 AND c.env='dev'").bind(&project).fetch_all(&mut wamn_postgres::connect(self.credentials.database.as_str()).await.unwrap()).await.unwrap();
             for row in rows {
@@ -481,9 +486,9 @@ impl Fixture {
                 Publisher::default(),
                 Arc::new(self.credentials.reader("project-a").await),
                 &postgres,
-                "acme--dev--project-a",
+                &"acme--dev--project-a".parse().unwrap(),
                 "project-a",
-                "dev",
+                &"dev".parse().unwrap(),
             )
             .with_oauth_encryption(Some(Arc::new(
                 wamn_connections::oauth_encryption::Envelope::from_file(self.key.path()).unwrap(),
@@ -526,9 +531,9 @@ impl Fixture {
                 Publisher::default(),
                 Arc::new(self.credentials.reader("project-a").await),
                 &first.postgres,
-                "acme--dev--project-a",
+                &"acme--dev--project-a".parse().unwrap(),
                 "project-a",
-                "dev",
+                &"dev".parse().unwrap(),
             )
             .with_oauth_encryption(Some(Arc::new(
                 wamn_connections::oauth_encryption::Envelope::from_file(self.key.path()).unwrap(),
@@ -606,15 +611,19 @@ impl Fixture {
 
     async fn use_project(&self, plugin: &mut TestHttp, project: &str) {
         use wamn_engine::release_manifest::ReleaseTarget;
-        let project_env_key = wamn_registry::project_env_key("acme", project, "dev");
+        let project_env_key =
+            wamn_registry::project_env_key("acme", project, &"dev".parse().unwrap());
         plugin.release = Arc::new(
             LoadedRelease::load_canonical_bytes(
                 &plugin.release.manifest().canonical_bytes(),
                 "oauth2-test",
-                ReleaseTarget::new(&project_env_key, "dev").with_applications(
-                    serde_json::from_value(serde_json::json!({"app":{"packages":["package_a"]}}))
+                ReleaseTarget::new(project_env_key.clone(), "dev".parse().unwrap())
+                    .with_applications(
+                        serde_json::from_value(
+                            serde_json::json!({"app":{"packages":["package_a"]}}),
+                        )
                         .unwrap(),
-                ),
+                    ),
             )
             .unwrap(),
         );
@@ -626,7 +635,7 @@ impl Fixture {
                 &plugin.postgres,
                 &project_env_key,
                 project,
-                "dev",
+                &"dev".parse().unwrap(),
             )
             .with_oauth_encryption(Some(Arc::new(
                 wamn_connections::oauth_encryption::Envelope::from_file(self.key.path()).unwrap(),
@@ -855,7 +864,10 @@ async fn claimed_requests_stop_at_the_invocation_deadline_or_cancellation() {
         connection.origin.component_digest = component.component_digest;
         let facts = NativeFacts::entry(
             NodeAcquisition {
-                identity: host.identity("acme--dev--project-a", Some(host.release_identity())),
+                identity: host.identity(
+                    &"acme--dev--project-a".parse().unwrap(),
+                    Some(host.release_identity()),
+                ),
                 invocation: connection,
                 causation: None,
                 platform: Some(wamn_control_provision::PlatformComponent::Executor),
@@ -865,7 +877,7 @@ async fn claimed_requests_stop_at_the_invocation_deadline_or_cancellation() {
         let store = WriteLogStore::new(
             Arc::clone(&plugin.postgres),
             "project-a".into(),
-            "acme--dev--project-a".into(),
+            "acme--dev--project-a".parse().unwrap(),
         );
         let called = Arc::clone(&host);
         let mut call = tokio::spawn(async move {

@@ -30,10 +30,10 @@ const IDLE_POLL_MS: u64 = 250;
 #[derive(Debug, Clone)]
 struct QueueTarget {
     invocation: String,
-    project_env_key: String,
+    project_env_key: wamn_registry::ProjectEnvKey,
     project: String,
     package_ids: Vec<String>,
-    environment: String,
+    environment: wamn_registry::EnvName,
 }
 
 #[derive(Debug, Clone)]
@@ -90,7 +90,7 @@ impl QueueService {
             .bind_session_identity(
                 &target.invocation,
                 &SessionIdentity {
-                    project_env_key: target.project_env_key.clone(),
+                    project_env_key: Some(target.project_env_key.clone()),
                     project: Some(config.project.clone()),
                     // Queue state belongs to the run plane, never the application schema.
                     schema: Some("wamn_run".to_owned()),

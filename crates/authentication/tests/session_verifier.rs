@@ -21,23 +21,23 @@ async fn exact_org_and_environment_matrix_uses_one_configured_issuer_cache() {
     let audiences = [
         (
             "org-a",
-            "urn:wamn:project-env:org-a:project:dev:instance-one",
+            "urn:wamn:project-env:org-a:dev:project:instance-one",
         ),
         (
             "org-a",
-            "urn:wamn:project-env:org-a:project:prod:instance-one",
+            "urn:wamn:project-env:org-a:prod:project:instance-one",
         ),
         (
             "org-b",
-            "urn:wamn:project-env:org-b:project:dev:instance-one",
+            "urn:wamn:project-env:org-b:dev:project:instance-one",
         ),
         (
             "org-b",
-            "urn:wamn:project-env:org-b:project:prod:instance-one",
+            "urn:wamn:project-env:org-b:prod:project:instance-one",
         ),
         (
             "org-a",
-            "urn:wamn:project-env:org-a:project:dev:instance-two",
+            "urn:wamn:project-env:org-a:dev:project:instance-two",
         ),
     ];
     for (host_org, host_audience) in audiences {

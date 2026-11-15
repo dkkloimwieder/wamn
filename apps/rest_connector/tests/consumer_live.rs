@@ -91,7 +91,7 @@ pub async fn workflow_host(
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     wamn_environment::environment::stage::write_release(
         database.as_str(),
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         &digest,
         manifest,
         &wamn_control_provision::PlatformComponent::Provisioning
@@ -115,7 +115,7 @@ pub async fn workflow_host(
             WorkloadRoleIdentity::ProjectEnvironment {
                 org: PROJECT_ENV_KEY,
                 project: "test",
-                environment: "test",
+                environment: &"test".parse().unwrap(),
                 database: database.path().trim_start_matches('/'),
             },
         )?;
@@ -211,7 +211,7 @@ pub async fn schedule_run(
         &AuthorWorkflowRequest {
             org: "rest",
             project: "publication",
-            environment: "test",
+            environment: &"test".parse().unwrap(),
             application,
             declared: &declared,
             document,
@@ -224,12 +224,12 @@ pub async fn schedule_run(
     .await?;
     enable_workflow(
         database.as_str(),
-        &wamn_registry::Triple::new("rest", "test", application),
+        &wamn_registry::Triple::new("rest", "test".parse().unwrap(), application),
         &mut project,
         &WorkflowVersion {
             org: "rest",
             project: "publication",
-            environment: "test",
+            environment: &"test".parse().unwrap(),
             application,
             workflow_id: &document.wiring_id,
             version: document.version,
@@ -243,7 +243,8 @@ pub async fn schedule_run(
     let release = LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "schedule fixture",
-        ReleaseTarget::new(PROJECT_ENV_KEY, "test").with_applications(declared),
+        ReleaseTarget::new(PROJECT_ENV_KEY.parse().unwrap(), "test".parse().unwrap())
+            .with_applications(declared),
     )?;
     match admit_schedule_run(
         host,
@@ -282,9 +283,14 @@ pub async fn run_caller(
             && execution_role == role,
         "the schedule run executes as {principal} with {execution_role}, not the workflow user with {role}"
     );
-    host.workflow_node_caller("test", PROJECT_ENV_KEY, &principal, &execution_role)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("the workflow user does not hold {execution_role}"))
+    host.workflow_node_caller(
+        "test",
+        &PROJECT_ENV_KEY.parse().unwrap(),
+        &principal,
+        &execution_role,
+    )
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("the workflow user does not hold {execution_role}"))
 }
 
 pub async fn install(
@@ -333,7 +339,7 @@ pub async fn install(
         database.as_str(),
         "rest",
         "publication",
-        "test",
+        &"test".parse().unwrap(),
     )
     .await?;
     for package in &packages {
@@ -346,14 +352,14 @@ pub async fn install(
             database_url: database.as_str().into(),
             org: "rest".into(),
             project: "publication".into(),
-            environment: "test".into(),
+            environment: "test".parse().unwrap(),
         })
         .await?;
     }
     let role = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: PROJECT_ENV_KEY,
+            project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
             database: database.path().trim_start_matches('/'),
         },
     )?;
@@ -406,7 +412,7 @@ pub async fn install(
     wamn_environment::environment::stage::materialize_application_principals(
         system.as_str(),
         database.as_str(),
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         manifest,
         &manifests,
         &wamn_broker::Publisher::default(),
@@ -486,7 +492,7 @@ pub async fn invoke(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "consumer live",
-        ReleaseTarget::new(PROJECT_ENV_KEY, "test")
+        ReleaseTarget::new(PROJECT_ENV_KEY.parse().unwrap(), "test".parse().unwrap())
             .with_applications(declared("rest_connector", manifest)),
     )?);
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
@@ -518,9 +524,9 @@ pub async fn invoke(
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             &postgres,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             "test",
-            "test",
+            &"test".parse().unwrap(),
         )),
         Arc::new(TracingLogger::default()),
         Arc::from([]),
@@ -638,7 +644,10 @@ pub async fn invoke(
             deadline_ms: 10000,
             facts: NativeFacts::entry(
                 NodeAcquisition {
-                    identity: host.identity(PROJECT_ENV_KEY, Some(host.release_identity())),
+                    identity: host.identity(
+                        &PROJECT_ENV_KEY.parse().unwrap(),
+                        Some(host.release_identity()),
+                    ),
                     invocation: wamn_execution_host::component_invocation(
                         component,
                         operation,

@@ -196,7 +196,7 @@ mod tests {
         use crate::events::{consumer_config_matches, stream_config_matches};
         use async_nats::jetstream::consumer::IntoConsumerConfig as _;
 
-        let target = Triple::new("example", "dev", "fixture");
+        let target = Triple::new("example", "dev".parse().unwrap(), "fixture");
         let source = source_stream_config(&target, 1, Duration::from_secs(120));
         assert!(stream_config_matches(&source, &source));
         let changed = async_nats::jetstream::stream::Config {
@@ -228,7 +228,7 @@ mod tests {
         use wamn_test_infrastructure::{event_broker, scratch::ScratchRoot};
 
         let root = ScratchRoot::create()?;
-        let target = Triple::new("example", "dev", "fixture");
+        let target = Triple::new("example", "dev".parse().unwrap(), "fixture");
         let source = source_stream_config(&target, 1, Duration::from_secs(120));
         let advisory = advisory_stream_config(&target, 1);
         let consumer = event_consumer_config(
@@ -240,7 +240,7 @@ mod tests {
         let broker = event_broker::prepare(
             root.path(),
             &target,
-            "project",
+            &"project--dev--project".parse().unwrap(),
             &source,
             &advisory,
             &[consumer],
@@ -376,8 +376,8 @@ mod tests {
                 );
             }
             for foreign in [
-                Triple::new("example", "dev", "other"),
-                Triple::new("example", "prod", "fixture"),
+                Triple::new("example", "dev".parse().unwrap(), "other"),
+                Triple::new("example", "prod".parse().unwrap(), "fixture"),
             ] {
                 let stream = source_stream_config(&foreign, 1, Duration::from_secs(120));
                 let advisory = advisory_stream_config(&foreign, 1);
@@ -481,13 +481,13 @@ mod tests {
             DeliveryAdvisoryType::MaxDeliver => "exhausted",
             DeliveryAdvisoryType::Terminated => "terminated",
         };
-        let target = Triple::new(format!("c-{name}"), "dev", "app");
-        let source_name = stream_name(&target.org, &target.project, target.env.as_str());
+        let target = Triple::new(format!("c-{name}"), "dev".parse().unwrap(), "app");
+        let source_name = stream_name(&target.org, &target.project, &target.env);
         let advisory_name = delivery_advisory_stream(&source_name);
         let subject = wamn_registry::name::event_subject(
             &target.org,
             &target.project,
-            target.env.as_str(),
+            &target.env,
             "item.update",
         );
         let consumer = event_consumer_config(name, &subject, Duration::from_millis(100), 2);
@@ -1432,9 +1432,9 @@ mod tests {
         );
         std::fs::DirBuilder::new().mode(0o700).create(root.path())?;
         let targets = [
-            Triple::new("example", "dev", "fixture"),
-            Triple::new("example", "dev", "other"),
-            Triple::new("example", "prod", "fixture"),
+            Triple::new("example", "dev".parse().unwrap(), "fixture"),
+            Triple::new("example", "dev".parse().unwrap(), "other"),
+            Triple::new("example", "prod".parse().unwrap(), "fixture"),
         ];
         let mut brokers = Vec::new();
         let mut declarations = Vec::new();
@@ -1483,7 +1483,7 @@ mod tests {
                 &authority,
                 &directory,
                 target,
-                "route-project",
+                &"route-project--dev--project".parse().unwrap(),
                 &source,
                 &advisory,
                 &consumers,

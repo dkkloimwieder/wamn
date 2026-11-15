@@ -143,7 +143,7 @@ fn build_bundle() -> PathBuf {
         &EdgeTarget {
             org: ORG,
             project: PROJECT,
-            environment: ENVIRONMENT,
+            environment: &ENVIRONMENT.parse().unwrap(),
         },
         &out,
     )
@@ -170,7 +170,7 @@ pub fn config(directory: &Path, digest: wamn_digest::Digest) -> EdgeConfig {
         target: TargetConfig {
             org: ORG.into(),
             project: PROJECT.into(),
-            environment: ENVIRONMENT.into(),
+            environment: ENVIRONMENT.parse().unwrap(),
         },
         release: ReleaseConfig {
             dir: directory.to_owned(),

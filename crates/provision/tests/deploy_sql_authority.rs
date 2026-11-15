@@ -216,7 +216,7 @@ fn the_swept_minimum_admits_only_the_connected_guest_on_postgres() {
     );
     let seed = r#"
 DO $$ DECLARE project text; BEGIN
-    FOREACH project IN ARRAY ARRAY['t1','t2'] LOOP
+    FOREACH project IN ARRAY ARRAY['t1--dev--project','t2--dev--project'] LOOP
         INSERT INTO s2.bench(project_id,g,a,b,c,num,ts,payload)
             VALUES (project,1,1,1,1,1,now(),'isolation');
         INSERT INTO s2.rls_secrets(project_id,secret) VALUES (project,'isolation');
@@ -282,16 +282,16 @@ DO $$ DECLARE target record; own boolean; foreign_rows boolean; BEGIN
             AND a.attname IN ('project_id','project_env_key') AND NOT a.attisdropped
         WHERE c.relkind IN ('r','p') AND has_any_column_privilege('wamn_app', c.oid, 'SELECT')
     LOOP
-        EXECUTE format('SELECT EXISTS(SELECT FROM %s WHERE %I = ''t1'') AND '
-            'EXISTS(SELECT FROM %s WHERE %I = ''t2'')',
+        EXECUTE format('SELECT EXISTS(SELECT FROM %s WHERE %I = ''t1--dev--project'') AND '
+            'EXISTS(SELECT FROM %s WHERE %I = ''t2--dev--project'')',
             target.relation,target.project_column,target.relation,target.project_column) INTO own;
         ASSERT own, 'missing isolation fixture for ' || target.relation;
         SET LOCAL ROLE "{guest}";
-        PERFORM set_config('app.project_env_key','t2',true);
+        PERFORM set_config('app.project_env_key','t2--dev--project',true);
         PERFORM set_config('app.user_id','{ACTOR_B}',true);
         PERFORM set_config('app.role','admin',true);
-        EXECUTE format('SELECT EXISTS(SELECT FROM %s WHERE %I = ''t1''), '
-            'EXISTS(SELECT FROM %s WHERE %I <> ''t1'')',
+        EXECUTE format('SELECT EXISTS(SELECT FROM %s WHERE %I = ''t1--dev--project''), '
+            'EXISTS(SELECT FROM %s WHERE %I <> ''t1--dev--project'')',
             target.relation,target.project_column,target.relation,target.project_column)
             INTO own,foreign_rows;
         RESET ROLE;
@@ -364,7 +364,7 @@ fn record_history_guest() -> String {
     workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: "t1",
+            project_env_key: &"t1--dev--project".parse().unwrap(),
             database: "wamn",
         },
     )
@@ -2186,7 +2186,7 @@ fn a_project_policy_refuses_without_a_transaction_identity() {
         &format!(
             "BEGIN; {} \
         INSERT INTO catalog.packages(project_env_key,package_id,package_version) \
-        VALUES('t1','platform_fixture','1.0.0'); COMMIT;",
+        VALUES('t1--dev--project','platform_fixture','1.0.0'); COMMIT;",
             wamn_control_provision::bind_platform_principal_sql(
                 wamn_control_provision::PlatformComponent::Provisioning
             )

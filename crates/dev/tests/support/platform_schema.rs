@@ -238,7 +238,7 @@ pub(super) async fn exercise(
     let selected = inputs(journey.run)?;
     let chart = selected.directory();
     let mut document = EnvironmentDocument::compile(&journey.file)?;
-    document.env = format!("isolated-{}", journey.environment);
+    document.env = format!("isolated-{}", journey.environment).parse()?;
     let application = document
         .applications
         .get_mut("alpha")

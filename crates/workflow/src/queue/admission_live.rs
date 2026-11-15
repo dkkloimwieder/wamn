@@ -190,17 +190,20 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
         "automation-live",
-        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "test")
-            .with_applications(
-                [(
-                    "automation".to_owned(),
-                    wamn_catalog::ApplicationDefinition {
-                        connections: std::collections::BTreeMap::new(),
-                        packages: ["automation".to_owned()].into(),
-                    },
-                )]
-                .into(),
-            ),
+        wamn_engine::release_manifest::ReleaseTarget::new(
+            PROJECT_ENV_KEY.parse().unwrap(),
+            "test".parse().expect("valid fixture coordinate"),
+        )
+        .with_applications(
+            [(
+                "automation".to_owned(),
+                wamn_catalog::ApplicationDefinition {
+                    connections: std::collections::BTreeMap::new(),
+                    packages: ["automation".to_owned()].into(),
+                },
+            )]
+            .into(),
+        ),
     )?);
     sqlx::query("INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest).bind(&canonical).execute(&mut admin).await.map(|result| result.rows_affected())?;
     let mut credentials = ClassCredentials::default();
@@ -221,14 +224,14 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
     ] {
         let role_target = if family == WorkloadRoleFamily::App {
             WorkloadRoleIdentity::ProjectEnvKey {
-                project_env_key: PROJECT_ENV_KEY,
+                project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
                 database: &db_name,
             }
         } else {
             WorkloadRoleIdentity::ProjectEnvironment {
                 org: "automation",
                 project: "default",
-                environment: "test",
+                environment: &"test".parse().unwrap(),
                 database: &db_name,
             }
         };
@@ -272,7 +275,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
         .bind_session_identity(
             "automation-live-queue",
             &SessionIdentity {
-                project_env_key: PROJECT_ENV_KEY.to_owned(),
+                project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
                 project: Some("default".to_owned()),
                 schema: Some("wamn_run".to_owned()),
                 runner: Some("automation-live".to_owned()),
@@ -310,9 +313,9 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             &postgres,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             "default",
-            "test",
+            &"test".parse().unwrap(),
         )),
         Arc::clone(&logging),
         Arc::from([]),
@@ -327,17 +330,22 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
     )?)));
     let target = QueueTarget {
         invocation: "automation-live-queue".to_owned(),
-        project_env_key: PROJECT_ENV_KEY.to_owned(),
+        project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
         project: "default".to_owned(),
         package_ids: vec!["automation".to_owned()],
-        environment: "test".to_owned(),
+        environment: "test".parse().expect("valid fixture coordinate"),
     };
     let jetstream =
         Arc::new(WamnJetstream::new(wamn_events_capability::WamnJetstreamConfig::default()).await?);
     let client = wamn_postgres::connect(database.as_str()).await?;
 
     let workflows = WorkflowsFixture {
-        runs: PostgresWorkflows::new(client, schema.as_str(), PROJECT_ENV_KEY, "test"),
+        runs: PostgresWorkflows::new(
+            client,
+            schema.as_str(),
+            PROJECT_ENV_KEY.parse().unwrap(),
+            "test".parse().unwrap(),
+        ),
         postgres: Arc::clone(&postgres),
         host: wamn_execution_host::HostRouteDelivery::new(
             Arc::clone(&release),
@@ -410,7 +418,11 @@ impl WorkflowsFixture {
             .unwrap();
         let held = self
             .postgres
-            .user_operation_permissions("default", PROJECT_ENV_KEY, &SERVICE.parse()?)
+            .user_operation_permissions(
+                "default",
+                &PROJECT_ENV_KEY.parse().unwrap(),
+                &SERVICE.parse()?,
+            )
             .await?;
         let active_role = held.pat_role();
         let caller = wamn_engine::flow_http_routing::AuthenticatedCaller::new(
@@ -467,7 +479,7 @@ async fn event_run(
     .to_string();
     let source_id = wamn_event_wire::msg_id(
         &target.project,
-        "test",
+        &"test".parse().expect("valid fixture coordinate"),
         &wamn_event_wire::CdcIdentity {
             system_id: 1,
             timeline: 1,

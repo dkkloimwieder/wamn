@@ -48,9 +48,9 @@ pub struct Causation {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DerivedEvent {
-    pub project_env_key: String,
+    pub project_env_key: wamn_registry::ProjectEnvKey,
     pub project: String,
-    pub environment: String,
+    pub environment: wamn_registry::EnvName,
     #[serde(deserialize_with = "source_name")]
     pub package_id: String,
     #[serde(deserialize_with = "source_name")]
@@ -68,9 +68,9 @@ impl DerivedEvent {
         reason = "the constructor names the event identity and content"
     )]
     pub fn new(
-        project_env_key: impl Into<String>,
+        project_env_key: wamn_registry::ProjectEnvKey,
         project: impl Into<String>,
-        environment: impl Into<String>,
+        environment: wamn_registry::EnvName,
         package_id: impl Into<String>,
         entity: impl Into<String>,
         op: Op,
@@ -79,9 +79,9 @@ impl DerivedEvent {
         causation: Causation,
     ) -> Self {
         Self {
-            project_env_key: project_env_key.into(),
+            project_env_key,
             project: project.into(),
-            environment: environment.into(),
+            environment,
             package_id: package_id.into(),
             entity: entity.into(),
             op,
@@ -142,7 +142,7 @@ impl Envelope {
 }
 
 /// The broker identity of a captured row in one project environment.
-pub fn msg_id(project: &str, env: &str, identity: &CdcIdentity) -> String {
+pub fn msg_id(project: &str, env: &wamn_registry::EnvName, identity: &CdcIdentity) -> String {
     format!(
         "cdc:{project}:{env}:{}:{}:{}:{}",
         identity.system_id, identity.timeline, identity.commit_lsn, identity.row_ordinal
@@ -159,9 +159,9 @@ pub fn msg_id(project: &str, env: &str, identity: &CdcIdentity) -> String {
 /// [`DerivedEvent::dedup_id`]. Length framing prevents concatenation ambiguity
 /// between target fields.
 pub fn derived_msg_id(
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
     package_id: &str,
     entity: &str,
     op: Op,
@@ -172,9 +172,9 @@ pub fn derived_msg_id(
     let mut digest = Sha256::new();
     digest.update(b"wamn.event.derived-msg-id.v0.1\0");
     for field in [
-        project_env_key,
+        project_env_key.as_str(),
         project,
-        env,
+        env.as_str(),
         package_id,
         entity,
         op.as_str(),
@@ -194,7 +194,13 @@ pub fn derived_msg_id(
 }
 
 /// The subject of one event in its project deployment.
-pub fn subject(org: &str, project: &str, env: &str, entity: &str, op: Op) -> String {
+pub fn subject(
+    org: &str,
+    project: &str,
+    env: &wamn_registry::EnvName,
+    entity: &str,
+    op: Op,
+) -> String {
     wamn_registry::name::event_subject(
         org,
         project,
@@ -218,7 +224,12 @@ pub fn subject_token(raw: &str) -> &str {
 }
 
 /// The filter for one captured entity.
-pub fn entity_filter(org: &str, project: &str, environment: &str, entity: &str) -> String {
+pub fn entity_filter(
+    org: &str,
+    project: &str,
+    environment: &wamn_registry::EnvName,
+    entity: &str,
+) -> String {
     wamn_registry::name::event_subject(
         org,
         project,
@@ -239,7 +250,7 @@ mod tests {
             commit_lsn: 42,
             row_ordinal: 0,
         };
-        let id = msg_id("app", "dev", &identity);
+        let id = msg_id("app", &"dev".parse().unwrap(), &identity);
         for other in [
             CdcIdentity {
                 system_id: 2,
@@ -258,20 +269,34 @@ mod tests {
                 ..identity
             },
         ] {
-            assert_ne!(id, msg_id("app", "dev", &other));
+            assert_ne!(id, msg_id("app", &"dev".parse().unwrap(), &other));
         }
-        assert_ne!(id, msg_id("app", "prod", &identity));
-        assert_ne!(id, msg_id("other", "dev", &identity));
+        assert_ne!(id, msg_id("app", &"prod".parse().unwrap(), &identity));
+        assert_ne!(id, msg_id("other", &"dev".parse().unwrap(), &identity));
         let mut body = serde_json::json!({
             "type":"cdc", "op":"insert", "new":{"id":"7"},
             "package_id":"orders", "entity":"order", "table":"orders",
             "identity":identity, "txid":7, "commit_ts":"2026-07-18T12:00:00Z"
         });
         let source = SourceEvent::decode(&serde_json::to_vec(&body).unwrap()).unwrap();
-        assert!(source.identity("project", "app", "dev", &[&id]).is_some());
         assert!(
             source
-                .identity("project", "app", "dev", &[&id, &id])
+                .identity(
+                    &"project--dev--project".parse().unwrap(),
+                    "app",
+                    &"dev".parse().unwrap(),
+                    &[&id]
+                )
+                .is_some()
+        );
+        assert!(
+            source
+                .identity(
+                    &"project--dev--project".parse().unwrap(),
+                    "app",
+                    &"dev".parse().unwrap(),
+                    &[&id, &id]
+                )
                 .is_none()
         );
         body.as_object_mut().unwrap().remove("identity");
@@ -282,9 +307,9 @@ mod tests {
     #[test]
     fn derived_msg_id_is_host_targeted_and_keeps_the_author_operand() {
         let id = derived_msg_id(
-            "acme",
+            &"acme--dev--project".parse().unwrap(),
             "app",
-            "dev",
+            &"dev".parse().unwrap(),
             "orders",
             "orders",
             Op::Insert,
@@ -292,10 +317,18 @@ mod tests {
         );
         assert!(!id.is_empty());
         assert_ne!(
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "42"),
+            derived_msg_id(
+                &"acme--dev--project".parse().unwrap(),
+                "app",
+                &"dev".parse().unwrap(),
+                "orders",
+                "orders",
+                Op::Insert,
+                "42"
+            ),
             msg_id(
                 "app",
-                "dev",
+                &"dev".parse().unwrap(),
                 &CdcIdentity {
                     system_id: 1,
                     timeline: 1,
@@ -306,11 +339,19 @@ mod tests {
             "a numeric author id cannot collide with a CDC LSN"
         );
         assert_ne!(
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
             derived_msg_id(
-                "other",
+                &"acme--dev--project".parse().unwrap(),
                 "app",
-                "dev",
+                &"dev".parse().unwrap(),
+                "orders",
+                "orders",
+                Op::Insert,
+                "same"
+            ),
+            derived_msg_id(
+                &"other--dev--project".parse().unwrap(),
+                "app",
+                &"dev".parse().unwrap(),
                 "orders",
                 "orders",
                 Op::Insert,
@@ -318,16 +359,40 @@ mod tests {
             )
         );
         assert_ne!(
-            derived_msg_id("a", "bc", "dev", "orders", "orders", Op::Insert, "same"),
-            derived_msg_id("ab", "c", "dev", "orders", "orders", Op::Insert, "same"),
+            derived_msg_id(
+                &"a--dev--project".parse().unwrap(),
+                "bc",
+                &"dev".parse().unwrap(),
+                "orders",
+                "orders",
+                Op::Insert,
+                "same"
+            ),
+            derived_msg_id(
+                &"ab--dev--project".parse().unwrap(),
+                "c",
+                &"dev".parse().unwrap(),
+                "orders",
+                "orders",
+                Op::Insert,
+                "same"
+            ),
             "length framing keeps adjacent fields unambiguous"
         );
         assert_ne!(
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
             derived_msg_id(
-                "acme",
+                &"acme--dev--project".parse().unwrap(),
                 "app",
-                "dev",
+                &"dev".parse().unwrap(),
+                "orders",
+                "orders",
+                Op::Insert,
+                "same"
+            ),
+            derived_msg_id(
+                &"acme--dev--project".parse().unwrap(),
+                "app",
+                &"dev".parse().unwrap(),
                 "orders",
                 "receipts",
                 Op::Insert,
@@ -336,24 +401,40 @@ mod tests {
             "the admitted entity is part of stream-wide dedup target"
         );
         assert_ne!(
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Update, "same"),
+            derived_msg_id(
+                &"acme--dev--project".parse().unwrap(),
+                "app",
+                &"dev".parse().unwrap(),
+                "orders",
+                "orders",
+                Op::Insert,
+                "same"
+            ),
+            derived_msg_id(
+                &"acme--dev--project".parse().unwrap(),
+                "app",
+                &"dev".parse().unwrap(),
+                "orders",
+                "orders",
+                Op::Update,
+                "same"
+            ),
             "the admitted operation is part of stream-wide dedup target"
         );
         assert_ne!(
             derived_msg_id(
-                "acme",
+                &"acme--dev--project".parse().unwrap(),
                 "app",
-                "dev",
+                &"dev".parse().unwrap(),
                 "orders",
                 "receipt",
                 Op::Insert,
                 "same"
             ),
             derived_msg_id(
-                "acme",
+                &"acme--dev--project".parse().unwrap(),
                 "app",
-                "dev",
+                &"dev".parse().unwrap(),
                 "overlay",
                 "receipt",
                 Op::Insert,
@@ -362,8 +443,24 @@ mod tests {
             "the package-local entity is disambiguated by its owning package"
         );
         assert_eq!(
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
-            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
+            derived_msg_id(
+                &"acme--dev--project".parse().unwrap(),
+                "app",
+                &"dev".parse().unwrap(),
+                "orders",
+                "orders",
+                Op::Insert,
+                "same"
+            ),
+            derived_msg_id(
+                &"acme--dev--project".parse().unwrap(),
+                "app",
+                &"dev".parse().unwrap(),
+                "orders",
+                "orders",
+                Op::Insert,
+                "same"
+            ),
             "an exact replay retains one stream-wide dedup identity"
         );
     }
@@ -371,20 +468,16 @@ mod tests {
     #[test]
     fn stream_names_keep_all_declared_coordinates_distinct() {
         assert_ne!(
-            stream_name("acme", "receiving", "dev"),
-            stream_name("acme", "wms", "dev")
+            stream_name("acme", "receiving", &"dev".parse().unwrap()),
+            stream_name("acme", "wms", &"dev".parse().unwrap())
         );
         assert_ne!(
-            stream_name("acme", "receiving", "dev"),
-            stream_name("acme", "receiving", "prod")
+            stream_name("acme", "receiving", &"dev".parse().unwrap()),
+            stream_name("acme", "receiving", &"prod".parse().unwrap())
         );
         assert_ne!(
-            stream_name("a_b", "c", "dev"),
-            stream_name("a", "b_c", "dev")
-        );
-        assert_ne!(
-            stream_name("a", "b_c", "dev"),
-            stream_name("a", "b", "c_dev")
+            stream_name("a_b", "c", &"dev".parse().unwrap()),
+            stream_name("a", "b_c", &"dev".parse().unwrap())
         );
     }
 
@@ -446,9 +539,9 @@ mod tests {
     #[test]
     fn source_decoding_requires_an_event_type_and_safe_source_names() {
         let event = DerivedEvent::new(
-            "acme--dev--app",
+            "acme--dev--app".parse().unwrap(),
             "app",
-            "dev",
+            "dev".parse().unwrap(),
             "orders",
             "order",
             Op::Insert,
@@ -498,7 +591,7 @@ impl VerifiedSourceEventId {
 /// Accept exactly one `Nats-Msg-Id` matching the envelope's source coordinate.
 pub fn verified_source_event_id(
     project: &str,
-    environment: &str,
+    environment: &wamn_registry::EnvName,
     envelope: &Envelope,
     message_ids: &[&str],
 ) -> Option<VerifiedSourceEventId> {
@@ -514,15 +607,15 @@ pub fn verified_source_event_id(
 /// Target equality is validated before identity derivation, so bytes naming a
 /// foreign project/project/environment cannot borrow the local header identity.
 pub fn verified_derived_source_event_id(
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     project: &str,
-    environment: &str,
+    environment: &wamn_registry::EnvName,
     event: &DerivedEvent,
     message_ids: &[&str],
 ) -> Option<VerifiedSourceEventId> {
-    if event.project_env_key != project_env_key
+    if &event.project_env_key != project_env_key
         || event.project != project
-        || event.environment != environment
+        || &event.environment != environment
     {
         return None;
     }
@@ -579,9 +672,9 @@ impl SourceEvent {
 
     pub fn identity(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         project: &str,
-        environment: &str,
+        environment: &wamn_registry::EnvName,
         headers: &[&str],
     ) -> Option<VerifiedSourceEventId> {
         match self {

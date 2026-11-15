@@ -199,7 +199,7 @@ pub async fn update(
         let lock = LifecycleLock::acquire_environment(
             wamn_postgres::connect(registry).await?,
             coordinate.0,
-            coordinate.1,
+            &coordinate.1,
         )
         .await?;
         let result = lock.protect(async {
@@ -266,7 +266,10 @@ async fn initialize(
     Ok(())
 }
 
-fn host_target<'a>(values: &'a Value, name: &str) -> anyhow::Result<(&'a str, &'a str)> {
+fn host_target<'a>(
+    values: &'a Value,
+    name: &str,
+) -> anyhow::Result<(&'a str, wamn_registry::EnvName)> {
     let group = values["runtime-operator"]["runtime"]["hostGroups"]
         .as_array()
         .context("installed release has no host groups")?
@@ -286,9 +289,10 @@ fn host_target<'a>(values: &'a Value, name: &str) -> anyhow::Result<(&'a str, &'
         .iter()
         .filter_map(Value::as_str)
         .find_map(|argument| argument.strip_prefix("--environment="))
-        .context("host has no environment")?;
+        .context("host has no environment")?
+        .parse::<wamn_registry::EnvName>()?;
     anyhow::ensure!(
-        wamn_registry::name::environment_host_name(org, env)? == name,
+        wamn_registry::name::environment_host_name(org, &env)? == name,
         "host group differs from its environment owner"
     );
     Ok((org, env))

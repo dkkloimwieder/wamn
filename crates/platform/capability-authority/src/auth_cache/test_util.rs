@@ -76,7 +76,7 @@ pub async fn nats() -> (Server, async_nats::Client) {
 /// wait until the watch runs.
 pub async fn watched(
     client: &async_nats::Client,
-    project_env_key: Option<&str>,
+    project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     holder: Arc<AuthCache>,
 ) -> Publisher {
     let writer = replicate(client, project_env_key, Arc::clone(&holder));

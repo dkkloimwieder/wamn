@@ -81,7 +81,6 @@ pub(super) async fn dynamic_query<T: 'static + Send>(
                         connection.connection(),
                         wamn_identity_protocol::AuthorityClass::DynamicSql,
                         true,
-                        &project_key,
                         schema.as_deref(),
                         runner.as_deref(),
                         role.as_deref(),

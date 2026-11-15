@@ -77,7 +77,7 @@ impl WamnBlobstore {
             let release = &context.release;
             let facts = &context.connections;
             anyhow::ensure!(
-                facts.project_env_key() == release.target().project_env_key,
+                facts.project_env_key() == &release.target().project_env_key,
                 "file connection target mismatch"
             );
             let id = *facts
@@ -118,14 +118,13 @@ impl WamnBlobstore {
                 },
             )
             .with_read_only(read_only);
-            FileStore::new(
+            Ok::<_, anyhow::Error>(FileStore::new(
                 container,
                 Arc::clone(&client.signer),
                 bound.cdn_host,
                 &release.target().environment,
                 deadline,
-            )
-            .map_err(anyhow::Error::from)
+            ))
         };
         let open = tokio::time::timeout(
             deadline.saturating_duration_since(tokio::time::Instant::now()),
@@ -382,7 +381,7 @@ pub(super) fn blobstore_span(
             EffectIdentity {
                 project_env_key: identity
                     .as_ref()
-                    .map_or("", |identity| identity.project_env_key.as_str()),
+                    .and_then(|identity| identity.project_env_key.as_ref()),
                 project: identity
                     .as_ref()
                     .and_then(|identity| identity.project.as_deref())

@@ -26,7 +26,7 @@ pub async fn last_published_sequence(
             .await
             .context("connect to the environment event broker")?,
     );
-    let name = wamn_event_wire::stream_name(&target.org, &target.project, target.env.as_str());
+    let name = wamn_event_wire::stream_name(&target.org, &target.project, &target.env);
     let mut stream = broker
         .get_stream(&name)
         .await
@@ -100,7 +100,7 @@ pub async fn prepare_application_consumers(
         .get_stream(wamn_event_wire::stream_name(
             &target.org,
             &target.project,
-            target.env.as_str(),
+            &target.env,
         ))
         .await?;
     prepare_consumers(&stream, consumers).await
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn provision_refuses_foreign_consumers_before_connecting() {
-        let target = Triple::new("example", "dev", "fixture");
+        let target = Triple::new("example", "dev".parse().unwrap(), "fixture");
         let expected = event_consumer_config(
             "mat_t_pkg_r1",
             "evt.example.dev.fixture.widget.>",
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn provision_refuses_implicit_or_unbounded_delivery_inputs() {
-        let target = Triple::new("example", "dev", "fixture");
+        let target = Triple::new("example", "dev".parse().unwrap(), "fixture");
         let config = event_consumer_config(
             "mat_t_pkg_r1",
             "evt.example.dev.fixture.widget.>",

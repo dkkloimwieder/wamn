@@ -211,7 +211,7 @@ pub type Residency = BTreeMap<String, ProjectResidency>;
 pub async fn residency<F, Fut>(
     namespace: &str,
     org: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
     mut get: F,
 ) -> anyhow::Result<Vec<Residency>>
 where

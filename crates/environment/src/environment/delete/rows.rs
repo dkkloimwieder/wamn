@@ -15,11 +15,7 @@ pub async fn delete_registry_rows(
     triple: &Triple,
     _instance: &str,
 ) -> anyhow::Result<Vec<String>> {
-    let (org, project, env) = (
-        triple.org.as_str(),
-        triple.project.as_str(),
-        triple.env.as_str(),
-    );
+    let (org, project, env) = (triple.org.as_str(), triple.project.as_str(), &triple.env);
     let project_env_key = wamn_control_provision::project_env_key(org, project, env);
     let mut lines = Vec::new();
     let mut transaction = crate::provision_project_env::provisioning_transaction(system)

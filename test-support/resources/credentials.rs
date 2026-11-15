@@ -79,7 +79,7 @@ pub async fn set_reference(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     project: &str,
-    environment: &str,
+    environment: &wamn_registry::EnvName,
     name: &str,
     stored: &StoreVersion,
 ) -> anyhow::Result<()> {
@@ -103,7 +103,7 @@ pub async fn database_login(
     target_input: Option<&str>,
     org: &str,
     project: &str,
-    environment: &str,
+    environment: &wamn_registry::EnvName,
     family: wamn_control_provision::WorkloadRoleFamily,
 ) -> anyhow::Result<String> {
     use wamn_control_provision::{WorkloadRoleIdentity, WorkloadRoleIdentityType};

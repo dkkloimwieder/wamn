@@ -25,7 +25,7 @@ use std::fmt::Write as _;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 
 /// The project every probe runs under, and the user its seeded rows belong to.
-const PROJECT_ENV_KEY: &str = "t1";
+const PROJECT_ENV_KEY: &str = "t1--dev--project";
 const U1: &str = "11111111-1111-1111-1111-111111111111";
 /// An unused user id for the refused inserts.
 const U2: &str = "22222222-2222-2222-2222-222222222222";
@@ -79,7 +79,7 @@ fn prelude(url: &str) -> (String, String) {
     let app_generation = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: PROJECT_ENV_KEY,
+            project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
             database: &database,
         },
     )

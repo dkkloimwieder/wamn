@@ -288,7 +288,7 @@ async fn under_lock(
 
 async fn begin<'a>(
     project: &'a mut Client,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, WorkflowLifecycleError> {
     let mut transaction = project
         .begin()

@@ -86,7 +86,7 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
             .unwrap()
     {
         let org: String = row.get(0);
-        let env: String = row.get(1);
+        let env: wamn_registry::EnvName = row.get(1);
         let project: String = row.get(2);
         assert!(
             is_project_admin(&mut client, &ann, &org, &project, Some(&env))
@@ -103,18 +103,30 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
     activate_org_membership(&mut client, &ben, "acme")
         .await
         .unwrap();
-    grant_environment_admin(&mut client, &ben, "acme", "dev")
+    grant_environment_admin(&mut client, &ben, "acme", &"dev".parse().unwrap())
         .await
         .unwrap();
     assert!(
-        is_project_admin(&mut client, &ben, "acme", "shop", Some("dev"))
-            .await
-            .unwrap()
+        is_project_admin(
+            &mut client,
+            &ben,
+            "acme",
+            "shop",
+            Some(&"dev".parse().unwrap())
+        )
+        .await
+        .unwrap()
     );
     assert!(
-        !is_project_admin(&mut client, &ben, "acme", "shop", Some("prod"))
-            .await
-            .unwrap()
+        !is_project_admin(
+            &mut client,
+            &ben,
+            "acme",
+            "shop",
+            Some(&"prod".parse().unwrap())
+        )
+        .await
+        .unwrap()
     );
     assert!(
         !wamn_platform_identity::control::is_org_admin(&mut client, &ben, "acme")
@@ -132,16 +144,22 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
             .is_err()
     );
     assert!(
-        grant_environment_admin(&mut client, &ben, "other", "dev")
+        grant_environment_admin(&mut client, &ben, "other", &"dev".parse().unwrap())
             .await
             .is_err()
     );
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
-    revoke_environment_admin(&mut client, &ben, "acme", "dev", &mut drops)
-        .await
-        .unwrap();
+    revoke_environment_admin(
+        &mut client,
+        &ben,
+        "acme",
+        &"dev".parse().unwrap(),
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert!(
-        !has_project_env_membership(&mut client, &ben, "acme", "shop", "dev")
+        !has_project_env_membership(&mut client, &ben, "acme", "shop", &"dev".parse().unwrap())
             .await
             .unwrap()
     );
@@ -149,14 +167,26 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
         .await
         .unwrap();
     assert!(
-        is_project_admin(&mut client, &ben, "acme", "billing", Some("prod"))
-            .await
-            .unwrap()
+        is_project_admin(
+            &mut client,
+            &ben,
+            "acme",
+            "billing",
+            Some(&"prod".parse().unwrap())
+        )
+        .await
+        .unwrap()
     );
     assert!(
-        !is_project_admin(&mut client, &ben, "acme", "shop", Some("dev"))
-            .await
-            .unwrap()
+        !is_project_admin(
+            &mut client,
+            &ben,
+            "acme",
+            "shop",
+            Some(&"dev".parse().unwrap())
+        )
+        .await
+        .unwrap()
     );
     sqlx::query(
         "UPDATE identity.org_memberships SET status='inactive' WHERE principal_id=$1::text::uuid",
@@ -167,9 +197,15 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
     .map(|result| result.rows_affected())
     .unwrap();
     assert!(
-        !has_project_env_membership(&mut client, &ben, "acme", "billing", "dev")
-            .await
-            .unwrap()
+        !has_project_env_membership(
+            &mut client,
+            &ben,
+            "acme",
+            "billing",
+            &"dev".parse().unwrap()
+        )
+        .await
+        .unwrap()
     );
     assert!(
         grant_project_admin(&mut client, &ben, "acme", "shop")
@@ -183,14 +219,26 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
         .await
         .unwrap();
     assert!(
-        is_project_admin(&mut client, &ann, "acme", "billing", Some("dev"))
-            .await
-            .unwrap()
+        is_project_admin(
+            &mut client,
+            &ann,
+            "acme",
+            "billing",
+            Some(&"dev".parse().unwrap())
+        )
+        .await
+        .unwrap()
     );
     assert!(
-        !is_project_admin(&mut client, &ann, "acme", "shop", Some("dev"))
-            .await
-            .unwrap()
+        !is_project_admin(
+            &mut client,
+            &ann,
+            "acme",
+            "shop",
+            Some(&"dev".parse().unwrap())
+        )
+        .await
+        .unwrap()
     );
     drop(client);
 }

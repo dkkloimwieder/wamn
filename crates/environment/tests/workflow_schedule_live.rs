@@ -330,12 +330,12 @@ async fn no_enabled_schedule_version_refuses_with_no_row(pool: sqlx::PgPool) {
         .expect("enable the schedule workflow");
     wamn_workflow::workflow_lifecycle::disable_workflow(
         &fixture.url,
-        &Triple::new("acme", ENVIRONMENT, APPLICATION),
+        &Triple::new("acme", ENVIRONMENT.parse().unwrap(), APPLICATION),
         &mut fixture.admin,
         &WorkflowVersion {
             org: "schedule-live",
             project: "default",
-            environment: ENVIRONMENT,
+            environment: &ENVIRONMENT.parse().unwrap(),
             application: APP,
             workflow_id: "nightly",
             version: 1,

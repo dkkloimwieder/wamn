@@ -10,7 +10,7 @@ pub struct DatabasePlacement {
     pub instance_suffix: String,
     pub placement_type: String,
     pub pool_cluster: Option<String>,
-    pub policy_name: String,
+    pub policy_name: crate::EnvName,
 }
 
 /// An organization's database placement.
@@ -28,7 +28,7 @@ pub struct Registration<'a> {
     pub secret_namespace: Option<&'a str>,
     pub instance_suffix: &'a str,
     pub disposable: Option<bool>,
-    pub policy: &'a str,
+    pub policy: &'a crate::EnvName,
     pub target_id: &'a str,
 }
 
@@ -43,7 +43,7 @@ pub async fn database_placement(
     let (instance_suffix, placement_type, pool_cluster, policy_name) = sqlx::query_as(
         "SELECT ep.instance_suffix, o.placement_type, o.pool_cluster, e.policy_name FROM registry.environment_projects ep JOIN registry.orgs o ON o.id=ep.org JOIN registry.environments e USING(org,env) WHERE ep.org=$1 AND ep.project=$2 AND ep.env=$3",
     )
-    .bind(&triple.org).bind(&triple.project).bind(triple.env.as_str())
+    .bind(&triple.org).bind(&triple.project).bind(&triple.env)
     .fetch_one(connection).await?;
     Ok(DatabasePlacement {
         instance_suffix,
@@ -82,7 +82,7 @@ pub async fn instance_suffix(
     triple: &Triple,
 ) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar("SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3")
-        .bind(&triple.org).bind(&triple.project).bind(triple.env.as_str()).fetch_optional(connection).await
+        .bind(&triple.org).bind(&triple.project).bind(&triple.env).fetch_optional(connection).await
 }
 
 /// Read the policy selected for a project deployment, if it exists.
@@ -92,13 +92,13 @@ pub async fn instance_suffix(
 pub async fn project_policy(
     connection: &mut PgConnection,
     triple: &Triple,
-) -> Result<Option<String>, sqlx::Error> {
+) -> Result<Option<crate::EnvName>, sqlx::Error> {
     sqlx::query_scalar(
         sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_READ_PROJECT_ENV_POLICY,
     )
     .bind(&triple.org)
     .bind(&triple.project)
-    .bind(triple.env.as_str())
+    .bind(&triple.env)
     .fetch_optional(connection)
     .await
 }
@@ -110,8 +110,8 @@ pub async fn project_policy(
 pub async fn environment_policy(
     connection: &mut PgConnection,
     org: &str,
-    env: &str,
-) -> Result<String, sqlx::Error> {
+    env: &crate::EnvName,
+) -> Result<crate::EnvName, sqlx::Error> {
     sqlx::query_scalar("SELECT policy_name FROM registry.environments WHERE org=$1 AND env=$2")
         .bind(org)
         .bind(env)
@@ -126,7 +126,7 @@ pub async fn environment_policy(
 pub async fn projects(
     connection: &mut PgConnection,
     org: &str,
-    env: &str,
+    env: &crate::EnvName,
 ) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar("SELECT project FROM registry.environment_projects WHERE org=$1 AND env=$2 ORDER BY project")
         .bind(org).bind(env).fetch_all(connection).await
@@ -141,7 +141,7 @@ pub async fn disposable(
     triple: &Triple,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar("SELECT disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org=$1 AND project=$2 AND env=$3")
-        .bind(&triple.org).bind(&triple.project).bind(triple.env.as_str()).fetch_one(connection).await
+        .bind(&triple.org).bind(&triple.project).bind(&triple.env).fetch_one(connection).await
 }
 
 /// Read whether the project deployment is registered.
@@ -150,7 +150,7 @@ pub async fn disposable(
 /// Returns database errors.
 pub async fn exists(connection: &mut PgConnection, triple: &Triple) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar("SELECT EXISTS(SELECT FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3)")
-        .bind(&triple.org).bind(&triple.project).bind(triple.env.as_str()).fetch_one(connection).await
+        .bind(&triple.org).bind(&triple.project).bind(&triple.env).fetch_one(connection).await
 }
 
 /// Record a project without replacing its existing definition.
@@ -198,7 +198,7 @@ pub async fn record(
     let (suffix, _): (String, bool) = sqlx::query_as(sql::upsert_project_env_with_policy_sql())
         .bind(&r.triple.org)
         .bind(&r.triple.project)
-        .bind(r.triple.env.as_str())
+        .bind(&r.triple.env)
         .bind(r.secret_name)
         .bind(r.secret_namespace)
         .bind(r.instance_suffix)

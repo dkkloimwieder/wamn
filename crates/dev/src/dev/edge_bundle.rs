@@ -29,11 +29,11 @@ use wamn_publish::publish_release::{
 pub struct EdgeTarget<'a> {
     pub org: &'a str,
     pub project: &'a str,
-    pub environment: &'a str,
+    pub environment: &'a wamn_registry::EnvName,
 }
 
 impl EdgeTarget<'_> {
-    fn project_env_key(&self) -> String {
+    fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
         project_env_key(self.org, self.project, self.environment)
     }
 }

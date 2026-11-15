@@ -14,9 +14,9 @@ use crate::Triple;
 pub struct EnvironmentConfiguration {
     pub org: String,
     pub project: String,
-    pub env: String,
+    pub env: crate::EnvName,
     pub target: String,
-    pub policy: String,
+    pub policy: crate::EnvName,
     pub revocation_seconds: u32,
     #[serde(default)]
     pub schema: Schema,
@@ -151,7 +151,7 @@ pub async fn read(
          ) c ON true WHERE p.org=$1 AND p.env=$2 AND p.project=$3 AND p.revocation_seconds IS NOT NULL \
          ORDER BY c.record_type",
     )
-    .bind(&triple.org).bind(triple.env.as_str()).bind(&triple.project)
+    .bind(&triple.org).bind(&triple.env).bind(&triple.project)
     .fetch_all(connection).await?;
     let Some(row) = rows.first() else {
         return Ok(None);
@@ -164,7 +164,7 @@ pub async fn read(
     };
     let mut configuration = EnvironmentConfiguration {
         org: triple.org.clone(),
-        env: triple.env.to_string(),
+        env: triple.env.clone(),
         project: triple.project.clone(),
         target: row.try_get("target")?,
         policy: row.try_get("policy_name")?,
@@ -244,8 +244,8 @@ fn database_seconds(seconds: u32) -> Result<i32, sqlx::Error> {
 pub async fn require_placement(
     connection: &mut sqlx::PgConnection,
     org: &str,
-    env: &str,
-    policy: &str,
+    env: &crate::EnvName,
+    policy: &crate::EnvName,
 ) -> Result<(), sqlx::Error> {
     let preserved: Option<bool> = sqlx::query_scalar(
         "SELECT requested.name IS NOT NULL AND (o.placement_type='pooled' OR \
@@ -370,7 +370,7 @@ pub async fn write_selection(
          UPDATE registry.environment_applications a SET release_digest=$5, client_package=$6, client_web=$7 \
          FROM parent p WHERE (a.org,a.env,a.project)=(p.org,p.env,p.project) AND a.application=$4",
     )
-    .bind(&triple.org).bind(triple.env.as_str()).bind(&triple.project).bind(application).bind(release)
+    .bind(&triple.org).bind(&triple.env).bind(&triple.project).bind(application).bind(release)
     .bind(client.map(|client| &client.package)).bind(client.map(|client| &client.web))
     .execute(connection).await.map(|result| result.rows_affected() == 1)
 }

@@ -181,7 +181,7 @@ pub struct Operation {
     #[arg(long)]
     project: String,
     #[arg(long)]
-    env: String,
+    env: wamn_registry::EnvName,
     #[arg(long)]
     application: Option<String>,
     #[arg(long)]
@@ -198,7 +198,7 @@ pub async fn execute(config: &Configuration, operation: Operation) -> anyhow::Re
         .context("authenticated actor is absent")?
         .parse()?;
     let triple =
-        wamn_registry::Triple::new(&operation.org, operation.env.as_str(), &operation.project);
+        wamn_registry::Triple::new(&operation.org, operation.env.clone(), &operation.project);
     let platform = config.platform()?;
     write_kubeconfig(&platform.target.kubeconfig, &config.org)?;
     if operation.verb == "retain" {

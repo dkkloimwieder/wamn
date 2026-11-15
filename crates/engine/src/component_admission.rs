@@ -741,7 +741,7 @@ mod tests {
             declaration: ComponentDeclaration {
                 connections: Vec::new(),
                 target: ComponentPackageCoordinate {
-                    project_env_key: "org-a".to_string(),
+                    project_env_key: "org-a--dev--project".parse().unwrap(),
                     package_id: "orders".to_string(),
                     package_version: "1.0.0".to_string(),
                 },

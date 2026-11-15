@@ -158,8 +158,7 @@ fn read_authorization(live: Option<&str>) -> anyhow::Result<Authorization> {
 }
 
 fn render(target: &wamn_registry::Triple, authorization: &mut Authorization) -> Vec<Value> {
-    let project_env_key =
-        wamn_registry::project_env_key(&target.org, &target.project, target.env.as_str());
+    let project_env_key = wamn_registry::project_env_key(&target.org, &target.project, &target.env);
     let source = source_stream_config(target, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(target, 1);
     let user = wamn_registry::environment_nats_user(&project_env_key);
@@ -196,7 +195,7 @@ fn render(target: &wamn_registry::Triple, authorization: &mut Authorization) -> 
         wamn_registry::name::nats_subject(&["$JS", "ACK", (source.name).as_ref(), ">"]),
     ]);
     for bucket in ["wamn-auth", "wamn-connection"] {
-        publish.extend(memory_subjects(bucket, &project_env_key));
+        publish.extend(memory_subjects(bucket, project_env_key.as_str()));
     }
     publish.push(wamn_registry::name::nats_subject(&[
         "$JS",
@@ -405,7 +404,7 @@ mod tests {
     use super::*;
 
     fn document(project: &str) -> Triple {
-        Triple::new("test", "dev", project)
+        Triple::new("test", "dev".parse().unwrap(), project)
     }
 
     #[test]
@@ -458,7 +457,8 @@ mod tests {
                     .contains(&wamn_registry::name::nats_subject(&[
                         "$KV",
                         (bucket).as_ref(),
-                        &wamn_registry::project_env_key("test", "one", "dev"),
+                        wamn_registry::project_env_key("test", "one", &"dev".parse().unwrap())
+                            .as_str(),
                         ">"
                     ]))
             );
@@ -632,11 +632,12 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         };
         crate::kv_memory::create_buckets(&admin).await.unwrap();
-        let project_env_key = wamn_registry::project_env_key("test", "one", "dev");
+        let project_env_key =
+            wamn_registry::project_env_key("test", "one", &"dev".parse().unwrap());
         for (user, target) in [
             (
                 wamn_registry::environment_nats_user(&project_env_key),
-                Some(project_env_key.as_str()),
+                Some(&project_env_key),
             ),
             (wamn_registry::control_nats_user("test"), None),
         ] {

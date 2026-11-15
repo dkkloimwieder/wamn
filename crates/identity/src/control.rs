@@ -138,7 +138,7 @@ pub async fn is_project_admin(
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
-    environment: Option<&str>,
+    environment: Option<&wamn_registry::EnvName>,
 ) -> Result<bool, IdentityError> {
     if !valid_org(org) {
         return Err(invalid_org());
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn a_control_audience_names_exactly_one_org() {
         assert_eq!(
-            control_audience_org("urn:wamn:project-env:dkk:receiving:dev:abc"),
+            control_audience_org("urn:wamn:project-env:dkk:dev:receiving:abc"),
             None
         );
     }

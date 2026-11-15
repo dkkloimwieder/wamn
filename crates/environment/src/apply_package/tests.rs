@@ -24,15 +24,19 @@ async fn auth_drops_ensure_admin_role_records_only_changed_grants(pool: sqlx::Pg
          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA wamn_history, wamn_authority TO authdrops_role_owner; \
          SET ROLE authdrops_role_owner;").execute(&mut client).await.map(drop).unwrap();
     let mut expected = AuthDrops::default();
-    expected.project_env_key("admin-drops");
+    expected.project_env_key(&"admin-drops--dev--project".parse().unwrap());
 
     let mut tx = client.begin().await.unwrap();
     bind_apply_package_principal(&mut tx).await.unwrap();
     let mut rolled_back = AuthDrops::default();
     assert!(
-        ensure_admin_role(&mut tx, "admin-drops", &mut rolled_back)
-            .await
-            .unwrap()
+        ensure_admin_role(
+            &mut tx,
+            &"admin-drops--dev--project".parse().unwrap(),
+            &mut rolled_back
+        )
+        .await
+        .unwrap()
     );
     assert_eq!(rolled_back, expected);
     tx.rollback().await.unwrap();
@@ -41,9 +45,13 @@ async fn auth_drops_ensure_admin_role_records_only_changed_grants(pool: sqlx::Pg
     bind_apply_package_principal(&mut tx).await.unwrap();
     let mut drops = AuthDrops::default();
     assert!(
-        ensure_admin_role(&mut tx, "admin-drops", &mut drops)
-            .await
-            .unwrap()
+        ensure_admin_role(
+            &mut tx,
+            &"admin-drops--dev--project".parse().unwrap(),
+            &mut drops
+        )
+        .await
+        .unwrap()
     );
     tx.commit().await.unwrap();
     assert_eq!(drops, expected);
@@ -51,9 +59,13 @@ async fn auth_drops_ensure_admin_role_records_only_changed_grants(pool: sqlx::Pg
     bind_apply_package_principal(&mut tx).await.unwrap();
     let mut unchanged = AuthDrops::default();
     assert!(
-        !ensure_admin_role(&mut tx, "admin-drops", &mut unchanged)
-            .await
-            .unwrap()
+        !ensure_admin_role(
+            &mut tx,
+            &"admin-drops--dev--project".parse().unwrap(),
+            &mut unchanged
+        )
+        .await
+        .unwrap()
     );
     assert!(unchanged.is_empty());
     tx.commit().await.unwrap();
@@ -104,9 +116,11 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
         }
     }
     let database_name = wamn_postgres::identity(database.as_str()).unwrap().1;
-    let login =
-        wamn_control_provision::migration::login("apply-drops--dev--fixture", &database_name)
-            .unwrap();
+    let login = wamn_control_provision::migration::login(
+        &"apply-drops--dev--fixture".parse().unwrap(),
+        &database_name,
+    )
+    .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE ROLE {login} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD 'migration-test'; GRANT {login} TO authdrops_apply WITH INHERIT TRUE, SET TRUE"))).execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
     let mut migration_url = url::Url::parse(database.as_str()).unwrap();
     migration_url.set_username(&login).unwrap();
@@ -116,13 +130,18 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
     owner_url.set_password(Some("authdrops")).unwrap();
     let (_server, nats) = nats().await;
     let cache = Arc::new(AuthCache::with_ttl(Duration::from_secs(3600)));
-    let changes = watched(&nats, Some("apply-drops--dev--fixture"), Arc::clone(&cache)).await;
+    let changes = watched(
+        &nats,
+        Some(&"apply-drops--dev--fixture".parse().unwrap()),
+        Arc::clone(&cache),
+    )
+    .await;
     let ticket = cache
-        .grants("apply-drops--dev--fixture", "principal")
+        .grants(&"apply-drops--dev--fixture".parse().unwrap(), "principal")
         .unwrap_err();
     cache
         .keep_grants(
-            "apply-drops--dev--fixture",
+            &"apply-drops--dev--fixture".parse().unwrap(),
             "principal",
             ticket,
             PrincipalGrants {
@@ -133,7 +152,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
         .await;
     assert!(
         cache
-            .grants("apply-drops--dev--fixture", "principal")
+            .grants(&"apply-drops--dev--fixture".parse().unwrap(), "principal")
             .is_ok()
     );
     let shipped = std::env::temp_dir().join(format!("wamn-local-shipped-{}", std::process::id()));
@@ -145,14 +164,14 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
         database_url: owner_url.to_string(),
         org: "apply-drops".into(),
         project: "fixture".into(),
-        environment: "dev".into(),
+        environment: "dev".parse().unwrap(),
         changes,
     })
     .await
     .unwrap();
     until("package apply publishes the admin role drop", || {
         cache
-            .grants("apply-drops--dev--fixture", "principal")
+            .grants(&"apply-drops--dev--fixture".parse().unwrap(), "principal")
             .is_err()
     })
     .await;

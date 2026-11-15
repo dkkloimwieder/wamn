@@ -141,7 +141,7 @@ fn component(
     let admitted = descriptor
         .clone()
         .into_admitted(wamn_catalog::ComponentPackageCoordinate::new(
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             name,
             "1.0.0",
         )?);
@@ -380,7 +380,11 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .map(drop)?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "BEGIN; SET LOCAL ROLE wamn_system; {} {} COMMIT;",
-        wamn_control_provision::test_database::seed_org_project_env_sql("acme", "apps", "dev"),
+        wamn_control_provision::test_database::seed_org_project_env_sql(
+            "acme",
+            "apps",
+            &"dev".parse().unwrap()
+        ),
         wamn_registry::test_util::activation_target_sql()
     )))
     .execute(&mut admin)
@@ -628,7 +632,9 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .context("retry initialization")?;
 
     assert_eq!(before_sql, continuity(&mut observer).await?);
-    let principal = |name: &str| wamn_platform_identity::application_subject(PROJECT_ENV_KEY, name);
+    let principal = |name: &str| {
+        wamn_platform_identity::application_subject(&PROJECT_ENV_KEY.parse().unwrap(), name)
+    };
     let a_user = wamn_platform_identity::resolve_subject(
         &mut admin,
         wamn_platform_identity::PrincipalType::Service,
@@ -646,11 +652,14 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let mounted = wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
         &old_a.canonical_bytes(),
         "running application a",
-        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "dev")
-            .with_applications(
-                wamn_environment::environment::analyse::select_application(&document, Some("a"))?
-                    .membership(),
-            ),
+        wamn_engine::release_manifest::ReleaseTarget::new(
+            PROJECT_ENV_KEY.parse().unwrap(),
+            "dev".parse().unwrap(),
+        )
+        .with_applications(
+            wamn_environment::environment::analyse::select_application(&document, Some("a"))?
+                .membership(),
+        ),
     )?;
     let b_permissions = permissions(&mut observer, b_user.id().to_string().as_str()).await?;
     document.applications.get_mut("a").unwrap().current =
@@ -758,7 +767,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .map(drop)?;
     wamn_platform_identity::application::mutate_grant(
         &mut tx,
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
             user_id: b_user.id().to_string().as_str(),
@@ -847,7 +856,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .bind(PROJECT_ENV_KEY).bind(&old_a.digest()).fetch_all(&mut *tx).await?.into_iter().collect();
     let retired = wamn_environment::environment::retention::prune_releases(
         &mut tx,
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         &retained,
         &mut wamn_broker::connection_changes::ConnectionDrops::default(),
     )
@@ -856,7 +865,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         wamn_environment::environment::retention::retire_runtime_grants(
             &mut admin,
             &mut tx,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             &releases,
             &retired,
             &mut wamn_broker::auth_changes::AuthDrops::default()
@@ -898,7 +907,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         if live {
             wamn_platform_identity::application::mutate_grant(
                 &mut tx,
-                PROJECT_ENV_KEY,
+                &PROJECT_ENV_KEY.parse().unwrap(),
                 wamn_platform_identity::application::GrantAuthority::Provisioning,
                 wamn_platform_identity::application::GrantChange::UserRole {
                     user_id: b_user.id().to_string().as_str(),
@@ -916,7 +925,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         }
         let retired = wamn_environment::environment::retention::prune_releases(
             &mut tx,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             &retained,
             &mut wamn_broker::connection_changes::ConnectionDrops::default(),
         )
@@ -924,7 +933,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         wamn_environment::environment::retention::retire_runtime_grants(
             &mut admin,
             &mut tx,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             &releases,
             &retired,
             &mut auth,
@@ -934,8 +943,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         assert_eq!(retired.is_empty(), live || pinned);
         let stranded = wamn_environment::environment::drain::stranded(
             observer_url.as_str(),
-            PROJECT_ENV_KEY,
-            "dev",
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            &"dev".parse().unwrap(),
             Some(&["a".to_owned()]),
             &BTreeMap::from([
                 (("a".into(), new_a.digest()), 1),

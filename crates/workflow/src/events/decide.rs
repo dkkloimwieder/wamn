@@ -67,8 +67,8 @@ pub fn decide(
     condition: Option<&CompiledCondition>,
     envelope: &Envelope,
     known_packages: &BTreeSet<String>,
-    project_env_key: &str,
-    resident_project_env_key: Option<&str>,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    resident_project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     max_depth: u32,
 ) -> Verdict {
     match envelope.package_id.as_str() {
@@ -92,7 +92,7 @@ pub fn decide(
         return Verdict::Refuse(RefuseReason::ProjectUnscopable);
     }
     match row_project(envelope) {
-        RowProject::Project(event_project) if event_project != project_env_key => {
+        RowProject::Project(event_project) if &event_project != project_env_key => {
             return Verdict::Skip(SkipReason::ForeignProject);
         }
         RowProject::Absent | RowProject::Project(_) => {}
@@ -129,7 +129,7 @@ pub fn decide_derived(
     condition: Option<&CompiledCondition>,
     event: &DerivedEvent,
     known_packages: &BTreeSet<String>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     max_depth: u32,
 ) -> Verdict {
     match event.package_id.as_str() {
@@ -149,7 +149,7 @@ pub fn decide_derived(
     if !registration.ops.contains(&event.op) {
         return Verdict::Skip(SkipReason::OpMismatch);
     }
-    if event.project_env_key != project_env_key {
+    if &event.project_env_key != project_env_key {
         return Verdict::Skip(SkipReason::ForeignProject);
     }
     if registration.condition.is_some() {
@@ -196,7 +196,7 @@ mod tests {
     fn envelope() -> Envelope {
         serde_json::from_value(json!({
             "op": "insert",
-            "new": {"project_id": "t1", "status": "ready"},
+            "new": {"project_id": "t1--dev--project", "status": "ready"},
             "package_id": "cat",
             "entity": "receipts",
             "table": "receipts",
@@ -219,14 +219,17 @@ mod tests {
                 None,
                 &envelope(),
                 &known_packages(),
-                "t1",
-                Some("t1"),
+                &"t1--dev--project".parse().unwrap(),
+                Some(&"t1--dev--project".parse().unwrap()),
                 16,
             ) else {
                 panic!("delivery refused")
             };
             assert_eq!(observed["event"], serde_json::json!("insert"));
-            assert_eq!(observed["new"]["project_id"], serde_json::json!("t1"));
+            assert_eq!(
+                observed["new"]["project_id"],
+                serde_json::json!("t1--dev--project")
+            );
             assert_eq!(observed["new"]["status"], serde_json::json!("ready"));
         };
     }
@@ -245,8 +248,8 @@ mod tests {
                 None,
                 &projectless,
                 &known_packages(),
-                "t1",
-                Some("t1"),
+                &"t1--dev--project".parse().unwrap(),
+                Some(&"t1--dev--project".parse().unwrap()),
                 16,
             ),
             Verdict::Deliver(_)
@@ -260,15 +263,18 @@ mod tests {
             .new
             .as_mut()
             .expect("insert carries a new image")
-            .insert("project_id".into(), Value::String("other".into()));
+            .insert(
+                "project_id".into(),
+                Value::String("other--dev--project".into()),
+            );
         assert_eq!(
             decide(
                 &registration(None),
                 None,
                 &foreign,
                 &known_packages(),
-                "t1",
-                Some("t1"),
+                &"t1--dev--project".parse().unwrap(),
+                Some(&"t1--dev--project".parse().unwrap()),
                 16,
             ),
             Verdict::Skip(SkipReason::ForeignProject)
@@ -283,14 +289,14 @@ mod tests {
             .as_mut()
             .expect("insert carries a new image")
             .remove("project_id");
-        for resident_project_env_key in [None, Some("other")] {
+        for resident_project_env_key in [None, Some(&"other--dev--project".parse().unwrap())] {
             assert_eq!(
                 decide(
                     &registration(None),
                     None,
                     &projectless,
                     &known_packages(),
-                    "t1",
+                    &"t1--dev--project".parse().unwrap(),
                     resident_project_env_key,
                     16,
                 ),
@@ -314,8 +320,8 @@ mod tests {
                     None,
                     &invalid,
                     &known_packages(),
-                    "t1",
-                    Some("t1"),
+                    &"t1--dev--project".parse().unwrap(),
+                    Some(&"t1--dev--project".parse().unwrap()),
                     16,
                 ),
                 Verdict::Refuse(RefuseReason::ProjectUnscopable)
@@ -333,8 +339,8 @@ mod tests {
                 Some(&condition),
                 &envelope(),
                 &known_packages(),
-                "other",
-                Some("other"),
+                &"other--dev--project".parse().unwrap(),
+                Some(&"other--dev--project".parse().unwrap()),
                 16,
             ),
             Verdict::Skip(SkipReason::ForeignProject)
@@ -355,8 +361,8 @@ mod tests {
                 None,
                 &envelope,
                 &known_packages(),
-                "t1",
-                Some("t1"),
+                &"t1--dev--project".parse().unwrap(),
+                Some(&"t1--dev--project".parse().unwrap()),
                 16,
             ),
             Verdict::Refuse(RefuseReason::DepthExceeded { .. })
@@ -366,21 +372,21 @@ mod tests {
     #[test]
     fn source_identity_requires_one_exact_header() {
         let envelope = envelope();
-        let expected = wamn_event_wire::msg_id("app", "dev", &envelope.identity);
+        let expected = wamn_event_wire::msg_id("app", &"dev".parse().unwrap(), &envelope.identity);
         assert_eq!(
-            verified_source_event_id("app", "dev", &envelope, &[&expected])
+            verified_source_event_id("app", &"dev".parse().unwrap(), &envelope, &[&expected])
                 .unwrap()
                 .as_str(),
             expected
         );
-        assert!(verified_source_event_id("app", "dev", &envelope, &[]).is_none());
+        assert!(verified_source_event_id("app", &"dev".parse().unwrap(), &envelope, &[]).is_none());
     }
 
     fn derived(depth: u32) -> DerivedEvent {
         DerivedEvent::new(
-            "t1",
+            "t1--dev--project".parse().unwrap(),
             "app",
-            "dev",
+            "dev".parse().unwrap(),
             "cat",
             "receipts",
             Op::Insert,
@@ -402,7 +408,7 @@ mod tests {
                 None,
                 &derived(3),
                 &known_packages(),
-                "t1",
+                &"t1--dev--project".parse().unwrap(),
                 16,
             ) else {
                 panic!("delivery refused")
@@ -423,7 +429,7 @@ mod tests {
                 Some(&condition),
                 &derived(3),
                 &known_packages(),
-                "t1",
+                &"t1--dev--project".parse().unwrap(),
                 16,
             ),
             Verdict::Deliver(_)
@@ -434,7 +440,7 @@ mod tests {
                 Some(&condition),
                 &derived(16),
                 &known_packages(),
-                "t1",
+                &"t1--dev--project".parse().unwrap(),
                 16,
             ),
             Verdict::Refuse(RefuseReason::DepthExceeded { .. })
@@ -445,26 +451,45 @@ mod tests {
     fn derived_source_identity_requires_exact_target_and_one_header() {
         let event = derived(0);
         let expected = wamn_event_wire::derived_msg_id(
-            "t1",
+            &"t1--dev--project".parse().unwrap(),
             "app",
-            "dev",
+            &"dev".parse().unwrap(),
             &event.package_id,
             &event.entity,
             event.op,
             &event.dedup_id,
         );
         assert_eq!(
-            verified_derived_source_event_id("t1", "app", "dev", &event, &[&expected])
-                .unwrap()
-                .as_str(),
+            verified_derived_source_event_id(
+                &"t1--dev--project".parse().unwrap(),
+                "app",
+                &"dev".parse().unwrap(),
+                &event,
+                &[&expected]
+            )
+            .unwrap()
+            .as_str(),
             expected
         );
         assert!(
-            verified_derived_source_event_id("other", "app", "dev", &event, &[&expected]).is_none()
+            verified_derived_source_event_id(
+                &"other--dev--project".parse().unwrap(),
+                "app",
+                &"dev".parse().unwrap(),
+                &event,
+                &[&expected]
+            )
+            .is_none()
         );
         assert!(
-            verified_derived_source_event_id("t1", "app", "dev", &event, &[&expected, &expected])
-                .is_none()
+            verified_derived_source_event_id(
+                &"t1--dev--project".parse().unwrap(),
+                "app",
+                &"dev".parse().unwrap(),
+                &event,
+                &[&expected, &expected]
+            )
+            .is_none()
         );
     }
 
@@ -474,16 +499,22 @@ mod tests {
             .expect("derived event serializes");
         let event = DerivedEvent::from_slice(&encoded).expect("derived event wire decodes");
         let message_id = wamn_event_wire::derived_msg_id(
-            "t1",
+            &"t1--dev--project".parse().unwrap(),
             "app",
-            "dev",
+            &"dev".parse().unwrap(),
             &event.package_id,
             &event.entity,
             event.op,
             &event.dedup_id,
         );
-        let source = verified_derived_source_event_id("t1", "app", "dev", &event, &[&message_id])
-            .expect("host-targeted source identity verifies");
+        let source = verified_derived_source_event_id(
+            &"t1--dev--project".parse().unwrap(),
+            "app",
+            &"dev".parse().unwrap(),
+            &event,
+            &[&message_id],
+        )
+        .expect("host-targeted source identity verifies");
         assert_eq!(source.as_str(), message_id);
         {
             let Verdict::Deliver(observed) = decide_derived(
@@ -491,7 +522,7 @@ mod tests {
                 None,
                 &event,
                 &known_packages(),
-                "t1",
+                &"t1--dev--project".parse().unwrap(),
                 16,
             ) else {
                 panic!("delivery refused")
@@ -511,14 +542,30 @@ mod tests {
         let mut other = envelope();
         other.package_id = "other".into();
         assert_eq!(
-            decide(&registration, None, &other, &known, "t1", Some("t1"), 16,),
+            decide(
+                &registration,
+                None,
+                &other,
+                &known,
+                &"t1--dev--project".parse().unwrap(),
+                Some(&"t1--dev--project".parse().unwrap()),
+                16,
+            ),
             Verdict::Skip(SkipReason::SourcePackageMismatch)
         );
 
         let mut unknown = envelope();
         unknown.package_id = "unknown".into();
         assert_eq!(
-            decide(&registration, None, &unknown, &known, "t1", Some("t1"), 16,),
+            decide(
+                &registration,
+                None,
+                &unknown,
+                &known,
+                &"t1--dev--project".parse().unwrap(),
+                Some(&"t1--dev--project".parse().unwrap()),
+                16,
+            ),
             Verdict::Refuse(RefuseReason::SourcePackageIdentityUnknown {
                 source_package: "unknown".into(),
             })
@@ -530,8 +577,8 @@ mod tests {
                 None,
                 &envelope(),
                 &known,
-                "t1",
-                Some("t1"),
+                &"t1--dev--project".parse().unwrap(),
+                Some(&"t1--dev--project".parse().unwrap()),
                 16,
             ),
             Verdict::Deliver(_)

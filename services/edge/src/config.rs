@@ -127,7 +127,7 @@ pub struct EdgeConfig {
 pub struct TargetConfig {
     pub org: String,
     pub project: String,
-    pub environment: String,
+    pub environment: wamn_registry::EnvName,
 }
 
 impl TargetConfig {
@@ -354,8 +354,8 @@ mod tests {
         assert_eq!(
             from_variables.target.release_target(),
             ReleaseTarget::new(
-                &wamn_registry::project_env_key("org-a", "plant", "edge"),
-                "edge"
+                wamn_registry::project_env_key("org-a", "plant", &"edge".parse().unwrap()),
+                "edge".parse().unwrap()
             )
         );
     }

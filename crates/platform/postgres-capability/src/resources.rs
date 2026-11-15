@@ -199,12 +199,12 @@ pub(super) fn db_span_for_project(
     project: &str,
     op: &'static str,
 ) -> tracing::Span {
-    let project_env_key = plugin.project_env_key_for(component_id).unwrap_or_default();
+    let project_env_key = plugin.project_env_key_for(component_id);
     let run = plugin.current_run_for(component_id);
     let span = effect_span!(
         "wamn.postgres",
         EffectIdentity {
-            project_env_key: &project_env_key,
+            project_env_key: project_env_key.as_ref(),
             project,
             component: component_id,
         },
@@ -251,7 +251,6 @@ pub(super) async fn prepare_statement_transaction(
     let identity = WamnPostgres::prepare_identity(
         authority,
         plugin.active_read(component_id),
-        &project_env_key,
         schema.as_deref(),
         runner.as_deref(),
         role.as_deref(),

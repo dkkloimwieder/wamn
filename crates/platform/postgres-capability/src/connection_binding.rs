@@ -20,13 +20,13 @@ pub async fn resolve(
         .invocation(scope)
         .context("no admitted connection invocation")?;
     anyhow::ensure!(
-        release.target().project_env_key == facts.project_env_key(),
+        &release.target().project_env_key == facts.project_env_key(),
         "connection release target mismatch"
     );
     let (digest, environment, candidate) = match &invocation.closure {
         ConnectionExecutionClosure::Released => (
             &release.release().manifest_digest,
-            release.target().environment.as_str(),
+            &release.target().environment,
             None,
         ),
         ConnectionExecutionClosure::Candidate {
@@ -42,7 +42,7 @@ pub async fn resolve(
             );
             (
                 manifest_digest,
-                environment.as_str(),
+                environment,
                 Some(
                     binding_world
                         .binding(&invocation.component_digest, alias)

@@ -24,7 +24,7 @@ use wamn_control_provision::{
 use wamn_control_provision::{Org, Placement, cluster_of};
 use wamn_platform_identity::{
     IdentityErrorType, Principal, PrincipalStatus, PrincipalType, assign_project_role,
-    authenticate_pat, create_service, operator_subject, resolve_subject, revoke_pat,
+    authenticate_pat, create_service, resolve_subject, revoke_pat,
 };
 use wamn_registry::Triple;
 
@@ -71,14 +71,14 @@ pub struct ProvisionProjectEnvRequest {
 
     /// Environment slug: any policy in the ORG's `registry.env_policies` set.
     /// Derives the target cluster via `cluster_of`.
-    pub env: String,
+    pub env: wamn_registry::EnvName,
 
     /// The environment policy a new environment row names. Absent names the
     /// policy whose name is the env. A recorded row keeps its policy: the
     /// environment document owns it
     /// (docs/architecture/overview.md#environment-lifecycle). The project is
     /// derived from the coordinate (`project_env_key`).
-    pub policy: Option<String>,
+    pub policy: Option<wamn_registry::EnvName>,
 
     /// The `registry.target` name where the environment runs. The first
     /// provision records it, and it never changes
@@ -213,8 +213,8 @@ pub async fn provision_project_env(
 
     let org = args.org.as_str();
     let project = args.project.as_str();
-    let env = args.env.as_str();
-    let triple = Triple::new(org, env, project);
+    let env = &args.env;
+    let triple = Triple::new(org, env.clone(), project);
 
     // Validate the project id + the assembled `wamn-<org>--<project>--<env>`
     // namespace and `wamn-db-<org>--<project>--<env>--<instance>` database lengths
@@ -233,7 +233,7 @@ pub async fn provision_project_env(
         record_project_env(
             system_url,
             &triple,
-            args.policy.as_deref(),
+            args.policy.as_ref(),
             &args.target,
             &secret_name,
             args.secret_namespace.as_deref(),
@@ -251,7 +251,7 @@ pub async fn provision_project_env(
         let url = args.system_database_url.as_deref().context(
             "pass --cluster, or --system-database-url to resolve the target cluster from the registry",
         )?;
-        resolve_cluster(url, org, args.policy.as_deref().unwrap_or(env)).await?
+        resolve_cluster(url, org, args.policy.as_ref().unwrap_or(env)).await?
     };
 
     let db_name = project_env_database_name(org, project, env, &instance);

@@ -151,7 +151,7 @@ pub(super) async fn delete_publication(platform: &Platform, database: &str) -> a
 
 pub(super) async fn delete_event_certificate(
     platform: &Platform,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<()> {
     let name = wamn_registry::name::nats_certificate(project_env_key);
     for type_ in ["certificate", "secret"] {

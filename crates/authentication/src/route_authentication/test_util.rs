@@ -77,8 +77,8 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
         &manifest.canonical_bytes(),
         "fixture",
         wamn_engine::release_manifest::ReleaseTarget::new(
-            wamn_registry::project_env_key("acme", "host-project", "dev"),
-            "dev",
+            wamn_registry::project_env_key("acme", "host-project", &"dev".parse().unwrap()),
+            "dev".parse().unwrap(),
         )
         .with_applications(
             [(
@@ -100,7 +100,7 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
                     None,
                 )),
             )),
-            "host-project",
+            &"host-project--dev--project".parse().unwrap(),
             None,
             None,
         ),

@@ -83,7 +83,7 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
         WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
-            environment: ENVIRONMENT,
+            environment: &ENVIRONMENT.parse().unwrap(),
             database: &mut database,
         },
     )?;
@@ -234,7 +234,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     session_fixture::install_authority(
         &mut admin,
         PROJECT,
-        ENVIRONMENT,
+        &ENVIRONMENT.parse().unwrap(),
         AUDIENCE,
         &[&first, second],
     )
@@ -269,7 +269,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     }
     let authentication = Arc::new(PlatformRouteAuthenticator::for_test(
         postgres,
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         Some(wamn_postgres::pool(admin_url, 4).await?),
         Some(verifier),
     ));
@@ -293,10 +293,13 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&manifest),
         "native session route test",
-        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT)
-            .with_applications(serde_json::from_value(
-                json!({"receiving": {"packages": ["root", "child"]}}),
-            )?),
+        wamn_engine::release_manifest::ReleaseTarget::new(
+            PROJECT_ENV_KEY.parse().unwrap(),
+            ENVIRONMENT.parse().unwrap(),
+        )
+        .with_applications(serde_json::from_value(
+            json!({"receiving": {"packages": ["root", "child"]}}),
+        )?),
     )?);
     let route = FlowHttpRouting::for_test(Some(release)).with_authenticator(authentication);
     sqlx::raw_sql("COMMIT")
@@ -413,7 +416,10 @@ async fn assert_case(caller: &AuthenticatedCaller, postgres: Arc<WamnPostgres>) 
         }
         assert!(!event.native_identity && !native_ids.contains(&event.scope));
         let identity = event.identity.expect("host identity");
-        assert_eq!(identity.project_env_key, PROJECT_ENV_KEY);
+        assert_eq!(
+            identity.project_env_key,
+            Some(PROJECT_ENV_KEY.parse().unwrap())
+        );
         assert_eq!(
             identity.user_id.as_deref(),
             Some(caller.principal_id()),
@@ -533,7 +539,7 @@ fn member_admission_request(child_digest: &wamn_digest::Digest) -> ComponentAdmi
         declaration: ComponentDeclaration {
             connections: Vec::new(),
             target: ComponentPackageCoordinate {
-                project_env_key: PROJECT_ENV_KEY.into(),
+                project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
                 package_id: "root".into(),
                 package_version: "1.0.0".into(),
             },
@@ -937,7 +943,7 @@ async fn native_warm_alternating_callers_and_credentials(pool: sqlx::PgPool) {
             let login = workload_login(
                 WorkloadRoleFamily::App,
                 WorkloadRoleIdentity::ProjectEnvKey {
-                    project_env_key: PROJECT_ENV_KEY,
+                    project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
                     database: database.path().trim_start_matches('/'),
                 },
             )
@@ -1028,7 +1034,7 @@ async fn warm_postgres_with_pool(
     let role = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: PROJECT_ENV_KEY,
+            project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
             database: &mut database,
         },
     )?;
@@ -1066,7 +1072,7 @@ async fn warm_postgres_with_pool(
         WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
-            environment: ENVIRONMENT,
+            environment: &ENVIRONMENT.parse().unwrap(),
             database: &mut database,
         },
     )?;
@@ -1163,7 +1169,7 @@ async fn pat_caller(
         WorkloadRoleIdentity::Control {
             org: ORG,
             project: PROJECT,
-            environment: ENVIRONMENT,
+            environment: &ENVIRONMENT.parse().unwrap(),
             database: system_database.path().trim_start_matches('/'),
         },
     )?;
@@ -1196,13 +1202,21 @@ async fn pat_caller(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&manifest),
         "warm PAT test",
-        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT)
-            .with_applications(serde_json::from_value(
-                json!({"receiving": {"packages": ["root", "child"]}}),
-            )?),
+        wamn_engine::release_manifest::ReleaseTarget::new(
+            PROJECT_ENV_KEY.parse().unwrap(),
+            ENVIRONMENT.parse().unwrap(),
+        )
+        .with_applications(serde_json::from_value(
+            json!({"receiving": {"packages": ["root", "child"]}}),
+        )?),
     )?);
     let routing = FlowHttpRouting::for_test(Some(release)).with_authenticator(Arc::new(
-        PlatformRouteAuthenticator::for_test(postgres, PROJECT, Some(reader), None),
+        PlatformRouteAuthenticator::for_test(
+            postgres,
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            Some(reader),
+            None,
+        ),
     ));
     routing
         .authenticate_authorization_for_test(ATTACHMENT, Some(&format!("Bearer {}", token.token())))

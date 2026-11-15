@@ -55,7 +55,8 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         payload: &str,
     ) -> Result<Value, Refusal> {
-        let project = parse::<ProjectTarget>(payload)?.project;
+        let target: ProjectTarget = parse(payload)?;
+        let project = target.project;
         let operation = attachment.route.operation;
         let request: Value = serde_json::from_str(payload).map_err(|_| Refusal::Declared {
             code: "invalid_input",
@@ -67,7 +68,7 @@ impl ControlRoutes<'_> {
                 attachment,
                 caller,
                 Some(&project),
-                request["env"].as_str(),
+                target.env.as_ref(),
             )
             .await?;
         if operation == "connection.copy"
@@ -76,7 +77,7 @@ impl ControlRoutes<'_> {
                     &mut transaction,
                     caller,
                     Some(&project),
-                    request["source_env"].as_str(),
+                    target.source_env.as_ref(),
                 )
                 .await?
         {
@@ -151,11 +152,8 @@ impl ControlRoutes<'_> {
         } else {
             None
         };
-        let environments: Vec<(String, String)> = sqlx::query(wamn_registry::sql::EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN).bind(self.org).bind(&project).bind(projection_env).fetch_all(&mut *transaction)
-            .await?
-            .into_iter()
-            .map(|row| (row.get(0), row.get(1)))
-            .collect();
+        let environments: Vec<(String, wamn_registry::EnvName)> = sqlx::query_as(wamn_registry::sql::EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN).bind(self.org).bind(&project).bind(projection_env).fetch_all(&mut *transaction)
+            .await?;
         if group == "connection" {
             for (_, env) in &environments {
                 let held: bool = sqlx::query(wamn_registry::sql::ENVIRONMENT_TRANSACTION_LOCK_SQL)
@@ -256,7 +254,7 @@ impl ControlRoutes<'_> {
                 attachment,
                 caller,
                 Some(&project),
-                request["env"].as_str(),
+                target.env.as_ref(),
             )
             .await?;
         let mut completed = Vec::new();
@@ -282,7 +280,7 @@ impl ControlRoutes<'_> {
             }
             .await;
             if let Err(error) = projected {
-                tracing::warn!(%error,project,env,"integration projection failed");
+                tracing::warn!(%error,project,%env,"integration projection failed");
                 return Err(incomplete(project, env, &completed));
             }
             completed.push(format!("{project}/{env}"));

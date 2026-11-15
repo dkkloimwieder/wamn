@@ -79,11 +79,7 @@ async fn delete_locked(
     data: bool,
     admin_url: &str,
 ) -> anyhow::Result<Vec<String>> {
-    let (org, project, env) = (
-        triple.org.as_str(),
-        triple.project.as_str(),
-        triple.env.as_str(),
-    );
+    let (org, project, env) = (triple.org.as_str(), triple.project.as_str(), &triple.env);
     let mut lines = Vec::new();
     // A lifecycle verb: the provisioning credential, as the install Jobs use.
     let mut system = connect(admin_url).await?;
@@ -238,7 +234,8 @@ async fn delete_locked(
         )
         .await
         .with_context(|| format!("remove the environment's key of Secret {control}"))?;
-        let policy = super::analyse::read_policy(&mut system, org, row.get(1)).await?;
+        let policy_name = row.try_get(1)?;
+        let policy = super::analyse::read_policy(&mut system, org, &policy_name).await?;
         crate::platform::control::wait_administration(
             &platform.target,
             triple,

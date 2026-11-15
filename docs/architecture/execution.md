@@ -772,7 +772,8 @@ The replica measures each value from its original publication time.
 Moka keeps admitted PATs and active sessions in the host that read them, with the configured expiry.
 The host keeps only a positive identity answer, so a new PAT or a new login works on its first request.
 A delete of the key `=identity.<principal>` drops the PATs and sessions of the principal on every host.
-An `project_env_key` holds only `[A-Za-z0-9_-]`, so that key never meets an environment cache key.
+A `ProjectEnvKey` contains three lowercase registry names separated by `--`.
+The identity prefix `=identity` cannot be a project deployment key.
 A host does not keep a token answer when any identity key changed during its read.
 A watch reset also invalidates reads already in progress.
 Every cached token answer ends at its credential deadline, even when the configured bound is longer.

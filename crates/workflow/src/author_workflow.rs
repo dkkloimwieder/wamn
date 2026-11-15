@@ -195,7 +195,7 @@ impl<'a> WorkflowTrigger<'a> {
 pub struct AuthorWorkflowRequest<'a> {
     pub org: &'a str,
     pub project: &'a str,
-    pub environment: &'a str,
+    pub environment: &'a wamn_registry::EnvName,
     /// The application of the workflow, by the name the environment declares.
     pub application: &'a str,
     /// The applications the environment declares, as the serving Helm
@@ -213,7 +213,7 @@ pub struct AuthorWorkflowRequest<'a> {
 
 impl AuthorWorkflowRequest<'_> {
     /// The composed environment key derived from the environment coordinate.
-    pub fn project_env_key(&self) -> String {
+    pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
         wamn_registry::project_env_key(self.org, self.project, self.environment)
     }
 }
@@ -221,7 +221,7 @@ impl AuthorWorkflowRequest<'_> {
 /// Read the installed release `manifest_digest` and condition `document` against it.
 pub(crate) async fn condition_against_release(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     application_packages: &std::collections::BTreeSet<String>,
     manifest_digest: &wamn_digest::Digest,
     document: &WiringDocument,

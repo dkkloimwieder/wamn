@@ -16,7 +16,7 @@ const OPERATION: &str = "wamn.dev/operation";
 #[serde(deny_unknown_fields)]
 struct Request {
     project: String,
-    env: String,
+    env: wamn_registry::EnvName,
     #[serde(default)]
     application: Option<String>,
     #[serde(default)]
@@ -70,7 +70,7 @@ impl Operation {
         self,
         org: &str,
         project: &str,
-        env: &str,
+        env: &wamn_registry::EnvName,
         database: &str,
         apply_credential: &str,
     ) -> Vec<(String, &'static str, &'static str)> {
@@ -135,7 +135,7 @@ impl ControlRoutes<'_> {
             )
             .await?;
         let triple =
-            wamn_registry::Triple::new(self.org, request.env.as_str(), request.project.as_str());
+            wamn_registry::Triple::new(self.org, request.env.clone(), request.project.as_str());
         let exists = wamn_registry::deployment::exists(&mut transaction, &triple).await?;
         if !exists {
             return Err(Refusal::Declared {

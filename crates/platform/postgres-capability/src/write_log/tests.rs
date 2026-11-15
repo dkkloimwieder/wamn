@@ -14,7 +14,7 @@ const SCOPE: &str = "write-log-request-element";
 /// A plugin over a fresh database of `project_env_key`, with the write log installed.
 async fn project_env_key_database(
     pool: &sqlx::PgPool,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> (url::Url, Arc<WamnPostgres>) {
     let database = wamn_test_postgres::url(pool);
     let guest_url = live_guest_url(database.as_str(), project_env_key).await;
@@ -37,12 +37,13 @@ const OPERATION: &str = "base:widget/create@1.0.0";
 #[sqlx::test(migrations = false)]
 async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = project_env_key_database(&pool, "test--dev--writelogtx").await;
+    let (database, postgres) =
+        project_env_key_database(&pool, &"test--dev--writelogtx".parse().unwrap()).await;
     postgres
         .bind_session_identity(
             SCOPE,
             &SessionIdentity {
-                project_env_key: "test--dev--writelogtx".into(),
+                project_env_key: Some("test--dev--writelogtx".parse().unwrap()),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some(OPERATION.into()),
                 ..SessionIdentity::default()
@@ -155,12 +156,13 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: s
 #[sqlx::test(migrations = false)]
 async fn known_results_finish_at_host_commit_and_a_missing_finish_rolls_back(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (_database, postgres) = project_env_key_database(&pool, "test--dev--writelogtx").await;
+    let (_database, postgres) =
+        project_env_key_database(&pool, &"test--dev--writelogtx".parse().unwrap()).await;
     postgres
         .bind_session_identity(
             SCOPE,
             &SessionIdentity {
-                project_env_key: "test--dev--writelogtx".into(),
+                project_env_key: Some("test--dev--writelogtx".parse().unwrap()),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some(OPERATION.into()),
                 ..SessionIdentity::default()
@@ -214,7 +216,7 @@ async fn model_versions_follow_wal_without_a_counter(pool: sqlx::PgPool) {
         wamn_control_provision::WorkloadRoleIdentity::ProjectEnvironment {
             org: "wal-test",
             project: PROJECT,
-            environment: "test",
+            environment: &"test".parse().unwrap(),
             database: database.path().trim_start_matches('/'),
         },
     )
@@ -268,11 +270,12 @@ async fn model_versions_follow_wal_without_a_counter(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = false)]
 async fn unfinished_claims_have_a_call_bound_and_accept_late_completion(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = project_env_key_database(&pool, "test--dev--writelogtx").await;
+    let (database, postgres) =
+        project_env_key_database(&pool, &"test--dev--writelogtx".parse().unwrap()).await;
     let store = WriteLogStore::new(
         postgres,
         PROJECT.to_owned(),
-        "test--dev--writelogtx".to_owned(),
+        "test--dev--writelogtx".parse().unwrap(),
     );
     assert!(matches!(
         store.claim(OPERATION, "late", vec![1]).await.unwrap(),
@@ -356,7 +359,8 @@ async fn cancellation_retains_external_claims_and_rolls_back_transactional_claim
     use wamn_engine::operation::{native_call::NativeOutcome, node_types::NodeError};
 
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = project_env_key_database(&pool, "test--dev--writelogtx").await;
+    let (database, postgres) =
+        project_env_key_database(&pool, &"test--dev--writelogtx".parse().unwrap()).await;
     let mut observer = wamn_postgres::connect(database.as_str()).await.unwrap();
     let route = wamn_catalog::ServingRoute {
         package_id: "base".into(),
@@ -374,7 +378,7 @@ async fn cancellation_retains_external_claims_and_rolls_back_transactional_claim
                 context: None,
                 scope: format!("cancellation-{key}"),
                 identity: SessionIdentity {
-                    project_env_key: "test--dev--writelogtx".into(),
+                    project_env_key: Some("test--dev--writelogtx".parse().unwrap()),
                     user_id: Some(LIVE_PRINCIPAL.into()),
                     operation: Some(OPERATION.into()),
                     ..SessionIdentity::default()

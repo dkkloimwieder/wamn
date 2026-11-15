@@ -29,7 +29,7 @@ pub const MISSING_SLOT_REASON: &str = "missing";
 pub struct RecoverCaptureGapRequest {
     pub org: String,
     pub project: String,
-    pub env: String,
+    pub env: wamn_registry::EnvName,
 
     /// Owning connection of the system database: the instance suffix, the reader
     /// registration, and the gap row.
@@ -47,7 +47,7 @@ pub struct RecoverCaptureGapRequest {
 pub struct CloseCaptureGapRequest {
     pub org: String,
     pub project: String,
-    pub env: String,
+    pub env: wamn_registry::EnvName,
 
     /// Owning connection of the system database.
     pub system_database_url: String,
@@ -82,12 +82,12 @@ pub async fn recover_capture_gap(
 ) -> anyhow::Result<RecoveredCaptureGap> {
     validate_project_env_cdc(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("cdc names: {e}"))?;
-    let triple = Triple::new(&args.org, args.env.as_str(), &args.project);
+    let triple = Triple::new(&args.org, args.env.clone(), &args.project);
     let slot = cdc_object_name(&args.org, &args.project, &args.env, instance);
     let database = project_env_database_name(&args.org, &args.project, &args.env, instance);
 
     let mut system = connect_system(&args.system_database_url).await?;
-    let env = triple.env.as_str();
+    let env = &triple.env;
     let registration = sqlx::query(sqlx::AssertSqlSafe(
         (select_event_reader_origin_sql()).to_string(),
     ))
@@ -221,9 +221,9 @@ pub async fn recover_capture_gap(
 
 /// Close the newest gap, retaining its original resynchronization time on retry.
 pub async fn close_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<ClosedCaptureGap> {
-    let triple = Triple::new(&args.org, args.env.as_str(), &args.project);
+    let triple = Triple::new(&args.org, args.env.clone(), &args.project);
     let mut system = connect_system(&args.system_database_url).await?;
-    let env = triple.env.as_str();
+    let env = &triple.env;
     let mut transaction = provisioning_transaction(&mut system).await?;
     let newest = sqlx::query(sqlx::AssertSqlSafe(
         (lock_newest_capture_gap_sql()).to_string(),
@@ -269,7 +269,7 @@ async fn last_cdc_event(
     broker: &async_nats::jetstream::Context,
     stream: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> anyhow::Result<Option<(u64, DateTime<Utc>)>> {
     let source = broker
         .get_stream(stream)
@@ -348,7 +348,7 @@ pub async fn require_resynchronized(system_url: &str, triple: &Triple) -> anyhow
     ))
     .bind(&triple.org)
     .bind(&triple.project)
-    .bind(triple.env.as_str())
+    .bind(&triple.env)
     .fetch_optional(&mut system)
     .await?;
     if let Some(row) = row {

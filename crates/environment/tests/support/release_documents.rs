@@ -54,7 +54,7 @@ pub fn release(
         let fact = device
             .clone()
             .into_admitted(wamn_catalog::ComponentPackageCoordinate {
-                project_env_key: String::new(),
+                project_env_key: "platform--palette--platform".parse()?,
                 package_id: PACKAGE.to_owned(),
                 package_version: version.to_owned(),
             })
@@ -126,7 +126,7 @@ pub fn fixture_host_group(document: &EnvironmentDocument, local: &str) -> Value 
 }
 
 pub fn fixture_document(
-    env: &str,
+    env: &wamn_registry::EnvName,
     route_host: &str,
     digest: &wamn_digest::Digest,
 ) -> EnvironmentDocument {
@@ -141,7 +141,7 @@ pub fn fixture_document(
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: env.to_owned(),
-        policy: POLICY.to_owned(),
+        policy: POLICY.parse().unwrap(),
         revocation_seconds: 60,
         applications: std::collections::BTreeMap::from([(
             PACKAGE.to_owned(),
@@ -187,7 +187,10 @@ pub fn fixture_http_entry(
     let declaration = wamn_publish::component_declaration::render_package_declaration(
         &package,
         "device",
-        &wamn_registry::project_env_key(ORG, PROJECT, "http"),
+        &wamn_registry::project_env_key(ORG, PROJECT, &"http".parse().unwrap())
+            .as_str()
+            .parse()
+            .unwrap(),
     )?;
     let declaration_path = work.join("device-declaration.json");
     std::fs::write(&declaration_path, serde_json::to_vec(&declaration)?)?;
@@ -295,7 +298,7 @@ pub mod http {
             &template
                 .replace(
                     "__PROJECT_ENV_KEY__",
-                    &wamn_registry::project_env_key(ORG, PROJECT, "http"),
+                    wamn_registry::project_env_key(ORG, PROJECT, &"http".parse().unwrap()).as_str(),
                 )
                 .replace("__PACKAGE_ID__", package)
                 .replace("__PACKAGE_VERSION__", version),
@@ -395,7 +398,7 @@ pub mod http {
         components: Vec<ComponentDescriptor>,
     ) -> anyhow::Result<Vec<u8>> {
         let target = ComponentPackageCoordinate {
-            project_env_key: wamn_registry::project_env_key(ORG, PROJECT, "http"),
+            project_env_key: wamn_registry::project_env_key(ORG, PROJECT, &"http".parse().unwrap()),
             package_id: "http_fixture".to_owned(),
             package_version: "1.0.0".to_owned(),
         };
@@ -432,7 +435,7 @@ pub mod http {
     pub use super::http_observation::{assert_observed_request, request_records};
 
     pub fn credential_secret(
-        environment: &str,
+        environment: &wamn_registry::EnvName,
         values: &Value,
         references: &mut serde_json::Map<String, Value>,
     ) -> anyhow::Result<Value> {
@@ -514,7 +517,7 @@ pub mod workflow {
         pub system_url: &'a str,
         pub project_url: &'a str,
         pub target: &'a wamn_registry::Triple,
-        pub project_env_key: &'a str,
+        pub project_env_key: &'a wamn_registry::ProjectEnvKey,
         /// The release the environment serves.
         pub digest: &'a wamn_digest::Digest,
         /// The applications the environment declares, as the serving Helm
@@ -597,8 +600,8 @@ pub mod workflow {
                 &bytes,
                 "manual fixture workflow",
                 wamn_engine::release_manifest::ReleaseTarget::new(
-                    environment.project_env_key,
-                    environment.target.env.as_str(),
+                    environment.project_env_key.clone(),
+                    environment.target.env.clone(),
                 )
                 .with_applications(environment.applications.clone()),
             )?,
@@ -730,11 +733,11 @@ pub mod workflow {
             statement_timeout_ms: 10_000,
         })?;
         let workflow = postgres
-            .executor_read("default", environment.project_env_key, async |connection| {
+            .executor_read("default", async |connection| {
                 wamn_events::admission::enabled_workflow(
                     connection,
                     environment.project_env_key,
-                    environment.target.env.as_str(),
+                    &environment.target.env,
                     application,
                     workflow_id,
                 )
@@ -763,14 +766,14 @@ pub mod workflow {
             .map(|(node, component)| (node, Value::String(component.component_digest.to_string())))
             .collect();
         let admitted = postgres
-            .executor_write("default", environment.project_env_key, async |connection| {
+            .executor_write("default", async |connection| {
                 wamn_events::admission::admit_manual_run(
                     connection,
                     environment.project_env_key,
                     &ManualRunAdmission {
                         package_id: application,
                         manifest_digest: environment.digest,
-                        environment: environment.target.env.as_str(),
+                        environment: &environment.target.env,
                         workflow_id,
                         workflow_version: workflow.version,
                         wiring_hash: &workflow.wiring_hash,
@@ -947,8 +950,8 @@ pub mod workflow {
             target: "cloud".into(),
             org: ORG.into(),
             project: PROJECT.into(),
-            env: ENVIRONMENT.into(),
-            policy: POLICY.into(),
+            env: ENVIRONMENT.parse().unwrap(),
+            policy: POLICY.parse().unwrap(),
             revocation_seconds: 60,
             // The existing consumer and integration packages put this application's
             // models in two schemas. The connector supplies the workflow components.

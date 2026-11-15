@@ -28,8 +28,7 @@ pub async fn reset_database(
     let mut system = wamn_postgres::connect(system_url).await?;
     let disposable = wamn_registry::deployment::disposable(&mut system, triple).await?;
     ensure!(disposable, "environment is not recorded as disposable");
-    let project_env_key =
-        wamn_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str());
+    let project_env_key = wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
     let mut client = wamn_postgres::connect(database_url).await?;
     let database: String = sqlx::query_scalar("SELECT current_database()::text")
         .fetch_one(&mut client)

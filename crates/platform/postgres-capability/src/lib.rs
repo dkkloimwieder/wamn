@@ -180,11 +180,11 @@ impl WamnPostgres {
             .scope_registrations
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if let Some(project_env_key) = config.get(PROJECT_ENV_KEY_CONFIG_KEY) {
-            let project_env_key = project_env_key.clone();
-            self.set_project_env_key(scope, &project_env_key)?;
+            let project_env_key: wamn_registry::ProjectEnvKey = project_env_key.parse()?;
+            self.set_project_env_key(scope, &project_env_key);
             tracing::debug!(
                 component = scope,
-                project_env_key,
+                %project_env_key,
                 "wamn:postgres project registered"
             );
         } else {

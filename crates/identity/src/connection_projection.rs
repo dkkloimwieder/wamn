@@ -29,7 +29,12 @@ impl std::error::Error for ProjectionError {
     }
 }
 
-fn failure(org: &str, project: &str, env: &str, source: anyhow::Error) -> ProjectionError {
+fn failure(
+    org: &str,
+    project: &str,
+    env: &wamn_registry::EnvName,
+    source: anyhow::Error,
+) -> ProjectionError {
     ProjectionError {
         target: wamn_registry::name::host_status(org, project, env),
         source,
@@ -41,7 +46,7 @@ pub async fn projection(
     system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> Result<PlatformConfiguration, ProjectionError> {
     async { rows_from_document(&document(system, org, project, env).await?) }
         .await
@@ -54,7 +59,7 @@ pub async fn project(
     target: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> Result<AuthDrops, ProjectionError> {
     push(system, target, org, project, env)
         .await
@@ -65,7 +70,7 @@ async fn document(
     system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> anyhow::Result<serde_json::Value> {
     wamn_registry::connections::projection(system, org, project, env)
         .await
@@ -121,7 +126,7 @@ async fn push(
     target: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> anyhow::Result<AuthDrops> {
     let document = document(system, org, project, env).await?;
     let rows = rows_from_document(&document)?;
@@ -217,7 +222,9 @@ mod tests {
         ] {
             sqlx::raw_sql(sqlx::AssertSqlSafe(
                 (&wamn_control_provision::test_database::seed_org_project_env_sql(
-                    "acme", project, env,
+                    "acme",
+                    project,
+                    &env.parse().unwrap(),
                 ))
                     .to_string(),
             ))
@@ -236,14 +243,14 @@ mod tests {
             .await
             .map(drop)
             .unwrap();
-        let rows = super::projection(&mut source, "acme", "project-a", "dev")
+        let rows = super::projection(&mut source, "acme", "project-a", &"dev".parse().unwrap())
             .await
             .unwrap();
         assert_eq!(rows.external_systems.len(), 1);
         assert_eq!(rows.integrations.len(), 2);
         assert_eq!(rows.connections.len(), 1);
         assert_eq!(rows.connections[0].status, "disabled");
-        let other = super::projection(&mut source, "acme", "project-b", "dev")
+        let other = super::projection(&mut source, "acme", "project-b", &"dev".parse().unwrap())
             .await
             .unwrap();
         assert_eq!(other.connections.len(), 1);
@@ -254,7 +261,7 @@ mod tests {
             .await
             .map(drop)
             .unwrap();
-        let disabled = super::projection(&mut source, "acme", "project-b", "dev")
+        let disabled = super::projection(&mut source, "acme", "project-b", &"dev".parse().unwrap())
             .await
             .unwrap();
         assert_eq!(disabled.connections[0].status, "disabled");

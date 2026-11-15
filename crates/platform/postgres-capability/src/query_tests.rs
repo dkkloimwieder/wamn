@@ -18,9 +18,11 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
 ) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    let app_url =
-        crate::session_identity::tests::live_guest_url(database.as_str(), "test--dev--dynamic")
-            .await;
+    let app_url = crate::session_identity::tests::live_guest_url(
+        database.as_str(),
+        &"test--dev--dynamic".parse().unwrap(),
+    )
+    .await;
     sqlx::raw_sql("CREATE SEQUENCE public.dynamic_query_write; GRANT USAGE ON SEQUENCE public.dynamic_query_write TO wamn_app")
         .execute(&pool).await.expect("sequence writable by the application login");
     sqlx::raw_sql("CREATE TABLE public.dynamic_query_probe(value integer); GRANT INSERT ON public.dynamic_query_probe TO wamn_query")
@@ -40,9 +42,7 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
         })
         .expect("Postgres capability"),
     );
-    postgres
-        .set_project_env_key("application", "test--dev--dynamic")
-        .unwrap();
+    postgres.set_project_env_key("application", &"test--dev--dynamic".parse().unwrap());
     postgres.set_application("application", "dynamic").unwrap();
     let user = "00000000-0000-4000-8000-000000000031";
     postgres.set_user_id("application", user).unwrap();
@@ -156,7 +156,11 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
     const SCOPE: &str = "transaction-owner";
     const PROJECT: &str = "test--dev--transaction-owner";
     const OPERATION: &str = "fixture:transaction/write";
-    let app_url = crate::session_identity::tests::live_guest_url(database.as_str(), PROJECT).await;
+    let app_url = crate::session_identity::tests::live_guest_url(
+        database.as_str(),
+        &PROJECT.parse().unwrap(),
+    )
+    .await;
     sqlx::raw_sql("CREATE TABLE public.transaction_owner(value integer); \
         ALTER TABLE public.transaction_owner ENABLE ROW LEVEL SECURITY; \
         CREATE POLICY caller ON public.transaction_owner USING ((SELECT (wamn_authority.current_identity()).xid) IS NOT NULL); \
@@ -174,7 +178,7 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
         })
         .unwrap(),
     );
-    postgres.set_project_env_key(SCOPE, PROJECT).unwrap();
+    postgres.set_project_env_key(SCOPE, &PROJECT.parse().unwrap());
     postgres
         .set_user_id(SCOPE, crate::session_identity::tests::LIVE_PRINCIPAL)
         .unwrap();
@@ -269,7 +273,11 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
         handle.resource_drop_async(&mut store).await.unwrap();
         assert_ne!(
             backend,
-            postgres.probe_checkout(PROJECT).await.unwrap().backend_pid
+            postgres
+                .probe_checkout(&PROJECT.parse().unwrap())
+                .await
+                .unwrap()
+                .backend_pid
         );
         let result: Option<String> = sqlx::query_scalar(
             "SELECT result FROM platform.write_log WHERE operation=$1 AND idempotency_key=$2",
@@ -306,7 +314,7 @@ async fn live_an_invalid_timezone_setting_is_refused(pool: sqlx::PgPool) {
     const SCOPE: &str = "numbering-refusal";
     use crate::session_identity::tests::{LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url};
     ensure_live_user_rows(database.as_str(), &[LIVE_PRINCIPAL]).await;
-    let app_url = live_guest_url(database.as_str(), PROJECT).await;
+    let app_url = live_guest_url(database.as_str(), &PROJECT.parse().unwrap()).await;
     let mut admin = pool.acquire().await.unwrap();
     let mut seed =
         wamn_test_postgres::transaction(&mut admin, LIVE_PRINCIPAL, "admin:numbering-refusal")
@@ -332,7 +340,7 @@ async fn live_an_invalid_timezone_setting_is_refused(pool: sqlx::PgPool) {
         })
         .unwrap(),
     );
-    postgres.set_project_env_key(SCOPE, PROJECT).unwrap();
+    postgres.set_project_env_key(SCOPE, &PROJECT.parse().unwrap());
     postgres.set_application(SCOPE, "numbering").unwrap();
     postgres.set_user_id(SCOPE, LIVE_PRINCIPAL).unwrap();
     let target = std::env::var_os("CARGO_TARGET_DIR")

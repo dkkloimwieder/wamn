@@ -113,7 +113,7 @@ fn render_host_objects(root: &Path) -> (Vec<Value>, String) {
             event: EventIdentity {
                 org: "acme".into(),
                 project: "wms".into(),
-                environment: "dev".into(),
+                environment: "dev".parse().unwrap(),
             },
             object_store_secret_name: None,
         },

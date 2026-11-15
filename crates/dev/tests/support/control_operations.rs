@@ -30,7 +30,7 @@ impl Control<'_> {
             .context("control operation contract")?;
         if attachment.route.authority == wamn_catalog::HostRouteAuthority::ProjectAdmin {
             value["project"] = self.journey.project.into();
-            value["env"] = self.journey.environment.into();
+            value["env"] = serde_json::json!(self.journey.environment);
         }
         let mut session = self.session.lock().await;
         if session["expires_at"].as_i64().context("session expiry")?

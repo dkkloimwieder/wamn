@@ -88,7 +88,7 @@ struct ExhaustedExecutionIdentity {
 /// Release a held lease or fail the run when its retry budget is spent.
 pub async fn release_lease(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -130,7 +130,7 @@ pub async fn release_lease(
 /// Renew a live lease under its owner and generation fence.
 pub async fn renew(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -158,7 +158,7 @@ pub async fn renew(
 /// Store the terminal outcome and remove the queue entry under the lease fence.
 pub async fn complete(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -219,14 +219,14 @@ fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionLeas
 )]
 pub async fn lease_next(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     runner: &str,
     package_ids: &[String],
-    environment: &str,
+    environment: &wamn_registry::EnvName,
     lease_ttl_ms: i64,
     manifest_digest: Option<&wamn_digest::Digest>,
 ) -> Result<LeaseTurn, ProductionLeaseError> {
-    validate_target(package_ids, environment)?;
+    validate_target(package_ids)?;
     validate_duration(lease_ttl_ms)?;
     let select_sql = select_production_lease_sql();
     // The select skips runs pinned to another release, so their head never
@@ -333,12 +333,12 @@ pub async fn lease_next(
 /// Fail and dequeue one expired run whose retry budget is spent.
 pub async fn reap_exhausted(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     package_ids: &[String],
-    environment: &str,
+    environment: &wamn_registry::EnvName,
     grace_ms: i64,
 ) -> Result<ProductionReapResult, ProductionLeaseError> {
-    validate_target(package_ids, environment)?;
+    validate_target(package_ids)?;
     if grace_ms < 0 {
         return Err(invalid_parameters("janitor grace must be nonnegative"));
     }
@@ -546,7 +546,7 @@ where
 /// Record deadline changes under the exact lease fence.
 pub async fn record_deadline_adjustments(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -571,8 +571,8 @@ pub async fn record_deadline_adjustments(
 /// Unfinished runs and their immutable application and release pins after restart.
 pub async fn unfinished_releases(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
-    environment: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    environment: &wamn_registry::EnvName,
 ) -> Result<Vec<(String, wamn_digest::Digest, String)>, sqlx::Error> {
     sqlx::query_as(
         "SELECT package_id, manifest_digest, run_id FROM wamn_run.runs \
@@ -588,12 +588,12 @@ pub async fn unfinished_releases(
 /// Whether this release still has queued work.
 pub async fn pinned_backlog(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     applications: &[String],
-    environment: &str,
+    environment: &wamn_registry::EnvName,
     manifest_digest: &wamn_digest::Digest,
 ) -> Result<bool, ProductionLeaseError> {
-    validate_target(applications, environment)?;
+    validate_target(applications)?;
     let sql = format!(
         "SELECT EXISTS (SELECT 1 FROM run_queue q JOIN runs r USING (project_env_key, run_id) \
         WHERE q.project_env_key = $1::text \
@@ -616,7 +616,7 @@ pub async fn pinned_backlog(
 /// Delete expired terminal history on an authorized retention connection.
 pub async fn prune_terminal_runs(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     retention_days: u32,
 ) -> Result<u64, sqlx::Error> {
     sqlx::query(sqlx::AssertSqlSafe(crate::sql::prune_terminal_runs_sql()))
@@ -669,9 +669,8 @@ fn validate_duration(duration_ms: i64) -> Result<(), ProductionLeaseError> {
     }
     Ok(())
 }
-fn validate_target(applications: &[String], environment: &str) -> Result<(), ProductionLeaseError> {
+fn validate_target(applications: &[String]) -> Result<(), ProductionLeaseError> {
     if applications.is_empty()
-        || environment.is_empty()
         || applications.iter().any(|application| {
             application.is_empty()
                 || application.trim() != application

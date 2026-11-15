@@ -111,7 +111,11 @@ fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
 fn target(canonical: &[u8]) -> wamn_engine::release_manifest::ReleaseTarget {
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(canonical)
         .expect("the published manifest is valid");
-    wamn_engine::release_manifest::ReleaseTarget::new("t1", "prod").with_applications(
+    wamn_engine::release_manifest::ReleaseTarget::new(
+        "t1--dev--project".parse().unwrap(),
+        "prod".parse().unwrap(),
+    )
+    .with_applications(
         [(
             "catalog".to_owned(),
             wamn_catalog::ApplicationDefinition {

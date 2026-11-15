@@ -64,7 +64,7 @@ struct Subjects {
 pub fn prepare(
     work: &Path,
     target: &Triple,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     source: &stream::Config,
     advisory: &stream::Config,
     consumers: &[pull::Config],
@@ -86,7 +86,7 @@ pub fn prepare_in(
     authority: &Authority,
     work: &Path,
     target: &Triple,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     source: &stream::Config,
     advisory: &stream::Config,
     consumers: &[pull::Config],
@@ -106,7 +106,7 @@ fn prepare_with(
     authority: Option<&Authority>,
     work: &Path,
     target: &Triple,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     source: &stream::Config,
     advisory: &stream::Config,
     consumers: &[pull::Config],
@@ -114,8 +114,7 @@ fn prepare_with(
     for token in [
         target.org.as_str(),
         target.project.as_str(),
-        target.env.as_str(),
-        project_env_key,
+        project_env_key.as_str(),
         source.name.as_str(),
         advisory.name.as_str(),
     ] {
@@ -124,12 +123,8 @@ fn prepare_with(
             "event broker identity must use subject-safe tokens"
         );
     }
-    let subject = wamn_registry::name::event_subject(
-        &(target.org),
-        &(target.project),
-        target.env.as_str(),
-        ">",
-    );
+    let subject =
+        wamn_registry::name::event_subject(&(target.org), &(target.project), &target.env, ">");
     ensure!(
         source.subjects == [subject.clone()],
         "source stream subjects differ from the environment"

@@ -11,7 +11,10 @@ pub struct PaletteComponent {
 
 /// Read the palette beside the selected platform route guest and verify its local bytes.
 /// Platform artifacts carry both files in the same distribution directory.
-pub fn read(route_guest: &Path, project_env_key: &str) -> anyhow::Result<Vec<PaletteComponent>> {
+pub fn read(
+    route_guest: &Path,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+) -> anyhow::Result<Vec<PaletteComponent>> {
     let path = route_guest.with_file_name(PALETTE_FILE);
     let palette = wamn_catalog::read_palette(
         &std::fs::read(&path)

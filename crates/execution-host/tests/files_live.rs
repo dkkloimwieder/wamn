@@ -75,11 +75,10 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&serde_json::to_value(manifest)?),
         "native files fixture",
-        ReleaseTarget::new(PROJECT_ENV_KEY, "dev").with_applications(serde_json::from_value(
-            json!({
+        ReleaseTarget::new(PROJECT_ENV_KEY.parse().unwrap(), "dev".parse().unwrap())
+            .with_applications(serde_json::from_value(json!({
                 "files":{"packages":["session_test"],"connections":{}}
-            }),
-        )?),
+            }))?),
     )?))
 }
 
@@ -171,9 +170,9 @@ impl FileHost {
             Publisher::default(),
             credentials,
             &postgres,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             PROJECT,
-            "dev",
+            &"dev".parse().unwrap(),
         ));
         let context = Arc::new(wamn_postgres_capability::invocation::ReleaseContext::new(
             Arc::clone(&release),
@@ -190,7 +189,7 @@ impl FileHost {
                 facts: Arc::clone(&facts),
                 org: ORG.into(),
                 project: PROJECT.into(),
-                environment: "dev".into(),
+                environment: "dev".parse().unwrap(),
             }),
             PROJECT.into(),
             Some(administration_url.clone()),
@@ -589,7 +588,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         &mut target,
         ORG,
         PROJECT,
-        "dev",
+        &"dev".parse().unwrap(),
     )
     .await?;
     target.commit().await?;
@@ -631,7 +630,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
             if let Some(lease) = wamn_execution_host::file_collection::FileCollection::acquire(
                 &fixture.postgres,
                 PROJECT,
-                PROJECT_ENV_KEY,
+                &PROJECT_ENV_KEY.parse().unwrap(),
             )
             .await?
             {
@@ -1151,7 +1150,7 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
     let role = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: PROJECT_ENV_KEY,
+            project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
             database: "file_referenced_delete",
         },
     )?;
@@ -1214,7 +1213,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     use wamn_http_capability::transport::HttpTransport;
     use wash_runtime::plugin::wasi_logging::TracingLogger;
 
-    let package = signed_read::signed_read_fixture(PROJECT_ENV_KEY)?;
+    let package = signed_read::signed_read_fixture(&PROJECT_ENV_KEY.parse().unwrap())?;
     let mut fixture =
         FileHost::start_with_release("package_signed_file", Arc::clone(&package.release)).await?;
     let bytes = b"private bytes returned by the package's signed read";
@@ -1270,9 +1269,9 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
                 ORG,
             )),
             &fixture.postgres,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             PROJECT,
-            "dev",
+            &"dev".parse().unwrap(),
         )),
         Arc::new(TracingLogger::default()),
         Arc::from([]),
@@ -1314,8 +1313,10 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
             deadline_ms: 30_000,
             facts: NativeFacts::entry(
                 NodeAcquisition {
-                    identity: operations
-                        .identity(PROJECT_ENV_KEY, Some(operations.release_identity())),
+                    identity: operations.identity(
+                        &PROJECT_ENV_KEY.parse().unwrap(),
+                        Some(operations.release_identity()),
+                    ),
                     invocation: component_invocation(
                         &package.component,
                         signed_read::OPERATION,

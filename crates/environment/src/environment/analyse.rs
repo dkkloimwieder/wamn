@@ -30,7 +30,7 @@ use wamn_release_control::release_chart;
 /// The policy facts `apply` uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Policy {
-    pub name: String,
+    pub name: wamn_registry::EnvName,
     pub readiness_budget_seconds: i32,
     pub drain_bound_seconds: i32,
 }
@@ -40,7 +40,7 @@ pub struct Policy {
 pub struct EnvironmentRow {
     pub disposable: bool,
     pub instance_suffix: String,
-    pub policy_name: String,
+    pub policy_name: wamn_registry::EnvName,
 }
 
 /// One installed package in the project database.
@@ -393,7 +393,7 @@ pub(crate) async fn connect_project(url: &str) -> anyhow::Result<Client> {
 pub(crate) async fn read_policy(
     system: &mut Client,
     org: &str,
-    name: &str,
+    name: &wamn_registry::EnvName,
 ) -> anyhow::Result<Policy> {
     let row =
         sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_POLICY)
@@ -422,11 +422,14 @@ pub(crate) async fn read_row(
             .fetch_optional(&mut *system)
             .await
             .context("read the environment row")?
-            .map(|row| EnvironmentRow {
-                instance_suffix: row.get(0),
-                policy_name: row.get(1),
-                disposable: row.get(2),
-            }),
+            .map(|row| {
+                Ok::<_, sqlx::Error>(EnvironmentRow {
+                    instance_suffix: row.get(0),
+                    policy_name: row.try_get(1)?,
+                    disposable: row.get(2),
+                })
+            })
+            .transpose()?,
     )
 }
 
@@ -434,7 +437,7 @@ pub(crate) async fn read_row(
 /// Only an absent database returns `None`; unreadable state returns its cause.
 pub async fn read_project(
     url: &str,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<Option<ProjectState>> {
     let mut client = match connect_project(url).await {
         Ok(client) => client,
@@ -735,13 +738,9 @@ pub(crate) async fn application_releases(
     platform: &Platform,
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<BTreeMap<String, String>> {
-    wamn_control_provision::validate_project_env(
-        &triple.org,
-        &triple.project,
-        triple.env.as_str(),
-    )?;
+    wamn_control_provision::validate_project_env(&triple.org, &triple.project, &triple.env)?;
     let coordinate = triple.to_string();
-    let filter = wamn_registry::name::application_release_filter(triple.env.as_str());
+    let filter = wamn_registry::name::application_release_filter(&triple.env);
     let mut entries = Vec::new();
     loop {
         let offset = entries.len().to_string();
@@ -786,7 +785,7 @@ pub(crate) async fn application_releases(
         let expected = wamn_control_provision::environment_names::application_release_name(
             &triple.org,
             &triple.project,
-            triple.env.as_str(),
+            &triple.env,
             &application,
         )?;
         ensure!(

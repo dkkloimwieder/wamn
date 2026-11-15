@@ -51,12 +51,12 @@ pub struct ApplyPackageRequest {
 
     pub org: String,
     pub project: String,
-    pub environment: String,
+    pub environment: wamn_registry::EnvName,
 }
 
 impl ApplyPackageRequest {
     /// The composed environment key derived from the environment coordinate.
-    pub fn project_env_key(&self) -> String {
+    pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
         wamn_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
@@ -163,7 +163,7 @@ async fn apply_request(
     advance_schema: bool,
 ) -> anyhow::Result<ApplyOutcome> {
     ensure!(
-        ![&request.org, &request.project, &request.environment]
+        ![&request.org, &request.project]
             .iter()
             .any(|part| part.is_empty()),
         "org, project and environment must not be empty"
@@ -203,7 +203,7 @@ async fn apply(
     client: &mut sqlx::PgConnection,
     migration_input: &str,
     catalog_input: &str,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     package: PreparedPackage,
     advance_schema: bool,
 ) -> anyhow::Result<ApplyOutcome> {
@@ -239,7 +239,7 @@ async fn apply(
     crate::migrations::lock_session(
         &mut executor,
         LOCK_PACKAGE_SQL,
-        &[project_env_key, &package_id],
+        &[project_env_key.as_str(), &package_id],
     )
     .await?;
     crate::migrations::lock_session(

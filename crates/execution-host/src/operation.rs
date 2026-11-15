@@ -321,11 +321,11 @@ impl OperationHost {
     /// The session identity of one call, before activation binds its principal.
     pub fn identity(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         release: Option<ReleaseIdentity>,
     ) -> SessionIdentity {
         SessionIdentity {
-            project_env_key: project_env_key.to_owned(),
+            project_env_key: Some(project_env_key.to_owned()),
             project: Some(self.project.clone()),
             schema: self.schema.clone(),
             runner: Some(self.owner_prefix.clone()),

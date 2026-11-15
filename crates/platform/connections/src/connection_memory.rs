@@ -156,7 +156,7 @@ impl ConnectionMemory {
     #[cfg(any(test, feature = "test-util"))]
     pub fn seed_release(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         digest: &wamn_digest::Digest,
         fact: ReleaseFact,
     ) {
@@ -164,7 +164,11 @@ impl ConnectionMemory {
             .seed(release_key(project_env_key, digest), Answer::Release(fact));
     }
 
-    pub fn connection_ticket(&self, project_env_key: &str, id: &uuid::Uuid) -> Ticket {
+    pub fn connection_ticket(
+        &self,
+        project_env_key: &wamn_registry::ProjectEnvKey,
+        id: &uuid::Uuid,
+    ) -> Ticket {
         self.memory.ticket(&connection_key(project_env_key, id))
     }
 
@@ -176,7 +180,7 @@ impl ConnectionMemory {
     /// The fact of connection `id`, or the ticket of a read of it.
     pub fn connection(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         id: &uuid::Uuid,
     ) -> Result<ConnectionFact, Ticket> {
         let key = connection_key(project_env_key, id);
@@ -189,7 +193,7 @@ impl ConnectionMemory {
 
     pub async fn keep_connection(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         id: &uuid::Uuid,
         ticket: Ticket,
         fact: ConnectionFact,
@@ -207,7 +211,7 @@ impl ConnectionMemory {
     /// a read of it.
     pub fn release(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         manifest_digest: &wamn_digest::Digest,
     ) -> Result<ReleaseFact, Ticket> {
         let key = release_key(project_env_key, manifest_digest);
@@ -220,7 +224,7 @@ impl ConnectionMemory {
 
     pub async fn keep_release(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         manifest_digest: &wamn_digest::Digest,
         ticket: Ticket,
         fact: ReleaseFact,
@@ -237,7 +241,10 @@ impl ConnectionMemory {
 
 impl ConnectionMemory {
     /// The connection map of `project_env_key`, or the ticket of a read of it.
-    pub fn connections(&self, project_env_key: &str) -> Result<EnvConnections, Ticket> {
+    pub fn connections(
+        &self,
+        project_env_key: &wamn_registry::ProjectEnvKey,
+    ) -> Result<EnvConnections, Ticket> {
         let key = connections_key(project_env_key);
         match self.memory.answer(&key) {
             Ok(Answer::Connections(map)) => Ok(map),
@@ -248,7 +255,7 @@ impl ConnectionMemory {
 
     pub async fn keep_connections(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         ticket: Ticket,
         map: EnvConnections,
     ) {
@@ -299,11 +306,14 @@ impl Watched for ConnectionMemory {
 /// every key.
 pub fn replicate(
     client: &async_nats::Client,
-    project_env_key: Option<&str>,
+    project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     holder: Arc<ConnectionMemory>,
 ) -> Publisher {
     let filters = match project_env_key {
-        Some(project_env_key) => vec![wamn_registry::name::nats_subject(&[project_env_key, ">"])],
+        Some(project_env_key) => vec![wamn_registry::name::nats_subject(&[
+            project_env_key.as_str(),
+            ">",
+        ])],
         None => vec![">".to_owned()],
     };
     wamn_capability_authority::kv_memory::spawn_watch(client, BUCKET, filters, holder);
@@ -331,7 +341,7 @@ mod tests {
 
     async fn watched(
         client: &async_nats::Client,
-        project_env_key: Option<&str>,
+        project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> (Arc<ConnectionMemory>, Publisher) {
         let memory = Arc::new(ConnectionMemory::default());
         let writer = replicate(client, project_env_key, Arc::clone(&memory));
@@ -355,23 +365,37 @@ mod tests {
     async fn a_host_without_the_bucket_keeps_no_fact() {
         let memory = ConnectionMemory::default();
         let id = uuid::Uuid::new_v4();
-        let ticket = memory.connection("t", &id).unwrap_err();
-        memory.keep_connection("t", &id, ticket, fact(1)).await;
         let ticket = memory
-            .release("t", &wamn_digest::bytes_sha256(b"release"))
+            .connection(&"t--dev--project".parse().unwrap(), &id)
+            .unwrap_err();
+        memory
+            .keep_connection(&"t--dev--project".parse().unwrap(), &id, ticket, fact(1))
+            .await;
+        let ticket = memory
+            .release(
+                &"t--dev--project".parse().unwrap(),
+                &wamn_digest::bytes_sha256(b"release"),
+            )
             .unwrap_err();
         memory
             .keep_release(
-                "t",
+                &"t--dev--project".parse().unwrap(),
                 &wamn_digest::bytes_sha256(b"release"),
                 ticket,
                 ReleaseFact::default(),
             )
             .await;
-        assert!(memory.connection("t", &id).is_err());
         assert!(
             memory
-                .release("t", &wamn_digest::bytes_sha256(b"release"))
+                .connection(&"t--dev--project".parse().unwrap(), &id)
+                .is_err()
+        );
+        assert!(
+            memory
+                .release(
+                    &"t--dev--project".parse().unwrap(),
+                    &wamn_digest::bytes_sha256(b"release")
+                )
                 .is_err()
         );
     }
@@ -380,34 +404,55 @@ mod tests {
     #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn a_delete_during_a_read_refuses_the_put() {
         let (_server, client) = nats().await;
-        let (memory, writer) = watched(&client, Some("t")).await;
+        let (memory, writer) = watched(&client, Some(&"t--dev--project".parse().unwrap())).await;
         let id = uuid::Uuid::new_v4();
-        let ticket = memory.connection("t", &id).unwrap_err();
+        let ticket = memory
+            .connection(&"t--dev--project".parse().unwrap(), &id)
+            .unwrap_err();
         let mut drops = ConnectionDrops::default();
-        drops.connection("t", id);
+        drops.connection(&"t--dev--project".parse().unwrap(), id);
         writer.publish(drops).await;
-        memory.keep_connection("t", &id, ticket, fact(1)).await;
-        assert!(memory.connection("t", &id).is_err());
+        memory
+            .keep_connection(&"t--dev--project".parse().unwrap(), &id, ticket, fact(1))
+            .await;
+        assert!(
+            memory
+                .connection(&"t--dev--project".parse().unwrap(), &id)
+                .is_err()
+        );
         // A read after the delete keeps its fact.
         until("the host sees the delete", || {
-            memory.memory.ticket(&connection_key("t", &id)) != ticket
+            memory
+                .memory
+                .ticket(&connection_key(&"t--dev--project".parse().unwrap(), &id))
+                != ticket
         })
         .await;
         let second = fact(2);
-        let ticket = memory.connection("t", &id).unwrap_err();
+        let ticket = memory
+            .connection(&"t--dev--project".parse().unwrap(), &id)
+            .unwrap_err();
         memory
-            .keep_connection("t", &id, ticket, second.clone())
+            .keep_connection(
+                &"t--dev--project".parse().unwrap(),
+                &id,
+                ticket,
+                second.clone(),
+            )
             .await;
-        assert_eq!(memory.connection("t", &id), Ok(second));
+        assert_eq!(
+            memory.connection(&"t--dev--project".parse().unwrap(), &id),
+            Ok(second)
+        );
     }
 
     #[tokio::test]
     #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
     async fn facts_reach_the_hosts_of_their_project_env_key_and_every_delete_reaches_them() {
         let (_server, client) = nats().await;
-        let (a, writer) = watched(&client, Some("t")).await;
-        let (b, _) = watched(&client, Some("t")).await;
-        let (other, _) = watched(&client, Some("u")).await;
+        let (a, writer) = watched(&client, Some(&"t--dev--project".parse().unwrap())).await;
+        let (b, _) = watched(&client, Some(&"t--dev--project".parse().unwrap())).await;
+        let (other, _) = watched(&client, Some(&"u--dev--project".parse().unwrap())).await;
         let (control, _) = watched(&client, None).await;
         let id = uuid::Uuid::new_v4();
         let digest = (format!("sha256:{}", "ab".repeat(32)))
@@ -426,26 +471,52 @@ mod tests {
             }],
         };
         let first = fact(1);
-        let ticket = a.connection("t", &id).unwrap_err();
-        a.keep_connection("t", &id, ticket, first.clone()).await;
-        let ticket = a.release("t", &digest).unwrap_err();
-        a.keep_release("t", &digest, ticket, release.clone()).await;
-        assert_eq!(a.connection("t", &id), Ok(first.clone()));
+        let ticket = a
+            .connection(&"t--dev--project".parse().unwrap(), &id)
+            .unwrap_err();
+        a.keep_connection(
+            &"t--dev--project".parse().unwrap(),
+            &id,
+            ticket,
+            first.clone(),
+        )
+        .await;
+        let ticket = a
+            .release(&"t--dev--project".parse().unwrap(), &digest)
+            .unwrap_err();
+        a.keep_release(
+            &"t--dev--project".parse().unwrap(),
+            &digest,
+            ticket,
+            release.clone(),
+        )
+        .await;
+        assert_eq!(
+            a.connection(&"t--dev--project".parse().unwrap(), &id),
+            Ok(first.clone())
+        );
         until("host b sees the facts", || {
-            b.connection("t", &id).is_ok() && b.release("t", &digest).is_ok()
+            b.connection(&"t--dev--project".parse().unwrap(), &id)
+                .is_ok()
+                && b.release(&"t--dev--project".parse().unwrap(), &digest)
+                    .is_ok()
         })
         .await;
         until("the control host sees the facts", || {
-            control.connection("t", &id).is_ok()
+            control
+                .connection(&"t--dev--project".parse().unwrap(), &id)
+                .is_ok()
         })
         .await;
-        assert!(other.connection("t", &id).is_err());
+        assert!(
+            other
+                .connection(&"t--dev--project".parse().unwrap(), &id)
+                .is_err()
+        );
         assert_eq!(
-            b.release("t", &digest).unwrap().binding(
-                &release.bindings[0].component_digest,
-                "shop",
-                "erp"
-            ),
+            b.release(&"t--dev--project".parse().unwrap(), &digest)
+                .unwrap()
+                .binding(&release.bindings[0].component_digest, "shop", "erp"),
             Some(&release.bindings[0])
         );
 
@@ -460,33 +531,62 @@ mod tests {
         }
         // A connection delete leaves the release map.
         let mut drops = ConnectionDrops::default();
-        drops.connection("t", id);
+        drops.connection(&"t--dev--project".parse().unwrap(), id);
         writer.publish(drops).await;
         until("hosts a and b drop the connection", || {
-            a.connection("t", &id).is_err()
-                && b.connection("t", &id).is_err()
+            a.connection(&"t--dev--project".parse().unwrap(), &id)
+                .is_err()
+                && b.connection(&"t--dev--project".parse().unwrap(), &id)
+                    .is_err()
                 && a.oauth_tokens.is_empty()
                 && b.oauth_tokens.is_empty()
         })
         .await;
-        assert!(b.release("t", &digest).is_ok());
+        assert!(
+            b.release(&"t--dev--project".parse().unwrap(), &digest)
+                .is_ok()
+        );
 
         // An environment delete drops every key of the environment.
-        let ticket = a.connection("t", &id).unwrap_err();
-        a.keep_connection("t", &id, ticket, first.clone()).await;
-        let ticket = other.connection("u", &id).unwrap_err();
-        other.keep_connection("u", &id, ticket, first.clone()).await;
+        let ticket = a
+            .connection(&"t--dev--project".parse().unwrap(), &id)
+            .unwrap_err();
+        a.keep_connection(
+            &"t--dev--project".parse().unwrap(),
+            &id,
+            ticket,
+            first.clone(),
+        )
+        .await;
+        let ticket = other
+            .connection(&"u--dev--project".parse().unwrap(), &id)
+            .unwrap_err();
+        other
+            .keep_connection(
+                &"u--dev--project".parse().unwrap(),
+                &id,
+                ticket,
+                first.clone(),
+            )
+            .await;
         until("host b sees the fact again", || {
-            b.connection("t", &id).is_ok()
+            b.connection(&"t--dev--project".parse().unwrap(), &id)
+                .is_ok()
         })
         .await;
         let mut drops = ConnectionDrops::default();
-        drops.project_env_key("t");
+        drops.project_env_key(&"t--dev--project".parse().unwrap());
         writer.publish(drops).await;
         until("host b drops the environment", || {
-            b.connection("t", &id).is_err() && b.release("t", &digest).is_err()
+            b.connection(&"t--dev--project".parse().unwrap(), &id)
+                .is_err()
+                && b.release(&"t--dev--project".parse().unwrap(), &digest)
+                    .is_err()
         })
         .await;
-        assert_eq!(other.connection("u", &id), Ok(first));
+        assert_eq!(
+            other.connection(&"u--dev--project".parse().unwrap(), &id),
+            Ok(first)
+        );
     }
 }

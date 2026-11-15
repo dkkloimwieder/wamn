@@ -12,7 +12,12 @@ use wamn_kubernetes::kubernetes_api::KubernetesApi;
 #[async_trait::async_trait]
 pub trait StatusSource: Send + Sync + std::fmt::Debug {
     /// Read the current runtime status of the named environment.
-    async fn read(&self, org: &str, project: &str, env: &str) -> anyhow::Result<Value>;
+    async fn read(
+        &self,
+        org: &str,
+        project: &str,
+        env: &wamn_registry::EnvName,
+    ) -> anyhow::Result<Value>;
 }
 
 /// Status from the release namespace through the pod's ServiceAccount.
@@ -21,7 +26,12 @@ pub struct KubernetesSource;
 
 #[async_trait::async_trait]
 impl StatusSource for KubernetesSource {
-    async fn read(&self, org: &str, project: &str, env: &str) -> anyhow::Result<Value> {
+    async fn read(
+        &self,
+        org: &str,
+        project: &str,
+        env: &wamn_registry::EnvName,
+    ) -> anyhow::Result<Value> {
         let api = KubernetesApi::in_cluster()?;
         let observed = observe_environment(
             &api.namespace,

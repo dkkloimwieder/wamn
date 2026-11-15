@@ -113,7 +113,7 @@ async fn mint(admin: &mut Client, database: &str, role: &str) {
 /// Insert a run created `age_days` days ago, and its queue row.
 async fn seed_run(
     admin: &mut Client,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     run_id: &str,
     status: &str,
     age_days: i64,
@@ -161,17 +161,17 @@ async fn keys(admin: &mut Client, relation: &str) -> Vec<String> {
     .collect()
 }
 
-async fn prune_history(url: &str, project_env_key: &str) -> anyhow::Result<u64> {
+async fn prune_history(
+    url: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+) -> anyhow::Result<u64> {
+    let triple = project_env_key.triple();
     wamn_environment::prune_run_history::prune_terminal_run_history(
         wamn_environment::prune_run_history::PruneRunHistoryRequest {
             database_url: url.into(),
-            org: project_env_key
-                .split("--")
-                .next()
-                .expect("fixture org")
-                .into(),
-            project: "fixture".into(),
-            environment: "dev".into(),
+            org: triple.org,
+            project: triple.project,
+            environment: triple.env,
             schema: SCHEMA.into(),
             retention_days: 30,
             dry_run: false,
@@ -181,7 +181,7 @@ async fn prune_history(url: &str, project_env_key: &str) -> anyhow::Result<u64> 
 }
 
 /// Run the verb and require the identity refusal, not a success that reports zero.
-async fn assert_refused(url: &str, project_env_key: &str, label: &str) {
+async fn assert_refused(url: &str, project_env_key: &wamn_registry::ProjectEnvKey, label: &str) {
     prune_history(url, project_env_key).await.expect_err(label);
 }
 
@@ -314,12 +314,33 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key(
 
     // An old completed run, a recent completed run, an old running run, and an
     // old completed run of the other project.
-    seed_run(&mut admin, PROJECT_ENV_KEY, "old-done", "completed", 40).await;
-    seed_run(&mut admin, PROJECT_ENV_KEY, "recent-done", "completed", 1).await;
-    seed_run(&mut admin, PROJECT_ENV_KEY, "old-running", "running", 40).await;
     seed_run(
         &mut admin,
-        OTHER_PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
+        "old-done",
+        "completed",
+        40,
+    )
+    .await;
+    seed_run(
+        &mut admin,
+        &PROJECT_ENV_KEY.parse().unwrap(),
+        "recent-done",
+        "completed",
+        1,
+    )
+    .await;
+    seed_run(
+        &mut admin,
+        &PROJECT_ENV_KEY.parse().unwrap(),
+        "old-running",
+        "running",
+        40,
+    )
+    .await;
+    seed_run(
+        &mut admin,
+        &OTHER_PROJECT_ENV_KEY.parse().unwrap(),
         "foreign-done",
         "completed",
         40,
@@ -331,7 +352,7 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key(
     let generation_role = workload_login(
         WorkloadRoleFamily::Retention,
         WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: PROJECT_ENV_KEY,
+            project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
             database: &database,
         },
     )
@@ -350,17 +371,22 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key(
     // The refusals run first, against the populated store.
     assert_refused(
         &credential_url,
-        OTHER_PROJECT_ENV_KEY,
+        &OTHER_PROJECT_ENV_KEY.parse().unwrap(),
         "foreign environment coordinate",
     )
     .await;
     assert_refused(
         &credential_url,
-        "no-such-project",
+        &"no-such-project--dev--project".parse().unwrap(),
         "unknown environment coordinate",
     )
     .await;
-    assert_refused(&app_url, PROJECT_ENV_KEY, "wamn_app login").await;
+    assert_refused(
+        &app_url,
+        &PROJECT_ENV_KEY.parse().unwrap(),
+        "wamn_app login",
+    )
+    .await;
     assert_eq!(
         (
             keys(&mut admin, "runs").await,
@@ -374,7 +400,7 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key(
     assert_authority(&mut credential).await;
     drop(credential);
 
-    let pruned = prune_history(&credential_url, PROJECT_ENV_KEY)
+    let pruned = prune_history(&credential_url, &PROJECT_ENV_KEY.parse().unwrap())
         .await
         .expect("prune terminal run history");
     assert_eq!(pruned, 1);

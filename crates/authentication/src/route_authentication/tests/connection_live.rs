@@ -56,7 +56,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         WorkloadRoleIdentity::ProjectEnvironment {
             org: "acme",
             project: "host-project",
-            environment: "prod",
+            environment: &"prod".parse().unwrap(),
             database: database.path().trim_start_matches('/'),
         },
     )
@@ -137,9 +137,9 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         wamn_broker::Publisher::default(),
         Arc::new(fixture.reader("host-project").await),
         &postgres,
-        "acme--dev--host-project",
+        &"acme--dev--host-project".parse().unwrap(),
         "host-project",
-        "dev",
+        &"dev".parse().unwrap(),
     ));
     let authority = wamn_postgres::pool(fixture.database.as_str(), 4)
         .await
@@ -343,7 +343,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
             wamn_control_provision::WorkloadRoleIdentity::ProjectEnvironment {
                 org: "org",
                 project: "project",
-                environment: "prod",
+                environment: &"prod".parse().unwrap(),
                 database: project.path().trim_start_matches('/'),
             },
         )
@@ -431,7 +431,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         );
     let authentication = PlatformRouteAuthenticator::for_test(
         Arc::clone(&pg),
-        "acme--dev--host-project",
+        &"acme--dev--host-project".parse().unwrap(),
         Some(identity_reader),
         None,
     );
@@ -440,7 +440,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     let (_nats, client) = wamn_capability_authority::auth_cache::test_util::nats().await;
     let writer = wamn_capability_authority::auth_cache::test_util::watched(
         &client,
-        Some("org--dev--a"),
+        Some(&"org--dev--a".parse().unwrap()),
         Arc::clone(pg.auth_cache()),
     )
     .await;

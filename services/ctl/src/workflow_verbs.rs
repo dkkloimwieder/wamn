@@ -31,7 +31,7 @@ pub enum WorkflowCommand {
 #[derive(Debug, Args)]
 pub struct WorkflowDatabase {
     #[arg(long)]
-    pub environment: String,
+    pub environment: wamn_registry::EnvName,
 }
 
 /// The environment of a workflow command without a serving-release coordinate.

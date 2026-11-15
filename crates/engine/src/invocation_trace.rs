@@ -35,9 +35,9 @@ pub fn request_trace(headers: &[(String, String)]) -> InvocationTrace {
 /// and the empty node, the same as its effect spans.
 #[derive(Debug)]
 pub struct InvocationSite<'a> {
-    pub project_env_key: &'a str,
+    pub project_env_key: &'a wamn_registry::ProjectEnvKey,
     pub project: &'a str,
-    pub environment: &'a str,
+    pub environment: &'a wamn_registry::EnvName,
     pub wiring_id: &'a str,
     pub wiring_version: u32,
     pub node_id: &'a str,

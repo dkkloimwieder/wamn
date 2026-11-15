@@ -5,7 +5,7 @@ use super::{WorkflowLifecycleError, WorkflowLifecycleErrorType};
 pub struct WorkflowVersion<'a> {
     pub org: &'a str,
     pub project: &'a str,
-    pub environment: &'a str,
+    pub environment: &'a wamn_registry::EnvName,
     pub application: &'a str,
     pub workflow_id: &'a str,
     pub version: u32,
@@ -13,7 +13,7 @@ pub struct WorkflowVersion<'a> {
 
 impl WorkflowVersion<'_> {
     /// The composed environment key derived from the environment coordinate.
-    pub fn project_env_key(&self) -> String {
+    pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
         wamn_registry::project_env_key(self.org, self.project, self.environment)
     }
 }

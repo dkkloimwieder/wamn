@@ -11,7 +11,7 @@ use tracing::Instrument as _;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_identity_protocol::AuthorityClass;
-use wamn_registry::identifiers::{valid_project, valid_project_env_key};
+use wamn_registry::identifiers::valid_project;
 
 use wamn_capability_authority::connection::ConnectionInvocation;
 #[cfg(test)]
@@ -100,7 +100,7 @@ pub struct WamnPostgres {
     /// The auth facts this host keeps
     /// (docs/architecture/execution.md#auth-memory).
     auth: Arc<wamn_capability_authority::auth_cache::AuthCache>,
-    hierarchy_reader: std::sync::RwLock<HashMap<String, sqlx::PgPool>>,
+    hierarchy_reader: std::sync::RwLock<HashMap<wamn_registry::ProjectEnvKey, sqlx::PgPool>>,
 }
 
 /// The bound principal has no `platform."user"` row in the project_env_key it identity
@@ -117,7 +117,7 @@ pub struct WamnPostgres {
 /// an operator can find the missing row. It carries no connection material.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnprovisionedPrincipal {
-    project_env_key: String,
+    project_env_key: wamn_registry::ProjectEnvKey,
     project: String,
     principal_id: String,
 }
@@ -125,7 +125,7 @@ pub struct UnprovisionedPrincipal {
 impl UnprovisionedPrincipal {
     /// The project_env_key whose `platform."user"` table was read.
     #[must_use]
-    pub fn project_env_key(&self) -> &str {
+    pub fn project_env_key(&self) -> &wamn_registry::ProjectEnvKey {
         &self.project_env_key
     }
 
@@ -161,7 +161,6 @@ impl std::error::Error for UnprovisionedPrincipal {}
 /// the no-hyphen `valid_schema` rule still matters where a schema name is quoted
 /// into DDL elsewhere).
 fn validate_session_identity(
-    project_env_key: &str,
     schema: Option<&str>,
     runner: Option<&str>,
     role: Option<&str>,
@@ -169,12 +168,6 @@ fn validate_session_identity(
     operation: Option<&str>,
     application: Option<&str>,
 ) -> Result<(), PgError> {
-    if !valid_project_env_key(project_env_key) {
-        return Err(PgError::QueryError((
-            "WAMN0".to_string(),
-            "invalid project_env_key identity".to_string(),
-        )));
-    }
     if let Some(schema) = schema
         && !valid_schema(schema)
     {
@@ -315,7 +308,7 @@ impl WamnPostgres {
     }
 
     /// Bind the host's existing identity reader for inherited authorization.
-    pub fn set_hierarchy_reader(&self, key: &str, reader: sqlx::PgPool) {
+    pub fn set_hierarchy_reader(&self, key: &wamn_registry::ProjectEnvKey, reader: sqlx::PgPool) {
         self.hierarchy_reader
             .write()
             .expect("hierarchy reader lock poisoned")
@@ -324,7 +317,7 @@ impl WamnPostgres {
 
     async fn inherited_grants(
         &self,
-        key: &str,
+        key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
         mut grants: wamn_capability_authority::auth_cache::PrincipalGrants,
     ) -> anyhow::Result<wamn_capability_authority::auth_cache::PrincipalGrants> {
@@ -342,7 +335,7 @@ impl WamnPostgres {
 
     async fn inherits_administration(
         &self,
-        key: &str,
+        key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<bool> {
         let reader = self
@@ -354,14 +347,13 @@ impl WamnPostgres {
         let Some(reader) = reader else {
             return Ok(false);
         };
-        let coordinate = wamn_registry::name::parse_project_env_key(key)
-            .ok_or_else(|| anyhow::anyhow!("invalid project deployment coordinate"))?;
+        let coordinate = wamn_registry::ProjectEnvKey::triple(key);
         Ok(wamn_platform_identity::control::is_project_admin(
             &mut *reader.acquire().await?,
             principal,
             &coordinate.org,
             &coordinate.project,
-            Some(coordinate.env.as_str()),
+            Some(&coordinate.env),
         )
         .await?)
     }
@@ -439,24 +431,22 @@ impl WamnPostgres {
     pub fn set_project_env_key(
         &self,
         component_id: &str,
-        project_env_key: &str,
-    ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            valid_project_env_key(project_env_key),
-            "invalid project_env_key {project_env_key:?}: canonical org--environment--project coordinates required"
-        );
+        project_env_key: &wamn_registry::ProjectEnvKey,
+    ) {
         self.scopes.update::<Authority, _>(component_id, |record| {
-            project_env_key.clone_into(&mut record.identity.project_env_key);
+            record.identity.project_env_key = Some(project_env_key.clone());
         });
-        Ok(())
     }
 
-    pub(super) fn project_env_key_for(&self, component_id: &str) -> Option<String> {
+    pub(super) fn project_env_key_for(
+        &self,
+        component_id: &str,
+    ) -> Option<wamn_registry::ProjectEnvKey> {
         self.scopes
             .read::<Authority, _>(component_id, |record| {
                 record.identity.project_env_key.clone()
             })
-            .filter(|key| !key.is_empty())
+            .flatten()
     }
 
     /// Register which project's database a component uses. The bench harness
@@ -700,8 +690,15 @@ impl WamnPostgres {
         // actor-required.
         if let Some(user_id) = identity.user_id.as_deref() {
             let project = identity.project.as_deref().unwrap_or(DEFAULT_PROJECT);
-            self.require_provisioned_principal(&identity.project_env_key, project, user_id)
-                .await?;
+            self.require_provisioned_principal(
+                identity
+                    .project_env_key
+                    .as_ref()
+                    .context("project environment identity is absent")?,
+                project,
+                user_id,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -740,7 +737,10 @@ impl WamnPostgres {
             .ok_or_else(|| anyhow::anyhow!("invocation scope was revoked"))?;
         if let Some(user) = identity.user_id.as_deref() {
             self.require_provisioned_principal(
-                &identity.project_env_key,
+                identity
+                    .project_env_key
+                    .as_ref()
+                    .context("project environment identity is absent")?,
                 identity.project.as_deref().unwrap_or(DEFAULT_PROJECT),
                 user,
             )
@@ -764,7 +764,7 @@ impl WamnPostgres {
     /// fail closed either way.
     async fn require_provisioned_principal(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         project: &str,
         principal_id: &str,
     ) -> anyhow::Result<()> {
@@ -790,7 +790,7 @@ impl WamnPostgres {
             })?;
         if !grants.present {
             tracing::warn!(
-                project_env_key,
+                %project_env_key,
                 project,
                 principal_id,
                 "wamn:postgres: refusing a bind for a principal with no platform.\"user\" row"
@@ -840,7 +840,7 @@ impl WamnPostgres {
     pub async fn connection_effect_snapshot(
         &self,
         component_id: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         lookup: &ConnectionEffectLookup<'_>,
         facts: &wamn_connections::connection_facts::ConnectionFacts,
         loaded: &LoadedRelease,
@@ -855,7 +855,7 @@ impl WamnPostgres {
                 "scope {component_id:?} has no bound environment identity"
             ))
         })?;
-        if registered != project_env_key {
+        if &registered != project_env_key {
             return Err(refusal(format!(
                 "scope {component_id:?} belongs to another environment"
             ))
@@ -1062,7 +1062,7 @@ impl WamnPostgres {
     pub async fn session_operation_permissions(
         &self,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         roles: &[wamn_identity_protocol::RoleName],
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
@@ -1102,7 +1102,7 @@ impl WamnPostgres {
     pub async fn user_operation_permissions(
         &self,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         principal_id: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
         let grants = self
@@ -1118,7 +1118,7 @@ impl WamnPostgres {
     pub async fn principal_grants(
         &self,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<wamn_capability_authority::auth_cache::PrincipalGrants> {
         let grants = self
@@ -1136,17 +1136,13 @@ impl WamnPostgres {
     async fn read_principal_grants(
         &self,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
         class: AuthorityClass,
     ) -> anyhow::Result<wamn_capability_authority::auth_cache::PrincipalGrants> {
         anyhow::ensure!(
             valid_project(project),
             "invalid operation-permission project"
-        );
-        anyhow::ensure!(
-            valid_project_env_key(project_env_key),
-            "invalid operation-permission project_env_key"
         );
         let ticket = match self
             .auth
@@ -1189,25 +1185,19 @@ impl WamnPostgres {
     pub async fn held_operation_grants(
         &self,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         principal_id: &wamn_identity_protocol::PrincipalId,
         operation: &str,
     ) -> anyhow::Result<HeldOperationGrants> {
         let mut held = self
-            .administration_transaction(
-                project,
-                project_env_key,
-                principal_id,
-                operation,
-                async |client| {
-                    wamn_authentication::authorization::user_operation_permissions(
-                        client,
-                        principal_id.to_string().as_str(),
-                    )
-                    .await
-                    .context("read held operation grants")
-                },
-            )
+            .administration_transaction(project, principal_id, operation, async |client| {
+                wamn_authentication::authorization::user_operation_permissions(
+                    client,
+                    principal_id.to_string().as_str(),
+                )
+                .await
+                .context("read held operation grants")
+            })
             .await??;
         if self
             .inherits_administration(project_env_key, principal_id)
@@ -1229,13 +1219,9 @@ impl WamnPostgres {
     pub async fn environment_inactive(
         &self,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> anyhow::Result<bool> {
         anyhow::ensure!(valid_project(project), "invalid environment-status project");
-        anyhow::ensure!(
-            valid_project_env_key(project_env_key),
-            "invalid environment-status project_env_key"
-        );
         let ticket = match self.auth.environment_inactive(project_env_key) {
             Ok(inactive) => return Ok(inactive),
             Err(ticket) => ticket,
@@ -1261,16 +1247,11 @@ impl WamnPostgres {
     pub async fn administration_transaction<T, E>(
         &self,
         project: &str,
-        project_env_key: &str,
         principal_id: &wamn_identity_protocol::PrincipalId,
         operation: &str,
         work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, E>,
     ) -> anyhow::Result<Result<T, E>> {
         anyhow::ensure!(valid_project(project), "invalid host-route project");
-        anyhow::ensure!(
-            valid_project_env_key(project_env_key),
-            "invalid host-route project_env_key"
-        );
         let (mut connection, policy) = self
             .checkout_platform(project, AuthorityClass::Administration)
             .await
@@ -1280,7 +1261,6 @@ impl WamnPostgres {
                 &mut connection,
                 AuthorityClass::Administration,
                 false,
-                project_env_key,
                 None,
                 None,
                 None,
@@ -1312,7 +1292,7 @@ impl WamnPostgres {
     pub async fn workflow_node_caller(
         &self,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         principal_id: &str,
         role: &str,
     ) -> anyhow::Result<Option<wamn_engine::flow_http_routing::AuthenticatedCaller>> {
@@ -1342,7 +1322,10 @@ impl WamnPostgres {
             .flatten())
     }
 
-    pub(super) fn require_project_env_key(&self, component_id: &str) -> Result<String, PgError> {
+    pub(super) fn require_project_env_key(
+        &self,
+        component_id: &str,
+    ) -> Result<wamn_registry::ProjectEnvKey, PgError> {
         self.project_env_key_for(component_id).ok_or_else(|| {
             tracing::warn!(
                 component_id,
@@ -1391,8 +1374,8 @@ pub fn valid_schema(schema: &str) -> bool {
 
 pub(crate) fn validate_identity(identity: &SessionIdentity) -> anyhow::Result<()> {
     anyhow::ensure!(
-        valid_project_env_key(&identity.project_env_key),
-        "invalid project environment key"
+        identity.project_env_key.is_some(),
+        "project environment identity is absent"
     );
     anyhow::ensure!(
         identity.project.as_deref().is_none_or(valid_project),
@@ -1444,7 +1427,7 @@ impl WamnPostgres {
 
 #[async_trait::async_trait]
 impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
-    fn set_hierarchy_reader(&self, key: &str, reader: sqlx::PgPool) {
+    fn set_hierarchy_reader(&self, key: &wamn_registry::ProjectEnvKey, reader: sqlx::PgPool) {
         self.set_hierarchy_reader(key, reader);
     }
 
@@ -1452,14 +1435,18 @@ impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
         self.auth_cache()
     }
 
-    async fn environment_inactive(&self, project: &str, key: &str) -> anyhow::Result<bool> {
+    async fn environment_inactive(
+        &self,
+        project: &str,
+        key: &wamn_registry::ProjectEnvKey,
+    ) -> anyhow::Result<bool> {
         self.environment_inactive(project, key).await
     }
 
     async fn session_operation_permissions(
         &self,
         project: &str,
-        key: &str,
+        key: &wamn_registry::ProjectEnvKey,
         roles: &[wamn_identity_protocol::RoleName],
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
@@ -1470,7 +1457,7 @@ impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
     async fn user_operation_permissions(
         &self,
         project: &str,
-        key: &str,
+        key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
         self.user_operation_permissions(project, key, principal)
@@ -1480,7 +1467,7 @@ impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
     async fn principal_grants(
         &self,
         project: &str,
-        key: &str,
+        key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<wamn_capability_authority::auth_cache::PrincipalGrants> {
         self.principal_grants(project, key, principal).await

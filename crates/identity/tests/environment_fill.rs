@@ -21,7 +21,9 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     {
         let batches: &[&str] = &[
             &wamn_control_provision::test_database::seed_org_project_env_sql(
-                "fill", "fixture", "dev",
+                "fill",
+                "fixture",
+                &"dev".parse().unwrap(),
             ),
             "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:fixture'); UPDATE registry.meta SET platform_domain='example.invalid'",
         ];
@@ -49,8 +51,14 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     .await?
     .id();
     wamn_platform_identity::org::activate_org_membership(&mut authority, &member, "fill").await?;
-    wamn_platform_identity::org::grant_member(&mut authority, &member, "fill", "fixture", "dev")
-        .await?;
+    wamn_platform_identity::org::grant_member(
+        &mut authority,
+        &member,
+        "fill",
+        "fixture",
+        &"dev".parse().unwrap(),
+    )
+    .await?;
     let service = *wamn_platform_identity::create_service(
         &mut authority,
         "automation",
@@ -81,8 +89,8 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     let target = ApplicationTarget {
         org: "fill",
         project: "fixture",
-        env: "dev",
-        project_env_key: "fill--dev--fixture",
+        env: &"dev".parse().unwrap(),
+        project_env_key: &"fill--dev--fixture".parse().unwrap(),
     };
     fill(
         system.as_str(),
@@ -129,7 +137,7 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         &member,
         "fill",
         "fixture",
-        "dev",
+        &"dev".parse().unwrap(),
         &mut drops,
     )
     .await?;

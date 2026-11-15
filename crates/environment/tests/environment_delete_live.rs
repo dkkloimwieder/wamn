@@ -81,7 +81,7 @@ esac
         .execute(&mut system)
         .await
         .map(drop)?;
-    let triple = Triple::new("acme", "dev", "app");
+    let triple = Triple::new("acme", "dev".parse().unwrap(), "app");
     let mut transaction = provisioning_transaction(&mut system).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::seed_org_project_env_sql(
@@ -126,11 +126,11 @@ esac
         wamn_platform_identity::application::ApplicationTarget {
             org: &triple.org,
             project: &triple.project,
-            env: triple.env.as_str(),
+            env: &triple.env,
             project_env_key: &wamn_registry::project_env_key(
                 &triple.org,
                 &triple.project,
-                triple.env.as_str(),
+                &triple.env,
             ),
         },
         &Publisher::default(),
@@ -157,7 +157,7 @@ esac
     .await
     .map(drop)?;
     sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&project_env_key).bind(&digest).bind(&&bytes[..]).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
-    sqlx::query("INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, manifest_digest, wiring_id, wiring_version, wiring_hash, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) VALUES ($1, 'stranded-work', 'app', $2, 'dispatched', $3, 'work', 1, $3, 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}')").bind(&project_env_key).bind(&triple.env.as_str()).bind(&digest).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, manifest_digest, wiring_id, wiring_version, wiring_hash, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) VALUES ($1, 'stranded-work', 'app', $2, 'dispatched', $3, 'work', 1, $3, 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}')").bind(&project_env_key).bind(&triple.env).bind(&digest).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
     transaction.commit().await?;
     let run_before: serde_json::Value = sqlx::query("SELECT to_jsonb(r) FROM wamn_run.runs r")
         .fetch_one(&mut project)
@@ -250,8 +250,8 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
         .execute(&mut system)
         .await
         .map(drop)?;
-    let triple = Triple::new("acme", "dev", "app");
-    let other = Triple::new("acme", "prod", "app");
+    let triple = Triple::new("acme", "dev".parse().unwrap(), "app");
+    let other = Triple::new("acme", "prod".parse().unwrap(), "app");
     let mut transaction = provisioning_transaction(&mut system).await?;
     for target in [&triple, &other] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -414,7 +414,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
         sqlx::query(wamn_registry::test_util::deployment_exists_sql())
             .bind(&other.org)
             .bind(&other.project)
-            .bind(&other.env.as_str())
+            .bind(&other.env)
             .fetch_optional(&mut system)
             .await?
             .is_some()

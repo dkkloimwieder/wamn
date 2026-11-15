@@ -77,7 +77,11 @@ fn seal(
         bytes,
         wamn_engine::component_admission::ComponentAdmissionRequest {
             declaration: wamn_catalog::ComponentDeclaration {
-                target: wamn_catalog::palette_target("platform-palette"),
+                target: wamn_catalog::palette_target(
+                    &"platform--palette--platform"
+                        .parse::<wamn_registry::ProjectEnvKey>()
+                        .expect("platform palette coordinates"),
+                ),
                 component: declaration.component,
                 interface_version: declaration.interface_version,
                 operations: declaration.operations,

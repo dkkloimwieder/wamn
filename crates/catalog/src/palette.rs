@@ -20,7 +20,9 @@ pub struct PalettePin {
 pub type Palette = BTreeMap<String, PalettePin>;
 
 /// Supply only the deployment coordinate when reading a sealed descriptor.
-pub fn palette_target(project_env_key: &str) -> ComponentPackageCoordinate {
+pub fn palette_target(
+    project_env_key: &wamn_registry::ProjectEnvKey,
+) -> ComponentPackageCoordinate {
     ComponentPackageCoordinate {
         project_env_key: project_env_key.to_owned(),
         package_id: PALETTE_PACKAGE_ID.to_owned(),
@@ -55,9 +57,11 @@ pub fn read_palette(bytes: &[u8]) -> anyhow::Result<Palette> {
             for connection in &pin.descriptor.connections {
                 connection.store_alias.validate()?;
             }
-            let facts = pin
-                .descriptor
-                .into_admitted(palette_target("platform-palette"));
+            let facts = pin.descriptor.into_admitted(palette_target(
+                &"platform--palette--platform"
+                    .parse()
+                    .expect("platform palette coordinates"),
+            ));
             crate::verify_stored_effect_projection(&facts.component)?;
             let descriptor = ComponentDescriptor::new(facts.component, facts.connections);
             Ok((
@@ -85,7 +89,11 @@ mod tests {
         let facts = normalize_component_fact(
             ComponentDeclaration {
                 connections: Vec::new(),
-                target: palette_target("platform-palette"),
+                target: palette_target(
+                    &"platform--palette--platform"
+                        .parse()
+                        .expect("platform palette coordinates"),
+                ),
                 component: "transform".into(),
                 interface_version: "0.1.0".into(),
                 operations: BTreeMap::from([(

@@ -121,7 +121,11 @@ async fn every_connection_writer_deletes_exactly_its_connection_keys(pool: sqlx:
     .unwrap();
     for env in ["dev", "prod"] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", env))
+            (&wamn_control_provision::test_database::seed_org_project_env_sql(
+                "acme",
+                "app",
+                &env.parse().unwrap(),
+            ))
                 .to_string(),
         ))
         .execute(&mut client)
@@ -156,17 +160,17 @@ async fn every_connection_writer_deletes_exactly_its_connection_keys(pool: sqlx:
                 .unwrap(),
         );
     }
-    let dev = connection_key("acme--dev--app", &ids[0]);
-    let prod = connection_key("acme--prod--app", &ids[1]);
+    let dev = connection_key(&"acme--dev--app".parse().unwrap(), &ids[0]);
+    let prod = connection_key(&"acme--prod--app".parse().unwrap(), &ids[1]);
     let release = release_key(
-        "acme--dev--app",
+        &"acme--dev--app".parse().unwrap(),
         &(format!("sha256:{}", "ab".repeat(32)))
             .parse::<wamn_digest::Digest>()
             .unwrap(),
     );
-    let other = connection_key("acme--dev--other", &ids[0]);
-    let dev_map = connections_key("acme--dev--app");
-    let prod_map = connections_key("acme--prod--app");
+    let other = connection_key(&"acme--dev--other".parse().unwrap(), &ids[0]);
+    let dev_map = connections_key(&"acme--dev--app".parse().unwrap());
+    let prod_map = connections_key(&"acme--prod--app".parse().unwrap());
     let keys = [&dev, &prod, &release, &other, &dev_map, &prod_map];
 
     let cases: [(&str, Value, &[&String]); 9] = [

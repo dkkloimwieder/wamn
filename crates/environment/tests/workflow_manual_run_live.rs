@@ -239,7 +239,11 @@ fn load(manifest: &ServingManifest) -> Arc<LoadedRelease> {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "manual-live",
-            ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT).with_applications(declared()),
+            ReleaseTarget::new(
+                PROJECT_ENV_KEY.parse().unwrap(),
+                ENVIRONMENT.parse().unwrap(),
+            )
+            .with_applications(declared()),
         )
         .expect("the fixture release loads"),
     )
@@ -406,14 +410,14 @@ async fn targeted_postgres(admin: &mut Client, url: &str) -> Arc<WamnPostgres> {
     ] {
         let target = if family == WorkloadRoleFamily::App {
             WorkloadRoleIdentity::ProjectEnvKey {
-                project_env_key: PROJECT_ENV_KEY,
+                project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
                 database: &database,
             }
         } else {
             WorkloadRoleIdentity::ProjectEnvironment {
                 org: PROJECT_ENV_KEY,
                 project: PROJECT,
-                environment: ENVIRONMENT,
+                environment: &ENVIRONMENT.parse().unwrap(),
                 database: &database,
             }
         };
@@ -478,9 +482,9 @@ impl Fixture {
                     wamn_broker::Publisher::default(),
                     Arc::new(ConnectionCredentials::empty()),
                     &self.postgres,
-                    release.target().project_env_key.as_str(),
+                    &release.target().project_env_key.as_str().parse().unwrap(),
                     PROJECT,
-                    release.target().environment.as_str(),
+                    &release.target().environment,
                 )),
                 Arc::clone(&self.logging),
                 Arc::from([]),
@@ -515,7 +519,7 @@ impl Fixture {
             &AuthorWorkflowRequest {
                 org: "manual-live",
                 project: "default",
-                environment: ENVIRONMENT,
+                environment: &ENVIRONMENT.parse().unwrap(),
                 application: APP,
                 declared: &declared(),
                 document,
@@ -532,12 +536,12 @@ impl Fixture {
     async fn enable(&mut self, version: u32, enabler: &str) {
         enable_workflow(
             &self.url,
-            &Triple::new("acme", ENVIRONMENT, APPLICATION),
+            &Triple::new("acme", ENVIRONMENT.parse().unwrap(), APPLICATION),
             &mut self.admin,
             &WorkflowVersion {
                 org: "manual-live",
                 project: "default",
-                environment: ENVIRONMENT,
+                environment: &ENVIRONMENT.parse().unwrap(),
                 application: APP,
                 workflow_id: WORKFLOW,
                 version,
@@ -577,7 +581,12 @@ impl Fixture {
         let principal: PrincipalId = user.parse().unwrap();
         let held = self
             .postgres
-            .session_operation_permissions(PROJECT, PROJECT_ENV_KEY, &signed, &principal)
+            .session_operation_permissions(
+                PROJECT,
+                &PROJECT_ENV_KEY.parse().unwrap(),
+                &signed,
+                &principal,
+            )
             .await
             .expect("read the session grants");
         AuthenticatedCaller::new(
@@ -871,14 +880,14 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution(pool: sql
     let input = json!({"day": 1});
     let ManualRunAdmitted::Queued { run_id: run } = fixture
         .postgres
-        .executor_write(PROJECT, PROJECT_ENV_KEY, async |connection| {
+        .executor_write(PROJECT, async |connection| {
             wamn_events::admission::admit_manual_run(
                 connection,
-                PROJECT_ENV_KEY,
+                &PROJECT_ENV_KEY.parse().unwrap(),
                 &ManualRunAdmission {
                     package_id: APP,
                     manifest_digest: &fixture.digest,
-                    environment: ENVIRONMENT,
+                    environment: &ENVIRONMENT.parse().unwrap(),
                     workflow_id: WORKFLOW,
                     workflow_version: 2,
                     wiring_hash: &wrong,

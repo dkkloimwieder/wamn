@@ -3,13 +3,13 @@
 use serde_json::{Map, Value, json};
 use wamn_event_wire::{DerivedEvent, Envelope, Op};
 
-/// Row-level tenancy carried by one CDC image.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RowProject<'a> {
+/// Project deployment identity carried by one CDC image.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowProject {
     /// The image is present and has no `project_id`; database residency governs.
     Absent,
     /// The image carries a string project identity.
-    Project(&'a str),
+    Project(wamn_registry::ProjectEnvKey),
     /// The image is absent or carries a non-string project identity.
     Unscopable,
 }
@@ -58,7 +58,7 @@ pub fn derived_event_context(event: &DerivedEvent) -> Value {
 /// The caller can accept `Absent` only after the catalog credential confirms
 /// that the package resides in the project database. A present string
 /// remains an additional equality guard; any other carrier is unscopable.
-pub fn row_project(envelope: &Envelope) -> RowProject<'_> {
+pub fn row_project(envelope: &Envelope) -> RowProject {
     let image: &Map<String, Value> = match envelope.op {
         Op::Insert | Op::Update => match envelope.new.as_ref() {
             Some(image) => image,
@@ -75,7 +75,9 @@ pub fn row_project(envelope: &Envelope) -> RowProject<'_> {
     };
     match image.get("project_id") {
         None => RowProject::Absent,
-        Some(Value::String(project)) => RowProject::Project(project),
+        Some(Value::String(project)) => project
+            .parse()
+            .map_or(RowProject::Unscopable, RowProject::Project),
         Some(_) => RowProject::Unscopable,
     }
 }

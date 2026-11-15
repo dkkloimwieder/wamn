@@ -779,15 +779,16 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
     let triple = Triple {
         org: "acme".into(),
         project: "pattest".into(),
-        env: "dev".into(),
+        env: "dev".parse().unwrap(),
     };
-    let mut database = project_env_database_name("acme", "pattest", "dev", "pattest1");
+    let mut database =
+        project_env_database_name("acme", "pattest", &"dev".parse().unwrap(), "pattest1");
     let role = workload_login(
         WorkloadRoleFamily::SessionRoleReader,
         WorkloadRoleIdentity::ProjectEnvironment {
             org: "acme",
             project: "pattest",
-            environment: "dev",
+            environment: &"dev".parse().unwrap(),
             database: &mut database,
         },
     )
@@ -802,7 +803,7 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
     SessionTarget::new(
         &triple,
         "pattest1",
-        &wamn_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str()),
+        &wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env),
         url.as_str(),
     )
     .expect_redacted("unused configured audience")

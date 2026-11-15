@@ -327,7 +327,7 @@ fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartReq
     WorkloadStartRequest {
         workload_id: INGRESS_WORKLOAD.to_owned(),
         workload: Workload {
-            namespace: release.release().target().environment.clone(),
+            namespace: release.release().target().environment.to_string(),
             name: INGRESS_WORKLOAD.to_owned(),
             annotations: HashMap::new(),
             service: None,

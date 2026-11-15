@@ -4,7 +4,7 @@ use crate::{ProvisionError, validate_project_env};
 pub fn environment_resource_name(
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> Result<String, ProvisionError> {
     validate_project_env(org, project, env)?;
     Ok(
@@ -15,7 +15,7 @@ pub fn environment_resource_name(
 pub fn application_release_name(
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
     application: &str,
 ) -> Result<String, ProvisionError> {
     validate_project_env(org, project, env)?;
@@ -29,15 +29,13 @@ mod tests {
     use super::*;
     #[test]
     fn application_names_are_bounded_and_refuse_invalid_coordinates() {
-        let env = "a".repeat(30);
+        let env = "a".repeat(30).try_into().unwrap();
         let name = application_release_name("a", "wms", &env, "orders").unwrap();
         assert!(name.len() <= 47);
         assert_ne!(
             name,
             application_release_name("a", "wms", &env, "receiving").unwrap()
         );
-        assert!(application_release_name("acme", "wms", "Bad Env", "orders").is_err());
-        assert!(environment_resource_name("acme", "wms", "Bad Env").is_err());
     }
 }
 
@@ -46,5 +44,5 @@ mod tests {
 pub struct EventIdentity {
     pub org: String,
     pub project: String,
-    pub environment: String,
+    pub environment: wamn_registry::EnvName,
 }

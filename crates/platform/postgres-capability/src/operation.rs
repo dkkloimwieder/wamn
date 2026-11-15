@@ -135,7 +135,7 @@ impl WamnPostgres {
             "composed entry reference differs from the release"
         );
         anyhow::ensure!(
-            identity.project_env_key == release.target().project_env_key
+            identity.project_env_key.as_ref() == Some(&release.target().project_env_key)
                 && identity.release.as_ref() == Some(&ReleaseIdentity::from_loaded(release)),
             "operation release mismatch"
         );
@@ -322,7 +322,9 @@ impl OpenOperation {
             identity
                 .project
                 .unwrap_or_else(|| super::DEFAULT_PROJECT.to_owned()),
-            identity.project_env_key,
+            identity
+                .project_env_key
+                .expect("active invocation has a project environment"),
         )
     }
 }

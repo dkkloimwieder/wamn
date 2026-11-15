@@ -190,7 +190,10 @@ pub trait RouteAuthenticator: Send + Sync + std::fmt::Debug {
 #[async_trait::async_trait]
 pub trait EnvironmentStatus: Send + Sync + std::fmt::Debug {
     /// Whether the environment of `project_env_key` is inactive.
-    async fn inactive(&self, project_env_key: &str) -> anyhow::Result<bool>;
+    async fn inactive(
+        &self,
+        project_env_key: &wamn_registry::ProjectEnvKey,
+    ) -> anyhow::Result<bool>;
 }
 
 /// One request to a protected route, as the route plugin resolved it.

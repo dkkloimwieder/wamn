@@ -469,7 +469,7 @@ mod tests {
 
     fn target() -> ComponentPackageCoordinate {
         ComponentPackageCoordinate {
-            project_env_key: "t1".to_string(),
+            project_env_key: "t1--dev--project".parse().unwrap(),
             package_id: "app".to_string(),
             package_version: "1.0.0".to_string(),
         }

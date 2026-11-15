@@ -233,9 +233,15 @@ async fn project_delete_removes_its_roles_and_memberships(
     )
     .await
     .expect("assign a role on the project to delete");
-    grant_project_env_membership(client, user.id(), "demo", "inventory", "dev")
-        .await
-        .expect("grant a membership on the project to delete");
+    grant_project_env_membership(
+        client,
+        user.id(),
+        "demo",
+        "inventory",
+        &"dev".parse().unwrap(),
+    )
+    .await
+    .expect("grant a membership on the project to delete");
     async fn rows(client: &mut sqlx::PgConnection, project: &str) -> (i64, i64) {
         sqlx::query(
             "SELECT (SELECT count(*) FROM identity.project_roles \
@@ -306,16 +312,28 @@ async fn project_environment_membership_round_trip(
             .expect("active org membership fixture");
     }
     assert!(
-        !has_project_env_membership(client, user.id(), "demo", "widgets", "dev")
-            .await
-            .expect("read membership before grant"),
+        !has_project_env_membership(
+            client,
+            user.id(),
+            "demo",
+            "widgets",
+            &"dev".parse().unwrap()
+        )
+        .await
+        .expect("read membership before grant"),
         "project management roles cannot imply environment membership"
     );
 
     for _ in 0..2 {
-        grant_project_env_membership(client, user.id(), "demo", "widgets", "dev")
-            .await
-            .expect("grant user membership idempotently");
+        grant_project_env_membership(
+            client,
+            user.id(),
+            "demo",
+            "widgets",
+            &"dev".parse().unwrap(),
+        )
+        .await
+        .expect("grant user membership idempotently");
     }
     let stored = sqlx::query(
         "SELECT principal_id::text, count(*) OVER () \
@@ -339,9 +357,15 @@ async fn project_environment_membership_round_trip(
         "the grant stamps the bound wamn:provisioning actor"
     );
     assert!(
-        has_project_env_membership(client, user.id(), "demo", "widgets", "dev")
-            .await
-            .expect("unprepared query observes new grant")
+        has_project_env_membership(
+            client,
+            user.id(),
+            "demo",
+            "widgets",
+            &"dev".parse().unwrap()
+        )
+        .await
+        .expect("unprepared query observes new grant")
     );
 
     for (org, project, env) in [
@@ -350,7 +374,7 @@ async fn project_environment_membership_round_trip(
         ("demo", "widgets", "prod"),
     ] {
         assert!(
-            !has_project_env_membership(client, user.id(), org, project, env)
+            !has_project_env_membership(client, user.id(), org, project, &env.parse().unwrap())
                 .await
                 .unwrap(),
             "the prepared PAT query accepted another environment"
@@ -364,16 +388,28 @@ async fn project_environment_membership_round_trip(
     ];
     for (principal, org, project, env) in other_memberships {
         assert!(
-            !has_project_env_membership(client, principal.id(), org, project, env)
-                .await
-                .expect("read another principal or environment")
+            !has_project_env_membership(
+                client,
+                principal.id(),
+                org,
+                project,
+                &env.parse().unwrap()
+            )
+            .await
+            .expect("read another principal or environment")
         );
     }
     assert_eq!(
-        grant_project_env_membership(client, service.id(), "demo", "widgets", "dev")
-            .await
-            .expect_err("service cannot hold a user membership")
-            .error_type(),
+        grant_project_env_membership(
+            client,
+            service.id(),
+            "demo",
+            "widgets",
+            &"dev".parse().unwrap()
+        )
+        .await
+        .expect_err("service cannot hold a user membership")
+        .error_type(),
         IdentityErrorType::NotFound
     );
     let service_insert = sqlx::query(
@@ -394,15 +430,21 @@ async fn project_environment_membership_round_trip(
         Some("23514")
     );
     assert_eq!(
-        grant_project_env_membership(client, user.id(), "demo", "widgets", "missing")
-            .await
-            .expect_err("unregistered environment cannot receive a membership")
-            .error_type(),
+        grant_project_env_membership(
+            client,
+            user.id(),
+            "demo",
+            "widgets",
+            &"missing".parse().unwrap()
+        )
+        .await
+        .expect_err("unregistered environment cannot receive a membership")
+        .error_type(),
         IdentityErrorType::NotFound
     );
 
     for (principal, org, project, env) in other_memberships {
-        grant_project_env_membership(client, principal.id(), org, project, env)
+        grant_project_env_membership(client, principal.id(), org, project, &env.parse().unwrap())
             .await
             .expect("grant independent memberships before revocation");
     }
@@ -412,16 +454,22 @@ async fn project_environment_membership_round_trip(
             user.id(),
             "demo",
             "widgets",
-            "dev",
+            &"dev".parse().unwrap(),
             &mut AuthDrops::default()
         )
         .await
         .expect("revoke membership")
     );
     assert!(
-        !has_project_env_membership(client, user.id(), "demo", "widgets", "dev")
-            .await
-            .unwrap(),
+        !has_project_env_membership(
+            client,
+            user.id(),
+            "demo",
+            "widgets",
+            &"dev".parse().unwrap()
+        )
+        .await
+        .unwrap(),
         "the prepared PAT query must observe membership revocation"
     );
     assert!(
@@ -430,7 +478,7 @@ async fn project_environment_membership_round_trip(
             user.id(),
             "demo",
             "widgets",
-            "dev",
+            &"dev".parse().unwrap(),
             &mut AuthDrops::default()
         )
         .await
@@ -438,15 +486,21 @@ async fn project_environment_membership_round_trip(
     );
     for (principal, org, project, env) in other_memberships {
         assert!(
-            has_project_env_membership(client, principal.id(), org, project, env)
+            has_project_env_membership(client, principal.id(), org, project, &env.parse().unwrap())
                 .await
                 .expect("revocation preserves every other principal and environment")
         );
     }
 
-    grant_project_env_membership(client, user.id(), "demo", "widgets", "dev")
-        .await
-        .expect("grant before environment replacement");
+    grant_project_env_membership(
+        client,
+        user.id(),
+        "demo",
+        "widgets",
+        &"dev".parse().unwrap(),
+    )
+    .await
+    .expect("grant before environment replacement");
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("DELETE FROM registry.environment_projects \
              WHERE org = 'demo' AND project = 'widgets' AND env = 'dev'; \
@@ -460,15 +514,27 @@ async fn project_environment_membership_round_trip(
     .map(drop)
     .expect("replace the provisioned environment");
     assert!(
-        !has_project_env_membership(client, user.id(), "demo", "widgets", "dev")
-            .await
-            .unwrap(),
+        !has_project_env_membership(
+            client,
+            user.id(),
+            "demo",
+            "widgets",
+            &"dev".parse().unwrap()
+        )
+        .await
+        .unwrap(),
         "replacement environment must not inherit the deleted grant"
     );
 
-    grant_project_env_membership(client, other_user.id(), "demo", "widgets", "dev")
-        .await
-        .expect("grant another user before deletion");
+    grant_project_env_membership(
+        client,
+        other_user.id(),
+        "demo",
+        "widgets",
+        &"dev".parse().unwrap(),
+    )
+    .await
+    .expect("grant another user before deletion");
     sqlx::query("DELETE FROM identity.principals WHERE id = $1::text::uuid")
         .bind(&other_user.id().to_string().as_str())
         .execute(&mut *client)
@@ -476,9 +542,15 @@ async fn project_environment_membership_round_trip(
         .map(|result| result.rows_affected())
         .expect("delete a principal with no PAT audit records");
     assert!(
-        !has_project_env_membership(client, other_user.id(), "demo", "widgets", "dev")
-            .await
-            .expect("principal deletion removes its membership")
+        !has_project_env_membership(
+            client,
+            other_user.id(),
+            "demo",
+            "widgets",
+            &"dev".parse().unwrap()
+        )
+        .await
+        .expect("principal deletion removes its membership")
     );
 }
 

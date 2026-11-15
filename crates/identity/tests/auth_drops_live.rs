@@ -82,7 +82,8 @@ async fn every_identity_writer_records_a_drop_of_its_principal(pool: sqlx::PgPoo
     test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str(), Some("wamn_system")).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&test_database::seed_org_project_env_sql("acme", "billing", "dev")).to_string(),
+        (&test_database::seed_org_project_env_sql("acme", "billing", &"dev".parse().unwrap()))
+            .to_string(),
     ))
     .execute(&mut client)
     .await
@@ -102,13 +103,26 @@ async fn every_identity_writer_records_a_drop_of_its_principal(pool: sqlx::PgPoo
     activate_org_membership(&mut client, &alice, "acme")
         .await
         .unwrap();
-    grant_member(&mut client, &alice, "acme", "billing", "dev")
-        .await
-        .unwrap();
+    grant_member(
+        &mut client,
+        &alice,
+        "acme",
+        "billing",
+        &"dev".parse().unwrap(),
+    )
+    .await
+    .unwrap();
     let mut drops = AuthDrops::default();
-    revoke_member(&mut client, &alice, "acme", "billing", "dev", &mut drops)
-        .await
-        .unwrap();
+    revoke_member(
+        &mut client,
+        &alice,
+        "acme",
+        "billing",
+        &"dev".parse().unwrap(),
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(changes(&drops), identity(&alice), "revoke_member");
 
     grant_project_admin(&mut client, &alice, "acme", "billing")
@@ -140,13 +154,26 @@ async fn every_identity_writer_records_a_drop_of_its_principal(pool: sqlx::PgPoo
     activate_org_membership(&mut client, &alice, "acme")
         .await
         .unwrap();
-    grant_project_env_membership(&mut client, &alice, "acme", "billing", "dev")
-        .await
-        .unwrap();
+    grant_project_env_membership(
+        &mut client,
+        &alice,
+        "acme",
+        "billing",
+        &"dev".parse().unwrap(),
+    )
+    .await
+    .unwrap();
     let mut drops = AuthDrops::default();
-    revoke_project_env_membership(&mut client, &alice, "acme", "billing", "dev", &mut drops)
-        .await
-        .unwrap();
+    revoke_project_env_membership(
+        &mut client,
+        &alice,
+        "acme",
+        "billing",
+        &"dev".parse().unwrap(),
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         changes(&drops),
         identity(&alice),
@@ -286,28 +313,40 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     };
     let principal = |id: &PrincipalId| {
         vec![AuthChange::Principal {
-            project_env_key: "t1".to_owned(),
+            project_env_key: "t1--dev--project".parse().unwrap(),
             principal: id.to_string(),
         }]
     };
-    let project_env_key = vec![AuthChange::ProjectEnvKey("t1".to_owned())];
+    let project_env_key = vec![AuthChange::ProjectEnvKey(
+        "t1--dev--project".parse().unwrap(),
+    )];
 
     let mut drops = AuthDrops::default();
-    write_user(&mut client, "t1", user(&bob), &mut drops)
-        .await
-        .unwrap();
+    write_user(
+        &mut client,
+        &"t1--dev--project".parse().unwrap(),
+        user(&bob),
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(changes(&drops), principal(&bob), "write_user");
 
     let mut drops = AuthDrops::default();
-    remove_admin(&mut client, "t1", &bob, &mut drops)
-        .await
-        .unwrap();
+    remove_admin(
+        &mut client,
+        &"t1--dev--project".parse().unwrap(),
+        &bob,
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(changes(&drops), principal(&bob), "remove_admin");
 
     let mut drops = AuthDrops::default();
     write_service(
         &mut client,
-        "t1",
+        &"t1--dev--project".parse().unwrap(),
         ApplicationUser {
             principal_id: &robot,
             email: "robot@example.invalid",
@@ -320,15 +359,20 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     assert_eq!(changes(&drops), principal(&robot), "write_service");
 
     let mut drops = AuthDrops::default();
-    create_role(&mut client, "t1", "clerk", &mut drops)
-        .await
-        .unwrap();
+    create_role(
+        &mut client,
+        &"t1--dev--project".parse().unwrap(),
+        "clerk",
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(changes(&drops), project_env_key, "create_role");
 
     let mut drops = AuthDrops::default();
     wamn_platform_identity::application::mutate_grant(
         &mut client,
-        "t1",
+        &"t1--dev--project".parse().unwrap(),
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::Permission {
             role: "clerk",
@@ -344,7 +388,7 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     let mut drops = AuthDrops::default();
     wamn_platform_identity::application::mutate_grant(
         &mut client,
-        "t1",
+        &"t1--dev--project".parse().unwrap(),
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::Permission {
             role: "clerk",
@@ -360,7 +404,7 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     let mut drops = AuthDrops::default();
     wamn_platform_identity::application::mutate_grant(
         &mut client,
-        "t1",
+        &"t1--dev--project".parse().unwrap(),
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
             user_id: bob.to_string().as_str(),
@@ -376,7 +420,7 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     let mut drops = AuthDrops::default();
     wamn_platform_identity::application::mutate_grant(
         &mut client,
-        "t1",
+        &"t1--dev--project".parse().unwrap(),
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
             user_id: bob.to_string().as_str(),
@@ -390,21 +434,36 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     assert_eq!(changes(&drops), principal(&bob), "revoke_user_role");
 
     let mut drops = AuthDrops::default();
-    delete_role(&mut client, "t1", "clerk", &mut drops)
-        .await
-        .unwrap();
+    delete_role(
+        &mut client,
+        &"t1--dev--project".parse().unwrap(),
+        "clerk",
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(changes(&drops), project_env_key, "delete_role");
 
     let mut drops = AuthDrops::default();
-    remove_user(&mut client, "t1", &bob, &mut drops)
-        .await
-        .unwrap();
+    remove_user(
+        &mut client,
+        &"t1--dev--project".parse().unwrap(),
+        &bob,
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(changes(&drops), principal(&bob), "remove_user");
 
     let mut drops = AuthDrops::default();
-    write_environment_status(&mut client, "t1", EnvironmentStatus::Inactive, &mut drops)
-        .await
-        .unwrap();
+    write_environment_status(
+        &mut client,
+        &"t1--dev--project".parse().unwrap(),
+        EnvironmentStatus::Inactive,
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(changes(&drops), project_env_key, "write_environment_status");
 }
 
@@ -439,7 +498,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys(pool: sqlx:
     for principal in [&bob, &robot] {
         write_user(
             &mut client,
-            "t1",
+            &"t1--dev--project".parse().unwrap(),
             ApplicationUser {
                 principal_id: principal,
                 email: principal.to_string().as_str(),
@@ -470,14 +529,19 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys(pool: sqlx:
         let mut drops = AuthDrops::default();
         match operation {
             "create_role" => {
-                create_role(&mut client, "t1", "clerk", &mut drops)
-                    .await
-                    .unwrap();
+                create_role(
+                    &mut client,
+                    &"t1--dev--project".parse().unwrap(),
+                    "clerk",
+                    &mut drops,
+                )
+                .await
+                .unwrap();
             }
             "grant_permission" => {
                 wamn_platform_identity::application::mutate_grant(
                     &mut client,
-                    "t1",
+                    &"t1--dev--project".parse().unwrap(),
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::Permission {
                         role: "clerk",
@@ -492,7 +556,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys(pool: sqlx:
             "revoke_permission" => {
                 wamn_platform_identity::application::mutate_grant(
                     &mut client,
-                    "t1",
+                    &"t1--dev--project".parse().unwrap(),
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::Permission {
                         role: "clerk",
@@ -507,7 +571,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys(pool: sqlx:
             "grant_user_role" => {
                 wamn_platform_identity::application::mutate_grant(
                     &mut client,
-                    "t1",
+                    &"t1--dev--project".parse().unwrap(),
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::UserRole {
                         user_id: bob.to_string().as_str(),
@@ -522,7 +586,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys(pool: sqlx:
             "revoke_user_role" => {
                 wamn_platform_identity::application::mutate_grant(
                     &mut client,
-                    "t1",
+                    &"t1--dev--project".parse().unwrap(),
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::UserRole {
                         user_id: bob.to_string().as_str(),
@@ -535,9 +599,14 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys(pool: sqlx:
                 .unwrap();
             }
             "delete_role" => {
-                delete_role(&mut client, "t1", "clerk", &mut drops)
-                    .await
-                    .unwrap();
+                delete_role(
+                    &mut client,
+                    &"t1--dev--project".parse().unwrap(),
+                    "clerk",
+                    &mut drops,
+                )
+                .await
+                .unwrap();
             }
             _ => unreachable!(),
         }

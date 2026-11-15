@@ -39,13 +39,17 @@ impl LifecycleLock {
     ///
     /// Returns a database error or refuses when another session holds the lock.
     pub async fn acquire(client: Client, triple: &Triple) -> anyhow::Result<Self> {
-        Self::acquire_environment(client, &triple.org, triple.env.as_str()).await
+        Self::acquire_environment(client, &triple.org, &triple.env).await
     }
 
     /// Take exclusive ownership of the host shared by an org and environment.
-    pub async fn acquire_environment(client: Client, org: &str, env: &str) -> anyhow::Result<Self> {
+    pub async fn acquire_environment(
+        client: Client,
+        org: &str,
+        env: &crate::EnvName,
+    ) -> anyhow::Result<Self> {
         let lock = Self::start(client).await?;
-        if !lock.try_acquire(TRY_LOCK_SQL, &[org, env]).await? {
+        if !lock.try_acquire(TRY_LOCK_SQL, &[org, env.as_str()]).await? {
             bail!("{DEPLOYMENT_IN_PROGRESS}: environment {org}/{env}");
         }
         Ok(lock)
@@ -69,12 +73,7 @@ impl LifecycleLock {
     ) -> anyhow::Result<Self> {
         // Fixed order: environment exclusion, then the application key.
         let lock = Self::acquire_shared(client, triple).await?;
-        let key = serde_json::to_string(&(
-            &triple.org,
-            &triple.project,
-            triple.env.as_str(),
-            application,
-        ))?;
+        let key = serde_json::to_string(&(&triple.org, &triple.project, &triple.env, application))?;
         let held = lock
             .try_acquire(
                 "SELECT pg_try_advisory_lock(hashtextextended('wamn-application/' || $1, 0))",

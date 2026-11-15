@@ -214,7 +214,7 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
 fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() -> anyhow::Result<()>
 {
     use crate::platform::operations;
-    let document = wamn_registry::Triple::new("acme", "dev", "billing");
+    let document = wamn_registry::Triple::new("acme", "dev".parse().unwrap(), "billing");
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let cluster = "database-owner";
     let database = "recorded-environment-database";
@@ -247,7 +247,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         let capture = wamn_control_provision::project_env_cdc_secret_name(
             &document.org,
             &document.project,
-            document.env.as_str(),
+            &document.env,
         );
         for binding in objects
             .iter()
@@ -464,13 +464,13 @@ fn org_chart_uses_each_recovery_owners_policy_and_preserves_role_references() ->
 fn recovery_refuses_the_source_shared_clusters_and_missing_policies() -> anyhow::Result<()> {
     let template = wamn_control_provision::Template::standard();
     let (org, _) = template.stamp("acme", "wamn-pg");
-    let prod = wamn_registry::Env::new("prod");
+    let prod = "prod".parse().expect("valid environment name");
     let source = wamn_registry::name::cluster(&org.id, &prod);
     assert!(crate::org::recovery_values(&org, &prod, &template.policies, &source, None).is_err());
     assert!(
         crate::org::recovery_values(
             &org,
-            &wamn_registry::Env::new("absent"),
+            &"absent".parse().expect("valid environment name"),
             &template.policies,
             "restored",
             None
@@ -554,10 +554,12 @@ fn non_gcp_ingress_has_a_default_class_and_ports_reachable_from_kind() -> anyhow
 fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let coordinates = [("a", "b-c", "d"), ("a", "b", "c-d")];
-    let accounts = coordinates
-        .map(|(org, _project, env)| wamn_registry::name::environment_service_account(org, env));
-    let secrets = coordinates
-        .map(|(org, project, env)| wamn_registry::credential_secret_name(org, project, env));
+    let accounts = coordinates.map(|(org, _project, env)| {
+        wamn_registry::name::environment_service_account(org, &env.parse().unwrap())
+    });
+    let secrets = coordinates.map(|(org, project, env)| {
+        wamn_registry::credential_secret_name(org, project, &env.parse().unwrap())
+    });
     assert_ne!(accounts[0], accounts[1]);
     assert_ne!(secrets[0], secrets[1]);
     for index in 0..coordinates.len() {

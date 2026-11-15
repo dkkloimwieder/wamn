@@ -134,16 +134,19 @@ fn record_connection_drops(
     if matches!(
         operation,
         "connection.write" | "connection.copy" | "connection.delete"
-    ) && let Some(env) = result["env"].as_str()
+    ) && let Some(env) = result["env"]
+        .as_str()
+        .and_then(|env| env.parse::<wamn_registry::EnvName>().ok())
     {
-        connections.connections(&wamn_registry::project_env_key(org, project, env));
+        connections.connections(&wamn_registry::project_env_key(org, project, &env));
     }
     let mut record = |env: &Value, id: &Value| {
         if let (Some(env), Some(id)) = (
-            env.as_str(),
+            env.as_str()
+                .and_then(|env| env.parse::<wamn_registry::EnvName>().ok()),
             id.as_str().and_then(|id| id.parse::<uuid::Uuid>().ok()),
         ) {
-            connections.connection(&wamn_registry::project_env_key(org, project, env), id);
+            connections.connection(&wamn_registry::project_env_key(org, project, &env), id);
         }
     };
     match operation {
@@ -380,7 +383,11 @@ async fn generation(
                 store,
                 &wamn_registry::Triple::new(
                     org,
-                    request["env"].as_str().unwrap(),
+                    request["env"]
+                        .as_str()
+                        .unwrap()
+                        .parse()
+                        .map_err(|_| refuse("invalid_input", "env"))?,
                     request["project"].as_str().unwrap(),
                 ),
                 value,
@@ -662,7 +669,7 @@ mod tests {
         let value = r#"{"key":"private-1234"}"#;
         let metadata = store_credential(
             &store,
-            &wamn_registry::Triple::new("acme", "dev", "app"),
+            &wamn_registry::Triple::new("acme", "dev".parse().unwrap(), "app"),
             value,
         )
         .await

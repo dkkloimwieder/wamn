@@ -27,7 +27,7 @@ pub fn admit(
     bases: BTreeSet<wamn_digest::Digest>,
 ) -> ComponentAdmission {
     let target = ComponentPackageCoordinate {
-        project_env_key: "rest--test--publication".into(),
+        project_env_key: "rest--test--publication".parse().unwrap(),
         package_id: manifest(package)["package"]["id"].as_str().unwrap().into(),
         package_version: "0.1.1".into(),
     };

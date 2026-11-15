@@ -120,7 +120,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain(pool: sql
         (&wamn_control_provision::test_database::seed_org_project_env_sql(
             "applyprobe",
             "existing",
-            "dev",
+            &"dev".parse().unwrap(),
         ))
             .to_string(),
     ))
@@ -241,7 +241,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain(pool: sql
                 &wamn_postgres::database_configuration(&url, &recorded.database).unwrap(),
                 &"applyprobe",
                 &"created",
-                &"dev",
+                &"dev".parse().unwrap(),
             )
             .await
             .unwrap(),
@@ -257,7 +257,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain(pool: sql
             database_url: project_apply.to_string(),
             org: "applyprobe".into(),
             project: "created".into(),
-            environment: "dev".into(),
+            environment: "dev".parse().unwrap(),
         },
     )
     .await

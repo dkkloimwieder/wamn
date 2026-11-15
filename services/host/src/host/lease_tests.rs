@@ -20,20 +20,30 @@ async fn facts(
 ) -> anyhow::Result<(Arc<ConnectionFacts>, Arc<ResourceLeases>)> {
     let leases = Arc::new(ResourceLeases::new(Some(url))?);
     let memory = Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&leases)));
-    let changes =
-        connection_memory::replicate(client, Some("lease--dev--rollout"), Arc::clone(&memory));
+    let changes = connection_memory::replicate(
+        client,
+        Some(&"lease--dev--rollout".parse().unwrap()),
+        Arc::clone(&memory),
+    );
     until("the rollout host watches connection facts", || {
         memory.watched()
     })
     .await;
     let id = "00000000-0000-4000-8000-000000000001".parse()?;
-    if let Err(ticket) = memory.connection("lease--dev--rollout", &id) {
+    if let Err(ticket) = memory.connection(&"lease--dev--rollout".parse().unwrap(), &id) {
         memory
-            .keep_connection("lease--dev--rollout", &id, ticket, fact.clone())
+            .keep_connection(
+                &"lease--dev--rollout".parse().unwrap(),
+                &id,
+                ticket,
+                fact.clone(),
+            )
             .await;
     }
     until("the rollout host holds the connection fact", || {
-        memory.connection("lease--dev--rollout", &id).is_ok()
+        memory
+            .connection(&"lease--dev--rollout".parse().unwrap(), &id)
+            .is_ok()
     })
     .await;
     let facts = ConnectionFacts::new(
@@ -47,9 +57,9 @@ async fn facts(
             wait_timeout_ms: 5_000,
             statement_timeout_ms: 10_000,
         })?),
-        "lease--dev--rollout",
+        &"lease--dev--rollout".parse().unwrap(),
         "rollout",
-        "dev",
+        &"dev".parse().unwrap(),
     );
     Ok((Arc::new(facts), leases))
 }

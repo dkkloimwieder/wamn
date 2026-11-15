@@ -68,7 +68,7 @@ async fn connect(url: &str) -> Client {
 fn release() -> ServingManifest {
     let fact = AdmittedComponent {
         target: ComponentPackageCoordinate {
-            project_env_key: PROJECT_ENV_KEY.to_owned(),
+            project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
             package_id: APPLICATION.to_owned(),
             package_version: "1.0.0".to_owned(),
         },
@@ -213,7 +213,7 @@ impl Fixture {
             &AuthorWorkflowRequest {
                 org: "workflow-project",
                 project: "fixture",
-                environment: ENVIRONMENT,
+                environment: &ENVIRONMENT.parse().unwrap(),
                 application: APPLICATION,
                 declared: &declared(),
                 document,
@@ -255,7 +255,7 @@ impl Fixture {
             &self.project_url,
             &triple(),
             &mut self.project,
-            &key(id, version),
+            &key(&ENVIRONMENT.parse().unwrap(), id, version),
             enabler,
             &digest,
             &declared(),
@@ -281,14 +281,18 @@ impl Fixture {
 }
 
 fn triple() -> Triple {
-    Triple::new("acme", ENVIRONMENT, "orders")
+    Triple::new("acme", ENVIRONMENT.parse().unwrap(), "orders")
 }
 
-fn key(id: &str, version: u32) -> WorkflowVersion<'_> {
+fn key<'a>(
+    environment: &'a wamn_registry::EnvName,
+    id: &'a str,
+    version: u32,
+) -> WorkflowVersion<'a> {
     WorkflowVersion {
         org: "workflow-project",
         project: "fixture",
-        environment: ENVIRONMENT,
+        environment,
         application: APPLICATION,
         workflow_id: id,
         version,
@@ -416,7 +420,7 @@ async fn one_version_is_enabled_and_the_lock_refuses_while_held(pool: sqlx::PgPo
         &project_url,
         &triple(),
         &mut fixture.project,
-        &key("nightly", 2),
+        &key(&ENVIRONMENT.parse().unwrap(), "nightly", 2),
     )
     .await
     .expect("disable 2");
@@ -425,7 +429,7 @@ async fn one_version_is_enabled_and_the_lock_refuses_while_held(pool: sqlx::PgPo
         &project_url,
         &triple(),
         &mut fixture.project,
-        &key("nightly", 9),
+        &key(&ENVIRONMENT.parse().unwrap(), "nightly", 9),
     )
     .await
     .expect_err("an absent version refuses");
@@ -664,7 +668,7 @@ async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool)
     let subject = wamn_registry::name::event_subject(
         &(target.org),
         &(target.project),
-        &(target.env.as_str()),
+        &(&target.env),
         &("order.update"),
     );
     let consumer = event_consumer_config("unread", &subject, Duration::from_secs(30), 5);
@@ -687,7 +691,7 @@ async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool)
         &fixture.project_url,
         &target,
         &mut fixture.project,
-        &key("changed", 1),
+        &key(&ENVIRONMENT.parse().unwrap(), "changed", 1),
         ALICE,
         &fixture.digest,
         &declared(),
@@ -716,7 +720,7 @@ async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool)
         &fixture.project_url,
         &target,
         &mut fixture.project,
-        &key("changed", 1),
+        &key(&ENVIRONMENT.parse().unwrap(), "changed", 1),
     )
     .await
     .unwrap();
@@ -739,7 +743,7 @@ async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool)
         &fixture.project_url,
         &target,
         &mut fixture.project,
-        &key("changed", 1),
+        &key(&ENVIRONMENT.parse().unwrap(), "changed", 1),
         ALICE,
         &fixture.digest,
         &declared(),

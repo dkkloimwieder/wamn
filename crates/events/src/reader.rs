@@ -11,7 +11,7 @@ pub struct ReaderConfig {
     pub project: String,
 
     /// Environment slug.
-    pub env: String,
+    pub env: wamn_registry::EnvName,
 
     /// Provisioned publication name.
     pub publication: String,

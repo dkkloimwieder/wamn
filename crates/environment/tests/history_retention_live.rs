@@ -156,7 +156,7 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
             &url,
             &"record-retention-t",
             &"fixture",
-            &"dev",
+            &"dev".parse().unwrap(),
         )
         .await
         .unwrap(),
@@ -171,12 +171,16 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
         database_url: url.to_owned(),
         org: "record-retention-t".into(),
         project: "fixture".into(),
-        environment: "dev".into(),
+        environment: "dev".parse().unwrap(),
     })
     .await
 }
 
-fn generation(family: WorkloadRoleFamily, project_env_key: &str, database: &str) -> String {
+fn generation(
+    family: WorkloadRoleFamily,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    database: &str,
+) -> String {
     workload_login(
         family,
         WorkloadRoleIdentity::ProjectEnvKey {
@@ -311,25 +315,22 @@ async fn positions(admin: &mut Client) -> BTreeMap<String, Vec<i64>> {
 
 async fn prune_history(
     url: &str,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<Vec<wamn_environment::prune_record_history::PrunedHistory>> {
+    let triple = project_env_key.triple();
     wamn_environment::prune_record_history::prune_expired_record_history(
         wamn_environment::prune_record_history::PruneRecordHistoryRequest {
             database_url: url.into(),
-            org: project_env_key
-                .split("--")
-                .next()
-                .expect("fixture org")
-                .into(),
-            project: "fixture".into(),
-            environment: "dev".into(),
+            org: triple.org,
+            project: triple.project,
+            environment: triple.env,
         },
     )
     .await
 }
 
 /// Run the verb and require the identity refusal.
-async fn assert_refused(url: &str, project_env_key: &str, label: &str) {
+async fn assert_refused(url: &str, project_env_key: &wamn_registry::ProjectEnvKey, label: &str) {
     prune_history(url, project_env_key).await.expect_err(label);
 }
 
@@ -530,12 +531,12 @@ async fn prune_removes_only_the_expired_prefix_of_each_row(pool: sqlx::PgPool) {
 
     let credential_role = generation(
         WorkloadRoleFamily::AuditRetention,
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         &mut database,
     );
     let run_retention_role = generation(
         WorkloadRoleFamily::Retention,
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         &mut database,
     );
     mint(
@@ -558,17 +559,17 @@ async fn prune_removes_only_the_expired_prefix_of_each_row(pool: sqlx::PgPool) {
     // Spec test 15, against the populated history.
     assert_refused(
         &credential_url,
-        OTHER_PROJECT_ENV_KEY,
+        &OTHER_PROJECT_ENV_KEY.parse().unwrap(),
         "foreign environment coordinate",
     )
     .await;
     assert_refused(
         &run_retention_url,
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         "run retention generation",
     )
     .await;
-    assert_refused(&url, PROJECT_ENV_KEY, "superuser login").await;
+    assert_refused(&url, &PROJECT_ENV_KEY.parse().unwrap(), "superuser login").await;
     assert_eq!(
         positions(&mut admin).await,
         seeded,
@@ -577,7 +578,7 @@ async fn prune_removes_only_the_expired_prefix_of_each_row(pool: sqlx::PgPool) {
 
     assert_authority(&mut admin, &credential_url).await;
 
-    prune_history(&credential_url, PROJECT_ENV_KEY)
+    prune_history(&credential_url, &PROJECT_ENV_KEY.parse().unwrap())
         .await
         .expect("prune record history");
 

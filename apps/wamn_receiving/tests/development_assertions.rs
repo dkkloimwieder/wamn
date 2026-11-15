@@ -89,7 +89,7 @@ fn declared_dev_data_access_grants(
 pub(super) async fn verify_dev_target_package_and_acl_state(
     project: &mut Client,
     sources: &[std::path::PathBuf],
-    key: &str,
+    key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<()> {
     use sqlx::migrate::Migrate as _;
     for source in sources {

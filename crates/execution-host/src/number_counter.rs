@@ -147,7 +147,7 @@ const SET_SQL: &str = "SELECT platform.set_counter($1::text::uuid, $2, $3, $4)";
 pub async fn set_number_counter(
     postgres: &WamnPostgres,
     project: &str,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     user_id: &str,
     operation: &str,
     request_id: &str,
@@ -171,7 +171,7 @@ pub async fn set_number_counter(
     }
     let scope = format!("wamn:number-counter-set:{}", uuid::Uuid::new_v4());
     let identity = SessionIdentity {
-        project_env_key: project_env_key.to_owned(),
+        project_env_key: Some(project_env_key.to_owned()),
         project: Some(project.to_owned()),
         user_id: Some(user_id.to_owned()),
         operation: Some(operation.to_owned()),

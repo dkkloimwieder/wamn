@@ -93,12 +93,6 @@ pub fn record_composed_entry(
 pub(super) fn validate_request(
     request: &PublishReleaseManifest<'_>,
 ) -> Result<(), PublishManifestError> {
-    if request.environment.is_empty() {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::Release,
-            "environment is required",
-        ));
-    }
     if request.packages.is_empty() {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::Release,

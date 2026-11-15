@@ -11,7 +11,7 @@ pub struct Target {
     #[arg(long)]
     project: String,
     #[arg(long)]
-    environment: String,
+    environment: wamn_registry::EnvName,
 }
 
 #[derive(Debug, Args)]

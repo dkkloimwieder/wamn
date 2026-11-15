@@ -24,10 +24,10 @@ impl RunTrigger {
 /// Frozen admission facts. A repeat retains the first run's release and nodes.
 #[derive(Debug)]
 pub struct RunAdmission<'a> {
-    pub project_env_key: &'a str,
+    pub project_env_key: &'a wamn_registry::ProjectEnvKey,
     pub application: &'a str,
     pub manifest_digest: &'a wamn_digest::Digest,
-    pub environment: &'a str,
+    pub environment: &'a wamn_registry::EnvName,
     pub workflow_id: &'a str,
     pub workflow_version: i32,
     pub wiring_hash: &'a wamn_digest::Digest,
@@ -54,7 +54,7 @@ pub enum RunAdmitted {
 /// Read a repeat before resolving a new run against the current release.
 pub async fn existing_run(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     key: &str,
     input: &serde_json::Value,
     trigger: RunTrigger,
@@ -145,8 +145,8 @@ SELECT graph_json::text, wiring_hash \
 /// Read an enabled manual workflow for admission.
 pub async fn enabled_workflow(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
-    environment: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    environment: &wamn_registry::EnvName,
     application: &str,
     workflow: &str,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
@@ -162,8 +162,8 @@ pub async fn enabled_workflow(
 /// Read the exact workflow version frozen by an admitted run.
 pub async fn workflow_version(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
-    environment: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    environment: &wamn_registry::EnvName,
     application: &str,
     workflow: &str,
     version: i32,
@@ -188,8 +188,8 @@ const ENABLED_EVENTS_SQL: &str = "SELECT application, workflow_id, source_packag
 /// Read enabled event workflows. A null application set reads the environment.
 pub async fn event_workflows(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
-    environment: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    environment: &wamn_registry::EnvName,
     applications: Option<&[String]>,
 ) -> Result<Vec<sqlx::postgres::PgRow>, sqlx::Error> {
     sqlx::query(ENABLED_EVENTS_SQL)
@@ -277,8 +277,8 @@ pub async fn history_actor(
 /// Read the enabled version used for a due schedule admission.
 pub async fn enabled_schedule(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
-    environment: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    environment: &wamn_registry::EnvName,
     application: &str,
     workflow: &str,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
@@ -298,8 +298,8 @@ pub async fn enabled_schedule(
 /// Read schedules and their calendar minute in this environment's project time zone.
 pub async fn enabled_schedules(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
-    environment: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    environment: &wamn_registry::EnvName,
     applications: &[String],
     project: &str,
     tick: chrono::DateTime<chrono::Utc>,

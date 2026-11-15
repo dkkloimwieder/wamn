@@ -269,7 +269,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
         COMPONENT,
         &wamn_control_provision::PlatformComponent::Executor.principal_name(),
     )?;
-    plugin.set_project_env_key(COMPONENT, PROJECT_ENV_KEY)?;
+    plugin.set_project_env_key(COMPONENT, &PROJECT_ENV_KEY.parse().unwrap());
     plugin.set_schema(COMPONENT, "wamn_run")?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
     // A production host carries its release digest and leases only the runs
@@ -285,7 +285,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
     let completion = ProductionCompletion::completed(serde_json::json!({"done": true}));
     assert_eq!(
         wamn_connections::production_lease::ProductionLeases::new(&plugin)
-            .reap_exhausted(COMPONENT, &packages, ENVIRONMENT, 0)
+            .reap_exhausted(COMPONENT, &packages, &ENVIRONMENT.parse().unwrap(), 0)
             .await?,
         ProductionReapResult::Empty
     );
@@ -294,7 +294,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
         lease_generation,
         ..
     } = wamn_connections::production_lease::ProductionLeases::new(&plugin)
-        .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+        .lease_next(COMPONENT, &packages, &ENVIRONMENT.parse().unwrap(), 30_000)
         .await?
     else {
         anyhow::bail!("the restored executor must lease its unchanged run");

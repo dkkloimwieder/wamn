@@ -38,7 +38,7 @@ pub async fn invoke(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "NetSuite checkpoint live",
-        ReleaseTarget::new(PROJECT_ENV_KEY, "test")
+        ReleaseTarget::new(PROJECT_ENV_KEY.parse().unwrap(), "test".parse().unwrap())
             .with_applications(super::consumer_live::declared("erp", manifest)),
     )?);
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
@@ -70,9 +70,9 @@ pub async fn invoke(
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             &postgres,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             "test",
-            "test",
+            &"test".parse().unwrap(),
         )),
         Arc::new(TracingLogger::default()),
         Arc::from([]),
@@ -134,7 +134,7 @@ pub async fn invoke(
     // the consumer command refuses the node.
     let record = &wiring.nodes["record"];
     let registered = wamn_catalog::resolve_workflow_components(
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         &super::consumer_live::declared("erp", manifest)["erp"].packages,
         manifest,
         &wiring,
@@ -153,7 +153,7 @@ pub async fn invoke(
     let without = workflow_host
         .workflow_node_caller(
             "test",
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             &wamn_identity_protocol::workflow_user_id().to_string(),
             "netsuite-pull-without-record",
         )
@@ -197,7 +197,10 @@ pub async fn invoke(
                 deadline_ms: 10000,
                 facts: NativeFacts::entry(
                     NodeAcquisition {
-                        identity: host.identity(PROJECT_ENV_KEY, Some(host.release_identity())),
+                        identity: host.identity(
+                            &PROJECT_ENV_KEY.parse().unwrap(),
+                            Some(host.release_identity()),
+                        ),
                         invocation: wamn_execution_host::component_invocation(
                             component,
                             &write.operation,

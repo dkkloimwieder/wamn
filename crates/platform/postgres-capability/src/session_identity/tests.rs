@@ -74,7 +74,7 @@ async fn a_platform_checkout_refuses_the_guest_authority() {
 /// A guest credential url for `project_env_key` in `database`, named the way
 /// provisioning names one: the login carries the project_env_key as its scope
 /// digest (`wamn-0h0g.22.6.4`).
-fn guest_url(project_env_key: &str, database: &str) -> String {
+fn guest_url(project_env_key: &wamn_registry::ProjectEnvKey, database: &str) -> String {
     format!(
         "postgres://wamn_app_{}:pw@db/{database}",
         wamn_identity_protocol::app_identity_hash(project_env_key, database)
@@ -90,7 +90,7 @@ fn guest_url(project_env_key: &str, database: &str) -> String {
 #[test]
 fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
     let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
-        "test--dev--fixture",
+        &"test--dev--fixture".parse().unwrap(),
         "host-default",
     ))))
     .expect("compose with a credential");
@@ -99,14 +99,18 @@ fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
             .resolve(
                 DEFAULT_PROJECT,
                 AuthorityClass::GuestSql,
-                Some("test--dev--fixture")
+                Some(&"test--dev--fixture".parse().unwrap())
             )
             .expect("the credential's own project_env_key resolves")
             .is_some()
     );
     assert!(
         host.provider
-            .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("evil"))
+            .resolve(
+                DEFAULT_PROJECT,
+                AuthorityClass::GuestSql,
+                Some(&"evil--dev--project".parse().unwrap())
+            )
             .is_err(),
         "a credential minted for another project_env_key must be REFUSED, not borrowed"
     );
@@ -129,7 +133,7 @@ fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
 #[test]
 fn the_composed_credential_becomes_the_default_project() {
     let composed = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
-        "test--dev--fixture",
+        &"test--dev--fixture".parse().unwrap(),
         "host-default",
     ))))
     .expect("compose with a credential");
@@ -139,7 +143,7 @@ fn the_composed_credential_becomes_the_default_project() {
             .resolve(
                 DEFAULT_PROJECT,
                 AuthorityClass::GuestSql,
-                Some("test--dev--fixture")
+                Some(&"test--dev--fixture".parse().unwrap())
             )
             .expect("resolve default")
             .is_some(),
@@ -154,7 +158,7 @@ fn the_composed_credential_becomes_the_default_project() {
             .resolve(
                 DEFAULT_PROJECT,
                 AuthorityClass::GuestSql,
-                Some("test--dev--fixture")
+                Some(&"test--dev--fixture".parse().unwrap())
             )
             .expect("resolve default")
             .is_none(),
@@ -210,7 +214,6 @@ fn validate_identity_rejects_malformed_identities() {
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     assert!(
         validate_session_identity(
-            "test--dev--fixture",
             Some("public"),
             Some("owner-1"),
             Some("inspector"),
@@ -220,86 +223,22 @@ fn validate_identity_rejects_malformed_identities() {
         )
         .is_ok()
     );
-    assert!(
-        validate_session_identity("test--dev--fixture", None, None, None, None, None, None).is_ok()
-    );
-    assert!(validate_session_identity("bad'project", None, None, None, None, None, None).is_err());
-    assert!(
-        validate_session_identity(
-            "test--dev--fixture",
-            Some("has-hyphen"),
-            None,
-            None,
-            None,
-            None,
-            None
-        )
-        .is_err()
-    );
-    assert!(
-        validate_session_identity(
-            "test--dev--fixture",
-            None,
-            Some("bad;runner"),
-            None,
-            None,
-            None,
-            None
-        )
-        .is_err()
-    );
+    assert!(validate_session_identity(None, None, None, None, None, None).is_ok());
+
+    assert!(validate_session_identity(Some("has-hyphen"), None, None, None, None, None).is_err());
+    assert!(validate_session_identity(None, Some("bad;runner"), None, None, None, None).is_err());
     // `''` is the base denial policy, never an identity.
-    assert!(
-        validate_session_identity("test--dev--fixture", None, None, Some(""), None, None, None)
-            .is_err()
-    );
+    assert!(validate_session_identity(None, None, Some(""), None, None, None).is_err());
     // A non-uuid user id would raise 22P02 inside every ownership predicate.
+    assert!(validate_session_identity(None, None, None, Some("not-a-uuid"), None, None).is_err());
+    assert!(validate_session_identity(None, None, None, Some(&U1[..35]), None, None).is_err());
     assert!(
-        validate_session_identity(
-            "test--dev--fixture",
-            None,
-            None,
-            None,
-            Some("not-a-uuid"),
-            None,
-            None
-        )
-        .is_err()
-    );
-    assert!(
-        validate_session_identity(
-            "test--dev--fixture",
-            None,
-            None,
-            None,
-            Some(&U1[..35]),
-            None,
-            None
-        )
-        .is_err()
-    );
-    assert!(
-        validate_session_identity(
-            "test--dev--fixture",
-            None,
-            None,
-            None,
-            Some(&format!("{U1}-1")),
-            None,
-            None
-        )
-        .is_err()
+        validate_session_identity(None, None, None, Some(&format!("{U1}-1")), None, None).is_err()
     );
     // `''` is the unbound operation, never an identity.
-    assert!(
-        validate_session_identity("test--dev--fixture", None, None, None, None, Some(""), None)
-            .is_err()
-    );
+    assert!(validate_session_identity(None, None, None, None, Some(""), None).is_err());
     // `''` is the unbound application, never an identity.
-    assert!(
-        validate_session_identity("test--dev--fixture", None, None, None, None, None, Some(""))
-            .is_err()
-    );
+    assert!(validate_session_identity(None, None, None, None, None, Some("")).is_err());
 }
 
 #[test]
@@ -364,7 +303,7 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
     let pg = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::default_only(None),
     )));
-    let deployment = |key: &str, project: &str| {
+    let deployment = |key: &wamn_registry::ProjectEnvKey, project: &str| {
         let release = wamn_capability_authority::connection::test_release(key);
         let facts = Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
             Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
@@ -373,17 +312,17 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
             &pg,
             key,
             project,
-            "dev",
+            &"dev".parse().unwrap(),
         ));
         Arc::new(crate::invocation::ReleaseContext::new(release, facts).unwrap())
     };
-    let first_project = deployment("test--dev--fixture", "fixture");
-    let second_project = deployment("test--dev--other", "other");
+    let first_project = deployment(&"test--dev--fixture".parse().unwrap(), "fixture");
+    let second_project = deployment(&"test--dev--other".parse().unwrap(), "other");
     let enter = |scope: &str| InvocationRequest {
         context: Some(Arc::clone(&first_project)),
         scope: scope.to_owned(),
         identity: SessionIdentity {
-            project_env_key: "test--dev--fixture".to_owned(),
+            project_env_key: Some("test--dev--fixture".parse().unwrap()),
             project: Some("fixture".to_owned()),
             release: Some(ReleaseIdentity::from_loaded(&first_project.release)),
             ..SessionIdentity::default()
@@ -403,7 +342,7 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
     assert!(AuthorizedInvocation::enter(&pg, other).await.is_err());
     let mut other = enter("c2");
     other.context = Some(Arc::clone(&second_project));
-    other.identity.project_env_key = second_project.release.target().project_env_key.clone();
+    other.identity.project_env_key = Some(second_project.release.target().project_env_key.clone());
     other.identity.project = Some("other".to_owned());
     let second = AuthorizedInvocation::enter(&pg, other).await.unwrap();
     assert!(Arc::ptr_eq(
@@ -444,7 +383,7 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
     let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
     // Two components under workload "wl-a", one under "wl-b".
     for c in ["wl-a-component-0", "wl-b-component-0"] {
-        pg.set_project_env_key(c, "test--dev--fixture").unwrap();
+        pg.set_project_env_key(c, &"test--dev--fixture".parse().unwrap());
         pg.set_project(c, "proj").unwrap();
         pg.set_schema(c, "s_run").unwrap();
         pg.set_runner(c, "owner-1").unwrap();
@@ -469,8 +408,8 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
     // Unbinding an UNKNOWN workload clears nothing.
     pg.clear_component_identity("wl-unknown");
     assert_eq!(
-        pg.project_env_key_for("wl-a-component-0").as_deref(),
-        Some("test--dev--fixture")
+        pg.project_env_key_for("wl-a-component-0").as_ref(),
+        Some(&"test--dev--fixture".parse().unwrap())
     );
 
     pg.clear_component_identity("wl-a");
@@ -490,8 +429,8 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
 
     // The other workload's component is untouched across the board.
     assert_eq!(
-        pg.project_env_key_for("wl-b-component-0").as_deref(),
-        Some("test--dev--fixture")
+        pg.project_env_key_for("wl-b-component-0").as_ref(),
+        Some(&"test--dev--fixture".parse().unwrap())
     );
     assert_eq!(pg.project_for("wl-b-component-0"), "proj");
     assert_eq!(pg.schema_for("wl-b-component-0").as_deref(), Some("s_run"));
@@ -591,7 +530,10 @@ fn live_database(admin_url: &str) -> String {
 /// URL naming an arbitrary user no longer resolves for the guest class.
 /// That is the point — a shared login is exactly what item 2 retires — and
 /// it means a live guest test has to authenticate as a real generation.
-pub(crate) async fn live_guest_url(admin_url: &str, project_env_key: &str) -> String {
+pub(crate) async fn live_guest_url(
+    admin_url: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+) -> String {
     let mut url = url::Url::parse(admin_url).expect("parse the live test url");
     let mut database = live_database(admin_url);
     let role = format!(
@@ -709,7 +651,13 @@ async fn visible_rows(pg: &WamnPostgres, component: &str, sql: &str) -> usize {
 /// The 3.2 project_env_key minimum plus the row-ownership rule documented by
 /// `deploy/sql/app-schema.sql`, over a table the probe role does not own so
 /// RLS applies to it.
-fn rls_fixture_sql(schema: &str, probe: &str, project_env_key: &str, u1: &str, u2: &str) -> String {
+fn rls_fixture_sql(
+    schema: &str,
+    probe: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    u1: &str,
+    u2: &str,
+) -> String {
     let query = query_fixture_sql(probe, probe);
     let identity = include_str!("../../../../../deploy/sql/record-history.sql");
     let authority = wamn_control_provision::project_key::authority_derivations_bootstrap_sql();
@@ -757,12 +705,15 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller(pool: sqlx::P
     // too and the tests stay parallel-safe.
     let probe = format!(
         "wamn_app_{}",
-        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            &live_database(admin_url)
+        )
     );
     let _ = suffix;
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&rls_fixture_sql(&schema, &probe, PROJECT_ENV_KEY, U1, U2)).to_string(),
+        (&rls_fixture_sql(&schema, &probe, &PROJECT_ENV_KEY.parse().unwrap(), U1, U2)).to_string(),
     ))
     .execute(&mut admin)
     .await
@@ -779,7 +730,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller(pool: sqlx::P
         statement_timeout_ms: 5_000,
     })
     .unwrap();
-    pg.set_project_env_key(COMPONENT, PROJECT_ENV_KEY).unwrap();
+    pg.set_project_env_key(COMPONENT, &PROJECT_ENV_KEY.parse().unwrap());
     pg.set_schema(COMPONENT, &schema).unwrap();
     pg.set_role(COMPONENT, "inspector").unwrap();
     pg.set_user_id(COMPONENT, U1).unwrap();
@@ -855,12 +806,15 @@ async fn live_guest_cannot_override_the_injected_role_or_user_identity(pool: sql
     // too and the tests stay parallel-safe.
     let probe = format!(
         "wamn_app_{}",
-        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            &live_database(admin_url)
+        )
     );
     let _ = suffix;
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&rls_fixture_sql(&schema, &probe, PROJECT_ENV_KEY, U1, U2)).to_string(),
+        (&rls_fixture_sql(&schema, &probe, &PROJECT_ENV_KEY.parse().unwrap(), U1, U2)).to_string(),
     ))
     .execute(&mut admin)
     .await
@@ -877,21 +831,20 @@ async fn live_guest_cannot_override_the_injected_role_or_user_identity(pool: sql
         statement_timeout_ms: 5_000,
     })
     .unwrap();
-    pg.set_project_env_key(COMPONENT, PROJECT_ENV_KEY).unwrap();
+    pg.set_project_env_key(COMPONENT, &PROJECT_ENV_KEY.parse().unwrap());
     pg.set_schema(COMPONENT, &schema).unwrap();
     pg.set_role(COMPONENT, "inspector").unwrap();
     pg.set_user_id(COMPONENT, U1).unwrap();
 
     // The real transaction keeps its caller even when guest SQL sets a role.
     let (mut conn, _pp) = pg
-        .checkout_guest(DEFAULT_PROJECT, PROJECT_ENV_KEY)
+        .checkout_guest(DEFAULT_PROJECT, &PROJECT_ENV_KEY.parse().unwrap())
         .await
         .unwrap();
     pg.begin_with_identity(
         &mut conn,
         AuthorityClass::GuestSql,
         false,
-        PROJECT_ENV_KEY,
         Some(&schema),
         None,
         Some("inspector"),
@@ -971,7 +924,7 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
     pg.bind_session_identity(
         COMPONENT,
         &SessionIdentity {
-            project_env_key: "org--dev--b".to_string(),
+            project_env_key: Some("org--dev--b".parse().unwrap()),
             ..SessionIdentity::default()
         },
     )
@@ -983,9 +936,9 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
         wamn_broker::Publisher::default(),
         Arc::new(wamn_connections::connection_credentials::ConnectionCredentials::empty()),
         &pg,
-        "org--dev--a",
+        &"org--dev--a".parse().unwrap(),
         DEFAULT_PROJECT,
-        "dev",
+        &"dev".parse().unwrap(),
     );
 
     let lookup = ConnectionEffectLookup {
@@ -1005,7 +958,7 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
         package_id: "catalog",
         operation: "operation",
         manifest_digest: &wamn_digest::bytes_sha256(b"release"),
-        environment: "dev",
+        environment: &"dev".parse().unwrap(),
         component_digest: &wamn_digest::bytes_sha256(b"component"),
         store_alias: "manager",
         candidate_binding: None,
@@ -1015,10 +968,10 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
     // for is refused before it can read a row.
     pg.connection_effect_snapshot(
         COMPONENT,
-        "org--dev--a",
+        &"org--dev--a".parse().unwrap(),
         &lookup,
         &facts,
-        &wamn_capability_authority::connection::test_release("org--dev--a"),
+        &wamn_capability_authority::connection::test_release(&"org--dev--a".parse().unwrap()),
     )
     .await
     .expect_err("a disagreeing project_env_key is refused");
@@ -1027,10 +980,10 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
     // connection, so the guard is not simply refusing everything.
     pg.connection_effect_snapshot(
         COMPONENT,
-        "org--dev--b",
+        &"org--dev--b".parse().unwrap(),
         &lookup,
         &facts,
-        &wamn_capability_authority::connection::test_release("org--dev--a"),
+        &wamn_capability_authority::connection::test_release(&"org--dev--a".parse().unwrap()),
     )
     .await
     .expect_err("an offline plugin has no connection to resolve against");
@@ -1072,9 +1025,9 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
         wamn_broker::Publisher::default(),
         Arc::new(wamn_connections::connection_credentials::ConnectionCredentials::empty()),
         &pg,
-        "org--dev--a",
+        &"org--dev--a".parse().unwrap(),
         DEFAULT_PROJECT,
-        "dev",
+        &"dev".parse().unwrap(),
     );
 
     let lookup = ConnectionEffectLookup {
@@ -1094,7 +1047,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
         package_id: "catalog",
         operation: "operation",
         manifest_digest: &wamn_digest::bytes_sha256(b"release"),
-        environment: "dev",
+        environment: &"dev".parse().unwrap(),
         component_digest: &wamn_digest::bytes_sha256(b"component"),
         store_alias: "manager",
         candidate_binding: None,
@@ -1103,10 +1056,10 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
     let unbound = pg
         .connection_effect_snapshot(
             COMPONENT,
-            "org--dev--a",
+            &"org--dev--a".parse().unwrap(),
             &lookup,
             &facts,
-            &wamn_capability_authority::connection::test_release("org--dev--a"),
+            &wamn_capability_authority::connection::test_release(&"org--dev--a".parse().unwrap()),
         )
         .await
         .expect_err("an unbound identity scope resolves nothing");
@@ -1133,7 +1086,7 @@ impl CredentialProvider for RecordingProvider {
         &self,
         _project: &str,
         class: AuthorityClass,
-        _project_env_key: Option<&str>,
+        _project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> anyhow::Result<Option<ResolvedCredential>> {
         self.asked
             .lock()
@@ -1151,9 +1104,13 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
         .parse()
         .expect("user UUID");
 
-    pg.user_operation_permissions(DEFAULT_PROJECT, "org--dev--a", &principal_id)
-        .await
-        .expect_err("a provider that names no credential resolves nothing");
+    pg.user_operation_permissions(
+        DEFAULT_PROJECT,
+        &"org--dev--a".parse().unwrap(),
+        &principal_id,
+    )
+    .await
+    .expect_err("a provider that names no credential resolves nothing");
 
     let asked = provider
         .asked
@@ -1242,11 +1199,17 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     // credential the host resolves is bound to PROJECT_ENV_KEY_A by its own digest.
     let role_a = format!(
         "wamn_app_{}",
-        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY_A, &mut database)
+        wamn_identity_protocol::app_identity_hash(
+            &PROJECT_ENV_KEY_A.parse().unwrap(),
+            &mut database
+        )
     );
     let role_b = format!(
         "wamn_app_{}",
-        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY_B, &mut database)
+        wamn_identity_protocol::app_identity_hash(
+            &PROJECT_ENV_KEY_B.parse().unwrap(),
+            &mut database
+        )
     );
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -1280,17 +1243,17 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
 
     let scope_a = "warm-instance-0";
     let scope_b = "warm-instance-1";
-    let identity = |project_env_key: &str| SessionIdentity {
-        project_env_key: project_env_key.to_string(),
+    let identity = |project_env_key: &wamn_registry::ProjectEnvKey| SessionIdentity {
+        project_env_key: Some(project_env_key.clone()),
         schema: Some(schema.clone()),
         user_id: Some(LIVE_PRINCIPAL.into()),
         ..SessionIdentity::default()
     };
-    pg.bind_session_identity(scope_a, &identity(PROJECT_ENV_KEY_A))
+    pg.bind_session_identity(scope_a, &identity(&PROJECT_ENV_KEY_A.parse().unwrap()))
         .await
         .expect("project_env_key A's acquisition binds");
     let refused = pg
-        .bind_session_identity(scope_b, &identity(PROJECT_ENV_KEY_B))
+        .bind_session_identity(scope_b, &identity(&PROJECT_ENV_KEY_B.parse().unwrap()))
         .await
         .expect_err("B's principal read requires B's own credential");
     let refused = refused.downcast_ref::<SessionIdentityError>().unwrap();
@@ -1408,9 +1371,12 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sql
     let schema = format!("wamn_coldparse_{}", std::process::id());
     let role = format!(
         "wamn_app_{}",
-        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            &live_database(admin_url)
+        )
     );
-    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -1436,7 +1402,7 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sql
     pg.bind_session_identity(
         scope,
         &SessionIdentity {
-            project_env_key: PROJECT_ENV_KEY.to_string(),
+            project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
             schema: Some(schema.clone()),
             user_id: Some(LIVE_PRINCIPAL.to_string()),
             ..SessionIdentity::default()
@@ -1485,9 +1451,12 @@ async fn live_reads_and_writes_bind_the_executing_principal(pool: sqlx::PgPool) 
     let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
-        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            &live_database(admin_url)
+        )
     );
-    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -1501,7 +1470,7 @@ async fn live_reads_and_writes_bind_the_executing_principal(pool: sqlx::PgPool) 
     pg.bind_session_identity(
         scope,
         &SessionIdentity {
-            project_env_key: PROJECT_ENV_KEY.to_string(),
+            project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
             user_id: Some(LIVE_PRINCIPAL.to_string()),
             ..SessionIdentity::default()
         },
@@ -1530,7 +1499,7 @@ async fn live_reads_and_writes_bind_the_executing_principal(pool: sqlx::PgPool) 
 
     // B borrows the same physical connection after A's transaction and read.
     let before = pg
-        .probe_checkout(PROJECT_ENV_KEY)
+        .probe_checkout(&PROJECT_ENV_KEY.parse().unwrap())
         .await
         .unwrap()
         .backend_pid;
@@ -1538,7 +1507,7 @@ async fn live_reads_and_writes_bind_the_executing_principal(pool: sqlx::PgPool) 
     pg.bind_session_identity(
         scope,
         &SessionIdentity {
-            project_env_key: PROJECT_ENV_KEY.into(),
+            project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
             user_id: Some(PRINCIPAL_B.into()),
             ..SessionIdentity::default()
         },
@@ -1554,7 +1523,7 @@ async fn live_reads_and_writes_bind_the_executing_principal(pool: sqlx::PgPool) 
         .unwrap();
     assert!(matches!(&read[0][0], SqlValue::Text(value) if value == PRINCIPAL_B));
     assert_eq!(
-        pg.probe_checkout(PROJECT_ENV_KEY)
+        pg.probe_checkout(&PROJECT_ENV_KEY.parse().unwrap())
             .await
             .unwrap()
             .backend_pid,
@@ -1591,9 +1560,12 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row(pool: sqlx::PgPool) {
     let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
-        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            &live_database(admin_url)
+        )
     );
-    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, LIVE_PLATFORM_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -1605,7 +1577,7 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row(pool: sqlx::PgPool) {
     .expect("the plugin builds from the guest generation's url");
     let scope = "unprovisioned-instance-0";
     let identity = |principal: &str| SessionIdentity {
-        project_env_key: PROJECT_ENV_KEY.to_string(),
+        project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
         user_id: Some(principal.to_string()),
         ..SessionIdentity::default()
     };
@@ -1618,7 +1590,7 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row(pool: sqlx::PgPool) {
         .downcast_ref::<UnprovisionedPrincipal>()
         .expect("the refusal names the missing user row");
     assert_eq!(denial.principal_id(), ABSENT_PRINCIPAL);
-    assert_eq!(denial.project_env_key(), PROJECT_ENV_KEY);
+    assert_eq!(denial.project_env_key(), &PROJECT_ENV_KEY.parse().unwrap());
     assert_eq!(denial.project(), DEFAULT_PROJECT);
 
     // CONTROL: the provisioned principal binds.
@@ -1662,9 +1634,12 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears(pool: sq
     let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
-        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            &live_database(admin_url)
+        )
     );
-    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let mut pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -1681,13 +1656,13 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears(pool: sq
     let (_nats, client) = wamn_capability_authority::auth_cache::test_util::nats().await;
     wamn_capability_authority::auth_cache::test_util::watched(
         &client,
-        Some(PROJECT_ENV_KEY),
+        Some(&PROJECT_ENV_KEY.parse().unwrap()),
         Arc::clone(pg.auth_cache()),
     )
     .await;
     let scope = "removed-instance-0";
     let identity = SessionIdentity {
-        project_env_key: PROJECT_ENV_KEY.to_string(),
+        project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
         user_id: Some(LIVE_PRINCIPAL.to_string()),
         ..SessionIdentity::default()
     };
@@ -1744,9 +1719,12 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgP
     let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
-        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            &live_database(admin_url)
+        )
     );
-    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let mut pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -1764,13 +1742,13 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgP
     let (_nats, client) = wamn_capability_authority::auth_cache::test_util::nats().await;
     let writer = wamn_capability_authority::auth_cache::test_util::watched(
         &client,
-        Some(PROJECT_ENV_KEY),
+        Some(&PROJECT_ENV_KEY.parse().unwrap()),
         Arc::clone(pg.auth_cache()),
     )
     .await;
     let scope = "dropped-instance-0";
     let identity = SessionIdentity {
-        project_env_key: PROJECT_ENV_KEY.to_string(),
+        project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
         user_id: Some(LIVE_PRINCIPAL.to_string()),
         ..SessionIdentity::default()
     };
@@ -1780,7 +1758,7 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgP
         .expect("the provisioned principal binds");
     assert_eq!(
         pg.auth_cache()
-            .grants(PROJECT_ENV_KEY, LIVE_PRINCIPAL)
+            .grants(&PROJECT_ENV_KEY.parse().unwrap(), LIVE_PRINCIPAL)
             .unwrap()
             .present,
         true,
@@ -1795,11 +1773,11 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgP
         .map(|result| result.rows_affected())
         .expect("remove the user row after issuance");
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
-    drops.principal(PROJECT_ENV_KEY, LIVE_PRINCIPAL);
+    drops.principal(&PROJECT_ENV_KEY.parse().unwrap(), LIVE_PRINCIPAL);
     writer.publish(drops).await;
     wamn_capability_authority::auth_cache::test_util::until("the drop reaches the memory", || {
         pg.auth_cache()
-            .grants(PROJECT_ENV_KEY, LIVE_PRINCIPAL)
+            .grants(&PROJECT_ENV_KEY.parse().unwrap(), LIVE_PRINCIPAL)
             .is_err()
     })
     .await;
@@ -1843,7 +1821,7 @@ async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it
     )));
     let scope = "operation-instance-0";
     let identity = SessionIdentity {
-        project_env_key: LIVE_PROJECT_ENV_KEY.to_string(),
+        project_env_key: Some(LIVE_PROJECT_ENV_KEY.parse().unwrap()),
         operation: Some(OPERATION.to_string()),
         ..SessionIdentity::default()
     };
@@ -1893,9 +1871,12 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
-        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            &live_database(admin_url)
+        )
     );
-    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -1907,7 +1888,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     .expect("the plugin builds from the guest generation's url");
     let scope = "operation-instance-1";
     let identity = SessionIdentity {
-        project_env_key: PROJECT_ENV_KEY.to_string(),
+        project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
         user_id: Some(LIVE_PRINCIPAL.to_string()),
         operation: Some(OPERATION.to_string()),
         ..SessionIdentity::default()
@@ -1983,7 +1964,7 @@ async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_
     )));
     let scope = "application-instance-0";
     let identity = SessionIdentity {
-        project_env_key: LIVE_PROJECT_ENV_KEY.to_string(),
+        project_env_key: Some(LIVE_PROJECT_ENV_KEY.parse().unwrap()),
         application: Some("platform_fixture".to_string()),
         ..SessionIdentity::default()
     };
@@ -2038,9 +2019,12 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
     let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
-        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            &live_database(admin_url)
+        )
     );
-    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -2051,7 +2035,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
     })
     .expect("the plugin builds from the guest generation's url");
     let identity = |application: &str| SessionIdentity {
-        project_env_key: PROJECT_ENV_KEY.to_string(),
+        project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
         user_id: Some(LIVE_PRINCIPAL.to_string()),
         application: Some(application.to_string()),
         ..SessionIdentity::default()
@@ -2124,9 +2108,12 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot(pool: sqlx::PgPoo
     let admin_url = database.as_str();
     let role = format!(
         "wamn_app_{}",
-        wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
+        wamn_identity_protocol::app_identity_hash(
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            &live_database(admin_url)
+        )
     );
-    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -2151,7 +2138,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot(pool: sqlx::PgPoo
     pg.bind_session_identity(
         scope,
         &SessionIdentity {
-            project_env_key: PROJECT_ENV_KEY.to_string(),
+            project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
             user_id: Some(LIVE_PRINCIPAL.into()),
             ..SessionIdentity::default()
         },
@@ -2351,7 +2338,7 @@ async fn workflow_caller_retains_typed_connection_unavailable() -> anyhow::Resul
     let error = postgres
         .workflow_node_caller(
             "default",
-            "org--dev--a",
+            &"org--dev--a".parse().unwrap(),
             "00000000-0000-4000-8000-000000000081",
             "reader",
         )
@@ -2381,7 +2368,7 @@ async fn live_operation_reads_keep_identity_and_refuse_writes(pool: sqlx::PgPool
     const PROJECT: &str = "test--dev--identity-read";
     const SCOPE: &str = "identity-read";
     let database = wamn_test_postgres::url(&pool);
-    let guest = live_guest_url(database.as_str(), PROJECT).await;
+    let guest = live_guest_url(database.as_str(), &PROJECT.parse().unwrap()).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest)),
         guest_pool_max_size: 1,
@@ -2396,7 +2383,7 @@ async fn live_operation_reads_keep_identity_and_refuse_writes(pool: sqlx::PgPool
     pg.bind_request_element_session_identity(
         SCOPE,
         &SessionIdentity {
-            project_env_key: PROJECT.into(),
+            project_env_key: Some(PROJECT.parse().unwrap()),
             user_id: Some(LIVE_PRINCIPAL.into()),
             operation: Some("admin:read-probe".into()),
             application: Some("fixture".into()),

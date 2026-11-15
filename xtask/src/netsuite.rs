@@ -14,7 +14,7 @@ use tokio::process::Command;
 pub struct Args {
     credentials: PathBuf,
     project: String,
-    env: String,
+    env: wamn_registry::EnvName,
     application: String,
     host_url: String,
     record_id: String,

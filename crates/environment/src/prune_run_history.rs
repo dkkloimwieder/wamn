@@ -50,7 +50,7 @@ pub struct PruneRunHistoryRequest {
 
     pub org: String,
     pub project: String,
-    pub environment: String,
+    pub environment: wamn_registry::EnvName,
 
     /// Prune terminal runs whose `created_at` is older than this many days.
     pub retention_days: u32,
@@ -62,7 +62,7 @@ pub struct PruneRunHistoryRequest {
 
 impl PruneRunHistoryRequest {
     /// The composed environment key derived from the environment coordinate.
-    pub fn project_env_key(&self) -> String {
+    pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
         wamn_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
@@ -77,7 +77,7 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
             request.schema
         );
     }
-    if [&request.org, &request.project, &request.environment]
+    if [&request.org, &request.project]
         .iter()
         .any(|part| part.trim().is_empty())
     {
@@ -131,7 +131,7 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
 /// input that chose it establishes nothing.
 async fn verify_retention_identity(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<()> {
     let row =
         sqlx::query("SELECT current_user::text AS role, current_database()::text AS database")
@@ -168,7 +168,7 @@ async fn verify_retention_identity(
 pub async fn prune(
     client: &mut sqlx::PgConnection,
     schema: &str,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     retention_days: u32,
     apply: bool,
 ) -> anyhow::Result<u64> {

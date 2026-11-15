@@ -67,14 +67,14 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
             WorkloadRoleIdentity::ProjectEnvironment {
                 org: "file-fixture",
                 project: "files",
-                environment: "dev",
+                environment: &"dev".parse().unwrap(),
                 database: name,
             },
         ),
         (
             WorkloadRoleFamily::App,
             WorkloadRoleIdentity::ProjectEnvKey {
-                project_env_key: "files",
+                project_env_key: &"files--dev--project".parse().unwrap(),
                 database: name,
             },
         ),
@@ -331,7 +331,11 @@ pub async fn registry(
         .map(drop)?;
     for name in [project, "unenabled"] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&wamn_control_provision::test_database::seed_org_project_env_sql(org, name, "dev"))
+            (&wamn_control_provision::test_database::seed_org_project_env_sql(
+                org,
+                name,
+                &"dev".parse().unwrap(),
+            ))
                 .to_string(),
         ))
         .execute(&mut owner)
@@ -363,7 +367,7 @@ pub async fn registry(
             SystemReader::Connection,
             org,
             target_project,
-            "dev",
+            &"dev".parse().unwrap(),
             "file_registry",
         );
         sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -380,7 +384,7 @@ pub async fn registry(
         .map(drop)?;
         if mapped {
             sqlx::query("INSERT INTO wamn_authority.author_login_projects \
-                 (login_identity,project_env_key,org_id,project_id,environment) VALUES ($1,$2,$3,$4,'dev')").bind(&role).bind(&wamn_registry::project_env_key(org, target_project, "dev")).bind(&org).bind(&target_project).execute(&mut owner).await.map(|result| result.rows_affected())?;
+                 (login_identity,project_env_key,org_id,project_id,environment) VALUES ($1,$2,$3,$4,'dev')").bind(&role).bind(&wamn_registry::project_env_key(org, target_project, &"dev".parse().unwrap())).bind(&org).bind(&target_project).execute(&mut owner).await.map(|result| result.rows_affected())?;
         }
         let input = login(database.url(), &role)?;
         clients.push((connect(&input).await?, input));

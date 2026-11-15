@@ -102,7 +102,7 @@ pub fn generation(family: WorkloadRoleFamily, database: &str) -> String {
         WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
-            environment: ENV,
+            environment: &ENV.parse().unwrap(),
             database,
         },
     )

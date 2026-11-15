@@ -34,7 +34,7 @@ pub async fn configure(
             changes: platform.auth_changes().await?,
             org: triple.org.clone(),
             project: triple.project.clone(),
-            env: triple.env.as_str().into(),
+            env: triple.env.clone(),
             policy: Some(document.policy.clone()),
             target: document.target.clone(),
             disposable,

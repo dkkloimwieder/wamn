@@ -203,7 +203,7 @@ pub async fn analyse(
 /// changed row records the memory key of the release in `drops`.
 pub async fn write(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     digest: &wamn_digest::Digest,
     document: &EnvironmentDocument,
     bindings: &[Binding],

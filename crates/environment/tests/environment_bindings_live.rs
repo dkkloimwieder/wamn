@@ -42,7 +42,11 @@ async fn seed(client: &mut sqlx::PgConnection) {
         .map(drop)
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev"))
+        (&wamn_control_provision::test_database::seed_org_project_env_sql(
+            "acme",
+            "one",
+            &"dev".parse().unwrap(),
+        ))
             .to_string(),
     ))
     .execute(&mut *client)
@@ -167,7 +171,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions(pool: 
             .is_err()
     );
     doc = document();
-    doc.env = "other".into();
+    doc.env = "other".parse().unwrap();
     assert!(
         bindings::analyse(&mut client, &doc, &packages)
             .await
@@ -851,7 +855,7 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state(po
         .await
         .map(drop)
         .unwrap();
-    let observed = analyse::read_project(database.as_str(), "acme--dev--one")
+    let observed = analyse::read_project(database.as_str(), &"acme--dev--one".parse().unwrap())
         .await
         .unwrap()
         .unwrap();
@@ -863,14 +867,14 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state(po
         .map(drop)
         .unwrap();
     assert!(
-        analyse::read_project(database.as_str(), "acme--dev--one")
+        analyse::read_project(database.as_str(), &"acme--dev--one".parse().unwrap())
             .await
             .is_err()
     );
     let mut missing = url::Url::parse(database.as_str()).unwrap();
     missing.set_path("/unprovisioned_fixture");
     assert!(
-        analyse::read_project(missing.as_str(), "acme--dev--one")
+        analyse::read_project(missing.as_str(), &"acme--dev--one".parse().unwrap())
             .await
             .unwrap()
             .is_none()

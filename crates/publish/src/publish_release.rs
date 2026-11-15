@@ -62,7 +62,7 @@ SELECT canonical_bytes FROM catalog.releases \
 pub struct PublishReleaseManifest<'a> {
     pub org: &'a str,
     pub project: &'a str,
-    pub environment: &'a str,
+    pub environment: &'a wamn_registry::EnvName,
     pub packages: &'a BTreeSet<PackageCoordinate>,
     pub attachments: &'a BTreeMap<String, ServingAttachment>,
     /// Local development can use rebuilt dependencies after target validation.
@@ -72,7 +72,7 @@ pub struct PublishReleaseManifest<'a> {
 
 impl PublishReleaseManifest<'_> {
     /// The composed environment key derived from the environment coordinate.
-    pub fn project_env_key(&self) -> String {
+    pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
         wamn_registry::project_env_key(self.org, self.project, self.environment)
     }
 }
@@ -248,14 +248,14 @@ pub struct PublishReleaseRequest {
     pub org: String,
     pub project: String,
     /// Environment the release is published for.
-    pub environment: String,
+    pub environment: wamn_registry::EnvName,
     /// Available exact coordinates for the declared application packages.
     pub packages: Vec<PackageCoordinate>,
 }
 
 impl PublishReleaseRequest {
     /// The composed environment key derived from the environment coordinate.
-    pub fn project_env_key(&self) -> String {
+    pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
         wamn_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
@@ -493,10 +493,6 @@ async fn publish_candidate(
     release_artifact_base: &str,
     entry: Option<&EntryPublicationInputs<'_>>,
 ) -> anyhow::Result<PublishedRelease> {
-    ensure!(
-        !args.environment.is_empty(),
-        "environment must not be empty"
-    );
     let (_, application) = select_application(&args.applications, args.application.as_deref())?;
     let (coordinates, opened) =
         package_sources::open_application(registry, application, &args.packages).await?;
@@ -714,7 +710,7 @@ fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
 /// Read the canonical bytes of an installed release.
 pub async fn read_release(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     manifest_digest: &wamn_digest::Digest,
 ) -> Result<Option<Vec<u8>>, PublishManifestError> {
     sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
@@ -736,7 +732,7 @@ fn storage(context: &'static str, error: sqlx::Error) -> PublishManifestError {
 }
 
 fn descriptor_components(
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     packages: &[PackageCoordinate],
     opened: &[OpenedPackage],
 ) -> anyhow::Result<ReleaseComponents> {
@@ -850,8 +846,10 @@ mod tests {
             )
             .unwrap()
         };
-        let staging = publish("staging");
-        let production = publish("production");
+        let staging_env = "staging".parse().unwrap();
+        let production_env = "production".parse().unwrap();
+        let staging = publish(&staging_env);
+        let production = publish(&production_env);
         assert_eq!(staging.digest, production.digest);
     }
 
@@ -1389,15 +1387,15 @@ mod tests {
         .await
         .unwrap();
         let packages = [PackageCoordinate::new("base", "1.0.0").unwrap()];
-        let project = |project_env_key: &str| {
+        let project = |project_env_key: &wamn_registry::ProjectEnvKey| {
             let components =
                 descriptor_components(project_env_key, &packages, std::slice::from_ref(&opened))
                     .unwrap();
             let fact = &components.facts[&("base".to_owned(), "1.0.0".to_owned())][0];
             ServingComponent::project(fact, components.connections(fact).unwrap())
         };
-        let first = project("acme--dev--plant");
-        let second = project("acme--prod--plant");
+        let first = project(&"acme--dev--plant".parse().unwrap());
+        let second = project(&"acme--prod--plant".parse().unwrap());
         assert_eq!(first, second);
 
         let _ = std::fs::remove_dir_all(&root);

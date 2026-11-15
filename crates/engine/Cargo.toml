@@ -11,6 +11,7 @@ test-util = []
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
 
 [dependencies]
+wamn-registry.workspace = true
 wamn-digest.workspace = true
 # No `oci` feature here: the registry source lives in wamn-component-artifact.
 wash-runtime = { workspace = true }

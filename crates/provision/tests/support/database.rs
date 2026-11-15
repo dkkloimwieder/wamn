@@ -60,11 +60,11 @@ pub async fn system(database: &str) {
 }
 
 /// Seed one named organization, project and environment for authority tests.
-pub fn seed_org_project_env_sql(org: &str, project: &str, env: &str) -> String {
+pub fn seed_org_project_env_sql(org: &str, project: &str, env: &wamn_registry::EnvName) -> String {
     use postgres_protocol::escape::escape_literal;
     let org = escape_literal(org);
     let project = escape_literal(project);
-    let env = escape_literal(env);
+    let env = escape_literal(env.as_str());
     let actor = crate::PlatformComponent::Provisioning.principal_id();
     format!(
         "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{actor}','','fixture') ON CONFLICT(xid) DO NOTHING; \
@@ -81,7 +81,7 @@ pub async fn package_migration_input(
     input: impl AsRef<str>,
     org: &str,
     project: &str,
-    environment: &str,
+    environment: &wamn_registry::EnvName,
 ) -> anyhow::Result<String> {
     let input = input.as_ref();
     let options = wamn_postgres::connect_options(input).await?;
@@ -124,8 +124,8 @@ mod tests {
         system(database.as_str()).await;
         {
             let batches: &[&str] = &[
-                &seed_org_project_env_sql("acme", "orders", "dev"),
-                &seed_org_project_env_sql("other", "orders", "dev"),
+                &seed_org_project_env_sql("acme", "orders", &"dev".parse().unwrap()),
+                &seed_org_project_env_sql("other", "orders", &"dev".parse().unwrap()),
             ];
             let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
             for batch in batches {

@@ -14,7 +14,7 @@ pub struct ApiServiceArgs {
     #[arg(long)]
     pub project: String,
     #[arg(long)]
-    pub env: String,
+    pub env: wamn_registry::EnvName,
     #[arg(long)]
     pub name: String,
     #[arg(long)]
@@ -96,7 +96,7 @@ pub struct ProjectEnvMembershipArgs {
 
     /// Exact environment within the project.
     #[arg(long)]
-    pub env: String,
+    pub env: wamn_registry::EnvName,
 
     /// Existing user principal UUID from the system database.
     #[arg(long)]
@@ -283,7 +283,7 @@ mod tests {
         assert_eq!(args.host_url, "https://control.example");
         assert_eq!(args.token, "session");
         assert_eq!(args.project, "billing");
-        assert_eq!(args.env, "dev");
+        assert_eq!(args.env, "dev".parse().unwrap());
         assert_eq!(args.principal_id, "00112233-4455-6677-8899-aabbccddeeff");
     }
 

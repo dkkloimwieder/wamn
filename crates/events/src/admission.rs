@@ -15,7 +15,7 @@ pub struct ManualRunAdmission<'a> {
     pub package_id: &'a str,
     /// The release the host serves, as its manifest digest.
     pub manifest_digest: &'a wamn_digest::Digest,
-    pub environment: &'a str,
+    pub environment: &'a wamn_registry::EnvName,
     pub workflow_id: &'a str,
     pub workflow_version: i32,
     pub wiring_hash: &'a wamn_digest::Digest,
@@ -33,7 +33,7 @@ pub struct ManualRunAdmission<'a> {
 /// Admit a manual workflow run and its queue entry in one transaction.
 pub async fn admit_manual_run(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     run: &ManualRunAdmission<'_>,
 ) -> Result<ManualRunAdmitted, ProductionLeaseError> {
     admission::admit_run(
@@ -78,8 +78,8 @@ pub struct EnabledWorkflow {
 /// in `environment`, or none.
 pub async fn enabled_workflow(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
-    environment: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    environment: &wamn_registry::EnvName,
     application: &str,
     workflow_id: &str,
 ) -> anyhow::Result<Option<EnabledWorkflow>> {

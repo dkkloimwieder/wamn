@@ -61,7 +61,7 @@ impl std::error::Error for WorkflowConditionError {
 /// two different digests there refuse as ambiguous. A declared package the
 /// release does not carry refuses.
 pub fn resolve_workflow_components(
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     application_packages: &BTreeSet<String>,
     manifest: &ServingManifest,
     document: &WiringDocument,
@@ -144,7 +144,7 @@ fn ambiguous(node_id: &str) -> WorkflowConditionError {
 /// Condition `document` against the per-node facts of `manifest` and derive its
 /// hash. The hash is produced only on the far side of the condition.
 pub fn condition_workflow_document(
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     application_packages: &BTreeSet<String>,
     manifest: &ServingManifest,
     document: &WiringDocument,
@@ -204,7 +204,7 @@ mod tests {
     ) -> ServingComponent {
         let fact = AdmittedComponent {
             target: ComponentPackageCoordinate {
-                project_env_key: "t1".to_owned(),
+                project_env_key: "t1--dev--project".parse().unwrap(),
                 package_id: package.to_owned(),
                 package_version: "1.0.0".to_owned(),
             },
@@ -263,11 +263,22 @@ mod tests {
     fn an_application_operation_conditions_with_its_target() {
         let manifest = manifest(vec![component(APPLICATION, "data", ORDERS_GET, true)]);
         let document = document("data", ORDERS_GET);
-        let resolved =
-            resolve_workflow_components("t1", &packages(), &manifest, &document).unwrap();
+        let resolved = resolve_workflow_components(
+            &"t1--dev--project".parse().unwrap(),
+            &packages(),
+            &manifest,
+            &document,
+        )
+        .unwrap();
         assert_eq!(resolved["node"].target.package_version, "1.0.0");
         assert_eq!(
-            condition_workflow_document("t1", &packages(), &manifest, &document).unwrap(),
+            condition_workflow_document(
+                &"t1--dev--project".parse().unwrap(),
+                &packages(),
+                &manifest,
+                &document
+            )
+            .unwrap(),
             document.wiring_hash()
         );
     }
@@ -275,9 +286,13 @@ mod tests {
     #[test]
     fn a_platform_node_resolves_in_another_package() {
         let manifest = manifest(vec![component("palette", "jsonata", "map", false)]);
-        let resolved =
-            resolve_workflow_components("t1", &packages(), &manifest, &document("jsonata", "map"))
-                .unwrap();
+        let resolved = resolve_workflow_components(
+            &"t1--dev--project".parse().unwrap(),
+            &packages(),
+            &manifest,
+            &document("jsonata", "map"),
+        )
+        .unwrap();
         assert_eq!(resolved["node"].target.package_id, "palette");
     }
 
@@ -285,7 +300,7 @@ mod tests {
     fn an_operation_of_another_package_resolves_in_that_package() {
         let manifest = manifest(vec![component("palette", "data", PALETTE_GET, true)]);
         let resolved = resolve_workflow_components(
-            "t1",
+            &"t1--dev--project".parse().unwrap(),
             &packages(),
             &manifest,
             &document("data", PALETTE_GET),
@@ -298,11 +313,16 @@ mod tests {
     fn a_node_the_release_does_not_carry_refuses() {
         let manifest = manifest(vec![component(APPLICATION, "data", ORDERS_GET, true)]);
         for document in [document("data", "put"), document("other", ORDERS_GET)] {
-            condition_workflow_document("t1", &packages(), &manifest, &document)
-                .expect_err("a node absent from the release refuses");
+            condition_workflow_document(
+                &"t1--dev--project".parse().unwrap(),
+                &packages(),
+                &manifest,
+                &document,
+            )
+            .expect_err("a node absent from the release refuses");
         }
         condition_workflow_document(
-            "t1",
+            &"t1--dev--project".parse().unwrap(),
             &BTreeSet::from(["absent".to_owned()]),
             &manifest,
             &document("data", ORDERS_GET),
@@ -317,10 +337,20 @@ mod tests {
         let other = component_with_digest("palette", "jsonata", "map", false, '2');
         let manifest = manifest(vec![component(APPLICATION, "jsonata", "map", false), other]);
         let document = document("jsonata", "map");
-        let resolved =
-            resolve_workflow_components("t1", &packages(), &manifest, &document).unwrap();
+        let resolved = resolve_workflow_components(
+            &"t1--dev--project".parse().unwrap(),
+            &packages(),
+            &manifest,
+            &document,
+        )
+        .unwrap();
         assert_eq!(resolved["node"].target.package_id, APPLICATION);
-        resolve_workflow_components("t1", &BTreeSet::new(), &manifest, &document)
-            .expect_err("without the application's packages the node is ambiguous");
+        resolve_workflow_components(
+            &"t1--dev--project".parse().unwrap(),
+            &BTreeSet::new(),
+            &manifest,
+            &document,
+        )
+        .expect_err("without the application's packages the node is ambiguous");
     }
 }

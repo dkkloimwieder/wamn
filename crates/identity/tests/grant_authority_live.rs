@@ -49,7 +49,8 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
     let mut first = connect(database.as_str()).await?;
     let mut observer = connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&test_database::seed_org_project_env_sql("acme", "billing", "dev")).to_string(),
+        (&test_database::seed_org_project_env_sql("acme", "billing", &"dev".parse().unwrap()))
+            .to_string(),
     ))
     .execute(&mut first)
     .await
@@ -131,13 +132,20 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
     );
     assert!(
         !wamn_platform_identity::session_token::session_is_active(
-            &mut first, &claims, "billing", "dev"
+            &mut first,
+            &claims,
+            "billing",
+            &"dev".parse().unwrap()
         )
         .await?
     );
     assert!(
         !wamn_platform_identity::has_project_env_membership(
-            &mut first, &user, "acme", "billing", "dev"
+            &mut first,
+            &user,
+            "acme",
+            "billing",
+            &"dev".parse().unwrap()
         )
         .await?
     );
@@ -178,7 +186,8 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
     let mut system = connect(system_database.as_str()).await?;
     let mut target = connect(target_database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&test_database::seed_org_project_env_sql("acme", "billing", "dev")).to_string(),
+        (&test_database::seed_org_project_env_sql("acme", "billing", &"dev".parse().unwrap()))
+            .to_string(),
     ))
     .execute(&mut system)
     .await
@@ -204,8 +213,8 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
     let coordinate = ApplicationTarget {
         org: "acme",
         project: "billing",
-        env: "dev",
-        project_env_key: "acme--dev--billing",
+        env: &"dev".parse().unwrap(),
+        project_env_key: &"acme--dev--billing".parse().unwrap(),
     };
     for expected in [true, false] {
         let mut tx = system.begin().await?;
@@ -287,7 +296,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
     ] {
         write_user(
             &mut tx,
-            "test",
+            &"test--dev--project".parse().unwrap(),
             ApplicationUser {
                 principal_id: principal,
                 email,
@@ -298,11 +307,17 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
         .await?;
     }
     for role in ["delegated", "reader"] {
-        create_role(&mut tx, "test", role, &mut drops).await?;
+        create_role(
+            &mut tx,
+            &"test--dev--project".parse().unwrap(),
+            role,
+            &mut drops,
+        )
+        .await?;
     }
     mutate_grant(
         &mut tx,
-        "test",
+        &"test--dev--project".parse().unwrap(),
         GrantAuthority::Provisioning,
         GrantChange::UserRole {
             user_id: actor.to_string().as_str(),
@@ -314,7 +329,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
     .await?;
     mutate_grant(
         &mut tx,
-        "test",
+        &"test--dev--project".parse().unwrap(),
         GrantAuthority::Provisioning,
         GrantChange::Permission {
             role: "delegated",
@@ -327,7 +342,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
     for grant in [true, false] {
         let error = mutate_grant(
             &mut tx,
-            "test",
+            &"test--dev--project".parse().unwrap(),
             GrantAuthority::User(&actor),
             GrantChange::UserRole {
                 user_id: target.to_string().as_str(),
@@ -345,7 +360,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
     }
     mutate_grant(
         &mut tx,
-        "test",
+        &"test--dev--project".parse().unwrap(),
         GrantAuthority::User(&actor),
         GrantChange::Permission {
             role: "reader",
@@ -358,7 +373,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
     for reference in ["example:item/write", "wamn-control:permission/grant"] {
         let error = mutate_grant(
             &mut tx,
-            "test",
+            &"test--dev--project".parse().unwrap(),
             GrantAuthority::User(&actor),
             GrantChange::Permission {
                 role: "reader",

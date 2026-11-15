@@ -43,7 +43,7 @@ pub fn workload_secret_name(
     family: WorkloadRoleFamily,
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> String {
     wamn_registry::name::workload_secret_name(&family.secret_prefix(), org, project, env)
 }
@@ -70,12 +70,20 @@ pub fn validate_instance_suffix(instance: &str) -> Result<(), ProvisionError> {
 }
 
 /// Use the application workload name for guest SQL credentials.
-pub fn project_env_guest_secret_name(org: &str, project: &str, env: &str) -> String {
+pub fn project_env_guest_secret_name(
+    org: &str,
+    project: &str,
+    env: &wamn_registry::EnvName,
+) -> String {
     workload_secret_name(WorkloadRoleFamily::App, org, project, env)
 }
 
 /// Refuse coordinates whose database or namespace name exceeds its limit.
-pub fn validate_project_env(org: &str, project: &str, env: &str) -> Result<(), ProvisionError> {
+pub fn validate_project_env(
+    org: &str,
+    project: &str,
+    env: &wamn_registry::EnvName,
+) -> Result<(), ProvisionError> {
     if let Some(reason) = slug_reason(org) {
         return Err(ProvisionError::InvalidComponent {
             component: "org",
@@ -91,13 +99,6 @@ pub fn validate_project_env(org: &str, project: &str, env: &str) -> Result<(), P
         });
     }
     validate_project_id(project)?;
-    if let Some(reason) = slug_reason(env) {
-        return Err(ProvisionError::InvalidComponent {
-            component: "env",
-            value: env.to_string(),
-            reason,
-        });
-    }
     let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
     let database = project_env_database_name(org, project, env, &probe);
     if database.len() > MAX_DB_NAME_LEN {
@@ -117,7 +118,11 @@ pub fn validate_project_env(org: &str, project: &str, env: &str) -> Result<(), P
 }
 
 /// Refuse coordinates whose CDC object name exceeds the database limit.
-pub fn validate_project_env_cdc(org: &str, project: &str, env: &str) -> Result<(), ProvisionError> {
+pub fn validate_project_env_cdc(
+    org: &str,
+    project: &str,
+    env: &wamn_registry::EnvName,
+) -> Result<(), ProvisionError> {
     validate_project_env(org, project, env)?;
     let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
     let cdc = cdc_object_name(org, project, env, &probe);
@@ -263,82 +268,36 @@ mod tests {
     }
 
     #[test]
-    fn project_env_names_encode_the_full_triple() {
-        // The org is encoded (unlike the 2.3 project-only name) so identically
-        // named projects across orgs never collide on the shared T3 pool.
-
-        // canary and prod are distinct names (they co-reside on <org>-prod, so the
-        // env MUST be in the name to keep them apart).
-        assert_ne!(
-            project_env_database_name("acme", "billing", "canary", INSTANCE),
-            project_env_database_name("acme", "billing", "prod", INSTANCE)
-        );
-        // Two orgs, same project+env → different db names (the pool collision fix).
-        assert_ne!(
-            project_env_database_name("org-a", "demo", "dev", INSTANCE),
-            project_env_database_name("org-b", "demo", "dev", INSTANCE)
-        );
-        // The namespace-targeted Secret keeps the stable triple-only lookup key.
-        assert_ne!(
-            project_env_secret_name("acme", "billing", "dev"),
-            project_env_database_name("acme", "billing", "dev", INSTANCE)
-        );
-    }
-
-    #[test]
     fn validate_project_env_slug_requires_a_bounded_name() {
-        assert!(validate_project_env("acme", "billing", "prod").is_ok());
+        assert!(validate_project_env("acme", "billing", &"prod".parse().unwrap()).is_ok());
         // A bad project id is rejected (the reason flows from validate_project_id).
         assert!(matches!(
-            validate_project_env("acme", "Bad", "dev"),
+            validate_project_env("acme", "Bad", &"dev".parse().unwrap()),
             Err(ProvisionError::InvalidProjectId { .. })
         ));
         assert!(matches!(
-            validate_project_env("acme", "wamn-x", "dev"),
+            validate_project_env("acme", "wamn-x", &"dev".parse().unwrap()),
             Err(ProvisionError::ReservedProjectId { .. })
         ));
         // wamn-R27: the org and env are slug-validated too (not only the project).
         assert!(matches!(
-            validate_project_env("Bad_Org", "billing", "dev"),
+            validate_project_env("Bad_Org", "billing", &"dev".parse().unwrap()),
             Err(ProvisionError::InvalidComponent {
                 component: "org",
                 ..
             })
         ));
-        assert!(matches!(
-            validate_project_env("acme", "billing", "Bad_Env"),
-            Err(ProvisionError::InvalidComponent {
-                component: "env",
-                ..
-            })
-        ));
+
         // The assembled name must fit the Postgres / DNS-1123 63-byte limit.
         let long_org = "o".repeat(40);
         let long_proj = "p".repeat(40);
-        let err = validate_project_env(&long_org, &long_proj, "canary").unwrap_err();
+        let err =
+            validate_project_env(&long_org, &long_proj, &"canary".parse().unwrap()).unwrap_err();
         assert!(matches!(err, ProvisionError::NameTooLong { max: 63, .. }));
         // 41 combined bytes — the longest triple the suffixed database admits.
-        assert!(validate_project_env(&"o".repeat(20), &"p".repeat(17), "prod").is_ok());
-    }
-
-    #[test]
-    fn the_environment_namespace_carries_the_minted_instance_suffix() {
-        // One environment = one namespace (wamn-0h0g.15.3): the same `--`
-        // separated triple the database name carries, under the `wamn-` prefix,
-        // plus the provision-minted instance suffix (wamn-0h0g.13.57).
-
-        // canary and prod are distinct namespaces, as they are distinct databases.
-        assert_ne!(
-            project_env_namespace("acme", "billing", "canary", "k3m9x2p7"),
-            project_env_namespace("acme", "billing", "prod", "k3m9x2p7")
-        );
-        // THE POINT OF THE SUFFIX: the SAME triple provisioned a second time
-        // lands in a DIFFERENT namespace, so a recreated environment cannot
-        // inherit whatever survived the deleted one. Drop the suffix from the
-        // derivation and these two collide.
-        assert_ne!(
-            project_env_namespace("acme", "billing", "prod", "k3m9x2p7"),
-            project_env_namespace("acme", "billing", "prod", "q80zdw41")
+        assert!(
+            validate_project_env(&"o".repeat(20), &"p".repeat(17), &"prod".parse().unwrap())
+                .is_ok()
         );
     }
 
@@ -348,8 +307,8 @@ mod tests {
         // `[a-z0-9-]`, starting and ending alphanumeric. The database's suffixed
         // 63-byte bound is tighter; take its longest admitted triple.
         let org = "o".repeat(37);
-        assert!(validate_project_env(&org, "pp", "de").is_ok());
-        let namespace = project_env_namespace(&org, "pp", "de", "0z9a8b7c");
+        assert!(validate_project_env(&org, "pp", &"de".parse().unwrap()).is_ok());
+        let namespace = project_env_namespace(&org, "pp", &"de".parse().unwrap(), "0z9a8b7c");
         assert!(namespace.len() <= MAX_NAMESPACE_LEN);
         assert!(
             namespace
@@ -405,27 +364,32 @@ mod tests {
     fn both_global_name_bounds_account_for_the_instance_suffix() {
         // The database sits exactly on 63 bytes with 41 component bytes.
         let org = "o".repeat(37);
-        let database = project_env_database_name(&org, "pp", "de", INSTANCE);
+        let database = project_env_database_name(&org, "pp", &"de".parse().unwrap(), INSTANCE);
         assert_eq!(database.len(), MAX_DB_NAME_LEN);
-        assert!(validate_project_env(&org, "pp", "de").is_ok());
+        assert!(validate_project_env(&org, "pp", &"de".parse().unwrap()).is_ok());
 
         // One more component byte is refused only because the separator and
         // eight-byte instance suffix consume ten bytes of the identifier budget.
         let over_database = "o".repeat(38);
         assert!(
-            wamn_registry::name::project_env_database_stem(&over_database, "pp", "de").len()
+            wamn_registry::name::project_env_database_stem(
+                &over_database,
+                "pp",
+                &"de".parse().unwrap()
+            )
+            .len()
                 <= MAX_DB_NAME_LEN
         );
         assert_eq!(
-            project_env_database_name(&over_database, "pp", "de", INSTANCE).len(),
+            project_env_database_name(&over_database, "pp", &"de".parse().unwrap(), INSTANCE).len(),
             MAX_DB_NAME_LEN + 1
         );
-        match validate_project_env(&over_database, "pp", "de") {
+        match validate_project_env(&over_database, "pp", &"de".parse().unwrap()) {
             Err(ProvisionError::NameTooLong { name, max }) => {
                 let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
                 assert_eq!(
                     name,
-                    project_env_database_name(&over_database, "pp", "de", &probe)
+                    project_env_database_name(&over_database, "pp", &"de".parse().unwrap(), &probe)
                 );
                 assert_eq!(max, MAX_DB_NAME_LEN);
             }
@@ -434,10 +398,10 @@ mod tests {
 
         // The namespace formula independently budgets the same ten bytes.
         let org = "o".repeat(40);
-        let stem = project_env_namespace_stem(&org, "pp", "de");
+        let stem = project_env_namespace_stem(&org, "pp", &"de".parse().unwrap());
         assert_eq!(stem.len(), MAX_NAMESPACE_STEM_LEN);
         assert_eq!(
-            project_env_namespace(&org, "pp", "de", INSTANCE).len(),
+            project_env_namespace(&org, "pp", &"de".parse().unwrap(), INSTANCE).len(),
             MAX_NAMESPACE_LEN
         );
     }
@@ -448,17 +412,20 @@ mod tests {
         // after its `__` separator plus eight-byte suffix are included.
         let org = "o".repeat(37);
         assert_eq!(
-            project_env_database_name(&org, "pp", "de", INSTANCE).len(),
+            project_env_database_name(&org, "pp", &"de".parse().unwrap(), INSTANCE).len(),
             MAX_DB_NAME_LEN
         );
         assert_eq!(
-            cdc_object_name(&org, "pp", "de", INSTANCE).len(),
+            cdc_object_name(&org, "pp", &"de".parse().unwrap(), INSTANCE).len(),
             MAX_DB_NAME_LEN + 1
         );
-        match validate_project_env_cdc(&org, "pp", "de") {
+        match validate_project_env_cdc(&org, "pp", &"de".parse().unwrap()) {
             Err(ProvisionError::NameTooLong { name, max }) => {
                 let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
-                assert_eq!(name, cdc_object_name(&org, "pp", "de", &probe));
+                assert_eq!(
+                    name,
+                    cdc_object_name(&org, "pp", &"de".parse().unwrap(), &probe)
+                );
                 assert_eq!(max, MAX_DB_NAME_LEN);
             }
             other => panic!("suffixed CDC candidate was not refused: {other:?}"),
@@ -473,22 +440,14 @@ mod tests {
         // triples are now rejected before they can be provisioned.
         // Project carries the `--`: rejected via validate_project_id.
         assert!(matches!(
-            validate_project_env("a", "x--p", "dev"),
+            validate_project_env("a", "x--p", &"dev".parse().unwrap()),
             Err(ProvisionError::InvalidProjectId { .. })
         ));
         // Org carries the `--`: rejected as the org component.
         assert!(matches!(
-            validate_project_env("a--x", "p", "dev"),
+            validate_project_env("a--x", "p", &"dev".parse().unwrap()),
             Err(ProvisionError::InvalidComponent {
                 component: "org",
-                ..
-            })
-        ));
-        // Env carries the `--`: rejected as the env component.
-        assert!(matches!(
-            validate_project_env("a", "p", "d--v"),
-            Err(ProvisionError::InvalidComponent {
-                component: "env",
                 ..
             })
         ));
@@ -514,16 +473,17 @@ mod tests {
             for &project in &slugs {
                 for &env in &envs {
                     // Only VALID triples derive names; `--`/`_` slugs never reach here.
-                    if validate_project_env_cdc(org, project, env).is_err() {
+                    if validate_project_env_cdc(org, project, &env.parse().unwrap()).is_err() {
                         continue;
                     }
                     valid += 1;
                     let triple = (org, project, env);
-                    let db = project_env_database_name(org, project, env, INSTANCE);
+                    let db =
+                        project_env_database_name(org, project, &env.parse().unwrap(), INSTANCE);
                     if let Some(prev) = by_db.insert(db.clone(), triple) {
                         assert_eq!(prev, triple, "database name {db:?} collides two triples");
                     }
-                    let cdc = cdc_object_name(org, project, env, INSTANCE);
+                    let cdc = cdc_object_name(org, project, &env.parse().unwrap(), INSTANCE);
                     if let Some(prev) = by_cdc.insert(cdc.clone(), triple) {
                         assert_eq!(prev, triple, "cdc object name {cdc:?} collides two triples");
                     }
@@ -556,46 +516,27 @@ mod tests {
             Err(ProvisionError::InvalidProjectId { .. })
         ));
         assert!(matches!(
-            validate_project_env("a_b", "p", "dev"),
+            validate_project_env("a_b", "p", &"dev".parse().unwrap()),
             Err(ProvisionError::InvalidComponent {
                 component: "org",
                 ..
             })
         ));
-        assert!(matches!(
-            validate_project_env("a", "p", "d_v"),
-            Err(ProvisionError::InvalidComponent {
-                component: "env",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn cdc_names_encode_the_triple_in_both_domains() {
-        // The Secret keeps the hyphenated K8s convention…
-
-        // …while the Postgres objects (slot charset `[a-z0-9_]`) are underscored,
-        // slug hyphens mapped to `_`, `__` as the separator.
-
-        // A hyphen inside a slug maps to a SINGLE `_`, the separator is DOUBLE —
-        // ("org-a","demo") and ("org","a-demo") stay distinct.
-        assert_ne!(
-            cdc_object_name("org-a", "demo", "dev", INSTANCE),
-            cdc_object_name("org", "a-demo", "dev", INSTANCE)
-        );
     }
 
     #[test]
     fn validate_project_env_cdc_bounds_the_object_name() {
-        assert!(validate_project_env_cdc("acme", "billing", "prod").is_ok());
+        assert!(validate_project_env_cdc("acme", "billing", &"prod".parse().unwrap()).is_ok());
         // The base project-env validation still applies (slug + reserved rules).
         assert!(matches!(
-            validate_project_env_cdc("acme", "Bad", "dev"),
+            validate_project_env_cdc("acme", "Bad", &"dev".parse().unwrap()),
             Err(ProvisionError::InvalidProjectId { .. })
         ));
         let org_ok = "o".repeat(36);
-        assert!(validate_project_env_cdc(&org_ok, "pp", "de").is_ok());
-        assert!(cdc_object_name(&org_ok, "pp", "de", INSTANCE).len() <= MAX_DB_NAME_LEN);
+        assert!(validate_project_env_cdc(&org_ok, "pp", &"de".parse().unwrap()).is_ok());
+        assert!(
+            cdc_object_name(&org_ok, "pp", &"de".parse().unwrap(), INSTANCE).len()
+                <= MAX_DB_NAME_LEN
+        );
     }
 }

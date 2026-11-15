@@ -18,12 +18,12 @@ use crate::kv_memory::Deletion;
 pub enum AuthChange {
     /// The user row or the user roles of `principal` in `project_env_key`.
     Principal {
-        project_env_key: String,
+        project_env_key: wamn_registry::ProjectEnvKey,
         principal: String,
     },
     /// A role or a permission of `project_env_key`, which every principal holding the
     /// role reads, or the environment status of `project_env_key`.
-    ProjectEnvKey(String),
+    ProjectEnvKey(wamn_registry::ProjectEnvKey),
     /// A PAT, a login, a membership or the status of `principal`. These are
     /// facts of the organization, so they change the principal in every
     /// project.
@@ -36,14 +36,14 @@ pub enum AuthChange {
 pub struct AuthDrops(BTreeSet<AuthChange>);
 
 impl AuthDrops {
-    pub fn principal(&mut self, project_env_key: &str, principal: &str) {
+    pub fn principal(&mut self, project_env_key: &wamn_registry::ProjectEnvKey, principal: &str) {
         self.0.insert(AuthChange::Principal {
             project_env_key: project_env_key.to_owned(),
             principal: principal.to_owned(),
         });
     }
 
-    pub fn project_env_key(&mut self, project_env_key: &str) {
+    pub fn project_env_key(&mut self, project_env_key: &wamn_registry::ProjectEnvKey) {
         self.0
             .insert(AuthChange::ProjectEnvKey(project_env_key.to_owned()));
     }
@@ -72,14 +72,14 @@ pub const BUCKET: &str = "wamn-auth";
 
 /// The key of the grants of `principal` in the environment named `project_env_key`.
 /// This shared cache key stays targeted after the table project columns leave.
-pub fn principal_key(project_env_key: &str, principal: &str) -> String {
-    wamn_registry::name::nats_subject(&[project_env_key, principal])
+pub fn principal_key(project_env_key: &wamn_registry::ProjectEnvKey, principal: &str) -> String {
+    wamn_registry::name::nats_subject(&[project_env_key.as_str(), principal])
 }
 
 /// The key of the environment status of `project_env_key`. A principal id is a UUID,
 /// so it is never `environment`.
-pub fn project_env_key(project_env_key: &str) -> String {
-    wamn_registry::name::nats_subject(&[project_env_key, "environment"])
+pub fn environment_status_key(project_env_key: &wamn_registry::ProjectEnvKey) -> String {
+    wamn_registry::name::nats_subject(&[project_env_key.as_str(), "environment"])
 }
 
 /// The first token of the key of an identity fact. A project name holds only
@@ -110,7 +110,9 @@ impl crate::Changes for AuthDrops {
                         principal,
                     } => Deletion::Key(principal_key(&project_env_key, &principal)),
                     AuthChange::Identity(principal) => Deletion::Key(identity_key(&principal)),
-                    AuthChange::ProjectEnvKey(project_env_key) => Deletion::Under(project_env_key),
+                    AuthChange::ProjectEnvKey(project_env_key) => {
+                        Deletion::Under(project_env_key.to_string())
+                    }
                 })
                 .collect(),
         )

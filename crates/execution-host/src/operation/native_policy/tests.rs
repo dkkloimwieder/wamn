@@ -505,7 +505,7 @@ impl HostPlugin for Observe {
 fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
     AdmittedComponent {
         target: ComponentPackageCoordinate {
-            project_env_key: PROJECT_ENV_KEY.into(),
+            project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
             package_id: operation
                 .split_once(':')
                 .expect("qualified operation")
@@ -667,13 +667,16 @@ impl Fixture {
             LoadedRelease::load_canonical_bytes(
                 &manifest.canonical_bytes(),
                 "native policy fixture",
-                wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "test")
-                    .with_applications(
-                        serde_json::from_value(
-                            serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
-                        )
-                        .unwrap(),
-                    ),
+                wamn_engine::release_manifest::ReleaseTarget::new(
+                    PROJECT_ENV_KEY.parse().unwrap(),
+                    "test".parse().unwrap(),
+                )
+                .with_applications(
+                    serde_json::from_value(
+                        serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
+                    )
+                    .unwrap(),
+                ),
             )
             .expect("admit the exact release manifest"),
         );
@@ -687,9 +690,9 @@ impl Fixture {
             Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             &postgres,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             "test",
-            release.target().environment.as_str(),
+            &release.target().environment,
         ));
         let policy = new_native_policy(
             &native,
@@ -807,7 +810,7 @@ impl Fixture {
             facts: NativeFacts::entry(
                 NodeAcquisition {
                     identity: SessionIdentity {
-                        project_env_key: PROJECT_ENV_KEY.into(),
+                        project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
                         project: Some("test".into()),
                         release: Some(ReleaseIdentity::for_test(
                             self.policy.resources.release.manifest().digest(),
@@ -1009,7 +1012,10 @@ async fn run_case(pool: &sqlx::PgPool, case: Case) {
                 .identity
                 .as_ref()
                 .expect("execution has host identity");
-            assert_eq!(identity.project_env_key, PROJECT_ENV_KEY);
+            assert_eq!(
+                identity.project_env_key,
+                Some(PROJECT_ENV_KEY.parse().unwrap())
+            );
             if !matches!(case, Case::Cancellation) {
                 assert_eq!(
                     identity.user_id,
@@ -1378,13 +1384,16 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "validation fixture",
-            wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "test")
-                .with_applications(
-                    serde_json::from_value(
-                        serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
-                    )
-                    .unwrap(),
-                ),
+            wamn_engine::release_manifest::ReleaseTarget::new(
+                PROJECT_ENV_KEY.parse().unwrap(),
+                "test".parse().unwrap(),
+            )
+            .with_applications(
+                serde_json::from_value(
+                    serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
+                )
+                .unwrap(),
+            ),
         )
         .unwrap(),
     );
@@ -1420,13 +1429,16 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         LoadedRelease::load_canonical_bytes(
             &next_manifest.canonical_bytes(),
             "another release",
-            wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "test")
-                .with_applications(
-                    serde_json::from_value(
-                        serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
-                    )
-                    .unwrap(),
-                ),
+            wamn_engine::release_manifest::ReleaseTarget::new(
+                PROJECT_ENV_KEY.parse().unwrap(),
+                "test".parse().unwrap(),
+            )
+            .with_applications(
+                serde_json::from_value(
+                    serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
+                )
+                .unwrap(),
+            ),
         )
         .unwrap(),
     );

@@ -428,7 +428,7 @@ mod tests {
         let operation = "observer-fixture:audit/observe@3.0.0".to_owned();
         let component = AdmittedComponent {
             target: wamn_catalog::ComponentPackageCoordinate {
-                project_env_key: "org-a".to_owned(),
+                project_env_key: "org-a--dev--project".parse().unwrap(),
                 package_id: manifest.package.id.clone(),
                 package_version: manifest.package.version.clone(),
             },
@@ -542,7 +542,7 @@ mod tests {
     ) -> AdmittedComponent {
         AdmittedComponent {
             target: wamn_catalog::ComponentPackageCoordinate {
-                project_env_key: "org-a".to_owned(),
+                project_env_key: "org-a--dev--project".parse().unwrap(),
                 package_id: manifest.package.id.clone(),
                 package_version: manifest.package.version.clone(),
             },
@@ -668,7 +668,7 @@ mod tests {
                 declaration: ComponentDeclaration {
                     connections: Vec::new(),
                     target: ComponentPackageCoordinate {
-                        project_env_key: "org-a".to_owned(),
+                        project_env_key: "org-a--dev--project".parse().unwrap(),
                         package_id: "orders".to_owned(),
                         package_version: "1.0.0".to_owned(),
                     },

@@ -523,7 +523,11 @@ mod tests {
             .await?;
         let mut setup = crate::transaction::provisioning_transaction(&mut first).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", "dev"),
+            wamn_control_provision::test_database::seed_org_project_env_sql(
+                "acme",
+                "app",
+                &"dev".parse().unwrap(),
+            ),
         ))
         .execute(&mut *setup)
         .await?;

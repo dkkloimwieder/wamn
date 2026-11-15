@@ -187,7 +187,7 @@ impl ApplicationRoutes<'_> {
         }
         let manifest = self.release.manifest();
         let target = self.release.target();
-        let project_env_key = target.project_env_key.as_str();
+        let project_env_key = &target.project_env_key;
         let Some(declared) = target.applications.get(&request.application) else {
             return Err(start_refusal("application_not_declared", "application"));
         };
@@ -195,7 +195,7 @@ impl ApplicationRoutes<'_> {
         let packages = &declared.packages;
         let workflow = self
             .postgres
-            .executor_read(self.project, project_env_key, async |connection| {
+            .executor_read(self.project, async |connection| {
                 wamn_events::admission::enabled_workflow(
                     connection,
                     project_env_key,
@@ -250,7 +250,7 @@ impl ApplicationRoutes<'_> {
         let node_digests = Value::Object(node_digests);
         let admitted = self
             .postgres
-            .executor_write(self.project, project_env_key, async |connection| {
+            .executor_write(self.project, async |connection| {
                 wamn_events::admission::admit_manual_run(
                     connection,
                     project_env_key,
@@ -296,7 +296,7 @@ impl ApplicationRoutes<'_> {
                 .set_counter(attachment, principal, request_id, request)
                 .await;
         }
-        let project_env_key = self.release.target().project_env_key.as_str();
+        let project_env_key = &self.release.target().project_env_key;
         let mut drops = AuthDrops::default();
         let result = self
             .serve(attachment, principal, payload, project_env_key, &mut drops)
@@ -315,7 +315,7 @@ impl ApplicationRoutes<'_> {
         attachment: &HostAttachment,
         principal: &PrincipalId,
         payload: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         drops: &mut AuthDrops,
     ) -> Result<Value, Refusal> {
         match attachment.route.handler {
@@ -331,7 +331,7 @@ impl ApplicationRoutes<'_> {
                             &id,
                             org,
                             self.project,
-                            Some(self.release.target().environment.as_str()),
+                            Some(&self.release.target().environment),
                         )
                         .await?;
                         listed.push(json!({
@@ -495,7 +495,7 @@ impl ApplicationRoutes<'_> {
         let value = crate::number_counter::set_number_counter(
             self.postgres,
             self.project,
-            self.release.target().project_env_key.as_str(),
+            &self.release.target().project_env_key,
             principal.to_string().as_str(),
             &attachment.operation,
             request_id.unwrap_or_default(),
@@ -528,11 +528,10 @@ impl ApplicationRoutes<'_> {
         lock: bool,
         work: impl AsyncFnOnce(&mut Client) -> Result<Value, Refusal>,
     ) -> Result<Value, Refusal> {
-        let project_env_key = self.release.target().project_env_key.as_str();
+        let project_env_key = &self.release.target().project_env_key;
         self.postgres
             .administration_transaction(
                 self.project,
-                project_env_key,
                 principal,
                 &attachment.operation,
                 async |client| {

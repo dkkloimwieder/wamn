@@ -1941,6 +1941,7 @@ dependencies = [
  "wamn-digest",
  "wamn-event-wire",
  "wamn-record-history",
+ "wamn-registry",
  "wamn-scalar",
  "wit-parser 0.254.2",
 ]

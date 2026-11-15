@@ -143,7 +143,7 @@ pub enum ConnectionExecutionClosure {
     Candidate {
         /// The release the candidate resolves under, as its manifest digest.
         manifest_digest: wamn_digest::Digest,
-        environment: String,
+        environment: wamn_registry::EnvName,
         wiring_hash: wamn_digest::Digest,
         component: String,
         interface_version: String,
@@ -153,7 +153,7 @@ pub enum ConnectionExecutionClosure {
 
 /// A package release for host capability fixtures that execute no released component.
 #[cfg(any(test, feature = "test-util"))]
-pub fn test_release(project_env_key: &str) -> Arc<LoadedRelease> {
+pub fn test_release(project_env_key: &wamn_registry::ProjectEnvKey) -> Arc<LoadedRelease> {
     let manifest = ServingManifest::new(
         wamn_catalog::ServingRelease {
             packages: [
@@ -171,7 +171,10 @@ pub fn test_release(project_env_key: &str) -> Arc<LoadedRelease> {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "capability fixture",
-            wamn_engine::release_manifest::ReleaseTarget::new(project_env_key, "dev"),
+            wamn_engine::release_manifest::ReleaseTarget::new(
+                project_env_key.clone(),
+                "dev".parse().expect("valid fixture coordinate"),
+            ),
         )
         .expect("capability fixture release"),
     )

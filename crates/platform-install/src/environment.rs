@@ -42,7 +42,7 @@ pub fn publication_values(
     schemas: &[String],
 ) -> Value {
     json!({"publication":{"name":name,"cluster":cluster,"org":triple.org,"project":triple.project,"env":triple.env,
-        "database":wamn_control_provision::project_env_database_name(&triple.org,&triple.project,triple.env.as_str(),instance),
+        "database":wamn_control_provision::project_env_database_name(&triple.org,&triple.project,&triple.env,instance),
         "schemas":schemas,"publish":wamn_control_provision::sql::CDC_PUBLISH}})
 }
 

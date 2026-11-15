@@ -167,7 +167,7 @@ pub async fn status(
                     chart: revision.chart,
                 });
             let namespace = platform.target.namespace.as_str();
-            let host_name = super::ensure::environment_host_name(&triple.org, triple.env.as_str())?;
+            let host_name = super::ensure::environment_host_name(&triple.org, &triple.env)?;
             let observed = observe(namespace, &host_name, |path| async move {
                 let body = kubectl(platform, namespace, &["get", "--raw", &path], None).await?;
                 serde_json::from_str::<Value>(&body).with_context(|| format!("decode {path}"))
@@ -246,7 +246,7 @@ async fn stranded_runs(
         sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_STATUS_STRANDED_RUNS)
             .bind(&triple.org)
             .bind(&triple.project)
-            .bind(triple.env.as_str())
+            .bind(&triple.env)
             .fetch_optional(&mut system)
             .await
             .context("read the environment row")?
@@ -256,6 +256,6 @@ async fn stranded_runs(
     }
     let url = project_url(platform, triple).await?;
     let project_env_key =
-        wamn_control_provision::project_env_key(&triple.org, &triple.project, triple.env.as_str());
-    stranded(&url, &project_env_key, triple.env.as_str(), None, live).await
+        wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
+    stranded(&url, &project_env_key, &triple.env, None, live).await
 }

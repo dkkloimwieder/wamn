@@ -18,7 +18,7 @@ use wamn_registry::lifecycle_lock::LifecycleLock;
 async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
     let database = wamn_test_postgres::url(&pool);
     let url = database.as_str();
-    let prod = Triple::new("acme", "prod", "wms");
+    let prod = Triple::new("acme", "prod".parse().unwrap(), "wms");
 
     LifecycleLock::hold(
         wamn_postgres::connect(url).await.unwrap(),
@@ -43,7 +43,7 @@ async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
             );
             let other = LifecycleLock::acquire(
                 wamn_postgres::connect(url).await.unwrap(),
-                &Triple::new("acme", "dev", "wms"),
+                &Triple::new("acme", "dev".parse().unwrap(), "wms"),
             )
             .await?;
             other.release().await;
@@ -127,7 +127,7 @@ async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = false)]
 async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open(pool: sqlx::PgPool) {
     let database = wamn_test_postgres::url(&pool);
-    let triple = Triple::new("acme", "prod", "wms");
+    let triple = Triple::new("acme", "prod".parse().unwrap(), "wms");
     let mut tasks = JoinSet::new();
     let mut observer = wamn_postgres::connect(database.as_str()).await.unwrap();
     tasks.spawn(async move {});
@@ -206,7 +206,7 @@ async fn acquire(url: &str, triple: &Triple, application: Option<&str>) -> Lifec
 #[sqlx::test(migrations = false)]
 async fn lock_loss_cancels_the_protected_operation(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let database = wamn_test_postgres::url(&pool);
-    let triple = Triple::new("acme", "prod", "wms");
+    let triple = Triple::new("acme", "prod".parse().unwrap(), "wms");
     let mut observer = wamn_postgres::connect(database.as_str()).await?;
     let lock =
         LifecycleLock::acquire(wamn_postgres::connect(database.as_str()).await?, &triple).await?;

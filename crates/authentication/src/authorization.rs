@@ -197,26 +197,30 @@ pub fn held_grants(
 /// Host transport and authorization memory used by route authentication.
 #[async_trait::async_trait]
 pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
-    fn set_hierarchy_reader(&self, key: &str, reader: sqlx::PgPool);
+    fn set_hierarchy_reader(&self, key: &wamn_registry::ProjectEnvKey, reader: sqlx::PgPool);
     fn auth_cache(&self) -> &Arc<wamn_capability_authority::auth_cache::AuthCache>;
-    async fn environment_inactive(&self, project: &str, key: &str) -> anyhow::Result<bool>;
+    async fn environment_inactive(
+        &self,
+        project: &str,
+        key: &wamn_registry::ProjectEnvKey,
+    ) -> anyhow::Result<bool>;
     async fn session_operation_permissions(
         &self,
         project: &str,
-        key: &str,
+        key: &wamn_registry::ProjectEnvKey,
         roles: &[wamn_identity_protocol::RoleName],
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants>;
     async fn user_operation_permissions(
         &self,
         project: &str,
-        key: &str,
+        key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants>;
     async fn principal_grants(
         &self,
         project: &str,
-        key: &str,
+        key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<PrincipalGrants>;
 }

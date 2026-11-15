@@ -253,7 +253,7 @@ pub enum Claim {
 pub struct WriteLogStore {
     postgres: Arc<WamnPostgres>,
     project: String,
-    project_env_key: String,
+    project_env_key: wamn_registry::ProjectEnvKey,
 }
 
 fn require_open_claim(changed: bool) -> Result<(), PgError> {
@@ -269,7 +269,11 @@ fn require_open_claim(changed: bool) -> Result<(), PgError> {
 
 impl WriteLogStore {
     /// The write log of `project_env_key`'s database in `project`.
-    pub fn new(postgres: Arc<WamnPostgres>, project: String, project_env_key: String) -> Self {
+    pub fn new(
+        postgres: Arc<WamnPostgres>,
+        project: String,
+        project_env_key: wamn_registry::ProjectEnvKey,
+    ) -> Self {
         Self {
             postgres,
             project,

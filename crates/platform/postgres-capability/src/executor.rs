@@ -7,7 +7,6 @@ use wamn_run_state::run_store::{ProductionLeaseError, ProductionLeaseErrorType};
 
 /// Host identity for one executor transaction.
 struct ExecutorIdentity<'a> {
-    project_env_key: &'a str,
     schema: Option<&'a str>,
     runner: Option<&'a str>,
     user: Option<&'a str>,
@@ -20,13 +19,11 @@ impl WamnPostgres {
     pub async fn executor_read<T>(
         &self,
         project: &str,
-        project_env_key: &str,
         read: impl AsyncFnOnce(&mut sqlx::PgConnection) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         self.executor_transaction(
             project,
             ExecutorIdentity {
-                project_env_key,
                 schema: None,
                 runner: None,
                 user: None,
@@ -43,7 +40,6 @@ impl WamnPostgres {
     pub async fn executor_write<T, E>(
         &self,
         project: &str,
-        project_env_key: &str,
         write: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, E>,
     ) -> Result<T, E>
     where
@@ -54,7 +50,6 @@ impl WamnPostgres {
         self.executor_transaction(
             project,
             ExecutorIdentity {
-                project_env_key,
                 schema: Some("wamn_run"),
                 runner: None,
                 user: Some(&executor),
@@ -133,7 +128,6 @@ impl WamnPostgres {
             connection.connection(),
             AuthorityClass::ExecutorPlatform,
             read_only,
-            identity.project_env_key,
             identity.schema,
             identity.runner,
             None,
@@ -151,15 +145,10 @@ impl WamnPostgres {
 
 #[async_trait::async_trait]
 impl wamn_connections::database::ProjectDatabase for WamnPostgres {
-    async fn read_connection(
-        &self,
-        project: &str,
-        project_env_key: &str,
-    ) -> anyhow::Result<StatementConnectionGuard> {
+    async fn read_connection(&self, project: &str) -> anyhow::Result<StatementConnectionGuard> {
         self.open_executor_transaction(
             project,
             ExecutorIdentity {
-                project_env_key,
                 schema: None,
                 runner: None,
                 user: None,
@@ -191,7 +180,7 @@ impl wamn_connections::production_lease::ExecutorDatabase for WamnPostgres {
         &self,
         component: &str,
     ) -> Result<StatementConnectionGuard, ProductionLeaseError> {
-        let project_env_key = self.project_env_key_for(component).ok_or_else(|| {
+        self.project_env_key_for(component).ok_or_else(|| {
             ProductionLeaseError::new(
                 ProductionLeaseErrorType::Identity,
                 "resolve executor identity",
@@ -207,7 +196,6 @@ impl wamn_connections::production_lease::ExecutorDatabase for WamnPostgres {
         self.open_executor_transaction(
             &project,
             ExecutorIdentity {
-                project_env_key: &project_env_key,
                 schema: schema.as_deref(),
                 runner: runner.as_deref(),
                 user: user.as_deref(),
@@ -218,7 +206,7 @@ impl wamn_connections::production_lease::ExecutorDatabase for WamnPostgres {
         )
         .await
     }
-    fn project_env_key(&self, component: &str) -> Option<String> {
+    fn project_env_key(&self, component: &str) -> Option<wamn_registry::ProjectEnvKey> {
         self.project_env_key_for(component)
     }
     fn runner(&self, component: &str) -> Option<String> {
@@ -235,7 +223,7 @@ impl WamnPostgres {
     pub async fn application_connection(
         &self,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> anyhow::Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
         let (connection, _) = self
             .checkout_guest(project, project_env_key)
