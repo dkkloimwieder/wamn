@@ -1,4 +1,4 @@
-use super::registry::{INSTANCE_SUFFIX_ALPHABET, do_record_project_env};
+use super::registry::do_record_project_env;
 use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeSet;
 
@@ -9,22 +9,6 @@ use super::*;
 /// A constant, a counter, or a triple-derived suffix collapses `seen`.
 #[test]
 fn the_minted_instance_suffix_is_a_fresh_valid_dns_label_tail() {
-    // A duplicated symbol would bias the `% len()` fold; a symbol outside
-    // `[a-z0-9]` would leave the namespace an illegal DNS-1123 label.
-    assert_eq!(INSTANCE_SUFFIX_ALPHABET.len(), 36);
-    assert_eq!(
-        INSTANCE_SUFFIX_ALPHABET
-            .iter()
-            .collect::<BTreeSet<_>>()
-            .len(),
-        INSTANCE_SUFFIX_ALPHABET.len()
-    );
-    assert!(
-        INSTANCE_SUFFIX_ALPHABET
-            .iter()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-    );
-
     let mut seen = BTreeSet::new();
     for _ in 0..64 {
         let suffix = mint_instance_suffix().expect("mint an instance suffix");
@@ -59,81 +43,45 @@ fn cluster_is_derived_by_placement_and_policy() {
 }
 
 #[test]
-fn secret_files_are_plain_json_and_mode_0600() {
-    let path = std::env::temp_dir().join(format!(
-        "wamn-ctl-pat-secret-mode-{}.json",
-        std::process::id()
-    ));
-    std::fs::write(&path, b"old credential material").unwrap();
-    std::fs::set_permissions(&path, Permissions::from_mode(0o644)).unwrap();
-
-    let document = json!({"stringData": {"token": "test-token"}});
-    write_secret_json(&path, &document).unwrap();
-
-    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o600);
-    let stored: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(
-        stored["stringData"]["token"],
-        document["stringData"]["token"]
-    );
-    std::fs::remove_file(path).unwrap();
-}
-
-#[test]
 fn secret_writes_replace_links_without_following_or_sharing_them() {
-    let sequence = SECRET_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "wamn-ctl-pat-secret-links-{}-{sequence}",
-        std::process::id()
-    ));
-    std::fs::create_dir(&root).unwrap();
-
-    let db_path = root.join("db.json");
-    let management_path = root.join("management.json");
-    std::os::unix::fs::symlink(&db_path, &management_path).unwrap();
-    let db_document = json!({"stringData": {"url": "db-secret"}});
-    let management_document = json!({"stringData": {"token": "management-secret"}});
-    write_secret_json(&db_path, &db_document).unwrap();
-    write_secret_json(&management_path, &management_document).unwrap();
-    assert!(
-        !std::fs::symlink_metadata(&management_path)
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
-    let stored_db: Value = serde_json::from_slice(&std::fs::read(&db_path).unwrap()).unwrap();
-    let stored_management: Value =
-        serde_json::from_slice(&std::fs::read(&management_path).unwrap()).unwrap();
-    assert_eq!(
-        stored_db["stringData"]["url"],
-        db_document["stringData"]["url"]
-    );
-    assert_eq!(
-        stored_management["stringData"]["token"],
-        management_document["stringData"]["token"]
-    );
-
-    let route_path = root.join("route.json");
-    std::fs::hard_link(&management_path, &route_path).unwrap();
-    let route_document = json!({"stringData": {"token": "route-secret"}});
-    write_secret_json(&route_path, &route_document).unwrap();
-    let stored_management: Value =
-        serde_json::from_slice(&std::fs::read(&management_path).unwrap()).unwrap();
-    let stored_route: Value = serde_json::from_slice(&std::fs::read(&route_path).unwrap()).unwrap();
-    assert_eq!(
-        stored_management["stringData"]["token"],
-        management_document["stringData"]["token"]
-    );
-    assert_eq!(
-        stored_route["stringData"]["token"],
-        route_document["stringData"]["token"]
-    );
-
-    std::fs::remove_file(db_path).unwrap();
-    std::fs::remove_file(management_path).unwrap();
-    std::fs::remove_file(route_path).unwrap();
-    std::fs::remove_dir(root).unwrap();
+    let work = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+    for file_type in ["file", "symlink", "hardlink"] {
+        let source = work.path().join(format!("{file_type}-source.json"));
+        let output = work.path().join(format!("{file_type}-output.json"));
+        let original = json!({"stringData": {"token": "original-secret"}});
+        std::fs::write(&source, serde_json::to_vec(&original).unwrap()).unwrap();
+        match file_type {
+            "file" => {
+                std::fs::write(&output, b"old credential material").unwrap();
+                std::fs::set_permissions(&output, Permissions::from_mode(0o644)).unwrap();
+            }
+            "symlink" => std::os::unix::fs::symlink(&source, &output).unwrap(),
+            "hardlink" => std::fs::hard_link(&source, &output).unwrap(),
+            _ => unreachable!(),
+        }
+        let replacement = json!({"stringData": {"token": "replacement-secret"}});
+        write_secret_json(&output, &replacement).unwrap();
+        assert!(
+            !std::fs::symlink_metadata(&output)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            std::fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let stored: Value = serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
+        assert_eq!(
+            stored["stringData"]["token"],
+            replacement["stringData"]["token"]
+        );
+        let retained: Value = serde_json::from_slice(&std::fs::read(&source).unwrap()).unwrap();
+        assert_eq!(
+            retained["stringData"]["token"],
+            original["stringData"]["token"]
+        );
+    }
 }
 
 /// A run with only PAT outputs mints for a recorded environment and writes

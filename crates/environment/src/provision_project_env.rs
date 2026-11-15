@@ -52,9 +52,6 @@ pub use registry::{
     read_project_env_instance, read_project_env_policy, require_connected, resolve_cluster,
 };
 
-#[cfg(test)]
-use output::SECRET_TEMP_SEQUENCE;
-
 /// Inputs of one project-environment provisioning.
 ///
 /// An artifact path that is absent or `-` is not written; the outcome carries

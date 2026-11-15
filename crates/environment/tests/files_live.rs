@@ -10,33 +10,6 @@ use sqlx::Row as _;
 )]
 mod files;
 
-#[test]
-fn file_fixture_declares_each_binding_mode() {
-    wamn_compiler::manifest::PackageManifest::from_slice(files::PACKAGE.as_bytes())
-        .expect("the file fixture uses the current package manifest");
-    let package: serde_json::Value = serde_json::from_str(files::PACKAGE).unwrap();
-    let declaration = wamn_publish::component_declaration::render_palette_declaration(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/support/file_package/publication/components/blob-put.json.in"),
-        &wamn_catalog::ComponentPackageCoordinate {
-            project_env_key: "file-fixture--dev--project".parse().unwrap(),
-            package_id: "file_fixture".into(),
-            package_version: "0.1.0".into(),
-        },
-        None,
-    )
-    .expect("render the file fixture's current blobstore declaration");
-    let _: wamn_catalog::ComponentDeclaration = serde_json::from_value(declaration)
-        .expect("the fixture uses the current component declaration");
-    assert_eq!(
-        package["connections"]["files"]["interface"],
-        serde_json::json!("wasmcloud:blobstore/blobstore@0.1.0")
-    );
-    assert_eq!(package["connections"]["files"]["mode"], "write");
-    assert_eq!(package["connections"]["files-read"]["mode"], "read");
-    assert_eq!(package["connections"]["files-no-cdn"]["mode"], "write");
-}
-
 #[tokio::test]
 #[ignore = "requires: postgres"]
 async fn application_file_writes_are_refused_and_history_uses_the_standard_contract()

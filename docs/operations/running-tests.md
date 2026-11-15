@@ -1001,15 +1001,6 @@ The [pinned MinIO request parser](https://github.com/minio/minio/blob/76c06ff1d2
 The test installs a one-day lifecycle rule for staging only, then requires that live bytes and unlinked metadata stay.
 No clock change or external aged snapshot is required.
 
-The retained `file_fixture_live` test assembles the file package on disposable PostgreSQL without kind.
-It requires the `blob-put` component named in its prerequisite declaration.
-It asserts that the release has an HTTP role and an authored HTTP route.
-
-```bash
-cargo test --locked --offline -p wamn-environment --test file_fixture_live \
-  native_files::file_fixture_assembles_an_http_role_without_kind -- --ignored --exact
-```
-
 ## Application generation and SQLx
 
 Follow [test-database isolation](#test-database-isolation) before these database-backed commands.
