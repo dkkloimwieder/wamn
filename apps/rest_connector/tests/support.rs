@@ -7,7 +7,7 @@ use wamn_catalog::ComponentPackageCoordinate;
 use wamn_publish::component_admission::{
     AdmitComponentRequest, ComponentAdmission, admit_component,
 };
-use wamn_publish::component_declaration::{render_package_declaration, render_palette_declaration};
+use wamn_publish::component_declaration::render_package_declaration;
 
 pub fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -23,7 +23,6 @@ pub fn manifest(package: &Path) -> Value {
 pub fn admit(
     package: &Path,
     name: &str,
-    palette: Option<&str>,
     bases: BTreeSet<wamn_digest::Digest>,
 ) -> ComponentAdmission {
     let target = ComponentPackageCoordinate {
@@ -31,22 +30,18 @@ pub fn admit(
         package_id: manifest(package)["package"]["id"].as_str().unwrap().into(),
         package_version: "0.1.1".into(),
     };
-    let declaration = match palette {
-        Some(template) => {
-            render_palette_declaration(&repository().join(template), &target, None).unwrap()
-        }
-        None => render_package_declaration(package, name, &target.project_env_key).unwrap(),
-    };
+    let declaration = render_package_declaration(package, name, &target.project_env_key).unwrap();
     let rendered = std::env::temp_dir().join(format!(
         "rest-publication-{}-{name}-{}.json",
         target.package_id,
         std::process::id()
     ));
     std::fs::write(&rendered, serde_json::to_vec(&declaration).unwrap()).unwrap();
+    let component_bytes =
+        wamn_compiler::output_root(package).join(format!("components/{name}.wasm"));
     let admitted = admit_component(AdmitComponentRequest {
         package: package.into(),
-        component_bytes: wamn_compiler::output_root(package)
-            .join(format!("components/{name}.wasm")),
+        component_bytes,
         declaration: rendered.clone(),
         admitted_platform_packages: vec![
             "wamn:node".into(),
@@ -57,4 +52,27 @@ pub fn admit(
     });
     std::fs::remove_file(rendered).unwrap();
     admitted.unwrap_or_else(|error| panic!("admit {name}: {error:#}"))
+}
+
+/// Compile and seal the platform palette through the product builder.
+pub fn palette() -> Vec<wamn_publish::palette::PaletteComponent> {
+    let repository = repository();
+    let components = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(wamn_build::palette::build(&repository))
+    })
+    .join()
+    .expect("the palette compiler returns")
+    .expect("build the platform palette");
+    components
+        .into_iter()
+        .map(|component| wamn_publish::palette::PaletteComponent {
+            bytes: std::fs::read(component.file).expect("read the built palette component"),
+            facts: component
+                .declaration
+                .into_admitted(wamn_catalog::palette_target("rest--test--publication")),
+        })
+        .collect()
 }

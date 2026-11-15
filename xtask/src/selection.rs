@@ -1003,7 +1003,9 @@ impl Runner<'_> {
                 command.arg("--tests");
             }
             for target in selectors {
-                add_target(&mut command, target);
+                if target != "lib:" {
+                    add_target(&mut command, target);
+                }
             }
             let features: BTreeSet<_> =
                 targets.iter().flat_map(|target| &target.features).collect();

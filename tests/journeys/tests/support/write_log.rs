@@ -31,6 +31,7 @@ async fn counts(database: &mut sqlx::PgConnection, key: &str) -> anyhow::Result<
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
     let application = Application::prepare(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/platform_fixture"),

@@ -104,6 +104,7 @@ fn fixture(root: &Path) -> anyhow::Result<()> {
         + 1;
     let mut workspace = workspace;
     workspace.replace_range(start..end, "members = [\"../guests/modbus\"]");
+    std::fs::create_dir(root.join("apps"))?;
     std::fs::write(root.join("apps/Cargo.toml"), workspace)?;
     std::fs::copy(
         repository.join("apps/Cargo.lock"),
