@@ -83,7 +83,11 @@ async fn auth_drops_assign_project_role_records_the_changed_identity(pool: sqlx:
     .await
     .unwrap();
     let mut tx = provisioning_transaction(&mut client).await.unwrap();
-    sqlx::raw_sql("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('org', 'pooled', 'test'); INSERT INTO registry.projects (org, id) VALUES ('org', 'project')").execute(&mut *tx).await.map(drop).unwrap();
+    sqlx::raw_sql(wamn_registry::test_util::seed_pat_project_sql())
+        .execute(&mut *tx)
+        .await
+        .map(drop)
+        .unwrap();
     tx.commit().await.unwrap();
     let mut tx = provisioning_transaction(&mut client).await.unwrap();
     let mut drops = AuthDrops::default();

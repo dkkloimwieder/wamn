@@ -390,7 +390,14 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .execute(&mut admin)
     .await
     .map(drop)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;", wamn_control_provision::test_database::seed_org_project_env_sql("acme","apps","dev")))).execute(&mut admin).await.map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "BEGIN; SET LOCAL ROLE wamn_system; {} {} COMMIT;",
+        wamn_control_provision::test_database::seed_org_project_env_sql("acme", "apps", "dev"),
+        wamn_registry::test_util::activation_target_sql()
+    )))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
     let apply_input = wamn_test_infrastructure::credentials::apply_login(system.url()).await?;
     let mut platform = Platform {
         system_database_url: apply_input,
@@ -456,9 +463,23 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .map(drop)?;
     wamn_test_infrastructure::credentials::define(&mut tx, "acme", &json!({"project":"apps","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}), &store).await?;
     tx.commit().await?;
-    sql::initialize(&platform, &document, system.url(), Some("a"))
-        .await
-        .context("initialize a")?;
+    let project_admin = wamn_postgres::database_configuration(system.url(), &database_name)?;
+    let migration_input = wamn_control_provision::test_database::package_migration_input(
+        &project_admin,
+        &document.org,
+        &document.project,
+        &document.env,
+    )
+    .await?;
+    sql::initialize(
+        &platform,
+        &document,
+        system.url(),
+        &migration_input,
+        Some("a"),
+    )
+    .await
+    .context("initialize a")?;
     assert!(
         expand::prepare(
             &platform,
@@ -602,9 +623,15 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning),
     ))).execute(&mut observer).await.map(drop)?;
     let before_sql = continuity(&mut observer).await?;
-    sql::initialize(&platform, &document, system.url(), Some("a"))
-        .await
-        .context("retry initialization")?;
+    sql::initialize(
+        &platform,
+        &document,
+        system.url(),
+        &migration_input,
+        Some("a"),
+    )
+    .await
+    .context("retry initialization")?;
 
     assert_eq!(before_sql, continuity(&mut observer).await?);
     let principal = |name: &str| wamn_platform_identity::application_subject(PROJECT_ENV_KEY, name);

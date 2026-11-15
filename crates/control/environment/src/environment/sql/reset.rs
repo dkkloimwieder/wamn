@@ -115,8 +115,8 @@ pub async fn reset_deployed(
     let private = ensure::PrivateDirectory::create()?;
     let mut platform = platform.clone();
     super::super::runtime::resolve_target(&mut platform, &document, &private.path(".")).await?;
-    let lock = super::super::lock::LifecycleLock::acquire_wait(
-        &platform.system_database_url,
+    let lock = wamn_registry::lifecycle_lock::LifecycleLock::acquire_wait(
+        wamn_postgres::connect(&platform.system_database_url).await?,
         &document.triple(),
     )
     .await?;

@@ -75,7 +75,7 @@ async fn setup(
             ("http_basic", json!({})),
         )
         .await;
-    let id = sqlx::query("SELECT id FROM registry.connection WHERE project='project-a'")
+    let id = sqlx::query(wamn_registry::test_util::connection_fact_fixture_id_sql())
         .fetch_one(&mut fixture.admin)
         .await
         .unwrap()
@@ -93,7 +93,11 @@ async fn setup(
 }
 
 async fn assert_postgres_read(fixture: &mut Fixture, facts: &ConnectionFacts, id: &uuid::Uuid) {
-    sqlx::raw_sql("REVOKE EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid) FROM wamn_conn_reader").execute(&mut fixture.admin).await.map(drop).unwrap();
+    sqlx::raw_sql(wamn_registry::test_util::revoke_connection_fact_sql())
+        .execute(&mut fixture.admin)
+        .await
+        .map(drop)
+        .unwrap();
     let error = facts.connection(id).await.unwrap_err();
     assert_eq!(
         error
@@ -104,7 +108,11 @@ async fn assert_postgres_read(fixture: &mut Fixture, facts: &ConnectionFacts, id
             .as_deref(),
         Some("42501"),
     );
-    sqlx::raw_sql("GRANT EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid) TO wamn_conn_reader").execute(&mut fixture.admin).await.map(drop).unwrap();
+    sqlx::raw_sql(wamn_registry::test_util::grant_connection_fact_sql())
+        .execute(&mut fixture.admin)
+        .await
+        .map(drop)
+        .unwrap();
 }
 
 #[sqlx::test(migrations = false)]

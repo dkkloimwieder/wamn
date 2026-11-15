@@ -226,25 +226,11 @@ mod tests {
             .map(drop)
             .unwrap();
         }
-        sqlx::raw_sql(r"
-            UPDATE registry.meta SET platform_domain='example.invalid';
-            UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud');
-            INSERT INTO registry.external_system(org,project,name) VALUES ('acme','project-a','source'),('acme','project-b','source');
-            INSERT INTO registry.integration(org,project,name,integration_type,auth_type,status)
-            VALUES ('acme','project-a','disabled','http','none','disabled'),
-                   ('acme','project-a','active','http','none','active'),
-                   ('acme','project-b','active','http','none','active');
-            INSERT INTO identity.principals(id,type,subject,display_name)
-            SELECT gen_random_uuid(),'service','projection-' || row_number() OVER()::text,'projection' FROM registry.environment_projects WHERE org='acme';
-            INSERT INTO registry.connection(integration_id,org,project,env,integration_type,target_id,active_generation,service_principal_id)
-            SELECT i.id,i.org,i.project,e.env,i.integration_type,v.target_id,1,p.id
-            FROM registry.integration i JOIN registry.environment_projects e ON (e.org,e.project)=(i.org,i.project) JOIN registry.environments v ON (v.org,v.env)=(e.org,e.env)
-            JOIN LATERAL (SELECT id FROM identity.principals WHERE subject='projection-' ||
-                CASE WHEN i.project='project-b' THEN '3' WHEN e.env='prod' THEN '2' ELSE '1' END) p ON true
-            WHERE i.name=CASE WHEN i.project='project-a' THEN 'disabled' ELSE 'active' END;
-            INSERT INTO registry.connection_generation(connection_id,generation,created_at,created_by)
-            SELECT id,1,now(),'00000000-0000-4000-8000-000000000001' FROM registry.connection;
-        ").execute(&mut *source).await.map(drop).unwrap();
+        sqlx::raw_sql(wamn_registry::test_util::seed_connection_projection_sql())
+            .execute(&mut *source)
+            .await
+            .map(drop)
+            .unwrap();
         sqlx::raw_sql("SET LOCAL ROLE wamn_control")
             .execute(&mut *source)
             .await
@@ -263,7 +249,11 @@ mod tests {
         assert_eq!(other.connections.len(), 1);
         assert_eq!(other.connections[0].status, "active");
         assert_ne!(rows.connections[0].id, other.connections[0].id);
-        sqlx::raw_sql("SET LOCAL ROLE wamn_system; UPDATE registry.connection SET status='disabled' WHERE org='acme' AND project='project-b'; SET LOCAL ROLE wamn_control").execute(&mut *source).await.map(drop).unwrap();
+        sqlx::raw_sql(wamn_registry::test_util::disable_project_connection_sql())
+            .execute(&mut *source)
+            .await
+            .map(drop)
+            .unwrap();
         let disabled = super::projection(&mut source, "acme", "project-b", "dev")
             .await
             .unwrap();

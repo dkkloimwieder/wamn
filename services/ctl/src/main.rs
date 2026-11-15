@@ -20,8 +20,6 @@ enum Command {
     ProvisionOrg(provisioning_verbs::ProvisionOrgArgs),
     #[command(hide = true)]
     ProvisionIdentityIssuer(identity_verbs::IdentityIssuerArgs),
-    #[command(hide = true)]
-    Invite(identity_verbs::InviteArgs),
 }
 
 #[tokio::main]
@@ -39,6 +37,5 @@ async fn main() -> anyhow::Result<()> {
         Command::ProvisionSystem(args) => provisioning_verbs::provision_system(args).await,
         Command::ProvisionOrg(args) => provisioning_verbs::provision_org(args).await,
         Command::ProvisionIdentityIssuer(args) => identity_verbs::provision_issuer(args).await,
-        Command::Invite(args) => identity_verbs::invite(args).await,
     }
 }

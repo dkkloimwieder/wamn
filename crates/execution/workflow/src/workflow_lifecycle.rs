@@ -32,7 +32,7 @@ use wamn_registry::Triple;
 use crate::author_workflow::{
     AuthorWorkflowError, AuthorWorkflowErrorType, condition_against_release,
 };
-use wamn_platform_install::lifecycle_lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
+use wamn_registry::lifecycle_lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
 
 const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, true)";
 
@@ -259,7 +259,16 @@ async fn under_lock(
     triple: &Triple,
     verb: impl AsyncFnOnce() -> Result<(), WorkflowLifecycleError>,
 ) -> Result<(), WorkflowLifecycleError> {
-    match LifecycleLock::hold(system_url, triple, async |_| Ok(verb().await)).await {
+    let result = async {
+        LifecycleLock::hold(
+            wamn_postgres::connect(system_url).await?,
+            triple,
+            async |_| Ok(verb().await),
+        )
+        .await
+    }
+    .await;
+    match result {
         Ok(result) => result,
         Err(error) if error.to_string().starts_with(DEPLOYMENT_IN_PROGRESS) => {
             Err(WorkflowLifecycleError::new(

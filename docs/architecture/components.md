@@ -31,6 +31,8 @@ Its target names the package and version. Admission adds the environment coordin
 Publication readers do not merge authored declarations or resolve schema references.
 A component declaration records its operations, ports, effects, static SQL, and connection requirements.
 Admission derives effects from the actual imports and compares the declared operation facts.
+Admission matches each capability row by its exact package and version.
+The standard WASI rows admit `0.2.12` only. A different patch is refused.
 The component's complete admitted facts remain separate from its compiled bytes.
 After native resolution, the host replaces each application's linker with one built from its declared imports.
 It then binds declared capabilities before preparing dispatch, including components that match no native plugin interface.

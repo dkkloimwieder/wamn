@@ -19,8 +19,8 @@ use wamn_catalog::{
     ServingComponent, ServingManifest, ServingRelease, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_environment::environment::lock::LifecycleLock;
 use wamn_registry::Triple;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 use wamn_workflow::author_workflow::{
     AuthorWorkflowError, AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution,
     WorkflowTrigger, author_workflow,
@@ -385,9 +385,12 @@ async fn one_version_is_enabled_and_the_lock_refuses_while_held(pool: sqlx::PgPo
     assert_eq!(database.message(), "workflow-version-immutable");
 
     // A held lock refuses enable and disable, and the state stays.
-    let held = LifecycleLock::acquire(&fixture.project_url, &triple())
-        .await
-        .expect("hold the lifecycle lock");
+    let held = LifecycleLock::acquire(
+        wamn_postgres::connect(&fixture.project_url).await.unwrap(),
+        &triple(),
+    )
+    .await
+    .expect("hold the lifecycle lock");
     let refusal = fixture
         .enable("nightly", 1, BOB)
         .await

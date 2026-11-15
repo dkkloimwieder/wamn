@@ -1,4 +1,4 @@
-//! Collect aged file objects through the host's targeted readers.
+//! Reconcile staged files and collect aged live objects through targeted readers.
 
 use std::time::{Duration, SystemTime};
 
@@ -8,8 +8,7 @@ use crate::file_route::{FileConnection, FileRoutes};
 
 /// Run collection once an hour within the existing host refresh task.
 pub const COLLECTION_INTERVAL: Duration = Duration::from_hours(1);
-/// Keep a one-day safety window, as in the C4 staging lifecycle test.
-/// Upload commits metadata before promotion, so no live object precedes its row.
+/// Keep live objects for one day before orphan deletion.
 pub const MIN_OBJECT_AGE: Duration = Duration::from_hours(24);
 const BATCH_SIZE: usize = 100;
 
@@ -48,7 +47,7 @@ fn namespace(connection: &FileConnection) -> (String, String, String, String) {
 }
 
 impl FileRoutes {
-    /// Collect old canonical live objects with no exact row in their physical store.
+    /// Reconcile staging and collect old live objects against rows in their physical store.
     /// Listing stays within this environment's segment, including shared stores.
     /// Failed reads refuse deletion. Each store failure is logged and other stores continue.
     pub async fn collect_orphan_files(&self) -> anyhow::Result<u64> {
@@ -61,7 +60,8 @@ impl FileRoutes {
         else {
             return Ok(0);
         };
-        let cutoff = SystemTime::now() - MIN_OBJECT_AGE;
+        let now = SystemTime::now();
+        let cutoff = now - MIN_OBJECT_AGE;
         let generations = self.connections.generations().await?;
         let mut visited = std::collections::HashSet::new();
         let mut deleted = 0;
@@ -73,14 +73,14 @@ impl FileRoutes {
             }
             let result = async {
                 let store = self.blobstore.file_store(&self.context, &connection.name, false, tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION).await?;
-                let mut batches = store.live_objects().await?.try_filter(|object| std::future::ready(object.last_modified < cutoff)).try_chunks(BATCH_SIZE);
+                let mut batches = store.live_objects().await?.try_chunks(BATCH_SIZE);
                 while let Some(batch) = batches.next().await {
                     let batch = batch.map_err(|error| error.1)?;
                     let keys: Vec<_> = batch.iter().map(|object| object.blob_key.clone()).collect();
                     let rows = reader.rows(&keys).await?;
                     for object in batch {
-                        let present = rows.iter().any(|(id, key)| key == &object.blob_key && generations.iter().find(|pin| &pin.id == id).is_none_or(|pin| namespace(pin) == location));
-                        if !present && store.delete_collected(&object, cutoff).await? {
+                        let row_blob_key = rows.iter().find(|(id, key)| key == &object.blob_key && generations.iter().find(|pin| &pin.id == id).is_none_or(|pin| namespace(pin) == location)).map(|(_, key)| key.as_str());
+                        if store.reconcile_collected(&object, row_blob_key, cutoff, now).await? {
                             deleted += 1;
                             tracing::info!(object_key = object.object_key(), connection_id = %connection.id, generation = connection.generation, "file collector deleted orphan object");
                         }

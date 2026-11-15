@@ -29,16 +29,16 @@ impl ExpectedDatabase {
         platform: &Platform,
         document: &EnvironmentDocument,
         exclusive: bool,
-    ) -> anyhow::Result<super::lock::LifecycleLock> {
+    ) -> anyhow::Result<wamn_registry::lifecycle_lock::LifecycleLock> {
         let lock = if exclusive {
-            super::lock::LifecycleLock::acquire_wait(
-                &platform.system_database_url,
+            wamn_registry::lifecycle_lock::LifecycleLock::acquire_wait(
+                wamn_postgres::connect(&platform.system_database_url).await?,
                 &document.triple(),
             )
             .await?
         } else {
-            super::lock::LifecycleLock::acquire_shared(
-                &platform.system_database_url,
+            wamn_registry::lifecycle_lock::LifecycleLock::acquire_shared(
+                wamn_postgres::connect(&platform.system_database_url).await?,
                 &document.triple(),
             )
             .await?
@@ -60,11 +60,13 @@ impl ExpectedDatabase {
 }
 
 /// Initialize project state and absent package baselines after CNPG creates the database.
+/// Package SQL uses the separately authenticated migration connection.
 /// Committed package records survive a later failure and prevent SQL replay.
 pub async fn initialize(
     platform: &Platform,
     document: &EnvironmentDocument,
     admin_url: &str,
+    migration_database_url: &str,
     application: Option<&str>,
 ) -> anyhow::Result<()> {
     let document = analyse::select_application(document, application)?;
@@ -89,7 +91,15 @@ pub async fn initialize(
             .await?;
     platform.auth_changes().await?.publish(drops).await;
     let installed = stage::installed(platform, &document).await?;
-    stage::initialize(platform, &document, &installed, &manifest, &project_url).await?;
+    stage::initialize(
+        platform,
+        &document,
+        &installed,
+        &manifest,
+        &project_url,
+        migration_database_url,
+    )
+    .await?;
     Ok(())
 }
 

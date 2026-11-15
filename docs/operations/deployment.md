@@ -644,25 +644,11 @@ Set `inviteUrl` to the web client base, for example `https://receiving.wamn.dev`
 The invitation mail links to `<inviteUrl>/invite#<code>`.
 The reset mail links to `<inviteUrl>/reset#<secret>`.
 If `inviteUrl` is empty, each mail shows the code.
-An operator provisions the first admin of an org with `wamn-ctl invite`, which uses the operator certificate flags of the PAT mint.
-It is the one SQL membership path, and it runs as the Provisioning platform principal.
-If the org already has an active org admin, the command refuses and names `user.invite`, the route for every later invitation.
-The command runs three steps:
-
-1. Identity creates the user of the email, or reuses the user that has it. Identity refuses a disabled user.
-2. One system database transaction, as `wamn_system` stamped `wamn:provisioning`, writes the active org membership and the requested grants.
-3. Identity mails the invitation only when the user has no password. The command prints only identity's reply.
-
-`--org-admin` and each `--project-admin` write the rows that `org_admin.grant` and `project_admin.grant` write.
-Each `--membership <project>/<env>` writes one environment membership.
-`--org-admin` is required. `--project-admin` and `--membership` are optional and can repeat:
-
-```bash
-wamn-ctl invite --email <email> --display-name <name> --org <org> \
-  --org-admin [--project-admin <project>]... [--membership <project>/<env>]... \
-  --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --pat-issuer <identity URL> \
-  --pat-server-ca <identity CA> --pat-client-cert <operator certificate> --pat-client-key <operator key>
-```
+Platform installation creates or reuses the initial owner through identity's `POST /users`.
+It writes the owner's active membership and administrator grant through the identity library.
+It then calls identity's `POST /invitations` with the operator certificate.
+It skips the request when the owner has a password or an unexpired invitation.
+Later invitations use the `user.invite` control route.
 
 Restart the Deployment after changing the credential, sender, or operator CA.
 CloudNativePG manages the issuer login and its basic-auth Secret. `provision-identity-issuer` publishes its public connection configuration.

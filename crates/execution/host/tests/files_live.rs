@@ -437,6 +437,13 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         .with_allow_http(true)
         .build()?;
     let client = fixture.minio.client()?;
+    let committed = fixture.upload("files", b"committed staging").await?;
+    let committed_live = Path::from(format!("generation-one/dev/_wamn_files/live/{committed}"));
+    let committed_staging = Path::from(format!(
+        "generation-one/dev/_wamn_files/staging/{committed}"
+    ));
+    backend.copy(&committed_live, &committed_staging).await?;
+    backend.delete(&committed_live).await?;
     let malformed = [
         "dev/_wamn_files/live/not-a-uuid".to_owned(),
         format!("dev/public/_wamn_files/live/{kept}/extra"),
@@ -640,6 +647,14 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         .execute(&mut fixture.writer)
         .await
         .map(drop)?;
+    assert!(matches!(
+        backend.head(&committed_staging).await,
+        Err(object_store::Error::NotFound { .. })
+    ));
+    assert_eq!(
+        backend.get(&committed_live).await?.bytes().await?.as_ref(),
+        b"committed staging"
+    );
     for (key, _) in &aged {
         let path = Path::from(format!("generation-one/{key}"));
         if key.ends_with(&orphan.to_string()) || batch_orphans.contains(key) {

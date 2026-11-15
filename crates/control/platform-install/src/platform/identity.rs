@@ -192,7 +192,7 @@ pub async fn initialize(
             .any(|key| key["kid"] == active["kid"] && key["x"] == active["x"])),
         "identity does not serve its active session key"
     );
-    invite_owner(target, document, chart, directory, &ca).await?;
+    invite_owner(target, document, directory, &ca).await?;
     if document.provider == Provider::Kind {
         println!(
             "Local access: run kind export kubeconfig --name {} first.\nLocal invitation file (no email delivery): kubectl --context '{}' -n {} exec deployment/identity -c identity -- cat {LOCAL_MAIL}",
@@ -204,10 +204,37 @@ pub async fn initialize(
     Ok(())
 }
 
+async fn owner_invitation<'a>(
+    connection: &'a mut sqlx::PgConnection,
+    org: &str,
+    email: &str,
+) -> anyhow::Result<sqlx::Transaction<'a, sqlx::Postgres>> {
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut *connection)
+        .await?;
+    let mut transaction = crate::transaction::provisioning_transaction(connection).await?;
+    wamn_registry::deployment::lock_org(&mut transaction, org).await?;
+    let has_admin: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT FROM identity.org_roles r \
+         JOIN identity.org_memberships m USING (principal_id, org) \
+         JOIN identity.principals p ON p.id=r.principal_id \
+         WHERE r.org=$1 AND r.role='org-admin' AND m.status='active' \
+         AND p.status='active' AND p.email<>lower(btrim($2)))",
+    )
+    .bind(org)
+    .bind(email)
+    .fetch_one(&mut *transaction)
+    .await?;
+    ensure!(
+        !has_admin,
+        "org {org} already has an active org admin; use user.invite"
+    );
+    Ok(transaction)
+}
+
 async fn invite_owner(
     target: &Target,
     document: &ClusterDocument,
-    chart: &SelectedChart,
     directory: &Path,
     ca: &SecretData,
 ) -> anyhow::Result<()> {
@@ -218,13 +245,14 @@ async fn invite_owner(
     let forward =
         super::database::forward(&platform, &document.org, "wamn-pg", "wamn_system").await?;
     let mut connection = wamn_postgres::connect(&forward.input).await?;
+    let mut transaction =
+        owner_invitation(&mut connection, &document.org, &document.owner_email).await?;
     let enrolled:bool=sqlx::query_scalar("SELECT EXISTS(SELECT FROM identity.principals p WHERE p.type='user' AND p.email=lower(btrim($1)) AND (EXISTS(SELECT FROM identity.password_credentials c WHERE c.principal_id=p.id) OR EXISTS(SELECT FROM identity.password_tokens t WHERE t.principal_id=p.id AND t.purpose='invitation' AND t.consumed_at IS NULL AND t.expires_at>clock_timestamp())))")
-        .bind(&document.owner_email).fetch_one(&mut connection).await?;
+        .bind(&document.owner_email).fetch_one(&mut *transaction).await?;
     if enrolled {
+        transaction.commit().await?;
         return Ok(());
     }
-    drop(connection);
-    drop(forward);
     let operator: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -234,39 +262,68 @@ async fn invite_owner(
     )
     .await?
     .context("missing identity operator Secret")?;
-    let (mut invitation, files) = invitation_job(document, chart.image("ctl")?, &operator, ca)?;
-    super::bootstrap::administrator(&mut invitation, &document.org)?;
-    job::run(&platform, directory, &mut invitation, &mut [files]).await?;
+    let (mut user, files) = operator_job(
+        document,
+        "users",
+        &json!({"email":document.owner_email,"display_name":document.owner_email}),
+        &operator,
+        ca,
+    )?;
+    let response = job::run(&platform, directory, &mut user, &mut [files]).await?;
+    let user: wamn_identity_protocol::wire::UserResponse =
+        serde_json::from_str(&response).context("decode the initial owner's identity")?;
+    wamn_platform_identity::org::invite_member(
+        &mut transaction,
+        &user.principal_id,
+        &document.org,
+        &wamn_platform_identity::org::MemberGrants {
+            org_admin: true,
+            ..Default::default()
+        },
+    )
+    .await?;
+    transaction.commit().await?;
+    drop(connection);
+    drop(forward);
+    if !user.enrolled {
+        let (mut invitation, files) = operator_job(
+            document,
+            "invitations",
+            &json!({"principal_id":user.principal_id}),
+            &operator,
+            ca,
+        )?;
+        job::run(&platform, directory, &mut invitation, &mut [files]).await?;
+    }
     Ok(())
 }
 
-fn invitation_job(
+fn operator_job(
     document: &ClusterDocument,
-    image: &str,
+    route: &str,
+    body: &Value,
     operator: &SecretData,
     ca: &SecretData,
 ) -> anyhow::Result<(Value, Secret)> {
     let mut job = job::manifest(
-        &format!("platform-invite-{}", document.org),
-        image,
-        &["/usr/local/bin/wamn-ctl"],
+        &format!("platform-owner-{route}-{}", document.org),
+        CURL_IMAGE,
+        &["curl"],
         &[
-            "invite",
-            "--org",
-            &document.org,
-            "--email",
-            &document.owner_email,
-            "--display-name",
-            &document.owner_email,
-            "--org-admin",
-            "--pat-issuer",
-            &issuer(&document.org),
-            "--pat-client-cert",
-            "/inputs/tls.crt",
-            "--pat-client-key",
-            "/inputs/tls.key",
-            "--pat-server-ca",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--cacert",
             "/inputs/ca.crt",
+            "--cert",
+            "/inputs/tls.crt",
+            "--key",
+            "/inputs/tls.key",
+            "--header",
+            "Content-Type: application/json",
+            "--data",
+            &body.to_string(),
+            &format!("{}/{route}", issuer(&document.org)),
         ],
     );
     let files = job::files(
@@ -278,22 +335,7 @@ fn invitation_job(
         ]
         .into(),
     );
-    job::environment(
-        &mut job,
-        &[
-            ("WAMN_NATS_URL", NATS_URL),
-            ("WAMN_NATS_TLS_CA", "/etc/wamn/nats/ca.crt"),
-            ("WAMN_NATS_TLS_CERT", "/etc/wamn/nats/tls.crt"),
-            ("WAMN_NATS_TLS_KEY", "/etc/wamn/nats/tls.key"),
-        ],
-    );
-    job::mount(
-        &mut job,
-        "nats",
-        "wamn-ctl-nats",
-        "/etc/wamn/nats",
-        &["ca.crt", "tls.crt", "tls.key"],
-    );
+    job["spec"]["template"]["spec"]["securityContext"] = json!({"runAsUser":0});
     Ok((job, files))
 }
 
@@ -467,6 +509,63 @@ fn key_activate_job(image: &str, kid: &str, namespace: &str) -> Value {
 mod tests {
     use super::*;
     use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    #[sqlx::test(migrations = false)]
+    async fn owner_invitation_serializes_and_refuses_a_different_active_admin(
+        pool: sqlx::PgPool,
+    ) -> anyhow::Result<()> {
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_test_postgres::url(&pool);
+        wamn_control_provision::test_database::system(database.as_str()).await;
+        let mut first = wamn_postgres::connect(database.as_str()).await?;
+        sqlx::raw_sql("SET ROLE wamn_system")
+            .execute(&mut first)
+            .await?;
+        let mut setup = crate::transaction::provisioning_transaction(&mut first).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", "dev"),
+        ))
+        .execute(&mut *setup)
+        .await?;
+        let owner =
+            wamn_platform_identity::create_or_reuse_user(&mut setup, "owner@example.test", "Owner")
+                .await?;
+        setup.commit().await?;
+
+        let mut transaction = owner_invitation(&mut first, "acme", "owner@example.test").await?;
+        {
+            let mut second = wamn_postgres::connect(database.as_str()).await?;
+            let waiting = owner_invitation(&mut second, "acme", "other@example.test");
+            tokio::pin!(waiting);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(100), &mut waiting)
+                    .await
+                    .is_err()
+            );
+            wamn_platform_identity::org::invite_member(
+                &mut transaction,
+                &owner.principal_id,
+                "acme",
+                &wamn_platform_identity::org::MemberGrants {
+                    org_admin: true,
+                    ..Default::default()
+                },
+            )
+            .await?;
+            transaction.commit().await?;
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_secs(5), waiting)
+                    .await?
+                    .is_err()
+            );
+        }
+        // The same owner can resume an incomplete bootstrap, including folded email spelling.
+        owner_invitation(&mut first, "acme", " Owner@Example.test ")
+            .await?
+            .rollback()
+            .await?;
+        Ok(())
+    }
 
     #[test]
     fn a_secret_manager_key_refuses_empty_and_whitespace_without_printing_it() {

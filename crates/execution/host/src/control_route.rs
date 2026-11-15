@@ -7,7 +7,7 @@
 //! one transaction on the org's `control` login, binds `app.user_id` to the
 //! caller and `app.operation` to the route's sealed operation id, and tests
 //! the role again inside it. The writes are the functions of
-//! `wamn_platform_identity::org`, which `wamn-ctl invite` also calls, so no
+//! `wamn_platform_identity::org`, which platform installation also calls, so no
 //! second writer exists.
 //!
 //! A write that changes administrative authority or membership also changes the

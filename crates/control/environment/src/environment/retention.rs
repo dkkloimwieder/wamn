@@ -7,8 +7,9 @@ use sqlx::{Connection as _, Row as _};
 use wamn_compiler::manifest::PackageManifest;
 use wamn_postgres::connect;
 use wamn_registry::Triple;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 
-use super::{Platform, document::EnvironmentDocument, lock::LifecycleLock};
+use super::{Platform, document::EnvironmentDocument};
 
 /// Remove unused cached releases and their generated permissions under environment exclusion.
 /// Unfinished runs and live hosts keep their release facts. Status reports stranded runs.
@@ -16,7 +17,7 @@ use super::{Platform, document::EnvironmentDocument, lock::LifecycleLock};
 /// # Errors
 /// Refuses unreadable host state, corrupt artifacts, uncertain role ownership, or lock loss.
 pub async fn prune(platform: &Platform, triple: &Triple) -> anyhow::Result<Vec<String>> {
-    LifecycleLock::hold(&platform.system_database_url, triple, async |_| {
+    LifecycleLock::hold(wamn_postgres::connect(&platform.system_database_url).await?, triple, async |_| {
         let document = EnvironmentDocument::read_serving(platform, triple).await?;
         let residency = super::drain::observe(platform,triple).await?;
         let live = super::drain::loaded(&residency);

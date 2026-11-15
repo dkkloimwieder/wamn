@@ -11,7 +11,6 @@ pub mod drain;
 pub mod ensure;
 pub mod expand;
 pub mod lifecycle;
-pub mod lock;
 pub mod operation;
 pub mod readiness;
 pub mod retention;
@@ -333,8 +332,8 @@ pub async fn apply(
     let document = EnvironmentDocument::compile(file)?;
     let mut platform = platform.clone();
     let control = runtime::resolve_platform(&mut platform, &document.org).await?;
-    lock::LifecycleLock::hold(
-        &platform.system_database_url,
+    wamn_registry::lifecycle_lock::LifecycleLock::hold(
+        wamn_postgres::connect(&platform.system_database_url).await?,
         &document.triple(),
         async |lock| {
             wamn_registry::configuration::require_placement(
@@ -441,8 +440,8 @@ async fn apply_selection(
     let private = ensure::PrivateDirectory::create()?;
     let mut platform = platform.clone();
     let control = runtime::resolve_platform(&mut platform, &triple.org).await?;
-    let lock = lock::LifecycleLock::acquire_application(
-        &platform.system_database_url,
+    let lock = wamn_registry::lifecycle_lock::LifecycleLock::acquire_application(
+        wamn_postgres::connect(&platform.system_database_url).await?,
         triple,
         application,
     )

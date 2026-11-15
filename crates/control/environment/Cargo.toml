@@ -11,11 +11,6 @@ test-util = ["wamn-platform-install/test-util"]
 ops = ["wamn-control-provision/ops", "wamn-platform-install/ops"]
 
 [[test]]
-name = "create_user_live"
-path = "tests/create_user_live.rs"
-required-features = ["ops"]
-
-[[test]]
 name = "netsuite_publication"
 path = "../../../apps/netsuite/tests/publication.rs"
 
@@ -72,6 +67,7 @@ wamn-release-control = { workspace = true }
 hyper = { workspace = true }
 
 [dev-dependencies]
+wamn-registry = { workspace = true, features = ["test-util"] }
 wamn-workflow.workspace = true
 wash-runtime = { workspace = true, features = ["wasi-logging"] }
 wamn-platform-install = { workspace = true, features = ["test-util"] }

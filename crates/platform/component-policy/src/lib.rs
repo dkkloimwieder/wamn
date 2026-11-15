@@ -98,32 +98,19 @@ pub fn analyze(
 fn integration_import(name: &str) -> bool {
     match (import_pkg(name), import_version(name)) {
         ("wasi:sockets" | "wasi:io" | "wasi:clocks" | "wasi:random", Some(version)) => {
-            admits_version(WASI_FAMILY, version)
+            admits_version(WASI_VERSION, version)
         }
         ("wasi:cli", _) => capability_row(name).is_some(),
         _ => name == "wamn:integration/bound@0.1.0",
     }
 }
 
-/// The version family of the standard WASI imports that Rust emits.
-pub const WASI_FAMILY: &str = "0.2";
+/// The admitted version of the standard WASI imports.
+pub const WASI_VERSION: &str = "0.2.12";
 
-/// Whether a row's version admits an import's version.
-///
-/// A [`WASI_FAMILY`] row admits `0.2.N` for any plain decimal `N`.
-/// Every other row admits only its exact version.
+/// Whether a row's exact version matches an import's version.
 fn admits_version(row_version: &str, version: &str) -> bool {
-    if row_version != WASI_FAMILY {
-        return row_version == version;
-    }
-    let Some(patch) = version
-        .strip_prefix(WASI_FAMILY)
-        .and_then(|rest| rest.strip_prefix('.'))
-    else {
-        return false;
-    };
-    let canonical = patch == "0" || !patch.starts_with('0');
-    !patch.is_empty() && canonical && patch.bytes().all(|byte| byte.is_ascii_digit())
+    row_version == version
 }
 
 /// Whether importing a capability reaches outside the host.
@@ -139,14 +126,12 @@ pub enum Posture {
     Effect,
 }
 
-/// One admitted capability, keyed on exact `namespace:package` AND a version
-/// or a version family.
+/// One admitted capability, keyed on exact `namespace:package` and version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CapabilityRow {
     /// Exact WIT `namespace:package`.
     pub package: &'static str,
-    /// Exact package version, or [`WASI_FAMILY`] for a `wasi:*` row that
-    /// admits every `0.2.N` patch.
+    /// Exact package version.
     pub version: &'static str,
     /// Whether importing it leaves the host.
     pub posture: Posture,
@@ -162,10 +147,7 @@ pub struct CapabilityRow {
 /// * **Closed, and fail-closed.** An import with no matching row here is
 ///   refused by ABSENCE, not by a namespace opinion. Expansion is a ruled
 ///   change.
-/// * **Exact version, or the WASI family.** A `wamn:*`, `wasmcloud:*` or
-///   `wasi:logging` row admits only its exact version. A `wasi:*` row of the
-///   family [`WASI_FAMILY`] admits every `0.2.N` patch. The host checks
-///   whether it implements the imported functions when it loads the component.
+/// * **Exact version.** Each row admits only its declared package version.
 /// * **Code, not catalog.** Posture is a security classification that must be
 ///   byte-identical on every host and must move only through code review plus
 ///   a stored row. A database row would let an operator reclassify an effect
@@ -185,7 +167,7 @@ pub struct CapabilityRow {
 ///
 /// The `wamn:*` rows and `wasi:logging` carry versions we author. Standard
 /// WASI imports come from the Rust toolchain. Their rows admit the host's
-/// supported version family without rewriting the component bytes.
+/// supported version without rewriting the component bytes.
 pub const CAPABILITY_REGISTRY: [CapabilityRow; 12] = [
     // Versions we author.
     CapabilityRow {
@@ -234,22 +216,22 @@ pub const CAPABILITY_REGISTRY: [CapabilityRow; 12] = [
     // above.
     CapabilityRow {
         package: "wasi:io",
-        version: WASI_FAMILY,
+        version: WASI_VERSION,
         posture: Posture::Ambient,
     },
     CapabilityRow {
         package: "wasi:clocks",
-        version: WASI_FAMILY,
+        version: WASI_VERSION,
         posture: Posture::Ambient,
     },
     CapabilityRow {
         package: "wasi:cli",
-        version: WASI_FAMILY,
+        version: WASI_VERSION,
         posture: Posture::Ambient,
     },
     CapabilityRow {
         package: "wasi:random",
-        version: WASI_FAMILY,
+        version: WASI_VERSION,
         posture: Posture::Ambient,
     },
 ];
@@ -544,14 +526,6 @@ mod tests {
         }
     }
 
-    /// Drift guard: the one load-bearing literal is the denied package. If this
-    /// string moves, the guard silently stops matching the interface the
-    /// runtime links unconditionally.
-    #[test]
-    fn denied_package_literal_is_pinned() {
-        assert_eq!(DENIED_EGRESS_PKG, "wasi:sockets");
-    }
-
     #[test]
     fn import_pkg_strips_interface_and_version() {
         assert_eq!(import_pkg("wasi:sockets/tcp@0.2.3"), "wasi:sockets");
@@ -656,6 +630,12 @@ mod tests {
                 .map(|interface| format!("{interface}@0.2.12")),
         );
         assert!(analyze_project(&ambient, &BTreeSet::new(), "project-node").is_ok());
+        for version in ["0.2.9", "0.2.13", "0.2.4294967296", "0.2.12-rc.1"] {
+            let import = format!("wasi:io/streams@{version}");
+            assert!(capability_row(&import).is_none());
+            assert!(!integration_import(&import));
+        }
+        assert!(integration_import("wasi:io/streams@0.2.12"));
         let drifted = ComponentImports::new(["wasi:cli/environment@0.3.0".to_owned()]);
         assert!(analyze_project(&drifted, &BTreeSet::new(), "project-node").is_err());
 
@@ -669,18 +649,23 @@ mod tests {
     #[test]
     fn project_policy_refuses_every_unlisted_authority_surface() {
         let imports = ComponentImports::new([
-            "wasi:filesystem/types@0.2.3".to_string(),
-            "wasi:sockets/tcp@0.2.3".to_string(),
-            "wasi:http/outgoing-handler@0.2.3".to_string(),
-            "wasi:cli/run@0.2.3".to_string(),
+            format!("wasi:filesystem/types@{WASI_VERSION}"),
+            format!("wasi:sockets/tcp@{WASI_VERSION}"),
+            format!("wasi:http/outgoing-handler@{WASI_VERSION}"),
+            format!("wasi:cli/run@{WASI_VERSION}"),
             "wamn:postgres/client@0.1.0".to_string(),
             "other:host/process@1.0.0".to_string(),
         ]);
 
-        let error = analyze_project(&imports, &BTreeSet::new(), "project-node")
-            .expect_err("unlisted packages must refuse");
-        assert_eq!(error.error_type(), ProjectImportErrorType::UnadmittedImport);
-        assert_eq!(error.imports().len(), 6);
+        for import in imports.iter() {
+            let error = analyze_project(
+                &ComponentImports::new([import.to_owned()]),
+                &BTreeSet::new(),
+                "project-node",
+            )
+            .expect_err("unlisted authority must refuse");
+            assert_eq!(error.error_type(), ProjectImportErrorType::UnadmittedImport);
+        }
     }
 
     /// Posture is DECLARED, not inferred. The old complement rule classified an
@@ -715,49 +700,6 @@ mod tests {
                 "{unregistered:?} must be refused by absence, not classified"
             );
         }
-    }
-
-    /// A `wasi:*` row admits its package at any `0.2.N`.
-    /// Authored rows stay exact.
-    #[test]
-    fn wasi_rows_match_the_family_and_authored_rows_stay_exact() {
-        for admitted in [
-            "wasi:io/streams@0.2.9",
-            "wasi:io/streams@0.2.12",
-            "wasi:io/streams@0.2.4294967296",
-        ] {
-            assert_eq!(
-                import_posture(admitted),
-                Some(Posture::Ambient),
-                "{admitted:?} is in the 0.2 family"
-            );
-            assert!(integration_import(admitted), "{admitted:?} is refused");
-        }
-        for refused in [
-            "wasi:filesystem/types@0.2.12",
-            "wasi:io/streams@0.3.0",
-            "wasi:io/streams@0.2",
-            "wasi:io/streams@0.2.",
-            "wasi:io/streams@0.2.+9",
-            "wasi:io/streams@0.2.09",
-            "wasi:io/streams@0.2.12-rc.1",
-            "wasi:io/streams",
-            "wasi:logging/logging@0.1.1-draft",
-            "wamn:postgres/client@0.1.1",
-        ] {
-            assert_eq!(import_posture(refused), None, "{refused:?} is admitted");
-        }
-        assert!(integration_import("wamn:integration/bound@0.1.0"));
-        for refused in ["wamn:integration/bound@0.1.1", "wasi:io/streams@0.3.0"] {
-            assert!(!integration_import(refused), "{refused:?} is admitted");
-        }
-        assert_eq!(import_version("wamn:postgres/client@0.1.0"), Some("0.1.0"));
-        assert_eq!(import_version("wasi:clocks@0.2.12"), Some("0.2.12"));
-        assert_eq!(
-            import_version("wasi:logging/logging@0.1.0-draft"),
-            Some("0.1.0-draft")
-        );
-        assert_eq!(import_version("wasi:clocks"), None);
     }
 
     /// The registry is a closed set with unique keys; a duplicate row would let

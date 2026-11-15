@@ -1,7 +1,6 @@
 //! Helm installation and explicit platform bootstrap.
 pub mod credentials;
 mod kcl;
-pub mod lifecycle_lock;
 pub mod migrations;
 pub mod platform;
 pub mod platform_migrations;

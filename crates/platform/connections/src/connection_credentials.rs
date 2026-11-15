@@ -282,7 +282,7 @@ mod tests {
         assert!(reader.connection_name("org:other:erp").is_err());
         assert!(reader.connection_name("project:project-a:erp").is_err());
         let principal: uuid::Uuid =
-            sqlx::query("SELECT service_principal_id FROM registry.connection WHERE id=$1")
+            sqlx::query(wamn_registry::test_util::connection_principal_sql())
                 .bind(&id)
                 .fetch_one(&mut fixture.admin)
                 .await
@@ -295,7 +295,11 @@ mod tests {
                 .await
                 .is_err()
         );
-        sqlx::raw_sql("SET ROLE wamn_system; UPDATE registry.integration SET status='disabled' WHERE project='project-a'; RESET ROLE").execute(&mut fixture.admin).await.map(drop).unwrap();
+        sqlx::raw_sql(wamn_registry::test_util::disable_project_integrations_sql())
+            .execute(&mut fixture.admin)
+            .await
+            .map(drop)
+            .unwrap();
         assert_eq!(
             reader
                 .connection_fact("project-a", "dev", &id)
@@ -380,7 +384,11 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        sqlx::raw_sql("SET ROLE wamn_system; UPDATE registry.integration SET status='disabled' WHERE project='project-a' AND name='files'; RESET ROLE").execute(&mut fixture.admin).await.map(drop).unwrap();
+        sqlx::raw_sql(wamn_registry::test_util::disable_files_integration_sql())
+            .execute(&mut fixture.admin)
+            .await
+            .map(drop)
+            .unwrap();
         assert_eq!(
             reader
                 .connection_fact("project-a", "dev", &store)
@@ -431,12 +439,11 @@ mod tests {
                 .as_deref(),
             Some(r#"{"client_secret":"first"}"#)
         );
-        let http_only: bool =
-            sqlx::query("SELECT http_only FROM registry.auth_type WHERE code='hmac'")
-                .fetch_one(&mut fixture.admin)
-                .await
-                .unwrap()
-                .get(0);
+        let http_only: bool = sqlx::query(wamn_registry::test_util::hmac_http_only_sql())
+            .fetch_one(&mut fixture.admin)
+            .await
+            .unwrap()
+            .get(0);
         assert!(http_only);
     }
 

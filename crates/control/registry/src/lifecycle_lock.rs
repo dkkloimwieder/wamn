@@ -7,12 +7,12 @@ use sqlx::{Connection as _, Row as _};
 use std::{sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 
-use wamn_registry::Triple;
+use crate::Triple;
 
 /// The refusal when another verb holds the lock.
 pub const DEPLOYMENT_IN_PROGRESS: &str = "deployment in progress";
 
-use wamn_registry::sql::{
+use crate::sql::{
     ENVIRONMENT_LOCK_SQL as TRY_LOCK_SQL, ENVIRONMENT_SHARED_LOCK_SQL as TRY_SHARED_LOCK_SQL,
 };
 
@@ -33,23 +33,18 @@ impl std::fmt::Debug for LifecycleLock {
 }
 
 impl LifecycleLock {
-    /// Take the lock of `triple`, or refuse with "deployment in progress".
+    /// Take the lock of `triple` on an opened connection.
     ///
     /// # Errors
     ///
-    /// When the system database refuses the connection, or another session
-    /// holds the lock.
-    pub async fn acquire(system_url: &str, triple: &Triple) -> anyhow::Result<Self> {
-        Self::acquire_environment(system_url, &triple.org, triple.env.as_str()).await
+    /// Returns a database error or refuses when another session holds the lock.
+    pub async fn acquire(client: Client, triple: &Triple) -> anyhow::Result<Self> {
+        Self::acquire_environment(client, &triple.org, triple.env.as_str()).await
     }
 
     /// Take exclusive ownership of the host shared by an org and environment.
-    pub async fn acquire_environment(
-        system_url: &str,
-        org: &str,
-        env: &str,
-    ) -> anyhow::Result<Self> {
-        let lock = Self::connect(system_url).await?;
+    pub async fn acquire_environment(client: Client, org: &str, env: &str) -> anyhow::Result<Self> {
+        let lock = Self::start(client).await?;
         if !lock.try_acquire(TRY_LOCK_SQL, &[org, env]).await? {
             bail!("{DEPLOYMENT_IN_PROGRESS}: environment {org}/{env}");
         }
@@ -57,8 +52,8 @@ impl LifecycleLock {
     }
 
     /// Wait for active deployments before taking exclusive environment ownership.
-    pub async fn acquire_wait(system_url: &str, triple: &Triple) -> anyhow::Result<Self> {
-        let lock = Self::connect(system_url).await?;
+    pub async fn acquire_wait(client: Client, triple: &Triple) -> anyhow::Result<Self> {
+        let lock = Self::start(client).await?;
         while !lock
             .try_acquire(TRY_LOCK_SQL, &[&triple.org, triple.env.as_str()])
             .await?
@@ -68,12 +63,12 @@ impl LifecycleLock {
 
     /// Serialize operations on one application without blocking another application's rollout.
     pub async fn acquire_application(
-        system_url: &str,
+        client: Client,
         triple: &Triple,
         application: &str,
     ) -> anyhow::Result<Self> {
         // Fixed order: environment exclusion, then the application key.
-        let lock = Self::acquire_shared(system_url, triple).await?;
+        let lock = Self::acquire_shared(client, triple).await?;
         let key = serde_json::to_string(&(
             &triple.org,
             &triple.project,
@@ -94,8 +89,8 @@ impl LifecycleLock {
 
     /// Exclude database replacement while allowing independent application operations.
     /// SQL Jobs hold this guard in their own process, even after their caller exits.
-    pub async fn acquire_shared(system_url: &str, triple: &Triple) -> anyhow::Result<Self> {
-        let lock = Self::connect(system_url).await?;
+    pub async fn acquire_shared(client: Client, triple: &Triple) -> anyhow::Result<Self> {
+        let lock = Self::start(client).await?;
         let held = lock
             .try_acquire(TRY_SHARED_LOCK_SQL, &[&triple.org, triple.env.as_str()])
             .await?;
@@ -105,8 +100,7 @@ impl LifecycleLock {
         Ok(lock)
     }
 
-    async fn connect(system_url: &str) -> anyhow::Result<Self> {
-        let mut client = wamn_postgres::connect(system_url).await?;
+    async fn start(mut client: Client) -> anyhow::Result<Self> {
         sqlx::raw_sql("SET idle_session_timeout = '5s'")
             .execute(&mut client)
             .await?;
@@ -173,11 +167,11 @@ impl LifecycleLock {
     ///
     /// When the lock is held, or `verb` fails.
     pub async fn hold<T>(
-        system_url: &str,
+        client: Client,
         triple: &Triple,
         verb: impl AsyncFnOnce(&Self) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
-        let lock = Self::acquire(system_url, triple).await?;
+        let lock = Self::acquire(client, triple).await?;
         let result = lock.protect(verb(&lock)).await;
         lock.release().await;
         result

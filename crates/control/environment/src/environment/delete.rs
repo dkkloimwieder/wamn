@@ -41,8 +41,8 @@ use wamn_registry::Triple;
 use super::Platform;
 use super::analyse::application_releases;
 use super::ensure::{kubectl, management_author_pat_name, project_url};
-use super::lock::LifecycleLock;
 use wamn_postgres::connect;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 use wamn_release_control::release_chart;
 
 /// Delete the environment. With `data`, the database and its roles are
@@ -60,9 +60,11 @@ pub async fn delete(
     data: bool,
     admin_url: &str,
 ) -> anyhow::Result<Vec<String>> {
-    LifecycleLock::hold(&platform.system_database_url, triple, async |_| {
-        delete_locked(platform, triple, data, admin_url).await
-    })
+    LifecycleLock::hold(
+        wamn_postgres::connect(&platform.system_database_url).await?,
+        triple,
+        async |_| delete_locked(platform, triple, data, admin_url).await,
+    )
     .await
 }
 

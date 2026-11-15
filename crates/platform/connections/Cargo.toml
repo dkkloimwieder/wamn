@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["dep:wamn-test-infrastructure", "wamn-kubernetes/test-util", "wamn-control-provision/test-util", "wamn-catalog/test-util", "wamn-capability-authority/test-util", ]
+test-util = ["wamn-registry/test-util", "dep:wamn-test-infrastructure", "wamn-kubernetes/test-util", "wamn-control-provision/test-util", "wamn-catalog/test-util", "wamn-capability-authority/test-util", ]
 
 [dependencies]
 wamn-run-state.workspace = true
@@ -43,6 +43,7 @@ wamn-registry = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+wamn-registry = { workspace = true, features = ["test-util"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 
 hyper = { workspace = true, features = ["server"] }

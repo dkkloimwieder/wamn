@@ -1,7 +1,8 @@
 //! Authenticated environment configuration through installer-owned resources.
-use super::{Platform, document::EnvironmentDocument, ensure as resources, lock::LifecycleLock};
+use super::{Platform, document::EnvironmentDocument, ensure as resources};
 use crate::provision_project_env::{self, ProvisionProjectEnvRequest};
 use anyhow::{Context as _, ensure};
+use wamn_registry::lifecycle_lock::LifecycleLock;
 
 pub async fn configure(
     platform: &Platform,
@@ -20,7 +21,8 @@ pub async fn configure(
     let mut platform = platform.clone();
     let installed = super::runtime::resolve_platform(&mut platform, &document.org).await?;
     let triple = document.triple();
-    LifecycleLock::hold(system_owner, &triple, async |lock| {
+    let client = wamn_postgres::connect(system_owner).await?;
+    LifecycleLock::hold(client, &triple, async |lock| {
         wamn_registry::configuration::require_placement(
             &mut *lock.client().await,
             &document.org,
