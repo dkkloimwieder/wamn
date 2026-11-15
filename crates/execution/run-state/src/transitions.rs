@@ -12,9 +12,9 @@ static FENCED_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| 
     format!(
         "\
 WITH input AS ( \
-    SELECT NULLIF(current_setting('app.project_env_key', true), '')::text AS project_env_key, \
-           $1::text AS target_run_id, $2::text AS authority_run_id, \
-           $3::text AS lease_owner, $4::bigint AS lease_generation \
+    SELECT $1::text AS project_env_key, \
+           $2::text AS target_run_id, $3::text AS authority_run_id, \
+           $4::text AS lease_owner, $5::bigint AS lease_generation \
 ), \
 locked_run AS MATERIALIZED ( \
     SELECT r.* FROM runs AS r, input AS i \
@@ -87,7 +87,7 @@ impl TerminalizeResult {
 pub fn record_deadline_adjustments_sql() -> String {
     format!(
         "{prefix}, recorded AS ( \
-             UPDATE runs AS r SET deadline_adjustments_json = $5::text::jsonb \
+             UPDATE runs AS r SET deadline_adjustments_json = $6::text::jsonb \
                FROM authority AS a WHERE a.result_code = 'ready' \
                 AND r.project_env_key = a.project_env_key AND r.run_id = a.run_id \
              RETURNING r.run_id \
@@ -109,9 +109,9 @@ pub fn terminalize_sql() -> String {
         "{prefix}, \
          terminalized AS ( \
              UPDATE runs AS r \
-                SET status = $5, terminal_reason = $6, \
-                    result_json = $7::text::jsonb, fail_type = $8, \
-                    updated_at = $9::timestamptz \
+                SET status = $6, terminal_reason = $7, \
+                    result_json = $8::text::jsonb, fail_type = $9, \
+                    updated_at = $10::timestamptz \
                FROM authority AS c \
               WHERE c.result_code = 'ready' \
                 AND r.project_env_key = c.project_env_key AND r.run_id = c.run_id \

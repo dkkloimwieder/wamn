@@ -89,6 +89,8 @@ CREATE DATABASE wamn;
 
 \connect wamn
 
+\ir record-history.sql
+
 CREATE SCHEMA s2 AUTHORIZATION CURRENT_USER;
 GRANT USAGE ON SCHEMA s2 TO wamn_app;
 
@@ -181,13 +183,13 @@ CREATE INDEX bench_project_g_id ON s2.bench (project_id, g, id);
 ALTER TABLE s2.bench ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.bench FORCE ROW LEVEL SECURITY;
 CREATE POLICY bench_project ON s2.bench
-    TO wamn_app
-    USING (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()))
-    WITH CHECK (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()));
+    TO wamn_app, wamn_query
+    USING (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_principal_id()) IS NOT NULL)
+    WITH CHECK (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_principal_id()) IS NOT NULL);
 CREATE POLICY bench_platform ON s2.bench
     AS PERMISSIVE FOR ALL TO wamn_platform
-    USING (true)
-    WITH CHECK (true);
+    USING ((SELECT wamn_authority.current_principal_id()) IS NOT NULL)
+    WITH CHECK ((SELECT wamn_authority.current_principal_id()) IS NOT NULL);
 CREATE INDEX bench_tkey
     ON s2.bench ((wamn_authority.project_key(project_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.bench TO wamn_app;
@@ -209,13 +211,13 @@ FROM generate_series(1, 1000) gs,
 ALTER TABLE s2.rls_secrets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.rls_secrets FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_secrets_project ON s2.rls_secrets
-    TO wamn_app
-    USING (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()))
-    WITH CHECK (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()));
+    TO wamn_app, wamn_query
+    USING (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_principal_id()) IS NOT NULL)
+    WITH CHECK (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_principal_id()) IS NOT NULL);
 CREATE POLICY rls_secrets_platform ON s2.rls_secrets
     AS PERMISSIVE FOR ALL TO wamn_platform
-    USING (true)
-    WITH CHECK (true);
+    USING ((SELECT wamn_authority.current_principal_id()) IS NOT NULL)
+    WITH CHECK ((SELECT wamn_authority.current_principal_id()) IS NOT NULL);
 CREATE INDEX rls_secrets_tkey
     ON s2.rls_secrets ((wamn_authority.project_key(project_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.rls_secrets TO wamn_app;
@@ -240,13 +242,13 @@ CREATE TABLE s2.scratch (
 ALTER TABLE s2.scratch ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.scratch FORCE ROW LEVEL SECURITY;
 CREATE POLICY scratch_project ON s2.scratch
-    TO wamn_app
-    USING (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()))
-    WITH CHECK (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()));
+    TO wamn_app, wamn_query
+    USING (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_principal_id()) IS NOT NULL)
+    WITH CHECK (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_principal_id()) IS NOT NULL);
 CREATE POLICY scratch_platform ON s2.scratch
     AS PERMISSIVE FOR ALL TO wamn_platform
-    USING (true)
-    WITH CHECK (true);
+    USING ((SELECT wamn_authority.current_principal_id()) IS NOT NULL)
+    WITH CHECK ((SELECT wamn_authority.current_principal_id()) IS NOT NULL);
 CREATE INDEX scratch_tkey
     ON s2.scratch ((wamn_authority.project_key(project_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.scratch TO wamn_app;
@@ -262,13 +264,13 @@ CREATE TABLE s2.fkchild (
 ALTER TABLE s2.fkchild ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.fkchild FORCE ROW LEVEL SECURITY;
 CREATE POLICY fkchild_project ON s2.fkchild
-    TO wamn_app
-    USING (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()))
-    WITH CHECK (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()));
+    TO wamn_app, wamn_query
+    USING (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_principal_id()) IS NOT NULL)
+    WITH CHECK (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_principal_id()) IS NOT NULL);
 CREATE POLICY fkchild_platform ON s2.fkchild
     AS PERMISSIVE FOR ALL TO wamn_platform
-    USING (true)
-    WITH CHECK (true);
+    USING ((SELECT wamn_authority.current_principal_id()) IS NOT NULL)
+    WITH CHECK ((SELECT wamn_authority.current_principal_id()) IS NOT NULL);
 CREATE INDEX fkchild_tkey
     ON s2.fkchild ((wamn_authority.project_key(project_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.fkchild TO wamn_app;

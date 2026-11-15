@@ -88,6 +88,7 @@ struct ExhaustedExecutionIdentity {
 /// Release a held lease or fail the run when its retry budget is spent.
 pub async fn release_lease(
     connection: &mut sqlx::PgConnection,
+    project_env_key: &str,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -95,6 +96,7 @@ pub async fn release_lease(
     validate_generation(lease_generation)?;
     let sql = release_production_lease_sql();
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(project_env_key)
         .bind(run_id)
         .bind(runner)
         .bind(lease_generation)
@@ -112,6 +114,7 @@ pub async fn release_lease(
         let body = generic_failure_outcome(FailType::RetryExhausted.as_sql(), &identity, run_id);
         let sql = terminalize_released_production_sql();
         sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(project_env_key)
             .bind(run_id)
             .bind(&body)
             .bind(chrono::Utc::now())
@@ -127,6 +130,7 @@ pub async fn release_lease(
 /// Renew a live lease under its owner and generation fence.
 pub async fn renew(
     connection: &mut sqlx::PgConnection,
+    project_env_key: &str,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -136,6 +140,7 @@ pub async fn renew(
     validate_duration(lease_ttl_ms)?;
     let sql = renew_production_lease_sql();
     let renewed = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(project_env_key)
         .bind(run_id)
         .bind(runner)
         .bind(lease_generation)
@@ -153,6 +158,7 @@ pub async fn renew(
 /// Store the terminal outcome and remove the queue entry under the lease fence.
 pub async fn complete(
     connection: &mut sqlx::PgConnection,
+    project_env_key: &str,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -166,6 +172,7 @@ pub async fn complete(
     let fail_type = completion.fail_type().map(FailType::as_sql);
     let sql = terminalize_sql();
     let row = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(project_env_key)
         .bind(run_id)
         .bind(run_id)
         .bind(runner)
@@ -206,8 +213,13 @@ fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionLeas
 }
 
 /// Lease one run. The caller commits both `Leased` and `GrantRefused` turns.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the queue binds its project and each independent lease coordinate"
+)]
 pub async fn lease_next(
     connection: &mut sqlx::PgConnection,
+    project_env_key: &str,
     runner: &str,
     package_ids: &[String],
     environment: &str,
@@ -220,6 +232,7 @@ pub async fn lease_next(
     // The select skips runs pinned to another release, so their head never
     // blocks this host's own backlog (R20). The grant below tests again the pin.
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(select_sql))
+        .bind(project_env_key)
         .bind(package_ids)
         .bind(environment)
         .bind(manifest_digest)
@@ -244,6 +257,7 @@ pub async fn lease_next(
 
     if selected.had_prior_lease {
         sqlx::query(sqlx::AssertSqlSafe(clear_pre_effect_state_sql()))
+            .bind(project_env_key)
             .bind(&selected.run_id)
             .fetch_one(&mut *connection)
             .await
@@ -254,6 +268,7 @@ pub async fn lease_next(
     // subtransaction.
     let advance_sql = advance_lease_attempts_sql();
     sqlx::query(sqlx::AssertSqlSafe(advance_sql))
+        .bind(project_env_key)
         .bind(&selected.run_id)
         .fetch_one(&mut *connection)
         .await
@@ -273,6 +288,7 @@ pub async fn lease_next(
             ProductionLeaseError::postgres("open production lease savepoint", &error)
         })?;
     let granted = sqlx::query(sqlx::AssertSqlSafe(grant_sql))
+        .bind(project_env_key)
         .bind(&selected.run_id)
         .bind(runner)
         .bind(lease_ttl_ms)
@@ -317,6 +333,7 @@ pub async fn lease_next(
 /// Fail and dequeue one expired run whose retry budget is spent.
 pub async fn reap_exhausted(
     connection: &mut sqlx::PgConnection,
+    project_env_key: &str,
     package_ids: &[String],
     environment: &str,
     grace_ms: i64,
@@ -327,6 +344,7 @@ pub async fn reap_exhausted(
     }
     let select_sql = select_exhausted_production_sql();
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(select_sql))
+        .bind(project_env_key)
         .bind(grace_ms)
         .bind(package_ids)
         .bind(environment)
@@ -383,6 +401,7 @@ pub async fn reap_exhausted(
     // D2b: this host owns the instant the reap stamps.
     let reaped_at = SystemTime::now();
     let row = sqlx::query(sqlx::AssertSqlSafe(terminalize_sql))
+        .bind(project_env_key)
         .bind(&selected.run_id)
         .bind(&body)
         .bind(chrono::DateTime::<chrono::Utc>::from(reaped_at))
@@ -527,6 +546,7 @@ where
 /// Record deadline changes under the exact lease fence.
 pub async fn record_deadline_adjustments(
     connection: &mut sqlx::PgConnection,
+    project_env_key: &str,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -536,6 +556,7 @@ pub async fn record_deadline_adjustments(
     let row = sqlx::query(sqlx::AssertSqlSafe(
         crate::transitions::record_deadline_adjustments_sql(),
     ))
+    .bind(project_env_key)
     .bind(run_id)
     .bind(run_id)
     .bind(runner)
@@ -567,6 +588,7 @@ pub async fn unfinished_releases(
 /// Whether this release still has queued work.
 pub async fn pinned_backlog(
     connection: &mut sqlx::PgConnection,
+    project_env_key: &str,
     applications: &[String],
     environment: &str,
     manifest_digest: &str,
@@ -574,13 +596,14 @@ pub async fn pinned_backlog(
     validate_target(applications, environment)?;
     let sql = format!(
         "SELECT EXISTS (SELECT 1 FROM run_queue q JOIN runs r USING (project_env_key, run_id) \
-        WHERE q.project_env_key = current_setting('app.project_env_key', true) \
-        AND r.package_id = ANY($1::text[]) AND r.environment = $2 AND r.manifest_digest = $3 \
+        WHERE q.project_env_key = $1::text \
+        AND r.package_id = ANY($2::text[]) AND r.environment = $3 AND r.manifest_digest = $4 \
         AND r.status IN ('{}', '{}'))",
         RunStatus::Dispatched.as_sql(),
         RunStatus::Running.as_sql()
     );
     let row = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(project_env_key)
         .bind(applications)
         .bind(environment)
         .bind(manifest_digest)

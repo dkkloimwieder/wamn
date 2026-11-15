@@ -16,8 +16,7 @@ pub(crate) async fn seed_fixture(
     // The fixture writes as its test principal, whose row stamps itself.
     sqlx::raw_sql(sqlx::AssertSqlSafe((&format!(
         "BEGIN;\n\
-         SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
-                set_config('app.operation', 'admin:seed-wms-fixture', true);\n\
+         INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{FIXTURE_PRINCIPAL}'::text::uuid,'','fixture','admin:seed-wms-fixture');\n\
          INSERT INTO platform.\"user\" (id, type, email) VALUES ('{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid');\n\
          INSERT INTO wms.product (id, product_code) VALUES ('{PRODUCT_ID}', 'PROD-101');\n\
          INSERT INTO wms.location (id, location_code) VALUES ('{LOCATION_A_ID}', 'LOC-A'), ('{LOCATION_B_ID}', 'LOC-B');\n\

@@ -34,10 +34,7 @@ pub const EMPTY_HASH: &str =
 const EXECUTOR_PASSWORD: &str = "lease-live-executor-password";
 
 pub async fn connect(url: &str) -> anyhow::Result<Client> {
-    let mut client = wamn_postgres::connect(url).await?;
-
-    let actor = wamn_identity_protocol::PlatformComponent::Provisioning;
-    sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:lease-fixture', false)").bind(&actor.principal_id().to_string()).execute(&mut client).await.map(|result| result.rows_affected())?;
+    let client = wamn_postgres::connect(url).await?;
     Ok(client)
 }
 

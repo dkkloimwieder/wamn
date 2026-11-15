@@ -11,7 +11,8 @@ async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor(poo
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     let actor = PlatformComponent::Provisioning.principal_id().to_string();
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+    sqlx::raw_sql("BEGIN").execute(&mut client).await.unwrap();
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:fixture')")
         .bind(&actor)
         .execute(&mut client)
         .await
@@ -28,6 +29,7 @@ async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor(poo
          INSERT INTO registry.capture_gap(org,project,env,slot,start_at,reason,end_lsn) \
            VALUES ('history','project','dev','slot',now(),'fixture','0/10'); \
          INSERT INTO identity.password_attempts(bucket,started_at,attempts) VALUES ('fixture',now(),1);").execute(&mut client).await.map(drop).unwrap();
+    sqlx::raw_sql("COMMIT").execute(&mut client).await.unwrap();
     wamn_platform_identity::session_keys::publish_session_key(
         &mut client,
         "https://history.invalid",
@@ -57,7 +59,7 @@ async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor(poo
             seeded.push(relation);
         }
     }
-    sqlx::raw_sql("RESET app.user_id")
+    sqlx::raw_sql("DELETE FROM platform.login_principal WHERE login IN (current_user, session_user, 'wamn_system'); SET ROLE wamn_system")
         .execute(&mut client)
         .await
         .map(drop)

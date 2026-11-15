@@ -128,8 +128,7 @@ impl Live {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&format!(
                 "BEGIN; \
-                 SELECT pg_catalog.set_config('app.user_id', '{LIVE_PRINCIPAL}', true), \
-                        pg_catalog.set_config('app.operation', 'admin:numbering', true); \
+                 INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{LIVE_PRINCIPAL}'::text::uuid,'','fixture','admin:numbering'); \
                  {statements} COMMIT;"
             ))
                 .to_string(),

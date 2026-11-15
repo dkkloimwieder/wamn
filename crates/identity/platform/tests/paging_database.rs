@@ -21,12 +21,6 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         .await
         .map(drop)
         .unwrap();
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-        .execute(&mut client)
-        .await
-        .map(|result| result.rows_affected())
-        .unwrap();
     sqlx::raw_sql("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES
            ('acme', 'pooled', 'wamn-pg'), ('other', 'pooled', 'wamn-pg');
          INSERT INTO registry.projects (org, id) VALUES

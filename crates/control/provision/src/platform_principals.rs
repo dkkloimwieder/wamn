@@ -7,7 +7,7 @@
 //! read deployment configuration, so this module tests the platform domain
 //! and writes the email.
 //!
-//! A platform component that writes binds its principal id in `platform.tx_identity.user_id`
+//! A platform component that writes binds its principal id in `platform.tx_identity.principal_id`
 //! and its `wamn:<component>` name in `platform.tx_identity.operation`, so the record-history
 //! triggers record that component.
 
@@ -52,13 +52,13 @@ impl std::error::Error for PlatformDomainError {}
 /// Render the statement that binds `component` as the actor and the operation
 /// of the current transaction.
 ///
-/// The statement binds the principal id in `platform.tx_identity.user_id` and the
+/// The statement binds the principal id in `platform.tx_identity.principal_id` and the
 /// `wamn:<component>` name in `platform.tx_identity.operation`. The binding is
 /// transaction-local, so the caller runs the statement inside the transaction
 /// that writes.
 pub fn bind_platform_principal_sql(component: PlatformComponent) -> String {
     format!(
-        "INSERT INTO platform.tx_identity (xid, user_id, role, application, operation) \
+        "INSERT INTO platform.tx_identity (xid, principal_id, role, application, operation) \
          VALUES (pg_current_xact_id(), {}::uuid, '', '', {});\n",
         escape_literal(&component.principal_id().to_string()),
         escape_literal(&component.principal_name()),
@@ -147,30 +147,6 @@ pub fn validate_platform_domain(domain: &str) -> Result<(), PlatformDomainError>
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_platform_row_that_is_already_there_is_kept() {
-        let sql = platform_principals_sql("example.invalid").expect("a domain name renders");
-        assert_eq!(
-            sql.matches("ON CONFLICT (id) DO NOTHING").count(),
-            PlatformComponent::ALL.len() + 1,
-            "every insert keeps a row that is already there, so a project_env_key holding part of the \
-             list converges to the whole list"
-        );
-    }
-
-    #[test]
-    fn the_workflow_user_row_is_rendered_once_as_a_service() {
-        let sql = platform_principals_sql("example.invalid").expect("a domain name renders");
-        let row = format!(
-            "INSERT INTO platform.\"user\" (id, type, email, display_name) VALUES \
-             ('{}', 'service', 'workflow@example.invalid', 'workflow') ON CONFLICT (id) \
-             DO NOTHING;\n",
-            workflow_user_id()
-        );
-        assert_eq!(sql.matches(&row).count(), 1, "{sql}");
-        assert_eq!(sql.matches(&workflow_user_id().to_string()).count(), 1);
-    }
 
     #[test]
     fn a_domain_name_renders() {

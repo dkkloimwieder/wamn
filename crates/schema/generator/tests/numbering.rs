@@ -527,7 +527,7 @@ async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
         let create = text(&package, "generated/sql/gadget/create.sql");
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "SET ROLE wamn_app; SET search_path TO inventory, pg_catalog;
-            INSERT INTO platform.tx_identity(user_id,role,application) VALUES('{first}','','fixture'); PREPARE create_gadget AS {create}
+            INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{first}','','fixture'); PREPARE create_gadget AS {create}
             EXECUTE create_gadget('{id}', '{stock}', 'G-1');"
         )))
         .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
@@ -556,7 +556,7 @@ async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
                 .unwrap();
             sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
                 "SET ROLE wamn_app; SET search_path TO inventory, pg_catalog;
-                INSERT INTO platform.tx_identity(user_id,role,application) VALUES('{second}','','fixture'); PREPARE update_gadget AS {update}
+                INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{second}','','fixture'); PREPARE update_gadget AS {update}
                 EXECUTE update_gadget('{id}', {}, {present}, '{value}');",
                 revision
             )))

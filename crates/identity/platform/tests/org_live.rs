@@ -53,12 +53,6 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
         .await
         .map(drop)
         .expect("apply the system schema composition");
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-        .execute(&mut client)
-        .await
-        .map(|result| result.rows_affected())
-        .expect("bind wamn:provisioning for the fixture session");
     sqlx::raw_sql(SEED_SQL)
         .execute(&mut client)
         .await

@@ -201,15 +201,6 @@ pub async fn fixture(pool: &sqlx::PgPool) -> Fixture {
     .await
     .map(drop)
     .expect("write the platform principals and the workflow user");
-    sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:schedule-live-fixture', false)",
-    )
-    .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-    .execute(&mut admin)
-    .await
-    .map(|result| result.rows_affected())
-    .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "INSERT INTO platform.\"user\" (id, type, email) VALUES \
                ('{READER}', 'user', 'reader@schedule.invalid'), \
@@ -674,17 +665,13 @@ pub async fn changed_order(fixture: &mut Fixture) -> i64 {
     .map(drop)
     .unwrap();
 
-    sqlx::raw_sql("BEGIN; SET LOCAL app.operation = 'admin:event-batch-fixture'")
+    sqlx::raw_sql("BEGIN")
         .execute(&mut *admin)
         .await
         .map(drop)
         .unwrap();
-    sqlx::query("SELECT set_config('app.user_id', $1, true)")
-        .bind(&READER)
-        .execute(&mut *admin)
-        .await
-        .map(|result| result.rows_affected())
-        .unwrap();
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:event-batch-fixture')")
+        .bind(&READER).execute(&mut *admin).await.unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("INSERT INTO application_data.orders VALUES (7, '2026-10-25T10:00:00Z', 'open')")
             .to_string(),

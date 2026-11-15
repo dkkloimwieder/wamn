@@ -131,7 +131,7 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
     wamn_platform_identity::test_database::project_platform(project_database.as_str()).await;
     let project_url = project_database.as_str().to_owned();
     let mut project = connect(&project_url).await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-workflow-fixture', false)", PlatformComponent::Provisioning.principal_id()))).execute(&mut project).await.map(drop).unwrap();
+
     let manifest = release();
     let bytes = manifest.canonical_bytes();
     let digest = manifest.digest().as_str().to_owned();

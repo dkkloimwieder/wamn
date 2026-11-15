@@ -357,7 +357,7 @@ async fn pass_one_and_two(
     let mut migrator = crate::migrations::migrator(package_root).await?;
     migrator.dangerous_set_table_name(format!("_sqlx_verification_{}", bases.len()));
     let mut connection = wamn_postgres::connect(database_url).await?;
-    bind_verification_actor(&mut connection).await?;
+    register_verification_principal(&mut connection).await?;
     migrator
         .run_direct(None, &mut connection, false)
         .await
@@ -365,11 +365,10 @@ async fn pass_one_and_two(
     Ok((canonical, files))
 }
 
-async fn bind_verification_actor(connection: &mut sqlx::PgConnection) -> Result<()> {
+async fn register_verification_principal(connection: &mut sqlx::PgConnection) -> Result<()> {
     let component = wamn_identity_protocol::PlatformComponent::ApplyPackage;
-    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation',$2,false)")
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES (current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind(component.principal_id().to_string())
-        .bind(component.principal_name())
         .execute(connection)
         .await?;
     Ok(())
@@ -744,7 +743,7 @@ async fn migrate(
             let mut migrator = crate::migrations::migrator(&directory).await?;
             migrator.dangerous_set_table_name(format!("_sqlx_verification_{index}"));
             let mut connection = wamn_postgres::connect(database_url).await?;
-            bind_verification_actor(&mut connection).await?;
+            register_verification_principal(&mut connection).await?;
             migrator.run_direct(None, &mut connection, false).await.context("migrate the verification database")?;
         }
         create_history_tables(&client, manifest).await

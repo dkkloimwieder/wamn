@@ -51,15 +51,6 @@ async fn connect(url: &str, role: Option<&str>) -> Client {
             .map(drop)
             .unwrap();
     }
-    sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'wamn:provisioning', false)",
-    )
-    .bind(&actor().to_string().as_str())
-    .execute(&mut client)
-    .await
-    .map(|result| result.rows_affected())
-    .unwrap();
     client
 }
 
@@ -213,10 +204,17 @@ async fn every_identity_writer_records_a_drop_of_its_principal(pool: sqlx::PgPoo
     let mut tx = client.begin().await.unwrap();
     let mut drops = AuthDrops::default();
     assert!(
-        authenticate_renewal(&mut tx, ISSUER, AUDIENCE, second.secret(), &mut drops)
-            .await
-            .unwrap()
-            .is_none()
+        authenticate_renewal(
+            &mut tx,
+            &second.login.principal,
+            ISSUER,
+            AUDIENCE,
+            second.secret(),
+            &mut drops
+        )
+        .await
+        .unwrap()
+        .is_none()
     );
     tx.commit().await.unwrap();
     assert_eq!(
@@ -277,13 +275,6 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     .await
     .map(drop)
     .unwrap();
-    // The writes stamp wamn:provisioning for the whole session.
-    sqlx::query("SELECT set_config('app.operation', $1, false)")
-        .bind(&PlatformComponent::Provisioning.principal_name())
-        .execute(&mut client)
-        .await
-        .map(|result| result.rows_affected())
-        .unwrap();
     let bob: PrincipalId = "0b0b0b0b-0000-4000-8000-000000000001".parse().unwrap();
     let robot: PrincipalId = "0b0b0b0b-0000-4000-8000-000000000002".parse().unwrap();
     let user = |id| ApplicationUser {

@@ -1,4 +1,4 @@
-SET app.user_id = '00000000-0000-0000-0000-000000000001';
+INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('00000000-0000-0000-0000-000000000001'::text::uuid,'','fixture','admin:fixture');
 INSERT INTO registry.orgs (id, placement_type) VALUES ('acme', 'dedicated');
 INSERT INTO registry.projects (org, id) VALUES ('acme', 'app');
 INSERT INTO registry.env_policies

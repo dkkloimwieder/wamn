@@ -500,14 +500,20 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 
 /// Seed enough receipts for multiple list pages, and return one get target.
 async fn seed_app_path(database: &mut sqlx::PgConnection) -> anyhow::Result<String> {
-    let row = sqlx::query("WITH identity AS MATERIALIZED (SELECT set_config('app.user_id', $1, true), \
-             set_config('app.operation', 'admin:benchmark-app-path', true)), inserted AS ( \
+    let mut transaction = sqlx::Connection::begin(database).await?;
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','benchmark','admin:benchmark-app-path')")
+        .bind(SEED_PRINCIPAL).execute(&mut *transaction).await?;
+    let row = sqlx::query(
+        "WITH inserted AS ( \
              INSERT INTO receiving.receipt (purchase_order_id, receipt_reference, occurred_at) \
              SELECT purchase_order.id, gen_random_uuid()::text, now() \
-             FROM receiving.purchase_order CROSS JOIN identity ORDER BY purchase_order.id LIMIT 100 \
-             RETURNING id::text) SELECT id FROM inserted LIMIT 1").bind(SEED_PRINCIPAL).fetch_one(&mut *database)
-        .await
-        .context("seed the application-path receipt")?;
+             FROM receiving.purchase_order ORDER BY purchase_order.id LIMIT 100 \
+             RETURNING id::text) SELECT id FROM inserted LIMIT 1",
+    )
+    .fetch_one(&mut *transaction)
+    .await
+    .context("seed the application-path receipt")?;
+    transaction.commit().await?;
     Ok(row.get(0))
 }
 
@@ -846,8 +852,7 @@ async fn seed_receipts(
 ) -> anyhow::Result<Vec<Receipt>> {
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "BEGIN; \
-             SELECT set_config('app.user_id', '{SEED_PRINCIPAL}', true), \
-                    set_config('app.operation', 'admin:benchmark-seed', true); \
+             INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{SEED_PRINCIPAL}'::text::uuid,'','fixture','admin:benchmark-seed'); \
              INSERT INTO receiving.item (id, item_number) VALUES ('{SEED_ITEM}', 'ITEM-BENCH') \
                ON CONFLICT DO NOTHING; \
              INSERT INTO receiving.location (id, location_code) VALUES ('{SEED_LOCATION}', 'BENCH') \

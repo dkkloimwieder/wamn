@@ -577,7 +577,6 @@ async fn seed_with_client(
     .await
     .map(drop)?;
 
-    sqlx::raw_sql("SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',false),set_config('app.operation','admin:seed-http-fixture',false)").execute(&mut *client).await.map(drop)?;
     sqlx::raw_sql("INSERT INTO platform.role (name) VALUES ('admin') ON CONFLICT DO NOTHING")
         .execute(&mut *client)
         .await
@@ -594,7 +593,6 @@ async fn seed_with_client(
         .await
         .context("bind the seeding project identity")?;
 
-    sqlx::raw_sql("SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false), set_config('app.operation', 'admin:seed-catalog-fixture', false)").execute(&mut *client).await.map(drop)?;
     let package_manifest = serde_json::json!({
         "package": {"id": PACKAGE, "version": PACKAGE_VERSION},
         "models": {},

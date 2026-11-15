@@ -43,7 +43,7 @@ pub(in super::super) async fn finish_transaction(
 
 /// The first statement after BEGIN records the caller for this transaction.
 pub(super) const IDENTITY_SQL: &str = "INSERT INTO platform.tx_identity \
-    (xid, user_id, role, application, operation, runner) \
+    (xid, principal_id, role, application, operation, runner) \
     VALUES (pg_current_xact_id(), $1::text::uuid, $2, $3, $4, $5)";
 
 /// The statement that opens every bound transaction of this plugin, except
@@ -168,8 +168,11 @@ impl WamnPostgres {
             operation,
             application,
         )?;
+        let principal = user_id.ok_or_else(|| {
+            PgError::QueryError(("55000".to_owned(), "actor-required".to_owned()))
+        })?;
         let params = vec![
-            user_id.map(str::to_owned),
+            Some(principal.to_owned()),
             Some(role.unwrap_or_default().to_owned()),
             Some(application.unwrap_or_default().to_owned()),
             operation.map(str::to_owned),

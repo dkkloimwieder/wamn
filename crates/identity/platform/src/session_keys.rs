@@ -279,7 +279,7 @@ async fn bind_provisioning(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<(), IdentityError> {
     sqlx::query(
-        "INSERT INTO platform.tx_identity(user_id,role,application) VALUES($1::text::uuid,'','')",
+        "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1::text::uuid,'','')",
     )
     .bind(
         wamn_identity_protocol::PlatformComponent::Provisioning

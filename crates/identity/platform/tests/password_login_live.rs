@@ -21,12 +21,6 @@ async fn connect(url: &str, role: &str) -> Client {
         .await
         .map(drop)
         .unwrap();
-    sqlx::query("SELECT set_config('app.user_id',$1,false)")
-        .bind(&ACTOR)
-        .execute(&mut client)
-        .await
-        .map(|result| result.rows_affected())
-        .unwrap();
     client
 }
 async fn user(client: &mut Client) -> PrincipalId {

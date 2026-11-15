@@ -37,10 +37,6 @@ async fn connect(url: &str) -> Client {
 
 /// Provision the project and return the admitted components of the package.
 async fn provision_project(project: &mut Client, project_url: &str) {
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-connection-fixture', false)",
-        wamn_control_provision::PlatformComponent::Provisioning.principal_id()
-    ))).execute(&mut *project).await.map(drop).unwrap();
     // apply-package narrows migration authority to wamn_db_owner, a
     // CLUSTER-wide role. On a fresh server it does not exist; the sibling
     // fixture that omits this passes only where an earlier run left the role

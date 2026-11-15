@@ -135,9 +135,12 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
             "targeted fixture login"
         );
     }
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut writer)
+        .await
+        .expect("begin fixture transaction");
     sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                set_config('app.operation', 'admin:file-fixture', false)",
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:file-fixture')",
     )
     .bind(&CALLER)
     .execute(&mut writer)
@@ -154,6 +157,10 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     .execute(&mut writer)
     .await
     .map(|result| result.rows_affected())?;
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut writer)
+        .await
+        .expect("commit fixture transaction");
     Ok(Fixture {
         observer,
         writer,
@@ -166,6 +173,8 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
 
 /// Seed metadata for schema tests, without asserting that an object was uploaded.
 pub async fn metadata(writer: &mut Client) -> anyhow::Result<()> {
+    let mut transaction =
+        wamn_test_postgres::transaction(writer, CALLER, "admin:file-fixture").await?;
     sqlx::query(
         "INSERT INTO platform.file \
          (id,application,connection_id,name,media_type,size,sha256,blob_key) \
@@ -175,9 +184,10 @@ pub async fn metadata(writer: &mut Client) -> anyhow::Result<()> {
     .bind(&FILE)
     .bind(&APPLICATION)
     .bind(&CONNECTION)
-    .execute(&mut *writer)
+    .execute(&mut *transaction)
     .await
     .map(|result| result.rows_affected())?;
+    transaction.commit().await?;
     Ok(())
 }
 
@@ -212,7 +222,14 @@ impl Registry {
     ) -> anyhow::Result<()> {
         payload["project"] = self.project.clone().into();
         payload["env"] = "dev".into();
-        let mut tx = self.control.begin().await?;
+        let mut tx = wamn_test_postgres::transaction(
+            &mut self.control,
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+            "wamn:provisioning",
+        )
+        .await?;
         wamn_platform_identity::connections::administration::execute_with_store(
             &mut tx,
             &self.org,
@@ -232,7 +249,14 @@ impl Registry {
         name: &str,
         parameters: &serde_json::Value,
     ) -> anyhow::Result<()> {
-        let mut tx = self.control.begin().await?;
+        let mut tx = wamn_test_postgres::transaction(
+            &mut self.control,
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+            "wamn:provisioning",
+        )
+        .await?;
         wamn_test_infrastructure::credentials::define(&mut tx,&self.org,&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters,"credential":serde_json::json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":STORE_PASSWORD}).to_string()}),self.credentials.as_ref()).await?;
         tx.commit().await?;
         Ok(())
@@ -301,19 +325,6 @@ pub async fn registry(
     .execute(&mut bootstrap)
     .await
     .map(drop)?;
-    let principal = wamn_control_provision::PlatformComponent::Provisioning;
-    // These clients seed several autocommit transactions. Keep their actor
-    // bound for the session, as the administration fixture does.
-    let bind_actor = format!(
-        "SELECT set_config('app.user_id', '{}', false), \
-         set_config('app.operation', '{}', false)",
-        principal.principal_id(),
-        principal.principal_name(),
-    );
-    sqlx::raw_sql(sqlx::AssertSqlSafe((&bind_actor).to_string()))
-        .execute(&mut owner)
-        .await
-        .map(drop)?;
     sqlx::raw_sql("UPDATE registry.meta SET platform_domain='example.invalid'")
         .execute(&mut owner)
         .await
@@ -331,10 +342,6 @@ pub async fn registry(
     sqlx::raw_sql("CREATE ROLE file_fixture_control LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \
          GRANT wamn_control TO file_fixture_control").execute(&mut bootstrap).await.map(drop)?;
     let mut control = connect(&login(database.url(), "file_fixture_control")?).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe((&bind_actor).to_string()))
-        .execute(&mut control)
-        .await
-        .map(drop)?;
     let mut clients = Vec::new();
     for (target_project, mapped) in [(project, true), ("unmapped", false), ("unenabled", true)] {
         let role = system_reader_login(
@@ -403,7 +410,14 @@ pub async fn registry(
         if !cdn {
             parameters.as_object_mut().unwrap().remove("cdn_host");
         }
-        let mut tx = fixture.control.begin().await?;
+        let mut tx = wamn_test_postgres::transaction(
+            &mut fixture.control,
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+            "wamn:provisioning",
+        )
+        .await?;
         wamn_test_infrastructure::credentials::define(&mut tx,org,&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters,"credential":serde_json::json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":STORE_PASSWORD}).to_string()}),fixture.credentials.as_ref()).await?;
         tx.commit().await?;
     }
@@ -596,7 +610,7 @@ pub async fn age_metadata(fixture: &mut Fixture) -> anyhow::Result<()> {
         !identity.get::<bool, _>(0) && !identity.get::<bool, _>(1),
         "fixture import uses no superuser"
     );
-    sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:aged-file-fixture',false)").bind(&CALLER).execute(&mut importer).await.map(|result| result.rows_affected())?;
+
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("BEGIN; ALTER TABLE platform.file DISABLE TRIGGER wamn_record_history_stamp; \
          UPDATE platform.file SET created_at=now()-interval '31 days'; \

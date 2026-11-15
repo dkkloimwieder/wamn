@@ -60,8 +60,7 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
                 // and the history entry names it.
                 sqlx::raw_sql(sqlx::AssertSqlSafe((&format!(
                         "BEGIN;\n\
-                         SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true), \
-                                set_config('app.operation', 'admin:follow-delete', true);\n\
+                         INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('00000000-0000-4000-8000-0000000000f1'::text::uuid,'','fixture','admin:follow-delete');\n\
                          DELETE FROM wms.packaging WHERE id = '{id}';\n\
                          COMMIT;"
                     )).to_string())).execute(&mut admin).await.map(drop)

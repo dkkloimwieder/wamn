@@ -67,9 +67,10 @@ impl WamnPostgres {
             .map(ReleaseIdentity::manifest_digest)
             .map(wamn_catalog::ManifestDigest::as_str);
         let result = self
-            .executor_bound(component_id, async |connection| {
+            .executor_bound(component_id, async |connection, project_env_key| {
                 persistence::lease_next(
                     connection,
+                    project_env_key,
                     &runner,
                     package_ids,
                     environment,
@@ -94,8 +95,15 @@ impl WamnPostgres {
         grace_ms: i64,
     ) -> Result<ProductionReapResult, ProductionLeaseError> {
         let result = self
-            .executor_bound(component_id, async |connection| {
-                persistence::reap_exhausted(connection, package_ids, environment, grace_ms).await
+            .executor_bound(component_id, async |connection, project_env_key| {
+                persistence::reap_exhausted(
+                    connection,
+                    project_env_key,
+                    package_ids,
+                    environment,
+                    grace_ms,
+                )
+                .await
             })
             .await?;
         Ok(result)
@@ -117,9 +125,16 @@ impl WamnPostgres {
             )
         })?;
         let result = self
-            .executor_bound(component_id, async |connection| {
-                persistence::renew(connection, run_id, &runner, lease_generation, lease_ttl_ms)
-                    .await
+            .executor_bound(component_id, async |connection, project_env_key| {
+                persistence::renew(
+                    connection,
+                    project_env_key,
+                    run_id,
+                    &runner,
+                    lease_generation,
+                    lease_ttl_ms,
+                )
+                .await
             })
             .await?;
         Ok(result)
@@ -141,9 +156,16 @@ impl WamnPostgres {
             )
         })?;
         let result = self
-            .executor_bound(component_id, async |connection| {
-                persistence::complete(connection, run_id, &runner, lease_generation, completion)
-                    .await
+            .executor_bound(component_id, async |connection, project_env_key| {
+                persistence::complete(
+                    connection,
+                    project_env_key,
+                    run_id,
+                    &runner,
+                    lease_generation,
+                    completion,
+                )
+                .await
             })
             .await?;
         Ok(result)
@@ -165,9 +187,10 @@ impl WamnPostgres {
             )
         })?;
         let result = self
-            .executor_bound(component_id, async |connection| {
+            .executor_bound(component_id, async |connection, project_env_key| {
                 persistence::record_deadline_adjustments(
                     connection,
+                    project_env_key,
                     run_id,
                     &runner,
                     lease_generation,
@@ -194,8 +217,15 @@ impl WamnPostgres {
             )
         })?;
         let result = self
-            .executor_bound(component_id, async |connection| {
-                persistence::release_lease(connection, run_id, &runner, lease_generation).await
+            .executor_bound(component_id, async |connection, project_env_key| {
+                persistence::release_lease(
+                    connection,
+                    project_env_key,
+                    run_id,
+                    &runner,
+                    lease_generation,
+                )
+                .await
             })
             .await?;
         Ok(result)
@@ -217,8 +247,15 @@ impl WamnPostgres {
             return Ok(false);
         };
         let result = self
-            .executor_bound(component_id, async |connection| {
-                persistence::pinned_backlog(connection, package_ids, environment, digest).await
+            .executor_bound(component_id, async |connection, project_env_key| {
+                persistence::pinned_backlog(
+                    connection,
+                    project_env_key,
+                    package_ids,
+                    environment,
+                    digest,
+                )
+                .await
             })
             .await?;
         Ok(result)

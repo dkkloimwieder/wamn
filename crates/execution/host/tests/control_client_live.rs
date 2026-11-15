@@ -130,11 +130,6 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
 
     // The users and their grants, written as provisioning, and one password
     // login of each admin for the control audience.
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-        .execute(&mut admin)
-        .await
-        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name) in [
         ("boss@example.test", "Boss"),

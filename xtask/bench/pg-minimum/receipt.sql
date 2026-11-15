@@ -21,7 +21,8 @@ SELECT ''::text AS role, s.purchase_order_id, s.line,
  WHERE s.client = :client_id AND s.slot = :sequence \gset
 \startpipeline
 BEGIN ISOLATION LEVEL READ COMMITTED;
-SELECT set_config('statement_timeout', :statement_timeout, true), set_config('search_path', COALESCE(:schema, current_setting('search_path')), true), set_config('app.runner', COALESCE(:runner, current_setting('app.runner', true)), true), set_config('app.role', :role, true), set_config('app.user_id', :principal, true), set_config('app.operation', :operation, true);
+INSERT INTO platform.tx_identity(principal_id, role, application, operation, runner) VALUES (:principal::uuid, :role, '', :operation, :runner);
+SELECT set_config('statement_timeout', :statement_timeout, true), set_config('search_path', COALESCE(:schema, current_setting('search_path')), true);
 INSERT INTO platform.write_log (operation, idempotency_key, request) VALUES (:claim_operation::text, :request_id::text, :request_hash::bytea) ON CONFLICT (operation, idempotency_key) DO NOTHING RETURNING idempotency_key;
 \endpipeline
 SELECT status

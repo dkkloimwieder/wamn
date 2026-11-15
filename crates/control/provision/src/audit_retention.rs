@@ -135,6 +135,9 @@ pub fn reconcile_audit_retention_grants_sql() -> String {
                               held.schema_name, held.relation_name, role_name); \
              END IF; \
            END LOOP; \
+           EXECUTE format('GRANT USAGE ON SCHEMA platform, wamn_authority TO %I', role_name); \
+           EXECUTE format('GRANT INSERT ON platform.tx_identity TO %I', role_name); \
+           EXECUTE format('GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO %I', role_name); \
            FOR target IN {targets} LOOP \
              EXECUTE format('GRANT USAGE ON SCHEMA %I TO %I', target.schema_name, role_name); \
              EXECUTE format('GRANT DELETE, SELECT ({read_columns}) ON TABLE %I.%I TO %I', \

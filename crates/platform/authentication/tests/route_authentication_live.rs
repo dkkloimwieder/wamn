@@ -153,11 +153,14 @@ async fn install_project_and_reconcile(
         .await
         .map(drop)
         .context("create the empty run-plane revoke target")?;
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut *project)
+        .await
+        .expect("begin fixture transaction");
     // The fixture writes as its test principal, whose row stamps itself. Both
     // bindings stay on this session for the later role and permission changes.
     sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:route-authentication-fixture', false)",
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:route-authentication-fixture')",
     )
     .bind(&FIXTURE_PRINCIPAL)
     .execute(&mut *project)
@@ -208,6 +211,10 @@ async fn install_project_and_reconcile(
         )?;
     }
     wamn_test_infrastructure::fixture_digest::write_build_record(&package);
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut *project)
+        .await
+        .expect("commit fixture transaction");
     let migration_database_url = wamn_control_provision::test_database::package_migration_input(
         project_url,
         ORG,
@@ -586,8 +593,7 @@ async fn assert_user_environment_membership(
     .map(drop)?;
     panic!("wamn-eulfr.12.10: no product second-environment fault fixture");
     sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:other-environment-fixture', false)",
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:other-environment-fixture')",
     )
     .bind(&user.id().to_string().as_str())
     .execute(&mut other_project)

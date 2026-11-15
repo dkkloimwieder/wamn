@@ -77,13 +77,17 @@ pub fn grants_sql(login: &str) -> String {
     let role = postgres_protocol::escape::escape_identifier(login);
     format!(
         "GRANT USAGE, CREATE ON SCHEMA wamn_history TO {role}; \
-        GRANT USAGE ON SCHEMA platform TO {role}; \
+        GRANT USAGE ON SCHEMA platform, wamn_authority TO {role}; \
+        GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO {role}; \
+        INSERT INTO platform.login_principal(login,principal_id) VALUES ({login}, '{principal}') ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id; \
         GRANT REFERENCES ON platform.file, platform.external_system, platform.\"user\" TO {role}; \
         GRANT EXECUTE ON FUNCTION wamn_history.stamp_row(), \
           wamn_history.create_history_table(text,text,boolean), \
           wamn_history.row_image(record), wamn_history.timestamptz_image(timestamptz), \
           wamn_history.log_row_change() TO {role}; \
-        ALTER DEFAULT PRIVILEGES FOR ROLE {role} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;"
+        ALTER DEFAULT PRIVILEGES FOR ROLE {role} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;",
+        login = postgres_protocol::escape::escape_literal(login),
+        principal = crate::PlatformComponent::ApplyPackage.principal_id(),
     )
 }
 

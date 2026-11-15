@@ -61,14 +61,6 @@ pub async fn apply_target(
     let login = database.require_login(client).await?;
     let key = crate::migrations::lock_session(client, lock, &[]).await?;
     let result = async {
-        let component = wamn_control_provision::PlatformComponent::Provisioning;
-        sqlx::query(
-            "SELECT set_config('app.user_id',$1,false), set_config('app.operation',$2,false)",
-        )
-        .bind(component.principal_id().to_string())
-        .bind(component.principal_name())
-        .execute(&mut *client)
-        .await?;
         let table = format!("{schema}._sqlx_migrations");
         wamn_control_provision::migration::prepare_history(client, &table, &login).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(

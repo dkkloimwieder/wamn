@@ -215,10 +215,7 @@ async fn development_identity_survives_schema_reset() {
         .unwrap()
         .build()
         .unwrap();
-    let actor = PlatformComponent::Provisioning.principal_id().to_string();
-    sqlx::query(sqlx::AssertSqlSafe(("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:seed-identity-fixture', false)").to_string())).bind(&actor).execute(&mut admin)
-        .await
-        .unwrap();
+
     // provision-org created the developer as the journey org's first admin.
     let user = create_or_reuse_user(&mut admin, DEVELOPER_EMAIL, "Developer")
         .await

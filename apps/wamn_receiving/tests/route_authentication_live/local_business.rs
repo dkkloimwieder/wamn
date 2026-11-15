@@ -48,7 +48,8 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
         let mut client = wamn_postgres::connect(&project_url).await?;
 
         super::bind_fixture_principal(&mut client).await?;
-        seed_acme_orders(&mut client).await?;
+        let mut fixture_write = wamn_test_postgres::transaction(&mut client, "00000000-0000-4000-8000-0000000000f1", "admin:seed-receiving-test-fixture").await?;
+        seed_acme_orders(&mut *fixture_write).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(("UPDATE receiving.purchase_order SET status = 'complete', row_version = row_version + 1
                 WHERE id = '00000000-0000-0000-0000-000000000721';
              UPDATE receiving.purchase_order SET status = 'cancelled', row_version = row_version + 1
@@ -56,7 +57,8 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
              INSERT INTO receiving.purchase_order
                 (id, purchase_order_number, supplier_id, status, acme_inspection_required, acme_quality_status)
              VALUES ('00000000-0000-0000-0000-000000000727', 'PO-FEED-EMPTY',
-                '00000000-0000-0000-0000-000000000730', 'open', false, 'not_required');").to_string())).execute(&mut client).await.map(drop)?;
+                '00000000-0000-0000-0000-000000000730', 'open', false, 'not_required');").to_string())).execute(&mut *fixture_write).await.map(drop)?;
+        fixture_write.commit().await?;
         let http = HttpClient::builder().build().expect("HTTP client");
         let read = async |path: &str, input: Value| -> anyhow::Result<Value> {
             let request_element = input.as_object().context("read input is an object")?;

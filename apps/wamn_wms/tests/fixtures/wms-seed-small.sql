@@ -32,9 +32,8 @@ SET row_security = off;
 
 -- The record history trigger requires an actor, and a dump carries none.
 -- These settings hold for the whole session that applies this file.
-SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false),
-       set_config('app.project_env_key_id', 'acme--dev--wms', false),
-       set_config('app.operation', 'admin:seed-wms-fixture', false);
+BEGIN;
+INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:seed-wms-fixture');
 
 --
 -- Data for Name: location; Type: TABLE DATA; Schema: wms; Owner: postgres
@@ -146,3 +145,5 @@ a0865b0a-a712-d77e-edd9-d6f84f4a65c7	bf590122-9881-4570-8186-61bee49d251f	21	\N	
 
 \unrestrict QXrj9WJ4F2lMNeyqBWQichHKe0folja7VMMLr6vffIueEUxGeJwtrhzlkh61qcA
 
+
+COMMIT;

@@ -311,12 +311,6 @@ async fn setup(raw: &str) -> Fixture {
         .map(drop)
         .expect_redacted("schema prerequisite roles");
     // The system fixture is platform setup, so it writes as wamn:provisioning.
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-        .execute(&mut system.client)
-        .await
-        .map(|result| result.rows_affected())
-        .expect_redacted("bind wamn:provisioning for the system fixture session");
     for name in &databases {
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "CREATE DATABASE {}",
@@ -381,8 +375,7 @@ async fn setup(raw: &str) -> Fixture {
         // Both bindings stay for the later fixture writes of this session.
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&format!(
-                "SET app.user_id = '{FIXTURE_PRINCIPAL}'; \
-                 SET app.operation = 'admin:session-exchange-fixture'; \
+                "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{FIXTURE_PRINCIPAL}'::text::uuid,'','fixture','admin:session-exchange-fixture'); \
                  INSERT INTO platform.\"user\" (id,type,email) \
                  VALUES ('{FIXTURE_PRINCIPAL}','user','fixture@example.invalid');"
             ))

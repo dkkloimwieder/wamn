@@ -12,16 +12,15 @@ use uuid::Uuid;
 /// The provisioned test principal that Receiving fixtures write as.
 pub const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
-/// Bind the fixture test principal as `app.user_id` and the fixture purpose as
-/// `app.operation` for this session.
+/// Create the fixture principal under its transaction identity.
 ///
 /// The record-history triggers stamp and log each fixture write with this
 /// principal and operation. The first binding in a database creates its user
 /// row, and that row stamps itself.
 pub async fn bind_fixture_principal(client: &mut Client) -> Result<()> {
+    sqlx::raw_sql("BEGIN").execute(&mut *client).await?;
     sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:seed-receiving-test-fixture', false)",
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:seed-receiving-test-fixture')",
     )
     .bind(&FIXTURE_PRINCIPAL)
     .execute(&mut *client)
@@ -38,6 +37,7 @@ pub async fn bind_fixture_principal(client: &mut Client) -> Result<()> {
     .await
     .map(|result| result.rows_affected())
     .context("create the fixture test principal")?;
+    sqlx::raw_sql("COMMIT").execute(&mut *client).await?;
     Ok(())
 }
 
@@ -80,6 +80,9 @@ pub async fn seed(client: &mut Client, ordered: [u16; 2], status: &str) -> Resul
         matches!(status, "open" | "cancelled"),
         "zero-received fixture must be open or cancelled"
     );
+    sqlx::raw_sql("BEGIN").execute(&mut *client).await?;
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:seed-receiving-test-fixture')")
+        .bind(FIXTURE_PRINCIPAL).execute(&mut *client).await?;
     let fixture = Fixture {
         id: Uuid::new_v4(),
         line_ids: [Uuid::new_v4(), Uuid::new_v4()],
@@ -134,6 +137,7 @@ pub async fn seed(client: &mut Client, ordered: [u16; 2], status: &str) -> Resul
     .await
     .map(|result| result.rows_affected())
     .context("seed distinct Receiving business fixture in one statement")?;
+    sqlx::raw_sql("COMMIT").execute(&mut *client).await?;
     Ok(fixture)
 }
 

@@ -390,7 +390,7 @@ impl Fixture {
             wamn_platform_identity::test_database::project_platform(database.as_str()).await;
             let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();
 
-            sqlx::raw_sql("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:seed-oauth2',true)").execute(&mut admin).await.map(drop).unwrap();
+            sqlx::raw_sql("BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:seed-oauth2')").execute(&mut admin).await.map(drop).unwrap();
             let project_env_key = wamn_registry::project_env_key("acme", project, "dev");
             sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&project_env_key).bind(&manifest_digest).bind(&bytes).execute(&mut admin).await.map(|result| result.rows_affected()).unwrap();
             let rows = sqlx::query("SELECT c.id,i.id,i.name FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project=$1 AND c.env='dev'").bind(&project).fetch_all(&mut wamn_postgres::connect(self.credentials.database.as_str()).await.unwrap()).await.unwrap();

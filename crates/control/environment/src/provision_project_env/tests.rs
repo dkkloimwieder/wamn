@@ -171,7 +171,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row(pool: sqlx::PgPool) 
         .await
         .map(drop)
         .unwrap();
-    sqlx::raw_sql("BEGIN; INSERT INTO platform.tx_identity(user_id,role,application) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture'); INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18'); COMMIT;").execute(&mut client).await.map(drop).unwrap();
+    sqlx::raw_sql("BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture'); INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18'); COMMIT;").execute(&mut client).await.map(drop).unwrap();
     let triple = Triple::new("demo", "dev", "inventory");
     for disposable in [Some(true), None] {
         do_record_project_env(

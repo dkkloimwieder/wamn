@@ -43,7 +43,7 @@ async fn provision(admin: &mut Client) {
         .map(drop)
         .expect("apply run-queue.sql");
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-catalog-fixture', false); \
+            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{}'::text::uuid,'','fixture','admin:seed-catalog-fixture'); \
              INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ('{PROJECT_ENV_KEY}', '{RELEASE_DIGEST}', '{{}}'), \
                     ('{OTHER_PROJECT_ENV_KEY}', '{RELEASE_DIGEST}', '{{}}');",

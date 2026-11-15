@@ -1,6 +1,7 @@
 //! Private worker entry points for the environment chart's retention tasks.
 
 use clap::Args;
+use sqlx::Connection as _;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity};
 
 use crate::Configuration;
@@ -95,21 +96,27 @@ async fn prune_identities(
     input: &str,
     scope: wamn_control_provision::migrations::MigrationDatabase,
 ) -> anyhow::Result<()> {
-    let configuration = scope.configuration(input)?;
-    let mut connection = wamn_postgres::connect(&configuration).await?;
-    scope.require_login(&mut connection).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "SET ROLE {}",
-        scope.owner_role()
-    )))
-    .execute(&mut connection)
-    .await?;
-    sqlx::query(
-        "DELETE FROM platform.tx_identity WHERE xid < pg_snapshot_xmin(pg_current_snapshot())",
-    )
-    .execute(&mut connection)
-    .await?;
-    Ok(())
+    // Bound credential lookup, connection establishment, role selection and delete.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let configuration = scope.configuration(input)?;
+        let mut connection = wamn_postgres::connect(&configuration).await?;
+        scope.require_login(&mut connection).await?;
+        let mut transaction = connection.begin().await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "SET LOCAL ROLE {}; SET LOCAL statement_timeout = '5s'",
+            scope.owner_role()
+        )))
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "DELETE FROM platform.tx_identity WHERE xid < pg_snapshot_xmin(pg_current_snapshot())",
+        )
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(())
+    })
+    .await?
 }
 
 /// Remove identities that no running transaction can still use.
@@ -118,13 +125,15 @@ pub(crate) async fn identities(directory: &std::path::Path, system: &str) -> any
     if let Err(error) = prune_identities(system, MigrationDatabase::System).await {
         tracing::warn!(%error, "system transaction identity retention failed");
     }
-    for entry in std::fs::read_dir(directory)? {
-        let entry = entry?;
-        if entry.file_name().to_string_lossy().starts_with('.') || !entry.path().is_file() {
+    let mut entries = tokio::fs::read_dir(directory).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        if entry.file_name().to_string_lossy().starts_with('.')
+            || !entry.file_type().await?.is_file()
+        {
             continue;
         }
         let result = async {
-            let input = std::fs::read_to_string(entry.path())?;
+            let input = tokio::fs::read_to_string(entry.path()).await?;
             prune_identities(&input, MigrationDatabase::Project).await
         }
         .await;

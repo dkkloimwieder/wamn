@@ -13,9 +13,8 @@ use wamn_platform_identity::org::{
 use wamn_platform_identity::{assign_project_role, create_or_reuse_user, create_service};
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let mut client = wamn_postgres::connect(url).await?;
+    let client = wamn_postgres::connect(url).await?;
 
-    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','wamn:provisioning',false)").bind(&PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut client).await.map(|result| result.rows_affected())?;
     Ok(client)
 }
 

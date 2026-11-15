@@ -1,6 +1,5 @@
 BEGIN;
-SELECT set_config('app.user_id','00000000-0000-4000-8000-000000000001',true),
-       set_config('app.operation','admin:connection-schema-test',true);
+INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('00000000-0000-4000-8000-000000000001'::text::uuid,'','fixture','admin:connection-schema-test');
 INSERT INTO platform.integration (id,integration_type,name,status) VALUES
     ('10000000-0000-4000-8000-000000000001','http','http-test','active'),
     ('10000000-0000-4000-8000-000000000002','s3','store-test','active'),
@@ -53,8 +52,7 @@ VALUES ('30000000-0000-4000-8000-000000000001','fixture','20000000-0000-4000-800
 COMMIT;
 
 BEGIN;
-SELECT set_config('app.user_id','00000000-0000-4000-8000-000000000002',true),
-       set_config('app.operation','admin:update-connection-schema-test',true);
+INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('00000000-0000-4000-8000-000000000002'::text::uuid,'','fixture','admin:update-connection-schema-test');
 UPDATE catalog.release_connection SET version=2 WHERE connection_id IN ('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000004');
 UPDATE catalog.connection_binding SET name='erp' WHERE name='erp';
 DO $$ BEGIN

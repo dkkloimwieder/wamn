@@ -77,8 +77,7 @@ fn refusal(url: &str, statement: &str) -> Option<String> {
     let (ok, _, stderr) = psql(
         url,
         &format!(
-            "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
-             set_config('app.operation', 'admin:operation-grant-fixture', true); \
+            "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{FIXTURE_PRINCIPAL}'::text::uuid,'','fixture','admin:operation-grant-fixture'); \
              {statement}; COMMIT;"
         ),
     );
@@ -132,8 +131,7 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(pool: sqlx::Pg
         &url,
         "seed an authored role with two permissions",
         &format!(
-            "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
-         set_config('app.operation', 'admin:seed-operation-grant-fixture', true); \
+            "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{FIXTURE_PRINCIPAL}'::text::uuid,'','fixture','admin:seed-operation-grant-fixture'); \
          INSERT INTO platform.\"user\" (id, type, email) VALUES \
            ('{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'); \
          INSERT INTO platform.role (name) VALUES ('clerk'); \

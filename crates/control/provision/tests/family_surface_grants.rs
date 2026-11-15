@@ -54,9 +54,6 @@ const GENERATION_PW: &str = "wamn_family_surface_pw";
 /// `VERBOSITY=verbose` is what carries the real SQLSTATE back into Rust, so a
 /// refusal is asserted on `42501` rather than on an error string.
 fn psql(url: &str, script: &str) -> (bool, String, String) {
-    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
-    let script =
-        format!("SET app.user_id='{actor}'; SET app.operation='admin:provision-fixture'; {script}");
     let mut child = Command::new("psql")
         .arg(url)
         .args([
@@ -655,8 +652,7 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
         "seed one readable fact in each catalog and fresh permission relation",
         &format!(
             "BEGIN;\n\
-             SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
-                    set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\
+             INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('00000000-0000-4000-8000-000000000001'::text::uuid,'','fixture','admin:seed-family-surface-fixture');\n\
              INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 'org-a','orders','1.0.0','{digest}');\n\
              INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
              VALUES ('org-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}');\n\
@@ -676,8 +672,7 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
              VALUES ('org-a', 'prod', 'orders', 'send', 1, '{{}}', '{digest}', \
                      'manual', 'role', 'widget-reader', \
                      '00000000-0000-4000-8000-000000000001');\n\
-             SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
-                    set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\
+             INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('00000000-0000-4000-8000-000000000001'::text::uuid,'','fixture','admin:seed-family-surface-fixture');\n\
              INSERT INTO platform.role (name) \
              VALUES ('widget-reader');\n\
              INSERT INTO platform.\"user\" (id, type, email) \

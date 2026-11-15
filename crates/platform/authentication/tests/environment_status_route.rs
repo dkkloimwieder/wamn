@@ -168,14 +168,6 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
 
     // No row means active, and an anonymous route admits no caller.
     assert_eq!(admitted(&route).await, Ok(false));
-    sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:environment-status-fixture', false)",
-    )
-    .bind(&ACTOR)
-    .execute(&mut admin)
-    .await
-    .map(|result| result.rows_affected())?;
     sqlx::query("INSERT INTO platform.environment (status) VALUES ('inactive')")
         .execute(&mut admin)
         .await

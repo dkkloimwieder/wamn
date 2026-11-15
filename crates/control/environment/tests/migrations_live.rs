@@ -29,20 +29,22 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
         .execute(&mut admin)
         .await?;
     let component = wamn_control_provision::PlatformComponent::ApplyPackage;
-    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation',$2,false)")
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind(component.principal_id().to_string())
-        .bind(component.principal_name())
         .execute(&mut admin)
         .await?;
     let table = migration::history_table("fixture--dev--one", "orders");
     migration::prepare_history(&mut admin, &table, "postgres").await?;
     let first = source(
         10,
-        "CREATE TABLE public.migration_effect(id int PRIMARY KEY)",
+        "CREATE TABLE public.migration_effect(id int PRIMARY KEY, created_at timestamptz NOT NULL, created_by uuid NOT NULL, updated_at timestamptz NOT NULL, updated_by uuid NOT NULL);
+        CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON public.migration_effect FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at','created_by','updated_at','updated_by');
+        SELECT wamn_history.create_history_table('public','migration_effect',false);
+        CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON public.migration_effect FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');",
     );
     let failing = source(
         30,
-        "INSERT INTO public.migration_effect VALUES (1); SELECT 1/0",
+        "INSERT INTO public.migration_effect(id) VALUES (1); SELECT 1/0",
     );
     assert!(
         migrations::run(
@@ -57,8 +59,16 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
         .fetch_all(&mut admin)
         .await?;
     assert!(rows.is_empty());
-    let last = source(30, "INSERT INTO public.migration_effect VALUES (1)");
-    let sources = [first, last];
+    let last = source(30, "INSERT INTO public.migration_effect(id) VALUES (1)");
+    let sources = [
+        first,
+        last,
+        source(40, "UPDATE public.migration_effect SET id=2 WHERE id=1"),
+        source(
+            50,
+            "-- no-transaction\nUPDATE public.migration_effect SET id=1 WHERE id=2",
+        ),
+    ];
     migrations::run(&mut admin, migrator(&sources), table.clone()).await?;
     use sqlx::migrate::Migrate as _;
     let applied = admin.list_applied_migrations(&table).await?;
@@ -74,6 +84,29 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
     .fetch_one(&mut admin)
     .await?;
     assert!(stamps);
+    let actors: bool =
+        sqlx::query_scalar("SELECT bool_and(changed_by=$1) FROM public.migration_effect_history")
+            .bind(component.principal_id())
+            .fetch_one(&mut admin)
+            .await?;
+    assert!(actors);
+    let principal: uuid::Uuid =
+        sqlx::query_scalar("SELECT updated_by FROM public.migration_effect WHERE id=1")
+            .fetch_one(&mut admin)
+            .await?;
+    assert_eq!(principal, component.principal_id());
+    sqlx::raw_sql(
+        "GRANT INSERT ON public.migration_effect TO wamn_app; SET ROLE wamn_app;
+        DO $$ BEGIN
+            BEGIN
+                INSERT INTO public.migration_effect(id) VALUES(99);
+                RAISE EXCEPTION 'application write succeeded without its transaction identity';
+            EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL;
+            END;
+        END $$; RESET ROLE;",
+    )
+    .execute(&mut admin)
+    .await?;
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM public.migration_effect")
         .fetch_one(&mut admin)
         .await?;
@@ -98,7 +131,7 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
         Some(MigrateError::VersionMissing(_))
     ));
     // An unavailable history write rolls the migration's data back with it.
-    let extra = source(50, "INSERT INTO public.migration_effect VALUES (2)");
+    let extra = source(60, "INSERT INTO public.migration_effect(id) VALUES (2)");
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE FUNCTION public.refuse_record() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'unavailable'; END $$; CREATE TRIGGER refuse_record BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION public.refuse_record()")))
         .execute(&mut admin).await?;
     let mut with_extra = sources.to_vec();
@@ -114,7 +147,7 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
     assert_eq!(rows, [1]);
     // SQLx retries a nontransactional file whose effects committed before its history write failed.
     let mut nontransactional = sources.to_vec();
-    nontransactional.push(source(50, "-- no-transaction\nCREATE INDEX CONCURRENTLY IF NOT EXISTS migration_effect_idx ON public.migration_effect(id)"));
+    nontransactional.push(source(60, "-- no-transaction\nCREATE INDEX CONCURRENTLY IF NOT EXISTS migration_effect_idx ON public.migration_effect(id)"));
     assert!(
         migrations::run(&mut admin, migrator(&nontransactional), table.clone())
             .await
@@ -422,13 +455,13 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
     .await?;
     sqlx::query("INSERT INTO platform.write_log(operation,idempotency_key,request,result) VALUES ('fixture.create','before-reset',$1,'committed')")
         .bind(&b"request"[..]).execute(&mut admin).await?;
-    sqlx::raw_sql("SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.environments SET disposable=false WHERE org='reset' AND env='dev'").execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap()).await?;
+    sqlx::raw_sql("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:fixture'); UPDATE registry.environments SET disposable=false WHERE org='reset' AND env='dev'").execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap()).await?;
     assert!(
         reset_database(system.as_str(), &owner_input, &migration_input, &triple)
             .await
             .is_err()
     );
-    sqlx::raw_sql("SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.environments SET disposable=true WHERE org='reset' AND env='dev'").execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap()).await?;
+    sqlx::raw_sql("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:fixture'); UPDATE registry.environments SET disposable=true WHERE org='reset' AND env='dev'").execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap()).await?;
     reset_database(system.as_str(), &owner_input, &migration_input, &triple).await?;
     let after: sqlx::postgres::types::Oid =
         sqlx::query_scalar("SELECT oid FROM pg_database WHERE datname=current_database()")

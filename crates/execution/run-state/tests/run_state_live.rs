@@ -10,9 +10,6 @@ use wamn_run_state::run_store::{
 use std::io::Write as _;
 use std::process::{Command, Output, Stdio};
 fn psql(url: &str, script: &str) -> Output {
-    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
-    let script =
-        format!("SET app.user_id='{actor}'; SET app.operation='admin:run-state-fixture'; {script}");
     let mut child = Command::new("psql")
         .args(["-X", "-v", "ON_ERROR_STOP=1", "-Atq", "-1", url])
         .stdin(Stdio::piped())
@@ -40,6 +37,15 @@ fn success(url: &str, script: &str) -> String {
 }
 
 const EXECUTOR_LOGIN: &str = "wamn_transitions_executor_login";
+
+async fn bound_transaction(
+    connection: &mut sqlx::PgConnection,
+) -> anyhow::Result<sqlx::Transaction<'_, sqlx::Postgres>> {
+    let mut tx = connection.begin().await?;
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','fixture','wamn:executor')")
+        .bind(wamn_identity_protocol::PlatformComponent::Executor.principal_id()).execute(&mut *tx).await?;
+    Ok(tx)
+}
 
 #[sqlx::test(migrations = false)]
 async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
@@ -149,6 +155,9 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         ),
     );
 
+    let actor = wamn_identity_protocol::PlatformComponent::Executor
+        .principal_id()
+        .to_string();
     let mut admin = wamn_postgres::connect(&url).await?;
     let mut worker = wamn_postgres::connect(&url).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
@@ -156,13 +165,6 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     )))
     .execute(&mut worker)
     .await?;
-    let actor = wamn_identity_protocol::PlatformComponent::Executor
-        .principal_id()
-        .to_string();
-    for client in [&mut admin, &mut worker] {
-        sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:run-test', false), set_config('app.project_env_key', 't1', false)")
-            .bind(&actor).execute(client).await?;
-    }
     let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
     let input = serde_json::json!({"order": 7});
     let nodes = serde_json::json!({"read": digest});
@@ -186,7 +188,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         root_run: None,
         depth: None,
     };
-    let mut tx = worker.begin().await?;
+    let mut tx = bound_transaction(&mut worker).await?;
     let admitted = admission::admit_run(&mut tx, &run).await?;
     let RunAdmitted::Queued { run_id } = &admitted else {
         panic!("run was not queued");
@@ -209,11 +211,18 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         vec![" cat".to_owned()],
         vec!["cat\0".to_owned()],
     ] {
-        let mut tx = worker.begin().await?;
-        let error =
-            persistence::lease_next(&mut tx, "worker", &invalid, "prod", 30000, Some(digest))
-                .await
-                .unwrap_err();
+        let mut tx = bound_transaction(&mut worker).await?;
+        let error = persistence::lease_next(
+            &mut tx,
+            "t1",
+            "worker",
+            &invalid,
+            "prod",
+            30000,
+            Some(digest),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(
             error.error_type(),
             wamn_run_state::run_store::ProductionLeaseErrorType::Contract
@@ -222,7 +231,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     }
 
     // Admission and its queue entry roll back together.
-    let mut tx = worker.begin().await?;
+    let mut tx = bound_transaction(&mut worker).await?;
     let aborted = RunAdmission {
         idempotency_key: "aborted",
         ..conflict
@@ -236,10 +245,11 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         .bind(&aborted_id).fetch_one(&mut admin).await?.get(0);
     assert!(!persisted);
 
-    let mut tx = worker.begin().await?;
+    let mut tx = bound_transaction(&mut worker).await?;
     assert!(matches!(
         persistence::lease_next(
             &mut tx,
+            "t1",
             "worker",
             &applications,
             "prod",
@@ -250,13 +260,14 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         LeaseTurn::Leased(ProductionLeaseResult::Empty)
     ));
     tx.commit().await?;
-    let mut tx = worker.begin().await?;
+    let mut tx = bound_transaction(&mut worker).await?;
     let LeaseTurn::Leased(ProductionLeaseResult::Ready {
         lease_generation: first,
         workflow,
         ..
     }) = persistence::lease_next(
         &mut tx,
+        "t1",
         "worker",
         &applications,
         "prod",
@@ -280,12 +291,13 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         .await?;
     sqlx::query("UPDATE wamn_run.run_queue SET lease_expires_at = now() - interval '1 minute' WHERE run_id=$1")
         .bind(run_id).execute(&mut admin).await?;
-    let mut tx = worker.begin().await?;
+    let mut tx = bound_transaction(&mut worker).await?;
     let LeaseTurn::Leased(ProductionLeaseResult::Ready {
         lease_generation: second,
         ..
     }) = persistence::lease_next(
         &mut tx,
+        "t1",
         "next-worker",
         &applications,
         "prod",
@@ -304,17 +316,16 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     )))
     .execute(&mut stale)
     .await?;
-    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:run-test',false), set_config('app.project_env_key','t1',false)")
-        .bind(&actor).execute(&mut stale).await?;
     let pid: i32 = sqlx::query("SELECT pg_backend_pid()")
         .fetch_one(&mut stale)
         .await?
         .get(0);
     let stale_run = run_id.to_owned();
     let waiting = tokio::spawn(async move {
-        let mut tx = stale.begin().await?;
+        let mut tx = bound_transaction(&mut stale).await?;
         let result = persistence::complete(
             &mut tx,
+            "t1",
             &stale_run,
             "worker",
             first,
@@ -341,14 +352,15 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         .bind(run_id).fetch_one(&mut admin).await?;
     assert!(row.get::<bool, _>(0));
     assert_eq!(row.get::<i32, _>(1), 1);
-    let mut tx = worker.begin().await?;
+    let mut tx = bound_transaction(&mut worker).await?;
     assert_eq!(
-        persistence::renew(&mut tx, run_id, "worker", first, 30000).await?,
+        persistence::renew(&mut tx, "t1", run_id, "worker", first, 30000).await?,
         ProductionLeaseRenewal::FenceLost
     );
     assert_eq!(
         persistence::complete(
             &mut tx,
+            "t1",
             run_id,
             "next-worker",
             second,
@@ -421,7 +433,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
             idempotency_key: "invalid-workflow",
             ..aborted
         };
-        let mut tx = worker.begin().await?;
+        let mut tx = bound_transaction(&mut worker).await?;
         assert!(admission::admit_run(&mut tx, &invalid).await.is_err());
         tx.rollback().await?;
     }
@@ -481,7 +493,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
             depth,
             ..aborted
         };
-        let mut tx = worker.begin().await?;
+        let mut tx = bound_transaction(&mut worker).await?;
         assert!(admission::admit_run(&mut tx, &invalid).await.is_err());
         tx.rollback().await?;
     }
@@ -496,7 +508,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         depth: Some(1),
         ..aborted
     };
-    let mut tx = worker.begin().await?;
+    let mut tx = bound_transaction(&mut worker).await?;
     let RunAdmitted::Queued { run_id: lineage_id } =
         admission::admit_run(&mut tx, &lineage).await?
     else {
@@ -522,10 +534,11 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     );
     tx.rollback().await?;
     // Run authority cannot be used to settle another run.
-    let mut tx = worker.begin().await?;
+    let mut tx = bound_transaction(&mut worker).await?;
     let row = sqlx::query(sqlx::AssertSqlSafe(
         wamn_run_state::transitions::terminalize_sql(),
     ))
+    .bind("t1")
     .bind(run_id)
     .bind(&lineage_id)
     .bind("worker")
@@ -554,7 +567,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         input: &input,
         ..aborted
     };
-    let mut tx = worker.begin().await?;
+    let mut tx = bound_transaction(&mut worker).await?;
     let RunAdmitted::Queued {
         run_id: exhausted_id,
     } = admission::admit_run(&mut tx, &exhausted).await?
@@ -564,9 +577,9 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     tx.commit().await?;
     sqlx::query("UPDATE wamn_run.run_queue SET lease_owner='dead', lease_expires_at=now()-interval '1 minute', attempts=max_attempts WHERE run_id=$1")
         .bind(&exhausted_id).execute(&mut admin).await?;
-    let mut tx = worker.begin().await?;
+    let mut tx = bound_transaction(&mut worker).await?;
     assert_eq!(
-        persistence::reap_exhausted(&mut tx, &applications, "prod", 0).await?,
+        persistence::reap_exhausted(&mut tx, "t1", &applications, "prod", 0).await?,
         ProductionReapResult::Reaped {
             run_id: exhausted_id
         }

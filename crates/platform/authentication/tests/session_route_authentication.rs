@@ -106,10 +106,13 @@ async fn seed(admin: &mut Client) -> anyhow::Result<()> {
         .as_str()
         .expect("fixture principal")
         .to_owned();
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut *admin)
+        .await
+        .expect("begin fixture transaction");
     // The fixture writes as its first principal, whose row stamps itself.
     sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:seed-session-route-fixture', false)",
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:seed-session-route-fixture')",
     )
     .bind(&first)
     .execute(&mut *admin)
@@ -152,6 +155,10 @@ async fn seed(admin: &mut Client) -> anyhow::Result<()> {
         sqlx::query("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'purchase-reader')").bind(&principal).execute(&mut *admin).await.map(|result| result.rows_affected())?;
     }
     sqlx::query("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'purchase-writer')").bind(&first).execute(&mut *admin).await.map(|result| result.rows_affected())?;
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut *admin)
+        .await
+        .expect("commit fixture transaction");
     Ok(())
 }
 

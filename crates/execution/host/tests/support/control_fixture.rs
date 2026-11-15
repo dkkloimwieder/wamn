@@ -37,7 +37,7 @@ pub(super) async fn install(admin: &mut Client, admin_url: &str) -> anyhow::Resu
     wamn_environment::provision_system::install_control_store(admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
-            "SET ROLE wamn_system; SET app.user_id = '{}'",
+            "SET ROLE wamn_system; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{}'::text::uuid,'','fixture','admin:fixture');",
             wamn_control_provision::PlatformComponent::Provisioning.principal_id()
         ))
             .to_string(),
@@ -156,14 +156,6 @@ pub(super) async fn project_database(
     .execute(&mut target)
     .await
     .map(drop)?;
-    sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:control-route-fixture', false)",
-    )
-    .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-    .execute(&mut target)
-    .await
-    .map(|result| result.rows_affected())?;
     sqlx::query(
         "INSERT INTO platform.\"user\" (id, type, email, display_name) \
              VALUES ($1::text::uuid, 'platform', 'provisioning@example.test', $2)",

@@ -151,17 +151,47 @@ async fn lookup(
         .transpose()
 }
 
+/// Find the principal for a renewal credential before opening its write transaction.
+pub async fn renewal_principal(
+    connection: &mut sqlx::PgConnection,
+    issuer: &str,
+    audience: &str,
+    secret: &str,
+) -> Result<Option<PrincipalId>, IdentityError> {
+    let Ok(token) = SecretToken::parse(SecretType::Renewal, secret) else {
+        return Ok(None);
+    };
+    let actor = wamn_control_provision::PlatformComponent::Provisioning
+        .principal_id()
+        .to_string();
+    let mut transaction = crate::transaction::read_connection(connection, &actor)
+        .await
+        .map_err(|error| database(&error))?;
+    let row = sqlx::query("SELECT l.principal_id::text FROM identity.renewal_credentials c JOIN identity.password_logins l ON l.id=c.login_id WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3")
+        .bind(token.digest()).bind(issuer).bind(audience)
+        .fetch_optional(&mut *transaction).await.map_err(|error| database(&error))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| database(&error))?;
+    row.map(|row| Ok(row.get::<String, _>(0).parse()?))
+        .transpose()
+}
+
 /// Authenticate a renewal credential and bind its user actor under the principal lock.
 ///
 /// Commit a refused result: replay revokes its family. This does not establish
 /// current environment authority; the service tests that before issuing tokens.
 pub async fn authenticate_renewal(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    principal: &PrincipalId,
     issuer: &str,
     audience: &str,
     secret: &str,
     drops: &mut AuthDrops,
 ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1::text::uuid,'','')")
+        .bind(principal.to_string()).execute(&mut **tx).await.map_err(|error| database(&error))?;
     let Some(digest) = SecretToken::parse(SecretType::Renewal, secret)
         .ok()
         .map(|token| token.digest())
@@ -171,14 +201,9 @@ pub async fn authenticate_renewal(
     let Some((login, consumed, usable)) = lookup(tx, issuer, audience, &digest).await? else {
         return Ok(None);
     };
-    sqlx::query(
-        "INSERT INTO platform.tx_identity(user_id,role,application) VALUES($1::text::uuid,'','')",
-    )
-    .bind(login.principal.to_string().as_str())
-    .execute(&mut **tx)
-    .await
-    .map(|result| result.rows_affected())
-    .map_err(|error| database(&error))?;
+    if &login.principal != principal {
+        return Ok(None);
+    }
     if consumed {
         revoke_family(tx, &login, drops).await?;
         return Ok(None);

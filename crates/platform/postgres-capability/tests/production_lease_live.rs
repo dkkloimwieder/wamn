@@ -85,6 +85,7 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let locked = sqlx::query(sqlx::AssertSqlSafe(
         (&select_production_lease_sql()).to_string(),
     ))
+    .bind(&PROJECT_ENV_KEY)
     .bind(&release_package_ids.as_slice())
     .bind(&ENVIRONMENT)
     .bind(&Some(POD_MANIFEST_DIGEST))

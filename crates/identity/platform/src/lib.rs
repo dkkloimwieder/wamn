@@ -10,7 +10,7 @@
 //! resolve an externally authenticated subject through [`resolve_subject`].
 //!
 //! Principals, project roles, memberships, and tokens carry record-history
-//! stamps. A caller that writes them binds `app.user_id` in the same
+//! stamps. A caller that writes them binds its principal in `platform.tx_identity` in the same
 //! transaction. Without a bound actor, the write fails with SQLSTATE `55000`.
 
 use sqlx::Row as _;
@@ -35,6 +35,7 @@ pub mod password;
 pub mod password_login;
 pub mod session_keys;
 pub mod session_token;
+pub mod transaction;
 
 use wamn_broker::auth_changes::AuthDrops;
 

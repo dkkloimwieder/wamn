@@ -108,8 +108,7 @@ fn prelude(url: &str) -> (String, String) {
     writeln!(
         script,
         r#"
-SET app.user_id = '{U1}';
-SET app.operation = 'admin:seed-authority-fixture';
+INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::text::uuid,'','fixture','admin:seed-authority-fixture');
 INSERT INTO platform."user" (id, type, email) VALUES ('{U1}','user','u1@t1');
 INSERT INTO platform.role (name) VALUES ('admin'),('auditor');
 INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U1}','admin');

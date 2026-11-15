@@ -44,7 +44,6 @@ use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig,
 };
 use wamn_http_capability::transport::HttpTransport;
-use wamn_identity_protocol::PlatformComponent;
 use wamn_identity_protocol::PrincipalId;
 use wamn_postgres_capability::{
     AuthorityClass, ClassCredentials, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
@@ -302,15 +301,6 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
     .await
     .map(drop)
     .expect("write the platform principals and the workflow user");
-    sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:manual-live-fixture', false)",
-    )
-    .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-    .execute(&mut admin)
-    .await
-    .map(|result| result.rows_affected())
-    .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "INSERT INTO platform.\"user\" (id, type, email) VALUES \
                ('{READER}', 'user', 'reader@manual.invalid'), \

@@ -102,12 +102,12 @@ async fn fanout_is_atomic_idempotent_and_records_the_history_actor(pool: sqlx::P
         2
     );
 
-    sqlx::raw_sql("BEGIN; SET LOCAL app.operation = 'admin:event-batch-fixture'")
+    sqlx::raw_sql("BEGIN")
         .execute(&mut fixture.admin)
         .await
         .map(drop)
         .unwrap();
-    sqlx::query("SELECT set_config('app.user_id', $1, true)")
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:event-batch-fixture')")
         .bind(&ADMIN)
         .execute(&mut fixture.admin)
         .await

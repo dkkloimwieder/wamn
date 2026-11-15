@@ -1,5 +1,5 @@
 BEGIN;
-INSERT INTO platform.tx_identity(user_id,role,application,operation)
+INSERT INTO platform.tx_identity(principal_id,role,application,operation)
 VALUES('00000000-0000-4000-8000-0000000000f1','','fixture','admin:seed-catalog-history');
 INSERT INTO platform."user" (id, type, email, display_name) VALUES
     ('00000000-0000-4000-8000-0000000000f1', 'user', 'creator@example.invalid', 'creator'),
@@ -47,7 +47,7 @@ BEGIN
         EXCEPTION WHEN SQLSTATE '55000' THEN
             ASSERT SQLERRM = 'actor-required', format('%s missing actor: %s', relation, SQLERRM);
         END;
-        INSERT INTO platform.tx_identity(user_id,role,application,operation)
+        INSERT INTO platform.tx_identity(principal_id,role,application,operation)
         VALUES('00000000-0000-4000-8000-0000000000f1','','fixture','admin:seed-catalog-history');
         IF relation NOT IN ('packages', 'release_connection', 'connection_binding') THEN
             BEGIN

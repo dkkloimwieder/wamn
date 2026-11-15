@@ -46,8 +46,7 @@ pub async fn write(
 ) -> anyhow::Result<u64> {
     let mut transaction = client.begin().await?;
     sqlx::query(
-        "SELECT pg_catalog.set_config('app.user_id', $1, true), \
-             pg_catalog.set_config('app.operation', $2, true)",
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture',$2)",
     )
     .bind(&CALLER)
     .bind(&OPERATION)

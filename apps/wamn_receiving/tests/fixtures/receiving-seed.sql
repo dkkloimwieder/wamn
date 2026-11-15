@@ -34,9 +34,7 @@
 
 BEGIN;
 
-SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true),
-       set_config('app.project_env_key_id', 'acme--dev--receiving', true),
-       set_config('app.operation', 'admin:seed-receiving-fixture', true);
+INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:seed-receiving-fixture');
 
 \if :{?reset}
 TRUNCATE receiving.receipt_line, receiving.receipt,

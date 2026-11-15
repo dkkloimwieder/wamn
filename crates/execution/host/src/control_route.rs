@@ -4,8 +4,8 @@
 //! Every org route needs a current `org-admin` row of the caller in the
 //! token's org. A project route needs that row or a current `project-admin`
 //! row of the caller in the project that the request names. A write runs in
-//! one transaction on the org's `control` login, binds `app.user_id` to the
-//! caller and `app.operation` to the route's sealed operation id, and tests
+//! one transaction on the org's `control` login, inserts the caller and
+//! the route's sealed operation id into its transaction identity, and tests
 //! the role again inside it. The writes are the functions of
 //! `wamn_platform_identity::org`, which `wamn-ctl invite` also calls, so no
 //! second writer exists.
@@ -287,35 +287,43 @@ impl ControlRoutes<'_> {
     ) -> Result<Value, Refusal> {
         let admitted = match attachment.route.authority {
             HostRouteAuthority::OrgAdmin => {
-                self.admits(&mut *self.control.acquire().await?, caller, None)
-                    .await?
+                self.read(caller, async |connection| {
+                    Ok(self.admits(connection, caller, None).await?)
+                })
+                .await?
             }
             HostRouteAuthority::ProjectAdmin => {
                 let target: Value =
                     serde_json::from_str(payload).map_err(|error| Refusal::Failed(error.into()))?;
                 let project = parse::<ProjectTarget>(payload)?.project;
-                self.admits_environment(
-                    &mut *self.control.acquire().await?,
-                    caller,
-                    Some(&project),
-                    target["env"].as_str(),
-                )
+                self.read(caller, async |connection| {
+                    Ok(self
+                        .admits_environment(
+                            connection,
+                            caller,
+                            Some(&project),
+                            target["env"].as_str(),
+                        )
+                        .await?)
+                })
                 .await?
             }
             // A read for every control caller: `org-admin`, or `project-admin`
             // of a project of the org.
             HostRouteAuthority::Member => {
-                self.admits(&mut *self.control.acquire().await?, caller, None)
-                    .await?
-                    || !control_projects_page(
-                        &mut *self.control.acquire().await?,
-                        caller,
-                        self.org,
-                        None,
-                        Some(1),
-                    )
-                    .await?
-                    .is_empty()
+                self.read(caller, async |connection| {
+                    Ok(self.admits(connection, caller, None).await?)
+                })
+                .await?
+                    || !self
+                        .read(caller, async |connection| {
+                            Ok(
+                                control_projects_page(connection, caller, self.org, None, Some(1))
+                                    .await?,
+                            )
+                        })
+                        .await?
+                        .is_empty()
             }
             authority @ (HostRouteAuthority::Admin | HostRouteAuthority::Granted) => {
                 return Err(Refusal::Failed(anyhow::anyhow!(
@@ -342,26 +350,34 @@ impl ControlRoutes<'_> {
                     None,
                     Order::Principal,
                 )?;
-                let users = org_users_page(
-                    &mut *self.control.acquire().await?,
-                    self.org,
-                    page.after(0),
-                    page.after(1),
-                    page.read_limit(),
-                )
-                .await?;
+                let users = self
+                    .read(caller, async |connection| {
+                        Ok(org_users_page(
+                            connection,
+                            self.org,
+                            page.after(0),
+                            page.after(1),
+                            page.read_limit(),
+                        )
+                        .await?)
+                    })
+                    .await?;
                 Ok(page.answer("users", users, |row| json!([row.email, row.principal_id])))
             }
             HostHandler::ProjectList => {
                 let page =
                     control_page(payload, attachment, caller, self.org, None, Order::Project)?;
-                let projects = org_projects_page(
-                    &mut *self.control.acquire().await?,
-                    self.org,
-                    page.after(0),
-                    page.read_limit(),
-                )
-                .await?;
+                let projects = self
+                    .read(caller, async |connection| {
+                        Ok(org_projects_page(
+                            connection,
+                            self.org,
+                            page.after(0),
+                            page.read_limit(),
+                        )
+                        .await?)
+                    })
+                    .await?;
                 Ok(page.answer("projects", projects, |row| json!([row.name])))
             }
             HostHandler::UserInvite => self.invite(attachment, caller, payload).await,
@@ -385,7 +401,7 @@ impl ControlRoutes<'_> {
                     .await?;
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
-                let environments = self.environments(None).await?;
+                let environments = self.environments(caller, None).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
                 Ok(json!({ "principal_id": principal.to_string().as_str(), "status": "inactive" }))
@@ -399,7 +415,7 @@ impl ControlRoutes<'_> {
                 drops.identity(principal.to_string().as_str());
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
-                let environments = self.environments(None).await?;
+                let environments = self.environments(caller, None).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
                 Ok(json!({ "principal_id": principal.to_string().as_str(), "org_admin": true }))
@@ -412,7 +428,7 @@ impl ControlRoutes<'_> {
                 revoke_org_admin(&mut transaction, &principal, self.org, &mut drops).await?;
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
-                let environments = self.environments(None).await?;
+                let environments = self.environments(caller, None).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
                 Ok(json!({ "principal_id": principal.to_string().as_str(), "org_admin": false }))
@@ -427,26 +443,29 @@ impl ControlRoutes<'_> {
                     Some(&request.project),
                     Order::Environment,
                 )?;
-                let environments = project_envs_page(
-                    &mut *self.control.acquire().await?,
-                    self.org,
-                    &request.project,
-                    page.after(0),
-                    page.read_limit(),
-                )
-                .await?;
+                let environments = self
+                    .read(caller, async |connection| {
+                        Ok(project_envs_page(
+                            connection,
+                            self.org,
+                            &request.project,
+                            page.after(0),
+                            page.read_limit(),
+                        )
+                        .await?)
+                    })
+                    .await?;
                 Ok(page.answer("environments", environments, |row| json!([row.name])))
             }
             HostHandler::EnvironmentStatus => {
                 let request: EnvironmentRequest = parse(payload)?;
-                if !project_envs(
-                    &mut *self.control.acquire().await?,
-                    self.org,
-                    &request.project,
-                )
-                .await?
-                .iter()
-                .any(|entry| entry.name == request.env)
+                if !self
+                    .read(caller, async |connection| {
+                        Ok(project_envs(connection, self.org, &request.project).await?)
+                    })
+                    .await?
+                    .iter()
+                    .any(|entry| entry.name == request.env)
                 {
                     return Err(Refusal::Declared {
                         code: "environment_not_found",
@@ -463,9 +482,14 @@ impl ControlRoutes<'_> {
                         .map_err(|_| {
                             anyhow::anyhow!("no administration login for status counts")
                         })?;
-                    application_counts(&logins[0]).await
+                    application_counts(&logins[0], caller).await
                 };
                 let memberships = async {
+                    let mut transaction = wamn_platform_identity::transaction::read_pool(
+                        self.control,
+                        &caller.to_string(),
+                    )
+                    .await?;
                     let row = sqlx::query(
                         "SELECT count(*)::int4 FROM identity.project_env_memberships \
                          WHERE org = $1 AND project = $2 AND env = $3",
@@ -473,8 +497,9 @@ impl ControlRoutes<'_> {
                     .bind(self.org)
                     .bind(&request.project)
                     .bind(&request.env)
-                    .fetch_one(self.control)
+                    .fetch_one(&mut *transaction)
                     .await?;
+                    transaction.commit().await?;
                     anyhow::Ok(row.get::<i32, _>(0))
                 };
                 Ok(status_with_counts(
@@ -488,14 +513,13 @@ impl ControlRoutes<'_> {
             }
             HostHandler::ReleaseProfile => {
                 let request: ReleaseRequest = parse(payload)?;
-                if !project_envs(
-                    &mut *self.control.acquire().await?,
-                    self.org,
-                    &request.project,
-                )
-                .await?
-                .iter()
-                .any(|entry| entry.name == request.env)
+                if !self
+                    .read(caller, async |connection| {
+                        Ok(project_envs(connection, self.org, &request.project).await?)
+                    })
+                    .await?
+                    .iter()
+                    .any(|entry| entry.name == request.env)
                 {
                     return Err(Refusal::Declared {
                         code: "environment_not_found",
@@ -509,7 +533,7 @@ impl ControlRoutes<'_> {
                     directory.join(control_administration_key(&request.project, &request.env));
                 let url = std::fs::read_to_string(&path)
                     .with_context(|| format!("read the administration login {}", path.display()))?;
-                match release_profile(url.trim(), &request.digest).await? {
+                match release_profile(url.trim(), &request.digest, caller).await? {
                     Some((profile, roles)) => Ok(json!({
                         "digest": request.digest,
                         "operations": profile.operations,
@@ -534,16 +558,20 @@ impl ControlRoutes<'_> {
                     Some(&request.project),
                     Order::Principal,
                 )?;
-                let members = project_members_page(
-                    &mut *self.control.acquire().await?,
-                    self.org,
-                    &request.project,
-                    request.environment.as_str(),
-                    page.after(0),
-                    page.after(1),
-                    page.read_limit(),
-                )
-                .await?;
+                let members = self
+                    .read(caller, async |connection| {
+                        Ok(project_members_page(
+                            connection,
+                            self.org,
+                            &request.project,
+                            request.environment.as_str(),
+                            page.after(0),
+                            page.after(1),
+                            page.read_limit(),
+                        )
+                        .await?)
+                    })
+                    .await?;
                 Ok(page.answer("members", members, |row| {
                     json!([row.email, row.principal_id])
                 }))
@@ -631,7 +659,7 @@ impl ControlRoutes<'_> {
                 drops.identity(principal.to_string().as_str());
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
-                let environments = self.environments(Some(&request.project)).await?;
+                let environments = self.environments(caller, Some(&request.project)).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
                 Ok(json!({
@@ -658,7 +686,7 @@ impl ControlRoutes<'_> {
                 .await?;
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
-                let environments = self.environments(Some(&request.project)).await?;
+                let environments = self.environments(caller, Some(&request.project)).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
                 Ok(json!({
@@ -783,7 +811,7 @@ impl ControlRoutes<'_> {
                 .collect()
         };
         for project in admin_targets {
-            environments.extend(self.environments(project).await?);
+            environments.extend(self.environments(caller, project).await?);
         }
         let environments: Vec<_> = environments.into_iter().collect();
         self.write_applications(
@@ -905,9 +933,37 @@ impl ControlRoutes<'_> {
         Ok(logins)
     }
 
+    async fn read_transaction(
+        &self,
+        caller: &PrincipalId,
+    ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, Refusal> {
+        Ok(
+            wamn_platform_identity::transaction::read_pool(self.control, &caller.to_string())
+                .await?,
+        )
+    }
+
+    async fn read<T>(
+        &self,
+        caller: &PrincipalId,
+        work: impl AsyncFnOnce(&mut Client) -> Result<T, Refusal>,
+    ) -> Result<T, Refusal> {
+        let mut transaction = self.read_transaction(caller).await?;
+        let value = work(&mut transaction).await?;
+        transaction.commit().await?;
+        Ok(value)
+    }
+
     /// Every current environment of the selected target.
-    async fn environments(&self, project: Option<&str>) -> Result<Vec<(String, String)>, Refusal> {
-        Ok(org_environments(&mut *self.control.acquire().await?, self.org, project).await?)
+    async fn environments(
+        &self,
+        caller: &PrincipalId,
+        project: Option<&str>,
+    ) -> Result<Vec<(String, String)>, Refusal> {
+        self.read(caller, async |connection| {
+            Ok(org_environments(connection, self.org, project).await?)
+        })
+        .await
     }
 
     /// Project current authority while holding the user's system membership lock.
@@ -925,6 +981,8 @@ impl ControlRoutes<'_> {
             pause.arrive(principal, false).await;
         }
         let mut system = writer.begin().await?;
+        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','',$2)")
+            .bind(caller.to_string()).bind(&attachment.operation).execute(&mut *system).await?;
         wamn_platform_identity::org::lock_membership(&mut system, principal, self.org).await?;
         #[cfg(feature = "test-util")]
         if let Some(pause) = self.projection_pause {
@@ -991,7 +1049,7 @@ impl ControlRoutes<'_> {
     ) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
         let mut transaction = writer.begin().await?;
         sqlx::query(
-            "INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES($1::text::uuid,'','',$2)",
+            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','',$2)",
         )
         .bind(caller.to_string().as_str())
         .bind(&attachment.operation)
@@ -1051,12 +1109,11 @@ const APPLICATION_COUNTS_SQL: &str = "SELECT \
         WHERE r.user_id = u.id)), \
     (SELECT count(*)::int4 FROM platform.role r)";
 
-async fn application_counts(url: &str) -> anyhow::Result<(i32, i32)> {
+async fn application_counts(url: &str, caller: &PrincipalId) -> anyhow::Result<(i32, i32)> {
     let mut client = wamn_postgres::connect(url).await?;
-    let mut transaction = client.begin().await?;
-    sqlx::query("SET TRANSACTION READ ONLY")
-        .execute(&mut *transaction)
-        .await?;
+    let mut transaction =
+        wamn_platform_identity::transaction::read_connection(&mut client, &caller.to_string())
+            .await?;
     let row = sqlx::query(APPLICATION_COUNTS_SQL)
         .fetch_one(&mut *transaction)
         .await?;
@@ -1121,7 +1178,7 @@ async fn write_application(
 
     let result = async {
         let mut transaction = client.begin().await?;
-        sqlx::query("INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES($1::text::uuid,'','',$2)").bind(caller.to_string().as_str()).bind(&attachment.operation).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','',$2)").bind(caller.to_string().as_str()).bind(&attachment.operation).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
         require_platform_rows(&mut transaction).await?;
         let mut drops = AuthDrops::default();
         project_authority(system, &mut transaction, target, principal, &mut drops).await?;
@@ -1177,6 +1234,7 @@ const VIEW_DEPENDENCIES_SQL: &str = "WITH RECURSIVE view_dependencies AS ( \
 async fn release_profile(
     url: &str,
     digest: &str,
+    caller: &PrincipalId,
 ) -> anyhow::Result<
     Option<(
         wamn_catalog::profile::ReleaseProfile,
@@ -1187,10 +1245,13 @@ async fn release_profile(
         .await
         .context("connect the administration login")?;
 
+    let mut transaction =
+        wamn_platform_identity::transaction::read_connection(&mut client, &caller.to_string())
+            .await?;
     let result = async {
         let Some(row) = sqlx::query(RELEASE_SQL)
             .bind(digest)
-            .fetch_optional(&mut client)
+            .fetch_optional(&mut *transaction)
             .await?
         else {
             return Ok(None);
@@ -1200,7 +1261,7 @@ async fn release_profile(
                 .context("decode the release manifest")?;
         let mut views = BTreeMap::<String, wamn_catalog::profile::ViewRelation>::new();
         for row in sqlx::query(VIEW_DEPENDENCIES_SQL)
-            .fetch_all(&mut client)
+            .fetch_all(&mut *transaction)
             .await?
         {
             let view = views.entry(row.get(0)).or_default();
@@ -1212,9 +1273,9 @@ async fn release_profile(
             }
         }
         let profile = wamn_catalog::profile::release_profile(&manifest.components, &views);
-        require_platform_rows(&mut client).await?;
+        require_platform_rows(&mut transaction).await?;
         let mut roles = BTreeMap::new();
-        for role in role_names(&mut client).await? {
+        for role in role_names(&mut transaction).await? {
             let operations = if role == ADMIN_ROLE {
                 profile
                     .operations
@@ -1222,15 +1283,15 @@ async fn release_profile(
                     .map(|each| each.operation.clone())
                     .collect()
             } else {
-                permission_rows(&mut client, &role).await?
+                permission_rows(&mut transaction, &role).await?
             };
             roles.insert(role, operations);
         }
         anyhow::Ok(Some((profile, roles)))
     }
-    .await;
-    drop(client);
-    result
+    .await?;
+    transaction.commit().await?;
+    Ok(result)
 }
 
 /// One environment's status row, in its own transaction on its
@@ -1249,7 +1310,7 @@ async fn write_status(
     let result = async {
         let mut transaction = client.begin().await?;
         sqlx::query(
-            "INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES($1::text::uuid,'','',$2)",
+            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','',$2)",
         )
         .bind(caller.to_string().as_str())
         .bind(&attachment.operation)
