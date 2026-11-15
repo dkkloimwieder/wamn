@@ -176,14 +176,29 @@ impl fmt::Debug for FileStore {
     }
 }
 
-/// Abort unfinished multipart uploads after body errors or task cancellation.
-struct UploadGuard(Option<WriteMultipart>);
+/// Cancel multipart work and abort remote uploads while invocation time remains.
+struct UploadGuard {
+    writer: Option<WriteMultipart>,
+    deadline: tokio::time::Instant,
+}
 impl Drop for UploadGuard {
     fn drop(&mut self) {
-        if let Some(upload) = self.0.take() {
+        if let Some(upload) = self.writer.take() {
+            let deadline = self.deadline;
+            if tokio::time::Instant::now() >= deadline {
+                // Dropping WriteMultipart cancels its part tasks. Bucket lifecycle
+                // cleanup owns remote parts when no invocation time remains.
+                drop(upload);
+                return;
+            }
             tokio::spawn(async move {
-                if let Err(error) = upload.abort().await {
-                    tracing::warn!(%error, "file staging multipart abort failed");
+                if tokio::time::Instant::now() >= deadline {
+                    return;
+                }
+                match tokio::time::timeout_at(deadline, upload.abort()).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => tracing::warn!(%error, "file staging multipart abort failed"),
+                    Err(_) => tracing::warn!("file staging multipart abort reached its deadline"),
                 }
             });
         }
@@ -208,44 +223,44 @@ fn public_key(blob_key: &str) -> String {
 impl FileStore {
     /// Stream canonical live, public and staged objects beneath this generation's prefix.
     /// Malformed keys are logged and skipped. Listing never buffers the whole bucket.
+    /// Maintenance uses each client's request limit without a deadline over the whole scan.
     pub async fn live_objects(
         &self,
     ) -> Result<BoxStream<'_, Result<FileObject, FileStorageError>>, FileStorageError> {
-        self.run("collect", async {
-            self.permit("collect", true).await?;
-            let private = self.path(&format!("{}/{FILE_PREFIX}live", self.environment))?;
-            let public = self.path(&format!("{}/public/{FILE_PREFIX}live", self.environment))?;
-            let staged = self.path(&format!("{}/{FILE_PREFIX}staging", self.environment))?;
-            Ok(futures_util::stream::iter([private, public, staged])
-                .flat_map(move |prefix| {
-                    let directory = format!("{prefix}/");
-                    deadline_stream(self.bound.store.list(Some(&prefix)), self.deadline)
-                        .map_err(|error| backend("list files", error))
-                        .try_filter_map(move |meta| {
-                            let key = meta.location.as_ref();
-                            let parsed = key.strip_prefix(&directory).and_then(|suffix| {
-                                suffix
-                                    .parse::<Uuid>()
-                                    .ok()
-                                    .filter(|id| id.to_string() == suffix)
-                            });
-                            let object = parsed.map(|id| FileObject {
-                                path: meta.location.clone(),
-                                blob_key: live_key(&self.environment, id),
-                                last_modified: meta.last_modified.into(),
-                            });
-                            if object.is_none() {
-                                tracing::warn!(
-                                    object_key = key,
-                                    "file collector skipped an unparseable key"
-                                );
-                            }
-                            std::future::ready(Ok(object))
-                        })
-                })
-                .boxed())
-        })
-        .await
+        self.permit("collect", true).await?;
+        let private = self.path(&format!("{}/{FILE_PREFIX}live", self.environment))?;
+        let public = self.path(&format!("{}/public/{FILE_PREFIX}live", self.environment))?;
+        let staged = self.path(&format!("{}/{FILE_PREFIX}staging", self.environment))?;
+        Ok(futures_util::stream::iter([private, public, staged])
+            .flat_map(move |prefix| {
+                let directory = format!("{prefix}/");
+                self.bound
+                    .store
+                    .list(Some(&prefix))
+                    .map_err(|error| backend("list files", error))
+                    .try_filter_map(move |meta| {
+                        let key = meta.location.as_ref();
+                        let parsed = key.strip_prefix(&directory).and_then(|suffix| {
+                            suffix
+                                .parse::<Uuid>()
+                                .ok()
+                                .filter(|id| id.to_string() == suffix)
+                        });
+                        let object = parsed.map(|id| FileObject {
+                            path: meta.location.clone(),
+                            blob_key: live_key(&self.environment, id),
+                            last_modified: meta.last_modified.into(),
+                        });
+                        if object.is_none() {
+                            tracing::warn!(
+                                object_key = key,
+                                "file collector skipped an unparseable key"
+                            );
+                        }
+                        std::future::ready(Ok(object))
+                    })
+            })
+            .boxed())
     }
 
     /// Delete only a listed canonical object in this store, after the caller reads its row.
@@ -255,24 +270,21 @@ impl FileStore {
         object: &FileObject,
         cutoff: SystemTime,
     ) -> Result<bool, FileStorageError> {
-        self.run("collect", async {
-            self.permit("collect", true).await?;
-            self.collected_is_staged(object)?;
-            let meta = match self.bound.store.head(&object.path).await {
-                Ok(meta) => meta,
-                Err(object_store::Error::NotFound { .. }) => return Ok(false),
-                Err(error) => return Err(backend("head orphan", error)),
-            };
-            if SystemTime::from(meta.last_modified) >= cutoff {
-                return Ok(false);
-            }
-            match self.bound.store.delete(&object.path).await {
-                Ok(()) => Ok(true),
-                Err(object_store::Error::NotFound { .. }) => Ok(false),
-                Err(error) => Err(backend("delete orphan", error)),
-            }
-        })
-        .await
+        self.permit("collect", true).await?;
+        self.collected_is_staged(object)?;
+        let meta = match self.bound.store.head(&object.path).await {
+            Ok(meta) => meta,
+            Err(object_store::Error::NotFound { .. }) => return Ok(false),
+            Err(error) => return Err(backend("head orphan", error)),
+        };
+        if SystemTime::from(meta.last_modified) >= cutoff {
+            return Ok(false);
+        }
+        match self.bound.store.delete(&object.path).await {
+            Ok(()) => Ok(true),
+            Err(object_store::Error::NotFound { .. }) => Ok(false),
+            Err(error) => Err(backend("delete orphan", error)),
+        }
     }
 
     fn collected_is_staged(&self, object: &FileObject) -> Result<bool, FileStorageError> {
@@ -303,30 +315,27 @@ impl FileStore {
         live_cutoff: SystemTime,
         now: SystemTime,
     ) -> Result<bool, FileStorageError> {
-        self.run("collect", async {
-            self.permit("collect", true).await?;
-            let staged = self.collected_is_staged(object)?;
-            if let Some(key) = row_blob_key {
-                if key != object.blob_key {
-                    return Err(FileStorageError::new(
-                        FileStorageErrorType::Refused,
-                        "collect",
-                        "catalog row belongs to another object",
-                    ));
-                }
-                if staged {
-                    self.repair(key).await?;
-                }
-                return Ok(false);
+        self.permit("collect", true).await?;
+        let staged = self.collected_is_staged(object)?;
+        if let Some(key) = row_blob_key {
+            if key != object.blob_key {
+                return Err(FileStorageError::new(
+                    FileStorageErrorType::Refused,
+                    "collect",
+                    "catalog row belongs to another object",
+                ));
             }
-            let cutoff = if staged {
-                now - MIN_STAGING_AGE
-            } else {
-                live_cutoff
-            };
-            self.delete_collected(object, cutoff).await
-        })
-        .await
+            if staged {
+                self.repair(key).await?;
+            }
+            return Ok(false);
+        }
+        let cutoff = if staged {
+            now - MIN_STAGING_AGE
+        } else {
+            live_cutoff
+        };
+        self.delete_collected(object, cutoff).await
     }
 
     pub(super) fn new(
@@ -438,7 +447,10 @@ impl FileStore {
                 )
                 .await
                 .map_err(|error| backend("stage", error))?;
-            let mut upload = UploadGuard(Some(WriteMultipart::new(upload)));
+            let mut upload = UploadGuard {
+                writer: Some(WriteMultipart::new(upload)),
+                deadline: self.deadline,
+            };
             let mut hash = Sha256::new();
             let mut size = 0u64;
             let mut buffer = vec![0; 64 * 1024];
@@ -461,7 +473,7 @@ impl FileStore {
                     })?;
                 hash.update(&buffer[..count]);
                 let writer = upload
-                    .0
+                    .writer
                     .as_mut()
                     .expect("upload remains active until finish");
                 writer
@@ -471,7 +483,10 @@ impl FileStore {
                 writer.write(&buffer[..count]);
             }
             self.permit("put", true).await?;
-            let writer = upload.0.take().expect("upload remains active until finish");
+            let writer = upload
+                .writer
+                .take()
+                .expect("upload remains active until finish");
             if size == 0 {
                 writer
                     .abort()
@@ -942,38 +957,83 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn stage_deadline_stops_the_upload_and_its_tasks() {
-        use tokio::io::AsyncWriteExt as _;
+        use object_store::limit::LimitStore;
+
+        for (bytes, expected) in [
+            (6 * 1024 * 1024, FileStorageErrorType::Body),
+            (11 * 1024 * 1024, FileStorageErrorType::Deadline),
+        ] {
+            let (mut files, backend) = store(false, None);
+            // Creation succeeds, but both part uploads and abort wait for a permit.
+            files.bound.store = Arc::new(LimitStore::new(Arc::clone(&backend), 0));
+            files.deadline = tokio::time::Instant::now() + Duration::from_millis(10);
+            let tasks = tokio::runtime::Handle::current()
+                .metrics()
+                .num_alive_tasks();
+            let body = tokio::io::repeat(42).take(bytes).chain(BrokenBody);
+            assert_eq!(
+                files.stage(Uuid::new_v4(), body).await.unwrap_err().type_,
+                expected
+            );
+            if expected == FileStorageErrorType::Deadline {
+                assert_eq!(tokio::time::Instant::now(), files.deadline);
+            } else {
+                assert!(tokio::time::Instant::now() < files.deadline);
+            }
+            tokio::task::yield_now().await;
+            tokio::time::advance(files.deadline - tokio::time::Instant::now()).await;
+            // Let cancellation run without advancing beyond the invocation deadline.
+            tokio::task::yield_now().await;
+            assert_eq!(tokio::time::Instant::now(), files.deadline);
+            assert_eq!(
+                tokio::runtime::Handle::current()
+                    .metrics()
+                    .num_alive_tasks(),
+                tasks
+            );
+            assert!(
+                backend
+                    .list(None)
+                    .try_collect::<Vec<_>>()
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn collection_reaches_staging_after_the_invocation_time_limit() {
+        use object_store::throttle::{ThrottleConfig, ThrottledStore};
 
         let (mut files, backend) = store(false, None);
-        files.deadline = tokio::time::Instant::now() + Duration::from_millis(10);
-        let tasks = tokio::runtime::Handle::current()
-            .metrics()
-            .num_alive_tasks();
-        let (body, mut sender) = tokio::io::duplex(1024);
-        let body = tokio::io::repeat(42).take(11 * 1024 * 1024).chain(body);
-        let id = Uuid::new_v4();
-        assert_eq!(
-            files.stage(id, body).await.unwrap_err().type_,
-            FileStorageErrorType::Deadline
-        );
-        assert!(tokio::time::Instant::now() >= files.deadline);
-        // Staging must release its body when the deadline expires.
-        assert!(sender.write_all(b"late bytes").await.is_err());
-        tokio::time::sleep(Duration::from_millis(1)).await;
-        assert_eq!(
-            tokio::runtime::Handle::current()
-                .metrics()
-                .num_alive_tasks(),
-            tasks
-        );
+        let row = files
+            .stage(Uuid::new_v4(), &b"committed"[..])
+            .await
+            .unwrap();
+        files.bound.store = Arc::new(ThrottledStore::new(
+            Arc::clone(&backend),
+            ThrottleConfig {
+                wait_list_per_call: Duration::from_secs(11),
+                ..Default::default()
+            },
+        ));
+        let mut objects = files.live_objects().await.unwrap();
+        let object = objects.try_next().await.unwrap().unwrap();
+        assert!(tokio::time::Instant::now() > files.deadline);
+        let now = SystemTime::now();
+        files
+            .reconcile_collected(&object, Some(&row.blob_key), now, now)
+            .await
+            .unwrap();
+        assert!(backend.head(&object.path).await.is_err());
         assert!(
             backend
-                .list(None)
-                .try_collect::<Vec<_>>()
+                .head(&files.path(&row.blob_key).unwrap())
                 .await
-                .unwrap()
-                .is_empty()
+                .is_ok()
         );
+        files.delete_collected(&object, now).await.unwrap();
     }
 
     struct BrokenBody;

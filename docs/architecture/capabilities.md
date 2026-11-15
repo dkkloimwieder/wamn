@@ -273,11 +273,13 @@ Key construction does not double a separator.
 
 A write commits only after bounded intake establishes a complete body.
 Guest writes and native file uploads accept at most 64 MiB.
-Native uploads stream through multipart storage and abort unfinished uploads on cancellation or deadline expiry.
+Native uploads stream through multipart storage and cancel upload tasks on cancellation or deadline expiry.
+Remote abort attempts share the original invocation deadline. Bucket lifecycle cleanup removes remaining incomplete uploads.
 Guest effects and native file operations share their caller's absolute deadline.
 Native HTTP file requests use the host's 30-second limit.
 Storage clients cap requests and retries at that limit. The caller timeout enforces any earlier invocation deadline.
 The collector lists live and staged objects beneath the environment's file prefix.
+Collection has no invocation deadline. Client request and retry limits bound each maintenance request.
 Its storage API promotes staging with a metadata row and removes staging without a row after 90 seconds.
 The host must supply the catalog lookup before it calls that API.
 Bucket creation installs a [one-day rule for incomplete multipart uploads](../operations/gcp.md#2-project-resources).
