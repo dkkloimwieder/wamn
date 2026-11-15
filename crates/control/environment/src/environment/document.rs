@@ -96,11 +96,26 @@ pub(super) enum ReleaseChange<'a> {
     Rollback(Option<&'a str>),
 }
 
+/// Read protected configuration as the provisioning component.
+pub(super) async fn read_configuration(
+    connection: &mut sqlx::PgConnection,
+    triple: &Triple,
+) -> Result<Option<wamn_registry::configuration::EnvironmentConfiguration>, sqlx::Error> {
+    let principal = wamn_control_provision::PlatformComponent::Provisioning
+        .principal_id()
+        .to_string();
+    let mut transaction =
+        wamn_platform_identity::transaction::read_connection(connection, &principal).await?;
+    let configuration = wamn_registry::configuration::read(&mut transaction, triple).await?;
+    transaction.commit().await?;
+    Ok(configuration)
+}
+
 impl EnvironmentDocument {
     /// Read applied configuration by coordinate from the registry.
     pub async fn read(platform: &super::Platform, triple: &Triple) -> anyhow::Result<Self> {
         let mut system = wamn_postgres::connect(&platform.system_database_url).await?;
-        let configuration = wamn_registry::configuration::read(&mut system, triple)
+        let configuration = read_configuration(&mut system, triple)
             .await?
             .with_context(|| format!("environment {triple} has no applied configuration"))?;
         let document = Self::from_configuration(configuration);
@@ -329,7 +344,7 @@ mod tests {
         let triple = Triple::new("acme", "prod", "wms");
         let mut connection = wamn_postgres::connect(database.as_str()).await?;
         assert!(
-            configuration::read(&mut connection, &triple)
+            read_configuration(&mut connection, &triple)
                 .await?
                 .is_none()
         );
@@ -369,9 +384,7 @@ mod tests {
             .execute(&mut connection)
             .await?;
         assert_eq!(
-            configuration::read(&mut connection, &triple)
-                .await?
-                .as_ref(),
+            read_configuration(&mut connection, &triple).await?.as_ref(),
             Some(&expected)
         );
         sqlx::raw_sql("SET ROLE wamn_apply")
@@ -399,9 +412,7 @@ mod tests {
         application.release = Some(release);
         application.client = Some(restored);
         assert_eq!(
-            configuration::read(&mut connection, &triple)
-                .await?
-                .as_ref(),
+            read_configuration(&mut connection, &triple).await?.as_ref(),
             Some(&expected)
         );
         // A settings write keeps desired releases and replaces obsolete child rows.
@@ -419,9 +430,7 @@ mod tests {
         assert!(configuration::write(&mut transaction, &expected).await?);
         transaction.commit().await?;
         assert_eq!(
-            configuration::read(&mut connection, &triple)
-                .await?
-                .as_ref(),
+            read_configuration(&mut connection, &triple).await?.as_ref(),
             Some(&expected)
         );
         let mut transaction =
@@ -438,9 +447,7 @@ mod tests {
         application.release = None;
         application.client = None;
         assert_eq!(
-            configuration::read(&mut connection, &triple)
-                .await?
-                .as_ref(),
+            read_configuration(&mut connection, &triple).await?.as_ref(),
             Some(&expected)
         );
         expected.applications.clear();
@@ -449,9 +456,7 @@ mod tests {
         assert!(configuration::write(&mut transaction, &expected).await?);
         transaction.commit().await?;
         assert_eq!(
-            configuration::read(&mut connection, &triple)
-                .await?
-                .as_ref(),
+            read_configuration(&mut connection, &triple).await?.as_ref(),
             Some(&expected)
         );
         Ok(())
@@ -570,9 +575,7 @@ mod tests {
             transaction.rollback().await?;
         }
         assert_eq!(
-            configuration::read(&mut connection, &triple)
-                .await?
-                .as_ref(),
+            read_configuration(&mut connection, &triple).await?.as_ref(),
             Some(&expected)
         );
         sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -591,14 +594,12 @@ mod tests {
         assert!(matches!(refusal, sqlx::Error::InvalidArgument(_)));
         transaction.commit().await?;
         assert_eq!(
-            configuration::read(&mut connection, &triple)
-                .await?
-                .as_ref(),
+            read_configuration(&mut connection, &triple).await?.as_ref(),
             Some(&expected)
         );
         let missing = Triple::new("acme", "prod", "missing");
         assert!(
-            configuration::read(&mut connection, &missing)
+            read_configuration(&mut connection, &missing)
                 .await?
                 .is_none()
         );

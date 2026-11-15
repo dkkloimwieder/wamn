@@ -303,7 +303,7 @@ pub async fn dry_run(
     runtime::resolve_target(&mut resolved, &document, &private.path(".")).await?;
     let mut system = wamn_postgres::connect(&resolved.system_database_url).await?;
     if let Some(configuration) =
-        wamn_registry::configuration::read(&mut system, &document.triple()).await?
+        document::read_configuration(&mut system, &document.triple()).await?
     {
         for (name, application) in configuration.applications {
             if let Some(selection) = document.applications.get_mut(&name) {

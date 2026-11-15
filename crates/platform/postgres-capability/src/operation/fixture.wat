@@ -147,20 +147,9 @@
         i32.const 64 call $wal i32.const 4 call $refused
         i32.const 1 call $return i32.const 0 return
       end
-      local.get $mode i32.const 19 i32.ge_u if
-        i32.const 0 i32.const 0
-        local.get $mode i32.const 19 i32.eq
-        if (result i32) i32.const 640 else i32.const 512 end
-        local.get $mode i32.const 19 i32.eq
-        if (result i32) i32.const 21 else i32.const 24 end
-        i32.const 64 call $authorize
-        local.get $mode i32.const 19 i32.eq if
-          i32.const 64 i32.load8_u if unreachable end
-          i32.const 64 call $finish-read
-          i32.const 64 i32.load8_u if unreachable end
-        else
-          i32.const 2 call $refused
-        end
+      local.get $mode i32.const 20 i32.eq if
+        i32.const 0 i32.const 0 i32.const 512 i32.const 24 i32.const 64 call $authorize
+        i32.const 2 call $refused
         i32.const 1 call $return i32.const 0 return
       end
       local.get $mode i32.const 18 i32.eq if

@@ -9,6 +9,7 @@ const ADMINISTRATION_PASSWORD: &str = "numbering-administration";
 const SET_OPERATION: &str = "wamn-control:number-counter/set@0.9.0";
 struct Live {
     administration: sqlx::PgConnection,
+    observation: sqlx::PgConnection,
     plugin: WamnPostgres,
     _lock: wamn_test_postgres::ProcessLock,
 }
@@ -55,11 +56,11 @@ impl Live {
         url.set_password(Some(ADMINISTRATION_PASSWORD))
             .expect("set the password");
         let administration = connect(url.as_str()).await;
+        let guest_url = live_guest_url(database.as_str(), PROJECT_ENV_KEY).await;
         let mut live = Self {
+            observation: connect(&guest_url).await,
             plugin: WamnPostgres::new(WamnPostgresConfig {
-                credentials: Some(ClassCredentials::every_class(
-                    live_guest_url(database.as_str(), PROJECT_ENV_KEY).await,
-                )),
+                credentials: Some(ClassCredentials::every_class(guest_url)),
                 guest_pool_max_size: 8,
                 platform_pool_max_size: 1,
                 wait_timeout_ms: 5_000,
@@ -83,7 +84,7 @@ impl Live {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&format!(
                 "BEGIN; \
-                 INSERT INTO platform.tx_identity (xid, user_id, role, application, operation) \
+                 INSERT INTO platform.tx_identity (xid, principal_id, role, application, operation) \
                  VALUES (pg_current_xact_id(), '{LIVE_PRINCIPAL}'::uuid, 'admin', '{APPLICATION}', 'admin:numbering'); \
                  {statements} COMMIT;"
             ))
@@ -179,15 +180,13 @@ async fn counter_set_refuses_invalid_input(pool: sqlx::PgPool) {
     );
 }
 
-async fn live_guest_url(admin_url: &str, _project_env_key: &str) -> String {
+async fn live_guest_url(admin_url: &str, project_env_key: &str) -> String {
     let mut url = url::Url::parse(admin_url).unwrap();
     let database = url.path().trim_start_matches('/').to_owned();
     let login = workload_login(
         WorkloadRoleFamily::App,
-        WorkloadRoleIdentity::ProjectEnvironment {
-            org: "org",
-            project: "project",
-            environment: "dev",
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key,
             database: &database,
         },
     )
@@ -231,11 +230,19 @@ async fn live_set_counter_is_logged_by_its_request_id(pool: sqlx::PgPool) {
             .unwrap(),
         10
     );
+    let mut transaction = wamn_test_postgres::transaction(
+        &mut live.observation,
+        LIVE_PRINCIPAL,
+        "admin:counter-observe",
+    )
+    .await
+    .unwrap();
     let current: i64 =
         sqlx::query_scalar("SELECT value FROM platform.number_counter WHERE counter = 'po'")
-            .fetch_one(&mut live.administration)
+            .fetch_one(&mut *transaction)
             .await
             .unwrap();
+    transaction.rollback().await.unwrap();
     assert_eq!(current, 12);
     assert_eq!(
         live.set("logged", "purchase_order", "po", "", 30)

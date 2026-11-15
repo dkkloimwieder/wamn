@@ -53,7 +53,7 @@ pub async fn configure(
             emit_operator_pat_secret: None,
         })
         .await?;
-        let unconfigured = wamn_registry::configuration::read(&mut *lock.client().await, &triple)
+        let unconfigured = super::document::read_configuration(&mut *lock.client().await, &triple)
             .await?
             .is_none();
         let connection = wamn_platform_install::environment::provision(

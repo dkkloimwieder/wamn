@@ -1300,9 +1300,19 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     pg.bind_session_identity(scope_a, &identity(PROJECT_ENV_KEY_A))
         .await
         .expect("project_env_key A's acquisition binds");
-    pg.bind_session_identity(scope_b, &identity(PROJECT_ENV_KEY_B))
+    let refused = pg
+        .bind_session_identity(scope_b, &identity(PROJECT_ENV_KEY_B))
         .await
-        .expect("project_env_key B's acquisition binds");
+        .expect_err("B's principal read requires B's own credential");
+    let refused = refused.downcast_ref::<SessionIdentityError>().unwrap();
+    assert!(matches!(
+        refused.type_,
+        SessionIdentityErrorType::Infrastructure
+    ));
+    assert!(matches!(
+        refused.source.downcast_ref::<PgError>(),
+        Some(PgError::ConnectionUnavailable)
+    ));
 
     // CONTROL: the table is reachable on this path at all, so the refusal
     // below is a refusal and not a broken fixture or search_path.

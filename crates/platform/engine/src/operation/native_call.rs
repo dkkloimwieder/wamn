@@ -80,6 +80,7 @@ impl<P: InvocationPolicy> fmt::Debug for NativeInvocation<P> {
 }
 
 struct NativeCall<P: InvocationPolicy> {
+    admission_error: Option<anyhow::Error>,
     request: NativeInvocation<P>,
     finish_result: bool,
     reply: oneshot::Sender<NativeOutcome>,
@@ -143,6 +144,7 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
         let trace = self.trace.clone();
         Box::pin(trace.run(async move {
             let Self {
+                admission_error,
                 request,
                 finish_result,
                 reply,
@@ -153,6 +155,10 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                 ..
             } = *self;
             drop(instantiate);
+            if let Some(error) = admission_error {
+                *failure.lock().expect("native call failure lock poisoned") = Some(error);
+                anyhow::bail!("native invocation admission failed");
+            }
             // The guest's host calls parent to this span, because the policy
             // binds the current span when it activates the scope.
             async move {
@@ -363,7 +369,7 @@ async fn invoke<P: InvocationPolicy>(
     let (reply, response) = oneshot::channel();
     let failure = NativeCallFailure::default();
     let retired_after_reply = Arc::new(AtomicBool::new(false));
-    request.facts = timeout_at(
+    let admission = timeout_at(
         deadline,
         request.application.policy.prepare(
             request
@@ -376,7 +382,16 @@ async fn invoke<P: InvocationPolicy>(
         ),
     )
     .await
-    .context("native admission deadline elapsed")??;
+    .context("native admission deadline elapsed")?;
+    // Dispatch admission failures too: native dispatch retires the instance
+    // without invoking its handler, so stale authority cannot survive reuse.
+    let admission_error = match admission {
+        Ok(facts) => {
+            request.facts = facts;
+            None
+        }
+        Err(error) => Some(error),
+    };
     let retained = request
         .application
         .policy
@@ -396,6 +411,7 @@ async fn invoke<P: InvocationPolicy>(
         // must not be replaced by the resulting closed response channel.
         if let Err(native_error) = target
             .dispatch(NativeCall {
+                admission_error,
                 request,
                 finish_result,
                 reply,

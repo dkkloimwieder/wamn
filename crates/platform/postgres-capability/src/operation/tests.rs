@@ -404,16 +404,6 @@ async fn missing_principal_returns_permission_denied(pool: sqlx::PgPool) {
 }
 
 #[sqlx::test(migrations = false)]
-async fn anonymous_read_authorization_uses_a_read_transaction(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let (_, postgres, release) = fixture(&pool).await;
-    let invocation = run_guest(Arc::clone(&postgres), release, 19).await;
-    assert!(postgres.operation_transaction_for(&invocation).is_none());
-    assert!(postgres.session_identity(&invocation).is_none());
-    assert!(postgres.invocation(&invocation).is_none());
-}
-
-#[sqlx::test(migrations = false)]
 async fn reads_use_a_host_transaction_and_refuse_write_claims(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture(&pool).await;
@@ -639,13 +629,6 @@ async fn guest_begin_statement_commit_writes_the_log_and_history(pool: sqlx::PgP
         .unwrap();
     run_guest(postgres, release, 7).await;
     assert_eq!(value(&database).await, 2);
-}
-
-#[sqlx::test(migrations = false)]
-async fn anonymous_caller_begins_an_operation_without_a_grant(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let (_database, postgres, release) = fixture(&pool).await;
-    run_guest(postgres, release, 19).await;
 }
 
 #[sqlx::test(migrations = false)]
